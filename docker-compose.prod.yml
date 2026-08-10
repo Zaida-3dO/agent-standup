@@ -1,13 +1,28 @@
 # Production deploy. The image is PULLED from GHCR, never built here — no
-# `build:` block, no local Dockerfile context, no bind mounts. The full
-# deploy shape (host directory, credentials, health check) lands in a later
-# PR; this file is deliberately generic so it works wherever it's dropped.
+# `build:` block, no local Dockerfile context, no bind mounts. This file is
+# deliberately generic — a single service expecting a reachable Postgres via
+# DATABASE_URL — so it works wherever it's dropped. On a host that groups
+# several apps under one shared compose file, fold this service block (and a
+# Postgres block alongside it) into that file instead of running this one
+# standalone; the shape is the same either way, only the file it lives in
+# changes. See README.md's Deployment section for the details that matter
+# either way (host port, DB readiness ordering, health check).
 #
 # `pull` needs registry auth if the package is private — keep a scoped
 # credential in this directory's own .docker/config.json (never committed):
 #   DOCKER_CONFIG=./.docker docker compose --env-file .env.production \
 #     -f docker-compose.prod.yml pull
 # `up` needs no DOCKER_CONFIG once the image is local.
+#
+# If Postgres runs as its own container in the same compose project, give it
+# `depends_on: condition: service_healthy` on the app service — the
+# entrypoint runs `prisma migrate deploy` at boot, which opens a real DB
+# connection even when there are zero pending migrations, so the app must not
+# start before Postgres is actually accepting connections. A cold first boot
+# of Postgres (initdb + its own internal restart) can take noticeably longer
+# than a short healthcheck window — give its healthcheck a generous
+# `start_period` (observed: ~100s on slow disk) or `depends_on` can give up
+# before Postgres finishes, even though it comes up fine moments later.
 services:
   app:
     container_name: agent-standup
@@ -20,3 +35,17 @@ services:
       NOTIFY_DOC: ${NOTIFY_DOC:-}
       VISUAL_REVIEW_DOC: ${VISUAL_REVIEW_DOC:-}
       TZ: ${TZ:-UTC}
+    healthcheck:
+      # Uses Node's built-in fetch rather than curl/wget — the runner image
+      # (node:24-alpine) doesn't ship either, but Node always does.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

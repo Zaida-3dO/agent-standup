@@ -57,7 +57,8 @@ PR (see [`MILESTONES.md`](docs/plans/MILESTONES.md)). `prisma generate` works to
 
 The image is built by [`.github/workflows/release.yml`](.github/workflows/release.yml)
 on a version tag or manual dispatch, and pushed to `ghcr.io/<owner>/agent-standup`
-tagged `latest` and the version. Wherever it runs, pull and run it with
+tagged `latest` and the version. The package is public, so pulling it needs no
+registry credential. Wherever it runs, pull and run it with
 [`docker-compose.prod.yml`](docker-compose.prod.yml):
 
 ```bash
@@ -68,8 +69,53 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
 `docker-compose.prod.yml` has no `build:` block and no bind mounts by design — it
-only ever pulls. The full deploy setup (host directory, scoped registry
-credential, health check) is its own PR; see `MILESTONES.md`.
+only ever pulls. It ships a health check on `GET /api/health` (liveness only —
+deliberately doesn't touch the database, so a slow DB doesn't make the process
+report unhealthy).
+
+### Postgres
+
+This app needs its own Postgres reachable via `DATABASE_URL`. Prefer a
+**dedicated Postgres instance** over adding a database to one that already
+serves another app — it keeps credentials, backups, and version upgrades
+independent, and the cost of one more small container is low. Only share an
+existing instance if there's a specific reason to (e.g. a hosting limit on
+how many database services are allowed).
+
+If Postgres runs as its own container next to this one, order startup with
+`depends_on: condition: service_healthy` — the entrypoint runs
+`prisma migrate deploy` at boot, which opens a real database connection even
+when there are zero pending migrations (expect and ignore
+`No migration found in prisma/migrations` until the baseline migration
+ships — see `MILESTONES.md`). Give Postgres's own health check a generous
+`start_period`: a cold first boot (`initdb` plus the official image's own
+internal restart) can take noticeably longer than a short window allows,
+which can make `depends_on` give up right before Postgres would have come up
+healthy on its own.
+
+### Deploying alongside other services
+
+Some hosts run several unrelated apps under one shared Docker Compose
+project rather than one compose file per app — a shared `.env` holding
+per-service location/config variables, one compose file defining every
+service, sub-folders per service holding data only. If that's the target,
+fold this app's service block (and a Postgres block per the section above)
+into the shared file instead of running `docker-compose.prod.yml` standalone
+— the service definitions are the same either way, only which file they live
+in changes. In that setup:
+
+- **Back up the shared compose file first**, before editing it.
+- **Never run a bare `up`, `down`, or `restart` with no service names** in a
+  directory that already has other services running from that file — always
+  name the services you mean to affect explicitly, e.g.
+  `docker compose up -d agent-standup agent-standup-db`. An unscoped command
+  recreates (or stops) everything the file defines, not just what you're
+  deploying.
+- **Pick a host port that isn't already in use** — check what the shared
+  compose file and the host's listening ports already claim before adding
+  `APP_PORT`.
+- Keep real secrets (the generated `DATABASE_URL` password, etc.) only in
+  that host's own `.env` — never copied into this repo.
 
 ## Status
 
