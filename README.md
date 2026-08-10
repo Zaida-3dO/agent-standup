@@ -33,25 +33,29 @@ Requires Node 24 and Docker (for local Postgres).
 cp .env.example .env          # fill in DATABASE_URL etc.
 npm install
 npm run db:up                 # starts local Postgres on a non-default port
+npx prisma migrate deploy     # apply the committed migrations
 npx prisma generate
 npm run dev                   # http://localhost:3000
 ```
 
 Useful scripts:
 
-| Command                           | What it does                                        |
-| --------------------------------- | --------------------------------------------------- |
-| `npm run dev`                     | Next.js dev server                                  |
-| `npm run build` / `npm start`     | Production build / run it                           |
-| `npm run typecheck`               | `tsc --noEmit`                                      |
-| `npm run lint` / `npm run format` | ESLint / Prettier (`:check` variants exist for CI)  |
-| `npm test`                        | Vitest                                              |
-| `npm run db:migrate`              | Create/apply a dev migration (`prisma migrate dev`) |
-| `npm run db:studio`               | Prisma Studio                                       |
+| Command                           | What it does                                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`                     | Next.js dev server                                                                                                              |
+| `npm run build` / `npm start`     | Production build / run it                                                                                                       |
+| `npm run typecheck`               | `tsc --noEmit`                                                                                                                  |
+| `npm run lint` / `npm run format` | ESLint / Prettier (`:check` variants exist for CI)                                                                              |
+| `npm test`                        | Vitest                                                                                                                          |
+| `npm run db:migrate`              | Create/apply a dev migration (`prisma migrate dev`)                                                                             |
+| `npm run db:deploy`               | Apply committed migrations without prompting (`prisma migrate deploy`)                                                          |
+| `npm run db:check-drift`          | Fail if `schema.prisma` and `prisma/migrations` disagree — needs `SHADOW_DATABASE_URL` pointed at an empty, disposable Postgres |
+| `npm run db:studio`               | Prisma Studio                                                                                                                   |
 
-There's no database migration yet — the initial baseline schema lands in a later
-PR (see [`MILESTONES.md`](docs/plans/MILESTONES.md)). `prisma generate` works today;
-`prisma migrate` has nothing to apply until then.
+The initial baseline migration (the whole schema in one shot — see
+[`SCHEMA.md`](docs/plans/SCHEMA.md)) lives in `prisma/migrations/`. CI applies it to a
+throwaway Postgres on every run and fails if `schema.prisma` and the migration history
+have drifted apart.
 
 ## Deployment
 
@@ -119,6 +123,7 @@ in changes. In that setup:
 
 ## Status
 
-The boilerplate is in place: app skeleton, CI, Dockerfile, and compose files. No
-database migration yet, and the API surface described in `SCHEMA.md` isn't built —
-see [`MILESTONES.md`](docs/plans/MILESTONES.md) for the build order.
+The boilerplate is in place: app skeleton, CI, Dockerfile, and compose files. The
+database schema has its initial migration, but nothing queries it yet — the API
+surface described in `SCHEMA.md` isn't built. See
+[`MILESTONES.md`](docs/plans/MILESTONES.md) for the build order.

@@ -52,11 +52,29 @@ jobs:
   build-and-test:
     name: Build & test
     runs-on: ubuntu-latest
+    services:
+      # A real, disposable Postgres — starts empty on every run, which is
+      # what makes it double as the "clean database" migrate-deploy proves
+      # against below. Version matches docker-compose.yml.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: standup
+          POSTGRES_PASSWORD: standup
+          POSTGRES_DB: standup
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U standup"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
     env:
-      # Not a real database. `prisma generate` and `next build` only need
-      # the datasource env var to resolve, not an actual connection — the
-      # app never queries at build time.
-      DATABASE_URL: postgresql://build:build@localhost:5432/build
+      # `prisma generate` and `next build` only need this to resolve, not an
+      # actual connection — the app never queries at build time. Later steps
+      # (migrate deploy, the drift check) do use it for real, against the
+      # `postgres` service above.
+      DATABASE_URL: postgresql://standup:standup@localhost:5432/standup
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -66,6 +84,14 @@ jobs:
       - run: npm ci
       - name: Generate Prisma client
         run: npx prisma generate
+      - name: Apply migrations to a clean database
+        run: npx prisma migrate deploy
+      - name: Create shadow database for the drift check
+        run: npx prisma db execute --url "postgresql://standup:standup@localhost:5432/postgres" --stdin <<< "CREATE DATABASE standup_shadow;"
+      - name: Check schema.prisma and migrations match (no drift)
+        run: npm run db:check-drift
+        env:
+          SHADOW_DATABASE_URL: postgresql://standup:standup@localhost:5432/standup_shadow
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Lint

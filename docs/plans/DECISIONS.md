@@ -664,6 +664,32 @@ would carry on regardless. Park the children.
 **Consequence for the state machine (#15):** transitions apply to tasks and subtasks. A project's
 column is computed on read, so guards never run against a project's own state.
 
+## 13d. Partial unique indexes on `assignments` — deferred, not solved (2026-08-10)
+
+`SCHEMA.md` §2 specifies two **partial unique indexes** on `assignments`: one live orchestrator per
+item (`WHERE role = 'orchestrator' AND released_at IS NULL`), and one row per session per item
+(`WHERE released_at IS NULL`). **Prisma's schema language cannot express partial indexes** — `@@unique`
+has no `WHERE` clause — so neither constraint appears in `schema.prisma`, and consequently neither
+appears in the baseline migration this PR adds either.
+
+Hand-writing them straight into the migration SQL was considered and rejected: the drift check this
+same PR introduces (`db:check-drift`, PR #7) diffs `schema.prisma` against replayed migration history,
+and a constraint present in the SQL but absent from the schema would show up as permanent drift on
+every run from day one — defeating the tool before it does any work.
+
+**This is a known gap, not a solved problem, deferred to PR #23 (claims).** That PR must do one of:
+
+- Add the two indexes as a **documented hand-written migration**, and teach the drift check to
+  tolerate that one specific, named exception rather than ignoring drift generally.
+- **Enforce the constraint in application code** instead — the atomic compare-and-set claim logic
+  §2 already calls for.
+
+**Application-level enforcement alone is not race-proof.** Two concurrent claims can both pass a
+"no live orchestrator" check before either writes its row — that race is exactly why the index was
+specified as a database constraint in the first place, not left to a check-then-write in the service
+layer. If PR #23 goes the application-code route, it is accepting that residual race, not closing it,
+and should say so rather than presenting a check as equivalent to a constraint.
+
 ## 14. Still open
 
 1. **Exact band numbers** beyond the starting values above.

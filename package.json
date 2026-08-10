@@ -19,7 +19,8 @@
     "db:up": "docker compose up -d db",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:check-drift": "node scripts/check-migration-drift.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

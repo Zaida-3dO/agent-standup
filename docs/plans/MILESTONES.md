@@ -87,11 +87,17 @@ backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 | **20** | Events: append on every mutation, field-change rows, timestamps in the same transaction | 14 | |
 | **21** | Summaries: shape, caps, reject-don't-truncate, similarity check, jargon denylist | 15 | |
 | **22** | Deferral proof for anything left undone — typed reasons, follow-up must be blocked | 19, 21 | |
-| **23** | Claims: atomic, one orchestrator per item, root-session check | 14 | |
+| **23** | Claims: atomic, one orchestrator per item, root-session check — **also carries the two partial unique indexes deferred from the initial migration** (`SCHEMA.md` §2; `DECISIONS.md` §13d) | 14 | |
 | **24** | Liveness ladder: quiet → stalled → dead, resume attempts, escalation to blocked | 23 | |
 | **25** | Notification rules: all-of / any-of, fires on the edge only, whitelisted fields | 20 | |
 
 **Milestone done when:** every guard in `SCHEMA.md` has a passing test, including the rejections.
+
+**Carried in from PR #7 (initial migration):** Prisma can't express partial unique indexes, so the
+one-live-orchestrator and one-row-per-session-per-item constraints on `assignments` aren't in the
+baseline schema or migration. PR #23 must land them — either a documented hand-written migration with
+the drift check taught to tolerate that one exception, or application-level enforcement, which is not
+race-proof on its own. See `DECISIONS.md` §13d.
 
 ---
 

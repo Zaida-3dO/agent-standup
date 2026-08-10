@@ -97,7 +97,7 @@ model Item {
   blockedOnType     BlockedOnType?
   blockedOnPersonId String?
   blockedOnPerson   Person?        @relation("BlockedOn", fields: [blockedOnPersonId], references: [id])
-  unblockAt         DateTime?
+  unblockAt         DateTime?      @db.Timestamptz(3)
   pauseReason       String?
   resumeCondition   String?
   resumeAttempts    Int            @default(0)
@@ -106,9 +106,9 @@ model Item {
   notify            Json?
   estimatedCost     Decimal?
   customFields      Json?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  completedAt       DateTime?
+  createdAt         DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
+  completedAt       DateTime?      @db.Timestamptz(3)
 
   assignments Assignment[]
   events      Event[]
@@ -161,9 +161,9 @@ model Assignment {
   worktree        String?
   liveness        Liveness   @default(running)
   supersededBy    String?
-  claimedAt       DateTime   @default(now())
-  lastActive      DateTime   @default(now())
-  releasedAt      DateTime?
+  claimedAt       DateTime   @default(now()) @db.Timestamptz(3)
+  lastActive      DateTime   @default(now()) @db.Timestamptz(3)
+  releasedAt      DateTime?  @db.Timestamptz(3)
   model           String?
   effort          String?
 
@@ -202,7 +202,7 @@ model Event {
   id           BigInt      @id @default(autoincrement())
   itemId       String?
   item         Item?       @relation(fields: [itemId], references: [id])
-  ts           DateTime    @default(now())
+  ts           DateTime    @default(now()) @db.Timestamptz(3)
   actorType    ActorType
   actorId      String?
   sessionId    String?
@@ -223,7 +223,7 @@ model EventSeen {
   event    Event    @relation(fields: [eventId], references: [id])
   personId String
   person   Person   @relation(fields: [personId], references: [id])
-  seenAt   DateTime @default(now())
+  seenAt   DateTime @default(now()) @db.Timestamptz(3)
 
   @@id([eventId, personId])
 }
@@ -238,7 +238,7 @@ model Summary {
   howVerified String?
   watchFor    Json
   finalState  Json
-  createdAt   DateTime @default(now())
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
 }
 
 enum ArtifactKind {
@@ -271,7 +271,7 @@ model Artifact {
   browserSession String?
   createdByType  HolderType
   createdById    String
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
 
   @@index([itemId, kind, reviewRound])
 }
@@ -282,8 +282,8 @@ model Person {
   avatar      String?
   colour      String?
   notifyRules Json?
-  createdAt   DateTime  @default(now())
-  archivedAt  DateTime?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  archivedAt  DateTime? @db.Timestamptz(3)
 
   originItems    Item[]          @relation("Origin")
   blockedItems   Item[]          @relation("BlockedOn")
@@ -295,9 +295,9 @@ model Authorization {
   id          String    @id
   grantedById String
   grantedBy   Person    @relation(fields: [grantedById], references: [id])
-  grantedAt   DateTime  @default(now())
-  expiresAt   DateTime?
-  revokedAt   DateTime?
+  grantedAt   DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt   DateTime? @db.Timestamptz(3)
+  revokedAt   DateTime? @db.Timestamptz(3)
   scope       Json
   grantText   String    @db.Text
 }
@@ -306,7 +306,7 @@ model Agent {
   name      String    @id
   roleHint  Role?
   persona   String?
-  retiredAt DateTime?
+  retiredAt DateTime? @db.Timestamptz(3)
 }
 
 model ToolCall {
@@ -314,7 +314,7 @@ model ToolCall {
   sessionId        String
   assignmentId     String?
   itemId           String?
-  ts               DateTime   @default(now())
+  ts               DateTime   @default(now()) @db.Timestamptz(3)
   tool             String
   command          String?    @db.Text
   paths            String[]
@@ -350,8 +350,8 @@ model Run {
   item                   Item            @relation(fields: [itemId], references: [id])
   assignmentId           String
   assignment             Assignment      @relation(fields: [assignmentId], references: [id])
-  startedAt              DateTime        @default(now())
-  endedAt                DateTime?
+  startedAt              DateTime        @default(now()) @db.Timestamptz(3)
+  endedAt                DateTime?       @db.Timestamptz(3)
   model                  String
   effort                 String
   selectionReason        SelectionReason
@@ -379,7 +379,7 @@ model RunScore {
   agentScore   Int?
   userScore    Int?
   userScoredBy String?
-  userScoredAt DateTime?
+  userScoredAt DateTime? @db.Timestamptz(3)
 
   @@unique([runId, facet])
 }
@@ -396,13 +396,13 @@ model Account {
   planType    PlanType
   usage5h     Decimal?
   usageWeekly Decimal?
-  usageAt     DateTime?
+  usageAt     DateTime?        @db.Timestamptz(3)
   machines    MachineAccount[]
 }
 
 model Machine {
   name         String           @id
-  lastPollAt   DateTime?
+  lastPollAt   DateTime?        @db.Timestamptz(3)
   liveSessions Int              @default(0)
   accounts     MachineAccount[]
 }
