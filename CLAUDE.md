@@ -94,6 +94,37 @@ Two things this authorisation does **not** cover, because they aren't merges:
 
 If review finds something genuinely blocking, fix it and re-review — don't merge and file a follow-up.
 
+### Never leave a PR unwatched
+
+**When you open a PR, immediately start something that waits on its CI** — a backgrounded
+`gh pr checks <n> --watch` with a timeout, so it returns either when the checks finish or when the
+timeout expires, whichever comes first. Then act on the result.
+
+Without it, branches get opened and quietly forgotten: the work is done, the checks went green, and
+nothing merges because everyone moved on. A PR that nobody is waiting on is indistinguishable from a
+PR that failed.
+
+### Green is not the same as right
+
+When several PRs solve the same problem, **don't merge whichever one is green first.** A change that
+does less will often pass more easily — precisely because it left something stale behind. Compare
+what they actually do, and prefer the one that finishes the job even if it needs a fix first.
+
+Real example: three PRs bumped a framework major. Two were green but bumped only the framework, not
+its companion lint config — passing today, mismatched underneath. The third did the full migration
+and failed, on a formatting nit. Merging on green would have picked a worse change.
+
+### Don't pull the ground out from under a running crew
+
+**A worktree belongs to the agent working in it until that agent has reported.** Do not
+`git worktree remove` it, push to its branch, or merge its PR while it is still live — it will keep
+working against a directory that no longer exists, and it cannot tell your interference apart from a
+rogue process.
+
+Clean up worktrees only after the agent that owns one has finished. If you must take over a branch
+mid-flight, expect the agent's report to be confused about what happened, and say plainly that it was
+you.
+
 ## Working in this repo
 
 - **`main` is protected.** Linear history, no force-pushes, no deletions, and every change arrives by
