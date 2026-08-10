@@ -31,11 +31,11 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **1** | Public repo on GitHub, **docs only**, committed straight to `main` | — | |
-| **2** | Branch protection on `main` — linear history, no force-push, no deletions, PR required | 1 | |
-| **3** | **The boilerplate.** App skeleton, Prisma wiring, Dockerfile, compose, CI workflow, GHCR release workflow, test harness, lint/format | 2 | |
-| **4** | Required status checks pointed at the CI jobs from #3 | 3 | |
-| **5** | First published image — trigger a release, pull it, verify it runs | 3 | |
+| **1** | Public repo on GitHub, **docs only**, committed straight to `main` | — | `done` |
+| **2** | Branch protection on `main` — linear history, no force-push, no deletions, PR required | 1 | `done` |
+| **3** | **The boilerplate.** App skeleton, Prisma wiring, Dockerfile, compose, CI workflow, GHCR release workflow, test harness, lint/format | 2 | `done` |
+| **4** | Required status checks pointed at the CI jobs from #3 | 3 | `done` |
+| **5** | First published image — trigger a release, pull it, verify it runs | 3 | `open` |
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
@@ -58,7 +58,7 @@ reaches `main` without passing checks.
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **7** | Initial migration — the **whole schema** in one baseline | 3 | |
+| **7** | Initial migration — the **whole schema** in one baseline | 3 | `open` |
 | **8** | DB client, connection pooling, migrate-on-boot wiring | 7 | |
 | **9** | Seed: `people` (two user profiles), `agents` name roster, `accounts` | 8 | |
 | **10** | Importer — items: 186 task dirs → `items`, status remap, old ID into `custom_fields` | 8 | |

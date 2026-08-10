@@ -76,6 +76,24 @@ covered by the integration tests" is not an answer when those don't exist yet.
 
 If a change is genuinely untestable, say why in the PR rather than skipping quietly.
 
+## Standing authorisation — keep the queue moving
+
+**Merging is pre-authorised. Do not stop to ask.** Once a change has been through review and its
+checks are green, merge it, and then **immediately start the work that merge just unblocked** — look
+up which PRs in `MILESTONES.md` have all their prerequisites met and dispatch them.
+
+The point is that a merge is not the end of a piece of work; it is the event that releases the next
+one. Waiting to be told to continue wastes the whole reason the dependency graph exists.
+
+Two things this authorisation does **not** cover, because they aren't merges:
+
+- Anything **outward-facing or hard to reverse** beyond the merge itself — deleting or renaming the
+  repository, rewriting published history, changing who can access it.
+- **Skipping the review.** Review is the gate this authorisation is conditional on. A green merge
+  button is not a review, and neither is having written the code yourself in the same session.
+
+If review finds something genuinely blocking, fix it and re-review — don't merge and file a follow-up.
+
 ## Working in this repo
 
 - **`main` is protected.** Linear history, no force-pushes, no deletions, and every change arrives by
