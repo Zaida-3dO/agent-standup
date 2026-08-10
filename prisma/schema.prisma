@@ -1,0 +1,417 @@
+// Agent Standup — full reasoning lives in docs/plans/SCHEMA.md.
+// Two rules govern this file:
+//   1. Store facts, derive volatiles. Every denormalisation carries a reason.
+//   2. A satellite table needs a structural reason: editable, referenced by a
+//      guard, or cardinality-constrained. Otherwise it is an event or a value.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ItemKind {
+  project
+  task
+  subtask
+}
+
+enum Priority {
+  P0
+  P1
+  P2
+  P3
+}
+
+enum OriginType {
+  person
+  source
+  auto
+}
+
+enum DriveMode {
+  autonomous
+  supervised
+  manual
+}
+
+enum MergeAuthority {
+  pre_approved
+  needs_approval
+  agent_judgement
+}
+
+enum BlockedOnType {
+  person
+  external_process
+  time
+}
+
+enum Facet {
+  reasoning
+  breadth
+  precision
+  autonomy
+  visual
+  writing
+}
+
+enum ItemState {
+  someday
+  on_deck
+  planning
+  plan_review
+  executing
+  in_review
+  paused
+  blocked
+  merged
+  research_done
+  wont_do
+  cancelled
+}
+
+model Item {
+  id                String         @id
+  parentId          String?
+  parent            Item?          @relation("Tree", fields: [parentId], references: [id])
+  children          Item[]         @relation("Tree")
+  kind              ItemKind
+  title             String
+  body              String         @db.Text
+  state             ItemState
+  priority          Priority       @default(P2)
+  originType        OriginType
+  originPersonId    String?
+  originPerson      Person?        @relation("Origin", fields: [originPersonId], references: [id])
+  area              String
+  repo              String?
+  branch            String?
+  needsVisualReview Boolean        @default(false)
+  driveMode         DriveMode      @default(autonomous)
+  mergeAuthority    MergeAuthority
+  blockedReason     String?
+  blockedOnType     BlockedOnType?
+  blockedOnPersonId String?
+  blockedOnPerson   Person?        @relation("BlockedOn", fields: [blockedOnPersonId], references: [id])
+  unblockAt         DateTime?
+  pauseReason       String?
+  resumeCondition   String?
+  resumeAttempts    Int            @default(0)
+  difficulty        Json?
+  sourceRef         String?
+  notify            Json?
+  estimatedCost     Decimal?
+  customFields      Json?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  completedAt       DateTime?
+
+  assignments Assignment[]
+  events      Event[]
+  artifacts   Artifact[]
+  summary     Summary?
+  runs        Run[]
+
+  @@index([state])
+  @@index([parentId])
+  @@index([area])
+  @@index([state, priority])
+  @@index([sourceRef])
+}
+
+enum Role {
+  orchestrator
+  builder
+  reviewer
+  visual_reviewer
+  scout
+  custom
+}
+
+enum HolderType {
+  person
+  agent
+}
+
+enum Liveness {
+  running
+  stalled
+  dead
+  superseded
+}
+
+model Assignment {
+  id              String     @id @default(uuid())
+  itemId          String
+  item            Item       @relation(fields: [itemId], references: [id])
+  role            Role
+  roleCustom      String?
+  holderType      HolderType
+  holderId        String
+  sessionId       String
+  parentSessionId String?
+  rootSessionId   String
+  machine         String
+  pid             Int?
+  branch          String?
+  worktree        String?
+  liveness        Liveness   @default(running)
+  supersededBy    String?
+  claimedAt       DateTime   @default(now())
+  lastActive      DateTime   @default(now())
+  releasedAt      DateTime?
+  model           String?
+  effort          String?
+
+  events Event[]
+  runs   Run[]
+
+  @@index([sessionId])
+  @@index([itemId, role])
+  @@index([rootSessionId])
+}
+
+enum ActorType {
+  person
+  agent
+  system
+}
+
+enum EventType {
+  field_change
+  state_change
+  claim
+  release
+  takeover
+  review_requested
+  review
+  merge
+  dispatch
+  dispatch_claimed
+  checkpoint
+  nudge
+  escalation
+  note
+}
+
+model Event {
+  id           BigInt      @id @default(autoincrement())
+  itemId       String?
+  item         Item?       @relation(fields: [itemId], references: [id])
+  ts           DateTime    @default(now())
+  actorType    ActorType
+  actorId      String?
+  sessionId    String?
+  assignmentId String?
+  assignment   Assignment? @relation(fields: [assignmentId], references: [id])
+  type         EventType
+  payload      Json
+  body         String?     @db.Text
+  seenBy       EventSeen[]
+
+  @@index([itemId, ts])
+  @@index([type, ts])
+  @@index([assignmentId, type, ts])
+}
+
+model EventSeen {
+  eventId  BigInt
+  event    Event    @relation(fields: [eventId], references: [id])
+  personId String
+  person   Person   @relation(fields: [personId], references: [id])
+  seenAt   DateTime @default(now())
+
+  @@id([eventId, personId])
+}
+
+model Summary {
+  itemId      String   @id
+  item        Item     @relation(fields: [itemId], references: [id])
+  shipped     Json
+  notDone     Json
+  userFacing  Boolean
+  whatToTest  Json?
+  howVerified String?
+  watchFor    Json
+  finalState  Json
+  createdAt   DateTime @default(now())
+}
+
+enum ArtifactKind {
+  plan
+  plan_review
+  code_review
+  visual_review
+  test_run
+  commit
+  screenshot
+  other
+}
+
+enum Verdict {
+  approved
+  changes_required
+  na
+}
+
+model Artifact {
+  id             String       @id @default(uuid())
+  itemId         String
+  item           Item         @relation(fields: [itemId], references: [id])
+  kind           ArtifactKind
+  verdict        Verdict?
+  reviewRound    Int          @default(1)
+  commitSha      String?
+  body           String?      @db.Text
+  ref            String?
+  browserSession String?
+  createdByType  HolderType
+  createdById    String
+  createdAt      DateTime     @default(now())
+
+  @@index([itemId, kind, reviewRound])
+}
+
+model Person {
+  id          String    @id
+  displayName String
+  avatar      String?
+  colour      String?
+  notifyRules Json?
+  createdAt   DateTime  @default(now())
+  archivedAt  DateTime?
+
+  originItems    Item[]          @relation("Origin")
+  blockedItems   Item[]          @relation("BlockedOn")
+  seen           EventSeen[]
+  authorizations Authorization[]
+}
+
+model Authorization {
+  id          String    @id
+  grantedById String
+  grantedBy   Person    @relation(fields: [grantedById], references: [id])
+  grantedAt   DateTime  @default(now())
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  scope       Json
+  grantText   String    @db.Text
+}
+
+model Agent {
+  name      String    @id
+  roleHint  Role?
+  persona   String?
+  retiredAt DateTime?
+}
+
+model ToolCall {
+  id               BigInt     @id @default(autoincrement())
+  sessionId        String
+  assignmentId     String?
+  itemId           String?
+  ts               DateTime   @default(now())
+  tool             String
+  command          String?    @db.Text
+  paths            String[]
+  stateAt          ItemState?
+  inputTokens      Int        @default(0)
+  outputTokens     Int        @default(0)
+  cacheWriteTokens Int        @default(0)
+  cacheReadTokens  Int        @default(0)
+  usage5h          Decimal?
+  usageWeekly      Decimal?
+
+  @@index([sessionId, ts])
+  @@index([itemId, ts])
+}
+
+enum RunOutcome {
+  completed
+  stalled
+  superseded
+  failed
+}
+
+enum SelectionReason {
+  recommended
+  exploration
+  override
+  pinned
+}
+
+model Run {
+  id                     String          @id @default(uuid())
+  itemId                 String
+  item                   Item            @relation(fields: [itemId], references: [id])
+  assignmentId           String
+  assignment             Assignment      @relation(fields: [assignmentId], references: [id])
+  startedAt              DateTime        @default(now())
+  endedAt                DateTime?
+  model                  String
+  effort                 String
+  selectionReason        SelectionReason
+  recommendationStrength Decimal?
+  inputTokens            BigInt          @default(0)
+  outputTokens           BigInt          @default(0)
+  cacheWriteTokens       BigInt          @default(0)
+  cacheReadTokens        BigInt          @default(0)
+  cost                   Decimal?
+  toolCallCount          Int             @default(0)
+  turnCount              Int             @default(0)
+  outcome                RunOutcome?
+  reworkRequired         Boolean         @default(false)
+  blockingFindings       Int             @default(0)
+  steeringInterventions  Int             @default(0)
+
+  scores RunScore[]
+}
+
+model RunScore {
+  id           String    @id @default(uuid())
+  runId        String
+  run          Run       @relation(fields: [runId], references: [id])
+  facet        Facet
+  agentScore   Int?
+  userScore    Int?
+  userScoredBy String?
+  userScoredAt DateTime?
+
+  @@unique([runId, facet])
+}
+
+enum PlanType {
+  subscription
+  metered
+}
+
+model Account {
+  id          String           @id
+  vendor      String
+  displayName String
+  planType    PlanType
+  usage5h     Decimal?
+  usageWeekly Decimal?
+  usageAt     DateTime?
+  machines    MachineAccount[]
+}
+
+model Machine {
+  name         String           @id
+  lastPollAt   DateTime?
+  liveSessions Int              @default(0)
+  accounts     MachineAccount[]
+}
+
+model MachineAccount {
+  machineName String
+  machine     Machine @relation(fields: [machineName], references: [name])
+  accountId   String
+  account     Account @relation(fields: [accountId], references: [id])
+
+  @@id([machineName, accountId])
+}

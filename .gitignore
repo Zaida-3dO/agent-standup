@@ -1,9 +1,30 @@
+# dependencies
 node_modules/
+
+# next.js
 .next/
+/out/
+
+# production
+/build
 dist/
-*.tsbuildinfo
+
+# testing / coverage
+coverage/
+
+# env files — never commit a real one
 .env
 .env.*
 !.env.example
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# registry auth for docker-compose.prod.yml pulls — holds a live credential
 .docker/
-coverage/
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*

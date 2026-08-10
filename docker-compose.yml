@@ -1,0 +1,12 @@
+# Local dev only. Production pulls a prebuilt image — see docker-compose.prod.yml.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: standup
+      POSTGRES_PASSWORD: standup
+      POSTGRES_DB: standup
+    ports: ["5433:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+volumes:
+  db-data:
