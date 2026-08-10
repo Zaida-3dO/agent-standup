@@ -57,6 +57,25 @@ Treat a finding as a **stop**, not a note to fix later.
 
 ---
 
+## Testing is a core tenet
+
+**Every feature ships with extensive tests.** Not a smoke test — tests that would actually fail if
+the behaviour regressed. A PR that adds behaviour and no tests is incomplete, and saying "it's
+covered by the integration tests" is not an answer when those don't exist yet.
+
+- **Setup work is the exception, and only setup work.** Scaffolding, config, CI wiring and deployment
+  plumbing don't need unit tests; they're proved by the pipeline running. Everything after that does.
+- **Prefer many small PRs, each fully tested, over one large PR tested at the end.** A single
+  transition guard is a perfectly good PR: the guard, and the unit tests that prove it both allows
+  what it should and **rejects what it shouldn't**. The rejections are the point — a guard that never
+  refuses anything passes a happy-path test suite and protects nothing.
+- **Test the error paths and the boundaries**, not just the success case: the rejection message, the
+  missing required field, the concurrent claim, the state that shouldn't be reachable.
+- **Integration and end-to-end tests come once the surface exists** — once there's an API and a
+  schema to run against, not before. Unit tests are not a placeholder for them; both are wanted.
+
+If a change is genuinely untestable, say why in the PR rather than skipping quietly.
+
 ## Working in this repo
 
 - **`main` is protected.** Linear history, no force-pushes, no deletions, and every change arrives by
