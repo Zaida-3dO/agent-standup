@@ -33,9 +33,9 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 |---|---|---|---|
 | **1** | Public repo on GitHub, **docs only**, committed straight to `main` | — | |
 | **2** | Branch protection on `main` — linear history, no force-push, no deletions, PR required | 1 | |
-| **3** | **The boilerplate.** App skeleton, Prisma wiring, Dockerfile, compose, CI workflow, test harness, lint/format | 2 | |
-| **4** | Required status checks pointed at the CI jobs from #3, and the rest of the repo settings | 3 | |
-| **5** | GHCR release workflow, first published image, verify it runs | 3 | |
+| **3** | **The boilerplate.** App skeleton, Prisma wiring, Dockerfile, compose, CI workflow, GHCR release workflow, test harness, lint/format | 2 | |
+| **4** | Required status checks pointed at the CI jobs from #3 | 3 | |
+| **5** | First published image — trigger a release, pull it, verify it runs | 3 | |
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
@@ -43,6 +43,12 @@ reaches `main` without passing checks.
 
 > **#1 and #2 are not really PRs** — they're the two setup steps that make PRs possible. They keep
 > numbers because everything downstream needs to point at them.
+>
+> **#3 is the fan-out point.** Almost nothing else can start until it merges, because everything
+> downstream needs the package manifest, the Prisma tooling and the test harness to exist. The
+> release workflow ships inside it rather than in #5 so that one infrastructure change lands whole;
+> #5 is then just proving the pipeline end to end. The only work with no prerequisites at all is
+> **#55**, the unattended-launch spike.
 
 ---
 
