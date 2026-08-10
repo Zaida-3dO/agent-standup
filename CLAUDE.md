@@ -114,6 +114,36 @@ Real example: three PRs bumped a framework major. Two were green but bumped only
 its companion lint config — passing today, mismatched underneath. The third did the full migration
 and failed, on a formatting nit. Merging on green would have picked a worse change.
 
+### Your PR must be mergeable into `main` as it is *now*, not as it was when you branched
+
+Required checks on `main` are **strict**: a branch has to be up to date with `main` before it can
+merge. Passing checks is not enough — a green PR that is `BEHIND` still cannot go in.
+
+**Several agents usually work in parallel here, so `main` moves while you work.** Assume it will. Your
+job is not finished when your change works; it is finished when your change works **on top of current
+`main`**.
+
+So, before you say you're done:
+
+```bash
+git fetch origin
+git rebase origin/main          # force-pushing your own feature branch is fine — only main is protected
+```
+
+- **Rebase, don't merge.** `main` requires linear history, so a merge commit can't land.
+- **Expect conflicts in shared files.** `package.json`, `package-lock.json` and config files are the
+  usual casualties, because dependency and tooling changes touch them constantly. Take `main`'s
+  version of anything you didn't deliberately change, then re-apply only your own additions on top.
+  **Never revert someone else's landed change to resolve a conflict** — if `main` upgraded a
+  dependency, keep the upgrade.
+- **For a lockfile, regenerate rather than hand-merge.** `npm install` after the rebase. A
+  hand-resolved lockfile is unreliable.
+- **Re-run the full verification after rebasing, not just before.** You are now on code you have never
+  tested against. A rebase that quietly breaks the build is worse than being behind, because it looks
+  finished.
+- **If `main` moves again while you're waiting on review, rebase again.** Being current is a state you
+  hold, not a step you complete.
+
 ### Don't pull the ground out from under a running crew
 
 **A worktree belongs to the agent working in it until that agent has reported.** Do not
