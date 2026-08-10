@@ -1,0 +1,22 @@
+# Production deploy. The image is PULLED from GHCR, never built here — no
+# `build:` block, no local Dockerfile context, no bind mounts. The full
+# deploy shape (host directory, credentials, health check) lands in a later
+# PR; this file is deliberately generic so it works wherever it's dropped.
+#
+# `pull` needs registry auth if the package is private — keep a scoped
+# credential in this directory's own .docker/config.json (never committed):
+#   DOCKER_CONFIG=./.docker docker compose --env-file .env.production \
+#     -f docker-compose.prod.yml pull
+# `up` needs no DOCKER_CONFIG once the image is local.
+services:
+  app:
+    container_name: agent-standup
+    image: ${GHCR_IMAGE:?Set GHCR_IMAGE in .env.production, e.g. ghcr.io/OWNER/agent-standup:latest}
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
+      NOTIFY_DOC: ${NOTIFY_DOC:-}
+      VISUAL_REVIEW_DOC: ${VISUAL_REVIEW_DOC:-}
+      TZ: ${TZ:-UTC}

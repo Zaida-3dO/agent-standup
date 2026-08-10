@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+coverage
+package-lock.json
+next-env.d.ts
+
+# Pre-existing plan docs and root instructions from PR #1/#2 — not this PR's
+# scope to reformat; leave their prose untouched.
+docs/plans/
+CLAUDE.md
