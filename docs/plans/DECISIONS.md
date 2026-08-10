@@ -608,6 +608,34 @@ itself back to `running`.
 - **`tool_calls` sizing**: ~37k rows/month, **under 0.5 GB/year**. Not a scale problem. The risks are
   outlier rows — cap `command` at ~4KB and store a count plus the first ~50 `paths`.
 
+## 13b. Public repository, and what that costs the docs (2026-08-10)
+
+The repo is **public from the first commit**. That was the owner's call, and it has a consequence the
+docs have to carry: these plans were written from one person's real setup, so publishing them meant
+taking that setup out of them first.
+
+**What was removed, and what replaced it:** real names → roles (*the user*, *a second user*, and
+`user-a`/`user-b` as example identifiers) · the owner's OS username → *the desktop user* · the name
+of the orchestration system these plans replace → *the user's setup*, and *user-specific* wherever it
+was contrasted against *generic* · other private projects and self-hosted services → what they are
+(*the NAS*, *the chat channel*, *the media MCP*) · real area, repo and machine names → invented ones
+(`web`, `infra`, `desktop`, `laptop`) · absolute paths and private dashboard URLs → removed outright.
+
+**This is not tidying — leave it alone.** The generic phrasing is load-bearing, and re-personalising
+it would republish exactly what was taken out. Verified by a scan that fails on any surviving
+instance; the rules are in `CLAUDE.md` at the repo root.
+
+**Two things worth recording honestly.** First, the names went in with the initial commit and came out
+by rewriting it, so the published history is clean — but a force-push only makes the old commit
+*unreachable*, not deleted, and it stays fetchable by its SHA until GitHub garbage-collects. Deleting
+and recreating the repo is the only guaranteed purge. Second, the plans were never written with an
+audience in mind; they read as a private design conversation, and no attempt has been made to make
+them read otherwise.
+
+**Backstops, not judgement alone:** secret scanning and push protection are on, so a recognised
+credential is refused at push time. They catch credentials — not names, not paths, not private
+project names. Those still depend on reading the diff.
+
 ## 14. Still open
 
 1. **Closed-task import fidelity** — full history or collapsed summary for the 144 merged.
