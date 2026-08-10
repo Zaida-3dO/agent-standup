@@ -66,8 +66,9 @@ reaches `main` without passing checks.
 | **12** | Importer — assignments and artifacts: claims, roles, review files | 10 | |
 | **13** | Import verification: row counts, spot-check report, idempotent re-run | 11, 12 | |
 
-**Decision needed before 11:** do the 144 finished tasks import full history or a collapsed summary?
-They are the bulk of the volume and the least useful.
+**Settled:** finished tasks import as a **collapsed summary**, one row each; in-flight and blocked
+tasks import in full. The original folders survive as read-only archive, so the detail can be
+backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 
 ---
 
@@ -78,7 +79,7 @@ They are the bulk of the volume and the least useful.
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **14** | Service-layer skeleton, transaction handling, typed errors | 8 | |
-| **15** | State machine: all-to-all transitions, guard framework, rehearsal mode | 14 | |
+| **15** | State machine: all-to-all transitions, guard framework, rehearsal mode. Projects have **no stored state** — theirs is derived from their children, so guards never run against one | 14 | |
 | **16** | Guards — blocked and paused: required fields, clearing on exit | 15 | |
 | **17** | Guards — artifacts: review requested, plan approval, evidence at the tip commit | 15 | |
 | **18** | Guards — merge: commit, approving review, visual gate, who may authorise | 17 | |
@@ -239,8 +240,6 @@ things get sequenced wrong more often than anything else:
 
 | Question | Blocks |
 |---|---|
-| Finished-task import: full history or a collapsed summary? | 11 |
-| Do projects carry their own state, or is it worked out from their children? | 15 |
 | The band numbers, beyond the starting values | 57 |
 | Does Codex need the blocking wait-for-crew fallback? | 64 |
 | What else the command-line tool should do beyond wait-for-crew | 64 |

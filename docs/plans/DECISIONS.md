@@ -636,12 +636,38 @@ them read otherwise.
 credential is refused at push time. They catch credentials — not names, not paths, not private
 project names. Those still depend on reading the diff.
 
+## 13c. Two v0 blockers settled (2026-08-10)
+
+### Finished tasks import as a collapsed summary, not full history
+
+The 144 already-finished tasks are most of the volume and the least useful part of it. Importing
+their full event streams mostly imports noise nobody will query — every claim, nudge and field-change
+for work that is already done. Each keeps one summary row instead.
+
+**Reversible on purpose:** the original task folders survive as read-only archive, so if the detail
+turns out to be wanted, it can be backfilled later. That asymmetry is the whole argument — starting
+collapsed and expanding is easy; starting bloated and pruning means deciding what to delete.
+
+In-flight and blocked tasks import in full. The cut applies only to terminal states.
+
+### Projects do not carry state — it is derived from their children
+
+A stored project state is a second source of truth, and it goes stale the moment a child moves. It
+would need a rule for every way the two can disagree — all children merged but the project says
+executing, a child reopened under a finished project — and each of those rules is a bug waiting to
+happen. Derived state cannot disagree with itself.
+
+**What this costs:** a project can't be parked independently of its children. That is the right
+trade, because parking a project while its children stay actionable is not a real state — the work
+would carry on regardless. Park the children.
+
+**Consequence for the state machine (#15):** transitions apply to tasks and subtasks. A project's
+column is computed on read, so guards never run against a project's own state.
+
 ## 14. Still open
 
-1. **Closed-task import fidelity** — full history or collapsed summary for the 144 merged.
-2. **Do projects carry state at all**, or is it derived from children? (My instinct: derived.)
-3. **Exact band numbers** beyond the starting values above.
-4. **Whether Codex needs the blocking fallback in practice**, or whether the CLI covers it.
-5. **CLI surface beyond `wait-for-crew`** — currently minimal by design.
-6. **Front end** — v1 is a port of `board.html`; Kanban, project and progress views are backlog, same repo.
-7. **Retention defaults** for `tool_calls`.
+1. **Exact band numbers** beyond the starting values above.
+2. **Whether Codex needs the blocking fallback in practice**, or whether the CLI covers it.
+3. **CLI surface beyond `wait-for-crew`** — currently minimal by design.
+4. **Front end** — v1 is a port of the existing board; Kanban, project and progress views are backlog, same repo.
+5. **Retention defaults** for `tool_calls`.
