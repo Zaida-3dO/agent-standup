@@ -72,7 +72,7 @@ CREATE TABLE "Item" (
     "blockedReason" TEXT,
     "blockedOnType" "BlockedOnType",
     "blockedOnPersonId" TEXT,
-    "unblockAt" TIMESTAMP(3),
+    "unblockAt" TIMESTAMPTZ(3),
     "pauseReason" TEXT,
     "resumeCondition" TEXT,
     "resumeAttempts" INTEGER NOT NULL DEFAULT 0,
@@ -81,9 +81,9 @@ CREATE TABLE "Item" (
     "notify" JSONB,
     "estimatedCost" DECIMAL(65,30),
     "customFields" JSONB,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    "completedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
+    "completedAt" TIMESTAMPTZ(3),
 
     CONSTRAINT "Item_pkey" PRIMARY KEY ("id")
 );
@@ -105,9 +105,9 @@ CREATE TABLE "Assignment" (
     "worktree" TEXT,
     "liveness" "Liveness" NOT NULL DEFAULT 'running',
     "supersededBy" TEXT,
-    "claimedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "lastActive" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "releasedAt" TIMESTAMP(3),
+    "claimedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "lastActive" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "releasedAt" TIMESTAMPTZ(3),
     "model" TEXT,
     "effort" TEXT,
 
@@ -118,7 +118,7 @@ CREATE TABLE "Assignment" (
 CREATE TABLE "Event" (
     "id" BIGSERIAL NOT NULL,
     "itemId" TEXT,
-    "ts" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "ts" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actorType" "ActorType" NOT NULL,
     "actorId" TEXT,
     "sessionId" TEXT,
@@ -134,7 +134,7 @@ CREATE TABLE "Event" (
 CREATE TABLE "EventSeen" (
     "eventId" BIGINT NOT NULL,
     "personId" TEXT NOT NULL,
-    "seenAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "seenAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "EventSeen_pkey" PRIMARY KEY ("eventId","personId")
 );
@@ -149,7 +149,7 @@ CREATE TABLE "Summary" (
     "howVerified" TEXT,
     "watchFor" JSONB NOT NULL,
     "finalState" JSONB NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Summary_pkey" PRIMARY KEY ("itemId")
 );
@@ -167,7 +167,7 @@ CREATE TABLE "Artifact" (
     "browserSession" TEXT,
     "createdByType" "HolderType" NOT NULL,
     "createdById" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Artifact_pkey" PRIMARY KEY ("id")
 );
@@ -179,8 +179,8 @@ CREATE TABLE "Person" (
     "avatar" TEXT,
     "colour" TEXT,
     "notifyRules" JSONB,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "archivedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "archivedAt" TIMESTAMPTZ(3),
 
     CONSTRAINT "Person_pkey" PRIMARY KEY ("id")
 );
@@ -189,9 +189,9 @@ CREATE TABLE "Person" (
 CREATE TABLE "Authorization" (
     "id" TEXT NOT NULL,
     "grantedById" TEXT NOT NULL,
-    "grantedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "expiresAt" TIMESTAMP(3),
-    "revokedAt" TIMESTAMP(3),
+    "grantedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expiresAt" TIMESTAMPTZ(3),
+    "revokedAt" TIMESTAMPTZ(3),
     "scope" JSONB NOT NULL,
     "grantText" TEXT NOT NULL,
 
@@ -203,7 +203,7 @@ CREATE TABLE "Agent" (
     "name" TEXT NOT NULL,
     "roleHint" "Role",
     "persona" TEXT,
-    "retiredAt" TIMESTAMP(3),
+    "retiredAt" TIMESTAMPTZ(3),
 
     CONSTRAINT "Agent_pkey" PRIMARY KEY ("name")
 );
@@ -214,7 +214,7 @@ CREATE TABLE "ToolCall" (
     "sessionId" TEXT NOT NULL,
     "assignmentId" TEXT,
     "itemId" TEXT,
-    "ts" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "ts" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "tool" TEXT NOT NULL,
     "command" TEXT,
     "paths" TEXT[],
@@ -234,8 +234,8 @@ CREATE TABLE "Run" (
     "id" TEXT NOT NULL,
     "itemId" TEXT NOT NULL,
     "assignmentId" TEXT NOT NULL,
-    "startedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "endedAt" TIMESTAMP(3),
+    "startedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "endedAt" TIMESTAMPTZ(3),
     "model" TEXT NOT NULL,
     "effort" TEXT NOT NULL,
     "selectionReason" "SelectionReason" NOT NULL,
@@ -263,7 +263,7 @@ CREATE TABLE "RunScore" (
     "agentScore" INTEGER,
     "userScore" INTEGER,
     "userScoredBy" TEXT,
-    "userScoredAt" TIMESTAMP(3),
+    "userScoredAt" TIMESTAMPTZ(3),
 
     CONSTRAINT "RunScore_pkey" PRIMARY KEY ("id")
 );
@@ -276,7 +276,7 @@ CREATE TABLE "Account" (
     "planType" "PlanType" NOT NULL,
     "usage5h" DECIMAL(65,30),
     "usageWeekly" DECIMAL(65,30),
-    "usageAt" TIMESTAMP(3),
+    "usageAt" TIMESTAMPTZ(3),
 
     CONSTRAINT "Account_pkey" PRIMARY KEY ("id")
 );
@@ -284,7 +284,7 @@ CREATE TABLE "Account" (
 -- CreateTable
 CREATE TABLE "Machine" (
     "name" TEXT NOT NULL,
-    "lastPollAt" TIMESTAMP(3),
+    "lastPollAt" TIMESTAMPTZ(3),
     "liveSessions" INTEGER NOT NULL DEFAULT 0,
 
     CONSTRAINT "Machine_pkey" PRIMARY KEY ("name")
