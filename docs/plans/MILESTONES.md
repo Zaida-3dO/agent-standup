@@ -166,7 +166,7 @@ every adapter passes the conformance harness.**
 | **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
 | **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | |
-| **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim | 13, 37, 39 | |
+| **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim. **Performed on a day when nothing is executing** — duplicate, verify against the duplicate, then switch; never a wholesale swap with items in flight (`DECISIONS.md` §11, §13h) | 13, 37, 39 | |
 | **86** | `/settings` — categories, widgets, per-field help and validation all rendered from the registry; value-source badges; reset-to-default; the `sensitive` section with typed confirmation; unrecognised and invalid override sections; the read-only build-constants and bootstrap panels; first-run entry when no profiles exist | 35, 78 | |
 | **87** | Budget-window editor — per-window cards, the three boundary kinds in plain words, the band chart, drawn validation errors, the time scrubber, and presets. Plots an account's position **once usage readings exist**; before that the chart is the boundaries alone | 86 | |
 | **93** | Administration UI — one page pattern per entity kind, over the API from #92, linked from `/settings` | 35, 92 | |

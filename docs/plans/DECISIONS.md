@@ -498,6 +498,11 @@ and is then deleted. It exists so the switch doesn't have to happen everywhere s
 keeping it beyond that would make it a second surface to maintain and a second place for behaviour
 to diverge.
 
+**And the switch happens on a day when nothing is in flight.** Duplicate first, verify against the
+duplicate, then switch — never a wholesale swap with items still `executing`. Switching over is
+itself a piece of work, and a system in the middle of being switched cannot reliably track the item
+that represents switching it. See §13h.
+
 ---
 
 ## 12. Facts the design rests on
@@ -1023,6 +1028,89 @@ by construction renders only what the registry declares. They get **their own su
 one page per entity kind, with the same operations on the command line so an installation with no
 server is not locked out of the one class of data it cannot start without. Every value that is not a
 setting lands there, including the two per-entity overrides of settings that are.
+
+## 13h. Four things that were asked for, and what became of each (2026-08-11)
+
+A coverage pass over the material this plan was built from turned up four instructions that no
+decision here records. Three did not happen; the fourth was agreed and never written down. All four
+are recorded now, plainly, because **an instruction that quietly went missing is worse than one that
+was argued down** — the argued-down one leaves a reason behind, and this log is the only place a
+reason survives.
+
+### The build-or-buy survey lapsed. It was not skipped on purpose
+
+The first thing asked for was a survey of what already exists, with a stated priority order: **use a
+product that already does this, before building one, before adapting something adjacent.** What
+exists instead is a light pass that describes itself as not the full research pass, and the build is
+now three milestones in.
+
+**Verdict: it lapsed.** Recording it as a deliberate skip would be the more comfortable sentence and
+it would not be true — no candidate was named, compared or rejected on the record, so there is
+nothing to point at as the reason it was right. *"We looked and there was nothing"* when nobody
+looked is exactly the class of claim this log exists to make impossible.
+
+**What follows.** Re-running it now as a build-or-buy gate would be theatre: the schema is baselined
+and the rules are specified, and that is not work a decision can recover. But the question the survey
+was for has not gone away, and it narrows to one that is still cheap to answer — **is there a product
+that already enforces workflow rules server-side against agent sessions, with a client-side hook that
+can refuse a tool call?** That is the unusual requirement; general task trackers do not have it. If
+something does it, the right response is to stop rather than to finish. **The narrowed question is
+owed before M8**, which is where the scope grows a scheduler, a budget model and a model picker —
+asking it there costs five more milestones than asking it now.
+
+### The prior-art data model was never read either
+
+The instruction was two-part and specific: **read an existing product's data model before its code,
+and do not fork it.** The don't-fork half is satisfied — nothing here is a fork — but it is satisfied
+**by default**, because forking was never on the table. That is not the same as the instruction being
+followed, and the half carrying the value is the half that was skipped: a data model that has
+survived contact with real use is cheap evidence about which fields turn out to be needed, and it is
+evidence that is only worth having *before* the first migration.
+
+**Verdict: not done.** One thing about the timing decides what a late read is worth: the schema is a
+baseline, and every change to it is additive. So prior art read from here can still argue for a
+column; it cannot argue for a shape. That is the cost of the omission — bounded, and not zero.
+
+### The differential test does not apply, and that is a decision rather than an omission
+
+The intent behind it was sound: **the behaviour a system already has is the specification anything
+rebuilding it must meet**, and a test that runs the same inputs through both and demands identical
+outcomes is the cheapest way to keep that true. Nothing here schedules such a test.
+
+**Verdict: it does not apply, and that is deliberate.** A differential test is only meaningful when
+the two sides are meant to agree, and here they are meant not to: the transition rule was
+**redesigned rather than carried across** — all-to-all transitions with required-field guards,
+instead of a fixed table of legal moves. A differential suite would fail by design on precisely the
+cases the redesign exists for, and pass only where nothing changed, which is where it has nothing to
+say.
+
+**But the protection it was buying is real and has to be bought some other way**, because the reason
+it mattered was never the comparison — it was that edge cases are learned expensively and lost
+silently. Three things carry that instead, and naming them is the point of recording this at all:
+
+1. **Every guard ships with its rejections tested**, which is already a tenet of this repository and
+   is the direct substitute: a rule that refuses the right things is what a differential test was
+   checking for indirectly.
+2. **Import verification (#13)** is the differential test that *does* still make sense — the same
+   inputs, and the resulting item states compared row by row. It is a comparison of data, which is
+   the part that was never meant to change.
+3. **Anything known to be wanted is written down as a guard test, not assumed to survive.** A rule
+   that lives only in someone's memory of how things used to behave is a rule that has already been
+   lost; the redesign is exactly the moment to convert it.
+
+No new row: this converts into an obligation on #15–#19, which exist.
+
+### Going live happens on a day when nothing is in flight
+
+The switch to this system as the source of truth has a precondition that was agreed and then written
+down nowhere: **duplicate first, verify against the duplicate, and make the switch when no work is
+executing.** Never a wholesale swap with items in flight.
+
+The risk it answers is not hypothetical. Switching over is itself a piece of work, and a system in
+the middle of being switched cannot reliably track the item that represents switching it — an item
+left `executing` across the boundary has two homes, and one of them is about to stop being read. It
+costs a sentence, and it belongs in two places rather than one: **§11**, which decides the shape of
+the import, and **#40**, the row that performs it. Both now carry it.
 
 ## 14. Still open
 
