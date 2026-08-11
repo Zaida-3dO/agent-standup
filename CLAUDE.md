@@ -63,8 +63,17 @@ npm run check:external-refs     # every tracked file; runs in CI on every PR
 
 <!-- external-ref-ok-next-line: naming the shapes it matches is the documentation; they are grammar, not real values -->
 It matches **pattern shapes** — `today's`, `the old …`, `replaces`, `port of` — and deliberately
-**never a list of the real values**, per the rule above. It is a backstop, not a proof: reading the
-diff is still what catches the rest.
+**never a list of the real values**, per the rule above.
+
+**A green run means the recurring phrasings are absent. It does not mean the prose is clean** — and
+the difference is worth knowing before you trust a tick. No shape matches a private proper noun
+dropped into a sentence, or a sentence that only makes sense to someone who has seen a system this
+repository does not contain. That gap is a **cost decision rather than an impossibility**: an
+allowlist of the proper nouns this repository *is* allowed to name would decide it while naming
+nothing private, at the price of a list extended on every new dependency and heading, and of noise on
+legitimate additions. The script's header records the reasoning. So the check is a backstop that
+keeps the recurring phrasings from eating the attention **reading the diff** needs — not a substitute
+for doing it.
 
 **Recording a deliberate exception.** Some shapes have honest in-repo uses ("that commit is still in
 the history"). Waive one line at a time, with a reason, in a comment the language already supports:

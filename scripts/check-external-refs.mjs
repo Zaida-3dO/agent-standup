@@ -20,11 +20,43 @@
  * Writing those in "so they can be grepped for" publishes precisely what
  * the rule exists to keep out, and a denylist wearing a regular expression
  * as a costume is the same mistake with extra steps. If you find yourself
- * adding a proper noun here, stop: the answer is a shape, or nothing.
+ * adding one of *those* proper nouns here, stop: the answer is a shape, or
+ * nothing. (There is exactly one construction that legitimately writes
+ * proper nouns into a check like this, and it is the opposite one — an
+ * allowlist of the names this repository is *permitted* to say. See the
+ * next section for why that is a cost decision rather than a rule.)
  *
- * A consequence worth stating plainly: this check is a backstop, not a
- * proof. It catches the phrasings that recur. Reading the diff is still
- * the mechanism that catches the rest.
+ * ── What this does NOT check, and what a green run therefore means ──────
+ *
+ * **A green run means the recurring phrasings are absent. It does not mean
+ * the prose is clean.** Those are different claims and only the first is
+ * tested here. Specifically:
+ *
+ *   - **No shape matches a private proper noun.** A name dropped into a
+ *     sentence — a machine, a service, a project — passes every pattern
+ *     below, and that is the single most likely thing to leak.
+ *   - **No shape matches a sentence that is merely unverifiable**: prose
+ *     that reads fine but only makes sense to someone who has seen a system
+ *     this repository does not contain.
+ *   - **The vocabulary lists are finite.** `old <noun>` matches a fixed set
+ *     of nouns; an unlisted one goes through.
+ *
+ * The proper-noun gap is a **cost decision, not an impossibility**, and it
+ * is worth being exact about which, because the two have different
+ * consequences. It could be decided by an *allowlist* — the proper nouns
+ * this repository is allowed to name (itself, its dependencies, the
+ * standard tools, the headings) — flagging every capitalised token that is
+ * not on it. That names nothing private, so it does not breach the rule
+ * above. What it costs is a list that has to be extended on every new
+ * dependency, tool, heading and product name, whose failure mode is noise
+ * on legitimate additions — which is how a check gets waived, then ignored,
+ * then deleted. Judged not worth it here; it is the first thing to reach
+ * for if that judgement stops holding.
+ *
+ * So: this is a backstop, not a proof. **Reading the diff is not something
+ * a green tick discharges** — it is the mechanism that catches everything
+ * in the list above, and this check exists to stop the recurring phrasings
+ * consuming the attention that reading needs.
  *
  * ── Recording a deliberate exception ────────────────────────────────────
  *
@@ -112,9 +144,14 @@ export const PATTERNS = [
     why: "describes work as carried over from elsewhere — describe what it delivers instead",
   },
   {
+    // `old(er)?`, not `older?` — the `?` binds to a single character, so
+    // `older?` means "olde" plus an optional "r" and matches nothing anyone
+    // writes. `\bthe old\b` covered the commonest form, which is why the
+    // hole stayed invisible: every other determiner ("an old board", "our
+    // old scripts", "old way") passed clean.
     id: "the-old-thing",
     regex:
-      /\bthe old\b|\bprior (state|system|app|application|version|setup|implementation|tool|world)\b|\bthe (original|earlier) (system|app|application|tool|script|scripts|setup|store|board|cli|version|implementation|way|world)\b|\bolder? (system|app|application|tool|script|scripts|setup|store|board|cli|version|one|way|world)\b/,
+      /\bthe old\b|\bprior (state|system|app|application|version|setup|implementation|tool|world)\b|\bthe (original|earlier) (system|app|application|tool|script|scripts|setup|store|board|cli|version|implementation|way|world)\b|\bold(er)? (system|app|application|tool|script|scripts|setup|store|board|cli|version|one|way|world)\b/,
     why: "names a predecessor — rewrite the sentence around the principle, not the thing it improves on",
   },
   {
@@ -197,8 +234,128 @@ const WAIVER = /external-ref-ok(-next-line)?:(.*)$/i;
 /** A waiver has to actually say something. Roughly four words. */
 const MIN_REASON_LENGTH = 12;
 
-/** …and it has to be words, not padding. */
+/** …and three of them have to carry information. See `FILLER_WORDS`. */
 const MIN_REASON_WORDS = 3;
+
+/**
+ * Words a reason can be made entirely of while explaining nothing.
+ *
+ * Three kinds: the grammar a sentence needs, the noises people make when
+ * they mean "leave me alone", and the text written where a reason was
+ * meant to go. `this is fine`, `TODO TODO TODO` and `lorem ipsum dolor`
+ * are each three words and twelve-plus characters, and each says exactly
+ * as much as an empty waiver.
+ *
+ * **This is not the denylist the repository's scanning rule forbids.** That
+ * rule is about the real names, hosts and project names that must stay out
+ * of a public repository — writing them down to grep for them publishes
+ * them. This list is ordinary English and publishes nothing. It is also
+ * still gameable by anyone determined to game it, which is fine: it can
+ * only be gamed *visibly*, by writing a sentence that reads like a reason
+ * into a comment sitting in the diff. Costing an explanation was always the
+ * design; this only stops the explanation being a placeholder.
+ */
+const FILLER_WORDS = new Set([
+  // Grammar.
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "because",
+  "been",
+  "but",
+  "by",
+  "can",
+  "do",
+  "does",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "in",
+  "into",
+  "is",
+  "it",
+  "its",
+  "my",
+  "of",
+  "on",
+  "or",
+  "our",
+  "so",
+  "than",
+  "that",
+  "the",
+  "their",
+  "them",
+  "then",
+  "there",
+  "these",
+  "this",
+  "those",
+  "to",
+  "was",
+  "were",
+  "will",
+  "with",
+  "we",
+  "you",
+  "your",
+  // Assertions that a thing is acceptable, which is the claim under review.
+  "fine",
+  "good",
+  "great",
+  "harmless",
+  "irrelevant",
+  "just",
+  "nice",
+  "obviously",
+  "okay",
+  "really",
+  "safe",
+  "sure",
+  "true",
+  "valid",
+  "whatever",
+  "yes",
+  // Words about the waiver rather than about the text it excuses.
+  "exception",
+  "ignore",
+  "reason",
+  "reasons",
+  "skip",
+  "waived",
+  "waiver",
+  // Placeholders.
+  "asdf",
+  "bar",
+  "baz",
+  "blah",
+  "dolor",
+  "dummy",
+  "etc",
+  "fixme",
+  "foo",
+  "ipsum",
+  "lorem",
+  "placeholder",
+  "qux",
+  "sample",
+  "stuff",
+  "tbd",
+  "temp",
+  "thing",
+  "things",
+  "tmp",
+  "todo",
+  "wip",
+  "xxx",
+  "yyy",
+  "zzz",
+]);
 
 /**
  * Strip the comment tail a reason inevitably ends in, so
@@ -213,16 +370,21 @@ function cleanReason(raw) {
 }
 
 /**
- * A length check alone lets `xxxxxxxxxxxx` through, which satisfies the
- * letter of "say why" and none of its point. Require it to look like a
- * phrase: several separate words, each with real letters in it. This can
- * still be gamed by someone determined to — but it can only be gamed
- * *visibly*, in a comment sitting in the diff, which is the whole design.
+ * A length check alone lets `xxxxxxxxxxxx` through, and a word count alone
+ * lets `this is fine` through — each satisfies the letter of "say why" and
+ * none of its point. So require three **distinct, non-filler** words:
+ * distinct kills `TODO TODO TODO`, and non-filler is what separates an
+ * explanation from an assurance that no explanation is needed.
  */
 function isRealReason(reason) {
   if (reason.length < MIN_REASON_LENGTH) return false;
-  const words = reason.split(/[\s,;:()[\]]+/).filter((word) => /[A-Za-z]{2,}/.test(word));
-  return words.length >= MIN_REASON_WORDS;
+  const substantive = new Set(
+    reason
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .filter((word) => word.length >= 2 && !FILLER_WORDS.has(word)),
+  );
+  return substantive.size >= MIN_REASON_WORDS;
 }
 
 /**
