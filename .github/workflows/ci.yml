@@ -75,6 +75,13 @@ jobs:
       # (migrate deploy, the drift check) do use it for real, against the
       # `postgres` service above.
       DATABASE_URL: postgresql://standup:standup@localhost:5432/standup
+      # A separate variable, not DATABASE_URL: vitest.config.ts pins
+      # DATABASE_URL to a fake value for tests that don't need a real
+      # connection. TEST_DATABASE_URL points the DB-integration tests (real
+      # unreachable-address, real migration-failure, real pool-pressure
+      # paths — see tests/boot.test.ts) at the same disposable service used
+      # above, so they run for real on every PR instead of skipping.
+      TEST_DATABASE_URL: postgresql://standup:standup@localhost:5432/standup
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
