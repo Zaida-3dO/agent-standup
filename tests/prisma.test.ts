@@ -38,11 +38,32 @@ describe("prisma singleton", () => {
   });
 
   it("builds a pooled datasource URL rather than passing DATABASE_URL through unmodified", async () => {
-    // A regression guard for the URL-building path itself: DATABASE_URL here
-    // deliberately carries no query string, so this also proves the pooling
-    // helper doesn't choke on that (no `?` to find/replace).
-    vi.stubEnv("DATABASE_URL", "postgresql://test:test@localhost:5432/test");
-    vi.resetModules();
-    await expect(import("@/lib/prisma")).resolves.not.toThrow();
+    // A regression guard on the actual wiring, not just that the module
+    // imports: mock @prisma/client's export and inspect what prisma.ts's
+    // `new PrismaClient(...)` call site actually received. Asserting only
+    // "resolves.not.toThrow()" here previously passed even with
+    // withPoolDefaults stripped from prisma.ts entirely — proven by mutation
+    // in review round 1 — because a raw DATABASE_URL is just as valid an
+    // argument to the constructor as a pooled one; only inspecting the
+    // received value catches that.
+    const rawDatabaseUrl = "postgresql://test:test@localhost:5432/test";
+    vi.stubEnv("DATABASE_URL", rawDatabaseUrl);
+
+    const PrismaClientMock = vi.fn();
+    vi.doMock("@prisma/client", () => ({ PrismaClient: PrismaClientMock }));
+
+    try {
+      vi.resetModules();
+      await import("@/lib/prisma");
+
+      expect(PrismaClientMock).toHaveBeenCalledTimes(1);
+      const options = PrismaClientMock.mock.calls[0]?.[0] as { datasourceUrl?: string };
+      expect(options.datasourceUrl).toBeDefined();
+      expect(options.datasourceUrl).not.toBe(rawDatabaseUrl);
+      expect(options.datasourceUrl).toContain("connection_limit=");
+      expect(options.datasourceUrl).toContain("pool_timeout=");
+    } finally {
+      vi.doUnmock("@prisma/client");
+    }
   });
 });
