@@ -12,7 +12,7 @@ endpoints), `DECISIONS.md` (why), `MILESTONES.md` (the work, as PR-sized pieces 
 ## ⚠️ This repository is PUBLIC
 
 Anything committed here is world-readable **the moment it is pushed, and permanently** — deleting it
-in a later commit does not remove it, because the old commit is still in the history. Assume anything
+in a later commit does not remove it, because that commit is still in the history. Assume anything
 that lands here has already been read and indexed.
 
 ### Scan every commit before making it
@@ -111,8 +111,8 @@ does less will often pass more easily — precisely because it left something st
 what they actually do, and prefer the one that finishes the job even if it needs a fix first.
 
 Real example: three PRs bumped a framework major. Two were green but bumped only the framework, not
-its companion lint config — passing today, mismatched underneath. The third did the full migration
-and failed, on a formatting nit. Merging on green would have picked a worse change.
+its companion lint config — passing checks while quietly mismatched underneath. The third did the
+full migration and failed, on a formatting nit. Merging on green would have picked a worse change.
 
 ### Your PR must be mergeable into `main` as it is *now*, not as it was when you branched
 
@@ -148,8 +148,8 @@ git rebase origin/main          # force-pushing your own feature branch is fine 
 
 **A worktree belongs to the agent working in it until that agent has reported.** Do not
 `git worktree remove` it, push to its branch, or merge its PR while it is still live — it will keep
-working against a directory that no longer exists, and it cannot tell your interference apart from a
-rogue process.
+working against a directory that has been deleted out from under it, and it cannot tell your
+interference apart from a rogue process.
 
 Clean up worktrees only after the agent that owns one has finished. If you must take over a branch
 mid-flight, expect the agent's report to be confused about what happened, and say plainly that it was
