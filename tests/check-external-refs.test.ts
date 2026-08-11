@@ -452,6 +452,20 @@ describe("check-external-refs — shapes that straddle a line break", () => {
     expect(lines[1]!.slice(violation!.column - 1)).toBe("the");
   });
 
+  it("still catches a straddle when the line before the break has trailing whitespace", () => {
+    // The trim is doing two jobs at once: dropping the *leading* whitespace
+    // the indentation test above pins, and dropping *trailing* whitespace
+    // left by an editor or a hard-wrap tool. Drop only the trailing half and
+    // this is the fixture that goes red: the line before the break ends
+    // "...in the" plus stray spaces, and a trim that keeps them puts more
+    // than one space at the join, which no pattern here can match across.
+    const lines = ["a rule now lives in the   ", "old system that enforces it"];
+    const [violation] = scan(lines.join("\n"));
+
+    expect(violation).toMatchObject({ patternId: "the-old-thing", line: 1 });
+    expect(violation!.text).toContain("⏎");
+  });
+
   it("does not weld a phrase across a blank line — that is a paragraph break, not a wrap", () => {
     // The flattening exists because a hard wrap is not a boundary in the
     // rendered text. A blank line is: it ends the paragraph, and the two
@@ -470,6 +484,26 @@ describe("check-external-refs — shapes that straddle a line break", () => {
       );
 
       expect(scan(text)).toEqual([]);
+    }
+  });
+
+  it("holds the blank-line guarantee only because every pattern uses a literal space", () => {
+    // The blank-line test above is not a general truth about the join — it
+    // holds *because* a blank line trims to "" and still contributes the
+    // join's own separator, landing the two halves exactly two spaces
+    // apart, and every shape in PATTERNS uses a literal single space
+    // between words (`\bthe old\b`, never `\bthe\s+old\b`). A two-space gap
+    // cannot satisfy a one-space literal, so the paragraph break holds.
+    //
+    // That is a property of the registry, not of the join, and nothing
+    // enforces it structurally: the day a pattern is written with `\s+` or
+    // `\s*`, a blank line starts welding unrelated paragraphs into false
+    // matches across the whole corpus, and the blank-line test above would
+    // not notice, because it only ever asserts through one shape. This is
+    // the trip-wire for that — a comment recording the constraint is a
+    // memory that can be missed, this fails loudly instead.
+    for (const pattern of PATTERNS as Array<{ id: string; regex: RegExp }>) {
+      expect(pattern.regex.source).not.toMatch(/\\s/);
     }
   });
 

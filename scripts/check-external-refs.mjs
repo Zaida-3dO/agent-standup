@@ -100,6 +100,15 @@ import { fileURLToPath } from "node:url";
  * The shapes. `id` is what the failure message names, so it wants to be
  * short and searchable; `why` is what the author reads at 2am, so it wants
  * to say what to write instead rather than merely restating the rule.
+ *
+ * Every `regex` here must join words with a literal single space, never
+ * `\s+` or `\s*`. The second pass below (search "Second pass") relies on
+ * that: a blank line trims to "" and still contributes the join's own
+ * separator, so two paragraphs land exactly two spaces apart and a
+ * literal-space pattern cannot bridge them. A whitespace-class pattern
+ * could, and would start welding unrelated paragraphs across every blank
+ * line in the corpus. A test enforces this (`no \s in any pattern source`)
+ * — if it's failing, that's why, and the fix is the pattern, not the test.
  */
 export const PATTERNS = [
   {
