@@ -4,10 +4,7 @@ Everything settled in one long planning session with the user, with the reasonin
 depends on a conversation surviving.
 
 **Companion docs:** `PLAN.md` (readable overview — accurate but stops before the heartbeat design) ·
-`SCHEMA.md` (tables, config, endpoints — current) · `plan-technical.md` (**stale**, superseded by this
-file and `SCHEMA.md`).
-
-**Source material:** a planning brain-dump, including its addenda A1–A5.
+`SCHEMA.md` (tables, config, endpoints).
 
 ---
 
@@ -22,12 +19,12 @@ stops it reading as another async-standup Slack bot (Standuply/Geekbot/DailyBot)
 
 ## 1. What it is
 
-One repo containing a backend, an MCP adapter, a CLI, and a web front end. Replaces
-a 1,007-line PowerShell CLI, the markdown task store (186 dirs), the ping supervisor script
-(~1,300 lines), two prose ledgers totalling ~50k tokens, and ~92% of the hook layer.
+One repo containing a backend, an MCP adapter, a CLI, and a web front end. One place the state
+lives, one place the rules are checked, and every surface a thin adapter over that one place.
 
-**The shift:** rules currently live in hooks that *ask* agents to behave. They move into a backend
-that *enforces*.
+**The point:** a rule a client is asked to honour is a rule that drifts, because each client honours
+it slightly differently and nothing notices. These rules live in the backend and are *enforced* —
+the server refuses the change.
 
 **The app is fully functional without the heartbeat.** Bands, hooks and gates all apply to a session
 you start yourself. The heartbeat only adds "start something unattended."
@@ -38,8 +35,10 @@ you start yourself. The heartbeat only adds "start something unattended."
 
 ### One recursive item type
 Project / task / subtask are **depths, not three types** — an item has a nullable `parent_id`, nests
-arbitrarily, no special handling. Rationale: agents already spawn sibling tasks that are really
-subtasks, because no subtask concept exists, which makes the board lie about work in flight.
+arbitrarily, no special handling. Rationale: an agent that discovers work inside work has to put it
+somewhere. Without a parent pointer it mints a sibling task and manages the pair itself, which makes
+any board overstate how much is independently in flight. A parent pointer fixes that at the root
+rather than in the renderer.
 
 ### Eleven states, five derived columns
 Columns are computed at read time, never stored, never transitioned. Adding `paused` forced five
@@ -47,10 +46,12 @@ columns rather than the four originally specified — it is neither in-progress 
 folding it into either destroys the property that makes "Blocked" trustworthy.
 
 ### Any state to any state
-No edge whitelist. Every currently-forbidden move is either bookkeeping strictness (deleted) or a real
-precondition (becomes a required field). Audited: evidence gate, visual gate, merge auth and
-claim-release all survive as required fields; the linear plan→review→approved chain and the terminal
-dead-ends are deleted.
+No edge whitelist. Any move a tracker might forbid is either bookkeeping strictness — in which case
+forbidding it only manufactures dead ends and teaches people to fake their way through the
+intermediate state — or a real precondition, in which case it becomes a required field. Audited on
+that test: the evidence gate, the visual gate, merge authority and claim-release are all real
+preconditions and survive as required fields; a linear plan→review→approved chain and terminal
+dead-ends are neither, and have no equivalent here.
 
 ### `blocked` is narrow
 Means **an outside actor must act** — you, another person, an external process (a SMART check running), or a
@@ -60,7 +61,8 @@ date. Explicitly *not* budget waits. If an agent could unstick itself, it is in 
 Nobody is on it; resumes on a condition the system re-checks itself. Covers budget wind-down **and**
 a dead owner. I initially argued the task should never move and only the assignment should change;
 that was too pure — if nobody is on it, it genuinely isn't in progress, and leaving it in `executing`
-recreates the rotting-in-executing problem.
+leaves you with the rotting-in-executing problem, where the busiest-looking column is the one nobody
+can trust.
 
 **Critical detail: the attempt counter resets on durable evidence, not on claim.** Otherwise
 dispatch → claim (reset) → die → repeat forever, and it never escalates. Claiming auto-unpauses (a
@@ -76,23 +78,26 @@ Role, session, agent type, **parent session** (the spawn tree — answers "the o
 still running?"), machine, PID, branch, worktree. Superseded assignments are retained, not
 overwritten, so an old session gets *told* who took over rather than failing blankly.
 
-### Closing summaries (addendum A5)
+### Closing summaries
 Required to reach any completed state. Typed fields with hard caps, `not_done` mandatory even when
 empty, `user_facing` forcing a where/what-to-test or how-verified branch, `final_state` derived.
 Static validators: caps reject rather than truncate; no near-verbatim copy of a history row; a
 **jargon denylist** on human-facing fields; `how_verified` may not be only a CI reference.
 
-Origin: the since-your-last-visit card for `T-20260723-fm-flow-align` rendered five bullets that were
-raw `loop-add`/`loop-close` rows, two pairs saying the same thing twice, with the one load-bearing
-item (the user reversing the one-task-per-PR rule) ranked last — and an OUTCOME line reading *"no merge
-note recorded."* The field that should carry the summary was empty, so the renderer improvised.
+Why required rather than encouraged: with no summary field to read, a "since you last looked" card
+has nothing to render but the raw event log — internal command names, the same thing said twice, the
+one load-bearing decision ranked last, and a closing line admitting it found nothing to report. A
+renderer given no summary improvises, and what it improvises is unreadable. So the field has to
+exist, and something has to refuse to complete without it.
 
 ### Fields, not plugins
-`first_mate_id`, `crew_id`, `playwright_session_id`, `standing_auth` are **generic fields holding
-user-specific values** — assignee-with-role, an approval reference, a browser session on a visual
-review. The vocabulary is the user's; the fields are generic. No custom-field machinery needed for v1.
+Vocabulary specific to one operator — what they call an orchestrating agent, which browser session a
+visual review ran in, which standing grant authorised a merge — belongs in **values held by generic
+fields**, never in the field names themselves. An assignee has a role; an artifact records a browser
+session; a merge cites an authorisation. The vocabulary is the operator's; the fields are generic,
+and that is the whole reason no custom-field machinery is needed for v1.
 
-### `area` replaces `repos`
+### `area`, not `repos`
 `repos` presumes git and code. Split: **`area`** (required, generic, works for research or an HA
 change) and **`repo` + `branch`** (optional, concrete, only when code exists — the merge gate needs
 exact repo identity, which a loose category can't give). Worktree lives on the **assignment** with its
@@ -109,11 +114,12 @@ Four consequences in the data model, all cheap now and painful later:
    for another. This cannot be a column on `events`.
 3. `run_scores.user_scored_by` — Two people may judge the same work differently, and collapsing them
    loses exactly the signal the two-scale design exists to capture.
-4. **`blocked_on` stops hardcoding names.** It becomes `blocked_on_type` (person/external-process/time)
-   plus a person reference — removing a user-specific leak that had got into core vocabulary.
+4. **`blocked_on` never holds a name.** It is `blocked_on_type` (person/external-process/time) plus a
+   person reference — a name in core vocabulary is exactly the leak that stops a product being generic.
 
-### Monthly archiving deleted
-A workaround for rendering a board from 186 folders. In a database, filtering is a query.
+### No monthly archiving
+Archiving by month is a workaround for rendering a board out of a directory tree that has grown too
+large to read. In a database, filtering is a query.
 
 ---
 
@@ -135,8 +141,8 @@ Buys: no credential on the NAS, deterministic so CI can gate it, no outage that 
 vendor-neutrality for free.
 
 **Costs flexibility, honestly.** Changing the planner is a deploy, not a prompt edit. Accepted because
-"an agent might read my prompt differently today" is the problem this app exists to kill — but it
-means the config surface must be good.
+"the same prompt might be read differently on a different day" is the problem this app exists to
+kill — but it means the config surface must be good.
 
 ### MCP Tasks (SEP-2663) does not fit
 Investigated properly against the spec. Four blockers: only the **server** creates a task (wrong
@@ -145,20 +151,20 @@ server asked, never append; terminal is permanently terminal (we need reopening)
 TTL while work items live for weeks. It also wouldn't save what was hoped — session cost is schema
 residency and results landing in context, neither of which a handle changes.
 
-**Where it does fit:** genuinely long server-side operations — importing 179 task folders, a heavy
-report. Use it there.
+**Where it does fit:** genuinely long server-side operations — a bulk import, a heavy report. Use it
+there.
 
 ### No plugin system
 One app, strict vocabulary boundary. Core may know items, parents, state, events, checkpoints, claims,
-comments, agents, evidence. Core may **never** know First Mate, crew, ping, budget points, pace line,
-Playwright, Claude, Codex.
+comments, agents, evidence. Core may **never** know an orchestration role's local name, a scheduler's
+own vocabulary, budget points, a pace line, a browser-automation tool, or any AI vendor.
 
-**The user-specific parts are a separate program that talks to the API, exactly like the front end
-does** — not add-ons inside the app. The heartbeat asks for state, applies the user's budget rules and
-priorities, and says what to do. The core never knows it exists.
+**The operator-specific parts are a separate program that talks to the API, exactly like the front end
+does** — not add-ons inside the app. The heartbeat asks for state, applies whatever budget rules and
+priorities that operator has, and says what to do. The core never knows it exists.
 
-The pattern that emerged from the generic/user-specific audit: **everything generic is storing and checking;
-everything user-specific is deciding what to do next and what it costs.**
+The pattern that emerged from the generic/operator-specific audit: **everything generic is storing and
+checking; everything operator-specific is deciding what to do next and what it costs.**
 
 ### Capability-by-reference — the load-bearing pattern (the user's)
 **Core decides *when* something must happen; you supply a document saying *how*; core hands over the
@@ -187,24 +193,29 @@ The ask-list is **patterns, not tool names.** Matching on `Bash` would send ever
 run off-box and add a round trip to everything. The server supplies a cached pattern list; no match →
 allow locally, zero network.
 
-**The machine-wide-kill guard moves server-side too** (the user's call, overriding my suggestion of a local
-floor — two implementations of one safety rule can disagree, and other installs wouldn't have the
-floor). This is an upgrade: the server can do an **ownership check** — is that PID yours? — where the
-local rule could only pattern-match. Requires agents to register processes they start.
+**The machine-wide-kill guard is server-side too** (the user's call, overriding my suggestion of a
+local floor — two implementations of one safety rule can disagree, and an installation that skipped
+the local half would silently have no floor at all). It is also the better place for it: the server
+can do an **ownership check** — is that PID yours? — where a local rule could only pattern-match.
+Requires agents to register processes they start.
 
-**From 17 wired hooks (~3,900 lines excluding Playwright) to essentially one.** Deleted outright:
-task-doc-guard (no files to guard), standing-auth-track (the table answers the real question),
-fm-tick, dispatch-report-guard, verify-guard-coverage. Absorbed: escalation gate, staging nudge, HA
-SSH nudge, delegate nudge, session-start, relay gate. The merge gate keeps its local
-command-*parsing* but its *judgement* becomes one query.
+**One script, not a folder of them.** A guard per rule means a client-side implementation per rule,
+and the number of them only grows: a check with nothing left to guard, a check whose question a
+table now answers directly, half a dozen nudges, a session handshake. Each is a file that can drift
+from the others and from the server. **A rule enforced in one server-side place cannot drift the way
+per-client scripts can** — so everything of that shape is either an ordinary query or a line in the
+ask-list. The merge gate is the one partial exception: command *parsing* stays local, its *judgement*
+is one query.
 
-**This deletes a live bug class:** `fm-tick.ps1` and `fm-tick-inline.ps1` currently share an interval
-constant, and one publishes it to a runtime file so they can't silently diverge. One script removes
-the whole mechanism.
+**And it deletes a bug class outright.** Two scripts that must agree on a shared constant need a
+mechanism to keep them agreeing — a generated file, a build step, a convention — and that mechanism
+is itself something that can fail quietly. One script has nothing to agree with.
 
-### Origin of the kill guard, for the record
-LEARNINGS #46 — a crew agent ran `taskkill /F /IM node.exe`, killing four sibling agents' dev servers.
-Deliberately not marker-scoped: the damage comes from workers, not the orchestrator.
+### Why the kill guard exists
+A machine-wide kill — `taskkill /F /IM node.exe` and its equivalents — takes out every sibling
+agent's processes, not just the caller's, and the caller has no way to tell. The damage comes from
+workers rather than from an orchestrator, so the guard applies to every session rather than only
+supervised ones.
 
 ### Guards and manual sessions
 Guards apply to **autonomous** sessions only; user-driven sessions are logging-only. **One exception**
@@ -219,10 +230,11 @@ closing a shared browser). Those become **warnings that name the consequence**, 
 Each machine runs a scheduled task that polls (`POST /poll`, default 300s) and launches whatever comes
 back. ~30 lines, no decisions. The server-side planner is **pure code**.
 
-**This deletes the single most expensive thing in the system** — today the ping is itself a Claude
-session reading the board, averaging ~2M input-equivalents a tick. A tick that finds nothing now costs
-one HTTP request, which is *why* polling can be frequent: today's 100-minute interval was chosen
-against the prompt cache, and fresh sessions plus a code planner remove that constraint.
+**This is what makes frequent polling affordable, and it is the single biggest cost decision here.**
+A scheduler that has to *reason* — an LLM session reading the board every tick — costs millions of
+input-equivalents per tick, so its interval gets stretched to an hour or more just to stay cheap, and
+then gets tuned against the prompt cache rather than against how quickly work should start. A tick
+that finds nothing costs one HTTP request here, so the interval can be chosen for responsiveness.
 
 ### Allocation (the user's design)
 Budget headroom as **points = percentage points of the window** — no new unit, estimates and budget
@@ -270,21 +282,25 @@ The server can't see the files, so **the poll carries a local scan** — paths a
 globs. Hashing a handful of files every five minutes is free.
 
 ### Open on the heartbeat
-Windows launch is a **port, not a spike** — `PatrickPing` already launches Claude Code sessions
-unattended and has for weeks. Verified its registration: runs as the desktop user, **LogonType: Interactive** →
-fires when locked, does **not** fire when logged out. The user: acceptable, their PC is always logged in.
+Unattended Windows launch is **well-understood, not a research question**. A scheduled task
+registered against the desktop user with **LogonType: Interactive** fires while the machine is
+locked, and does **not** fire when nobody is logged on. That is the constraint to design around: a
+machine that stays logged in works, one that logs out does not. The user: acceptable, because the
+machines this dispatches to stay logged in. An installation where they don't loses unattended launch
+on those machines — which is survivable, since the heartbeat is optional by design.
 
-Auth deferred: reachable from his PC without a token, like fynance. Not designing around Docker
-networking for v0.
+Auth deferred: reachable on a trusted network without a token for v0. Not designing around container
+networking yet.
 
 ---
 
 ## 6. Orchestrator supervision — the missing feature
 
-**Nothing reliably checks on crew today.** `fm-tick.ps1` is a Stop hook (fires when a turn *ends*);
-`fm-tick-inline.ps1` is PostToolUse (fires when a tool *returns*). **Neither is a timer**, and neither
-can fire while an orchestrator is blocked inside a subagent call. `fm-tick-inline.ps1`'s own header
-records observed gaps of **294 / 264 / 253 / 249 / 198 / 195 minutes — up to 4.9 hours.**
+**Client-side hooks cannot supervise a crew, and this is why.** A `Stop` hook fires when a turn
+*ends*; a `PostToolUse` hook fires when a tool *returns*. **Neither is a timer**, and neither can
+fire at all while an orchestrator sits blocked inside a subagent call — which is precisely the
+window supervision is wanted in. The gap between consecutive firings is therefore unbounded in
+exactly the case where it needs to be short.
 
 ### `wait_for_crew` — long-poll
 Server holds the request open and returns on a crew event **or** timeout, whichever first. Solves
@@ -340,23 +356,27 @@ enforcement — some calls genuinely can't be backgrounded.
 
 **Four bands, not two ceilings:** free · selective (high-value only) · **wind down** · stop.
 
-Band three is the new and most valuable one: start nothing, get in-flight work to a *good stopping
-point* (not necessarily finished), take shortcuts to a clean pause, write the handoff. Today the system
-hits a wall mid-thought and strands work — which is exactly why resumes were so expensive.
+Band three is the valuable one: start nothing, get in-flight work to a *good stopping point* (not
+necessarily finished), take shortcuts to a clean pause, write the handoff. Without it, a budget limit
+is a wall hit mid-thought, and the work is stranded wherever it happened to be — which is what makes
+resuming expensive, because the next session pays to rebuild context a clean pause would have written
+down for free.
 
 - **Stricter of the two windows wins.**
 - **Autonomous only** — never blocks the user.
-- **Boundaries move with time** (a pace line). Weekly wind-down `15 × days − 5`; 5-hour `80` rising to
-  ~`92` in the final hour.
+- **Boundaries move with time** (a pace line). Configured, not baked in — for example, weekly
+  wind-down `15 × days − 5`; 5-hour `80` rising to ~`92` in the final hour.
 - **No formula language.** Every boundary is a constant or `slope × elapsed + offset`, optionally
   switching on a time condition — an ordered list of *(when, value)* pairs. Declarative, testable, no
   parser.
 - Wind-down reaches in-flight agents through the per-tool-call nudge, which costs nothing extra.
 
-**Concurrency ceiling deferred** (the user: the browser app fixes the freeze). Worth recording that the
-freeze was **not a budget event** — 11 MCP servers × 6 sessions ≈ 69 processes, ~6GB; every session
-could have been inside budget. If it recurs, a per-machine session cap is config plus a count, no
-migration.
+**Concurrency ceiling deferred**, but worth recording why it isn't a budget feature. A machine
+freezing under many concurrent sessions is **not a budget event** — a dozen MCP servers times half a
+dozen sessions is dozens of processes and several gigabytes of memory, with every session inside
+budget the whole time. It is a resource problem and wants a resource fix, so putting
+it in the budget bands would be solving it in the wrong place. If it comes up, a per-machine session
+cap is config plus a count, no migration.
 
 ### Ghost tasks (the user's design)
 Unminted user sessions still send tool calls, so a session ID the server has never seen and that holds
@@ -370,9 +390,10 @@ nudging on a read trains people to ignore nudges. Ghosts must never gate the use
 
 ## 8. Telemetry and scoring
 
-**Cost logging is a byproduct, not a task.** Today an orchestrator self-reports quality 1–10 and **94%
-of 678 runs came back a 9 or a 10** — a number that cannot discriminate. Every tool call reporting its
-own cost is objective and complete with nobody remembering anything.
+**Cost logging is a byproduct, not a task.** Ask an orchestrator to self-report quality on a 1–10
+scale and almost everything comes back a 9 or a 10 — a distribution that cannot discriminate, bought
+at the price of somebody remembering to ask. Every tool call reporting its own cost is objective and
+complete with nobody remembering anything.
 
 **One field that can't be backfilled: the item's state at the time of each call.** Without it you can't
 answer "how much does review cost versus building," which is the question worth asking.
@@ -429,9 +450,9 @@ thought it was fine" is unauditable, and an agent that can't articulate why it's
 The user declined a forced never-auto-merge path list as scope creep; parked as a future request. The
 residual risk is that per-task marking depends on remembering at mint time.
 
-The validation gate is being retired under its own task (its own task, cross-referenced
-today). Agent Standup is built without it; whether it should be added back is that task's decision, and
-only if it adds something the review pipeline doesn't.
+**No client-side validation gate.** Agent Standup is built without one: review is the gate, and a
+second gate in front of it earns its place only if it catches something review doesn't. Adding one
+later is a decision on its own merits rather than a default to inherit.
 
 ---
 
@@ -454,27 +475,36 @@ to update. Warn, never self-modify.
 
 ---
 
-## 11. Migration
+## 11. Import, and going live
 
-Migrate everything, hard cutover, closed tasks included. 186 dirs / 144 merged. Status remap per §2.
-`parent_id` null for all imports — no historical hierarchy to recover. **Open:** whether closed tasks
-import full history or a collapsed summary (they're the bulk of the volume and the least useful).
-The PowerShell CLI becomes a thin shim over the API for one release, then is deleted.
+**A one-time import from an external file-based store, then a single switch** — not a phased
+dual-write. Everything comes across, finished items included, with states remapped per §2. Two calls
+worth stating:
+
+- **`parent_id` is null for every imported row.** A flat store has no hierarchy to recover, and
+  inferring one from titles would produce a tree that looks authoritative and isn't.
+- **Whether finished items arrive in full or collapsed** is settled in §13c.
+
+**A compatibility shim exposes the same command-line surface against the API for a single release**,
+and is then deleted. It exists so the switch doesn't have to happen everywhere simultaneously;
+keeping it beyond that would make it a second surface to maintain and a second place for behaviour
+to diverge.
 
 ---
 
-## 12. Facts verified today
+## 12. Facts the design rests on
+
+Each of these was checked rather than assumed, and each one a decision above leans on.
 
 | | |
 |---|---|
-| Existing MCPs | The two Python ones are **stateful** (FastMCP default; confirmed `Mcp-Session-Id` on initialize); the TypeScript one is **stateless** by design. Neither Python server has any per-session state — no `Context`, no progress, no resources, no prompts — so `stateless_http=True` is a one-line flip. One of them exposes **62 tools**, resident in context every turn. |
-| MCP SDK | Python `mcp 1.28.1` in both containers. |
-| Cache TTL | This session runs a **1-hour** prompt-cache TTL, **dropping to 5 minutes under usage overage** — i.e. exactly when running hot. Nothing signals the transition. Hence `WAIT_FOR_CREW_TIMEOUT = 240`, not 300. |
+| MCP statefulness | Statefulness is a property of how a server is built, not of what it does: common frameworks default to stateful and return an `Mcp-Session-Id` on initialize whether or not anything needs it. A server that holds no per-session state — no context object, no progress, no resources, no prompts — can be flipped stateless in one line. Which is why the MCP adapter can be specified stateless up front rather than discovering it later. |
+| Tool-list cost | Every tool description is resident in the agent's context on every turn, used or not. A server exposing sixty-odd tools is therefore a permanent tax on every session that connects to it. |
+| Cache TTL | A **1-hour** prompt-cache TTL **drops to 5 minutes under usage overage** — i.e. exactly when running hot — and nothing signals the transition. Hence `WAIT_FOR_CREW_TIMEOUT = 240`, not 300. |
 | Cache pricing | Write **1.25×** base (5-min TTL) or **2×** (1-hour); read **0.1×**. Marginal cost of a wait: do nothing 1.25N · 1-hour TTL 0.85N · pinging 0.025N/min. **The 1-hour TTL is cheaper than doing nothing, always.** |
-| PatrickPing | Runs as the desktop user, **LogonType: Interactive**, RunLevel Limited, `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -File ping-launcher.ps1`. Currently Disabled. |
-| Hooks | 23 files, 17 wired. Kill guard is the only non-marker-scoped FM guard. |
+| Unattended Windows launch | A scheduled task registered against the desktop user with **LogonType: Interactive** fires while the machine is locked and does **not** fire when nobody is logged on. RunLevel Limited is sufficient. |
+| Prose ledgers | A ledger kept as prose is read whole or not at all — a hundred thousand characters is tens of thousands of tokens resident in every session that loads it, whether or not one line of it is relevant. The same content as rows is a query with a `WHERE` clause. |
 | Codex | No background-completion re-invocation found. `notify` fires `agent-turn-complete` **outward**; cloud tasks are fire-and-forget. |
-| Ledgers | `WHILE-YOU-WERE-OUT.md` 130,011 chars (~32k tokens); `standing-authorizations.md` 73,310 (~18k). Untouched, ~45% of the boot corpus. |
 | Claude Code plugins | Bundle `hooks/hooks.json`, `.mcp.json`, `skills/`, `agents/`, `bin/`, `monitors/`, `settings.json` in one installable unit; marketplace can be a private repo. |
 
 ---
@@ -486,9 +516,9 @@ Recorded because the reasoning matters more than the conclusion.
 **Mine, corrected:** framing HTTP as the substrate (it's the service layer; the front end's transport
 doesn't decide the agent's) · designing a self-installing hook handshake before checking that plugins
 already bundle hooks · arguing a reservation table was needed for the two-machine race · insisting the
-task never moves when its owner dies · labelling session markers and batching as user-specific when
+task never moves when its owner dies · labelling session markers and batching as operator-specific when
 only the *policy* was · suggesting a local kill-guard floor alongside a server rule · calling unattended
-Windows launch a risk that could sink the design when `PatrickPing` already does it · treating the
+Windows launch a risk that could sink the design when the platform supports it directly · treating the
 model picker as too open-ended to build, when shipping it disabled defuses that entirely.
 
 **The user's, that changed the design:** flat states with derived columns instead of two real levels ·
@@ -533,12 +563,13 @@ and per-person read state are facts nothing else could hold. And `event_seen` st
 rather than an array on `events` for the mirror reason: **fold in things that append, keep separate
 things that would mutate.** An array would make `events` update-heavy on its hottest read path.
 
-### The user-specific leak sweep
+### The operator-specific leak sweep
 
 Anywhere the schema named a person, it was wrong. Fixed in four places — `origin`, `blocked_on`,
 `events.actor`, `artifacts.created_by` — all now type+id references to `people`. `authorizations` had
-**no grantor at all**, which the markdown file got away with and a queryable table can't. `items.id`
-stopped mandating `T-YYYYMMDD-slug`; legacy IDs live in `custom_fields.legacy_id`.
+**no grantor at all**: prose gets away with an unattributed grant because a reader supplies the
+missing context, and a queryable table can't. `items.id` mandates no particular format; an imported
+identifier lives in `custom_fields.legacy_id`.
 
 ### Enum vs text
 
@@ -608,29 +639,35 @@ itself back to `running`.
 - **`tool_calls` sizing**: ~37k rows/month, **under 0.5 GB/year**. Not a scale problem. The risks are
   outlier rows — cap `command` at ~4KB and store a count plus the first ~50 `paths`.
 
-## 13b. Public repository, and what that costs the docs (2026-08-10)
+## 13b. Public repository, and the writing rules that keep it publishable (2026-08-10)
 
-The repo is **public from the first commit**. That was the owner's call, and it has a consequence the
-docs have to carry: these plans were written from one person's real setup, so publishing them meant
-taking that setup out of them first.
+The repo is **public from the first commit**, deliberately. That has a consequence these docs have to
+carry: they are design documents for a tool that runs against real infrastructure, and documents
+written that way fill up with the specifics of one installation unless something stops them. The
+rules below are that something. They are not style preferences — they are the reason this is safe to
+publish, and the reason it reads as a product rather than as one person's configuration.
 
-**What was removed, and what replaced it:** real names → roles (*the user*, *a second user*, and
-`user-a`/`user-b` as example identifiers) · the owner's OS username → *the desktop user* · the name
-of the orchestration system these plans replace → *the user's setup*, and *user-specific* wherever it
-was contrasted against *generic* · other private projects and self-hosted services → what they are
-(*the NAS*, *the chat channel*, *the media MCP*) · real area, repo and machine names → invented ones
-(`web`, `infra`, `desktop`, `laptop`) · absolute paths and private dashboard URLs → removed outright.
+**How each category is written:** people by role (*the user*, *a second user*), with `user-a` /
+`user-b` as example identifiers · an operating-system account as *the desktop user* · self-hosted
+services and other projects by what they are (*the NAS*, *the chat channel*, *the media MCP*), never
+by their own name · area, repo and machine names invented (`web`, `infra`, `desktop`, `laptop`) ·
+*operator-specific* wherever a capability is contrasted against *generic* · absolute paths and
+private dashboard URLs not written at all ·
+<!-- external-ref-ok-next-line: this rule has to quote the phrasing it forbids in order to state it -->
+**nothing described by what it succeeds** — no predecessor, no prior state, no setup the reader is
+assumed to already run, because a reader of a public repository can verify none of it and it leaks
+the shape of a private system for no benefit.
 
-**This is not tidying — leave it alone.** The generic phrasing is load-bearing, and re-personalising
-it would republish exactly what was taken out. Verified by a scan that fails on any surviving
-instance; the rules are in `CLAUDE.md` at the repo root.
+**This is not tidying — leave it alone.** The generic phrasing is load-bearing. Making it concrete
+again, to be helpful or to make an example more vivid, republishes exactly what the phrasing exists
+to keep out. Enforced rather than remembered: `npm run check:external-refs` fails the build on the
+shapes these rules exclude, and the rules themselves are in `CLAUDE.md` at the repo root.
 
-**Two things worth recording honestly.** First, the names went in with the initial commit and came out
-by rewriting it, so the published history is clean — but a force-push only makes the old commit
-*unreachable*, not deleted, and it stays fetchable by its SHA until GitHub garbage-collects. Deleting
-and recreating the repo is the only guaranteed purge. Second, the plans were never written with an
-audience in mind; they read as a private design conversation, and no attempt has been made to make
-them read otherwise.
+**Two things worth recording honestly.** First, a force-push only makes a commit *unreachable*, not
+deleted — it stays fetchable by its SHA until GitHub garbage-collects, so rewriting history is a
+mitigation and not a purge. Deleting and recreating the repository is the only guaranteed one.
+Second, these are working design documents rather than a product manual: they read as one side of an
+argument, and no attempt has been made to make them read otherwise.
 
 **Backstops, not judgement alone:** secret scanning and push protection are on, so a recognised
 credential is refused at push time. They catch credentials — not names, not paths, not private
@@ -638,17 +675,17 @@ project names. Those still depend on reading the diff.
 
 ## 13c. Two v0 blockers settled (2026-08-10)
 
-### Finished tasks import as a collapsed summary, not full history
+### Finished items import as a collapsed summary, not full history
 
-The 144 already-finished tasks are most of the volume and the least useful part of it. Importing
-their full event streams mostly imports noise nobody will query — every claim, nudge and field-change
-for work that is already done. Each keeps one summary row instead.
+Finished work is most of the volume of any established backlog and the least useful part of it.
+Importing full event streams for it mostly imports noise nobody will query — every claim, nudge and
+field-change for work that is already done. Each finished item keeps one summary row instead.
 
-**Reversible on purpose:** the original task folders survive as read-only archive, so if the detail
-turns out to be wanted, it can be backfilled later. That asymmetry is the whole argument — starting
+**Reversible on purpose:** the import reads its source and never writes to it, so if the detail turns
+out to be wanted it can be backfilled later. That asymmetry is the whole argument — starting
 collapsed and expanding is easy; starting bloated and pruning means deciding what to delete.
 
-In-flight and blocked tasks import in full. The cut applies only to terminal states.
+In-flight and blocked items import in full. The cut applies only to terminal states.
 
 ### Projects do not carry state — it is derived from their children
 
@@ -694,6 +731,6 @@ and should say so rather than presenting a check as equivalent to a constraint.
 
 1. **Exact band numbers** beyond the starting values above.
 2. **Whether Codex needs the blocking fallback in practice**, or whether the CLI covers it.
-3. **CLI surface beyond `wait-for-crew`** — currently minimal by design.
-4. **Front end** — v1 is a port of the existing board; Kanban, project and progress views are backlog, same repo.
+3. **CLI surface beyond `wait-for-crew`** — deliberately minimal.
+4. **Front end** — v1 is a single board view; Kanban, project and progress views are backlog, same repo.
 5. **Retention defaults** for `tool_calls`.

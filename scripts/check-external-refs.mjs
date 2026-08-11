@@ -1,0 +1,491 @@
+#!/usr/bin/env node
+/**
+ * Fails when a tracked file describes something that lives *outside* this
+ * repository: a system this one supposedly succeeds, "the old" way of doing
+ * a thing, what is true "today", a setup the reader is assumed to already
+ * know. Everything here has to read as an application built from scratch,
+ * because that is the only thing a reader of a public repository can
+ * actually verify.
+ *
+ * This is a check rather than a line in a style guide because the failure
+ * mode is forgetting, not disagreeing. Prose drifts back toward whatever
+ * the author had in their head; a gate in CI is the only version of the
+ * rule that survives the tenth pull request.
+ *
+ * ── How it matches: SHAPES, NEVER VALUES ────────────────────────────────
+ *
+ * Every pattern below is a *grammatical shape* — "the old …", "port of …",
+ * "replaces …". None of them is, or may become, a list of the real names,
+ * hosts, usernames or project names that must stay out of this repository.
+ * Writing those in "so they can be grepped for" publishes precisely what
+ * the rule exists to keep out, and a denylist wearing a regular expression
+ * as a costume is the same mistake with extra steps. If you find yourself
+ * adding a proper noun here, stop: the answer is a shape, or nothing.
+ *
+ * A consequence worth stating plainly: this check is a backstop, not a
+ * proof. It catches the phrasings that recur. Reading the diff is still
+ * the mechanism that catches the rest.
+ *
+ * ── Recording a deliberate exception ────────────────────────────────────
+ *
+ * Some of these shapes have honest in-repo uses. Waive them one line at a
+ * time, with a reason, in a comment the language already supports:
+ *
+ *     <!-- external-ref-ok: <why this one is about this repo> -->
+ *     // external-ref-ok-next-line: <why this one is about this repo>
+ *
+ * A waiver's own line is never scanned — its reason is prose about the rule,
+ * not content the rule applies to. So `external-ref-ok` covers the line it
+ * sits on, and `external-ref-ok-next-line` covers **that line and the one
+ * after it**. Be precise about which line you attach it to: a waiver covers
+ * the *whole* line, so on a long hard-wrapped one it can silence more than
+ * you meant. The run summary prints how many matches the waivers in a tree
+ * are silencing, so that creep is visible rather than quiet.
+ *
+ * The reason is mandatory and has to read as a phrase — several real words,
+ * not twelve characters of padding. A waiver that says nothing fails the
+ * check itself, so silencing it always costs an explanation sitting in the
+ * diff beside the text it excuses.
+ *
+ * Usage:
+ *   node scripts/check-external-refs.mjs            # every tracked file
+ *   node scripts/check-external-refs.mjs a.md b.md  # just these
+ */
+import { spawnSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/**
+ * The shapes. `id` is what the failure message names, so it wants to be
+ * short and searchable; `why` is what the author reads at 2am, so it wants
+ * to say what to write instead rather than merely restating the rule.
+ */
+export const PATTERNS = [
+  {
+    id: "temporal-today",
+    regex: /\btoday'?s?\b/,
+    why: 'anchors the text to a world outside this repository — describe what the app does, not what exists "today"',
+  },
+  {
+    id: "temporal-now",
+    regex: /\bcurrently\b|\bat present\b|\bas things stand\b/,
+    why: "describes a present state the reader cannot see — state the behaviour itself, unqualified",
+  },
+  {
+    id: "temporal-past",
+    regex: /\bpreviously\b|\bformerly\b|\bhistorically\b|\bin the past\b/,
+    why: "points at a history this repository does not have — give the reason, not the chronology",
+  },
+  {
+    // `used to` is deliberately restricted to the *change* sense. Bare
+    // `used to` is far more often the ordinary purpose sense ("`kind` is
+    // used to derive the column"), and a check that fires on correct prose
+    // gets waived, then ignored, then deleted.
+    id: "temporal-changed",
+    regex:
+      /\bused to (be|live|lives?|work|sit|run|have|has|do|exist|happen|handle|hold|mean)\b|\bno longer\b|\bnowadays\b|\bthese days\b|\buntil now\b|\bcarried over from\b|\bmov(e|ed|ing) (off|away from)\b/,
+    why: "contrasts against an earlier state — say what is true now and stop there",
+  },
+  {
+    // `legacy` is noun-narrowed rather than dropped: "the legacy store" is a
+    // predecessor reference, while "legacy shim" and "legacy config format"
+    // are ordinary terms of art in this ecosystem. (It never matched
+    // `legacy_id` — the underscore removes the right word boundary.)
+    //
+    // `supersede` is deliberately absent and must stay absent: it is this
+    // product's own vocabulary. An assignment is superseded when another
+    // session takes it over, so the word is live in `schema.prisma`, in the
+    // baseline migration and throughout `SCHEMA.md` — a shape for it would
+    // fire on ten-plus lines of correct prose the day it was added.
+    id: "supersession",
+    regex:
+      /\breplaces\b|\breplacing\b|\breplacement for\b|\bin place of\b|\bpredecessors?\b|\blegacy (system|systems|store|stores|app|application|tool|tools|scripts?|setup|board|cli|hooks?|implementation|client|surface|way|world)\b/,
+    why: "frames a feature by what it supersedes — describe the capability on its own terms",
+  },
+  {
+    // Narrowed to the "carried over" sense: `a port of X`, `ported from`.
+    // Left broad it fires on network ports, which this repository talks
+    // about constantly.
+    id: "ported",
+    regex:
+      /\ba port of\b|\bported from\b|\bporting\b|\bport of (today|the old|the existing|the current|an? existing)\b/,
+    why: "describes work as carried over from elsewhere — describe what it delivers instead",
+  },
+  {
+    id: "the-old-thing",
+    regex:
+      /\bthe old\b|\bprior (state|system|app|application|version|setup|implementation|tool|world)\b|\bthe (original|earlier) (system|app|application|tool|script|scripts|setup|store|board|cli|version|implementation|way|world)\b|\bolder? (system|app|application|tool|script|scripts|setup|store|board|cli|version|one|way|world)\b/,
+    why: "names a predecessor — rewrite the sentence around the principle, not the thing it improves on",
+  },
+  {
+    id: "the-existing-thing",
+    regex:
+      /\bexisting setup\b|\b(the|an?|your|their|his|her|our) existing (setup|system|systems|app|application|tool|tools|script|scripts|store|stores|board|cli|mcp|hook|hooks|folder|folders|file|files|ledger|ledgers|installation|deployment|process|pipeline|infrastructure|codebase|repo|repos|stack|implementation)\b/,
+    why: "assumes the reader already runs something — describe the interface or capability, not the incumbent",
+  },
+  {
+    id: "the-current-thing",
+    regex:
+      /\bthe current (system|setup|implementation|script|scripts|tool|tools|board|cli|app|store|ping|process|way|world)\b/,
+    why: "same as above, in the present tense — this repository is the only system in scope",
+  },
+  {
+    id: "the-new-thing",
+    regex: /\bthe new (app|system|tool|version|backend|world|thing)\b/,
+    why: '"new" only means anything against an old one — it is just "the app"',
+  },
+  {
+    id: "cutover",
+    regex: /\bcut ?over\b/,
+    why: "migration-off-something framing — name the capability (going live, importing) rather than the transition",
+  },
+  {
+    // Not `environment` — "fill in the values for your environment" is the
+    // sentence a README needs, and `setup` / `world` / `rig` carry the intent.
+    id: "someones-own-setup",
+    regex: /\b(the user's|the owner's|your|his|her|their|our|my) (own )?(setup|world|rig)\b/,
+    why: "gestures at a particular person's machines — write it for anyone who installs this",
+  },
+  {
+    // If this repository ever ships a launcher script of its own (the poller
+    // in M8 is the likely one), waive it at that file rather than deleting
+    // this pattern — the point is references pointing outward.
+    id: "foreign-script-file",
+    regex: /\.ps1\b|\.psm1\b/,
+    why: "a script file from another codebase — nothing here ships one, so it reads as a reference outward",
+  },
+];
+
+/**
+ * Two files necessarily contain the shapes: the one that defines them, and
+ * the one that proves they are caught. Nothing else belongs here, and a
+ * test asserts as much — an exemption list that can grow quietly is just a
+ * slower way of deleting the check.
+ */
+export const SELF_EXEMPT = ["scripts/check-external-refs.mjs", "tests/check-external-refs.test.ts"];
+
+/**
+ * Lockfiles are generated, enormous, and prose-free. Exported and pinned by a
+ * test for the same reason as `SELF_EXEMPT`: one name added here silences a
+ * whole file, and that has to be a visible change rather than a quiet one.
+ */
+export const SKIPPED_FILES = ["package-lock.json"];
+
+const BINARY_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "ico",
+  "webp",
+  "pdf",
+  "zip",
+  "gz",
+  "woff",
+  "woff2",
+  "ttf",
+  "eot",
+  "mp4",
+  "mp3",
+]);
+
+/** Anything larger than this is not prose anyone wrote by hand. */
+const MAX_BYTES = 512 * 1024;
+
+const WAIVER = /external-ref-ok(-next-line)?:(.*)$/i;
+
+/** A waiver has to actually say something. Roughly four words. */
+const MIN_REASON_LENGTH = 12;
+
+/** …and it has to be words, not padding. */
+const MIN_REASON_WORDS = 3;
+
+/**
+ * Strip the comment tail a reason inevitably ends in, so
+ * `<!-- external-ref-ok: because X -->` reads as "because X".
+ */
+function cleanReason(raw) {
+  return raw
+    .replace(/-->\s*$/, "")
+    .replace(/\*\/\s*$/, "")
+    .replace(/["'`]\s*[,;)]*\s*$/, "")
+    .trim();
+}
+
+/**
+ * A length check alone lets `xxxxxxxxxxxx` through, which satisfies the
+ * letter of "say why" and none of its point. Require it to look like a
+ * phrase: several separate words, each with real letters in it. This can
+ * still be gamed by someone determined to — but it can only be gamed
+ * *visibly*, in a comment sitting in the diff, which is the whole design.
+ */
+function isRealReason(reason) {
+  if (reason.length < MIN_REASON_LENGTH) return false;
+  const words = reason.split(/[\s,;:()[\]]+/).filter((word) => /[A-Za-z]{2,}/.test(word));
+  return words.length >= MIN_REASON_WORDS;
+}
+
+/**
+ * Locate the waivers in a file, and reject the ones that say nothing.
+ *
+ * **A waiver inside a fenced code block is documentation, not a waiver.**
+ * The rules file has to show the syntax to teach it, and those examples
+ * would otherwise be live — inflating the waiver count and, worse, silently
+ * excusing any violating text pasted into that block later. Fenced content
+ * is still *scanned*; it just cannot waive.
+ */
+function waiversIn(lines) {
+  /** Line numbers (1-based) that carry a waiver of their own. */
+  const waiverLines = new Set();
+  /** Line numbers (1-based) that a `-next-line` waiver above them covers. */
+  const waivedNextLines = new Set();
+  /** Waivers that fail to give a reason — themselves a failure. */
+  const malformed = [];
+
+  let inFence = false;
+
+  lines.forEach((line, index) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return;
+    }
+    if (inFence) return;
+
+    const found = line.match(WAIVER);
+    if (!found) return;
+
+    const lineNumber = index + 1;
+    waiverLines.add(lineNumber);
+    if (found[1]) waivedNextLines.add(lineNumber + 1);
+
+    const reason = cleanReason(found[2] ?? "");
+    if (!isRealReason(reason)) {
+      malformed.push({
+        line: lineNumber,
+        column: (found.index ?? 0) + 1,
+        match: found[0].trim(),
+        text: line,
+      });
+    }
+  });
+
+  return { waiverLines, waivedNextLines, malformed };
+}
+
+/**
+ * Find every violation in one file's text.
+ *
+ * Returns objects of `{ line, column, patternId, match, text, kind }` where
+ * `kind` is `"external-ref"` for a matched shape and `"empty-waiver"` for a
+ * waiver that silences the check without saying why.
+ */
+export function findViolations(text) {
+  const lines = text.split(/\r?\n/);
+  const violations = [];
+  const { waiverLines, waivedNextLines, malformed } = waiversIn(lines);
+
+  for (const found of malformed) {
+    violations.push({
+      line: found.line,
+      column: found.column,
+      patternId: "waiver-without-a-reason",
+      match: found.match,
+      text: found.text,
+      kind: "empty-waiver",
+    });
+  }
+
+  const isWaived = (lineNumber) => waiverLines.has(lineNumber) || waivedNextLines.has(lineNumber);
+
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1;
+    if (isWaived(lineNumber)) return;
+
+    for (const pattern of PATTERNS) {
+      const global = new RegExp(pattern.regex.source, "gi");
+      for (const match of line.matchAll(global)) {
+        violations.push({
+          line: lineNumber,
+          column: (match.index ?? 0) + 1,
+          patternId: pattern.id,
+          match: match[0],
+          text: line,
+          kind: "external-ref",
+        });
+      }
+    }
+  });
+
+  // Second pass, over the same text with the newlines collapsed to spaces.
+  //
+  // Every doc here is hard-wrapped at ~100 columns, so a phrase like "the
+  // old system" lands astride a line break roughly as often as not — and a
+  // line-at-a-time matcher cannot see it. That is a blind spot the width of
+  // the corpus, not an edge case. Only *straddling* matches are reported
+  // here; anything contained in one line was already found above.
+  const offsets = [];
+  let cursor = 0;
+  for (const line of lines) {
+    offsets.push(cursor);
+    cursor += line.length + 1; // the separator that replaced the newline
+  }
+  const flattened = lines.join(" ");
+
+  /** Which 1-based line an offset into `flattened` belongs to. */
+  const lineAt = (offset) => {
+    let low = 0;
+    let high = offsets.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if ((offsets[mid] ?? 0) <= offset) low = mid;
+      else high = mid - 1;
+    }
+    return low + 1;
+  };
+
+  for (const pattern of PATTERNS) {
+    const global = new RegExp(pattern.regex.source, "gi");
+    for (const match of flattened.matchAll(global)) {
+      const start = match.index ?? 0;
+      const startLine = lineAt(start);
+      const endLine = lineAt(start + match[0].length - 1);
+      if (startLine === endLine) continue; // pass one already had it
+      if (isWaived(startLine) || isWaived(endLine)) continue;
+
+      violations.push({
+        line: startLine,
+        column: start - (offsets[startLine - 1] ?? 0) + 1,
+        patternId: pattern.id,
+        // Show it as one phrase; the line break is why it was invisible.
+        match: match[0],
+        text: `${lines[startLine - 1] ?? ""} ⏎ ${lines[endLine - 1] ?? ""}`.trim(),
+        kind: "external-ref",
+      });
+    }
+  }
+
+  return violations.sort((a, b) => a.line - b.line || a.column - b.column);
+}
+
+/**
+ * How much this file's waivers are actually silencing.
+ *
+ * A waiver covers a whole line, and a line is unbounded — on a long one a
+ * single reason can quietly excuse several matches across several shapes.
+ * That is a fair design (the alternative is per-shape waivers, which is more
+ * ceremony than this is worth), but it should not be *invisible*. The run
+ * summary prints these counts, so waiver creep shows up in the CI log
+ * instead of only in a careful reading of the diff.
+ */
+export function summariseWaivers(text) {
+  const lines = text.split(/\r?\n/);
+  const { waiverLines, waivedNextLines } = waiversIn(lines);
+  let suppressed = 0;
+
+  for (const lineNumber of new Set([...waiverLines, ...waivedNextLines])) {
+    const line = lines[lineNumber - 1];
+    if (line === undefined) continue;
+    for (const pattern of PATTERNS) {
+      const global = new RegExp(pattern.regex.source, "gi");
+      suppressed += [...line.matchAll(global)].length;
+    }
+  }
+
+  return { waivers: waiverLines.size, suppressed };
+}
+
+/** Should this path be read at all? */
+export function isScannable(path) {
+  if (SELF_EXEMPT.includes(path)) return false;
+
+  const name = path.split("/").pop() ?? path;
+  if (SKIPPED_FILES.includes(name)) return false;
+
+  const extension = name.includes(".") ? (name.split(".").pop() ?? "").toLowerCase() : "";
+  return !BINARY_EXTENSIONS.has(extension);
+}
+
+/** Every tracked file, so a new file is covered the moment it is added. */
+function trackedFiles() {
+  const result = spawnSync("git", ["ls-files", "-z"], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(
+      `git ls-files failed: ${result.stderr || result.error?.message || "unknown error"}`,
+    );
+  }
+  return result.stdout.split("\0").filter(Boolean);
+}
+
+function describe(violation, path) {
+  const pattern = PATTERNS.find((p) => p.id === violation.patternId);
+  const why = pattern?.why ?? "a waiver has to say why the match is really about this repository";
+  return [
+    `${path}:${violation.line}:${violation.column}  [${violation.patternId}]  matched: ${JSON.stringify(violation.match)}`,
+    `    ${violation.text.trim()}`,
+    `    ↳ ${why}`,
+  ].join("\n");
+}
+
+function main(argv) {
+  const explicit = argv.slice(2);
+  const listed = explicit.length > 0 ? explicit : trackedFiles();
+  const paths = listed.filter(isScannable);
+
+  const failures = [];
+  let scanned = 0;
+  let waivers = 0;
+  let suppressed = 0;
+
+  for (const path of paths) {
+    let stats;
+    try {
+      stats = statSync(path);
+    } catch {
+      continue; // deleted between listing and reading; nothing to check
+    }
+    if (!stats.isFile() || stats.size > MAX_BYTES) continue;
+
+    scanned += 1;
+    const contents = readFileSync(path, "utf8");
+    for (const violation of findViolations(contents)) {
+      failures.push(describe(violation, path));
+    }
+    const waived = summariseWaivers(contents);
+    waivers += waived.waivers;
+    suppressed += waived.suppressed;
+  }
+
+  // Say what was *not* read as well as what was. Coverage can otherwise fall
+  // silently — one entry added to the skip list and the summary looks the
+  // same, which is the failure mode of every check that only reports success.
+  const skipped = listed.length - scanned;
+  const coverage = `Scanned ${scanned} of ${listed.length} files${skipped > 0 ? ` (${skipped} skipped: binary, generated, or self-exempt)` : ""}`;
+  const waiverNote =
+    waivers > 0
+      ? ` ${waivers} waiver${waivers === 1 ? "" : "s"} active, silencing ${suppressed} match${suppressed === 1 ? "" : "es"}.`
+      : "";
+
+  if (failures.length === 0) {
+    console.log(`${coverage}: nothing refers to anything outside this repository.${waiverNote}`);
+    return 0;
+  }
+
+  console.error(failures.join("\n\n"));
+  console.error(
+    `\n${failures.length} reference${failures.length === 1 ? "" : "s"} to something outside this repository.\n\n` +
+      "This repository is public and has to read as an application built from scratch:\n" +
+      "nothing in it may describe a predecessor, a prior state, or a setup the reader is\n" +
+      "assumed to already have. Rewrite the sentence around the underlying reason — that is\n" +
+      "almost always the better sentence anyway, and it keeps the decision's meaning.\n\n" +
+      "If a match really is about this repository, waive that one line and say why:\n" +
+      "    <!-- external-ref-ok: <reason> -->            (markdown, covers this line)\n" +
+      "    // external-ref-ok-next-line: <reason>        (code, covers this line and the next)\n" +
+      "The reason must read as a phrase, not padding, so silencing the check always costs an\n" +
+      "explanation sitting in the diff beside the text it excuses.",
+  );
+  return 1;
+}
+
+if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
+  process.exit(main(process.argv));
+}

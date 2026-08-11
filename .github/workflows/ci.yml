@@ -81,6 +81,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # Before `npm ci`, because it needs nothing but the checkout (Node
+      # builtins only) and it is the one failure here that is permanent once
+      # merged: this repository is public, so anything describing a system
+      # outside it is world-readable from the moment it lands. Cheap to catch
+      # here, impossible to unpublish.
+      - name: Check nothing refers to anything outside this repository
+        run: npm run check:external-refs
       - run: npm ci
       - name: Generate Prisma client
         run: npx prisma generate

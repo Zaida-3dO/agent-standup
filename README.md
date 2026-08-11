@@ -1,12 +1,11 @@
 # Agent Standup
 
-A task tracker for AI coding agents. Replaces folders-of-markdown plus a 1,000-line
-PowerShell script with a real app: a database, a rules engine every change goes
+A task tracker for AI coding agents: a database, a rules engine every change goes
 through, an MCP so agents can talk to it, a CLI for the parts MCP can't do, and a
 web front end.
 
-**The shift:** today the rules live in hooks that _ask_ agents to behave. Here they
-live in the backend and are _enforced_ — the server refuses the change.
+**The point:** the rules live in the backend and are _enforced_ rather than
+requested. An agent can't skip a step, because the server refuses the change.
 
 ## Docs
 
