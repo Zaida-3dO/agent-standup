@@ -1,7 +1,7 @@
 # Agent Standup — the plan
 
-**Status:** planning, no code being written yet. This doc is the one to read and correct.
-There's a companion doc, `plan-technical.md`, with the detailed engineering version.
+**Status:** planning. This doc is the one to read and correct. Its companions are `SCHEMA.md` (the
+concrete shape of the tables, config and API) and `DECISIONS.md` (every decision with its reasoning).
 
 **Name settled 2026-08-09.** The product is **Agent Standup**; the command you type is **`standup`**.
 The long name goes on the repo, the site and the README — "Agent" is what stops it being mistaken for
@@ -14,14 +14,13 @@ and on GitHub.
 
 ## What we're building, in one paragraph
 
-A proper app for tracking the work the AI does — replacing today's folders-of-markdown-files
-plus a 1,000-line PowerShell script. It has a **database** (real state, not files), a **backend**
-that all changes go through, an **MCP** so agents can talk to it, and a **web front end** so you can
-look at it. One repo, one product.
+A proper app for tracking the work the AI does. It has a **database** (real state, not files), a
+**backend** that all changes go through, an **MCP** so agents can talk to it, and a **web front end**
+so you can look at it. One repo, one product.
 
-The important shift: today the rules live in hooks that *ask* agents to behave. In the new app the
-rules live in the backend and are *enforced*. An agent can't skip a step, because the server refuses
-the change.
+The important part: the rules live in the backend and are *enforced*, not requested. An agent can't
+skip a step, because the server refuses the change. A rule a client is merely asked to honour is a
+rule that drifts — silently, and differently on every machine.
 
 ---
 
@@ -99,9 +98,9 @@ That covers people *and* time *and* external processes:
 | **An external process** | your SMART disk check finishing — nobody needs to act, it just has to run |
 | **A date** | something becomes available on the 14th and work can continue then |
 
-The date case gets a **when-to-check-back** field, which buys something the user's setup can't do
-at all: **the server can unblock it for you when the time comes**, rather than it sitting there until
-someone notices.
+The date case gets a **when-to-check-back** field, and that field is what buys the thing worth
+having: **the server can unblock it for you when the time comes**, rather than it sitting there
+until someone notices. A blocker with a known expiry doesn't need a human to remember it.
 
 **What is deliberately *not* blocked: waiting on tokens or budget.** That stays In progress. Nothing
 external has to happen — it resumes on its own when the window resets. Calling it blocked would put
@@ -112,10 +111,11 @@ removing.
 
 ## Any status can go to any status
 
-This is a real change from today, and it's the one you asked for.
+This is the one you asked for, and it's a real departure from how trackers usually work.
 
-Today there's a fixed list of allowed moves, and anything not on the list is a hard failure. You can't
-go from A to C even when going from A to C is obviously the right thing. The new rule:
+The obvious design is a fixed list of allowed moves where anything off the list is a hard failure.
+It has a well-known failure mode: you can't go from A to C even when going from A to C is obviously
+the right thing, and the workaround is to fake your way through B. So the rule here is different:
 
 > **No move is ever forbidden. But some moves require you to supply something first.**
 
@@ -126,13 +126,13 @@ So instead of *"you can't do that"*, you get *"you can do that, but you have to 
 | **Blocked** | Who or what it's waiting on, and why. It has to be something outside the AI system — that's the definition of blocked. |
 | **Out of Blocked** | The blocker cleared. You can't leave blocked while still claiming to be blocked. |
 | **Completed** | The closing summary — what shipped, what was asked for but not built and why, and where to go look at it. (Details below.) |
-| **Completed via `merged`** | Plus the commit, and the review that approved it. Same "no artifact, no review" rule as today, but as a required field rather than a wall. |
+| **Completed via `merged`** | Plus the commit, and the review that approved it — "no artifact, no review", as a required field rather than a wall. |
 | **Backlog, from in-progress** | The agent's claim released first, so nothing keeps trying to resume shelved work. |
 
-Everything the old system blocked is now one of two things: either it was just bookkeeping strictness
-and we delete it, or it was protecting something real and it becomes a required field. Nothing that
-was actually keeping you safe gets dropped — it changes from a locked door to a form you have to fill
-in.
+Every rule a tracker might enforce falls into one of two buckets: either it's bookkeeping strictness,
+in which case it doesn't exist here, or it's protecting something real, in which case it becomes a
+required field. Nothing that genuinely keeps you safe gets dropped — it changes from a locked door to
+a form you have to fill in.
 
 There's also a **preview mode**: an agent can ask "what would happen if I moved this to completed?"
 and get back "rejected, you haven't said what wasn't built" without anything actually changing.
@@ -141,8 +141,7 @@ and get back "rejected, you haven't said what wasn't built" without anything act
 
 ## The closing summary
 
-We worked this out earlier today, and it's now part of the plan. Nothing can reach **Completed**
-without one.
+This is part of the plan rather than a nice-to-have: nothing can reach **Completed** without one.
 
 Four things, all short, written for you rather than for the next agent:
 
@@ -190,8 +189,8 @@ That second point matters for the thing you flagged as a safety priority: not ge
 Claude. A plain web API works from anything. If you move to Codex or something else later, the app
 doesn't care.
 
-**About the ~12 actions the MCP will expose** — deliberately few. One of your existing MCPs
-exposes 62 tools, and every one of those descriptions sits in the agent's context on every
+**About the ~12 actions the MCP will expose** — deliberately few. It's easy to find MCP servers
+exposing sixty-odd tools, and every one of those descriptions sits in the agent's context on every
 single turn whether or not anyone touches it. Small list, kept small on purpose:
 
 *Looking things up:* get one item · list items · what am I working on · **get me oriented** (the
@@ -221,9 +220,9 @@ for it elsewhere.**
 of each request — it's the tool descriptions sitting in context every turn, and results landing in
 context permanently. A ticket number changes neither.
 
-**Where it genuinely fits:** any single operation on *our* side that really does take minutes —
-importing your 179 existing task folders, a heavy report. Those should hand back a ticket instead of
-making the agent sit and wait. That's precisely what the feature is for, and we should use it there.
+**Where it genuinely fits:** any single operation on *our* side that really does take minutes — a
+bulk import, a heavy report. Those should hand back a ticket instead of making the agent sit and
+wait. That's precisely what the feature is for, and we should use it there.
 
 **The good news is you already get the thing you wanted.** A durable handle you attach progress to,
 that survives disconnects and can be picked up by a fresh session — that's the work item's own ID.
@@ -259,15 +258,13 @@ self-install: the hook reports its version on every call, and if the server need
 the session to run the update command. Warn, don't self-modify.
 
 **One caveat worth naming: a plugin is a Claude Code format.** Codex wouldn't consume it. So it's a
-convenience for the way you work today, and the three pieces inside it — server, hook script, command
-— have to stay usable on their own. Nothing about being packaged as a plugin is allowed to leak into
-the design.
+convenience for one client, and the three pieces inside it — server, hook script, command — have to
+stay usable on their own. Nothing about being packaged as a plugin is allowed to leak into the design.
 
-**And you already have the hook itself.** `fm-tick-inline.ps1` fires after every Bash, PowerShell,
-Read, Write, Edit, Grep, Glob and Task call today. The mechanism has been running for weeks — it just
-reads and writes files instead of talking to a server.
+**And the hook itself is barely anything.** A `PostToolUse` hook fires after every Bash, Read, Write,
+Edit, Grep, Glob and Task call; that's the whole mechanism, and it's a well-trodden one.
 
-So the work isn't building a hook. It's **making the existing one a dumb pipe**:
+So the work isn't inventing a hook. It's **keeping the hook a dumb pipe**:
 
 1. Hook fires after a tool call.
 2. It sends the server three facts: which session, which task, which tool.
@@ -289,9 +286,8 @@ without saving a progress note, and say so — rather than hoping the agent reme
 
 ## The front end
 
-Agreed it's not the focus. **Version one is a port of the board you already have** at
-the existing board page, reading from the new database instead of markdown files.
-That's it.
+Agreed it's not the focus. **Version one is a single board view** — the four columns from the table
+above, read straight out of the database. That's it.
 
 Everything else goes on the backlog, inside this same repo, as work we intend to do:
 
@@ -325,11 +321,10 @@ thing to get right now.
 
 ---
 
-## What's generic, what's ours — the full inventory
+## What's generic, what's operator-specific — the full inventory
 
-You asked for the list of everything we support today and want to keep, split by whether another
-person building an agent task-tracker would want it. Doing that split turned out to answer the
-plugin question by itself.
+You asked for every capability worth having, split by whether another person building an agent
+task-tracker would want it. Doing that split turned out to answer the plugin question by itself.
 
 ### Would belong in anyone's agent task tracker
 
@@ -338,7 +333,7 @@ plugin question by itself.
 | Items with title, description, priority, state | Table stakes |
 | **Nested items to any depth** | Any agent that discovers work inside work needs this |
 | Flat state list, columns worked out from it | Ordinary Kanban |
-| Required-fields-on-transition instead of blocked moves | The good idea; nothing user-specific about it |
+| Required-fields-on-transition instead of blocked moves | The good idea; nothing operator-specific about it |
 | History of everything that happened | Table stakes |
 | Comments and approvals | Table stakes |
 | **Ownership claims with a timeout** | *Every* multi-agent system has the two-agents-one-task bug |
@@ -356,60 +351,60 @@ plugin question by itself.
 | Board / Kanban UI | Table stakes |
 | MCP, web API, command line | Table stakes |
 
-### Only ever makes sense for the user
+### Only ever makes sense for one operator
 
-| Feature | Why it's ours |
+| Feature | Why it's operator-specific |
 |---|---|
-| The ping's specific job list (check inbox → merge queue → dispatch → pull from your Projects note) | Encodes exactly how you work |
-| Budget ceilings in Anthropic's 5-hour and weekly pools | Tied to one vendor's billing |
-| The 15%-a-day pace line | Your rule, your numbers |
-| Cost tracking measured in those pools | Same |
-| Model and effort picking (Opus/Sonnet/Haiku) | Claude-specific |
-| Standing authorisations as you use them | Your policy |
-| Playwright pool slots | A different app entirely |
-| The guard hooks (no killing processes, browser guards, delegate nudges) | The user's safety rails |
-| Note vault, file-sync, git-sync rules | Your machine setup |
-| The Haven dashboard as a render target | Yours |
-| The repo list | Yours |
-| The chat channel | Yours |
+| The scheduler's own job list — which queues it works, in which order, and where it pulls new work from | Encodes one particular way of working |
+| Budget ceilings expressed in a vendor's usage windows | Tied to one vendor's billing |
+| A pace line, and the numbers in it | One person's rule, one person's numbers |
+| Cost tracking measured in those windows | Same |
+| Model and effort picking across a vendor's tiers | Vendor-specific |
+| Standing authorisations, as a particular team grants them | Local policy |
+| Slots in a shared browser-session pool | A different application entirely |
+| Machine-level safety rails (process kills, shared browsers, delegation nudges) | Local safety rails |
+| Note stores, file-sync and git-sync conventions | One machine setup |
+| A particular dashboard as a render target | Local |
+| Which repositories are in play | Local |
+| Which chat channel to speak into | Local |
 
 ### The pattern that falls out — and it changes my recommendation
 
 Look at the two lists and the difference isn't arbitrary:
 
-> **Everything generic is *storing and checking things*. Everything user-specific is *deciding what
-> to do next, and what it costs*.**
+> **Everything generic is *storing and checking things*. Everything operator-specific is *deciding
+> what to do next, and what it costs*.**
 
 That is a much cleaner line than I expected, and it means the answer isn't a plugin system — it's
 simpler than that.
 
-**Revised recommendation: the user-specific parts aren't add-ons living inside the app. They're a
+**Revised recommendation: the operator-specific parts aren't add-ons living inside the app. They're a
 separate small program that talks to it — exactly like the front end does.**
 
-The ping becomes its own service: it asks Agent Standup what the state of the world is, applies your
-budget rules and your priorities, and tells it what to do. Agent Standup never knows the ping exists.
-No plugin machinery, no extension points, no versioned add-on API — just two programs and the web API
-that has to exist anyway.
+The scheduler becomes its own service: it asks Agent Standup what the state of the world is, applies
+your budget rules and your priorities, and tells it what to do. Agent Standup never knows the
+scheduler exists. No plugin machinery, no extension points, no versioned add-on API — just two
+programs and the web API that has to exist anyway.
 
 This gets you everything the plugin idea was after:
 
-- The core genuinely cannot grow user-specific assumptions, because that logic isn't in it.
-- The core could ship standalone tomorrow — it's already whole without the ping.
+- The core genuinely cannot grow operator-specific assumptions, because that logic isn't in it.
+- The core could ship standalone tomorrow — it's already whole without the scheduler.
 - Your rules can change as often as you like without touching the app.
-- If you ever move off Claude, the piece that knows about Claude is the small one.
+- If you ever move to another AI tool, the piece that knows about the current one is the small one.
 
 **One correction to my earlier answer:** I'd argued a boundary would break because deciding what to
 dispatch needs budget, priority *and* cost history together. That objection goes away here —
-cost-per-item is a generic field the core should store anyway, so the ping asks one question and gets
-one answer. The line only broke when I drew it in the wrong place.
+cost-per-item is a generic field the core should store anyway, so the scheduler asks one question and
+gets one answer. The line only broke when I drew it in the wrong place.
 
-**Still separate:** not being locked to Claude is a different goal, handled by the core knowing
+**Still separate:** not being locked to one vendor is a different goal, handled by the core knowing
 nothing about any specific AI tool — not by how we package things.
 ---
 
 ## Where it runs
 
-Proposal, and it matches the split we landed on for the browser work:
+Proposal — pull-only, in three lines:
 
 - **The app runs on the NAS.** It's a small service with a database — exactly what that box is for.
 - **Agents keep running on your PC**, and reach out to the app.
@@ -427,9 +422,9 @@ server can want things to happen; only the PC makes them happen.
 1. **Do projects need statuses at all**, or is a project just a container whose progress is derived
    from the tasks inside it? My instinct is the latter — a project being "in review" doesn't mean
    much.
-2. **What happens to the 179 existing task folders.** You said migrate everything, hard cutover,
-   including the closed ones. Still your call whether closed tasks come across in full or as
-   summaries — the closed ones are the bulk of the volume and the least useful.
+2. **How much of an imported backlog comes across.** Everything in one go, finished items included.
+   Still your call whether finished items arrive in full or as summaries — they're the bulk of the
+   volume and the least useful part of it.
 
 ---
 
