@@ -48,4 +48,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      # scripts/entrypoint.mjs waits up to DB_WAIT_TIMEOUT_SECONDS (default
+      # 60s) for Postgres before it even attempts to migrate, so the app
+      # doesn't start listening until that wait resolves. 30s wasn't enough
+      # margin for that; 90s comfortably covers the default wait plus
+      # `prisma migrate deploy` and server startup.
+      start_period: 90s
