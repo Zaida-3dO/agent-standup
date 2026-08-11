@@ -49,8 +49,13 @@ export function parseDurationSecondsMs(env, varName, defaultSeconds) {
   }
 
   const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
+  const ms = seconds * 1000;
+  // Validate the MULTIPLIED value, not just the parsed seconds: a seconds
+  // value can itself be finite and positive (e.g. "1e308") and still
+  // overflow to Infinity once multiplied by 1000 — which would otherwise
+  // clear this check and hand the caller a non-finite millisecond value.
+  if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(ms)) {
     throw new InvalidDurationEnvError(varName, raw);
   }
-  return seconds * 1000;
+  return ms;
 }

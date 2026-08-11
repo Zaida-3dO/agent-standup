@@ -31,6 +31,7 @@ describe("parseDurationSecondsMs", () => {
     ["a negative number", "-1"],
     ["whitespace only", "   "],
     ["Infinity, which Number() parses but isn't a bounded duration", "Infinity"],
+    ["a seconds value that is itself finite but overflows to Infinity once * 1000", "1e308"],
   ])("rejects %s (%j) rather than silently falling back to the default", (_label, raw) => {
     expect(() => parseDurationSecondsMs({ X: raw }, "X", 60)).toThrow(InvalidDurationEnvError);
   });
@@ -49,8 +50,14 @@ describe("parseDurationSecondsMs", () => {
     }
   });
 
-  it("exposes the documented defaults used elsewhere (entrypoint.mjs, wait-for-db.mjs)", () => {
-    expect(DEFAULT_DB_WAIT_TIMEOUT_SECONDS).toBeGreaterThan(0);
-    expect(DEFAULT_DB_WAIT_INTERVAL_SECONDS).toBeGreaterThan(0);
+  it("pins the default timeout comfortably above the recorded cold-boot observation", () => {
+    // A dedicated pin, not a `toBeGreaterThan(0)` sanity check — that check
+    // is satisfied by *any* positive value, so it would not catch a later
+    // edit that quietly lowers the default. docker-compose.prod.yml records
+    // an observed ~100s cold Postgres boot on slow disk; the default must
+    // stay comfortably above that number, not just above zero.
+    expect(DEFAULT_DB_WAIT_TIMEOUT_SECONDS).toBe(180);
+    expect(DEFAULT_DB_WAIT_TIMEOUT_SECONDS).toBeGreaterThan(100);
+    expect(DEFAULT_DB_WAIT_INTERVAL_SECONDS).toBe(2);
   });
 });
