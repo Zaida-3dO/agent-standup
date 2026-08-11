@@ -69,13 +69,13 @@ describe("waitForDatabase — retry-loop timing (mocked client, no real DB or ne
   it("bounds the attempt count to roughly timeoutMs/intervalMs, proving intervalMs actually elapses between attempts", async () => {
     // Not an elapsed-time assertion: the loop's total wall-clock duration is
     // governed by the deadline either way, so a correct sleep(intervalMs)
-    // and a broken sleep(0) both run for close to the full timeoutMs budget
-    // — that comparison doesn't distinguish them. The ATTEMPT COUNT does:
-    // with a near-instant mock client, each attempt is otherwise dominated
-    // by the sleep between attempts, so a 300ms/100ms budget should produce
-    // only a handful of attempts. sleep(0) in place of
-    // sleep(Math.min(intervalMs, remaining)) produces dozens within the same
-    // window, bound only by event-loop overhead rather than by intervalMs.
+    // and a zero-duration sleep both run for close to the full timeoutMs
+    // budget — that comparison doesn't distinguish them. The ATTEMPT COUNT
+    // does: with a near-instant mock client, each attempt is otherwise
+    // dominated by the sleep between attempts, so a 300ms/100ms budget
+    // should produce only a handful of attempts. A near-zero sleep between
+    // attempts produces dozens within the same window, bound only by
+    // event-loop overhead rather than by intervalMs.
     mockInstantlyFailingPrismaClient();
     vi.resetModules();
     const { waitForDatabase } = await import("../scripts/lib/wait-for-db.mjs");
