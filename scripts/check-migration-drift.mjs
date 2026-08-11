@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Fails if `prisma/schema.prisma` and `prisma/migrations` have drifted apart —
+// external-ref-ok-next-line: "no longer" is about this repository's own migration history, not an earlier system
 // i.e. replaying the migration history no longer reproduces the committed
 // schema exactly. A schema edit with no accompanying migration is exactly
 // the case this exists to catch (see docs/plans/MILESTONES.md, PR #7).

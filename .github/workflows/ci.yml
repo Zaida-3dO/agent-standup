@@ -82,6 +82,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # First, because it needs nothing but the checkout and it is the one
+      # failure that is permanent once merged: this repository is public, so
+      # a reference to a predecessor or a private setup is world-readable
+      # from the moment it lands. Cheap to catch here, impossible to unpublish.
+      - name: Check nothing refers to anything outside this repository
+        run: npm run check:external-refs
       - name: Generate Prisma client
         run: npx prisma generate
       - name: Apply migrations to a clean database

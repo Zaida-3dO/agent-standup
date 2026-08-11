@@ -46,6 +46,38 @@ Treat a finding as a **stop**, not a note to fix later.
 - **Never write a denylist of the real values into this repo.** Listing the actual names, hosts, or
   usernames "so they can be grepped for" publishes exactly what the rule exists to keep out. Scan by
   category, using judgement.
+<!-- external-ref-ok-next-line: this rule has to quote the phrasing it forbids in order to state it -->
+- **Nothing is described by what it succeeds.** No predecessor, no prior state, no "replaces X", no
+  setup the reader is assumed to already run. Everything here reads as an application built from
+  scratch, because that is the only version a reader of a public repository can verify — and a
+  feature that exists *because* of a migration is still describable by its capability ("a one-time
+  import from an external file-based store"). Where a decision's reasoning genuinely was "because
+  the other thing did X", rewrite it to the underlying principle. That is almost always the better
+  sentence, and it survives the other thing changing.
+
+### The check that enforces the last rule
+
+```bash
+npm run check:external-refs     # every tracked file; runs in CI on every PR
+```
+
+<!-- external-ref-ok-next-line: naming the shapes it matches is the documentation; they are grammar, not real values -->
+It matches **pattern shapes** — `today's`, `the old …`, `replaces`, `port of` — and deliberately
+**never a list of the real values**, per the rule above. It is a backstop, not a proof: reading the
+diff is still what catches the rest.
+
+**Recording a deliberate exception.** Some shapes have honest in-repo uses ("that commit is still in
+the history"). Waive one line at a time, with a reason, in a comment the language already supports:
+
+```markdown
+<!-- external-ref-ok: why this one is really about this repository -->
+// external-ref-ok-next-line: why this one is really about this repository
+```
+
+`external-ref-ok` covers the line it sits on; `external-ref-ok-next-line` covers the line after it.
+**The reason is mandatory** — a waiver with nothing after the colon fails the check too, so silencing
+it always costs an explanation that lands in the diff beside the text it excuses. Prefer rewording:
+most matches are easier to fix than to justify.
 
 ### If something sensitive is committed
 
