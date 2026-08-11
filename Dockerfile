@@ -42,10 +42,13 @@ COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --from=build --chown=nextjs:nodejs /app/scripts ./scripts
 
 USER nextjs
 EXPOSE 3000
 
-# No migration exists yet (the initial baseline lands in a later PR) — this
-# is forward-wired so the entrypoint doesn't need to change when it does.
-CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
+# scripts/entrypoint.mjs: waits for Postgres to actually accept a query,
+# applies the committed migrations, and only then starts `node server.js` —
+# refusing to serve (nonzero exit, no server started) if either step fails.
+# See scripts/entrypoint.mjs and scripts/lib/ for the reasoning.
+CMD ["node", "scripts/entrypoint.mjs"]

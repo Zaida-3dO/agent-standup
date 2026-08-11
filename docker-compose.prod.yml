@@ -34,6 +34,16 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
       NOTIFY_DOC: ${NOTIFY_DOC:-}
       VISUAL_REVIEW_DOC: ${VISUAL_REVIEW_DOC:-}
+      # How long scripts/entrypoint.mjs waits for Postgres to accept a query
+      # before giving up, and how often it retries. Given an explicit default
+      # here (rather than left to fall through to entrypoint.mjs's own) so
+      # the knob is discoverable without reading the code — and given a
+      # numeric default rather than `${VAR:-}`, unlike NOTIFY_DOC above:
+      # entrypoint.mjs treats an explicitly-set-but-invalid value (including
+      # "") as a boot-time configuration error, not a silent fallback, so an
+      # unset var must resolve to a real number here, never to "".
+      DB_WAIT_TIMEOUT_SECONDS: ${DB_WAIT_TIMEOUT_SECONDS:-180}
+      DB_WAIT_INTERVAL_SECONDS: ${DB_WAIT_INTERVAL_SECONDS:-2}
       TZ: ${TZ:-UTC}
     healthcheck:
       # Uses Node's built-in fetch rather than curl/wget — the runner image
@@ -48,4 +58,15 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      # scripts/entrypoint.mjs waits up to DB_WAIT_TIMEOUT_SECONDS (default
+      # 180s, above) for Postgres before it even attempts to migrate, so the
+      # app doesn't start listening until that wait resolves. 180s comfortably
+      # exceeds this same file's own recorded cold-boot observation just
+      # above (~100s on slow disk). start_period covers that wait plus
+      # `prisma migrate deploy` and server startup on top. If you raise
+      # DB_WAIT_TIMEOUT_SECONDS above, raise start_period to match — it is
+      # not derived from that variable, so nothing else will do it for you,
+      # and a database that's still within its now-larger allowed wait will
+      # otherwise report as unhealthy while it's actually still booting
+      # correctly.
+      start_period: 240s
