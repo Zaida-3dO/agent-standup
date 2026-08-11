@@ -41,11 +41,11 @@ describe("prisma singleton", () => {
     // A regression guard on the actual wiring, not just that the module
     // imports: mock @prisma/client's export and inspect what prisma.ts's
     // `new PrismaClient(...)` call site actually received. Asserting only
-    // "resolves.not.toThrow()" here previously passed even with
-    // withPoolDefaults stripped from prisma.ts entirely — proven by mutation
-    // in review round 1 — because a raw DATABASE_URL is just as valid an
-    // argument to the constructor as a pooled one; only inspecting the
-    // received value catches that.
+    // "resolves.not.toThrow()" would still pass even with withPoolDefaults
+    // stripped from prisma.ts entirely — a raw DATABASE_URL is just as
+    // valid a constructor argument as a pooled one, so only inspecting the
+    // received value catches a call site that stops wiring the two
+    // together.
     const rawDatabaseUrl = "postgresql://test:test@localhost:5432/test";
     vi.stubEnv("DATABASE_URL", rawDatabaseUrl);
 

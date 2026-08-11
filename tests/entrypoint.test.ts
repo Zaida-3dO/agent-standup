@@ -103,12 +103,13 @@ describe("scripts/entrypoint.mjs — database unreachable (no Postgres needed)",
 });
 
 describe("scripts/entrypoint.mjs — invalid DB_WAIT_*_SECONDS (no Postgres needed)", () => {
-  // Review round 1 found this hangs the real process forever (SIGKILL
-  // required, no FATAL) rather than refusing to boot. These prove the fix
-  // against the real entrypoint, not just the parser in isolation (see
-  // tests/boot-env.test.ts) — a short waitForExit budget is itself part of
-  // the assertion: it proves the process actually exits promptly rather than
-  // running until some other timeout coincidentally fires.
+  // A malformed duration input must refuse to boot promptly, not hang — the
+  // parser alone (tests/boot-env.test.ts) only proves it throws; these spawn
+  // the real entrypoint.mjs process to prove that throw actually becomes a
+  // fast, bounded exit rather than an infinite retry loop. A short
+  // waitForExit budget is itself part of the assertion: it proves the
+  // process actually exits promptly rather than running until some other
+  // timeout coincidentally fires.
   it.each([
     ["a duration typo with a unit suffix", "60s"],
     ["another duration typo with a unit suffix", "2m"],
@@ -124,10 +125,10 @@ describe("scripts/entrypoint.mjs — invalid DB_WAIT_*_SECONDS (no Postgres need
         STUB_SERVER_ARGS,
       );
 
-      // Previously this specific input (a duration typo) never exited at all;
-      // the real bug was verified by SIGKILLing at 20s. A generous-but-bounded
-      // budget here is the regression check: a config-validation failure must
-      // return well before any DB-wait timeout could plausibly explain it.
+      // A config-validation failure must return well before any DB-wait
+      // timeout could plausibly explain a slow exit — generous enough to
+      // absorb normal process startup, tight enough that a hang here is
+      // unambiguous rather than a coincidence of some other timeout firing.
       const code = await waitForExit(child, 8_000);
 
       expect(code).not.toBe(0);

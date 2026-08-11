@@ -12,10 +12,9 @@ const isWindows = process.platform === "win32";
 // One random token per test-file evaluation, appended to every scratch
 // database name in that file. Named for what's being tested, never for who
 // or what ran it (this repo is public — see CLAUDE.md's "Private project
-// names"). The token exists so two environments hitting the same Postgres
-// server at once (a developer's machine and CI, or two CI runs) can't
-// collide on the same database name — which is the property the old
-// per-agent naming happened to give for free.
+// names"). The token lets two environments hitting the same Postgres server
+// at once — a developer's machine and CI, or two CI runs — share it without
+// colliding on a database name.
 const runToken = randomBytes(3).toString("hex");
 
 /** Builds a scratch-database name: `agent_standup_test_<purpose>_<random>`. */
