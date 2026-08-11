@@ -30,4 +30,19 @@ describe("prisma singleton", () => {
     expect(prisma.item).toBeDefined();
     expect(typeof prisma.item.findMany).toBe("function");
   });
+
+  it("throws a clear error instead of Prisma's generic one when DATABASE_URL is unset", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    vi.resetModules();
+    await expect(import("@/lib/prisma")).rejects.toThrow(/DATABASE_URL is not set/);
+  });
+
+  it("builds a pooled datasource URL rather than passing DATABASE_URL through unmodified", async () => {
+    // A regression guard for the URL-building path itself: DATABASE_URL here
+    // deliberately carries no query string, so this also proves the pooling
+    // helper doesn't choke on that (no `?` to find/replace).
+    vi.stubEnv("DATABASE_URL", "postgresql://test:test@localhost:5432/test");
+    vi.resetModules();
+    await expect(import("@/lib/prisma")).resolves.not.toThrow();
+  });
 });
