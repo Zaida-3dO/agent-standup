@@ -54,4 +54,25 @@ describe("withPoolDefaults", () => {
   it("throws on an invalid URL rather than silently producing garbage", () => {
     expect(() => withPoolDefaults("not-a-url")).toThrow();
   });
+
+  it("does not re-encode an existing percent-encoded query value (e.g. libpq `options`)", () => {
+    // A regression guard: withPoolDefaults used to round-trip the whole URL
+    // through URLSearchParams.set() + toString(), which re-serializes every
+    // existing param and turns a percent-encoded space (%20, valid in a
+    // libpq `options` value) into `+` — silently corrupting it, since a
+    // percent-decoder (what Prisma's Rust connector uses) reads `+` as a
+    // literal character, not a decoded space.
+    const input = "postgres://user:pass@host:5432/db?options=-c%20statement_timeout%3D5000";
+    const url = withPoolDefaults(input);
+
+    expect(url).toContain("options=-c%20statement_timeout%3D5000");
+    expect(url).not.toContain("+");
+    expect(url).toContain(`connection_limit=${DEFAULT_CONNECTION_LIMIT}`);
+    expect(url).toContain(`pool_timeout=${DEFAULT_POOL_TIMEOUT_SECONDS}`);
+  });
+
+  it("returns the URL unchanged when both params are already set", () => {
+    const input = "postgres://user:pass@host:5432/db?connection_limit=5&pool_timeout=7";
+    expect(withPoolDefaults(input)).toBe(input);
+  });
 });

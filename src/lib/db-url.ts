@@ -31,18 +31,32 @@ export interface PoolDefaults {
  * params applied, UNLESS the operator already set one — an explicit value on
  * `DATABASE_URL` always wins, so pooling can be retuned per-deployment
  * without a code change.
+ *
+ * Appends the new params to the ORIGINAL string rather than round-tripping
+ * through `url.searchParams.set()` + `url.toString()` — `URLSearchParams`
+ * re-serializes every existing param when it stringifies, which rewrites a
+ * percent-encoded space (`%20`, valid in a libpq `options` value) as `+`
+ * (the `application/x-www-form-urlencoded` convention), silently corrupting
+ * it. `new URL()` is still used to validate the input and to check which
+ * params already exist — only `.searchParams.has()`, a read, not a mutation
+ * that gets re-serialized.
  */
 export function withPoolDefaults(databaseUrl: string, defaults: PoolDefaults = {}): string {
   const url = new URL(databaseUrl);
   const connectionLimit = defaults.connectionLimit ?? DEFAULT_CONNECTION_LIMIT;
   const poolTimeoutSeconds = defaults.poolTimeoutSeconds ?? DEFAULT_POOL_TIMEOUT_SECONDS;
 
+  const toAppend: string[] = [];
   if (!url.searchParams.has("connection_limit")) {
-    url.searchParams.set("connection_limit", String(connectionLimit));
+    toAppend.push(`connection_limit=${connectionLimit}`);
   }
   if (!url.searchParams.has("pool_timeout")) {
-    url.searchParams.set("pool_timeout", String(poolTimeoutSeconds));
+    toAppend.push(`pool_timeout=${poolTimeoutSeconds}`);
+  }
+  if (toAppend.length === 0) {
+    return databaseUrl;
   }
 
-  return url.toString();
+  const separator = url.search ? "&" : "?";
+  return `${databaseUrl}${separator}${toAppend.join("&")}`;
 }
