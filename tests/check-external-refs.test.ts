@@ -12,6 +12,7 @@ import {
   SKIPPED_FILES,
   findViolations,
   isScannable,
+  summariseWaivers,
 } from "../scripts/check-external-refs.mjs";
 
 type Violation = {
@@ -81,6 +82,7 @@ describe("check-external-refs — what it catches", () => {
     ["supersession", "Replaces a folder of files plus a wrapper script."],
     ["supersession", "This is the replacement for resuming a session."],
     ["supersession", "The predecessor system had a directory per task."],
+    ["supersession", "A shim so the legacy store keeps working."],
     ["ported", "Version one is a port of the board that already exists."],
     ["ported", "Ported from the scheduler that runs on each machine."],
     ["the-old-thing", "Everything the old system blocked is now a field."],
@@ -161,6 +163,7 @@ describe("check-external-refs — what it must not flag", () => {
     "Fill in the values for your environment.",
     "Migration seeds `legacy_id` here, which is why `id` can be opaque.",
     "The eslintrc FlatCompat legacy shim chokes on modern flat configs.",
+    "Keep supporting the legacy config format for one more major.",
     "The importer moves each row into `items`.",
   ];
 
@@ -240,6 +243,123 @@ describe("check-external-refs — waivers", () => {
     expect(ids("the old thing <!-- external-ref-ok: fine -->")).toEqual([
       "waiver-without-a-reason",
     ]);
+  });
+
+  it("rejects padding that is long enough but says nothing", () => {
+    // A length check alone lets this through, which satisfies the letter of
+    // "say why" and none of its point.
+    expect(ids("the old thing <!-- external-ref-ok: xxxxxxxxxxxx -->")).toEqual([
+      "waiver-without-a-reason",
+    ]);
+    expect(ids("the old thing <!-- external-ref-ok: ............ -->")).toEqual([
+      "waiver-without-a-reason",
+    ]);
+  });
+
+  it("a plain waiver covers its own line and no more", () => {
+    // Worth pinning: the two forms differ, and getting this backwards would
+    // silently widen every waiver in the repository.
+    const text = [
+      "<!-- external-ref-ok: this line is really about this repository -->",
+      "the old board is still described here",
+    ].join("\n");
+
+    expect(scan(text).map((v) => v.line)).toEqual([2]);
+  });
+
+  it("reports how much the waivers in a file are silencing", () => {
+    // A waiver covers a whole line, and a line is unbounded — one reason can
+    // excuse several matches across several shapes. That is an acceptable
+    // design only if it is visible, so the summary counts it.
+    const wide =
+      "the old board and today's ledger and the current script <!-- external-ref-ok: all three are about this repository -->";
+
+    expect(scan(wide)).toEqual([]);
+    const summary = summariseWaivers(wide) as { waivers: number; suppressed: number };
+    expect(summary.waivers).toBe(1);
+    expect(summary.suppressed).toBeGreaterThanOrEqual(3);
+  });
+
+  it("counts the second line a -next-line waiver covers", () => {
+    const text = [
+      "<!-- external-ref-ok-next-line: this one is about this repository -->",
+      "the old board and today's ledger and the current script",
+    ].join("\n");
+
+    expect(scan(text)).toEqual([]);
+    const summary = summariseWaivers(text) as { waivers: number; suppressed: number };
+    expect(summary.waivers).toBe(1);
+    expect(summary.suppressed).toBeGreaterThanOrEqual(3);
+  });
+
+  it("counts nothing when there are no waivers", () => {
+    expect(summariseWaivers("the server refuses the change")).toEqual({
+      waivers: 0,
+      suppressed: 0,
+    });
+  });
+
+  it("treats a waiver inside a fenced block as documentation, not a waiver", () => {
+    // The rules file has to show the syntax to teach it. Those examples must
+    // not be live, or every reader miscounts the real waivers — and worse,
+    // violating text pasted into that block later would be silently excused.
+    const text = [
+      "```markdown",
+      "<!-- external-ref-ok: why this one is really about this repository -->",
+      "```",
+      "the old board is described here",
+    ].join("\n");
+
+    expect(summariseWaivers(text)).toEqual({ waivers: 0, suppressed: 0 });
+    expect(scan(text).map((v) => v.line)).toEqual([4]);
+  });
+
+  it("still scans inside a fence, so a violating example cannot hide there", () => {
+    const text = ["```markdown", "the old board, as an example", "```"].join("\n");
+
+    expect(scan(text).map((v) => v.patternId)).toEqual(["the-old-thing"]);
+  });
+});
+
+describe("check-external-refs — shapes that straddle a line break", () => {
+  // Every doc in docs/plans is hard-wrapped at ~100 columns, so a phrase
+  // lands astride a break roughly as often as not. A line-at-a-time matcher
+  // is blind to exactly those — a gap the width of the corpus.
+  it("catches a shape split across a hard wrap", () => {
+    const violations = scan("cannot drift the way the\nold per-client scripts could");
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({ patternId: "the-old-thing", line: 1 });
+    // The rendered line shows both halves, or the message is unactionable.
+    expect(violations[0]!.text).toContain("⏎");
+  });
+
+  it("reports a straddling match once, not twice", () => {
+    // The same words on one line are found by the first pass; the second
+    // pass must not double-report them.
+    expect(scan("cannot drift the way the old per-client scripts could")).toHaveLength(1);
+  });
+
+  it("does not invent matches across an innocent wrap", () => {
+    expect(scan("the server refuses the\nchange and nothing else happens")).toEqual([]);
+  });
+
+  it("respects a waiver on either side of the break", () => {
+    const onFirst = [
+      "<!-- external-ref-ok: this wrapped line is about this repository -->",
+      "cannot drift the way the",
+      "old per-client scripts could",
+    ].join("\n");
+    // The waiver covers its own line and, being a plain waiver, not the rest —
+    // but the straddle starts on line 2, so waive there instead.
+    expect(scan(onFirst)).toHaveLength(1);
+
+    const onSecond = [
+      "<!-- external-ref-ok-next-line: this wrapped line is about this repo -->",
+      "cannot drift the way the",
+      "old per-client scripts could",
+    ].join("\n");
+    expect(scan(onSecond)).toEqual([]);
   });
 });
 

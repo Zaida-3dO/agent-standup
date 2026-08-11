@@ -74,10 +74,14 @@ the history"). Waive one line at a time, with a reason, in a comment the languag
 // external-ref-ok-next-line: why this one is really about this repository
 ```
 
-`external-ref-ok` covers the line it sits on; `external-ref-ok-next-line` covers the line after it.
-**The reason is mandatory** — a waiver with nothing after the colon fails the check too, so silencing
-it always costs an explanation that lands in the diff beside the text it excuses. Prefer rewording:
-most matches are easier to fix than to justify.
+A waiver's own line is never scanned, so `external-ref-ok` covers the line it sits on and
+`external-ref-ok-next-line` covers **that line and the one after**. A waiver covers the *whole* line,
+so attach it precisely — on a long wrapped line it can silence more than you meant, and the run
+summary reports how many matches the tree's waivers are silencing so that creep stays visible.
+
+**The reason is mandatory and must read as a phrase**, not padding — a waiver that says nothing fails
+the check itself, so silencing it always costs an explanation that lands in the diff beside the text
+it excuses. Prefer rewording: most matches are easier to fix than to justify.
 
 ### If something sensitive is committed
 

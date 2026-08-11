@@ -36,10 +36,10 @@ You asked for project → task → subtask. The design is simpler than three sep
 - A subtask can have its own subtasks, as deep as it needs to go. No special handling — a
   sub-subtask is just an item whose parent happened to be a subtask.
 
-**Why this matters right now:** you spotted that agents already do this. When a job turns out to have
-a smaller job inside it, the agent creates a whole separate task and then quietly manages both
-itself. That's a subtask wearing the wrong hat, and it makes the board lie about how much is in
-flight. Giving items a parent fixes that at the root.
+**Why this matters:** an agent that discovers work inside work has to put it somewhere. With no
+parent to hang it on, it creates a whole separate task and then quietly manages the pair itself —
+a subtask wearing the wrong hat, and a board that overstates how much is independently in flight.
+Giving items a parent fixes that at the root rather than in the renderer.
 
 Everything gets the same fields and the same statuses at every level. A subtask is a task.
 
@@ -80,7 +80,8 @@ guard *and* the stable visual.
 only get from planning to executing if the plan was actually approved — becomes: *you can make that
 move, but you have to point at the approval.* Same protection, no dead ends.
 
-**The local validation gate is not a state and never was.** It's a gate the builder runs on their own side.
+**A client-side validation gate is not a state.** It's something a builder runs on their own side
+before asking for review, so it never belongs in a list of states the server reasons about.
 
 ### Blocked is narrow — but wider than I first wrote it
 
@@ -400,6 +401,7 @@ gets one answer. The line only broke when I drew it in the wrong place.
 
 **Still separate:** not being locked to one vendor is a different goal, handled by the core knowing
 nothing about any specific AI tool — not by how we package things.
+
 ---
 
 ## Where it runs
@@ -422,9 +424,10 @@ server can want things to happen; only the PC makes them happen.
 1. **Do projects need statuses at all**, or is a project just a container whose progress is derived
    from the tasks inside it? My instinct is the latter — a project being "in review" doesn't mean
    much.
-2. **How much of an imported backlog comes across.** Everything in one go, finished items included.
-   Still your call whether finished items arrive in full or as summaries — they're the bulk of the
-   volume and the least useful part of it.
+2. ~~**How much of an imported backlog comes across.**~~ **Settled** — everything in one go, finished
+   items included, with finished items collapsed to a single summary row each. They're the bulk of
+   the volume and the least useful part of it, and the import never writes to its source, so the
+   detail can be backfilled if it turns out to be wanted. Reasoning in `DECISIONS.md` §13c.
 
 ---
 

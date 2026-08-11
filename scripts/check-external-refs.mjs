@@ -34,11 +34,18 @@
  *     <!-- external-ref-ok: <why this one is about this repo> -->
  *     // external-ref-ok-next-line: <why this one is about this repo>
  *
- * `external-ref-ok` covers the line it sits on; `external-ref-ok-next-line`
- * covers the line after it. The reason is mandatory and must be a real
- * sentence — a waiver with nothing after the colon is itself a failure, so
- * silencing the check always costs an explanation that shows up in review
- * right beside the text it excuses.
+ * A waiver's own line is never scanned — its reason is prose about the rule,
+ * not content the rule applies to. So `external-ref-ok` covers the line it
+ * sits on, and `external-ref-ok-next-line` covers **that line and the one
+ * after it**. Be precise about which line you attach it to: a waiver covers
+ * the *whole* line, so on a long hard-wrapped one it can silence more than
+ * you meant. The run summary prints how many matches the waivers in a tree
+ * are silencing, so that creep is visible rather than quiet.
+ *
+ * The reason is mandatory and has to read as a phrase — several real words,
+ * not twelve characters of padding. A waiver that says nothing fails the
+ * check itself, so silencing it always costs an explanation sitting in the
+ * diff beside the text it excuses.
  *
  * Usage:
  *   node scripts/check-external-refs.mjs            # every tracked file
@@ -80,14 +87,19 @@ export const PATTERNS = [
     why: "contrasts against an earlier state — say what is true now and stop there",
   },
   {
-    // Not `legacy`, and not `supersede`: the first is an ordinary term of art
-    // in this ecosystem (a legacy config format, `legacy_id` on an imported
-    // row) and the second is this product's own vocabulary — an assignment is
-    // superseded when another session takes it over. Both would fire on
-    // correct prose on their first encounter, which is how a check gets
-    // ignored.
+    // `legacy` is noun-narrowed rather than dropped: "the legacy store" is a
+    // predecessor reference, while "legacy shim" and "legacy config format"
+    // are ordinary terms of art in this ecosystem. (It never matched
+    // `legacy_id` — the underscore removes the right word boundary.)
+    //
+    // `supersede` is deliberately absent and must stay absent: it is this
+    // product's own vocabulary. An assignment is superseded when another
+    // session takes it over, so the word is live in `schema.prisma`, in the
+    // baseline migration and throughout `SCHEMA.md` — a shape for it would
+    // fire on ten-plus lines of correct prose the day it was added.
     id: "supersession",
-    regex: /\breplaces\b|\breplacing\b|\breplacement for\b|\bin place of\b|\bpredecessors?\b/,
+    regex:
+      /\breplaces\b|\breplacing\b|\breplacement for\b|\bin place of\b|\bpredecessors?\b|\blegacy (system|systems|store|stores|app|application|tool|tools|scripts?|setup|board|cli|hooks?|implementation|client|surface|way|world)\b/,
     why: "frames a feature by what it supersedes — describe the capability on its own terms",
   },
   {
@@ -185,6 +197,9 @@ const WAIVER = /external-ref-ok(-next-line)?:(.*)$/i;
 /** A waiver has to actually say something. Roughly four words. */
 const MIN_REASON_LENGTH = 12;
 
+/** …and it has to be words, not padding. */
+const MIN_REASON_WORDS = 3;
+
 /**
  * Strip the comment tail a reason inevitably ends in, so
  * `<!-- external-ref-ok: because X -->` reads as "because X".
@@ -198,6 +213,66 @@ function cleanReason(raw) {
 }
 
 /**
+ * A length check alone lets `xxxxxxxxxxxx` through, which satisfies the
+ * letter of "say why" and none of its point. Require it to look like a
+ * phrase: several separate words, each with real letters in it. This can
+ * still be gamed by someone determined to — but it can only be gamed
+ * *visibly*, in a comment sitting in the diff, which is the whole design.
+ */
+function isRealReason(reason) {
+  if (reason.length < MIN_REASON_LENGTH) return false;
+  const words = reason.split(/[\s,;:()[\]]+/).filter((word) => /[A-Za-z]{2,}/.test(word));
+  return words.length >= MIN_REASON_WORDS;
+}
+
+/**
+ * Locate the waivers in a file, and reject the ones that say nothing.
+ *
+ * **A waiver inside a fenced code block is documentation, not a waiver.**
+ * The rules file has to show the syntax to teach it, and those examples
+ * would otherwise be live — inflating the waiver count and, worse, silently
+ * excusing any violating text pasted into that block later. Fenced content
+ * is still *scanned*; it just cannot waive.
+ */
+function waiversIn(lines) {
+  /** Line numbers (1-based) that carry a waiver of their own. */
+  const waiverLines = new Set();
+  /** Line numbers (1-based) that a `-next-line` waiver above them covers. */
+  const waivedNextLines = new Set();
+  /** Waivers that fail to give a reason — themselves a failure. */
+  const malformed = [];
+
+  let inFence = false;
+
+  lines.forEach((line, index) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return;
+    }
+    if (inFence) return;
+
+    const found = line.match(WAIVER);
+    if (!found) return;
+
+    const lineNumber = index + 1;
+    waiverLines.add(lineNumber);
+    if (found[1]) waivedNextLines.add(lineNumber + 1);
+
+    const reason = cleanReason(found[2] ?? "");
+    if (!isRealReason(reason)) {
+      malformed.push({
+        line: lineNumber,
+        column: (found.index ?? 0) + 1,
+        match: found[0].trim(),
+        text: line,
+      });
+    }
+  });
+
+  return { waiverLines, waivedNextLines, malformed };
+}
+
+/**
  * Find every violation in one file's text.
  *
  * Returns objects of `{ line, column, patternId, match, text, kind }` where
@@ -207,36 +282,24 @@ function cleanReason(raw) {
 export function findViolations(text) {
   const lines = text.split(/\r?\n/);
   const violations = [];
+  const { waiverLines, waivedNextLines, malformed } = waiversIn(lines);
 
-  /** Line numbers (1-based) that a waiver on the previous line covers. */
-  const waivedNextLines = new Set();
-  /** Line numbers (1-based) that carry a waiver of their own. */
-  const waiverLines = new Set();
+  for (const found of malformed) {
+    violations.push({
+      line: found.line,
+      column: found.column,
+      patternId: "waiver-without-a-reason",
+      match: found.match,
+      text: found.text,
+      kind: "empty-waiver",
+    });
+  }
 
-  lines.forEach((line, index) => {
-    const found = line.match(WAIVER);
-    if (!found) return;
-
-    const lineNumber = index + 1;
-    waiverLines.add(lineNumber);
-    if (found[1]) waivedNextLines.add(lineNumber + 1);
-
-    const reason = cleanReason(found[2] ?? "");
-    if (reason.length < MIN_REASON_LENGTH) {
-      violations.push({
-        line: lineNumber,
-        column: (found.index ?? 0) + 1,
-        patternId: "waiver-without-a-reason",
-        match: found[0].trim(),
-        text: line,
-        kind: "empty-waiver",
-      });
-    }
-  });
+  const isWaived = (lineNumber) => waiverLines.has(lineNumber) || waivedNextLines.has(lineNumber);
 
   lines.forEach((line, index) => {
     const lineNumber = index + 1;
-    if (waiverLines.has(lineNumber) || waivedNextLines.has(lineNumber)) return;
+    if (isWaived(lineNumber)) return;
 
     for (const pattern of PATTERNS) {
       const global = new RegExp(pattern.regex.source, "gi");
@@ -253,7 +316,82 @@ export function findViolations(text) {
     }
   });
 
+  // Second pass, over the same text with the newlines collapsed to spaces.
+  //
+  // Every doc here is hard-wrapped at ~100 columns, so a phrase like "the
+  // old system" lands astride a line break roughly as often as not — and a
+  // line-at-a-time matcher cannot see it. That is a blind spot the width of
+  // the corpus, not an edge case. Only *straddling* matches are reported
+  // here; anything contained in one line was already found above.
+  const offsets = [];
+  let cursor = 0;
+  for (const line of lines) {
+    offsets.push(cursor);
+    cursor += line.length + 1; // the separator that replaced the newline
+  }
+  const flattened = lines.join(" ");
+
+  /** Which 1-based line an offset into `flattened` belongs to. */
+  const lineAt = (offset) => {
+    let low = 0;
+    let high = offsets.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if ((offsets[mid] ?? 0) <= offset) low = mid;
+      else high = mid - 1;
+    }
+    return low + 1;
+  };
+
+  for (const pattern of PATTERNS) {
+    const global = new RegExp(pattern.regex.source, "gi");
+    for (const match of flattened.matchAll(global)) {
+      const start = match.index ?? 0;
+      const startLine = lineAt(start);
+      const endLine = lineAt(start + match[0].length - 1);
+      if (startLine === endLine) continue; // pass one already had it
+      if (isWaived(startLine) || isWaived(endLine)) continue;
+
+      violations.push({
+        line: startLine,
+        column: start - (offsets[startLine - 1] ?? 0) + 1,
+        patternId: pattern.id,
+        // Show it as one phrase; the line break is why it was invisible.
+        match: match[0],
+        text: `${lines[startLine - 1] ?? ""} ⏎ ${lines[endLine - 1] ?? ""}`.trim(),
+        kind: "external-ref",
+      });
+    }
+  }
+
   return violations.sort((a, b) => a.line - b.line || a.column - b.column);
+}
+
+/**
+ * How much this file's waivers are actually silencing.
+ *
+ * A waiver covers a whole line, and a line is unbounded — on a long one a
+ * single reason can quietly excuse several matches across several shapes.
+ * That is a fair design (the alternative is per-shape waivers, which is more
+ * ceremony than this is worth), but it should not be *invisible*. The run
+ * summary prints these counts, so waiver creep shows up in the CI log
+ * instead of only in a careful reading of the diff.
+ */
+export function summariseWaivers(text) {
+  const lines = text.split(/\r?\n/);
+  const { waiverLines, waivedNextLines } = waiversIn(lines);
+  let suppressed = 0;
+
+  for (const lineNumber of new Set([...waiverLines, ...waivedNextLines])) {
+    const line = lines[lineNumber - 1];
+    if (line === undefined) continue;
+    for (const pattern of PATTERNS) {
+      const global = new RegExp(pattern.regex.source, "gi");
+      suppressed += [...line.matchAll(global)].length;
+    }
+  }
+
+  return { waivers: waiverLines.size, suppressed };
 }
 
 /** Should this path be read at all? */
@@ -295,6 +433,8 @@ function main(argv) {
 
   const failures = [];
   let scanned = 0;
+  let waivers = 0;
+  let suppressed = 0;
 
   for (const path of paths) {
     let stats;
@@ -306,9 +446,13 @@ function main(argv) {
     if (!stats.isFile() || stats.size > MAX_BYTES) continue;
 
     scanned += 1;
-    for (const violation of findViolations(readFileSync(path, "utf8"))) {
+    const contents = readFileSync(path, "utf8");
+    for (const violation of findViolations(contents)) {
       failures.push(describe(violation, path));
     }
+    const waived = summariseWaivers(contents);
+    waivers += waived.waivers;
+    suppressed += waived.suppressed;
   }
 
   // Say what was *not* read as well as what was. Coverage can otherwise fall
@@ -316,9 +460,13 @@ function main(argv) {
   // same, which is the failure mode of every check that only reports success.
   const skipped = listed.length - scanned;
   const coverage = `Scanned ${scanned} of ${listed.length} files${skipped > 0 ? ` (${skipped} skipped: binary, generated, or self-exempt)` : ""}`;
+  const waiverNote =
+    waivers > 0
+      ? ` ${waivers} waiver${waivers === 1 ? "" : "s"} active, silencing ${suppressed} match${suppressed === 1 ? "" : "es"}.`
+      : "";
 
   if (failures.length === 0) {
-    console.log(`${coverage}: nothing refers to anything outside this repository.`);
+    console.log(`${coverage}: nothing refers to anything outside this repository.${waiverNote}`);
     return 0;
   }
 
@@ -331,8 +479,9 @@ function main(argv) {
       "almost always the better sentence anyway, and it keeps the decision's meaning.\n\n" +
       "If a match really is about this repository, waive that one line and say why:\n" +
       "    <!-- external-ref-ok: <reason> -->            (markdown, covers this line)\n" +
-      "    // external-ref-ok-next-line: <reason>        (code, covers the line below)\n" +
-      "A waiver with no reason fails too, so the explanation lands in the diff beside the text.",
+      "    // external-ref-ok-next-line: <reason>        (code, covers this line and the next)\n" +
+      "The reason must read as a phrase, not padding, so silencing the check always costs an\n" +
+      "explanation sitting in the diff beside the text it excuses.",
   );
   return 1;
 }

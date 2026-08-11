@@ -35,8 +35,10 @@ you start yourself. The heartbeat only adds "start something unattended."
 
 ### One recursive item type
 Project / task / subtask are **depths, not three types** — an item has a nullable `parent_id`, nests
-arbitrarily, no special handling. Rationale: agents already spawn sibling tasks that are really
-subtasks, because no subtask concept exists, which makes the board lie about work in flight.
+arbitrarily, no special handling. Rationale: an agent that discovers work inside work has to put it
+somewhere. Without a parent pointer it mints a sibling task and manages the pair itself, which makes
+any board overstate how much is independently in flight. A parent pointer fixes that at the root
+rather than in the renderer.
 
 ### Eleven states, five derived columns
 Columns are computed at read time, never stored, never transitioned. Adding `paused` forced five
