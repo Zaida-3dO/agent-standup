@@ -805,7 +805,9 @@ Same service, different consumers.
 
 ## Open, and deliberately so
 
-Three things, and they are the whole list: the CLI-vs-MCP split for anything beyond `wait_for_crew`;
-whether Codex needs the blocking fallback in practice; and the exact band numbers beyond the starting
-values in §17. Anything else settled in principle but not yet to the field level is a gap to be found
-by building, not a thread recorded somewhere else — `DECISIONS.md` §14 is the canonical open list.
+**`DECISIONS.md` §14 is the canonical open list; four of its five bear on this document** — the
+CLI-vs-MCP split for anything beyond `wait_for_crew`; whether Codex needs the blocking fallback in
+practice; the exact band numbers beyond the starting values in §17; and the retention default for
+`tool_calls`, also §17. The fifth is how far the front end goes beyond a single board view, which
+this document does not describe. Anything else settled in principle but not yet to the field level is
+a gap to be found by building, not a thread recorded somewhere else.
