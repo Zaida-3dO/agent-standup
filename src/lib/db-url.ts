@@ -57,6 +57,19 @@ export function withPoolDefaults(databaseUrl: string, defaults: PoolDefaults = {
     return databaseUrl;
   }
 
-  const separator = url.search ? "&" : "?";
-  return `${databaseUrl}${separator}${toAppend.join("&")}`;
+  // Derive the separator from the RAW string, not from `url.search`/
+  // `url.hash` — a DATABASE_URL ending in a bare `?` (no params after it)
+  // parses to `url.search === ""`, indistinguishable from "no `?` at all",
+  // so `url.search ? "&" : "?"` emitted a SECOND `?`; re-parsed, the first
+  // appended param's name became the literal string "?connection_limit",
+  // which nothing reads — Prisma accepted the malformed URL and silently
+  // fell back to its own per-host default instead. A `#fragment` is worse:
+  // appending after it puts both new params inside the fragment, where
+  // neither ever reaches Postgres. Insert before the fragment instead.
+  const hashIndex = databaseUrl.indexOf("#");
+  const base = hashIndex === -1 ? databaseUrl : databaseUrl.slice(0, hashIndex);
+  const hash = hashIndex === -1 ? "" : databaseUrl.slice(hashIndex);
+  const separator = base.endsWith("?") ? "" : base.includes("?") ? "&" : "?";
+
+  return `${base}${separator}${toAppend.join("&")}${hash}`;
 }

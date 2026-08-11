@@ -75,4 +75,38 @@ describe("withPoolDefaults", () => {
     const input = "postgres://user:pass@host:5432/db?connection_limit=5&pool_timeout=7";
     expect(withPoolDefaults(input)).toBe(input);
   });
+
+  it("does not double up the separator on a URL ending in a bare '?', which would otherwise drop connection_limit", () => {
+    // Regression guard: url.search on "…/db?" is "" — indistinguishable
+    // from no query string at all — so a separator derived from url.search
+    // would emit a second "?", and the first param's name would re-parse as
+    // the literal string "?connection_limit", which nothing reads.
+    const url = new URL(withPoolDefaults("postgres://user:pass@host:5432/db?"));
+    expect(url.searchParams.get("connection_limit")).toBe(String(DEFAULT_CONNECTION_LIMIT));
+    expect(url.searchParams.get("pool_timeout")).toBe(String(DEFAULT_POOL_TIMEOUT_SECONDS));
+  });
+
+  it("inserts both params before a URL fragment rather than inside it", () => {
+    const url = new URL(withPoolDefaults("postgres://user:pass@host:5432/db#frag"));
+    expect(url.hash).toBe("#frag");
+    expect(url.searchParams.get("connection_limit")).toBe(String(DEFAULT_CONNECTION_LIMIT));
+    expect(url.searchParams.get("pool_timeout")).toBe(String(DEFAULT_POOL_TIMEOUT_SECONDS));
+  });
+
+  it("inserts both params before a fragment even when a query string already exists", () => {
+    const url = new URL(withPoolDefaults("postgres://user:pass@host:5432/db?sslmode=require#frag"));
+    expect(url.hash).toBe("#frag");
+    expect(url.searchParams.get("sslmode")).toBe("require");
+    expect(url.searchParams.get("connection_limit")).toBe(String(DEFAULT_CONNECTION_LIMIT));
+    expect(url.searchParams.get("pool_timeout")).toBe(String(DEFAULT_POOL_TIMEOUT_SECONDS));
+  });
+
+  it("pins the default connection_limit and pool_timeout values", () => {
+    // A dedicated pin, not covered by the tests above (which read the
+    // constants back from the module rather than asserting a literal) —
+    // this is the one that actually fails if DEFAULT_CONNECTION_LIMIT or
+    // DEFAULT_POOL_TIMEOUT_SECONDS drifts, e.g. 10 -> 999.
+    expect(DEFAULT_CONNECTION_LIMIT).toBe(10);
+    expect(DEFAULT_POOL_TIMEOUT_SECONDS).toBe(10);
+  });
 });
