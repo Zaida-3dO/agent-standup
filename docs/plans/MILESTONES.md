@@ -60,7 +60,7 @@ into it.*
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **7** | Initial migration — the **whole schema** in one baseline | 3 | `done` |
-| **8** | DB client, connection pooling, migrate-on-boot wiring | 7 | `open` |
+| **8** | DB client, connection pooling, migrate-on-boot wiring | 7 | `done` |
 | **9** | Seed: `people` (two user profiles), `agents` name roster, `accounts` | 8 | |
 | **10** | Importer — items: a directory-per-task store → `items`, status remap, the source identifier into `custom_fields` | 8 | |
 | **11** | Importer — events: the source store's history log → `events`, actor mapping | 10 | |
