@@ -54,20 +54,21 @@ reaches `main` without passing checks.
 
 ## M2 — Data layer
 
-*Feature: the database exists and the old markdown history is in it.*
+*Feature: the database exists, and a backlog held in an external file-based store can be imported
+into it.*
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **7** | Initial migration — the **whole schema** in one baseline | 3 | `open` |
 | **8** | DB client, connection pooling, migrate-on-boot wiring | 7 | |
 | **9** | Seed: `people` (two user profiles), `agents` name roster, `accounts` | 8 | |
-| **10** | Importer — items: 186 task dirs → `items`, status remap, old ID into `custom_fields` | 8 | |
-| **11** | Importer — events: `history.jsonl` → `events`, actor mapping | 10 | |
+| **10** | Importer — items: a directory-per-task store → `items`, status remap, the source identifier into `custom_fields` | 8 | |
+| **11** | Importer — events: the source store's history log → `events`, actor mapping | 10 | |
 | **12** | Importer — assignments and artifacts: claims, roles, review files | 10 | |
 | **13** | Import verification: row counts, spot-check report, idempotent re-run | 11, 12 | |
 
-**Settled:** finished tasks import as a **collapsed summary**, one row each; in-flight and blocked
-tasks import in full. The original folders survive as read-only archive, so the detail can be
+**Settled:** finished items import as a **collapsed summary**, one row each; in-flight and blocked
+items import in full. The import reads its source and never writes to it, so the detail can be
 backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 
 ---
@@ -111,7 +112,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **27** | Web API: transition and complete, with rehearsal mode | 15, 21 | |
 | **28** | Web API: orientation — checkpoint, state, what changed, open loops, crew | 20, 23 | |
 | **29** | Web API: claim, release, heartbeat | 23 | |
-| **30** | MCP adapter skeleton — **stateless**, streamable-HTTP, the existing stateless TypeScript MCP as the model | 26 | |
+| **30** | MCP adapter skeleton — **stateless**, streamable-HTTP | 26 | |
 | **31** | MCP read tools: get item, list items, my work, orientation | 28, 30 | |
 | **32** | MCP write tools: create, update, transition, complete | 27, 30 | |
 | **33** | MCP session tools: claim, release, heartbeat, checkpoint, note | 29, 30 | |
@@ -121,26 +122,27 @@ race-proof on its own. See `DECISIONS.md` §13d.
 
 ---
 
-## M5 — The board, and the cutover
+## M5 — The board, and going live
 
-*Feature: you can see the work, and the orchestrator runs on this instead of markdown files.*
+*Feature: you can see the work, and orchestrators run on this for real.*
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **35** | Profile picker — choose a user profile, remembered in the browser, switchable from the top bar | 9, 26 | |
 | **36** | Board API: items grouped into columns, filters | 26 | |
-| **37** | Board UI: port of today's board, amber/red split in Waiting, needs-you badge | 35, 36 | |
+| **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
-| **39** | Shim so the old PowerShell CLI calls the new API, for one release | 26, 27 | |
-| **40** | Cutover: parallel-run rehearsal, switch, retire the markdown store | 13, 37, 39 | |
+| **39** | Compatibility shim — a legacy command-line surface routed at the API, kept for one release | 26, 27 | |
+| **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim | 13, 37, 39 | |
 
-**Milestone done when:** the old task folders are read-only history and the board is the live view.
+**Milestone done when:** the board is the live view, and every orchestrator reads and writes through
+the API rather than against anything it imported from.
 
 ---
 
 ## M6 — The hook
 
-*Feature: the rules reach into sessions, and seventeen hooks become one.*
+*Feature: the rules reach into sessions, through a single hook script.*
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
@@ -154,7 +156,8 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **48** | Plugin package — MCP config, hook config, and the command-line binary in one install | 30, 42 | |
 | **49** | `/setup-agent-standup` — registers the scheduled task, then **proves it works** with a live call | 48 | |
 
-**Milestone done when:** the 17 hook scripts are deleted except the two that must stay local.
+**Milestone done when:** one hook script covers every guarded event, and the only judgement left on
+the client is the handful of checks that cannot run anywhere else.
 
 ---
 
@@ -183,7 +186,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **55** | **Spike:** launching a session unattended on Windows, locked and logged in. Port of today's ping | — | |
+| **55** | **Spike:** launching a session unattended on Windows, locked and logged in | — | |
 | **56** | Accounts and usage readings, from the hook and from polling; handling stale readings | 9, 50 | |
 | **57** | Budget bands: four of them, boundaries that move with the clock, strictest window wins | 56 | |
 | **58** | The poll: a machine reports its sessions, usage, and anything waiting to be minted | 56 | |
@@ -195,7 +198,8 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **64** | Wait-for-crew and the crew digest; the command-line tool, run in the background | 24, 48, 54 | |
 | **65** | Nudge to background a command, using how long that command has taken before | 46, 54 | |
 
-**Milestone done when:** today's ping script is deleted and the scheduled task runs a ~30-line poller.
+**Milestone done when:** each machine runs nothing but a ~30-line poller on a scheduled task, and
+every decision it acts on was made server-side.
 
 ---
 
@@ -239,8 +243,8 @@ things get sequenced wrong more often than anything else:
 - **M7 before M8.** Telemetry has no consumer until M9, so it reads as deferrable. It isn't — the data
   can't be backfilled.
 - **#55 before the rest of M8.** It has no prerequisites and can start any time, but the whole
-  milestone assumes it works. It's a port rather than a gamble, since the current ping does this
-  today — confirm it early anyway.
+  milestone assumes it works. Unattended launch is well-trodden ground rather than a gamble —
+  confirm it early anyway.
 
 ## Decisions blocking specific PRs
 
@@ -249,11 +253,13 @@ things get sequenced wrong more often than anything else:
 | The band numbers, beyond the starting values | 57 |
 | Does Codex need the blocking wait-for-crew fallback? | 64 |
 | What else the command-line tool should do beyond wait-for-crew | 64 |
-| Front-end framework beyond porting the board | 73 |
+| Front-end framework beyond the first board view | 73 |
 
 ## Not scheduled, deliberately
 
-A per-machine limit on how many sessions run at once (the browser-pool app owns that) · retiring
-retiring the local validation gate (already its own piece of work) · a hard list of paths that can never auto-merge
-(dropped) · a real custom-field system (the escape-hatch field will do; keys that keep recurring get
-promoted to columns) · threaded discussion (cut, and only comes back designed properly with replies).
+A per-machine limit on how many sessions run at once (a resource concern, and whatever pools browser
+sessions is the natural owner of it) · a client-side validation gate before review (review is the
+gate; a second one earns its place only if it catches something review doesn't) · a hard list of
+paths that can never auto-merge (dropped) · a real custom-field system (the escape-hatch field will
+do; keys that keep recurring get promoted to columns) · threaded discussion (cut, and only comes
+back designed properly with replies).
