@@ -431,17 +431,46 @@ describe("check-external-refs — shapes that straddle a line break", () => {
     expect(lines[2]!.slice(violation!.column - 1)).toBe("the");
   });
 
+  it("catches a straddle whose continuation line is indented, and columns it correctly", () => {
+    // Wrapped list items, numbered points and indented paragraphs continue on
+    // a line starting with two or three spaces. Joining those raw puts three
+    // spaces where the rendered text has one, so the phrase never matches —
+    // and this corpus is mostly indented prose, so that was most of it.
+    //
+    // The column assertion is the other half and needs the indented line to be
+    // where the match *starts*: the trim has to be added back, or every column
+    // on an indented line points at the wrong character. A fixture whose match
+    // starts on an unindented line cannot tell the two apart.
+    const lines = [
+      "intro line",
+      "  a bullet that wraps the way the",
+      "  old per-client scripts could",
+    ];
+    const [violation] = scan(lines.join("\n"));
+
+    expect(violation).toMatchObject({ patternId: "the-old-thing", line: 2, column: 31 });
+    expect(lines[1]!.slice(violation!.column - 1)).toBe("the");
+  });
+
   it("does not weld a phrase across a blank line — that is a paragraph break, not a wrap", () => {
     // The flattening exists because a hard wrap is not a boundary in the
     // rendered text. A blank line is: it ends the paragraph, and the two
     // halves are never read as one sentence. Joining must not manufacture a
-    // match out of them — which is why the separator is left alone rather
-    // than collapsed to single spaces on the way in.
-    const text = ["a rule lives in one place, not in the", "", "old client-side wrapper"].join(
-      "\n",
-    );
+    // match out of them.
+    //
+    // This is the property pulling against the indentation fix above, which
+    // is why both are pinned: an empty line trims to the empty string and
+    // still contributes its own separator, so the halves end up two spaces
+    // apart and cannot form a phrase. Collapse the whitespace on the way in
+    // and this test is what goes red. A whitespace-only line is a blank line
+    // in the rendered text too, and gets the same treatment.
+    for (const blank of ["", "   "]) {
+      const text = ["a rule lives in one place, not in the", blank, "old client-side wrapper"].join(
+        "\n",
+      );
 
-    expect(scan(text)).toEqual([]);
+      expect(scan(text)).toEqual([]);
+    }
   });
 
   it("respects a waiver on either side of the break", () => {

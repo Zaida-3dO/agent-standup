@@ -503,13 +503,34 @@ export function findViolations(text) {
   // line-at-a-time matcher cannot see it. That is a blind spot the width of
   // the corpus, not an edge case. Only *straddling* matches are reported
   // here; anything contained in one line was already found above.
-  const offsets = [];
+  //
+  // **Each line is trimmed before joining, and that is load-bearing.** A
+  // wrapped list item, a numbered point or an indented paragraph continues
+  // on a line that starts with two or three spaces, and joining those raw
+  // puts three spaces where the rendered text has one — so `the old` never
+  // matches and every straddle inside indented prose is invisible. This
+  // corpus is mostly indented prose, so that is most of the corpus.
+  //
+  // Trimming does **not** weaken the paragraph-break rule, which is the
+  // property pulling the other way: a blank line trims to the empty string
+  // and still contributes its own separator, so the two halves are joined
+  // by two spaces and cannot form a phrase. A blank line remains a
+  // boundary; a wrap does not.
+  //
+  // What is dropped has to be added back when reporting, or every column on
+  // an indented line points at the wrong character — hence `indents`.
+  const offsets = []; // where each line's trimmed content starts in `flattened`
+  const indents = []; // how much leading whitespace was dropped from that line
+  const pieces = [];
   let cursor = 0;
   for (const line of lines) {
+    const piece = line.trim();
     offsets.push(cursor);
-    cursor += line.length + 1; // the separator that replaced the newline
+    indents.push(line.length - line.trimStart().length);
+    pieces.push(piece);
+    cursor += piece.length + 1; // the separator that replaced the newline
   }
-  const flattened = lines.join(" ");
+  const flattened = pieces.join(" ");
 
   /** Which 1-based line an offset into `flattened` belongs to. */
   const lineAt = (offset) => {
@@ -534,7 +555,9 @@ export function findViolations(text) {
 
       violations.push({
         line: startLine,
-        column: start - (offsets[startLine - 1] ?? 0) + 1,
+        // Back into the original line's coordinates: the offset within the
+        // trimmed piece, plus whatever indentation the trim removed.
+        column: start - (offsets[startLine - 1] ?? 0) + (indents[startLine - 1] ?? 0) + 1,
         patternId: pattern.id,
         // Show it as one phrase; the line break is why it was invisible.
         match: match[0],

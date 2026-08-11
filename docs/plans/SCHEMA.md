@@ -271,7 +271,7 @@ dumped whole.
 | `session_id` | `text` null | |
 | `assignment_id` | `uuid` null → `assignments.id` | Set on `checkpoint` and other per-agent events. |
 | `body` | `text` null | Prose for `checkpoint`, `note`, `nudge`, `escalation`. **A column, not payload** — slice reads on the hottest path would otherwise drag text nobody asked for, and it's cheap to exclude here. |
-| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; it arrives with the settings service, which is where the audit event is specified (§17.8) and written (§19's `PATCH /settings`). |
+| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; its payload is below, its posture is §17.8, and it is written by §19's `PATCH /settings`. |
 | `payload` | `jsonb` | Type-specific. **A discriminated union keyed on `type`** — see below. |
 
 *(No `state_at` here — it's derivable from the `state-change` rows in this same table, event volume is
@@ -299,6 +299,14 @@ turn `GET /events?since=` into a twelve-way union, killing the query the ledger 
 | `nudge` | `{kind}` — text in `body` |
 | `escalation` | `{to_person}` — reason in `body` |
 | `note` | *(none — text in `body`)* |
+| `setting-change` | `{key, from: {set, value?}, to: {set, value?}, batch_id}` — `item_id` is null |
+
+**`setting-change` carries `{set}` rather than a bare `from`/`to` because JSON `null` is a legal
+setting value** (§17.2): notifications off, retention forever. Without the discriminator, *"cleared
+the override"* and *"set it to nothing"* serialise identically, and those are different acts —
+`set: false` means "was at the registry default". `batch_id` is shared by every row one `PATCH
+/settings` writes (§19), so a save of six values reads back as one human act rather than six
+unrelated ones. Delivered by **#78**, with the posture that governs it in §17.8.
 
 **When to lift a field out of the payload into a real column: only when it's queried *across* event
 types, or when deriving it at query time is expensive at that table's volume.** Neither applies to
