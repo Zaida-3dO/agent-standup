@@ -25,13 +25,31 @@ Check the staged diff — not just the files you think you touched — for:
 | **PII** | Real people's names, emails, phone numbers, addresses, OS usernames, account handles |
 | **Local paths** | Anything absolute — `C:\Users\...`, `/home/...`, mapped drive letters, network share paths |
 | **Private infrastructure** | Internal hostnames, LAN IPs, private URLs and dashboards, port mappings that reveal a real deployment |
-| **Private project names** | Names of the owner's other repos, self-hosted services, agents, or automation tooling |
+| **Private project names** | Names of the owner's other repos, self-hosted services, or automation tooling |
 
 ```bash
 git diff --cached          # read it, all of it, before every commit
 ```
 
-Treat a finding as a **stop**, not a note to fix later.
+Treat a finding as a **stop**, not a note to fix later — with one narrow, named exception below. Do
+not read that exception as license to grade anything else in the table more gently; it applies to one
+thing only.
+
+**Exception: agent and crew codenames.** A crew member's working codename — an internal identity
+assigned to a worker instance, never a real person, host, credential, or product name — is **shorthand,
+not a secret**. It identifies no one and exposes nothing; there is nothing behind it to compromise, so
+it does not belong in the same severity as the rest of this table. Apply it consistently:
+
+- **In commit messages and pull-request bodies, a codename is fine.** Narrating who reviewed, found,
+  or fixed something by its working name is not a finding, and does not need rewording, amending, or
+  a rebase to remove.
+- **In tracked files, prefer role over name** — "the review found," "an earlier pass fixed," rather
+  than a codename — because a file is read long after the codename means anything to anyone. But a
+  surviving instance is a **note**, worth cleaning up the next time that file is already being
+  touched, not a blocker held on its own.
+- **Everything else in this table is unchanged.** Credentials, PII, paths, hosts, and every other
+  private project name are still an unqualified stop. This carve-out is about codenames specifically,
+  not a general softening of what counts as private.
 
 ### Writing rules that keep it clean
 
@@ -63,8 +81,17 @@ npm run check:external-refs     # every tracked file; runs in CI on every PR
 
 <!-- external-ref-ok-next-line: naming the shapes it matches is the documentation; they are grammar, not real values -->
 It matches **pattern shapes** — `today's`, `the old …`, `replaces`, `port of` — and deliberately
-**never a list of the real values**, per the rule above. It is a backstop, not a proof: reading the
-diff is still what catches the rest.
+**never a list of the real values**, per the rule above.
+
+**A green run means the recurring phrasings are absent. It does not mean the prose is clean** — and
+the difference is worth knowing before you trust a tick. No shape matches a private proper noun
+dropped into a sentence, or a sentence that only makes sense to someone who has seen a system this
+repository does not contain. That gap is a **cost decision rather than an impossibility**: an
+allowlist of the proper nouns this repository *is* allowed to name would decide it while naming
+nothing private, at the price of a list extended on every new dependency and heading, and of noise on
+legitimate additions. The script's header records the reasoning. So the check is a backstop that
+keeps the recurring phrasings from eating the attention **reading the diff** needs — not a substitute
+for doing it.
 
 **Recording a deliberate exception.** Some shapes have honest in-repo uses ("that commit is still in
 the history"). Waive one line at a time, with a reason, in a comment the language already supports:

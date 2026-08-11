@@ -88,6 +88,8 @@ describe("check-external-refs — what it catches", () => {
     ["the-old-thing", "Everything the old system blocked is now a field."],
     ["the-old-thing", "The original store kept one folder per task."],
     ["the-old-thing", "Nothing here depends on the prior state of anything."],
+    ["the-old-thing", "An old system had a directory for each of them."],
+    ["the-old-thing", "Old scripts on each machine cannot be kept in step."],
     ["the-existing-thing", "Model it on the existing MCP server."],
     ["the-existing-thing", "It reads from an existing setup on that machine."],
     ["the-current-thing", "The current script does this already."],
@@ -118,6 +120,24 @@ describe("check-external-refs — what it catches", () => {
 
   it("catches every occurrence on a line, not just the first", () => {
     expect(ids("the old board and the old ledger")).toEqual(["the-old-thing", "the-old-thing"]);
+  });
+
+  it("catches every determiner in front of `old`, not only `the`", () => {
+    // Regression. The shape was written `older?`, and `?` binds to a single
+    // character — so it meant "olde" plus an optional "r" and matched nothing
+    // anyone writes. `\bthe old\b` was carrying the whole shape on its own,
+    // which is why the hole was invisible: the commonest form was covered and
+    // every other determiner went straight through.
+    for (const text of [
+      "an old system",
+      "our old board",
+      "old scripts",
+      "my old setup",
+      "one old way of doing it",
+      "an older version",
+    ]) {
+      expect(ids(text)).toContain("the-old-thing");
+    }
   });
 
   it("matches regardless of case", () => {
@@ -165,6 +185,11 @@ describe("check-external-refs — what it must not flag", () => {
     "The eslintrc FlatCompat legacy shim chokes on modern flat configs.",
     "Keep supporting the legacy config format for one more major.",
     "The importer moves each row into `items`.",
+    // `old <noun>` is narrowed to a list of nouns that name a system. These
+    // two are real lines in this repository, about its own rows and its own
+    // sessions, and widening the list to catch them would flag correct prose.
+    "A woken old session is told who took over rather than failing blankly.",
+    "Older items keep pointing at the version they came from.",
   ];
 
   it.each(clean)("leaves this alone: %s", (text) => {
@@ -256,6 +281,51 @@ describe("check-external-refs — waivers", () => {
     ]);
   });
 
+  it("rejects a reason made only of words that explain nothing", () => {
+    // Each of these is three words and over twelve characters, so a length
+    // check and a word count both pass them — and each says exactly as much
+    // as an empty waiver.
+    //
+    // The last fixture is the one that pins DISTINCTNESS, and it is the only
+    // one that does: every other entry here is killed by the filler list on
+    // its own (`todo` is filler too), so dropping the `new Set` would leave
+    // them all still rejected and the suite still green. "schema schema
+    // schema" is one real word padded out to three — three words, twenty
+    // characters, one distinct non-filler word — so it is rejected today and
+    // accepted the moment distinctness goes.
+    for (const junk of [
+      "this is fine",
+      "TODO TODO TODO",
+      "lorem ipsum dolor",
+      "it is fine really",
+      "just ignore this one",
+      "waived for reasons",
+      "this is the one",
+      "schema schema schema",
+    ]) {
+      expect(ids(`the old thing <!-- external-ref-ok: ${junk} -->`)).toEqual([
+        "waiver-without-a-reason",
+      ]);
+    }
+  });
+
+  it("accepts the reasons a real waiver in this repository actually gives", () => {
+    // The other half of the test above, and the one that stops the filter
+    // being tightened until it rejects honest waivers. The first three are
+    // live waiver reasons in this repository. The fourth is not — it is the
+    // template from the rules file's fenced example, which the fence rule
+    // excludes from being a waiver at all — and it is here precisely because
+    // it is the string a contributor copies.
+    for (const real of [
+      "this rule has to quote the phrasing it forbids in order to state it",
+      "naming the shapes it matches is the documentation; they are grammar, not real values",
+      '"no longer" is about this repository\'s own migration history, not an earlier system',
+      "this one is about this repository",
+    ]) {
+      expect(scan(`the old thing <!-- external-ref-ok: ${real} -->`)).toEqual([]);
+    }
+  });
+
   it("a plain waiver covers its own line and no more", () => {
     // Worth pinning: the two forms differ, and getting this backwards would
     // silently widen every waiver in the repository.
@@ -340,8 +410,101 @@ describe("check-external-refs — shapes that straddle a line break", () => {
     expect(scan("cannot drift the way the old per-client scripts could")).toHaveLength(1);
   });
 
-  it("does not invent matches across an innocent wrap", () => {
-    expect(scan("the server refuses the\nchange and nothing else happens")).toEqual([]);
+  it("points at where the match starts, not at the start of the line", () => {
+    // The second pass finds matches in the whole file flattened to one
+    // string, then maps an offset in that string back to a line and column.
+    // That arithmetic depends on the join separator being exactly one
+    // character wide, and nothing else pins it: get it wrong and every
+    // straddling match is still *reported*, just at coordinates that send the
+    // reader to the wrong place. The clean lines above the straddle are
+    // load-bearing — the drift only accumulates once there are earlier lines
+    // to accumulate over, so a fixture starting on line 1 proves nothing.
+    const lines = [
+      "some clean text here",
+      "another clean line",
+      "cannot drift the way the",
+      "old per-client scripts could",
+    ];
+    const [violation] = scan(lines.join("\n"));
+
+    expect(violation).toMatchObject({ patternId: "the-old-thing", line: 3, column: 22 });
+    expect(lines[2]!.slice(violation!.column - 1)).toBe("the");
+  });
+
+  it("catches a straddle whose continuation line is indented, and columns it correctly", () => {
+    // Wrapped list items, numbered points and indented paragraphs continue on
+    // a line starting with two or three spaces. Joining those raw puts three
+    // spaces where the rendered text has one, so the phrase never matches —
+    // and this corpus is mostly indented prose, so that was most of it.
+    //
+    // The column assertion is the other half and needs the indented line to be
+    // where the match *starts*: the trim has to be added back, or every column
+    // on an indented line points at the wrong character. A fixture whose match
+    // starts on an unindented line cannot tell the two apart.
+    const lines = [
+      "intro line",
+      "  a bullet that wraps the way the",
+      "  old per-client scripts could",
+    ];
+    const [violation] = scan(lines.join("\n"));
+
+    expect(violation).toMatchObject({ patternId: "the-old-thing", line: 2, column: 31 });
+    expect(lines[1]!.slice(violation!.column - 1)).toBe("the");
+  });
+
+  it("still catches a straddle when the line before the break has trailing whitespace", () => {
+    // The trim is doing two jobs at once: dropping the *leading* whitespace
+    // the indentation test above pins, and dropping *trailing* whitespace
+    // left by an editor or a hard-wrap tool. Drop only the trailing half and
+    // this is the fixture that goes red: the line before the break ends
+    // "...in the" plus stray spaces, and a trim that keeps them puts more
+    // than one space at the join, which no pattern here can match across.
+    const lines = ["a rule now lives in the   ", "old system that enforces it"];
+    const [violation] = scan(lines.join("\n"));
+
+    expect(violation).toMatchObject({ patternId: "the-old-thing", line: 1 });
+    expect(violation!.text).toContain("⏎");
+  });
+
+  it("does not weld a phrase across a blank line — that is a paragraph break, not a wrap", () => {
+    // The flattening exists because a hard wrap is not a boundary in the
+    // rendered text. A blank line is: it ends the paragraph, and the two
+    // halves are never read as one sentence. Joining must not manufacture a
+    // match out of them.
+    //
+    // This is the property pulling against the indentation fix above, which
+    // is why both are pinned: an empty line trims to the empty string and
+    // still contributes its own separator, so the halves end up two spaces
+    // apart and cannot form a phrase. Collapse the whitespace on the way in
+    // and this test is what goes red. A whitespace-only line is a blank line
+    // in the rendered text too, and gets the same treatment.
+    for (const blank of ["", "   "]) {
+      const text = ["a rule lives in one place, not in the", blank, "old client-side wrapper"].join(
+        "\n",
+      );
+
+      expect(scan(text)).toEqual([]);
+    }
+  });
+
+  it("holds the blank-line guarantee only because every pattern uses a literal space", () => {
+    // The blank-line test above is not a general truth about the join — it
+    // holds *because* a blank line trims to "" and still contributes the
+    // join's own separator, landing the two halves exactly two spaces
+    // apart, and every shape in PATTERNS uses a literal single space
+    // between words (`\bthe old\b`, never `\bthe\s+old\b`). A two-space gap
+    // cannot satisfy a one-space literal, so the paragraph break holds.
+    //
+    // That is a property of the registry, not of the join, and nothing
+    // enforces it structurally: the day a pattern is written with `\s+` or
+    // `\s*`, a blank line starts welding unrelated paragraphs into false
+    // matches across the whole corpus, and the blank-line test above would
+    // not notice, because it only ever asserts through one shape. This is
+    // the trip-wire for that — a comment recording the constraint is a
+    // memory that can be missed, this fails loudly instead.
+    for (const pattern of PATTERNS as Array<{ id: string; regex: RegExp }>) {
+      expect(pattern.regex.source).not.toMatch(/\\s/);
+    }
   });
 
   it("respects a waiver on either side of the break", () => {

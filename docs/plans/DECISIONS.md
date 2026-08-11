@@ -443,9 +443,17 @@ there's something to learn from. The code is bounded; the open-ended part is dat
 
 ## 9. Merge authority
 
-Three values: pre-approved · needs-approval · **agent-judgement** (the default, configurable). Under
-judgement the agent decides at the gate and **must record a one-line rationale** — otherwise "the agent
-thought it was fine" is unauditable, and an agent that can't articulate why it's safe can't merge.
+Three values: pre-approved · needs-approval · agent-judgement. **The registry default is
+`needs-approval`, and an installation may override it to `agent-judgement`** (§13e). This entry used
+to read "agent-judgement, the default, configurable" while the configuration section recorded the
+product default as `needs-approval` — the two readings could coexist only because there was nowhere
+to record an installation's own answer separately from the one the product ships with, which is
+exactly what a registry default plus a stored override adds. Note that `items.default_merge_authority`
+is marked `sensitive`: overriding it removes the approval gate from **every item created afterwards**,
+so it is confirmed by typing the key and audited as its own kind of event.
+
+Under judgement the agent decides at the gate and **must record a one-line rationale** — otherwise "the
+agent thought it was fine" is unauditable, and an agent that can't articulate why it's safe can't merge.
 
 The user declined a forced never-auto-merge path list as scope creep; parked as a future request. The
 residual risk is that per-task marking depends on remembering at mint time.
@@ -490,6 +498,11 @@ and is then deleted. It exists so the switch doesn't have to happen everywhere s
 keeping it beyond that would make it a second surface to maintain and a second place for behaviour
 to diverge.
 
+**And the switch happens on a day when nothing is in flight.** Duplicate first, verify against the
+duplicate, then switch — never a wholesale swap with items still `executing`. Switching over is
+itself a piece of work, and a system in the middle of being switched cannot reliably track the item
+that represents switching it. See §13h.
+
 ---
 
 ## 12. Facts the design rests on
@@ -500,7 +513,7 @@ Each of these was checked rather than assumed, and each one a decision above lea
 |---|---|
 | MCP statefulness | Statefulness is a property of how a server is built, not of what it does: common frameworks default to stateful and return an `Mcp-Session-Id` on initialize whether or not anything needs it. A server that holds no per-session state — no context object, no progress, no resources, no prompts — can be flipped stateless in one line. Which is why the MCP adapter can be specified stateless up front rather than discovering it later. |
 | Tool-list cost | Every tool description is resident in the agent's context on every turn, used or not. A server exposing sixty-odd tools is therefore a permanent tax on every session that connects to it. |
-| Cache TTL | A **1-hour** prompt-cache TTL **drops to 5 minutes under usage overage** — i.e. exactly when running hot — and nothing signals the transition. Hence `WAIT_FOR_CREW_TIMEOUT = 240`, not 300. |
+| Cache TTL | A **1-hour** prompt-cache TTL **drops to 5 minutes under usage overage** — i.e. exactly when running hot — and nothing signals the transition. Hence `crew.wait_timeout_seconds = 240`, not 300. |
 | Cache pricing | Write **1.25×** base (5-min TTL) or **2×** (1-hour); read **0.1×**. Marginal cost of a wait: do nothing 1.25N · 1-hour TTL 0.85N · pinging 0.025N/min. **The 1-hour TTL is cheaper than doing nothing, always.** |
 | Unattended Windows launch | A scheduled task registered against the desktop user with **LogonType: Interactive** fires while the machine is locked and does **not** fire when nobody is logged on. RunLevel Limited is sufficient. |
 | Prose ledgers | A ledger kept as prose is read whole or not at all — a hundred thousand characters is tens of thousands of tokens resident in every session that loads it, whether or not one line of it is relevant. The same content as rows is a query with a `WHERE` clause. |
@@ -727,10 +740,390 @@ specified as a database constraint in the first place, not left to a check-then-
 layer. If PR #23 goes the application-code route, it is accepting that residual race, not closing it,
 and should say so rather than presenting a check as equivalent to a constraint.
 
+## 13e. Configuration lives in the database (2026-08-11)
+
+Most of what was environment configuration becomes a **setting**: a typed value in a `settings`
+table, edited at `/settings` or with `standup config`, over a registry of defaults declared in code.
+
+**The dividing line is not "does a human set it" — it is what must be known before the process can
+reach the database.** Anything needed to connect and listen has to be an environment variable,
+because it is read before there is anywhere else to read from. Everything read after that point is
+read from a database that is by definition already reachable, so keeping it in the environment buys
+nothing and costs validation, explanation, auditability and a redeploy per change.
+
+That leaves three tiers: **bootstrap** (`DATABASE_URL`, `HOSTNAME`, `PORT`, plus `SHADOW_DATABASE_URL`
+in development), **settings** (everything else), and **build constants**.
+
+**A registry, not a key-value bag.** Every setting is declared in code with its key, schema, default,
+label, help text, category and when a change takes effect; **the database stores overrides only**.
+Three things follow: a fresh database boots fully working with no configuration at all, because the
+defaults are code; the editing surfaces are *generated* from the registry, so explaining a field as
+it is set is a property of the declaration rather than a document somebody maintains; and a value has
+one type in one place, so a guard reading a setting gets a number.
+
+**This is consistent with the decision that capabilities are named values rather than a generic map,
+not a reversal of it.** That argument was for named-and-typed over an untyped map, and a registry is
+named-and-typed. What changes is where the value is *stored*, never whether it is typed.
+
+**`BUDGET_WINDOWS` is the case that proves it.** It is nested, per window, per band, and a boundary
+may be a constant, or a slope against elapsed time, or an ordered list of switch points. As a string
+in the environment that is an unvalidated blob with no editor and no explanation. As a typed value it
+gets all three — including the check that matters most and that no format-in-a-string could ever
+support: boundaries with different slopes cross somewhere, and the crossing point is where the system
+would be told to wind down harder than it stops. The validator samples the window and rejects the
+value naming the moment it happens.
+
+**Two things that were configuration are not.** Which usage adapter reads an account is already
+`accounts.vendor` — a global answer cannot describe two accounts, the same modelling error as putting
+usage on machines. Which paths minting scans belongs on `machines`, because the values are filesystem
+globs and machines have different filesystems. **Settings are otherwise global**; the one value that
+needed a scope got a column on the table that already represents that scope, which is cheaper than a
+resolution order at every read and a form that becomes a matrix.
+
+**The hook protocol version is compiled in**, and it is four constants rather than one: per variant
+(HTTP and command line, which evolve independently) and per role — the version this build speaks, and
+the oldest it still accepts. Making it configurable only allows setting it to a version the build
+does not implement. Two numbers rather than one because "you should update" and "I cannot talk
+to you" are different statements, and collapsing them makes every fix a breaking change.
+
+**The capability documents move, and their validation gets stronger rather than weaker.** They were
+checked once, at startup, so a missing document failed immediately rather than stranding an item at a
+gate days later. The intent to preserve is that a missing document surfaces *before* an item reaches
+the gate — and the check now happens in four places instead of one: refused on write when the value
+is provably wrong, marked unverified when the server cannot see that filesystem (it hands the path to
+an agent and never reads it, so its own view is not authoritative), re-checked on the sweep that
+already runs for liveness, and **named in the rejection at the gate**. The last is the real fix: the
+failure to avoid was never that a check ran late, it was that the message did not say what to do.
+**What this costs:** a misconfigured installation now starts. That is the right trade for a running
+service — a service that refuses to start is down for everyone, including whoever is trying to fix
+the configuration through the interface built for it.
+
+**Caching is explicit and small.** A one-row revision counter is bumped in the same transaction as
+every settings write, including a delete — a counter and not a maximum timestamp, because clearing an
+override deletes a row and a delete can move a maximum backwards. Long-lived processes re-read the
+counter every few seconds and rebuild the snapshot when it moves; short-lived ones build it once. So
+the guarantee is stated rather than assumed: **immediate in the process that made the change, within
+the revalidation interval everywhere else.** Each service call resolves one snapshot and threads it
+through, so two guards in one transaction can never disagree.
+
+**Every change writes an `events` row** — who, which key, from what, to what, with "was at the
+default" distinguished from "was set to nothing", because null is a legal value and those are
+different acts. No settings history table: the ledger is the history, and a second copy earns nothing.
+
+**And it is never a secret store.** Every value is served to the front end and printed by the command
+line; there is no redaction path and none will be added, because a value that cannot be displayed
+cannot be edited in the surface the table exists to feed. Credentials stay in the bootstrap tier.
+Enforced rather than remembered: the registry's own test fails the build on a credential-shaped key,
+matched by shape rather than by any list of real values.
+
+**Settings are global, with one exception shape used exactly twice.** A value varies per entity only
+through an override column on that entity's own table — `accounts.budget_windows` over
+`budget.windows`, because bands key off the account and a metered account has no window to have
+boundaries in; and `machines.source_globs` over `minting.source_globs`, because filesystem globs are a
+property of a machine. Two uses, both named, and a third needs an argument rather than a precedent.
+This is deliberately not a scope axis on every setting, which would cost a resolution order at every
+read and a form that becomes a matrix. **The override is validated by the same registry validator**, so
+the typed editor and the cross-boundary check apply identically — it changes the place, never the type.
+
+**And one class of value is not configuration at all.** Repositories, areas, machines, accounts and
+people are owned by the *installation*, not the build: there is no default repository, and a fresh
+database is not fully working with none of them. They are entities with their own surface
+(`SCHEMA.md` §23), and keeping them out of the registry is what stops it becoming the generic map
+this decision rejects twice.
+
+**Who may change a setting is a question this creates and has to answer out loud.** Identity here is a
+claim rather than a credential, and access control is deferred — a reasonable deferral, made
+elsewhere. But five settings do not tune the system, they switch off its enforcement: the default
+merge authority, the budget master switch, the notification document (which silences every escalation
+path), the liveness thresholds, and retention. **Moving them into the database makes them easier to
+change, which is the whole point and is also the risk**, and the previous arrangement — a variable on
+the deployment host, changed by redeploy — was inadvertently a control. So the registry marks the
+first four `sensitive`: rendered apart, confirmed by typing the key, audited distinctly. **Retention is
+its own class, `irreversible`**, because it deletes measured history that cannot be recreated: the
+wrong value there is not a state you can leave, it is an event that has already happened. It gets a
+floor in its own schema and a refusal in the job that does the deleting, and *irreversible plus
+unauthenticated* is the combination worth breaking first.
+
+**Capability verification is recorded, not asserted.** *"Checked"* is a fact about the machine that
+processed the write, which with a command-line adapter may be anyone's laptop — so the stored state is
+who checked it, when, and what they found, and *unverified* and *verified elsewhere* stay different
+answers. The periodic re-check is a hosted-tier loop; the local equivalent is `standup doctor`.
+
+**When code and data disagree, the registry wins and says so.** An override that fails its schema
+falls back to the default, loudly and visibly, rather than failing the boot or being silently
+coerced. An override for a key the registry does not declare is inert and listed, not deleted —
+deleting data on deploy loses the record of what someone configured. A rename is expressed by a
+deprecated entry naming its replacement plus a one-shot copy, never inferred. And a changed default
+is a behaviour change for every installation that never overrode it, which belongs in release notes.
+
+## 13f. The command line is a first-class adapter (2026-08-11)
+
+`standup` becomes a full adapter over the service layer, alongside the web API and MCP, rather than a
+single-purpose binary. It exists so the app can be used where a server cannot be hosted — and it is
+worth more as a forcing function than as a convenience.
+
+**The reason it can work is not that the app is stateless.** Statelessness is a property of the HTTP
+server and says nothing about whether a second way in enforces the same rules; a stateless server
+with a rule written inside a route handler is exactly as bypassable as a stateful one. It works
+because **all state is in Postgres and every rule lives in a callable service layer that every way in
+is a thin adapter over.**
+
+**Which names the failure mode exactly: the day a rule is implemented in a route handler instead of
+the service layer, the command line silently stops enforcing it and nothing says so.** So this ships
+with a conformance suite, and the suite is the load-bearing part.
+
+**The suite is a standing property, not a comparison, and the properties have to be structural or
+they are wishes.** Drivers sit behind one interface in a map typed from the **adapter registry** — the
+module the application mounts its adapters through, so the names are load-bearing at runtime and
+adding an adapter without adding its driver does not compile. Cases are written once per operation and
+run against every driver, so a case costs nothing per adapter. Four assertions: same acceptance, or
+the same rejection *code, rule identifier and offending fields*, from every driver — not message text,
+which a terminal and an API should word differently; an accepting and a rejecting case per operation;
+**every registered rule covered by an observed rejection**, computed from what the service returned
+rather than from what a case claimed, since a case can name one rule while the service refuses on
+another; and every exposed operation mapping to a registered service operation, with waivers bounded
+by construction — **no operation any rule can reject may be waived by an adapter that exposes any
+write.**
+
+**That the error envelope names the rule that refused is not test scaffolding.** A category code
+shared by several rules cannot say which one fired, so coverage could not be computed from it — and a
+rejection that names the rule is a better rejection for an agent as well, because it is an identifier
+to look up rather than a sentence to parse.
+
+**And one structural rule, because comparing behaviour cannot catch an adapter that satisfies every
+case and then adds a check of its own: only the service layer, the settings resolver, and migrations
+and seeds may import the database client — an allowlist, not a list of forbidden directories.** A
+denylist would leave out pages, layouts and server actions, which sit in the same bundle and also
+mutate; an allowlist needs no maintenance as directories are added and covers code nobody has written
+yet. **It ships before the adapters it constrains**, because it needs nothing to exist first and
+because every adapter written before it arrives was unconstrained. A negative control accompanies each
+assertion, plus a direct check that the rule registry is not empty — an assertion evaluated over an
+empty set passes forever, silently.
+
+The payoff is that the central claim becomes provable rather than intended: if a command line running
+against the same database cannot bypass a single rule, the rules genuinely are in the core.
+
+**Two transports, one set of commands.** With a server reachable, the command line calls the API —
+which keeps the database credential off every machine running an agent, and keeps the long-poll.
+Without one, it runs the service layer in-process. The commands themselves have one implementation
+and take a binding; only the two bindings could diverge, and the suite pins them.
+
+**Registration transport decides which hook a session gets.** Registering over the command line
+proves the command line is installed and the database is reachable; registering over MCP or HTTP
+proves a server is reachable. That is evidence, not preference, so the handshake reply is driven off
+it — the command-line hook or the HTTP hook, each with its own version to compare. With both
+available the registration transport wins, with an explicit override recorded as an override.
+Registration earns a `sessions` table: it is mutable, one row per session, read on the hook path, and
+a session registers before it holds anything. No foreign key to it from anywhere — a session that
+never registered still produces tool calls, which is what makes it a ghost.
+
+**In a no-server installation one class of version skew disappears.** There the command line *is* the
+app — hook, rules and migrations are one installed package — so the hook cannot be a different version
+from the rules it enforces, and the only remaining question is whether that package is current with
+the database's migration state. **This collapse does not generalise:** a hosted installation whose
+hook shells out to the command line has a package and an image versioned independently, and still
+needs the comparison.
+
+**A stale hook is advisory; an incompatible or absent one may not claim.** Refusing everything on a
+version bump would make every fix a breaking change, and the minimum-supported version is the escape
+valve for anything that genuinely must be enforced. Refusing the *claim* is the honest maximum: a
+hook can always be not installed, so what is enforceable server-side is that **no unguarded session
+holds work.** Such a session can still read, orient and update itself; it cannot take ownership of an
+item under rules it is unable to enforce. That is a rule that is enforced rather than one that asks.
+
+**Wait-for-crew is one command whose implementation follows the binding, never the caller** — a caller
+that must know its own transport is exactly what goes stale when an installation changes shape. Over
+HTTP it calls the endpoint that holds the request open; running against the database directly it polls
+the ledger. **Both bound themselves to the transaction-visibility horizon**, and that, rather than a
+cursor alone, is what makes them return the same events: a sequence identifier is allocated before
+commit, so ordering by it alone can step permanently over an event that commits late — worst under
+exactly the concurrent-writer load that makes a wait worth having. Timeout and poll interval are both
+settings, and the interval affects latency only, never which events come back. The cursor is required
+rather than defaulted, and every entry point hands one back, because an unspecified first call either
+misses everything before it or returns the whole ledger and those are opposite behaviours.
+
+**What a no-server installation does not have, stated rather than discovered:** the board and the
+rest of the front end, because those are pages served by a server — an acceptable trade. Everything
+else is substituted rather than lost: MCP moves to stdio, which is the standard local transport
+anyway; the long-poll becomes polling with identical semantics; and `/settings` becomes
+`standup config`, reading its labels, help and validation from the same registry the page renders
+from — which is why the configuration decision and this one belong together.
+
+**The heartbeat is deferred with intent.** The command line acting as a poller — asking for work and
+launching it on this machine — is worth having and is not first-release work. Named here so it is not
+rediscovered as a new idea, and nothing forecloses it: the poll is an ordinary operation, so it
+becomes another driver in the suite when it arrives.
+
+**Two costs stated honestly.** Process start-up is the real tax and it is the reason to run the
+server when you can — a hook that fires after every tool call cannot pay a process each time, which
+is why the cached pattern list matters (only matches consult the rules) and why telemetry spools
+locally and flushes in batches rather than opening a connection per call. And **"no dedicated server"
+does not mean "no dependencies"** — a Postgres is still required. `standup init` makes that an install
+step rather than a footnote: find or provision a database, migrate, seed, write local configuration,
+then prove it with a real round trip. Every other command preflights and stops with *"run
+`standup init` first"*, because a half-configured installation that behaves like a working one is the
+worst outcome available.
+
+**Removing the database dependency was evaluated and rejected for now.** SQLite is not one schema
+with a different driver but a second data model — enums become free text, giving up the property they
+were chosen for; money becomes a float; time-zone-aware timestamps are lost — and the no-server tier
+is precisely the multi-writer case that suits it worst, while a file can never be the cross-machine
+coordinator that half the design is about. An in-process WASM build of Postgres removes the
+second-data-model objection completely and fails on a different axis: single-connection, in a tier
+that is multi-process by definition. Genuinely useful for tests. **A downloaded platform binary is
+the candidate worth keeping open** — real Postgres, no container — at the cost of a first-run
+download, a platform matrix, and the command line taking on process supervision, which is the
+underestimated part. First release: an existing connection string, a detected local Postgres, or one
+provisioned through a container runtime.
+
+**Distribution.** The package publishes the binary on the same version tag that publishes the image,
+so both artefacts of a version are cut together. The packaged plugin form does not vendor a copy — it
+declares the package as a prerequisite and shims to it — because a second copy is a version that can
+drift, and each piece has to stay usable on its own.
+
+## 13g. Values that must be exact are a data problem, not a type problem (2026-08-11)
+
+`items.repo` and `items.area` were free text. `repo` is what the merge gate uses to decide which
+repository a change lands in — and the reason `repo` exists separately from `area` at all is that the
+gate needs **exact repository identity, which a loose category cannot give.** Free text is a loose
+category, so a stated requirement had no mechanism behind it. Both fields are also filtered on and
+both are in the notification-rule field whitelist, so three spellings of one name mean a filter that
+splits, a count that undercounts, and a rule that silently never fires — which is a person not being
+told.
+
+**The enum-versus-text test does not cover this case, because repositories are both things at once.**
+Make it an enum when you want the same value every time; keep it text when you cannot enumerate the
+values in advance. A repository name is unenumerable *and* must be canonical, so it falls through the
+gap between two rules that are each individually right.
+
+**An enum is disqualified rather than awkward.** Postgres cannot remove an enum value, so a typo is
+permanent; and an enum of one installation's repository names inside a generic product is precisely
+the vocabulary leak this schema removed from origin, blocked-on and actor references. **A seeded
+reference table with a foreign key is the one shape that gets both properties that were in tension:**
+nothing has to be enumerated in advance, and the same value is stored every time. Adding a repository
+becomes an insert — a data operation at runtime, not a migration and a deploy — and the per-repository
+facts the system already wants (default branch, the host that turns a commit into a link, whether
+visual review applies) finally have somewhere to live.
+
+**Two tables, not one taxonomy table, and with different create postures.** A polymorphic table would
+cost a discriminator on every join and give up exactly the per-repository columns that are the reason
+to build it. `repos` is **created deliberately**, because a wrong repository aims the merge gate at
+the wrong repository and creating one is rare. `areas` is **created on first use with normalisation**,
+because it is required on every item and blocking that is friction on the most common operation there
+is. The limit is stated rather than hidden: normalisation kills case and separator variants, not
+synonyms, and the answer to synonyms is the one already used elsewhere — surface near-duplicates for
+merging, and promote what recurs.
+
+**It lands before the importer**, because an import set contains aliases of one repository, the
+identifiers it carries are preserved verbatim by design, and importing them as free text bakes the
+fragmentation in permanently on day one. Retrofitting means a second data migration over rows just
+imported, and the alias mapping has to be decided either way. It is not on the binding chain, so it
+costs nothing to do first.
+
+**And it exposes a class the design had no home for.** Repositories, areas, machines, accounts and
+people are all owned by the **installation**, not by the build — there is no default repository, and a
+fresh database is not fully working with none of them. Configuration is the opposite on every axis:
+declared in code, defaulted, stored as overrides only. So they cannot live on the settings page, which
+by construction renders only what the registry declares. They get **their own surface** — `/admin`,
+one page per entity kind, with the same operations on the command line so an installation with no
+server is not locked out of the one class of data it cannot start without. Every value that is not a
+setting lands there, including the two per-entity overrides of settings that are.
+
+## 13h. Four things that were asked for, and what became of each (2026-08-11)
+
+A coverage pass over the material this plan was built from turned up four instructions that no
+decision here records. Three did not happen; the fourth was agreed and never written down. All four
+are recorded now, plainly, because **an instruction that quietly went missing is worse than one that
+was argued down** — the argued-down one leaves a reason behind, and this log is the only place a
+reason survives.
+
+### The build-or-buy survey lapsed. It was not skipped on purpose
+
+The first thing asked for was a survey of what already exists, with a stated priority order: **use a
+product that already does this, before building one, before adapting something adjacent.** What
+exists instead is a light pass that describes itself as not the full research pass, and the build is
+now three milestones in.
+
+**Verdict: it lapsed.** Recording it as a deliberate skip would be the more comfortable sentence and
+it would not be true — no candidate was named, compared or rejected on the record, so there is
+nothing to point at as the reason it was right. *"We looked and there was nothing"* when nobody
+looked is exactly the class of claim this log exists to make impossible.
+
+**What follows.** Re-running it now as a build-or-buy gate would be theatre: the schema is baselined
+and the rules are specified, and that is not work a decision can recover. But the question the survey
+was for has not gone away, and it narrows to one that is still cheap to answer — **is there a product
+that already enforces workflow rules server-side against agent sessions, with a client-side hook that
+can refuse a tool call?** That is the unusual requirement; general task trackers do not have it. If
+something does it, the right response is to stop rather than to finish. **The narrowed question is
+owed before M8**, which is where the scope grows a scheduler, a budget model and a model picker —
+asking it there costs five more milestones than asking it now.
+
+### The prior-art data model was never read either
+
+The instruction was two-part and specific: **read an existing product's data model before its code,
+and do not fork it.** The don't-fork half is satisfied — nothing here is a fork — but it is satisfied
+**by default**, because forking was never on the table. That is not the same as the instruction being
+followed, and the half carrying the value is the half that was skipped: a data model that has
+survived contact with real use is cheap evidence about which fields turn out to be needed, and it is
+evidence that is only worth having *before* the first migration.
+
+**Verdict: not done.** One thing about the timing decides what a late read is worth: the schema is a
+baseline, and every change to it is additive. So prior art read from here can still argue for a
+column; it cannot argue for a shape. That is the cost of the omission — bounded, and not zero.
+
+### The differential test does not apply, and that is a decision rather than an omission
+
+The intent behind it was sound: **a specification written as observed behaviour is worth more than one
+written as prose**, because it cannot drift from what it describes — so run the same inputs through
+two implementations, demand identical outcomes, and the specification tests itself. Nothing here
+schedules such a test.
+
+**Verdict: it does not apply, and that is deliberate.** A differential test is only meaningful when
+the two sides are meant to agree, and the two here are meant to disagree: the transition rule is
+**all-to-all transitions with required-field guards, chosen over a fixed table of legal moves** — a
+different design, deliberately, and the one this repository builds. A differential suite between two
+designs that were chosen to differ fails on precisely the cases the choice exists for, and passes
+only where nothing differs, which is where it has nothing to say.
+
+**But the protection it was buying is real and has to be bought some other way**, because the reason
+it mattered was never the comparison — it was that edge cases are learned expensively and lost
+silently. Three things carry that instead, and naming them is the point of recording this at all:
+
+1. **Every guard ships with its rejections tested**, which is already a tenet of this repository and
+   is the direct substitute: a rule that refuses the right things is what a differential test was
+   checking for indirectly.
+2. **Import verification (#13)** is the differential test that *does* still make sense — the same
+   inputs, and the resulting item states compared row by row. It is a comparison of data, which is
+   the part that was never meant to change.
+3. **Anything known to be wanted is written down as a guard test, not assumed to survive.** A rule
+   that lives only in somebody's head is a rule that has already been lost; the moment a design is
+   chosen over an alternative is exactly the moment to write down what the choice must not cost.
+
+No new row: this converts into an obligation on #15–#19, which exist.
+
+### Going live happens on a day when nothing is in flight
+
+The switch to this system as the source of truth has a precondition that was agreed and then written
+down nowhere: **duplicate first, verify against the duplicate, and make the switch when no work is
+executing.** Never a wholesale swap with items in flight.
+
+The risk it answers is not hypothetical. Switching over is itself a piece of work, and a system in
+the middle of being switched cannot reliably track the item that represents switching it — an item
+left `executing` across the boundary has two homes, and one of them is about to stop being read. It
+costs a sentence, and it belongs in two places rather than one: **§11**, which decides the shape of
+the import, and **#40**, the row that performs it. Both now carry it.
+
 ## 14. Still open
 
 1. **Exact band numbers** beyond the starting values above.
-2. **Whether Codex needs the blocking fallback in practice**, or whether the CLI covers it.
-3. **CLI surface beyond `wait-for-crew`** — deliberately minimal.
-4. **Front end** — v1 is a single board view; Kanban, project and progress views are backlog, same repo.
-5. **Retention defaults** for `tool_calls`.
+2. **Whether Codex needs the blocking fallback in practice**, or whether the command line covers it.
+3. **Front end** — v1 is a single board view; Kanban, project and progress views are backlog, same repo.
+4. **Retention defaults** for `tool_calls`.
+5. **Whether a downloaded Postgres binary or an in-process build should replace the container-runtime
+   path** for installations with no database of their own. Decided by one measurement, stated in
+   §13f: does a single-backend Postgres sustain the write rate of a no-server installation?
+6. **Whether near-duplicate areas should be merged automatically above a similarity threshold**, or
+   only ever surfaced for a person to merge — see §13g.
+
+*The command-line surface beyond wait-for-crew was on this list and is answered by §13f: it is a full
+adapter over the service layer, and its shape is specified in `SCHEMA.md` §20.*
