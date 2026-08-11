@@ -36,7 +36,7 @@ function fakeLog() {
 }
 
 describe("waitForDatabase — unreachable database (no Postgres needed)", () => {
-  it("gives up loudly against a real closed port, having actually retried", async () => {
+  it("gives up loudly against a real closed port, having actually retried more than once", async () => {
     const log = fakeLog();
     const start = Date.now();
 
@@ -47,20 +47,37 @@ describe("waitForDatabase — unreachable database (no Postgres needed)", () => 
     // fast test, but it has to be long enough to actually contain more
     // than one attempt — otherwise it'd only prove the timeout fires, not
     // that the retry loop itself runs.
-    await expect(
-      waitForDatabase({
+    let thrown: unknown;
+    try {
+      await waitForDatabase({
         databaseUrl: "postgresql://nobody:nobody@127.0.0.1:1/nowhere",
         timeoutMs: 6000,
         intervalMs: 250,
         log,
-      }),
-    ).rejects.toBeInstanceOf(DatabaseUnreachableError);
+      });
+    } catch (err) {
+      thrown = err;
+    }
 
+    expect(thrown).toBeInstanceOf(DatabaseUnreachableError);
     const elapsed = Date.now() - start;
-    expect(elapsed).toBeGreaterThanOrEqual(1500);
     // Didn't hang indefinitely past the timeout either.
     expect(elapsed).toBeLessThan(15_000);
-    expect(log.calls.some((line) => line.startsWith("warn:"))).toBe(true);
+
+    // The assertion that names the actual behaviour: the attempt count, not
+    // the clock. A single attempt against this closed port already costs
+    // enough real time (~2s) to satisfy a loose elapsed-time bound even with
+    // the retry loop deleted entirely — an elapsed-time bound alone cannot
+    // tell "retried" from "took one slow attempt".
+    const message = (thrown as InstanceType<typeof DatabaseUnreachableError>).message;
+    const attemptMatch = message.match(/across (\d+) attempt/);
+    expect(attemptMatch).not.toBeNull();
+    expect(Number(attemptMatch![1])).toBeGreaterThanOrEqual(2);
+
+    expect(
+      log.calls.filter((line) => line.startsWith("warn:") && line.includes("retrying")).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(log.calls.some((line) => line.includes("giving up"))).toBe(true);
   }, 20_000);
 
   it("rejects immediately, with no retries, when DATABASE_URL is unset", async () => {
@@ -68,6 +85,27 @@ describe("waitForDatabase — unreachable database (no Postgres needed)", () => 
       waitForDatabase({ databaseUrl: undefined, timeoutMs: 5000 }),
     ).rejects.toBeInstanceOf(DatabaseUnreachableError);
   });
+
+  it("the isFinite guard breaks the loop on a non-finite timeoutMs, rather than retrying forever", async () => {
+    // A non-finite timeoutMs cannot reach here through entrypoint.mjs —
+    // scripts/lib/boot-env.mjs validates the multiplied millisecond value
+    // before this function ever sees it — but waitForDatabase is also
+    // called directly (by tests, and by any future caller), which is what
+    // the belt-and-braces `!Number.isFinite(remaining)` guard defends.
+    // `deadline = Date.now() + Infinity` is `Infinity`, so `remaining` is
+    // `Infinity` from the first failed attempt onward; without the guard
+    // this genuinely never resolves, so the test's own timeout is itself
+    // part of the assertion, not just a safety net.
+    const log = fakeLog();
+    await expect(
+      waitForDatabase({
+        databaseUrl: "postgresql://nobody:nobody@127.0.0.1:1/nowhere",
+        timeoutMs: Infinity,
+        intervalMs: 250,
+        log,
+      }),
+    ).rejects.toBeInstanceOf(DatabaseUnreachableError);
+  }, 8_000);
 });
 
 describeIfDb("waitForDatabase / runMigrations — against a real Postgres", () => {
