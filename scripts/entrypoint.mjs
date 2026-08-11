@@ -15,6 +15,12 @@
 // a stub process instead of needing a full production build.
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import {
+  DEFAULT_DB_WAIT_INTERVAL_SECONDS,
+  DEFAULT_DB_WAIT_TIMEOUT_SECONDS,
+  InvalidDurationEnvError,
+  parseDurationSecondsMs,
+} from "./lib/boot-env.mjs";
 import { DatabaseUnreachableError, waitForDatabase } from "./lib/wait-for-db.mjs";
 import { runMigrations } from "./lib/run-migrations.mjs";
 
@@ -59,8 +65,27 @@ export async function main({
   spawnServer = defaultSpawnServer,
 } = {}) {
   const databaseUrl = env.DATABASE_URL;
-  const timeoutMs = Number(env.DB_WAIT_TIMEOUT_SECONDS ?? 60) * 1000;
-  const intervalMs = Number(env.DB_WAIT_INTERVAL_SECONDS ?? 2) * 1000;
+
+  let timeoutMs;
+  let intervalMs;
+  try {
+    timeoutMs = parseDurationSecondsMs(
+      env,
+      "DB_WAIT_TIMEOUT_SECONDS",
+      DEFAULT_DB_WAIT_TIMEOUT_SECONDS,
+    );
+    intervalMs = parseDurationSecondsMs(
+      env,
+      "DB_WAIT_INTERVAL_SECONDS",
+      DEFAULT_DB_WAIT_INTERVAL_SECONDS,
+    );
+  } catch (err) {
+    if (err instanceof InvalidDurationEnvError) {
+      log.error(`FATAL: ${err.message} — refusing to start the application.`);
+      return 1;
+    }
+    throw err;
+  }
 
   try {
     await waitForDatabase({ databaseUrl, timeoutMs, intervalMs, log });
@@ -76,12 +101,22 @@ export async function main({
     return 1;
   }
 
-  // PRISMA_SCHEMA_PATH is never set in production — the committed
-  // prisma/schema.prisma is always used. It exists so tests can point this
-  // exact wiring at a throwaway, deliberately-broken migration, to prove the
-  // migration-failure path is handled correctly without touching this
-  // repo's own migration history.
-  const migration = await runMigrations({ env, log, schemaPath: env.PRISMA_SCHEMA_PATH });
+  // PRISMA_SCHEMA_PATH exists so tests can point this exact wiring at a
+  // throwaway, deliberately-broken migration, to prove the migration-failure
+  // path is handled correctly without touching this repo's own migration
+  // history — it's a test seam, and it must not be a live production
+  // control surface. The image sets NODE_ENV=production (see Dockerfile),
+  // so gate on that rather than trusting "nobody sets it in production":
+  // honouring it there would let anything able to set a container env var
+  // redirect which migrations get applied to the real database at boot.
+  const isProduction = env.NODE_ENV === "production";
+  if (env.PRISMA_SCHEMA_PATH && isProduction) {
+    log.warn(
+      "PRISMA_SCHEMA_PATH is set but ignored (NODE_ENV=production) — the committed prisma/schema.prisma is always used here.",
+    );
+  }
+  const schemaPath = isProduction ? undefined : env.PRISMA_SCHEMA_PATH;
+  const migration = await runMigrations({ env, log, schemaPath });
   if (!migration.ok) {
     return migration.exitCode || 1;
   }
@@ -91,5 +126,18 @@ export async function main({
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().then((code) => process.exit(code));
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      // Anything that escapes main() itself unhandled — e.g. run-migrations.mjs's
+      // spawn rejecting on EACCES/ENOENT before it can log its own FATAL —
+      // would otherwise surface as a raw UnhandledPromiseRejection stack
+      // trace instead of the same loud, unambiguous framing every other
+      // boot failure gets.
+      console.error(
+        "FATAL: unexpected error during boot — refusing to start the application.",
+        err,
+      );
+      process.exit(1);
+    });
 }

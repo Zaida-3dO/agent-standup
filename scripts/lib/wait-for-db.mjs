@@ -8,6 +8,7 @@
 // immediately crash the app container; it waits, then gives up loudly if the
 // database genuinely never comes up.
 import { PrismaClient } from "@prisma/client";
+import { DEFAULT_DB_WAIT_INTERVAL_SECONDS, DEFAULT_DB_WAIT_TIMEOUT_SECONDS } from "./boot-env.mjs";
 
 export class DatabaseUnreachableError extends Error {
   constructor(message, options) {
@@ -45,8 +46,8 @@ function summarize(value) {
  */
 export async function waitForDatabase({
   databaseUrl,
-  timeoutMs = 60_000,
-  intervalMs = 2_000,
+  timeoutMs = DEFAULT_DB_WAIT_TIMEOUT_SECONDS * 1000,
+  intervalMs = DEFAULT_DB_WAIT_INTERVAL_SECONDS * 1000,
   log = console,
 } = {}) {
   if (!databaseUrl) {
@@ -70,7 +71,18 @@ export async function waitForDatabase({
       await probe.$disconnect().catch(() => {});
 
       const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
+      // Belt-and-braces: `timeoutMs`/`intervalMs` are validated before they
+      // ever reach here when called through entrypoint.mjs (see
+      // lib/boot-env.mjs), but this function is also called directly (by
+      // tests, and by any future caller) — a non-finite `remaining` would
+      // otherwise never satisfy `<= 0` and this loop would never exit.
+      if (!Number.isFinite(remaining) || remaining <= 0) {
+        // The final attempt's error is the most likely to be diagnostic
+        // (closest to whatever's actually wrong), so log it before giving
+        // up rather than only surfacing it via `cause` on the thrown error.
+        log.warn(`Database still not ready (attempt ${attempt}: ${summarize(err)}); giving up.`);
+        break;
+      }
 
       log.warn(`Database not ready yet (attempt ${attempt}: ${summarize(err)}); retrying...`);
       await sleep(Math.min(intervalMs, remaining));
@@ -78,7 +90,7 @@ export async function waitForDatabase({
   }
 
   throw new DatabaseUnreachableError(
-    `Database still unreachable after ${timeoutMs}ms across ${attempt} attempt(s).`,
+    `Database still unreachable after ${timeoutMs}ms across ${attempt} attempt(s): ${summarize(lastError)}`,
     { cause: lastError },
   );
 }

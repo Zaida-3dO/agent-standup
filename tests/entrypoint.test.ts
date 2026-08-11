@@ -102,6 +102,59 @@ describe("scripts/entrypoint.mjs — database unreachable (no Postgres needed)",
   });
 });
 
+describe("scripts/entrypoint.mjs — invalid DB_WAIT_*_SECONDS (no Postgres needed)", () => {
+  // Review round 1 found this hangs the real process forever (SIGKILL
+  // required, no FATAL) rather than refusing to boot. These prove the fix
+  // against the real entrypoint, not just the parser in isolation (see
+  // tests/boot-env.test.ts) — a short waitForExit budget is itself part of
+  // the assertion: it proves the process actually exits promptly rather than
+  // running until some other timeout coincidentally fires.
+  it.each([
+    ["a duration typo with a unit suffix", "60s"],
+    ["another duration typo with a unit suffix", "2m"],
+    ["empty string — what an unset `${VAR:-}` in Compose yields", ""],
+  ])(
+    "refuses to serve and exits promptly when DB_WAIT_TIMEOUT_SECONDS is %s (%j)",
+    async (_label, badValue) => {
+      const { child, getOutput } = runEntrypoint(
+        {
+          DATABASE_URL: "postgresql://nobody:nobody@127.0.0.1:1/nowhere",
+          DB_WAIT_TIMEOUT_SECONDS: badValue,
+        },
+        STUB_SERVER_ARGS,
+      );
+
+      // Previously this specific input (a duration typo) never exited at all;
+      // the real bug was verified by SIGKILLing at 20s. A generous-but-bounded
+      // budget here is the regression check: a config-validation failure must
+      // return well before any DB-wait timeout could plausibly explain it.
+      const code = await waitForExit(child, 8_000);
+
+      expect(code).not.toBe(0);
+      expect(getOutput()).toMatch(/FATAL/);
+      expect(getOutput()).toContain("DB_WAIT_TIMEOUT_SECONDS");
+      expect(getOutput()).not.toContain("APP_STARTED");
+    },
+  );
+
+  it("refuses to serve and exits promptly when DB_WAIT_INTERVAL_SECONDS is invalid", async () => {
+    const { child, getOutput } = runEntrypoint(
+      {
+        DATABASE_URL: "postgresql://nobody:nobody@127.0.0.1:1/nowhere",
+        DB_WAIT_INTERVAL_SECONDS: "not-a-number",
+      },
+      STUB_SERVER_ARGS,
+    );
+
+    const code = await waitForExit(child, 8_000);
+
+    expect(code).not.toBe(0);
+    expect(getOutput()).toMatch(/FATAL/);
+    expect(getOutput()).toContain("DB_WAIT_INTERVAL_SECONDS");
+    expect(getOutput()).not.toContain("APP_STARTED");
+  });
+});
+
 describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Postgres", () => {
   it("refuses to serve, exits nonzero, and logs FATAL when migrations fail", async () => {
     const dbName = scratchDatabaseName("entrypoint_fail");
@@ -109,7 +162,17 @@ describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Pos
     const { schemaPath, cleanup } = createBrokenMigrationSchema();
     try {
       const { child, getOutput } = runEntrypoint(
-        { DATABASE_URL: scratchUrl, DB_WAIT_TIMEOUT_SECONDS: "5", PRISMA_SCHEMA_PATH: schemaPath },
+        {
+          DATABASE_URL: scratchUrl,
+          DB_WAIT_TIMEOUT_SECONDS: "5",
+          PRISMA_SCHEMA_PATH: schemaPath,
+          // Explicit rather than relying on the ambient NODE_ENV a test
+          // runner happens to have: PRISMA_SCHEMA_PATH is a test-only seam,
+          // gated off whenever NODE_ENV=production (see the dedicated test
+          // below), so this test says outright that it's exercising the
+          // non-production path.
+          NODE_ENV: "test",
+        },
         STUB_SERVER_ARGS,
       );
 
@@ -118,6 +181,41 @@ describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Pos
       expect(code).not.toBe(0);
       expect(getOutput()).toMatch(/FATAL/);
       expect(getOutput()).not.toContain("APP_STARTED");
+    } finally {
+      cleanup();
+      dropScratchDatabase(testDatabaseUrl!, dbName);
+    }
+  }, 25_000);
+
+  it("ignores PRISMA_SCHEMA_PATH when NODE_ENV=production, applying the real schema instead", async () => {
+    // The production image sets NODE_ENV=production (see Dockerfile). This
+    // proves the gate actually holds against the real entrypoint: even
+    // pointed at a schema whose only migration deliberately fails, a
+    // production-mode boot applies this repo's real (passing) migrations
+    // and starts — nothing can redirect what gets applied to a real
+    // deployment's database via this env var.
+    const dbName = scratchDatabaseName("entrypoint_prod_schema_gate");
+    const scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+    const { schemaPath, cleanup } = createBrokenMigrationSchema();
+    try {
+      const { child, getOutput } = runEntrypoint(
+        {
+          DATABASE_URL: scratchUrl,
+          DB_WAIT_TIMEOUT_SECONDS: "10",
+          PRISMA_SCHEMA_PATH: schemaPath,
+          NODE_ENV: "production",
+        },
+        STUB_SERVER_ARGS,
+      );
+
+      await waitForOutput(getOutput, "APP_STARTED", 20_000);
+
+      expect(getOutput()).toContain("PRISMA_SCHEMA_PATH is set but ignored");
+      expect(getOutput()).toContain("Migrations applied successfully");
+      expect(getOutput()).not.toMatch(/FATAL/);
+
+      child.kill();
+      await waitForExit(child, 5000);
     } finally {
       cleanup();
       dropScratchDatabase(testDatabaseUrl!, dbName);
