@@ -70,24 +70,39 @@ export const PATTERNS = [
     why: "points at a history this repository does not have — give the reason, not the chronology",
   },
   {
+    // `used to` is deliberately restricted to the *change* sense. Bare
+    // `used to` is far more often the ordinary purpose sense ("`kind` is
+    // used to derive the column"), and a check that fires on correct prose
+    // gets waived, then ignored, then deleted.
     id: "temporal-changed",
-    regex: /\bused to\b|\bno longer\b|\bnowadays\b|\bthese days\b/,
+    regex:
+      /\bused to (be|live|lives?|work|sit|run|have|has|do|exist|happen|handle|hold|mean)\b|\bno longer\b|\bnowadays\b|\bthese days\b|\buntil now\b|\bcarried over from\b|\bmov(e|ed|ing) (off|away from)\b/,
     why: "contrasts against an earlier state — say what is true now and stop there",
   },
   {
+    // Not `legacy`, and not `supersede`: the first is an ordinary term of art
+    // in this ecosystem (a legacy config format, `legacy_id` on an imported
+    // row) and the second is this product's own vocabulary — an assignment is
+    // superseded when another session takes it over. Both would fire on
+    // correct prose on their first encounter, which is how a check gets
+    // ignored.
     id: "supersession",
-    regex: /\breplaces\b|\breplacing\b|\breplacement for\b|\bin place of\b/,
+    regex: /\breplaces\b|\breplacing\b|\breplacement for\b|\bin place of\b|\bpredecessors?\b/,
     why: "frames a feature by what it supersedes — describe the capability on its own terms",
   },
   {
+    // Narrowed to the "carried over" sense: `a port of X`, `ported from`.
+    // Left broad it fires on network ports, which this repository talks
+    // about constantly.
     id: "ported",
-    regex: /\bport of\b|\bported from\b|\bporting\b/,
+    regex:
+      /\ba port of\b|\bported from\b|\bporting\b|\bport of (today|the old|the existing|the current|an? existing)\b/,
     why: "describes work as carried over from elsewhere — describe what it delivers instead",
   },
   {
     id: "the-old-thing",
     regex:
-      /\bthe old\b|\bthe original\b|\bolder? (system|app|application|tool|script|scripts|setup|store|board|cli|version|one|way|world)\b/,
+      /\bthe old\b|\bprior (state|system|app|application|version|setup|implementation|tool|world)\b|\bthe (original|earlier) (system|app|application|tool|script|scripts|setup|store|board|cli|version|implementation|way|world)\b|\bolder? (system|app|application|tool|script|scripts|setup|store|board|cli|version|one|way|world)\b/,
     why: "names a predecessor — rewrite the sentence around the principle, not the thing it improves on",
   },
   {
@@ -113,15 +128,19 @@ export const PATTERNS = [
     why: "migration-off-something framing — name the capability (going live, importing) rather than the transition",
   },
   {
+    // Not `environment` — "fill in the values for your environment" is the
+    // sentence a README needs, and `setup` / `world` / `rig` carry the intent.
     id: "someones-own-setup",
-    regex:
-      /\b(the user's|the owner's|your|his|her|their|our|my) (own )?(setup|environment|world|rig)\b/,
+    regex: /\b(the user's|the owner's|your|his|her|their|our|my) (own )?(setup|world|rig)\b/,
     why: "gestures at a particular person's machines — write it for anyone who installs this",
   },
   {
+    // If this repository ever ships a launcher script of its own (the poller
+    // in M8 is the likely one), waive it at that file rather than deleting
+    // this pattern — the point is references pointing outward.
     id: "foreign-script-file",
     regex: /\.ps1\b|\.psm1\b/,
-    why: "a script file from another codebase — this repository does not ship one, so it can only be a reference outward",
+    why: "a script file from another codebase — nothing here ships one, so it reads as a reference outward",
   },
 ];
 
@@ -133,8 +152,12 @@ export const PATTERNS = [
  */
 export const SELF_EXEMPT = ["scripts/check-external-refs.mjs", "tests/check-external-refs.test.ts"];
 
-/** Lockfiles are generated, enormous, and prose-free. */
-const SKIPPED_FILES = new Set(["package-lock.json"]);
+/**
+ * Lockfiles are generated, enormous, and prose-free. Exported and pinned by a
+ * test for the same reason as `SELF_EXEMPT`: one name added here silences a
+ * whole file, and that has to be a visible change rather than a quiet one.
+ */
+export const SKIPPED_FILES = ["package-lock.json"];
 
 const BINARY_EXTENSIONS = new Set([
   "png",
@@ -238,7 +261,7 @@ export function isScannable(path) {
   if (SELF_EXEMPT.includes(path)) return false;
 
   const name = path.split("/").pop() ?? path;
-  if (SKIPPED_FILES.has(name)) return false;
+  if (SKIPPED_FILES.includes(name)) return false;
 
   const extension = name.includes(".") ? (name.split(".").pop() ?? "").toLowerCase() : "";
   return !BINARY_EXTENSIONS.has(extension);
@@ -267,7 +290,8 @@ function describe(violation, path) {
 
 function main(argv) {
   const explicit = argv.slice(2);
-  const paths = (explicit.length > 0 ? explicit : trackedFiles()).filter(isScannable);
+  const listed = explicit.length > 0 ? explicit : trackedFiles();
+  const paths = listed.filter(isScannable);
 
   const failures = [];
   let scanned = 0;
@@ -287,8 +311,14 @@ function main(argv) {
     }
   }
 
+  // Say what was *not* read as well as what was. Coverage can otherwise fall
+  // silently — one entry added to the skip list and the summary looks the
+  // same, which is the failure mode of every check that only reports success.
+  const skipped = listed.length - scanned;
+  const coverage = `Scanned ${scanned} of ${listed.length} files${skipped > 0 ? ` (${skipped} skipped: binary, generated, or self-exempt)` : ""}`;
+
   if (failures.length === 0) {
-    console.log(`Scanned ${scanned} files: nothing refers to anything outside this repository.`);
+    console.log(`${coverage}: nothing refers to anything outside this repository.`);
     return 0;
   }
 

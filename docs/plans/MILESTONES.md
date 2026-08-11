@@ -35,8 +35,8 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 | **2** | Branch protection on `main` — linear history, no force-push, no deletions, PR required | 1 | `done` |
 | **3** | **The boilerplate.** App skeleton, Prisma wiring, Dockerfile, compose, CI workflow, GHCR release workflow, test harness, lint/format | 2 | `done` |
 | **4** | Required status checks pointed at the CI jobs from #3 | 3 | `done` |
-| **5** | First published image — trigger a release, pull it, verify it runs | 3 | `open` |
-| **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | |
+| **5** | First published image — trigger a release, pull it, verify it runs | 3 | `done` |
+| **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | `done` |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
 reaches `main` without passing checks.
@@ -59,7 +59,7 @@ into it.*
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **7** | Initial migration — the **whole schema** in one baseline | 3 | `open` |
+| **7** | Initial migration — the **whole schema** in one baseline | 3 | `done` |
 | **8** | DB client, connection pooling, migrate-on-boot wiring | 7 | |
 | **9** | Seed: `people` (two user profiles), `agents` name roster, `accounts` | 8 | |
 | **10** | Importer — items: a directory-per-task store → `items`, status remap, the source identifier into `custom_fields` | 8 | |
@@ -132,7 +132,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **36** | Board API: items grouped into columns, filters | 26 | |
 | **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
-| **39** | Compatibility shim — a legacy command-line surface routed at the API, kept for one release | 26, 27 | |
+| **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | |
 | **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim | 13, 37, 39 | |
 
 **Milestone done when:** the board is the live view, and every orchestrator reads and writes through

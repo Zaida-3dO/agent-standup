@@ -283,7 +283,9 @@ globs. Hashing a handful of files every five minutes is free.
 Unattended Windows launch is **well-understood, not a research question**. A scheduled task
 registered against the desktop user with **LogonType: Interactive** fires while the machine is
 locked, and does **not** fire when nobody is logged on. That is the constraint to design around: a
-machine that stays logged in works, one that logs out does not. The user: acceptable.
+machine that stays logged in works, one that logs out does not. The user: acceptable, because the
+machines this dispatches to stay logged in. An installation where they don't loses unattended launch
+on those machines — which is survivable, since the heartbeat is optional by design.
 
 Auth deferred: reachable on a trusted network without a token for v0. Not designing around container
 networking yet.
@@ -296,7 +298,7 @@ networking yet.
 *ends*; a `PostToolUse` hook fires when a tool *returns*. **Neither is a timer**, and neither can
 fire at all while an orchestrator sits blocked inside a subagent call — which is precisely the
 window supervision is wanted in. The gap between consecutive firings is therefore unbounded in
-exactly the wrong case, and measured gaps of several hours are ordinary rather than pathological.
+exactly the case where it needs to be short.
 
 ### `wait_for_crew` — long-poll
 Server holds the request open and returns on a crew event **or** timeout, whichever first. Solves
@@ -360,8 +362,8 @@ down for free.
 
 - **Stricter of the two windows wins.**
 - **Autonomous only** — never blocks the user.
-- **Boundaries move with time** (a pace line). Weekly wind-down `15 × days − 5`; 5-hour `80` rising to
-  ~`92` in the final hour.
+- **Boundaries move with time** (a pace line). Configured, not baked in — for example, weekly
+  wind-down `15 × days − 5`; 5-hour `80` rising to ~`92` in the final hour.
 - **No formula language.** Every boundary is a constant or `slope × elapsed + offset`, optionally
   switching on a time condition — an ordered list of *(when, value)* pairs. Declarative, testable, no
   parser.
@@ -369,8 +371,8 @@ down for free.
 
 **Concurrency ceiling deferred**, but worth recording why it isn't a budget feature. A machine
 freezing under many concurrent sessions is **not a budget event** — a dozen MCP servers times half a
-dozen sessions is comfortably a hundred processes and several gigabytes of memory, with every
-session inside budget the whole time. It is a resource problem and wants a resource fix, so putting
+dozen sessions is dozens of processes and several gigabytes of memory, with every session inside
+budget the whole time. It is a resource problem and wants a resource fix, so putting
 it in the budget bands would be solving it in the wrong place. If it comes up, a per-machine session
 cap is config plus a count, no migration.
 
@@ -481,10 +483,10 @@ worth stating:
   inferring one from titles would produce a tree that looks authoritative and isn't.
 - **Whether finished items arrive in full or collapsed** is settled in §13c.
 
-**A compatibility shim keeps one already-installed command-line client working**, by routing its
-commands at the API for a single release, and is then deleted. It exists so the switch doesn't have
-to happen everywhere simultaneously; keeping it beyond that would make it a second surface to
-maintain and a second place for behaviour to diverge.
+**A compatibility shim exposes the same command-line surface against the API for a single release**,
+and is then deleted. It exists so the switch doesn't have to happen everywhere simultaneously;
+keeping it beyond that would make it a second surface to maintain and a second place for behaviour
+to diverge.
 
 ---
 
@@ -494,12 +496,11 @@ Each of these was checked rather than assumed, and each one a decision above lea
 
 | | |
 |---|---|
-| MCP statefulness | A server is stateful or stateless by construction, and the popular Python framework defaults to stateful — it returns an `Mcp-Session-Id` on initialize whether or not anything needs it. A server holding no per-session state (no context object, no progress, no resources, no prompts) can be flipped stateless in one line. Ours holds none, so it ships stateless. |
+| MCP statefulness | Statefulness is a property of how a server is built, not of what it does: common frameworks default to stateful and return an `Mcp-Session-Id` on initialize whether or not anything needs it. A server that holds no per-session state — no context object, no progress, no resources, no prompts — can be flipped stateless in one line. Which is why the MCP adapter can be specified stateless up front rather than discovering it later. |
 | Tool-list cost | Every tool description is resident in the agent's context on every turn, used or not. A server exposing sixty-odd tools is therefore a permanent tax on every session that connects to it. |
 | Cache TTL | A **1-hour** prompt-cache TTL **drops to 5 minutes under usage overage** — i.e. exactly when running hot — and nothing signals the transition. Hence `WAIT_FOR_CREW_TIMEOUT = 240`, not 300. |
 | Cache pricing | Write **1.25×** base (5-min TTL) or **2×** (1-hour); read **0.1×**. Marginal cost of a wait: do nothing 1.25N · 1-hour TTL 0.85N · pinging 0.025N/min. **The 1-hour TTL is cheaper than doing nothing, always.** |
 | Unattended Windows launch | A scheduled task registered against the desktop user with **LogonType: Interactive** fires while the machine is locked and does **not** fire when nobody is logged on. RunLevel Limited is sufficient. |
-| Guard scope | A guard against machine-wide damage has to apply to every session, not only supervised ones, because the damage comes from workers. It is the one guard that can't be scoped to an orchestrator. |
 | Prose ledgers | A ledger kept as prose is read whole or not at all — a hundred thousand characters is tens of thousands of tokens resident in every session that loads it, whether or not one line of it is relevant. The same content as rows is a query with a `WHERE` clause. |
 | Codex | No background-completion re-invocation found. `notify` fires `agent-turn-complete` **outward**; cloud tasks are fire-and-forget. |
 | Claude Code plugins | Bundle `hooks/hooks.json`, `.mcp.json`, `skills/`, `agents/`, `bin/`, `monitors/`, `settings.json` in one installable unit; marketplace can be a private repo. |
@@ -649,9 +650,11 @@ publish, and the reason it reads as a product rather than as one person's config
 services and other projects by what they are (*the NAS*, *the chat channel*, *the media MCP*), never
 by their own name · area, repo and machine names invented (`web`, `infra`, `desktop`, `laptop`) ·
 *operator-specific* wherever a capability is contrasted against *generic* · absolute paths and
-private dashboard URLs not written at all · **nothing described by what it succeeds** — no
-predecessor, no prior state, no setup the reader is assumed to already run, because a reader of a
-public repository can verify none of it and it leaks the shape of a private system for no benefit.
+private dashboard URLs not written at all ·
+<!-- external-ref-ok-next-line: this rule has to quote the phrasing it forbids in order to state it -->
+**nothing described by what it succeeds** — no predecessor, no prior state, no setup the reader is
+assumed to already run, because a reader of a public repository can verify none of it and it leaks
+the shape of a private system for no benefit.
 
 **This is not tidying — leave it alone.** The generic phrasing is load-bearing. Making it concrete
 again, to be helpful or to make an example more vivid, republishes exactly what the phrasing exists

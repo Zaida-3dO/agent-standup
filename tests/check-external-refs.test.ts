@@ -9,6 +9,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   PATTERNS,
   SELF_EXEMPT,
+  SKIPPED_FILES,
   findViolations,
   isScannable,
 } from "../scripts/check-external-refs.mjs";
@@ -74,11 +75,17 @@ describe("check-external-refs — what it catches", () => {
     ["temporal-past", "Historically the gate ran on the client."],
     ["temporal-changed", "The store used to be a directory tree."],
     ["temporal-changed", "That constraint no longer applies."],
+    ["temporal-changed", "Until now the rules lived in client-side scripts."],
+    ["temporal-changed", "Carried over from the earlier implementation."],
+    ["temporal-changed", "We are moving off a folder-of-markdown workflow."],
     ["supersession", "Replaces a folder of files plus a wrapper script."],
     ["supersession", "This is the replacement for resuming a session."],
+    ["supersession", "The predecessor system had a directory per task."],
     ["ported", "Version one is a port of the board that already exists."],
+    ["ported", "Ported from the scheduler that runs on each machine."],
     ["the-old-thing", "Everything the old system blocked is now a field."],
-    ["the-old-thing", "The original folders survive as an archive."],
+    ["the-old-thing", "The original store kept one folder per task."],
+    ["the-old-thing", "Nothing here depends on the prior state of anything."],
     ["the-existing-thing", "Model it on the existing MCP server."],
     ["the-existing-thing", "It reads from an existing setup on that machine."],
     ["the-current-thing", "The current script does this already."],
@@ -136,11 +143,25 @@ describe("check-external-refs — what it must not flag", () => {
     "An approving code-review artifact at the current max(review_round).",
     "Reject it and name the current holder.",
     "Liveness is `running`, `stalled`, `dead` or `superseded`.",
+    "You cannot supersede a `running` assignment.",
     "Missed an existing helper, or broke an unrelated caller.",
     "Pick a host port that isn't already in use.",
     "Replace the stub with the real client.",
     "A compatibility shim, kept for one release.",
     "Import verification: row counts, spot-check report, idempotent re-run.",
+    // Everything below is ordinary prose for a Next.js / Prisma / Postgres
+    // repository that an over-broad pattern would flag. A check that fires
+    // on correct writing gets waived, then ignored, then deleted — so these
+    // are as load-bearing as the violations above.
+    "`kind` is used to derive the column at read time.",
+    "`DATABASE_URL` is used to connect to Postgres.",
+    "Return the original error rather than wrapping it.",
+    "Compare against the original commit SHA.",
+    "The published port of the db container is 5432.",
+    "Fill in the values for your environment.",
+    "Migration seeds `legacy_id` here, which is why `id` can be opaque.",
+    "The eslintrc FlatCompat legacy shim chokes on modern flat configs.",
+    "The importer moves each row into `items`.",
   ];
 
   it.each(clean)("leaves this alone: %s", (text) => {
@@ -165,6 +186,13 @@ describe("check-external-refs — what it must not flag", () => {
     for (const exempt of SELF_EXEMPT as string[]) {
       expect(isScannable(exempt)).toBe(false);
     }
+  });
+
+  it("skips only generated files, so coverage can't be dropped by adding a name", () => {
+    // Same reasoning as SELF_EXEMPT, for the other list that can silence a
+    // file. Adding "README.md" here would disable scanning of the most
+    // public file in the repository with the suite still green.
+    expect(SKIPPED_FILES).toEqual(["package-lock.json"]);
   });
 });
 
@@ -242,7 +270,19 @@ describe("check-external-refs — as CI runs it", () => {
     const result = runCli([file], dir);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Scanned 1 files");
+    // Reports what it did *not* read as well as what it did — coverage that
+    // only ever reports success can fall silently.
+    expect(result.stdout).toContain("Scanned 1 of 1 files");
+  });
+
+  it("says how many files it skipped, so coverage can't drop unnoticed", () => {
+    const { dir, file } = seedFile("clean.md", "The server refuses the change.\n");
+    writeFileSync(path.join(dir, "package-lock.json"), "{}\n", "utf8");
+
+    const result = runCli([file, "package-lock.json"], dir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Scanned 1 of 2 files (1 skipped");
   });
 
   it("passes over this repository as it stands", () => {
