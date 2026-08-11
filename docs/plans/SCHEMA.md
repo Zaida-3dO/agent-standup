@@ -14,7 +14,7 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | `text` PK | **Opaque.** An imported item keeps whatever identifier it arrived with, verbatim, so an import is 1:1 — but no format is mandated. Baking one installation's ID scheme into a generic product is a leak. New items get whatever the app generates. |
-| `parent_id` | `text` null → `items.id` | Null = a project (a root). Otherwise the item this sits under. Unbounded depth; guarded by `MAX_ITEM_DEPTH`. |
+| `parent_id` | `text` null → `items.id` | Null = a project (a root). Otherwise the item this sits under. Unbounded depth; guarded by the `items.max_depth` setting (§17.2). |
 | `kind` | enum | `project` (depth 0) · `task` (depth 1) · `subtask` (**depth ≥ 2** — nesting is unbounded, so everything deeper is still a subtask). Derived from depth, stored for cheap querying. **Recompute the whole subtree on reparent**, not just the moved row: promoting a subtask to a root changes its children's kind too. |
 | `title` | `text` | One line. |
 | `body` | `text` | The brief — the durable instruction for whoever picks this up next. |
@@ -22,8 +22,8 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 | `priority` | enum | `P0`–`P3`. |
 | `origin_type` | enum | `person` · `source` · `auto` — who or what created it. |
 | `origin_person` | `text` null → `people.id` | Required iff `origin_type = person`. **A reference, never a name in the schema** — more than one person mints work, and the core should know none of them by name. Which *file* a `source` item came from is already on `source_ref`. |
-| `area` | `text` | **Required.** Which part of your work this concerns. Works for research and non-code work. |
-| `repo` | `text` null | Concrete repo key, only when code is involved. |
+| `area` | `text` → `areas.id` | **Required.** Which part of the work this concerns. Works for research and non-code work. A foreign key rather than free text (§23.1) — it is filtered on and whitelisted in notification rules, so three spellings of one name are three values to the database and one to whoever typed them. **Auto-created on first use**, with normalisation, because blocking the most common write in the system is friction nobody should pay. |
+| `repo` | `text` null → `repos.id` | Concrete repo key, only when code is involved. A foreign key for the same reason, and **created deliberately** rather than on first use: this is the value the merge gate reads to decide which repository a change lands in, so a wrong one aims the gate at the wrong repository (§23.1). |
 | `branch` | `text` null | Integration branch for the deliverable. Per-agent branches live on `assignments`. |
 | `needs_visual_review` | `bool` | Gates the merge check. **Renamed from `visual`** to stop it colliding with the `visual` *facet*, which is a difficulty score, not a gate. |
 | `drive_mode` | enum | `autonomous` · `manual` · `supervised` — see §1.2. Gates the heartbeat, budget bands, and the guard layer. |
@@ -47,7 +47,8 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 **No `review_round` column** — it's `max(artifacts.review_round)` for the item. Artifacts are the truth;
 a second copy here would drift.
 
-**Indexes:** `(state)`, `(parent_id)`, `(area)`, `(state, priority)`, `(source_ref)`.
+**Indexes:** `(state)`, `(parent_id)`, `(area)`, `(repo)`, `(state, priority)`, `(source_ref)`.
+`(repo)` is there because listing filters on it exactly as it filters on `area`.
 
 **Two rules on `custom_fields`, or it becomes a schema inside the schema:**
 - **Not addressable by notification rules.** §1.1b is bounded to a field whitelist on purpose; letting
@@ -262,6 +263,7 @@ dumped whole.
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | `bigserial` PK | Also the cursor. |
+| `tx_id` | transaction id | The transaction that wrote the row, defaulted on insert. **A cursor alone is not enough to read this table exactly once.** Sequence values are handed out *before* commit, so sequence order is not commit order: a transaction holding id 100 can commit after one holding 101, and a reader doing `id > since ORDER BY id` at that moment advances past 100 and never sees it. Anything that must not skip a row — wait-for-crew, §19 — bounds itself to rows whose writing transaction has finished, and orders by `id` inside that set, where the order is both stable and complete. Cost: a row is held back until the oldest transaction concurrent with it finishes, which is milliseconds unless something holds a long transaction open — a reason for the importer to commit in batches, and a reason to make the horizon's age observable. |
 | `item_id` | `text` null → `items.id` | Null for system-level events. |
 | `ts` | `timestamptz` | |
 | `actor_type` | enum | `person` · `agent` · `system`. |
@@ -269,7 +271,7 @@ dumped whole.
 | `session_id` | `text` null | |
 | `assignment_id` | `uuid` null → `assignments.id` | Set on `checkpoint` and other per-agent events. |
 | `body` | `text` null | Prose for `checkpoint`, `note`, `nudge`, `escalation`. **A column, not payload** — slice reads on the hottest path would otherwise drag text nobody asked for, and it's cheap to exclude here. |
-| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. |
+| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; it arrives with the settings service (§17.2). |
 | `payload` | `jsonb` | Type-specific. **A discriminated union keyed on `type`** — see below. |
 
 *(No `state_at` here — it's derivable from the `state-change` rows in this same table, event volume is
@@ -640,7 +642,7 @@ later — a *mutation*, which an append-only ledger can't hold. But that's only 
 - **`dispatch-claimed`** — `{dispatch_event_id, session_id}`, written when a session first reports in
 
 **"Did the launch fail?"** is a `dispatch` with no matching `dispatch-claimed` inside
-`DISPATCH_FAILED_AFTER_SECONDS`. More awkward than reading a null column — but it runs every five
+`dispatch.failed_after_seconds`. More awkward than reading a null column — but it runs every five
 minutes over recent events, not on a hot path, and it keeps the ledger whole.
 
 Same query answers the minting lease: an unclaimed mint dispatch means don't issue another.
@@ -705,43 +707,297 @@ Every `(from, to)` pair is legal. What's enforced is **what must be supplied**.
 
 ---
 
-## 17. Environment configuration
+## 17. Configuration
+
+Configuration lives in three tiers, and which tier a value belongs to is decided by one question:
+**what must be known before the process can reach the database?**
+
+| Tier | Read from | Changed by |
+|---|---|---|
+| **Bootstrap** | Environment variables | Editing the environment and restarting |
+| **Settings** | The `settings` table, over a registry of typed defaults declared in code | `/settings` in the front end, or `standup config set` |
+| **Build constants** | Compiled in | Shipping a new version |
+
+Anything needed to connect and listen is bootstrap. Everything read after that point comes from a
+database that is already reachable, so it is a setting — typed, validated, explained and audited.
+Anything describing what this build *is*, rather than how it is configured, is a constant.
+
+### 17.1 Bootstrap — environment variables
 
 | Variable | Values | Meaning |
 |---|---|---|
-| `DATABASE_URL` | connection string | Postgres. |
-| `BIND` | address | Interface the service listens on. |
-| `PORT` | int | Port it listens on. |
-| `MAX_ITEM_DEPTH` | int, default `6` | Runaway guard on the item tree. |
-| `DEFAULT_MERGE_AUTHORITY` | enum | Product default `needs-approval`; an installation that trusts its agents sets `agent-judgement`. |
-| `SUBAGENT_DELEGATION` | `never` · `allowed` · `required` | What an orchestrator may do itself. `never` blocks spawning; `allowed` nudges toward delegating; `required` blocks the orchestrator doing the work. Product default `allowed`; an installation that always runs a crew sets `required`. Only fires when an orchestrator role exists, so a single-agent installation is never affected. |
-| `POLL_INTERVAL_SECONDS` | default `300` | How often each machine asks for work. |
-| `WAIT_FOR_CREW_TIMEOUT` | default `240` | **240, not 300** — the cache TTL drops to 5 min under usage overage, and nothing signals it. |
-| `STALE_AFTER_SECONDS` | default `900` | Quiet → `stalled`. PID check first; this is the fallback. |
-| `DEAD_AFTER_SECONDS` | default `1800` | Stalled → `dead`, claim released. |
-| `DISPATCH_FAILED_AFTER_SECONDS` | default `180` | No session against a dispatch → launch failed. |
-| `RESUME_ATTEMPTS_BEFORE_BLOCKED` | default `3` | Attempts with no durable progress before escalating to a person. |
-| `BUDGET_ENABLED` | bool | Master switch. |
-| `BUDGET_WINDOWS` | object per window | Each: `enabled`, and band boundaries for `free` / `selective` / `wind_down` / `stop`. A boundary is a constant, or `slope × elapsed + offset`, or an ordered list of *(when, value)* pairs. For example: weekly wind-down `15 × days − 5`; 5-hour `80`, rising to `92` in the final hour. |
-| `BUDGET_VENDOR` | `anthropic` · … | Which adapter reads usage. Codex is a separate object, not a rewrite. |
-| `MODEL_PICKER_ENABLED` | bool, default **off** | Mechanism ships in v1; heuristics fill in once there's data. |
-| `MODEL_PICKER_EXPLORE_RATE` | 0–1 | How often to deliberately try one tier down on low-risk work. Without it, it never learns. |
-| `NOTIFY_DOC` | path, null = notifications off | Doc explaining how to reach people. **Required if any notification rule exists**, or rules would fire with nowhere to go. |
-| `VISUAL_REVIEW_DOC` | path, null = visual review unavailable | Doc explaining how a visual review is performed here. **Required if any item sets `needs_visual_review`** — otherwise the item reaches the gate with no way through it. |
-| `SOURCES` | list of globs | Where minting looks. Scanned locally, hashed, reported on the poll. |
-| `BACKLOG_LOW_THRESHOLD` | default `3` | On-deck count below this triggers a mint request. |
-| `RETENTION_DAYS` | null = keep | Applies to `tool_calls` only. |
-| `HOOK_VERSION_REQUIRED` | semver | Handshake compares; stale → tells the session to update. |
+| `DATABASE_URL` | connection string | Postgres. The one value nothing else can be read without. |
+| `HOSTNAME` | address | Interface the server binds to. The name belongs to the runtime, not to us; the image sets it explicitly rather than inheriting it, because container runtimes commonly set `HOSTNAME` to the container's own name and binding to that is not what anyone means. |
+| `PORT` | int | Port it listens on. Same ownership. |
+| `NODE_ENV` | `development` · `production` · `test` | Set by the toolchain, not by an operator. |
+| `SHADOW_DATABASE_URL` | connection string | Development and CI only. The disposable database the migration drift check drops and rebuilds. Never points at anything anyone cares about. |
 
-**Capabilities are named config values, not a generic map.** A capability is a path *plus the moment the
-core hands it over* — and that moment is code, so one can never be added by configuration alone. A map
-would give up type safety and per-capability validation (`NOTIFY_DOC` and `VISUAL_REVIEW_DOC` have
-different required-ness rules) in exchange for flexibility that doesn't exist. Same reasoning as facets
-being a fixed union.
+The command-line adapter adds two of its own, bootstrap for the same reason:
 
-**Both docs are validated at config time, not at transition time** — a missing one should fail on
-startup, not strand an item at a gate three days later. The core checks the path exists and never reads
-it.
+| Variable | Values | Meaning |
+|---|---|---|
+| `STANDUP_URL` | base URL | Where a server is, if there is one. Present → commands call the API; absent → they use `DATABASE_URL` and run the service layer in-process. |
+| `STANDUP_SESSION_ID` | text | The session a command acts as. Exported by whatever launches a session, never typed by hand. |
+
+**Not all of these are optional to the same degree.** Either `DATABASE_URL` or `STANDUP_URL` must
+resolve, or the process has no idea what it is talking to — in which case it says so and stops,
+rather than starting up half-configured. See `standup init` in §20.
+
+### 17.2 Settings — the registry, and the table
+
+**Every setting is declared in code.** The registry is the single source of key, schema, default,
+label, help text, category and when a change takes effect. **The database stores overrides only** — a
+row exists for a key exactly when someone has deliberately set it. Three properties follow, and they
+are the whole reason for the shape:
+
+1. **A fresh database boots fully working with no configuration at all.** Defaults are code, so there
+   is nothing to seed and nothing to forget to seed.
+2. **The editing surfaces are generated, not maintained.** `/settings` renders labels, widgets,
+   validation and per-field help *from the registry*; so does `standup config`. Explaining a field as
+   it is set is a property of the declaration, not a document somebody has to remember to update.
+3. **A value has one type, in one place.** The schema that validates a write is the schema that types
+   the read, so a guard reading a setting gets a number, not an unknown.
+
+**This is the same argument as capabilities being named values rather than a generic map** (§17.5),
+not a departure from it. A registry is named-and-typed; a key-value bag with free-form values is the
+map that argument rejects. What changes is only *where the value is stored* — never whether it is
+typed.
+
+| Key | Type · default | Category | Meaning |
+|---|---|---|---|
+| `items.max_depth` | int, `6` | Items | Runaway guard on the item tree. |
+| `items.default_merge_authority` | enum, `needs-approval` | Items | What `merge_authority` a new item gets when nothing sets it. |
+| `agents.subagent_delegation` | `never` · `allowed` · `required`, default `allowed` | Agents | What an orchestrator may do itself. `never` blocks spawning; `allowed` nudges toward delegating; `required` blocks the orchestrator doing the work. Only fires when an orchestrator role exists, so a single-agent installation is never affected. |
+| `liveness.stale_after_seconds` | int, `900` | Liveness | Quiet → `stalled`. A process check comes first; this is the fallback. |
+| `liveness.dead_after_seconds` | int, `1800` | Liveness | Stalled → `dead`, claim released. |
+| `dispatch.failed_after_seconds` | int, `180` | Dispatch | No session against a dispatch → the launch failed. |
+| `dispatch.resume_attempts_before_blocked` | int, `3` | Dispatch | Attempts with no durable progress before escalating to a person. |
+| `poll.interval_seconds` | int, `300` | Dispatch | How often each machine asks for work. Takes effect on that machine's next poll. |
+| `crew.wait_timeout_seconds` | int, `240` | Crew | How long a wait-for-crew call is held before returning empty. Sized to stay inside the shortest prompt-cache lifetime a session may be given, which is not always signalled — a wait that outlives the cache costs more than the wait saves. |
+| `crew.wait_poll_interval_seconds` | int, `5` | Crew | How often the polling implementation of wait-for-crew re-reads the ledger. Used only where no long-poll is available; both implementations return identically (§19). |
+| `budget.enabled` | bool, `false` | Budget | Master switch. |
+| `budget.windows` | object, `{}` | Budget | Per window: enabled, plus the boundary of each band. See §17.4. |
+| `model_picker.enabled` | bool, `false` | Model picker | The mechanism ships before the data does; enable it once there is something to learn from. |
+| `model_picker.explore_rate` | 0–1, `0` | Model picker | How often to deliberately try one tier down on low-risk work. At zero it never learns. |
+| `notify.doc` | path or null, `null` | Capabilities | Document explaining how to reach people. Null = notifications off. Wanted whenever any notification rule exists, or rules fire with nowhere to go. |
+| `visual_review.doc` | path or null, `null` | Capabilities | Document explaining how a visual review is performed here. Null = visual review unavailable. Wanted whenever any item sets `needs_visual_review`, or the item reaches the gate with no way through it. |
+| `minting.backlog_low_threshold` | int, `3` | Minting | On-deck count below this triggers a mint request. |
+| `minting.source_globs` | list of globs, `[]` | Minting | Where minting looks. The default; a machine that carries its own `source_globs` overrides it, because filesystem layouts differ per machine. See §17.7. |
+| `retention.tool_calls_days` | int or null, `null` | Retention | Null = keep. Applies to `tool_calls` only. |
+
+**`settings` — the table.**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `key` | `text` PK | Matches a registry key. A row for a key the registry does not declare is inert — see §17.3. |
+| `value` | `jsonb` NOT NULL | The override. JSON `null` is a legal, meaningful value ("explicitly nothing" — notifications off, retention forever) and is **not** the same as no row, which means "at the default". |
+| `updated_at` | `timestamptz` | |
+| `updated_by_type` | `actor_type` enum | `person` · `agent` · `system`. |
+| `updated_by_id` | `text` null | → `people.id` or `agents.name`. Null for `system`. |
+
+**`settings_revision` — one row, one number.**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `int` PK, always `1` | A single row. |
+| `revision` | `bigint` | Bumped in the same transaction as every settings write, including a delete. |
+
+A counter rather than `max(settings.updated_at)`, because clearing an override deletes a row and a
+delete can lower a maximum — a change that moves state backwards would be invisible to anything
+watching a high-water mark. The counter only goes up, so "have settings changed since I last looked"
+is one comparison. It doubles as the entity tag for `GET /settings` and as a cheap "anything to
+re-read" signal for any process holding a cached snapshot.
+
+**`settings` is never a secret store.** Every value is served to the front end by `GET /settings` and
+printed by `standup config list`. There is no redaction path and none will be added, because a value
+that cannot be displayed cannot be edited in the surface the table exists to feed. Credentials,
+tokens and connection strings are bootstrap environment variables — that tier exists precisely
+because some values must not be readable from the application. **A registry entry whose value would
+be unsafe to read aloud is in the wrong tier.** The registry's own test enforces this by shape: a key
+whose name is credential-shaped fails the build.
+
+### 17.3 Reading settings, and what happens when code and data disagree
+
+**Resolution.** Start from the registry defaults, apply any override that validates, freeze the
+result. The output is a typed snapshot, not a lookup table — `snapshot["items.max_depth"]` is a
+number.
+
+**One snapshot per service call.** The service layer resolves once at the entry to a call and threads
+the snapshot through, so every guard evaluated inside one transaction sees one consistent
+configuration. Re-reading per guard would let two checks in the same transaction disagree — a bug
+that would appear roughly never and be impossible to reproduce.
+
+**Caching.** A long-lived process keeps the resolved snapshot in memory and re-reads `revision` at
+most once every few seconds; if it moved, the snapshot is rebuilt. The guarantee is therefore
+explicit and small: **a settings change is visible in the process that made it immediately, and in
+every other process within the revalidation interval.** The cost is one primary-key read per process
+per interval — with a handful of processes, a couple of reads a second. A short-lived process — every
+command-line invocation — builds the snapshot once and exits, so it is always current.
+
+Push notification was considered and rejected: it needs a dedicated connection per process outside
+the pool, and a notification delivered while a process is reconnecting is lost, so the version
+comparison has to exist anyway as the backstop. A mechanism that does not remove another mechanism is
+not an improvement.
+
+**When the registry and the stored overrides disagree, the registry wins and says so.**
+
+| Situation | What happens |
+|---|---|
+| A key is declared, an override exists, it validates | The override is used. |
+| A key is declared, an override exists, it fails its schema (the schema has tightened) | **The default is used**, and the key is logged at startup and shown on `/settings` with the stored value and the validation error side by side. Not a boot failure — refusing to start because a bound moved turns a configuration nit into an outage. Not silently coerced either: a coerced value is one nobody chose. |
+| An override exists for a key the registry does not declare | The row is **inert** — resolution starts from the registry, so an undeclared key can never affect behaviour. It is not deleted: deleting data on deploy loses the record of what someone had configured. It is listed under "Unrecognised" on `/settings` with a remove action, and logged once at startup. |
+| A key is renamed | The retired entry stays in the registry marked deprecated, naming its replacement, and a one-shot step copies the value across. A rename is written deliberately, never inferred from a similar name. |
+| A default changes in a new version | Every installation that never overrode that key changes behaviour on upgrade. **That is a behaviour change and is treated as one** — it belongs in the release notes, not in a diff nobody reads. |
+
+### 17.4 `budget.windows` — the shape, and why it is a setting
+
+A budget window carries four bands (`free` · `selective` · `wind down` · `stop`), so it carries three
+boundaries: where each of the last three begins, in percentage points of that window. `free` starts
+at zero and needs no boundary.
+
+A boundary is one of three things and no more — declarative, testable, no parser:
+
+| Kind | Shape | Reads as |
+|---|---|---|
+| `constant` | `{ value }` | 80% |
+| `linear` | `{ slope, offset, per }`, where `per` is `hour` or `day` | 15 × days − 5 |
+| `schedule` | `{ entries: [{ at, value }] }` | 80, rising to 92 in the final hour |
+
+`at` anchors to either end of the window — `{ elapsed }` or `{ remaining }` — because some rules are
+naturally written from the start ("by day three") and some from the end ("in the final hour"), and
+both reduce to the same point once the window's length is known. A schedule entry's value is a
+constant or a linear; **a schedule may not contain a schedule.** One level expresses every rule
+anyone has wanted; the second level is where a shape becomes a language.
+
+**What being typed buys, concretely.** The boundaries must not cross: at *every* moment in the
+window, selective is at or below wind down, which is at or below stop, and all three sit inside
+0–100. With moving boundaries that is not checkable by eye — two lines with different slopes cross
+somewhere, and the somewhere is the point at which the system would be told to wind down harder than
+it stops. The setting's validator samples the window across its length and rejects a value whose
+boundaries cross or leave the range, naming the moment it happens. A configuration format that cannot
+be inspected cannot be checked this way; a typed value can, and this is the check worth the most.
+
+### 17.5 Capabilities — still named values, and where they are validated
+
+**Capabilities are named settings, not a generic map.** A capability is a path *plus the moment the
+core hands it over* — and that moment is code, so one can never be added by configuration alone. A
+map would give up type safety and per-capability rules (`notify.doc` and `visual_review.doc` are
+wanted under different conditions) in exchange for flexibility that does not exist. Same reasoning as
+facets being a fixed union.
+
+**Where a capability document is checked, and by whom, needs care, because the core deliberately
+never reads one.** It hands over a path; the agent reads it. Server and agent do not necessarily
+share a filesystem, so "the path exists" is a question the server can answer only sometimes:
+
+| Check | When | Effect |
+|---|---|---|
+| Well-formed — absolute path or valid URL, no traversal | On write | **Refuse.** Provable from the value alone. |
+| Exists, where the server can see that filesystem | On write | **Refuse.** Provable. |
+| Exists, where it cannot | On write | **Accept, mark unverified**, and show it as unverified on `/settings`. Recording "I could not check" is honest; recording a pass is not. |
+| Still exists | On the sweep that already runs for liveness | **Warn**, loudly, in the log and on `/settings`. |
+| Configured at all, when something needs it | Continuously, and **in the rejection at the gate** | The transition rejection names the missing setting rather than reporting a missing artifact. |
+
+Checking early was never valuable for its own sake — the point is that a missing document must not
+first be discovered by an item stuck at a gate, with a message that does not say what to do. Refusing
+the bad edit tells the person who made it while they are looking at it; naming the setting in the
+rejection fixes the message; the sweep covers a document deleted an hour after it was checked. **The
+one thing given up is that a misconfigured installation still starts** — the right trade for a running
+service, because a service that refuses to start is down for everyone, including whoever is trying to
+fix the configuration through the interface built for it.
+
+`/settings` and the startup log both state, in a sentence, when a capability is wanted and unset:
+*"14 items require a visual review and `visual_review.doc` is not set."*
+
+### 17.6 Build constants — fixed by this version, not configurable
+
+| Constant | Meaning |
+|---|---|
+| `HOOK_PROTOCOL.http.current` / `.min_supported` | The version of the HTTP hook protocol this build speaks, and the oldest it still accepts. |
+| `HOOK_PROTOCOL.cli.current` / `.min_supported` | The same for the command-line hook protocol. The two variants are versioned independently because they change independently — a fix to one must not force every session using the other to reinstall. |
+| `APP_VERSION` | The published version of this build. |
+
+**None of these is configurable, and the reason is the same for all of them: they describe what this
+build implements.** Setting a required protocol version to one the build does not implement produces
+a system that refuses everything for a reason nobody can act on. They are exposed read-only on
+`/settings` and by `standup doctor`, because knowing them is useful and changing them is not.
+
+**Two numbers per variant, not one**, because "you should update" and "I cannot talk to you"
+are different statements, and collapsing them makes every version bump a breaking one. Raising
+`min_supported` is the deliberate act that makes an update mandatory. §21 covers what each answer
+does to a session.
+
+### 17.7 Two kinds of thing that are not settings
+
+**A setting is a value the *build* knows about.** It exists because code reads it, it has a default,
+and a fresh database boots fully working with none of them stored. Two other kinds of value fail that
+test, and pushing them into the registry would break it.
+
+**Installation-owned entity data.** `repos`, `areas`, `machines`, `accounts`, `people`. The build
+cannot know these; there is no default repository; a fresh database is *not* fully working with zero
+rows if an item names a repository. They are entities, declared in the schema rather than in code,
+and they are edited on the **administration surface** (§23) — not `/settings`, which by construction
+can render only what the registry declares.
+
+**Per-entity overrides of a setting.** Two values are genuinely a global default *plus* a
+per-entity exception, and both are the same mechanism:
+
+| Value | Default | Override | Why an override is needed |
+|---|---|---|---|
+| Minting globs | `minting.source_globs` | `machines.source_globs` | Filesystem globs are a property of a machine, and machines have different layouts. |
+| Budget windows | `budget.windows` | `accounts.budget_windows` | Bands key off `account_id`, and `accounts.plan_type` makes them mean different things — a metered account has no window to have boundaries in. One global value cannot describe two accounts, which is the same test that keeps the usage adapter on `accounts.vendor` rather than in configuration. |
+
+**The rule, stated so it does not grow:** **settings are global; a value varies per entity only by an
+override column on that entity's own table, and only where the entity already exists.** Two uses, and
+the door is closed to a third without an argument. This is deliberately *not* a scope axis on
+`settings` — that would mean a resolution order at every read, a cache keyed per scope, and a form
+that becomes a matrix. A nullable column on a table that already has rows costs one `COALESCE` at the
+one place that reads it.
+
+**And the override is validated by the registry's own validator**, so the typed editor and the
+cross-boundary check in §17.4 apply identically to a per-account value. The override is a different
+*place*, never a different *type*.
+
+**One value is not configuration at all in either sense.** Which usage adapter reads an account is
+`accounts.vendor`, a column with an existing home and an existing meaning. Its value should be checked
+against the registered adapter list on write, which it is not.
+
+### 17.8 Who may change a setting — the posture, stated
+
+**There is no authorisation on `/settings`, for the same reason there is none on the profile picker:
+identity here is a claim, not a credential.** Anyone who can reach the app can change any setting, and
+`standup config set --as <person>` asserts its own identity. Access control is a separate concern
+layered on top, and it is deferred.
+
+**That deferral has a sharper edge here than it does on the board, and it is stated rather than
+discovered.** Some settings do not merely tune the system — they switch off the enforcement it exists
+to provide:
+
+| Setting | What one write does |
+|---|---|
+| `items.default_merge_authority` → `pre-approved` | Every subsequently created item skips the human approval gate |
+| `budget.enabled` → `false` | The bands stop applying |
+| `notify.doc` → `null` | Every notification path goes silent, including the escalation that puts a blocked item on somebody's list |
+| `liveness.dead_after_seconds`, `dispatch.resume_attempts_before_blocked` → large | Dead work is never reclaimed and never escalates |
+| `retention.tool_calls_days` → a small number | **Destroys history that cannot be recreated.** Facet and cost data is measured, not derived; once deleted it is gone |
+
+**So the registry declares two flags, and they are different classes of thing:**
+
+- **`sensitive`** — this setting relaxes an enforcement. Rendered in its own section of `/settings`
+  behind a *"these change what the system enforces"* heading, requires typing the setting's key to
+  confirm, and writes an audit event of its own kind so it is greppable rather than buried among
+  ordinary changes.
+- **`irreversible`** — this setting can destroy data that cannot be recreated. Everything `sensitive`
+  does, **plus a floor in its own schema** (retention cannot be set below a bounded minimum), **plus a
+  refusal in the consuming job**: a retention pass that would delete more than a bounded fraction of
+  the table stops and reports instead of proceeding. *Irreversible* and *unauthenticated* is the
+  combination worth breaking first, and the floor is the cheap half of breaking it.
+
+**What a deployment is expected to do.** Put whatever access control it wants in front of the app —
+a reverse proxy, a network boundary, an identity-aware gateway. The app does not authenticate and does
+not pretend to. **And note the honest limit: in `direct` mode the command line reaches the database
+without passing through any of that, so database access is unrestricted settings access.** That is
+inherent to a tier whose whole premise is a client with a connection string; it is written down here
+rather than left to be found.
 
 ---
 
@@ -767,7 +1023,7 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 | `get_crew_name` | Request a name for a new agent. |
 | `crew_status` | Non-blocking digest of what your crew is doing. |
 
-**Not exposed as MCP:** `wait_for_crew`. It's the `standup` CLI binary, because only a Bash call can be backgrounded — and backgrounding is the whole point.
+**Not exposed as MCP:** `wait_for_crew`. It's `standup crew wait` (§20), because only a shell call can be backgrounded — and backgrounding is the whole point.
 
 ## 19. HTTP endpoints
 
@@ -779,7 +1035,7 @@ Same service, different consumers.
 |---|---|
 | `POST /items/{id}/transition?dry_run=` | The validated move. |
 | `GET /items/{id}/orientation` | The resume payload. |
-| `GET /crew/wait?timeout=240` | **Long-poll.** Returns on a crew event or timeout, whichever first. The CLI's target. |
+| `GET /crew/wait?since=&timeout=` | **Long-poll.** Returns on the first crew event after `since` that is below the transaction-visibility horizon, or empty at the timeout. `since` is required and is handed back by `claim`, `orientation` and every wait, so a caller always has one. The horizon, not the cursor alone, is what makes this and the polling implementation return identically — a sequence identifier is allocated before commit, so ordering by it alone can step over an event that commits late (§3). `timeout` is clamped to `crew.wait_timeout_seconds`. |
 
 **Machine-facing:**
 
@@ -787,7 +1043,7 @@ Same service, different consumers.
 |---|---|
 | `POST /poll` | Launcher. Sends machine, live sessions, usage snapshot, pending source hashes. Returns zero or more dispatches, each with a server-composed prompt. |
 | `POST /hook` | The dumb pipe. Sends event type, session, tool, command. Returns allow/deny for guarded patterns, or nudge text, or nothing. |
-| `POST /sessions/{id}/register` | Handshake. Reports hook version; server replies with what to update. |
+| `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim. |
 
 **Human-facing:**
 
@@ -801,13 +1057,268 @@ Same service, different consumers.
 | `POST /items/{id}/notes` | Leave a timestamped remark (an `events` row of type `note`). |
 | `GET /authorizations?scope=` | Is there a standing auth covering this? |
 
+Configuration (§17):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /settings` | Every declared setting with its value, source (default or override), schema, label, help, category and validation state. The registry, rendered. Carries the revision as an entity tag. |
+| `GET /settings/{key}` | One setting, same shape. |
+| `PATCH /settings` | Set and clear several keys at once, in **one transaction**, with one revision bump and one audit row per key sharing a batch identifier. The primary write path, because one human act on `/settings` is one act. Cross-setting validators see the proposed set, not the stored set. |
+| `PUT /settings/{key}` | Set one override — the single-key case of the same path. |
+| `DELETE /settings/{key}` | Clear an override, returning the key to its registry default. Also audited. |
+
+Installation-owned entities (§23):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET`/`POST`/`PATCH` `/repos`, `/areas` | The reference tables. Creating a repository is deliberate; an area is created on first use with normalisation, so `POST /areas` is mostly used for renaming and archiving. |
+| `GET`/`PATCH` `/machines` | Including `source_globs`, the per-machine override of `minting.source_globs`. |
+| `GET`/`PATCH` `/accounts` | Including `vendor` — validated against the registered adapter list — and `budget_windows`, the per-account override, validated by the registry's own validator. |
+| `GET`/`POST`/`PATCH` `/people` | Profiles. Archive rather than delete; attribution rows point here. |
+
+**None of these is `/settings`, and the distinction is structural rather than stylistic**: settings are
+declared by the build and stored as overrides; these are entities the installation owns and the build
+cannot know. See §17.7.
+
+---
+
+## 20. The command line
+
+`standup` is a third adapter over the service layer, alongside the web API and MCP. It exists so the
+app can be used where a server cannot be hosted, and it enforces exactly the same rules, because it
+reaches them the same way.
+
+**Two transports.** With `STANDUP_URL` set it calls the API; otherwise it uses `DATABASE_URL` and
+runs the service layer in-process. `--direct` forces the second. One set of command implementations
+sits above both, so only the two bindings could ever diverge — and §22 is the test that says they do
+not.
+
+**Postgres is still required.** "No dedicated server" means the app does not have to be hosted, not
+that it has nothing to talk to. `standup init` finds an existing database, accepts a connection
+string, or provisions one through a container runtime; then migrates, seeds, writes local
+configuration, and proves it with a live round trip. **Every other command preflights** and stops with
+*"run `standup init` first"* — a half-configured installation that behaves like a working one is the
+worst available outcome.
+
+**Shape.** `standup <noun> <verb>`, nouns `item` · `session` · `crew` · `config` · `repo` · `area` ·
+`machine` · `account` · `person`, plus `init`, `doctor`, `hook` and `mcp`, which name one thing each.
+A short alias list covers the commands used constantly; aliases resolve to the same operation, so
+nothing downstream sees them.
+
+**Output.** Human-readable by default, `--json` for anything parsing it — one document, one envelope,
+`{ ok, data }` or `{ ok, error: { code, message, fields } }`, with all human text on standard error so
+standard output stays parseable. **The error code is the same identifier the API returns**, which is
+what lets identical enforcement be asserted rather than assumed.
+
+**Exit codes** separate the situations that want opposite responses: `0` accepted · `1` unexpected
+failure · `2` malformed command · **`3` rejected by a rule** · `4` not configured.
+
+**Who is acting.** `--as` names the person, else the environment, else the only profile if there is
+one. **A claim, not a credential** — the same posture as the profile picker, and the command's help
+says so. `--session` names the session, from the environment in practice, and is required by anything
+that takes or releases ownership. Precedence throughout is flag, then environment, then the
+configuration file. The connection string is read from the environment or written by `init` into that
+file with owner-only permissions, and is never printed by any command.
+
+**Wait-for-crew follows the binding, not the adapter** — over `http` it calls the long-poll; over
+`direct` it polls the ledger, bounded by the same visibility horizon so both return the same events
+(§22 covers the test that says so).
+
+**What needs a server**, stated rather than discovered: the front end. Everything else is substituted
+— MCP over stdio, wait-for-crew by polling, and configuration through `standup config`, which renders
+the same registry the settings page does.
+
+---
+
+## 21. Session registration, and which hook a session gets
+
+A session registers before it does anything. **The transport it registers over is a capability
+signal**: registering over the command line proves the command line is installed and the database is
+reachable; registering over MCP or HTTP proves a server is reachable. So the transport — stamped by
+the adapter, not supplied by the caller — decides which hook variant the reply describes. With both
+available the registration transport wins; an explicit override in the payload is honoured and
+recorded as an override.
+
+### `sessions`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `text` PK | The client's session identifier. |
+| `machine` | `text` | |
+| `transport` | enum | `cli-direct` · `cli-http` · `mcp-stdio` · `mcp-http` · `http`. How this session registered. Five values because the version rule turns on the binding, and they are the same names the conformance drivers use. |
+| `hook_variant` | enum null | `cli` · `http`. From `transport` unless overridden. |
+| `hook_version` | `text` null | What the session reported. Null = never reported one. |
+| `client` | `text` null | What kind of agent tool it is, as it describes itself. |
+| `person_id` | `text` null → `people.id` | Who it acts as, where known. |
+| `registered_at` · `last_seen_at` | `timestamptz` | |
+
+**Nothing references this table by foreign key.** A session that never registered still writes tool
+calls — that is what makes it a ghost — so a constraint would either reject those rows or force a
+phantom registration. This is a registry, not a constraint.
+
+### Versions, and what each answer does
+
+The build carries two protocol versions per hook variant: the one it speaks and the oldest it still
+accepts (§17.6).
+
+| Reported | Answer |
+|---|---|
+| At or above `current` | Nothing to say. |
+| Below `current`, at or above `min_supported` | **Advisory** — a nudge on the handshake and on the next hook call. A fix must not disable every session the moment it deploys; anything that genuinely must be enforced is expressed by raising `min_supported`, which is a deliberate act in a release. |
+| Below `min_supported` | **The session may not claim.** |
+| Never registered | **The session may not claim**, and is nudged to register on its first write-shaped action. |
+
+**Refusing the claim rather than everything is the honest maximum.** A hook can always be not
+installed, so its presence cannot be enforced on a machine the server does not control. What *can* be
+enforced, in the service layer and therefore through every adapter, is that **no unguarded session
+holds work**: such a session may still read, orient and update itself, but may not take ownership of
+an item under rules it cannot enforce.
+
+**One case collapses.** Where the command line runs in `direct` mode it *is* the app — the hook, the
+rules and the migrations are one installed package — so the hook cannot be a different version from
+the rules, and the remaining question is whether that package is current with the database's
+migration state. An older package against a newer database refuses rather than warns: it is the one
+skew that can corrupt rather than merely fail. **This does not generalise** — a hook shelling out to
+the command line in `http` mode still has two independently versioned artefacts.
+
+---
+
+## 22. Adapter conformance
+
+Every way in — the web API, MCP over each transport, the command line on each of its two — is a thin
+shell over one service call. That is a claim, and this is the test that makes it true rather than
+intended, because the failure it guards against is silent: **a rule implemented inside an adapter is
+enforced for that adapter's callers and for nobody else, and nothing reports it.**
+
+**One driver per adapter, behind one interface**, in a map typed from the **adapter registry** — the
+module the application mounts its adapters through, so the names are load-bearing at runtime rather
+than a list maintained for a test. `AdapterName` is its key type, so
+**adding an adapter without adding its driver does not compile.**
+
+**Cases are authored once per operation, never per adapter.** A case names an operation, a seed, an
+input and an expectation — accepted, or rejected with a specific code and set of offending fields.
+The runner takes the cross product with every driver that exposes that operation, so a new case costs
+nothing per adapter, which is what stops the suite decaying when writing cases becomes tedious.
+
+**Four assertions:**
+
+1. **Identical outcomes.** The same acceptance, or the same rejection code and fields, from every
+   driver. *Message text is deliberately not compared* — a terminal and an API should word things
+   differently, and asserting text is both brittle and a weaker claim.
+2. **Every operation has an accepting case and a rejecting case.** A guard that never refuses anything
+   passes a happy-path suite and protects nothing.
+3. **Every registered guard appears in at least one *observed* rejection** — computed from the `guard`
+   identifier the service returned, never from what a case declared, because a case can name one rule
+   while the service refuses on another with the same code. So a new guard fails the
+   build until it has a case, and nobody has to remember to write per-adapter tests for it. This is
+   the assertion that keeps the suite honest a year from now.
+4. **Adapter completeness.** Every operation an adapter exposes maps to a registered service
+   operation, and any it deliberately does not expose carries a written waiver — the board is a
+   user-interface read, the poll is machine-facing, `init` is local-only. An unwaived divergence
+   fails.
+
+**Waivers are bounded by construction, not by review attention.** They live in one reviewed file with
+a reason each, printed in the CI summary, and **no operation any registered guard can reject may be
+waived by an adapter that exposes any write operation** — so an adapter is read-only by declaration,
+or fully covered, with nothing in between. Without that, a driver that declines to expose anything
+passes assertion 1 vacuously.
+
+**And one structural rule, because behaviour comparison cannot catch an adapter that satisfies every
+case and then adds a check of its own.** It is an allowlist rather than a denylist:
+
+> **Only the service layer, the settings resolver, and migrations and seeds may import the database
+> client. Nothing else, anywhere in the repository.**
+
+A denylist naming route directories would leave out pages, layouts and server actions — which live in
+the same bundle and also mutate — so it would be wrong the first time the front end writes anything.
+An allowlist needs no maintenance as directories are added and covers code nobody has written yet. If
+an adapter cannot reach the database except through a service, it cannot bypass a rule — not because
+it was reviewed carefully, but because it will not build.
+
+**One negative control per claim.** A fixture adapter reaching past the service layer, a guard with no
+case, a driver returning a different code, an operation with only an accepting case, an adapter
+exposing an unmapped operation — each asserted to fail — **plus a direct assertion that the guard
+registry is not empty**, because an assertion evaluated over an empty set passes forever and silently.
+
+**Cost, and how it is kept sane.** Run in-process wherever the process boundary is not the thing
+being tested — call the route handler directly, drive the command line through its entry point with
+an argument vector — and keep a much smaller spawned smoke subset (a real process, a real stdio
+session) as its own job. The in-process matrix runs on every change; the spawned subset proves the
+wiring and does not grow with the case table.
+
+---
+
+## 23. Installation-owned data, and where it is edited
+
+Configuration (§17) is owned by the build: a key exists because code reads it, every key has a
+default, and a fresh database boots fully working with no rows at all. **A second class of data does
+not work that way.** Repositories, areas, machines, accounts and people are owned by the
+*installation*: the build cannot know them, there is no default repository, and a database with no
+rows here cannot serve an item that names one. They are entities, declared in the schema, and they
+belong on their own surface rather than stretched into a settings page that can only render what the
+registry declares.
+
+### 23.1 `repos` and `areas`
+
+**A value that must be exact cannot be free text.** `items.repo` is what the merge gate uses to decide
+which repository a change lands in, and `items.area` is required on every item, filtered on, and in
+the notification-rule field whitelist. Three spellings of one name are three values to the database
+and one to whoever typed them — which shows up as a filter that splits, a count that undercounts, and
+a notification rule that silently never fires.
+
+**An enum is disqualified rather than merely awkward.** Postgres cannot remove an enum value, so a
+typo is permanent; and an enum of one installation's repository names, in a product meant to be
+generic, is exactly the vocabulary leak this schema removes everywhere else. **A reference table with
+a foreign key is the one shape that gets both properties that were in tension** — nothing has to be
+enumerated in advance, and the same value is stored every time. Adding a repository is an insert: a
+data operation at runtime, not a migration and a deploy.
+
+| Table | Create posture | Why the difference |
+|---|---|---|
+| `repos` — `id`, `display_name`, `default_branch`, `host`, `needs_visual_review`, `archived_at` | **Deliberate.** Creating one is an explicit act | A wrong repository aims the merge gate at the wrong repository, and creating one is rare |
+| `areas` — `id`, `display_name`, `archived_at` | **Auto-create on first use**, with normalisation: lowercase, trim, collapse separators | It is written on every item, including research and non-code work; blocking that is friction on the most common operation in the system |
+
+`items.repo` and `items.area` become foreign keys, and `items.repo` gains the index that its filters
+already assume.
+
+**The honest limit:** normalisation kills case and separator variants, not synonyms — `web` and
+`website` will coexist. The answer is the one used elsewhere for the same shape: surface
+near-duplicates for merging, and promote what recurs. An accepted limit, not a hidden one.
+
+**Archive, never delete** — attribution and history point at these rows.
+
+### 23.2 Per-entity overrides of a setting
+
+Two settings have a per-entity exception, and both are edited here beside the entity rather than on
+the settings page: `machines.source_globs` overriding `minting.source_globs`, and
+`accounts.budget_windows` overriding `budget.windows` (§17.7). **The override is validated by the
+registry's own validator**, so the same typed editor, the same help text and the same cross-boundary
+check apply — the override changes the place, never the type. Each row shows whether it carries an
+override or is inheriting the setting.
+
+`accounts.vendor` is checked against the registered adapter list on write; a vendor with no adapter is
+a setting nobody can act on.
+
+### 23.3 Where it is edited
+
+`/admin`, one page per entity kind, and `standup repo` · `standup area` · `standup machine` ·
+`standup account` · `standup person` for the same operations — because a no-server installation must
+not be locked out of the one class of data it cannot start without. Same service calls, same
+conformance drivers, same rules.
+
 ---
 
 ## Open, and deliberately so
 
-**`DECISIONS.md` §14 is the canonical open list; four of its five bear on this document** — the
-CLI-vs-MCP split for anything beyond `wait_for_crew`; whether Codex needs the blocking fallback in
-practice; the exact band numbers beyond the starting values in §17; and the retention default for
-`tool_calls`, also §17. The fifth is how far the front end goes beyond a single board view, which
-this document does not describe. Anything else settled in principle but not yet to the field level is
-a gap to be found by building, not a thread recorded somewhere else.
+**`DECISIONS.md` §14 is the canonical open list; five of its six bear on this document** — the exact
+band numbers beyond the starting values in §17; whether Codex needs the blocking fallback in practice
+(§19); the retention default for `tool_calls`, also §17; whether near-duplicate areas are merged
+automatically above a similarity threshold or only ever surfaced for a person to merge (§23.1); and
+which substrate carries an installation that has no database of its own (§20). The sixth is how far
+the front end goes beyond a single board view, which this document does not describe. Anything else
+settled in principle but not yet to the field level is a gap to be found by building, not a thread
+recorded somewhere else.
+
+**The command-line-versus-MCP split is not on that list**, because §20 settles it: the command line
+is a full adapter, and `wait_for_crew` stays off MCP for the one reason that has nothing to do with
+surface area — only a shell call can be backgrounded.
