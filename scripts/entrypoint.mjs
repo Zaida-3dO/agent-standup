@@ -104,11 +104,14 @@ export async function main({
   // PRISMA_SCHEMA_PATH exists so tests can point this exact wiring at a
   // throwaway, deliberately-broken migration, to prove the migration-failure
   // path is handled correctly without touching this repo's own migration
-  // history — it's a test seam, and it must not be a live production
-  // control surface. The image sets NODE_ENV=production (see Dockerfile),
-  // so gate on that rather than trusting "nobody sets it in production":
-  // honouring it there would let anything able to set a container env var
-  // redirect which migrations get applied to the real database at boot.
+  // history — it's a test seam, and it must not apply by default on a real
+  // deployment. The image sets NODE_ENV=production (see Dockerfile), so
+  // gate on that: a deployment left at its defaults always applies the
+  // committed prisma/schema.prisma, whether or not this variable happens to
+  // be set — e.g. left over from a copied test config. This is NOT a
+  // security boundary against a deliberate actor: NODE_ENV is itself a
+  // container env var, and anyone who can set one can just as easily set
+  // DATABASE_URL. What it closes is the accidental case.
   const isProduction = env.NODE_ENV === "production";
   if (env.PRISMA_SCHEMA_PATH && isProduction) {
     log.warn(
