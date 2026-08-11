@@ -1073,16 +1073,17 @@ column; it cannot argue for a shape. That is the cost of the omission — bounde
 
 ### The differential test does not apply, and that is a decision rather than an omission
 
-The intent behind it was sound: **the behaviour a system already has is the specification anything
-rebuilding it must meet**, and a test that runs the same inputs through both and demands identical
-outcomes is the cheapest way to keep that true. Nothing here schedules such a test.
+The intent behind it was sound: **a specification written as observed behaviour is worth more than one
+written as prose**, because it cannot drift from what it describes — so run the same inputs through
+two implementations, demand identical outcomes, and the specification tests itself. Nothing here
+schedules such a test.
 
 **Verdict: it does not apply, and that is deliberate.** A differential test is only meaningful when
-the two sides are meant to agree, and here they are meant not to: the transition rule was
-**redesigned rather than carried across** — all-to-all transitions with required-field guards,
-instead of a fixed table of legal moves. A differential suite would fail by design on precisely the
-cases the redesign exists for, and pass only where nothing changed, which is where it has nothing to
-say.
+the two sides are meant to agree, and the two here are meant to disagree: the transition rule is
+**all-to-all transitions with required-field guards, chosen over a fixed table of legal moves** — a
+different design, deliberately, and the one this repository builds. A differential suite between two
+designs that were chosen to differ fails on precisely the cases the choice exists for, and passes
+only where nothing differs, which is where it has nothing to say.
 
 **But the protection it was buying is real and has to be bought some other way**, because the reason
 it mattered was never the comparison — it was that edge cases are learned expensively and lost
@@ -1095,8 +1096,8 @@ silently. Three things carry that instead, and naming them is the point of recor
    inputs, and the resulting item states compared row by row. It is a comparison of data, which is
    the part that was never meant to change.
 3. **Anything known to be wanted is written down as a guard test, not assumed to survive.** A rule
-   that lives only in someone's memory of how things used to behave is a rule that has already been
-   lost; the redesign is exactly the moment to convert it.
+   that lives only in somebody's head is a rule that has already been lost; the moment a design is
+   chosen over an alternative is exactly the moment to write down what the choice must not cost.
 
 No new row: this converts into an obligation on #15–#19, which exist.
 

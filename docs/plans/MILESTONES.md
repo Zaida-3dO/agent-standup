@@ -90,8 +90,8 @@ backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **77** | **Settings core.** `settings` + `settings_revision` tables (additive migration), the typed registry with schema/default/label/help/category/`appliesWhen`/`sensitive`/`irreversible`/`formerEnv` per key, resolution into a frozen typed snapshot, the revision-based cache, and the registry's own test (help present, defaults valid, no credential-shaped key, no unmapped prefix). No surface — this is what the service layer reads | 8 | |
-| **85** | **The import allowlist and its negative control.** Only the service layer, the settings resolver, and migrations and seeds may import the database client — enforced by lint and by an import-graph test, with a fixture that deliberately breaks it and is asserted to be caught | 14 | |
+| **77** | **Settings core.** `settings` + `settings_revision` tables (additive migration), the typed registry with schema/default/label/help/category/`appliesWhen`/`sensitive`/`irreversible`/`formerEnv` per key, resolution into a frozen typed snapshot, the revision-based cache, and the registry's own test (help present, defaults valid, no credential-shaped key, no unmapped prefix). **Also the two per-entity override columns** — `machines.source_globs` (`text[]` null) and `accounts.budget_windows` (`jsonb` null), in the same additive migration and validated by the same registry validator, because they are the second half of the same mechanism and `SCHEMA.md` §17.7 has nothing to point at without them. No surface — this is what the service layer reads | 8 | |
+| **85** | **The import allowlist and its negative control.** Only the service layer, the settings resolver, and migrations and seeds may import the database client — enforced by lint and by an import-graph test, with a fixture that deliberately breaks it and is asserted to be caught. **Plus the rule itself stated in `CLAUDE.md` under *Working in this repo*** — every adapter is a thin shell over a service call, and no adapter may reach the database or a guard directly — because a contributor needs it before writing code rather than from a failing lint | 14 | |
 | **14** | Service-layer skeleton, transaction handling, typed errors. Delivers the **operation registry** — the canonical index of service operations, which the conformance harness checks adapters against — and resolves one settings snapshot per call | 8, 77 | |
 | **15** | State machine: all-to-all transitions, guard framework, rehearsal mode. Projects have **no stored state** — theirs is derived from their children, so guards never run against one | 14 | |
 | **16** | Guards — blocked and paused: required fields, clearing on exit | 15 | |
@@ -132,7 +132,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 |---|---|---|---|
 | **26** | Items — the service calls and their routes: create, read, update, list with filters. Also delivers the **adapter registry**, the module the application mounts adapters through and from which `AdapterName` is derived | 14 | |
 | **27** | Transition and complete — the service calls and their routes, with rehearsal mode | 15, 21 | |
-| **28** | Orientation — the service call and its route: checkpoint, state, what changed, open loops, crew | 20, 23 | |
+| **28** | Orientation — the service call and its route: checkpoint, state, what changed, open loops, crew. **Also my-work** — what this session holds right now and in what role — which no other row owned: it is the same session-scoped read over assignments and events, not a filter on the item list, because it answers *in what role* as well as *which items* | 20, 23 | |
 | **29** | Claim, release and heartbeat — the service calls and their routes. **Also the checkpoint and note write path**, which no other row owns: #28 delivers orientation, which only *reads* checkpoints | 23 | |
 | **30** | MCP adapter — a transport-agnostic server core (tool registration and handlers calling the service layer), wired to streamable HTTP. **Stateless.** The stdio wiring is #84 | 26 | |
 | **31** | MCP read tools: get item, list items, my work, orientation | 28, 30 | |
@@ -229,7 +229,7 @@ the client is the handful of checks that cannot run anywhere else.
 | **55** | **Spike:** launching a session unattended on Windows, locked and logged in | — | |
 | **56** | Accounts and usage readings, from the hook and from polling; handling stale readings | 9, 50 | |
 | **57** | Budget bands: four of them, boundaries that move with the clock, strictest window wins. Reads `budget.windows` as a typed setting, and `accounts.budget_windows` where an account overrides it | 56, 77 | |
-| **58** | The poll: a machine reports its sessions, usage, and anything waiting to be minted. Reads `machines.source_globs`, falling back to `minting.source_globs` | 56 | |
+| **58** | The poll: a machine reports its sessions, usage, and anything waiting to be minted. Reads `machines.source_globs`, falling back to `minting.source_globs` | 56, 77 | |
 | **59** | The planner: sort by priority, pack against headroom, deterministic ordering | 57, 58 | |
 | **60** | Launch prompts composed server-side; dispatch and dispatch-claimed recorded | 59 | |
 | **61** | The launcher script and its scheduled task, per machine | 55, 60 | |

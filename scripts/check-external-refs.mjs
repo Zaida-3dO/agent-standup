@@ -38,8 +38,17 @@
  *   - **No shape matches a sentence that is merely unverifiable**: prose
  *     that reads fine but only makes sense to someone who has seen a system
  *     this repository does not contain.
- *   - **The vocabulary lists are finite.** `old <noun>` matches a fixed set
- *     of nouns; an unlisted one goes through.
+ *   - **The vocabulary lists are finite, on both sides of every shape.**
+ *     `old <noun>` matches a fixed set of nouns, and an unlisted one goes
+ *     through — but so does an unlisted *inflection* of a verb that is
+ *     otherwise covered. A live example, left unfixed deliberately so the
+ *     limit is concrete rather than abstract: `supersession` carries
+ *     `replaces` and `replacing` and **not `replaced`**, so "it replaced
+ *     the folder-based store" passes clean. Closing that one would cost
+ *     zero waivers — nothing in the tree says `replaced` — and it is not
+ *     closed here only because widening a shape wants its own pass over
+ *     the corpus for false positives. Treat every alternation below as a
+ *     list somebody wrote once, not as a category.
  *
  * The proper-noun gap is a **cost decision, not an impossibility**, and it
  * is worth being exact about which, because the two have different
@@ -372,9 +381,18 @@ function cleanReason(raw) {
 /**
  * A length check alone lets `xxxxxxxxxxxx` through, and a word count alone
  * lets `this is fine` through — each satisfies the letter of "say why" and
- * none of its point. So require three **distinct, non-filler** words:
- * distinct kills `TODO TODO TODO`, and non-filler is what separates an
- * explanation from an assurance that no explanation is needed.
+ * none of its point. So require three **distinct, non-filler** words.
+ *
+ * The two halves catch different things, and it is worth being exact about
+ * which does what, because an earlier version of this comment credited
+ * distinctness with a rejection the filler list was performing:
+ *
+ *   - **non-filler** is what rejects `this is fine`, `waived for reasons`,
+ *     `lorem ipsum dolor` and `TODO TODO TODO` — every word in each is
+ *     filler, `todo` included, so they fail on the count alone;
+ *   - **distinctness** is what rejects `schema schema schema` — one real
+ *     word padded out to three. Nothing else in the rule reaches that, so
+ *     the suite pins it with a fixture of exactly that shape.
  */
 function isRealReason(reason) {
   if (reason.length < MIN_REASON_LENGTH) return false;

@@ -271,7 +271,7 @@ dumped whole.
 | `session_id` | `text` null | |
 | `assignment_id` | `uuid` null → `assignments.id` | Set on `checkpoint` and other per-agent events. |
 | `body` | `text` null | Prose for `checkpoint`, `note`, `nudge`, `escalation`. **A column, not payload** — slice reads on the hottest path would otherwise drag text nobody asked for, and it's cheap to exclude here. |
-| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; it arrives with the settings service (§17.2). |
+| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; it arrives with the settings service, which is where the audit event is specified (§17.8) and written (§19's `PATCH /settings`). |
 | `payload` | `jsonb` | Type-specific. **A discriminated union keyed on `type`** — see below. |
 
 *(No `state_at` here — it's derivable from the `state-change` rows in this same table, event volume is
@@ -663,6 +663,7 @@ with one account and stops making sense at two.
 | `name` | `text` PK | `desktop`, `laptop`. |
 | `last_poll_at` | `timestamptz` | Lets the server notice *"no poll in 6 hours"*. Without it, a machine that quietly stops asking for work is invisible. |
 | `live_sessions` | `int` | **A hint, not truth.** A poll snapshot, stale between polls — but it knows about sessions that launched and haven't made a tool call yet, which the server cannot see. Treat as a floor. |
+| `source_globs` | `text[]` null | **Per-machine override of the `minting.source_globs` setting** (§17.7). Null = inherit the setting. A column here rather than a scope axis on `settings`, because filesystem layouts are a property of a machine and machines differ; validated by the registry's own validator, so it is a different *place* for the value and never a different type. |
 
 ### `accounts`
 
@@ -675,6 +676,7 @@ with one account and stops making sense at two.
 | `usage_5h` | `numeric` null | **A cache, deliberately.** Derivable as the newest reported reading, but the planner needs it every poll and a `max()` over `tool_calls` per decision is the wrong trade. |
 | `usage_weekly` | `numeric` null | Same. |
 | `usage_at` | `timestamptz` null | When that snapshot was taken — a stale reading is worse than none. |
+| `budget_windows` | `jsonb` null | **Per-account override of the `budget.windows` setting** (§17.7). Null = inherit the setting. Bands key off `account_id` and `plan_type` makes them mean different things — a metered account has no window to have boundaries in — so one global value cannot describe two accounts, which is the same test that keeps `vendor` a column rather than configuration. Same shape and same validator as the setting, including the cross-boundary check (§17.4). |
 
 ### `machine_accounts`
 
@@ -685,6 +687,12 @@ with one account and stops making sense at two.
 
 Bands and the pace line key off **`account_id`**, and the future case — *dispatch against whichever
 account has headroom* — becomes an ordinary query rather than a redesign.
+
+**`machines.source_globs` and `accounts.budget_windows` are the only two per-entity overrides of a
+setting, and the list is closed.** Both are nullable columns on a table that already has rows, which
+costs one `COALESCE` at the single point that resolves each; a third needs an argument rather than a
+precedent. §17.7 is where the rule lives and why the alternative — a scope axis on `settings` — was
+rejected.
 
 ---
 

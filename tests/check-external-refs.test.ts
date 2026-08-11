@@ -284,9 +284,15 @@ describe("check-external-refs — waivers", () => {
   it("rejects a reason made only of words that explain nothing", () => {
     // Each of these is three words and over twelve characters, so a length
     // check and a word count both pass them — and each says exactly as much
-    // as an empty waiver. Distinctness kills the repeated one; the rest are
-    // an assurance that no explanation is needed, or text left where a
-    // reason was meant to go.
+    // as an empty waiver.
+    //
+    // The last fixture is the one that pins DISTINCTNESS, and it is the only
+    // one that does: every other entry here is killed by the filler list on
+    // its own (`todo` is filler too), so dropping the `new Set` would leave
+    // them all still rejected and the suite still green. "schema schema
+    // schema" is one real word padded out to three — three words, twenty
+    // characters, one distinct non-filler word — so it is rejected today and
+    // accepted the moment distinctness goes.
     for (const junk of [
       "this is fine",
       "TODO TODO TODO",
@@ -294,6 +300,8 @@ describe("check-external-refs — waivers", () => {
       "it is fine really",
       "just ignore this one",
       "waived for reasons",
+      "this is the one",
+      "schema schema schema",
     ]) {
       expect(ids(`the old thing <!-- external-ref-ok: ${junk} -->`)).toEqual([
         "waiver-without-a-reason",
@@ -303,8 +311,11 @@ describe("check-external-refs — waivers", () => {
 
   it("accepts the reasons a real waiver in this repository actually gives", () => {
     // The other half of the test above, and the one that stops the filter
-    // being tightened until it rejects honest waivers. Every string here is
-    // a live waiver reason in this repository.
+    // being tightened until it rejects honest waivers. The first three are
+    // live waiver reasons in this repository. The fourth is not — it is the
+    // template from the rules file's fenced example, which the fence rule
+    // excludes from being a waiver at all — and it is here precisely because
+    // it is the string a contributor copies.
     for (const real of [
       "this rule has to quote the phrasing it forbids in order to state it",
       "naming the shapes it matches is the documentation; they are grammar, not real values",
