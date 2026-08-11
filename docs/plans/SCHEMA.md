@@ -1,6 +1,6 @@
 # Agent Standup — data model, config, and API surface
 
-Companion to `PLAN.md` (the readable plan) and `plan-technical.md` (engineering detail).
+Companion to `PLAN.md` (the readable plan) and `DECISIONS.md` (the reasoning behind each call).
 This is the concrete shape of what gets persisted and what gets exposed.
 
 **Status: draft for review.** Types are Postgres. Nothing built.
@@ -13,16 +13,16 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | `text` PK | **Opaque.** Today's `T-YYYYMMDD-slug` values are preserved verbatim on import so migration is 1:1, but the format is not a rule — mandating a the user's setup-shaped ID scheme in a generic product is a leak. New items get whatever the app generates. |
+| `id` | `text` PK | **Opaque.** An imported item keeps whatever identifier it arrived with, verbatim, so an import is 1:1 — but no format is mandated. Baking one installation's ID scheme into a generic product is a leak. New items get whatever the app generates. |
 | `parent_id` | `text` null → `items.id` | Null = a project (a root). Otherwise the item this sits under. Unbounded depth; guarded by `MAX_ITEM_DEPTH`. |
 | `kind` | enum | `project` (depth 0) · `task` (depth 1) · `subtask` (**depth ≥ 2** — nesting is unbounded, so everything deeper is still a subtask). Derived from depth, stored for cheap querying. **Recompute the whole subtree on reparent**, not just the moved row: promoting a subtask to a root changes its children's kind too. |
 | `title` | `text` | One line. |
-| `body` | `text` | The brief. Replaces today's `task.md`. |
+| `body` | `text` | The brief — the durable instruction for whoever picks this up next. |
 | `state` | enum | See §1.1. The only thing transitions move. |
 | `priority` | enum | `P0`–`P3`. |
 | `origin_type` | enum | `person` · `source` · `auto` — who or what created it. |
-| `origin_person` | `text` null → `people.id` | Required iff `origin_type = person`. **Replaces the hardcoded single user** — a second person mints tasks too (the web project feedback), and the core shouldn't know either name. Which *file* a `source` item came from is already on `source_ref`. |
-| `area` | `text` | **Required.** Which part of your world this concerns. Works for research and non-code work. |
+| `origin_person` | `text` null → `people.id` | Required iff `origin_type = person`. **A reference, never a name in the schema** — more than one person mints work, and the core should know none of them by name. Which *file* a `source` item came from is already on `source_ref`. |
+| `area` | `text` | **Required.** Which part of your work this concerns. Works for research and non-code work. |
 | `repo` | `text` null | Concrete repo key, only when code is involved. |
 | `branch` | `text` null | Integration branch for the deliverable. Per-agent branches live on `assignments`. |
 | `needs_visual_review` | `bool` | Gates the merge check. **Renamed from `visual`** to stop it colliding with the `visual` *facet*, which is a difficulty score, not a gate. |
@@ -30,7 +30,7 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 | `merge_authority` | enum | `pre-approved` · `needs-approval` · `agent-judgement` — see §1.3. Default from config. |
 | `blocked_reason` | `text` null | Required iff `state = blocked`. |
 | `blocked_on_type` | enum null | `person` · `external-process` · `time`. Required iff `state = blocked`. |
-| `blocked_on_person` | `text` null → `people.id` | Required iff `blocked_on_type = person`. **Replaces hardcoding person names in an enum** — those were a user-specific leak into core vocabulary. |
+| `blocked_on_person` | `text` null → `people.id` | Required iff `blocked_on_type = person`. **A reference, not a name in an enum** — putting people into core vocabulary is exactly the leak that stops a product being generic. |
 | `unblock_at` | `timestamptz` null | Only for `blocked_on_type = time`. Server can clear the block when it passes. |
 | `pause_reason` | `text` null | Required iff `state = paused`. |
 | `resume_condition` | `text` null | What the server re-checks to unpause. Required iff `state = paused`. |
@@ -193,7 +193,8 @@ discovered at 3am.
 
 ## 2. `assignments` — who is on it
 
-Replaces today's `roles` table *and* `claim.json`. One row per agent per item.
+One row per agent per item — role and ownership in the same record, so there is no second place for
+either to be true.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -254,7 +255,9 @@ it's for, so it's costed at a deliberately high baseline.
 
 ## 3. `events` — the ledger
 
-Replaces `history.jsonl` **and** `WHILE-YOU-WERE-OUT.md`. Queried for slices, never dumped whole.
+One append-only stream for everything that happens — per-item history and the cross-item "what
+changed while I was away" view are the same rows, sliced differently. Queried for slices, never
+dumped whole.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -301,9 +304,10 @@ anything here — Postgres indexes jsonb expressions fine, and event volume is l
 is the one place the second test bites; see §10.)
 
 **Every mutating call appends a row.** `field-change` is what makes that true for ordinary field edits —
-priority, area, merge authority — which would otherwise vanish from the record. Today's CLI
-set-field` already writes a history row, so omitting this would have been a regression, not a
-simplification. It also makes `updated_at` an index over the ledger rather than an independent fact.
+priority, area, merge authority — which would otherwise vanish from the record. An edit that leaves no
+trace is indistinguishable from one that never happened, so leaving these out would be a hole in the
+ledger rather than a simplification. It also makes `updated_at` an index over the ledger rather than
+an independent fact.
 
 **Seen state is per person** — see `event_seen` in §8a. It cannot be a column here: one person marking something
 read must not clear it for another.
@@ -350,7 +354,7 @@ for. (`comments` failed the same test later and was cut too — §7.)
 **Static validators, no model in the loop:**
 1. Count and length caps — **reject, never truncate**.
 2. No entry ≥85% similar to any `events` row for this item (kills the log-paste).
-3. **Jargon denylist** on human fields: `loop-add`, `loop-close`, `owner=`, `review_round`, `LGTM`, `fail-open`, `cwd-repo`, bare `§n`/`#n`/`PR-n`, `*.ps1` filenames, ALL-CAPS prefixes.
+3. **Jargon denylist** on human-facing fields — the vocabulary of the system rather than of the work: internal command names, raw field identifiers (`owner=`, `review_round`), review shorthand (`LGTM`, `fail-open`), bare cross-references (`§n`, `#n`, `PR-n`), script filenames, ALL-CAPS prefixes.
 4. `how_verified` may not consist *solely* of a CI/test reference.
 
 ### 5a. `not_done` — deferral must be proved, not explained
@@ -407,7 +411,7 @@ is already the place that says which transitions require what.
 | `commit_sha` | `text` null | What it applies to — the "at tip" check. |
 | `body` | `text` null | Review text, stored inline: queryable, survives a repo move. |
 | `ref` | `text` null | Path or URL for binaries (screenshots). |
-| `browser_session` | `text` null | Which browser session a visual review ran in. Core doesn't know what Playwright is. |
+| `browser_session` | `text` null | Which browser session a visual review ran in. An opaque string — the core never learns that any browser-automation tool exists. |
 | `created_by_type` | enum | `person` · `agent`. A review by a person and one by a reviewer agent are both evidence. |
 | `created_by_id` | `text` | → `people.id` or `agents.name`, per `created_by_type`. |
 | `created_at` | `timestamptz` | |
@@ -431,7 +435,8 @@ workflow, and it earns nothing:
 
 ## 8. `authorizations`
 
-Replaces the 73k-character `standing-authorizations.md`. Queryable: *"is there a standing auth covering this?"*
+Standing grants as rows rather than prose, so the question that matters is a query rather than a
+read: *"is there a standing auth covering this?"*
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -644,16 +649,17 @@ Same query answers the minting lease: an unclaimed mint dispatch means don't iss
 
 ## 15. `machines` and `accounts`
 
-**Usage belongs to the account, not the machine.** Machines are compute; limits are billing. One account
-driven from two machines is the situation today, and the reverse becomes possible the moment a second
-account exists — so budget state on `machines` was a modelling error.
+**Usage belongs to the account, not the machine.** Machines are compute; limits are billing. One
+account driven from two machines is the ordinary case, and the reverse becomes possible the moment a
+second account exists — so budget state on `machines` would be a modelling error that reads fine
+with one account and stops making sense at two.
 
 ### `machines`
 
 | Field | Type | Meaning |
 |---|---|---|
 | `name` | `text` PK | `desktop`, `laptop`. |
-| `last_poll_at` | `timestamptz` | Server can notice *"no poll in 6 hours"* — today nothing watches. |
+| `last_poll_at` | `timestamptz` | Lets the server notice *"no poll in 6 hours"*. Without it, a machine that quietly stops asking for work is invisible. |
 | `live_sessions` | `int` | **A hint, not truth.** A poll snapshot, stale between polls — but it knows about sessions that launched and haven't made a tool call yet, which the server cannot see. Treat as a floor. |
 
 ### `accounts`
@@ -707,8 +713,8 @@ Every `(from, to)` pair is legal. What's enforced is **what must be supplied**.
 | `BIND` | address | Interface the service listens on. |
 | `PORT` | int | Port it listens on. |
 | `MAX_ITEM_DEPTH` | int, default `6` | Runaway guard on the item tree. |
-| `DEFAULT_MERGE_AUTHORITY` | enum | Product default `needs-approval`; yours `agent-judgement`. |
-| `SUBAGENT_DELEGATION` | `never` · `allowed` · `required` | What an orchestrator may do itself. `never` blocks spawning; `allowed` nudges toward delegating; `required` blocks the orchestrator doing the work. Product default `allowed`; yours `required`. Only fires when an orchestrator role exists, so a single-agent setup is never affected. |
+| `DEFAULT_MERGE_AUTHORITY` | enum | Product default `needs-approval`; an installation that trusts its agents sets `agent-judgement`. |
+| `SUBAGENT_DELEGATION` | `never` · `allowed` · `required` | What an orchestrator may do itself. `never` blocks spawning; `allowed` nudges toward delegating; `required` blocks the orchestrator doing the work. Product default `allowed`; an installation that always runs a crew sets `required`. Only fires when an orchestrator role exists, so a single-agent installation is never affected. |
 | `POLL_INTERVAL_SECONDS` | default `300` | How often each machine asks for work. |
 | `WAIT_FOR_CREW_TIMEOUT` | default `240` | **240, not 300** — the cache TTL drops to 5 min under usage overage, and nothing signals it. |
 | `STALE_AFTER_SECONDS` | default `900` | Quiet → `stalled`. PID check first; this is the fallback. |
@@ -716,7 +722,7 @@ Every `(from, to)` pair is legal. What's enforced is **what must be supplied**.
 | `DISPATCH_FAILED_AFTER_SECONDS` | default `180` | No session against a dispatch → launch failed. |
 | `RESUME_ATTEMPTS_BEFORE_BLOCKED` | default `3` | Attempts with no durable progress before escalating to a person. |
 | `BUDGET_ENABLED` | bool | Master switch. |
-| `BUDGET_WINDOWS` | object per window | Each: `enabled`, and band boundaries for `free` / `selective` / `wind_down` / `stop`. A boundary is a constant, or `slope × elapsed + offset`, or an ordered list of *(when, value)* pairs. Yours: weekly wind-down `15 × days − 5`; 5-hour `80`, rising to `92` in the final hour. |
+| `BUDGET_WINDOWS` | object per window | Each: `enabled`, and band boundaries for `free` / `selective` / `wind_down` / `stop`. A boundary is a constant, or `slope × elapsed + offset`, or an ordered list of *(when, value)* pairs. For example: weekly wind-down `15 × days − 5`; 5-hour `80`, rising to `92` in the final hour. |
 | `BUDGET_VENDOR` | `anthropic` · … | Which adapter reads usage. Codex is a separate object, not a rewrite. |
 | `MODEL_PICKER_ENABLED` | bool, default **off** | Mechanism ships in v1; heuristics fill in once there's data. |
 | `MODEL_PICKER_EXPLORE_RATE` | 0–1 | How often to deliberately try one tier down on low-risk work. Without it, it never learns. |
@@ -741,14 +747,14 @@ it.
 
 ## 18. What an agent sees — the MCP tools
 
-Deliberately small. One media MCP in this setup exposes 62 tools, and every description sits in context on every turn.
+Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and every one of those descriptions sits in context on every turn whether or not it is used.
 
 | Tool | Description as the agent reads it |
 |---|---|
 | `get_item` | Fetch one item plus a summary of its children. |
 | `list_items` | Filter by state, area, parent, assignee, repo, priority. |
-| `my_work` | What you currently hold, and in what role. |
-| `orientation` | **Catch me up.** Latest checkpoint, current state, events since that checkpoint, open loops, crew and worktree state. The replacement for resuming a session. |
+| `my_work` | What you hold right this moment, and in what role. |
+| `orientation` | **Catch me up.** Latest checkpoint, current state, events since that checkpoint, open loops, crew and worktree state. What a fresh session reads instead of being resumed. |
 | `create_item` | Create a project, task or subtask. `parent_id` optional. |
 | `update_item` | Change non-state fields. |
 | `transition` | Move to a new state. Validates required fields. `dry_run` to preview a rejection. |
