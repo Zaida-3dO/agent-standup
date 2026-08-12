@@ -173,6 +173,34 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       expect(row.state).toBe("blocked");
       expect(row.blockedReason).toBe("waiting on someone");
     });
+
+    it("attributes the state_change event to the calling actor when one is supplied on the call", async () => {
+      const id = await createTask({ state: "executing" });
+      await runtime.call(
+        "transition_item",
+        { id, to: "someday" },
+        { caller: { actor: "agent-under-test" } },
+      );
+      const events = await eventsFor(id);
+      const row = await prisma.$queryRawUnsafe<{ actorType: string; actorId: string | null }[]>(
+        `SELECT "actorType", "actorId" FROM "Event" WHERE "itemId" = $1`,
+        id,
+      );
+      expect(events).toHaveLength(1);
+      expect(row[0]?.actorType).toBe("agent");
+      expect(row[0]?.actorId).toBe("agent-under-test");
+    });
+
+    it("attributes the state_change event to the system when no actor is supplied", async () => {
+      const id = await createTask({ state: "executing" });
+      await runtime.call("transition_item", { id, to: "someday" });
+      const row = await prisma.$queryRawUnsafe<{ actorType: string; actorId: string | null }[]>(
+        `SELECT "actorType", "actorId" FROM "Event" WHERE "itemId" = $1`,
+        id,
+      );
+      expect(row[0]?.actorType).toBe("system");
+      expect(row[0]?.actorId).toBeNull();
+    });
   });
 
   describe("transition_item — AC3/AC4: rehearsal mode", () => {
@@ -290,12 +318,45 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       const summary = await summaryFor(id);
       expect(summary).not.toBeNull();
       expect(summary?.userFacing).toBe(false);
-      expect(summary?.howVerified).toBe(
-        "Ran it locally and watched it work end to end.",
-      );
+      expect(summary?.howVerified).toBe("Ran it locally and watched it work end to end.");
 
       const events = await eventsFor(id);
       expect(events.some((e) => e.type === "state_change")).toBe(true);
+    });
+
+    it("persists what_to_test and userFacing=true for a user-facing summary, not just the not-user-facing branch", async () => {
+      const id = await createTask({ state: "in_review" });
+      await runtime.call("complete_item", {
+        id,
+        to: "merged",
+        summary: validSummary({
+          user_facing: true,
+          how_verified: undefined,
+          what_to_test: [{ text: "Open the settings page and confirm the new field is there." }],
+        }),
+      });
+
+      const summary = await summaryFor(id);
+      expect(summary?.userFacing).toBe(true);
+      expect(summary?.whatToTest).toEqual([
+        { text: "Open the settings page and confirm the new field is there." },
+      ]);
+      expect(summary?.howVerified).toBeNull();
+    });
+
+    it("attributes the state_change event to the calling actor when one is supplied", async () => {
+      const id = await createTask({ state: "in_review" });
+      await runtime.call(
+        "complete_item",
+        { id, to: "merged", summary: validSummary() },
+        { caller: { actor: "agent-under-test" } },
+      );
+      const row = await prisma.$queryRawUnsafe<{ actorType: string; actorId: string | null }[]>(
+        `SELECT "actorType", "actorId" FROM "Event" WHERE "itemId" = $1 AND "type" = 'state_change'`,
+        id,
+      );
+      expect(row[0]?.actorType).toBe("agent");
+      expect(row[0]?.actorId).toBe("agent-under-test");
     });
 
     it("rejects with guard_rejected when no summary is supplied — the guard fires, not just this operation's own shape check", async () => {
@@ -322,7 +383,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       await prisma.$executeRawUnsafe(
         `INSERT INTO "Event" ("itemId", "actorType", "type", "body", "payload") VALUES ($1, 'system'::"ActorType", 'note'::"EventType", $2, '{}'::jsonb)`,
         id,
-        "shipped the entire feature end to end with full test coverage today",
+        "shipped the entire feature end to end with full test coverage",
       );
 
       const error = (await runtime
@@ -330,7 +391,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
           id,
           to: "merged",
           summary: validSummary({
-            shipped: ["shipped the entire feature end to end with full test coverage today"],
+            shipped: ["shipped the entire feature end to end with full test coverage"],
           }),
         })
         .catch((e: unknown) => e)) as { code?: string; fields?: readonly string[] };
@@ -390,6 +451,34 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       expect(error.code).toBe("guard_rejected");
     });
 
+    it("not_done reason needs-approval rejects a linked item that has blocked_on_type person but is NOT itself blocked", async () => {
+      // The reverse combination from the test above: blockedOnType is set
+      // but state is not blocked. Only seedable directly — an item cannot
+      // reach this shape through the ordinary transition guard, which
+      // clears blockedOnType whenever state leaves blocked (transition.ts's
+      // "clearingBlocked" branch) — but the FK proof here reads the two
+      // columns independently, so both combinations need to be rejected on
+      // their own terms rather than one implying the other.
+      const id = await createTask({ state: "in_review" });
+      const linked = await createTask({ state: "executing" });
+      await prisma.item.update({
+        where: { id: linked },
+        data: { blockedOnType: "person" },
+      });
+
+      const error = (await runtime
+        .call("complete_item", {
+          id,
+          to: "merged",
+          summary: validSummary({
+            not_done: [{ text: "Needs a call.", reason: "needs-approval", item_id: linked }],
+          }),
+        })
+        .catch((e: unknown) => e)) as { code?: string };
+
+      expect(error.code).toBe("guard_rejected");
+    });
+
     it("not_done reason descoped needs no linked item_id at all", async () => {
       const id = await createTask({ state: "in_review" });
       const result = (await runtime.call("complete_item", {
@@ -413,6 +502,18 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
 
       expect(error.code).toBe("guard_rejected");
       expect(error.guard).toBe("hierarchy.no_finish_with_actionable_child");
+    });
+
+    it("completing a non-existent item returns not_found, not a 500-shaped internal error", async () => {
+      const error = (await runtime
+        .call("complete_item", {
+          id: "does-not-exist",
+          to: "merged",
+          summary: validSummary(),
+        })
+        .catch((e: unknown) => e)) as { code?: string };
+
+      expect(error.code).toBe("not_found");
     });
   });
 

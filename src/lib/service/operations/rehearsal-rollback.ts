@@ -8,9 +8,10 @@
 // itself. But a guard's `check` gets the same `ctx.db` a real transition
 // uses — that is deliberate, so a guard can query whatever it needs inside
 // the one transaction — and nothing stops a guard from also *writing*
-// through it while deciding. Today every registered guard happens to be a
-// read-only validator, so "rehearsal never mutates" currently holds only by
-// convention, not by construction. `runtime.ts`'s own contract is: the
+// through it while deciding. Every registered guard happens to be a
+// read-only validator, so "rehearsal never mutates" holds only by
+// convention, not by construction — nothing in the guard contract requires
+// it. `runtime.ts`'s own contract is: the
 // transaction commits when the operation handler *resolves*, and rolls back
 // only when it *throws*. If a rehearsal handler simply called
 // `rehearseTransition` and returned its outcome, a guard's write would
@@ -58,9 +59,9 @@
 //
 // One thing this does **not** cover: a guard that reaches outside the
 // transaction entirely (an HTTP call, a write through a second, independent
-// database connection). Nothing in this service layer stops that today —
+// database connection). Nothing in this service layer stops that —
 // `ctx.db` is the only handle a guard is handed, but TypeScript cannot stop
-// a guard from importing something else. That is a pre-existing gap in the
+// a guard from importing something else. That is a gap in the
 // guard contract, not one this row introduces or can close from here.
 import { ServiceError } from "../errors";
 import type { TransitionOutcome } from "../state-machine/transition";

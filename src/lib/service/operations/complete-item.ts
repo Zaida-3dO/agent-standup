@@ -197,9 +197,9 @@ export const completeItem = defineOperation({
     // touching the transition machinery, so a caller gets every shape/cap/
     // jargon/similarity problem in one rejection round rather than
     // discovering them one guard-rejection at a time. `summaryRequiredGuard`
-    // still runs too, inside `applyTransition` below — this is a superset
-    // check done early, not a replacement for the guard that actually gates
-    // the transition.
+    // still runs too, inside `applyTransition` below, and actually gates
+    // the transition — this earlier check is a superset run for a better
+    // error, not the enforcement mechanism itself.
     const shapeIssues = validateSummaryShape(candidate);
     const historyRows = await ctx.db.$queryRawUnsafe<{ body: string | null; payload: unknown }[]>(
       `SELECT "body", "payload" FROM "Event" WHERE "itemId" = $1`,
@@ -231,10 +231,11 @@ export const completeItem = defineOperation({
     // The write path row #16 left for this row: `applyTransition` validates
     // `fields.summary` through the guard but does not persist it (this
     // module's own header). `Summary` is 1:1 with an item (SCHEMA.md §5),
-    // so this upserts rather than assumes a fresh insert — completing an
-    // item that was previously completed and reopened writes a new summary
-    // over the old one, which is the only sensible reading of "1:1" for a
-    // row keyed on `item_id` alone with no history of its own.
+    // so this upserts rather than assumes a fresh insert — an item that
+    // reopens and completes a second time keeps exactly one summary row,
+    // holding whatever it most recently completed with, which is the only
+    // sensible reading of "1:1" for a row keyed on `item_id` alone with no
+    // history of its own.
     await ctx.db.$executeRawUnsafe(
       `INSERT INTO "Summary" (
          "itemId", "shipped", "notDone", "userFacing", "whatToTest", "howVerified", "watchFor", "finalState"

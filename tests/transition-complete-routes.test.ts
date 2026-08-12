@@ -165,11 +165,9 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
       const id = await createItemViaRoute();
 
       const response = await transitionRoute.POST(
-        jsonRequest(
-          `http://localhost/api/items/${id}/transition?dry_run=true`,
-          "POST",
-          { to: "someday" },
-        ),
+        jsonRequest(`http://localhost/api/items/${id}/transition?dry_run=true`, "POST", {
+          to: "someday",
+        }),
         { params: Promise.resolve({ id }) },
       );
 
@@ -188,11 +186,9 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
       const id = await createItemViaRoute();
 
       const response = await transitionRoute.POST(
-        jsonRequest(
-          `http://localhost/api/items/${id}/transition?dry_run=true`,
-          "POST",
-          { to: "blocked" },
-        ),
+        jsonRequest(`http://localhost/api/items/${id}/transition?dry_run=true`, "POST", {
+          to: "blocked",
+        }),
         { params: Promise.resolve({ id }) },
       );
 
@@ -208,11 +204,9 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
     it("dry_run=false (or the param absent) actually writes — proving the route reads the query param, not a hardcoded rehearsal", async () => {
       const id = await createItemViaRoute();
       const response = await transitionRoute.POST(
-        jsonRequest(
-          `http://localhost/api/items/${id}/transition?dry_run=false`,
-          "POST",
-          { to: "someday" },
-        ),
+        jsonRequest(`http://localhost/api/items/${id}/transition?dry_run=false`, "POST", {
+          to: "someday",
+        }),
         { params: Promise.resolve({ id }) },
       );
       expect(response.status).toBe(200);
