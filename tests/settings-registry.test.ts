@@ -335,11 +335,17 @@ describe("what the registry does not foreclose", () => {
     // implement produces a system refusing everything for a reason nobody
     // can act on. A later per-variant map must be free to land as a
     // constant without colliding with a key declared here.
+    //
+    // This is narrower than "no key mentions hook at all": MILESTONES.md
+    // #41 adds `hook.allow_patterns` / `hook.ask_patterns`, which are
+    // ordinary, deliberately-configurable pattern lists — the opposite of a
+    // protocol version, which §17.6 is explicit must NOT be configurable.
+    // What stays foreclosed here is a key that is actually about protocol
+    // versioning, however it might be spelled.
     for (const key of SETTING_KEYS) {
-      expect(key.toLowerCase()).not.toContain("hook");
       expect(key.toLowerCase()).not.toContain("protocol");
+      expect(key.toLowerCase()).not.toMatch(/hook[._]?version/);
     }
-    expect(KEY_PREFIXES.hook).toBeUndefined();
   });
 
   it("declares no key for installation-owned entity data", () => {
