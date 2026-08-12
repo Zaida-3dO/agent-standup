@@ -60,6 +60,7 @@ import { updateMachine } from "./operations/update-machine";
 import { listAccounts } from "./operations/list-accounts";
 import { getAccount } from "./operations/get-account";
 import { updateAccount } from "./operations/update-account";
+import { getCrewName } from "./operations/get-crew-name";
 import { listPeople } from "./operations/list-people";
 import { hookDecision } from "./operations/hook-decision";
 
@@ -105,6 +106,7 @@ export const OPERATION_REGISTRY = {
   [listAccounts.name]: listAccounts,
   [getAccount.name]: getAccount,
   [updateAccount.name]: updateAccount,
+  [getCrewName.name]: getCrewName,
   [listPeople.name]: listPeople,
   [hookDecision.name]: hookDecision,
 } as const satisfies Record<string, AnyOperation>;

@@ -16,6 +16,7 @@
 import { malformed, type ErrorEnvelope } from "./envelope";
 import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
 import { ADMIN_COMMANDS } from "./commands-admin";
+import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
 import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
 
 /** What building an input produced. */
@@ -218,6 +219,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   // that module's own header, so concurrent CLI rows landing entries above
   // never conflict with this one.
   ...ADMIN_COMMANDS,
+  ...OWNERSHIP_COMMANDS,
   ...CONFIG_COMMANDS, // row #83 — `standup config`
 ]);
 
@@ -233,6 +235,7 @@ export const ALIASES: Readonly<Record<string, readonly [string, string]>> = Obje
   ls: ["item", "list"],
   show: ["item", "get"],
   new: ["item", "create"],
+  ...OWNERSHIP_ALIASES,
 });
 
 /** A resolved command, plus the words left over for it. */

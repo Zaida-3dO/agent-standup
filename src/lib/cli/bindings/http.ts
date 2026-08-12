@@ -17,6 +17,7 @@ import type { Rejection, ServiceErrorCode } from "@/lib/service";
 import { SERVICE_ERROR_CODES } from "@/lib/service";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
 import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
+import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
 
 /** How one operation is expressed as an HTTP request. */
 export interface RouteSpec {
@@ -171,6 +172,7 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
   // that module's own header, so concurrent CLI rows adding entries above
   // never conflict with this one.
   ...ADMIN_HTTP_ROUTES,
+  ...OWNERSHIP_HTTP_ROUTES,
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */

@@ -71,7 +71,7 @@ into it.*
 | **10** | Importer — items: a directory-per-task store → `items`, status remap, the source identifier into `custom_fields`. Resolves repositories and areas through the reference tables, mapping aliases of one repository as it goes rather than importing them as distinct values | 8, 91 | `done` |
 | **11** | Importer — events: the source store's history log → `events`, actor mapping | 10 | `done` |
 | **12** | Importer — assignments and artifacts: claims, roles, review files | 10 | `done` |
-| **13** | Import verification: row counts, spot-check report, idempotent re-run | 11, 12 | |
+| **13** | Import verification: row counts, spot-check report, idempotent re-run | 11, 12 | `done` |
 | **91** | **`repos` and `areas`.** Two reference tables and the two foreign keys; deliberate create for a repository, auto-create-with-normalisation for an area; the missing index on `items.repo`; near-duplicate surfacing | 8 | `done` |
 
 > **#91 before #10.** The importer is the first thing to write these columns in volume, and an import
@@ -142,9 +142,9 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **34** | Crew naming: hand out a name, assign it, retire it | 9, 14 | `done` |
 | **78** | Settings service and its routes — `GET`, `PATCH` (a map, one transaction), `PUT`/`DELETE` for the one-key case — with write-time validation including the capability documents, the `setting-change` audit event, and the revision bump in the same transaction | 20, 77 | `done` |
 | **79** | **Command-line foundation.** The `standup` entry point, `<noun> <verb>` dispatch with aliases, both bindings (`direct` over the service layer, `http` over the API) behind one interface, `--json` envelope and exit codes, identity resolution, configuration precedence, preflight, and `standup doctor` — which also re-checks configured capability paths locally | 14, 26 | `done` |
-| **80** | `standup init` — find, accept or provision a database; create it; migrate; seed; write local configuration; prove it with a live round trip. Asks for a provisioning connection separately from the application role, and falls back to a supplied connection string rather than abandoning | 9, 79 | |
+| **80** | `standup init` — find, accept or provision a database; create it; migrate; seed; write local configuration; prove it with a live round trip. Asks for a provisioning connection separately from the application role, and falls back to a supplied connection string rather than abandoning | 9, 79 | `done` |
 | **81** | Command line: items — list, get, create, update, transition with `--dry-run`, complete | 15, 21, 26, 27, 79 | `done` |
-| **82** | Command line: ownership and orientation — claim, release, heartbeat, checkpoint, note, my-work, orientation, crew name | 23, 28, 29, 34, 79 | |
+| **82** | Command line: ownership and orientation — claim, release, heartbeat, checkpoint, note, my-work, orientation, crew name | 23, 28, 29, 34, 79 | `done` |
 | **83** | `standup config` — list, get, set, clear, describe, rendering label, help and validation from the registry; `sensitive` and `irreversible` keys require the confirmation flag | 78, 79 | `done` |
 | **84** | MCP over **stdio**, wiring the same transport-agnostic server core as the HTTP transport | 30, 79 | `done` |
 | **90** | **Retiring the environment variables.** A startup check, derived from the registry's `formerEnv` entries, that fails in development and logs loudly in production when a retired name is still set; plus `.env.example`, the production compose environment block, and the README's configuration and database-requirement sections | 77 | `done` |
