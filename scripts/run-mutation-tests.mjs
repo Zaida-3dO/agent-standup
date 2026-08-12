@@ -71,16 +71,17 @@
  *   --base <ref>     Git ref to diff against when --changed-only is set.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   verifyNamedKills,
   computeMutationScore,
   assertDeadLineNeverKilled,
+  assertRequestedFilesMutated,
   clearReportFile,
   readReportOrThrow,
   validateIncrementalCache,
 } from "./lib/mutation-report-guards.mjs";
+import { changedSourceFiles, buildMutateArg } from "./lib/mutation-scope.mjs";
 
 const REPORT_PATH = path.resolve("reports/mutation/mutation.json");
 // Must match `incrementalFile` in stryker.config.json — passed explicitly
@@ -97,45 +98,6 @@ function parseArgs(argv) {
     else if (argv[i] === "--base") args.base = argv[++i];
   }
   return args;
-}
-
-/**
- * Source files (under `src/`, TypeScript, excluding tests) changed relative
- * to `base`. Returns null (meaning "use the config default") when the diff
- * can't be computed — a --changed-only run on a branch with no source
- * changes returns an empty array (not null), which the caller treats as
- * "nothing to mutate" rather than falling back to the full default scope.
- */
-function changedSourceFiles(base) {
-  const fetchResult = spawnSync("git", ["fetch", "origin", "main", "--quiet"], {
-    stdio: "inherit",
-  });
-  if (fetchResult.status !== 0) {
-    console.warn(
-      `[run-mutation-tests] \`git fetch origin main\` failed (exit ${fetchResult.status}); ` +
-        `diffing against the local ref ${base} without refreshing it first.`,
-    );
-  }
-
-  const diff = spawnSync("git", ["diff", "--name-only", `${base}...HEAD`], {
-    encoding: "utf8",
-  });
-  if (diff.status !== 0 || diff.error) {
-    console.warn(
-      `[run-mutation-tests] could not diff against ${base}; falling back to the config's default mutate scope.`,
-    );
-    return null;
-  }
-
-  const files = diff.stdout
-    .split("\n")
-    .map((f) => f.trim())
-    .filter(Boolean)
-    .filter((f) => f.startsWith("src/"))
-    .filter((f) => /\.tsx?$/.test(f))
-    .filter((f) => existsSync(f));
-
-  return files;
 }
 
 /**
@@ -257,6 +219,13 @@ function main() {
 
   const strykerArgs = ["stryker", "run"];
 
+  // Non-null only when this run is scoped to a specific changed-file list —
+  // used below, after the run, to reconcile that every one of these files
+  // was actually mutated (see `assertRequestedFilesMutated`). Left null for
+  // a full/default-scope run, which has no fixed target list to reconcile
+  // against.
+  let requestedFiles = null;
+
   if (args.changedOnly) {
     const files = changedSourceFiles(args.base);
     if (files === null) {
@@ -269,7 +238,13 @@ function main() {
     } else {
       console.log(`[run-mutation-tests] scoping mutation to ${files.length} changed file(s):`);
       for (const f of files) console.log(`  - ${f}`);
-      strykerArgs.push("--mutate", files.join(","));
+      // `buildMutateArg` escapes every minimatch-magic character (most
+      // importantly Next.js's own `[id]`-style dynamic route folders) in
+      // each path before joining — see `scripts/lib/mutation-scope.mjs`'s
+      // module doc comment for why a plain `files.join(",")` here silently
+      // scopes a bracket route to zero files instead of itself.
+      strykerArgs.push("--mutate", buildMutateArg(files));
+      requestedFiles = files;
     }
   }
 
@@ -306,6 +281,17 @@ function main() {
   let attributedKills;
   try {
     attributedKills = verifyNamedKills(report);
+    // Reconciliation: every file this run was SCOPED to must actually show
+    // up as mutated in the report. Stryker's own project resolver produces
+    // no warning at all when a `--mutate` target pattern matches zero files
+    // (verified empirically — only the config-level `mutate` list gets that
+    // warning); the file is simply absent from the report, indistinguishable
+    // from "this file mutated cleanly" unless something checks for its
+    // absence. This is what caught the original bracket-route bug and is
+    // what will catch the next special character nobody has hit yet.
+    if (requestedFiles) {
+      assertRequestedFilesMutated(report, requestedFiles);
+    }
   } catch (err) {
     console.error(`[run-mutation-tests] ${err.message}`);
     process.exit(1);
@@ -315,7 +301,24 @@ function main() {
   const score = computeMutationScore(report);
   const breakThreshold = report.thresholds?.break ?? null;
 
-  if (score != null && breakThreshold != null && score < breakThreshold) {
+  // `score == null` means the run produced no Killed/Survived/Timeout
+  // mutant at all — every mutant was NoCoverage, or (now that
+  // `assertRequestedFilesMutated` above already threw for a --changed-only
+  // run with a silently-empty scope) some other scope resolved to nothing.
+  // This USED to print "PASS (nothing to prove)" and exit 0 — the exact
+  // false-PASS shape that let the six bracket routes go untested while CI
+  // stayed green. A run that proved nothing about any mutant must never be
+  // treated as a pass.
+  if (score == null) {
+    console.error(
+      "\n[run-mutation-tests] the run produced no scoreable mutants (no Killed, Survived, or " +
+        "Timeout status among any mutant) for the requested scope. A run that proves nothing " +
+        "must never be treated as a pass.",
+    );
+    process.exit(1);
+  }
+
+  if (breakThreshold != null && score < breakThreshold) {
     console.error(
       `\n[run-mutation-tests] mutation score ${score.toFixed(2)}% is below the break threshold ` +
         `${breakThreshold}%.`,
@@ -324,9 +327,7 @@ function main() {
   }
 
   console.log(
-    score != null
-      ? `\n[run-mutation-tests] mutation score ${score.toFixed(2)}% — all kills verified by name. PASS.`
-      : "\n[run-mutation-tests] no mutants were generated for the requested scope. PASS (nothing to prove).",
+    `\n[run-mutation-tests] mutation score ${score.toFixed(2)}% — all kills verified by name. PASS.`,
   );
 }
 

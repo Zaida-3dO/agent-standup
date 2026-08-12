@@ -120,6 +120,54 @@ export function assertDeadLineNeverKilled(report, filePath, deadLine) {
 }
 
 /**
+ * Reconciliation guard for a `--changed-only` run: every file the caller
+ * SCOPED the run to (`requestedFiles`, e.g. from `changedSourceFiles` in
+ * `mutation-scope.mjs`) must actually appear in the report as a mutated
+ * file with at least one mutant. Verified empirically (a real `stryker run`
+ * against a mix of one valid file and one file whose `--mutate` pattern
+ * silently matched zero files — see this change's handoff notes) that
+ * Stryker's own JSON report simply OMITS a requested file that matched no
+ * mutants; there is no separate error, warning, or marker anywhere in the
+ * report distinguishing "deliberately not mutated" from "silently dropped
+ * by a broken glob pattern". This is the check equivalent to
+ * `assertDeadLineNeverKilled` above, generalized from one fixed control
+ * file to an arbitrary list of requested files: without it, a `--mutate`
+ * pattern that resolves to nothing (a glob-special character in a path, a
+ * typo, a file the diff renamed) produces a report that LOOKS complete —
+ * `files.length` was non-zero going in, so the "nothing changed" early exit
+ * in `run-mutation-tests.mjs` never fires — while proving nothing about the
+ * file that was silently dropped. This is what caught the original
+ * bracket-route bug (`src/app/api/items/[id]/route.ts` and five sibling
+ * dynamic routes) and is what will catch the next special character nobody
+ * has hit yet, without needing to know in advance what that character is.
+ *
+ * Throws naming every missing/empty file if any are found; returns
+ * (nothing) silently on success.
+ */
+export function assertRequestedFilesMutated(report, requestedFiles) {
+  const files = report.files ?? {};
+  const problems = [];
+  for (const requested of requestedFiles) {
+    const fileResult = files[requested];
+    if (!fileResult) {
+      problems.push(`${requested} (absent from the report entirely)`);
+    } else if ((fileResult.mutants ?? []).length === 0) {
+      problems.push(`${requested} (present in the report but zero mutants were generated for it)`);
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `${problems.length} requested file(s) were scoped for mutation but never actually mutated ` +
+        `— Stryker's own file resolution silently produced nothing for them (most likely a ` +
+        `glob-special character in the path being reinterpreted as a pattern instead of matching ` +
+        `itself). A run that never touched these files has proven nothing about them and must ` +
+        `never be treated as a pass:\n${problems.map((p) => `  - ${p}`).join("\n")}`,
+    );
+  }
+}
+
+/**
  * Deletes any file at `reportPath` if one exists, otherwise does nothing.
  *
  * Called immediately before every Stryker invocation in

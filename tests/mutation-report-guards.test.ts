@@ -16,6 +16,7 @@ import {
   verifyNamedKills,
   computeMutationScore,
   assertDeadLineNeverKilled,
+  assertRequestedFilesMutated,
   clearReportFile,
   readReportOrThrow,
   validateIncrementalCache,
@@ -259,6 +260,99 @@ describe("assertDeadLineNeverKilled", () => {
     expect(() => assertDeadLineNeverKilled(report, filePath, 37)).toThrow(
       /expected at least one mutant at/i,
     );
+  });
+});
+
+// This is the reconciliation half of the mutation-glob fix: proves that a
+// changed-files scope which silently resolved to zero mutants for one of
+// its requested files — the exact shape Stryker produced for the six
+// bracket-route files (`src/app/api/items/[id]/route.ts` and siblings)
+// before the escaping fix in `mutation-scope.mjs` — is caught here, not
+// silently treated as a pass. The fixture shapes below reproduce a REAL
+// report observed from a live `stryker run --mutate
+// "src/lib/areas.ts,src/app/api/items/[id]/route.ts"` (unescaped): only
+// `src/lib/areas.ts` ever appears in `report.files`; the bracket route is
+// entirely absent, with no warning or marker anywhere in the report.
+describe("assertRequestedFilesMutated (reconciliation: closes the silent-glob-drop hole)", () => {
+  it("passes silently when every requested file appears in the report with at least one mutant", () => {
+    const report = {
+      files: {
+        "src/lib/areas.ts": {
+          mutants: [
+            {
+              id: "1",
+              status: "Survived",
+              mutatorName: "X",
+              location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+            },
+          ],
+        },
+        "src/app/api/items/[id]/route.ts": {
+          mutants: [
+            {
+              id: "2",
+              status: "Survived",
+              mutatorName: "X",
+              location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+            },
+          ],
+        },
+      },
+    };
+
+    expect(() =>
+      assertRequestedFilesMutated(report, ["src/lib/areas.ts", "src/app/api/items/[id]/route.ts"]),
+    ).not.toThrow();
+  });
+
+  // The exact real-world shape: a bracket route's `--mutate` pattern
+  // silently matched zero files, so it never appears in `report.files` at
+  // all — while a sibling valid file's pattern matched fine, keeping
+  // `report.files` non-empty and the run from crashing outright.
+  it("throws naming a requested file that is entirely absent from the report", () => {
+    const report = {
+      files: {
+        "src/lib/areas.ts": {
+          mutants: [
+            {
+              id: "1",
+              status: "Survived",
+              mutatorName: "X",
+              location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+            },
+          ],
+        },
+      },
+    };
+
+    expect(() =>
+      assertRequestedFilesMutated(report, ["src/lib/areas.ts", "src/app/api/items/[id]/route.ts"]),
+    ).toThrow(/src\/app\/api\/items\/\[id\]\/route\.ts/);
+  });
+
+  it("throws naming a requested file that is present but has zero mutants generated for it", () => {
+    const report = {
+      files: {
+        "src/lib/areas.ts": { mutants: [] },
+      },
+    };
+
+    expect(() => assertRequestedFilesMutated(report, ["src/lib/areas.ts"])).toThrow(
+      /zero mutants were generated/,
+    );
+  });
+
+  it("reports every missing file, not just the first", () => {
+    const report = { files: {} };
+
+    expect(() => assertRequestedFilesMutated(report, ["src/a.ts", "src/b.ts"])).toThrow(
+      /2 requested file\(s\)/,
+    );
+  });
+
+  it("does nothing when the requested-files list is empty", () => {
+    const report = { files: {} };
+    expect(() => assertRequestedFilesMutated(report, [])).not.toThrow();
   });
 });
 
