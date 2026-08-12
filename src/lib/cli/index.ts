@@ -36,6 +36,9 @@ export type {
 export { doctorReport } from "./doctor";
 export type { CapabilityCheck, DoctorReport } from "./doctor";
 
+export { runMcpStdio } from "./mcp";
+export type { McpStdioOutcome, RunMcpStdioOptions } from "./mcp";
+
 export { helpText, runCli, runCommand } from "./run";
 export type { RunCliOptions, RunOutcome } from "./run";
 
