@@ -29,7 +29,7 @@ bottom is explicit about which is which.
 
 The three required contexts above are exactly the three jobs in `ci.yml` that end in `-gate` or are
 named `Build & test` — every other job (`changes`, `actionlint`, `mutation-testing*`, `docker-build`) is
-either a helper or, in mutation testing's case, not currently a required check at all.
+either a helper or, in mutation testing's case, not a required check at all.
 
 ---
 
@@ -61,12 +61,12 @@ queue" is protecting the branch:
 
 That's the change that matters. Two more repository-level settings are related but optional:
 
-- **`allow_auto_merge`** (currently `false`): turning this on adds a "Merge when ready" option on a PR
+- **`allow_auto_merge`** (`false` in the table above): turning this on adds a "Merge when ready" option on a PR
   that automatically adds it to the queue the moment its required checks and reviews pass, instead of
   a human needing to notice and click "Add to merge queue" by hand. Worth turning on alongside the
   queue for the automation to actually land, but the queue functions without it — anyone with write
   access can still add a passed PR to the queue manually.
-- **`allow_update_branch`** (currently `false`): shows a manual "Update branch" button on a stale PR.
+- **`allow_update_branch`** (`false` in the table above): shows a manual "Update branch" button on a stale PR.
   With the queue (and `strict` off) handling "test against current main" automatically, this stops
   being load-bearing — it's a convenience for someone who wants to rebase by hand before queuing, not a
   requirement.
@@ -76,7 +76,7 @@ That's the change that matters. Two more repository-level settings are related b
 ## Rollback — if the queue stalls
 
 **Uncheck "Require merge queue"** in the same branch protection rule editor, and re-check "Require
-branches to be up to date before merging" if you want the old protection back immediately. Save.
+branches to be up to date before merging" if you want that protection back immediately. Save.
 
 This stops new PRs from being _added_ to the queue right away. It does **not** by itself guarantee
 already-queued PRs are cleared — check the queue view (`https://github.com/Zaida-3dO/agent-standup/queue/main`)
