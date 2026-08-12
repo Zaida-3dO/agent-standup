@@ -39,12 +39,19 @@ export class InvalidAreaNameError extends Error {
  * though the id is "web" — but the id, and only the id, is what every
  * subsequent write and filter compares against, which is the whole point.
  *
- * Idempotent under concurrent callers: two requests racing to create "web"
- * for the first time both resolve to the same row via upsert rather than
- * one throwing a unique-violation the caller has to handle.
+ * Atomic under concurrent callers: `INSERT ... ON CONFLICT (id) DO NOTHING`
+ * is a single statement Postgres itself serialises against the unique index
+ * on `id`, so two requests racing to create "web" for the first time can
+ * never both succeed at creating a row — one insert wins, the other becomes
+ * a no-op, and both callers then read back the same, single row. This is
+ * deliberately NOT `prisma.area.upsert`: Prisma's upsert is a find followed
+ * by a create, two separate round-trips with no atomicity between them, so
+ * two concurrent first-use calls can both miss the find and both attempt
+ * the create — one then throws a unique-constraint violation instead of
+ * resolving to the winner's row.
  */
 export async function ensureArea(
-  client: Pick<PrismaClient, "area">,
+  client: Pick<PrismaClient, "area" | "$executeRaw" | "$queryRaw">,
   rawName: string,
 ): Promise<{ id: string; displayName: string }> {
   const id = normalizeAreaKey(rawName);
@@ -54,15 +61,28 @@ export async function ensureArea(
 
   const displayName = rawName.trim();
 
-  const area = await client.area.upsert({
-    where: { id },
-    // Only the id is used to find an existing row — an area already on
-    // record keeps its own display name (which may have been edited since
-    // creation) rather than being silently overwritten by whatever raw
-    // string this particular write happened to spell it with.
-    update: {},
-    create: { id, displayName },
-  });
+  // ON CONFLICT DO NOTHING means this statement never touches an existing
+  // row's displayName, enforced by Postgres itself: on conflict there is no
+  // UPDATE clause at all, so a losing writer's spelling can never overwrite
+  // the row that's already on record.
+  await client.$executeRaw`
+    INSERT INTO "Area" ("id", "displayName")
+    VALUES (${id}, ${displayName})
+    ON CONFLICT ("id") DO NOTHING
+  `;
+
+  // Whichever caller's insert actually landed, every caller reads back the
+  // same committed row here — the id is unique, so this always finds
+  // exactly the row the race resolved to, never a "half-created" state.
+  const rows = await client.$queryRaw<
+    Array<{ id: string; displayName: string }>
+  >`SELECT "id", "displayName" FROM "Area" WHERE "id" = ${id}`;
+  const area = rows[0];
+  if (!area) {
+    // Should be unreachable: we just inserted-or-confirmed this row inside
+    // the same client/transaction. Fail loudly rather than return undefined.
+    throw new Error(`ensureArea: no Area row found for id ${JSON.stringify(id)} after insert`);
+  }
 
   return { id: area.id, displayName: area.displayName };
 }

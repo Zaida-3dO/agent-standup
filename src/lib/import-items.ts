@@ -159,7 +159,7 @@ export interface ImportItemsResult {
  * snapshot for it.
  */
 export async function importItems(
-  client: Pick<PrismaClient, "item" | "area">,
+  client: Pick<PrismaClient, "item" | "area" | "$executeRaw" | "$queryRaw">,
   tasks: SourceTask[],
   options: ImportItemsOptions,
 ): Promise<ImportItemsResult> {
