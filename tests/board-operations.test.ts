@@ -391,5 +391,259 @@ describeIfDb("get_board against Postgres", () => {
       ].map((entry) => entry.item.id);
       expect(allIds).toContain(item.id);
     });
+
+    it("state filter genuinely EXCLUDES a task in a different state", async () => {
+      // A root item (no parentId) is a PROJECT (kind derived from depth,
+      // create-item.ts) — the state filter excludes those by design (see
+      // the next test), so both items here must be TASKS under a project,
+      // or this would trivially pass by excluding both, not by narrowing.
+      const project = await createItem({ area: "board-filter-state" });
+      const executing = await createItem({ area: "board-filter-state", parentId: project.id });
+      await setState(executing.id, "executing");
+      const blocked = await createItem({ area: "board-filter-state", parentId: project.id });
+      await setState(blocked.id, "blocked");
+
+      const board = (await runtime.call("get_board", {
+        area: "board-filter-state",
+        state: "executing",
+      })) as BoardOutput;
+      const allIds = [
+        ...board.backlog,
+        ...board.in_progress,
+        ...board.waiting,
+        ...board.completed,
+      ].map((entry) => entry.item.id);
+      expect(allIds).toEqual([executing.id]);
+    });
+
+    it("state filter EXCLUDES a project even when the project's own leftover-default state matches the filter value", async () => {
+      // Every item, project included, is created with `on_deck`
+      // (`create_item`'s default) and a project never transitions — so a
+      // naive `state = 'on_deck'` equality with no kind exclusion would
+      // wrongly sweep in every untouched project. This is the exact case
+      // the module header names as the reason the filter carries a
+      // `kind != 'project'` clause alongside the equality check.
+      const project = await createItem({ area: "board-filter-state-project" });
+      expect(project.state).toBe("on_deck");
+      const onDeckTask = await createItem({
+        area: "board-filter-state-project",
+        parentId: project.id,
+      });
+      expect(onDeckTask.state).toBe("on_deck");
+
+      const board = (await runtime.call("get_board", {
+        area: "board-filter-state-project",
+        state: "on_deck",
+      })) as BoardOutput;
+      const allIds = [
+        ...board.backlog,
+        ...board.in_progress,
+        ...board.waiting,
+        ...board.completed,
+      ].map((entry) => entry.item.id);
+      expect(allIds).toEqual([onDeckTask.id]);
+      expect(allIds).not.toContain(project.id);
+    });
+
+    describe('assignee filter — "who\'s on it"', () => {
+      async function claimAs(itemId: string, holderId: string, sessionId: string): Promise<void> {
+        await runtime.call("claim", {
+          itemId,
+          role: "builder",
+          holderType: "agent",
+          holderId,
+          sessionId,
+          machine: "board-tests-machine",
+        });
+      }
+
+      it("genuinely EXCLUDES an item held by a different holder", async () => {
+        const held = await createItem({ area: "board-filter-assignee" });
+        await claimAs(held.id, "crew-alpha", "session-alpha");
+        const unheld = await createItem({ area: "board-filter-assignee" });
+        await claimAs(unheld.id, "crew-beta", "session-beta");
+
+        const board = (await runtime.call("get_board", {
+          area: "board-filter-assignee",
+          assignee: "crew-alpha",
+        })) as BoardOutput;
+        const allIds = [
+          ...board.backlog,
+          ...board.in_progress,
+          ...board.waiting,
+          ...board.completed,
+        ].map((entry) => entry.item.id);
+        expect(allIds).toEqual([held.id]);
+      });
+
+      it("excludes an item whose only assignment has been RELEASED — 'who's on it' means a live claim, not history", async () => {
+        const item = await createItem({ area: "board-filter-assignee-released" });
+        await claimAs(item.id, "crew-gamma", "session-gamma");
+        await runtime.call("release", { itemId: item.id, sessionId: "session-gamma" });
+
+        const board = (await runtime.call("get_board", {
+          area: "board-filter-assignee-released",
+          assignee: "crew-gamma",
+        })) as BoardOutput;
+        const allIds = [
+          ...board.backlog,
+          ...board.in_progress,
+          ...board.waiting,
+          ...board.completed,
+        ].map((entry) => entry.item.id);
+        expect(allIds).toEqual([]);
+      });
+
+      it("an unclaimed item never matches any assignee filter", async () => {
+        await createItem({ area: "board-filter-assignee-none" });
+        const board = (await runtime.call("get_board", {
+          area: "board-filter-assignee-none",
+          assignee: "nobody-in-particular",
+        })) as BoardOutput;
+        const allIds = [
+          ...board.backlog,
+          ...board.in_progress,
+          ...board.waiting,
+          ...board.completed,
+        ].map((entry) => entry.item.id);
+        expect(allIds).toEqual([]);
+      });
+    });
+
+    describe("search filter — free text over title/body", () => {
+      it("matches a substring of the title, case-insensitively", async () => {
+        const match = await createItem({
+          area: "board-filter-search-title",
+          title: "Fix the Onboarding flow",
+          body: "irrelevant",
+        });
+        await createItem({
+          area: "board-filter-search-title",
+          title: "Unrelated work",
+          body: "irrelevant",
+        });
+
+        const board = (await runtime.call("get_board", {
+          area: "board-filter-search-title",
+          search: "onboard",
+        })) as BoardOutput;
+        const allIds = [
+          ...board.backlog,
+          ...board.in_progress,
+          ...board.waiting,
+          ...board.completed,
+        ].map((entry) => entry.item.id);
+        expect(allIds).toEqual([match.id]);
+      });
+
+      it("matches a substring of the body, and genuinely excludes an item where neither field matches", async () => {
+        const match = await createItem({
+          area: "board-filter-search-body",
+          title: "x",
+          body: "The migration touches the payments table.",
+        });
+        await createItem({
+          area: "board-filter-search-body",
+          title: "x",
+          body: "Nothing to do with that at all.",
+        });
+
+        const board = (await runtime.call("get_board", {
+          area: "board-filter-search-body",
+          search: "payments",
+        })) as BoardOutput;
+        const allIds = [
+          ...board.backlog,
+          ...board.in_progress,
+          ...board.waiting,
+          ...board.completed,
+        ].map((entry) => entry.item.id);
+        expect(allIds).toEqual([match.id]);
+      });
+    });
+
+    describe("composition — two or more filters narrow together", () => {
+      it("area + priority + state together return only the item matching ALL three, not any one of them", async () => {
+        // Three items, each matching exactly two of the three filters, plus
+        // one matching all three — a test that only ANDs two dimensions
+        // could still pass if the implementation quietly ORed a third in.
+        // Each is a TASK under a project, not a bare root item — a root
+        // item is itself a project (kind derived from depth), and the
+        // state filter deliberately excludes projects (see the dedicated
+        // test above), which would make this test pass by exclusion rather
+        // than by genuinely narrowing on all three dimensions.
+        const project = await createItem({ area: "board-compose-target" });
+        const target = await createItem({
+          area: "board-compose-target",
+          parentId: project.id,
+          priority: "P0",
+        });
+        await setState(target.id, "blocked");
+
+        const wrongPriority = await createItem({
+          area: "board-compose-target",
+          parentId: project.id,
+          priority: "P2",
+        });
+        await setState(wrongPriority.id, "blocked");
+
+        const wrongState = await createItem({
+          area: "board-compose-target",
+          parentId: project.id,
+          priority: "P0",
+        });
+        await setState(wrongState.id, "executing");
+
+        const otherAreaProject = await createItem({ area: "board-compose-other-area" });
+        const wrongArea = await createItem({
+          area: "board-compose-other-area",
+          parentId: otherAreaProject.id,
+          priority: "P0",
+        });
+        await setState(wrongArea.id, "blocked");
+
+        const board = (await runtime.call("get_board", {
+          area: "board-compose-target",
+          priority: "P0",
+          state: "blocked",
+        })) as BoardOutput;
+        const allIds = [
+          ...board.backlog,
+          ...board.in_progress,
+          ...board.waiting,
+          ...board.completed,
+        ].map((entry) => entry.item.id);
+        expect(allIds).toEqual([target.id]);
+      });
+
+      it("assignee + search together return empty when the assignee holds an item that doesn't match the search text", async () => {
+        // Proves composition narrows even when each filter alone would
+        // match something — a mistakenly-OR'd implementation would still
+        // return the held item here.
+        const held = await createItem({
+          area: "board-compose-empty",
+          title: "Completely different topic",
+          body: "nothing searched for here",
+        });
+        await runtime.call("claim", {
+          itemId: held.id,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-delta",
+          sessionId: "session-delta",
+          machine: "board-tests-machine",
+        });
+
+        const board = (await runtime.call("get_board", {
+          area: "board-compose-empty",
+          assignee: "crew-delta",
+          search: "onboarding",
+        })) as BoardOutput;
+        expect(board.backlog).toEqual([]);
+        expect(board.in_progress).toEqual([]);
+        expect(board.waiting).toEqual([]);
+        expect(board.completed).toEqual([]);
+      });
+    });
   });
 });
