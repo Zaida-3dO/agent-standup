@@ -28,11 +28,7 @@
 // `hasPersonApprovedCodeReviewAtCurrentRoundAndTip`) — see each function's
 // own doc for the exact scenario this closes.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
-import {
-  currentTipCommitSha,
-  hasApproval,
-  latestApprovalAtTip,
-} from "../state-machine/guards/artifact-tip";
+import { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
 import { currentReviewRound, hasApprovingArtifactAtCurrentRoundAndTip } from "./merge-review-round";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement"]);

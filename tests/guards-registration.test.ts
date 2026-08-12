@@ -36,13 +36,26 @@ const GUARDS_DIR = path.join(repoRoot(), "src/lib/service/guards");
  * rather than by importing `ALL_GUARDS` — a regex over source that cannot
  * consult the thing it is checking, same shape as
  * `service-registry.test.ts`'s `declaredOperationNames`.
+ *
+ * The character class includes `-`: `state-machine.blocked_required_fields`
+ * and `state-machine.paused_required_fields` (the `blocked`/`paused`
+ * guards) are real, already-registered ids that use a hyphenated namespace
+ * segment, unlike every other guard's `artifact.*` / `hierarchy.*` /
+ * `summaries.*`. A class of only `[a-z0-9_.]` silently fails to match
+ * either — not a partial match, no match at all, because the literal `"`
+ * this regex requires right after the class never follows a bare `state`
+ * — which is exactly the blind spot this consolidation was built to close:
+ * two of the seven guards in this directory would have gone on being
+ * invisible to this scan even after every guard file physically moved
+ * here. Renaming the ids is not an option (a rename is a behaviour change,
+ * not a move); widening the pattern the scan itself uses is.
  */
 function declaredGuardIds(): string[] {
   const ids: string[] = [];
   for (const entry of readdirSync(GUARDS_DIR, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".ts") || entry.name === "index.ts") continue;
     const source = readFileSync(path.join(GUARDS_DIR, entry.name), "utf-8");
-    for (const match of source.matchAll(/\bid:\s*"([a-z0-9_.]+)"/g)) {
+    for (const match of source.matchAll(/\bid:\s*"([a-z0-9_.-]+)"/g)) {
       const id = match[1];
       if (id) ids.push(id);
     }

@@ -23,11 +23,13 @@ export {
   type TransitionRequest,
 } from "./transition";
 
-// Row #16's guards — required fields for `blocked`/`paused`. See
-// docs/plans/MILESTONES.md #16, SCHEMA.md §16.
+// The `blocked`/`paused` required-fields guards (MILESTONES.md #16,
+// SCHEMA.md §16) live under `src/lib/service/guards/` with every other
+// hand-written guard — re-exported here too, since
+// `tests/state-machine-guards-blocked-paused.test.ts` and other established
+// callers already import them from this module.
 export {
   blockedRequiredFieldsGuard,
   pausedRequiredFieldsGuard,
   BLOCKED_PAUSED_GUARDS,
-} from "./guards/blocked-paused";
-export { registerBlockedPausedGuards } from "./guards/register";
+} from "../guards/blocked-paused";

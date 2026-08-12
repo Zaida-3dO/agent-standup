@@ -7,7 +7,7 @@
 // artifact at the current `max(artifacts.review_round)`" is the review-round
 // shape of the same question this module answers for commits) and MILESTONES
 // #17's own row says to "keep the artifact-checking surface reusable."
-import type { TransactionHandle } from "../../context";
+import type { TransactionHandle } from "../context";
 
 /** The one row shape every function here reads out of `"Artifact"`. */
 interface ArtifactRow {

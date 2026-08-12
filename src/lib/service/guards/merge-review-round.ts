@@ -5,15 +5,15 @@
 // §6 ("No `review_round` column — it's `max(artifacts.review_round)` for the
 // item. Artifacts are the truth; a second copy here would drift.").
 //
-// Deliberately separate from `state-machine/guards/artifact-tip.ts`, not a
-// reimplementation of it: that module answers "is this artifact at the
-// item's tip **commit**"; this one answers "is this artifact at the item's
-// current **review round**" — the review-round-scoped shape of the same
-// underlying question row #17's own header points #18 at, but a different
-// column, so it earns its own small module rather than overloading
-// `artifact-tip.ts` with a second axis it was never asked to compare on.
+// Deliberately separate from `./artifact-tip.ts`, not a reimplementation of
+// it: that module answers "is this artifact at the item's tip **commit**";
+// this one answers "is this artifact at the item's current **review
+// round**" — the review-round-scoped shape of the same underlying question
+// row #17's own header points #18 at, but a different column, so it earns
+// its own small module rather than overloading `artifact-tip.ts` with a
+// second axis it was never asked to compare on.
 import type { TransactionHandle } from "../context";
-import { currentTipCommitSha } from "../state-machine/guards/artifact-tip";
+import { currentTipCommitSha } from "./artifact-tip";
 
 interface ReviewRoundRow {
   reviewRound: number;

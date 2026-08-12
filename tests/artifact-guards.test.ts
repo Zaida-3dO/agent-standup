@@ -17,9 +17,8 @@ import {
   hasApproval,
   latestApprovalAtTip,
   planApprovalGuard,
-  registerArtifactGuards,
   reviewRequestedGuard,
-} from "@/lib/service/state-machine/guards";
+} from "@/lib/service/guards";
 import { guardRegistry } from "@/lib/service/state-machine/guard";
 import {
   defineOperation,
@@ -154,15 +153,16 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
   }
 
   describe("registration — into row #15's shared registry, no parallel mechanism", () => {
-    it("registers all three guards into the shared guardRegistry, exactly once", () => {
-      // registerArtifactGuards() already ran once as guards/index.ts's own
-      // module-scope side effect (imported transitively above); calling it
-      // again here proves the idempotency guard.ts's duplicate-id check
-      // would otherwise trip on a second module evaluation.
+    it("registers all three guards into the shared guardRegistry, via ALL_GUARDS alone", () => {
+      // guards/index.ts's module-scope registration loop already ran once
+      // as a side effect of importing `@/lib/service/guards` above (both
+      // directly, and transitively through `@/lib/service/state-machine`'s
+      // own imports) — so by the time this test body runs, the shared
+      // registry already has these guards, registered by ALL_GUARDS and
+      // nothing else.
       expect(guardRegistry.has("artifact.review_requested")).toBe(true);
       expect(guardRegistry.has("artifact.plan_approval")).toBe(true);
       expect(guardRegistry.has("artifact.evidence_at_tip")).toBe(true);
-      expect(() => registerArtifactGuards()).not.toThrow();
     });
   });
 
