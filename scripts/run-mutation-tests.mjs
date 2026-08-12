@@ -41,6 +41,25 @@
  *       both (a) and (c) at once, since "killed by a named test" and
  *       "attributed to a specific test" are the same fact read two ways.
  *
+ * ── Incremental result caching ───────────────────────────────────────────
+ *
+ * `stryker.config.json` sets `incremental: true`, so Stryker reuses a
+ * mutant's prior verdict — keyed on the exact source text at its location,
+ * and for a killed mutant, the killing test's own source text too — instead
+ * of re-testing it when neither has changed. That reuse decision is
+ * Stryker's own, not re-implemented here. What this wrapper adds on top:
+ *
+ *   - The control run (`assertControlSurvives`) always passes `--force`,
+ *     so it NEVER reuses a prior verdict for its own fixture — a broken
+ *     harness must be caught on every single invocation, not just the
+ *     first one after it broke.
+ *   - The cache file itself (`reports/stryker-incremental.json`) is
+ *     validated before every real run — see `validateIncrementalCache` —
+ *     and deleted rather than trusted if it is not well-formed. A cache
+ *     persisted across runs is exactly the shape that produced this
+ *     repository's earlier false-PASS bug in `mutation.json`; this closes
+ *     the same gap for the second file that now persists state.
+ *
  * ── Usage ────────────────────────────────────────────────────────────────
  *   node scripts/run-mutation-tests.mjs [--changed-only] [--base <ref>]
  *
@@ -60,9 +79,15 @@ import {
   assertDeadLineNeverKilled,
   clearReportFile,
   readReportOrThrow,
+  validateIncrementalCache,
 } from "./lib/mutation-report-guards.mjs";
 
 const REPORT_PATH = path.resolve("reports/mutation/mutation.json");
+// Must match `incrementalFile` in stryker.config.json — passed explicitly
+// (rather than relying solely on the config file) so this script names the
+// exact path it validates and clears, the same way REPORT_PATH does for
+// `mutation.json`.
+const INCREMENTAL_FILE_PATH = path.resolve("reports/stryker-incremental.json");
 const isWindows = process.platform === "win32";
 
 function parseArgs(argv) {
@@ -141,13 +166,35 @@ const CONTROL_FIXTURE_DEAD_LINE = 37;
  * environment-dependent flakiness this guard exists to be immune to.
  * Scanning the resulting report for the fixed dead line by number is
  * robust to that; asking a shell to pass a byte-exact range is not.
+ *
+ * Always passes `--force`, unconditionally bypassing incremental reuse for
+ * this invocation even though `stryker.config.json` sets `incremental:
+ * true` project-wide. This check exists to catch the harness itself lying
+ * about a kill — reusing a PRIOR run's verdict for this fixture would let a
+ * broken harness's control check keep passing on an old, honest result
+ * forever after the first correct run, which defeats the entire point of
+ * running it on every invocation. `--force` still allows this run's own
+ * result to be written back into the shared incremental cache afterward
+ * (harmless — Stryker's own scope-tracking keeps it from displacing the
+ * separately-scoped real run's cached entries, verified empirically before
+ * this landed), it only skips READING any prior result for these mutants.
  */
 function assertControlSurvives() {
   clearReportFile(REPORT_PATH);
 
   spawnSync(
     isWindows ? "npx.cmd" : "npx",
-    ["stryker", "run", "--mutate", CONTROL_FIXTURE_FILE, "--reporters", "json"],
+    [
+      "stryker",
+      "run",
+      "--mutate",
+      CONTROL_FIXTURE_FILE,
+      "--reporters",
+      "json",
+      "--force",
+      "--incrementalFile",
+      INCREMENTAL_FILE_PATH,
+    ],
     { stdio: "inherit", shell: isWindows },
   );
   // Deliberately not checking the exit code above — see the doc comment.
@@ -188,6 +235,19 @@ function printSummary(report, attributedKills) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
 
+  // Validate the incremental result cache before ANYTHING else — including
+  // the control run below. `stryker.config.json` sets `incremental: true`
+  // project-wide, so even the control run's own Stryker invocation reads
+  // `reports/stryker-incremental.json` (it only opts out of REUSING what's
+  // there via `--force`; the file still gets parsed on the way in). A
+  // corrupt cache left unvalidated would crash the control run's dry run
+  // before this script's own guards ever got a chance to explain why — see
+  // `validateIncrementalCache`'s doc comment in `mutation-report-guards.mjs`.
+  const cacheCheck = validateIncrementalCache(INCREMENTAL_FILE_PATH);
+  if (cacheCheck.reason) {
+    console.warn(`[run-mutation-tests] ${cacheCheck.reason}`);
+  }
+
   // Guard (b) first and always — if the harness can't prove a no-op
   // survives, nothing downstream is worth running. Runs inside its own
   // try/catch (below, wrapping the whole function body) so a thrown
@@ -220,6 +280,13 @@ function main() {
   // the real run's result: exactly the false-PASS shape this wrapper
   // exists to prevent.
   clearReportFile(REPORT_PATH);
+
+  // The cache was already validated (and, if unusable, deleted) at the top
+  // of main() — before the control run, which reads the same shared file.
+  // Pin the path explicitly here too so this invocation and the control
+  // run are provably reading/writing the exact same file, not relying on
+  // both agreeing with stryker.config.json by coincidence.
+  strykerArgs.push("--incrementalFile", INCREMENTAL_FILE_PATH);
 
   const result = spawnSync(isWindows ? "npx.cmd" : "npx", strykerArgs, {
     stdio: "inherit",

@@ -8,7 +8,7 @@
 // failing — that shape is reproduced here as `killedWithoutAttribution`,
 // and `verifyNamedKills` must reject it exactly as it would reject a real
 // Stryker report produced by that failure mode.
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import {
   assertDeadLineNeverKilled,
   clearReportFile,
   readReportOrThrow,
+  validateIncrementalCache,
 } from "../scripts/lib/mutation-report-guards.mjs";
 
 function reportWith(
@@ -335,5 +336,93 @@ describe("readReportOrThrow / clearReportFile (the false-PASS fix)", () => {
     writeFileSync(reportPath, JSON.stringify(shape), "utf8");
 
     expect(readReportOrThrow(reportPath, "control run")).toEqual(shape);
+  });
+});
+
+// AC5 (incremental caching): a stale or corrupt incremental cache must
+// never be silently trusted. `validateIncrementalCache` is the wrapper's
+// FIRST line of defence — before Stryker's own project reader ever gets a
+// chance to crash opaquely on the same file (verified separately, against
+// a real Stryker invocation, in the handoff brief; that path is not
+// re-testable here without spawning Stryker, which is exactly what these
+// synthetic-fixture tests exist to avoid).
+describe("validateIncrementalCache (AC5: a bad incremental cache cannot cause a false PASS)", () => {
+  let dir: string;
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reports no cache and takes no action when the file does not exist — the ordinary first-run state", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "incremental-cache-"));
+    const cachePath = path.join(dir, "stryker-incremental.json");
+
+    const result = validateIncrementalCache(cachePath);
+
+    expect(result).toEqual({ hadCache: false, reason: null });
+    expect(existsSync(cachePath)).toBe(false);
+  });
+
+  it("deletes an unparseable cache file and reports why, rather than leaving it for Stryker to crash on", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "incremental-cache-"));
+    const cachePath = path.join(dir, "stryker-incremental.json");
+    writeFileSync(cachePath, "{ not valid json at all", "utf8");
+
+    const result = validateIncrementalCache(cachePath);
+
+    expect(result.hadCache).toBe(false);
+    expect(result.reason).toMatch(/not valid JSON/i);
+    expect(existsSync(cachePath)).toBe(false);
+  });
+
+  it("deletes a well-formed-JSON file that isn't a recognisable report (missing `files`)", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "incremental-cache-"));
+    const cachePath = path.join(dir, "stryker-incremental.json");
+    writeFileSync(cachePath, JSON.stringify({ notAReport: true }), "utf8");
+
+    const result = validateIncrementalCache(cachePath);
+
+    expect(result.hadCache).toBe(false);
+    expect(result.reason).toMatch(/not a recognisable mutation-testing report/i);
+    expect(existsSync(cachePath)).toBe(false);
+  });
+
+  it("deletes a JSON array (valid JSON, but `files` cannot exist on it as an object key)", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "incremental-cache-"));
+    const cachePath = path.join(dir, "stryker-incremental.json");
+    writeFileSync(cachePath, JSON.stringify([1, 2, 3]), "utf8");
+
+    const result = validateIncrementalCache(cachePath);
+
+    expect(result.hadCache).toBe(false);
+    expect(existsSync(cachePath)).toBe(false);
+  });
+
+  it("deletes bare JSON null (parses without throwing, but is not a report)", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "incremental-cache-"));
+    const cachePath = path.join(dir, "stryker-incremental.json");
+    writeFileSync(cachePath, "null", "utf8");
+
+    const result = validateIncrementalCache(cachePath);
+
+    expect(result.hadCache).toBe(false);
+    expect(existsSync(cachePath)).toBe(false);
+  });
+
+  it("leaves a well-formed cache file in place and reports hadCache: true", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "incremental-cache-"));
+    const cachePath = path.join(dir, "stryker-incremental.json");
+    const shape = {
+      schemaVersion: "1.0",
+      files: { "src/lib/x.ts": { mutants: [] } },
+      testFiles: {},
+    };
+    writeFileSync(cachePath, JSON.stringify(shape), "utf8");
+
+    const result = validateIncrementalCache(cachePath);
+
+    expect(result).toEqual({ hadCache: true, reason: null });
+    expect(existsSync(cachePath)).toBe(true);
+    expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual(shape);
   });
 });

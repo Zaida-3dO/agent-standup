@@ -165,8 +165,39 @@ jobs:
         run: npx prisma generate
       - name: Apply migrations to a clean database
         run: npx prisma migrate deploy
+      # Restores Stryker's incremental result cache (a prior run's verdict
+      # per mutant, reused when neither the mutated source nor its killing
+      # test changed) so a run only re-tests what could plausibly have
+      # changed. `restore-keys` deliberately falls back to the newest cache
+      # from ANY branch, not just this one — a fork's first run, or a PR
+      # branched before the cache existed, still benefits instead of always
+      # paying the full-run cost once per branch. That fallback is safe to
+      # do blindly: a mutant reused from an unrelated branch's cache is only
+      # ever accepted if Stryker's own diff finds the exact source text at
+      # its location AND (for a prior kill) the killing test's own source
+      # unchanged — anything else is re-tested for real. The wrapper itself
+      # also validates this file's content before Stryker ever reads it and
+      # deletes it outright if it is not well-formed — see
+      # `validateIncrementalCache` in `scripts/lib/mutation-report-guards.mjs`.
+      - name: Restore mutation testing incremental cache
+        uses: actions/cache@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: mutation-incremental-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            mutation-incremental-${{ runner.os }}-
       - name: Mutation test changed source files
         run: npm run test:mutate:changed
+      # Saved even when the mutation-testing step above fails the score
+      # threshold — the cache holds per-mutant test RESULTS, which are true
+      # regardless of whether the overall run passed the break threshold,
+      # and the next run still benefits from not re-testing unchanged code.
+      - name: Save mutation testing incremental cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: mutation-incremental-${{ runner.os }}-${{ github.run_id }}
 
   mutation-testing-gate:
     name: Mutation testing (required)

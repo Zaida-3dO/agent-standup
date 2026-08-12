@@ -16,5 +16,7 @@
     "src/lib/near-duplicates.ts",
     "src/lib/repos.ts",
     "src/app/api/health/route.ts"
-  ]
+  ],
+  "incremental": true,
+  "incrementalFile": "reports/stryker-incremental.json"
 }
