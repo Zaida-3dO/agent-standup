@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Required so the required checks below (`Build & test`, `Actionlint
+  # (required)`, `Docker build (required)`) can actually report a result
+  # against a merge-queue `merge_group` ref. Without this trigger, enabling
+  # GitHub's merge queue would make it wait forever for statuses that never
+  # get posted — the queue hangs and nothing can merge. See
+  # docs/merge-queue-runbook.md for the full picture.
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   changes:
@@ -16,7 +24,15 @@ jobs:
       source: ${{ steps.filter.outputs.source }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      # v4 (not v3) is required here: v3 has no merge_group handling at all,
+      # so on a merge_group event it would fall back to comparing the
+      # temporary gh-readonly-queue/* ref against the default branch using
+      # an undocumented merge-base search — v4.0.1 added first-class
+      # merge_group support (base/ref default to the event's own
+      # merge_group.base_sha/head_sha), which is what makes the `changes`
+      # outputs below reliable instead of merely "probably works". See
+      # docs/merge-queue-runbook.md.
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -155,6 +171,20 @@ jobs:
           # The incremental/changed-files scope diffs against origin/main,
           # which needs real history, not the single-commit shallow clone
           # actions/checkout defaults to.
+          #
+          # This also covers the merge_group case: `fetch-depth: 0` fetches
+          # full history for ALL branches regardless of triggering event
+          # (per actions/checkout's own docs), so `origin/main` is still a
+          # valid, current ref when this job runs against a merge-queue
+          # temporary ref. `scripts/run-mutation-tests.mjs` diffs with
+          # `origin/main...HEAD` (three-dot / merge-base form), which stays
+          # correct even if `origin/main` has moved past the merge group's
+          # own base_sha by the time this job runs (concurrent queue
+          # activity) — the merge-base is still the group's true base, not
+          # main's newest tip, so the diff only ever reflects files the
+          # queued batch actually touches. Verified by inspection of
+          # actions/checkout + git diff semantics, not by running a live
+          # merge queue — see docs/merge-queue-runbook.md.
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
