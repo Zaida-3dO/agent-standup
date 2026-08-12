@@ -22,6 +22,92 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  // The database-client import allowlist (MILESTONES.md #85, CLAUDE.md
+  // "Working in this repo"): only the service layer and the settings
+  // resolver may reach the database client at runtime. Everything else in
+  // `src/` — including every adapter — is expected to call the service
+  // layer instead of the database directly.
+  //
+  // `import/no-restricted-paths` (from `eslint-config-next`'s existing
+  // `import` plugin — nothing new installed) rather than the core
+  // `no-restricted-imports` for the client-module half of this rule: it
+  // matches `from` against the specifier's *resolved file*, not its literal
+  // text, so `../../lib/prisma` from `src/app/` is caught exactly the same
+  // as the `@/lib/prisma` alias — a contributor who never uses the alias is
+  // not exempt. Resolution goes through `eslint-import-resolver-typescript`,
+  // which already reads this repo's `tsconfig.json` `paths`.
+  //
+  // Deliberately two separate flat-config entries, not one `target` array
+  // with `!`-negated globs: `no-restricted-paths` resolves every `target`
+  // entry as a plain path with `path.resolve` before matching it, which
+  // mangles a leading `!` into a literal directory segment instead of
+  // treating it as a negation — the negated form silently matches nothing,
+  // and the allowlisted directories get flagged as false positives (this
+  // was caught during review). Flat config's own `ignores` — the mechanism
+  // already proven correct for the `no-restricted-imports` half below — is
+  // what actually scopes the rule off the allowlist.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/lib/service/**", "src/lib/settings/**"],
+    settings: {
+      "import/resolver": {
+        typescript: { project: "./tsconfig.json" },
+      },
+    },
+    rules: {
+      "import/no-restricted-paths": [
+        "error",
+        {
+          zones: [
+            {
+              // Kept in sync with ALLOWLIST_PREFIXES/ALLOWLIST_FILES in
+              // scripts/check-db-import-allowlist.mjs, which enforces the
+              // same rule independently of lint.
+              target: "./src/**/*",
+              from: "./src/lib/prisma.ts",
+              message:
+                "Only the service layer (src/lib/service/) and the settings resolver " +
+                "(src/lib/settings/) may import the database client. Call the service " +
+                'layer instead — see CLAUDE.md, "Working in this repo".',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // The other half of the allowlist: constructing a raw client instead of
+  // importing the singleton. `import/no-restricted-paths` matches a module,
+  // not a named export, so `@prisma/client`'s `PrismaClient` value import
+  // needs the core rule instead — `import type` is always allowed
+  // (`allowTypeImports: true`), which is what keeps the
+  // `Pick<PrismaClient, "item">` dependency-injection pattern used
+  // throughout `src/lib/` legal everywhere. `src/lib/prisma.ts` is excluded
+  // here (not from the zone above) because it necessarily imports
+  // `PrismaClient` as a value to construct the singleton — see
+  // scripts/check-db-import-allowlist.mjs's header for why that file is
+  // allowlisted by exact path, not proximity.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/lib/service/**", "src/lib/settings/**", "src/lib/prisma.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@prisma/client",
+              importNames: ["PrismaClient"],
+              allowTypeImports: true,
+              message:
+                "Only the service layer (src/lib/service/) and the settings resolver " +
+                "(src/lib/settings/) may construct a database client. Call the service " +
+                'layer instead — see CLAUDE.md, "Working in this repo".',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;

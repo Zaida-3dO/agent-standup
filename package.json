@@ -19,6 +19,7 @@
     "test:mutate": "node scripts/run-mutation-tests.mjs",
     "test:mutate:changed": "node scripts/run-mutation-tests.mjs --changed-only",
     "check:external-refs": "node scripts/check-external-refs.mjs",
+    "check:db-imports": "node scripts/check-db-import-allowlist.mjs",
     "db:up": "docker compose up -d db",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
