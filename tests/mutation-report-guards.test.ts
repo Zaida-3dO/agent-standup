@@ -8,11 +8,16 @@
 // failing — that shape is reproduced here as `killedWithoutAttribution`,
 // and `verifyNamedKills` must reject it exactly as it would reject a real
 // Stryker report produced by that failure mode.
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   verifyNamedKills,
   computeMutationScore,
   assertDeadLineNeverKilled,
+  clearReportFile,
+  readReportOrThrow,
 } from "../scripts/lib/mutation-report-guards.mjs";
 
 function reportWith(
@@ -253,5 +258,82 @@ describe("assertDeadLineNeverKilled", () => {
     expect(() => assertDeadLineNeverKilled(report, filePath, 37)).toThrow(
       /expected at least one mutant at/i,
     );
+  });
+});
+
+// Acceptance criteria 4 and 5 for the false-PASS fix: a report path is a
+// real file on disk here (mkdtempSync + writeFileSync/rmSync), never a
+// mocked `fs` module — these two functions exist specifically to make a
+// real filesystem race (a stale file surviving a crashed run) impossible,
+// so the proof has to go through a real file to mean anything.
+describe("readReportOrThrow / clearReportFile (the false-PASS fix)", () => {
+  let dir: string;
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("AC4: throws — never returns a report — when no file exists at the path", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "mutation-report-guards-"));
+    const reportPath = path.join(dir, "mutation.json");
+
+    expect(existsSync(reportPath)).toBe(false);
+    expect(() => readReportOrThrow(reportPath, "--changed-only run")).toThrow(
+      /--changed-only run produced no report/,
+    );
+  });
+
+  it("AC4: the thrown message names which run was being checked, not just 'missing'", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "mutation-report-guards-"));
+    const reportPath = path.join(dir, "mutation.json");
+
+    expect(() => readReportOrThrow(reportPath, "control run")).toThrow(/control run/);
+  });
+
+  it("AC5: clearReportFile deletes a file from a previous invocation so it cannot be read as current", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "mutation-report-guards-"));
+    const reportPath = path.join(dir, "mutation.json");
+
+    // Simulate the control run's report already sitting at the shared
+    // path — the exact stale-file shape that produced the false PASS.
+    writeFileSync(reportPath, JSON.stringify({ files: { "stale.ts": { mutants: [] } } }), "utf8");
+    expect(existsSync(reportPath)).toBe(true);
+
+    clearReportFile(reportPath);
+
+    expect(existsSync(reportPath)).toBe(false);
+    // And with the stale file gone, a real run that then fails to write
+    // its own report is correctly caught as "nothing was produced" —
+    // never silently reads the deleted stale content.
+    expect(() => readReportOrThrow(reportPath, "--changed-only run")).toThrow(/produced no report/);
+  });
+
+  it("AC5: after clearReportFile + a fresh write, only the freshly written content is read back", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "mutation-report-guards-"));
+    const reportPath = path.join(dir, "mutation.json");
+
+    writeFileSync(reportPath, JSON.stringify({ files: { "control-fixture.ts": {} } }), "utf8");
+    clearReportFile(reportPath);
+    writeFileSync(reportPath, JSON.stringify({ files: { "real-run.ts": {} } }), "utf8");
+
+    const report = readReportOrThrow(reportPath, "--changed-only run");
+    expect(Object.keys(report.files)).toEqual(["real-run.ts"]);
+  });
+
+  it("clearReportFile is a no-op (does not throw) when the path does not exist", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "mutation-report-guards-"));
+    const reportPath = path.join(dir, "never-existed.json");
+
+    expect(existsSync(reportPath)).toBe(false);
+    expect(() => clearReportFile(reportPath)).not.toThrow();
+  });
+
+  it("reads back a well-formed report unchanged when the file does exist", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "mutation-report-guards-"));
+    const reportPath = path.join(dir, "mutation.json");
+    const shape = { thresholds: { break: 60 }, files: { "src/lib/x.ts": { mutants: [] } } };
+    writeFileSync(reportPath, JSON.stringify(shape), "utf8");
+
+    expect(readReportOrThrow(reportPath, "control run")).toEqual(shape);
   });
 });

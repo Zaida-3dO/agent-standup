@@ -12,6 +12,7 @@
 //   - from the runtime, by requiring that an unregistered operation is
 //     genuinely unreachable rather than merely unlisted.
 import { readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -29,7 +30,33 @@ import {
 import { defaultSnapshot } from "@/lib/settings";
 import { z } from "zod";
 
-const OPERATIONS_DIR = path.resolve(import.meta.dirname, "../src/lib/service/operations");
+/**
+ * The real, git-tracked repo root — deliberately NOT `import.meta.dirname`.
+ *
+ * Under mutation testing, Stryker copies the whole tree into a sandbox
+ * directory and rewrites (instruments) every source file it mutates before
+ * running the suite there. `import.meta.dirname` inside that sandbox still
+ * resolves to *a* `tests/` directory, but it's the sandbox's own copy — so
+ * a scan rooted on it reads Stryker's rewritten source
+ * (`defineOperation({ name: "create_item"` becomes
+ * `defineOperation(stryMutAct_9fa48("182")...`), the regex below finds
+ * nothing, and this test fails for a reason that has nothing to do with
+ * the registry it's supposed to be checking — which aborts the whole
+ * mutation run (see `scripts/run-mutation-tests.mjs`).
+ *
+ * Stryker's sandbox has no `.git` of its own; it lives nested inside the
+ * real repo's working tree (default: a `sandbox-<id>` dir under
+ * `.stryker-tmp/`), so walking up from wherever this process's cwd happens
+ * to be with
+ * `git rev-parse --show-toplevel` always lands on the real repo root and
+ * therefore the real, un-instrumented source — both when run normally and
+ * when run from inside a Stryker sandbox.
+ */
+function repoRoot(): string {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
+}
+
+const OPERATIONS_DIR = path.join(repoRoot(), "src/lib/service/operations");
 
 /**
  * A transaction handle that notes it was touched, so a test can assert an

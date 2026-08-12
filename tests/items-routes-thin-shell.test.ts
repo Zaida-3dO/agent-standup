@@ -27,12 +27,30 @@
 // not only the canonical one. `@prisma/client` has no relative form (a bare
 // package specifier), so it stays matched by name.
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+/**
+ * The real, git-tracked repo root — deliberately NOT `import.meta.dirname`.
+ * See `tests/service-registry.test.ts`'s `repoRoot()` for the full
+ * rationale: under mutation testing, Stryker runs the suite from a
+ * sandboxed, instrumented copy of the tree, and `import.meta.dirname`
+ * inside that sandbox resolves to the sandbox's own `tests/` directory —
+ * so a scan rooted on it reads Stryker's rewritten source instead of the
+ * real route files, matches nothing, and fails for a reason that has
+ * nothing to do with the import boundary this test is supposed to be
+ * checking. Stryker's sandbox has no `.git` of its own and lives nested
+ * inside the real repo's working tree, so `git rev-parse --show-toplevel`
+ * finds the real root from inside the sandbox too.
+ */
+function repoRoot(): string {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
+}
+
+const REPO_ROOT = repoRoot();
 const ITEMS_API_DIR = path.resolve(REPO_ROOT, "src/app/api/items");
 
 /** `src/lib/prisma.ts`, repo-relative, extensionless — what every spelling of the client import must resolve to. */

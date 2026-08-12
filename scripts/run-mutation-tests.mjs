@@ -52,12 +52,14 @@
  *   --base <ref>     Git ref to diff against when --changed-only is set.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   verifyNamedKills,
   computeMutationScore,
   assertDeadLineNeverKilled,
+  clearReportFile,
+  readReportOrThrow,
 } from "./lib/mutation-report-guards.mjs";
 
 const REPORT_PATH = path.resolve("reports/mutation/mutation.json");
@@ -141,6 +143,8 @@ const CONTROL_FIXTURE_DEAD_LINE = 37;
  * robust to that; asking a shell to pass a byte-exact range is not.
  */
 function assertControlSurvives() {
+  clearReportFile(REPORT_PATH);
+
   spawnSync(
     isWindows ? "npx.cmd" : "npx",
     ["stryker", "run", "--mutate", CONTROL_FIXTURE_FILE, "--reporters", "json"],
@@ -149,7 +153,7 @@ function assertControlSurvives() {
   // Deliberately not checking the exit code above — see the doc comment.
   // The verdict comes only from the report content read below.
 
-  const report = readReport();
+  const report = readReportOrThrow(REPORT_PATH, "control run");
   let statuses;
   try {
     statuses = assertDeadLineNeverKilled(report, CONTROL_FIXTURE_FILE, CONTROL_FIXTURE_DEAD_LINE);
@@ -161,16 +165,6 @@ function assertControlSurvives() {
     `[run-mutation-tests] control check passed: the unreachable-branch mutant at line ` +
       `${CONTROL_FIXTURE_DEAD_LINE} was never reported Killed (status: ${statuses.join(", ")}), as required.`,
   );
-}
-
-function readReport() {
-  if (!existsSync(REPORT_PATH)) {
-    throw new Error(
-      `[run-mutation-tests] expected a report at ${REPORT_PATH} but none was written. ` +
-        "Stryker likely failed before producing output — check the console output above.",
-    );
-  }
-  return JSON.parse(readFileSync(REPORT_PATH, "utf8"));
 }
 
 function printSummary(report, attributedKills) {
@@ -195,7 +189,10 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
 
   // Guard (b) first and always — if the harness can't prove a no-op
-  // survives, nothing downstream is worth running.
+  // survives, nothing downstream is worth running. Runs inside its own
+  // try/catch (below, wrapping the whole function body) so a thrown
+  // failure here exits loudly with a message instead of an uncaught
+  // Node stack trace.
   assertControlSurvives();
 
   const strykerArgs = ["stryker", "run"];
@@ -216,6 +213,14 @@ function main() {
     }
   }
 
+  // Clear the control run's report before this invocation — see
+  // `clearReportFile()`. Without this, a real run that crashes before
+  // writing its own report would leave the control run's stale report in
+  // place, and `readReportOrThrow()` below would read THAT as if it were
+  // the real run's result: exactly the false-PASS shape this wrapper
+  // exists to prevent.
+  clearReportFile(REPORT_PATH);
+
   const result = spawnSync(isWindows ? "npx.cmd" : "npx", strykerArgs, {
     stdio: "inherit",
     shell: isWindows,
@@ -230,7 +235,7 @@ function main() {
     process.exit(1);
   }
 
-  const report = readReport();
+  const report = readReportOrThrow(REPORT_PATH, args.changedOnly ? "--changed-only run" : "run");
   let attributedKills;
   try {
     attributedKills = verifyNamedKills(report);
@@ -258,4 +263,14 @@ function main() {
   );
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  // Anything thrown above (assertControlSurvives's control-mutant check,
+  // or readReport's "no report was written" guard) is a hard failure of
+  // this wrapper's own load-bearing checks — never allowed to surface as
+  // an uncaught-exception stack trace that a CI log reader could mistake
+  // for an unrelated crash. Print the message plainly and exit non-zero.
+  console.error(`\n[run-mutation-tests] FAILED: ${err.message}`);
+  process.exit(1);
+}

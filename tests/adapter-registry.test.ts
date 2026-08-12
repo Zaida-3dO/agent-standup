@@ -17,6 +17,7 @@ import {
   readFileSync,
   type Dirent,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -30,7 +31,24 @@ import {
   type AdapterName,
 } from "@/lib/adapters";
 
-const ADAPTERS_MODULE_DIR = path.resolve(import.meta.dirname, "../src/lib/adapters");
+/**
+ * The real, git-tracked repo root — deliberately NOT `import.meta.dirname`.
+ * See `tests/service-registry.test.ts`'s `repoRoot()` for the full
+ * rationale: under mutation testing, Stryker runs the suite from a
+ * sandboxed, instrumented copy of the tree, and `import.meta.dirname`
+ * inside that sandbox resolves to the sandbox's own `tests/` directory —
+ * so a scan rooted on it reads Stryker's rewritten source instead of the
+ * real declarations, finds nothing, and fails for a reason that has
+ * nothing to do with the registry this test is supposed to be checking.
+ * Stryker's sandbox has no `.git` of its own and lives nested inside the
+ * real repo's working tree, so `git rev-parse --show-toplevel` finds the
+ * real root from inside the sandbox too.
+ */
+function repoRoot(): string {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
+}
+
+const ADAPTERS_MODULE_DIR = path.join(repoRoot(), "src/lib/adapters");
 
 /**
  * Every adapter name declared anywhere under `src/lib/adapters/` **and**
