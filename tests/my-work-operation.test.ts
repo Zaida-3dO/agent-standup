@@ -13,6 +13,7 @@ import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { claimItem, type ClaimInput } from "@/lib/claims";
+import { isoOrString } from "@/lib/service/operations/my-work";
 import {
   createScratchDatabase,
   dropScratchDatabase,
@@ -21,6 +22,29 @@ import {
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
+
+// Unit coverage for `isoOrString` — the `claimedAt`/`lastActive` field
+// mapping — run unconditionally (no TEST_DATABASE_URL needed), because the
+// DB-backed tests below can only ever exercise the `Date` branch (Postgres
+// `timestamptz` always deserializes to a JS `Date` via `$queryRawUnsafe`).
+// Both branches the function actually has:
+//   1. a `Date` input -> `.toISOString()`
+//   2. an already-a-string input -> returned unchanged (the `Date | string`
+//      signature's other half; nothing else the function does).
+describe("isoOrString (my_work's claimedAt/lastActive mapping)", () => {
+  it("claimedAt: converts a Date input to its ISO string", () => {
+    const d = new Date("2026-03-14T09:26:53.589Z");
+    expect(isoOrString(d)).toBe("2026-03-14T09:26:53.589Z");
+  });
+
+  it("lastActive: passes an already-a-string input through unchanged", () => {
+    // A gutted function body (one that ignores `value` and always returns a
+    // fixed literal) fails this assertion by name, since it would return
+    // that literal instead of the input.
+    const s = "2026-07-01T00:00:00.000Z";
+    expect(isoOrString(s)).toBe(s);
+  });
+});
 
 describeIfDb("my_work against Postgres", () => {
   const dbName = scratchDatabaseName("my_work_ops");

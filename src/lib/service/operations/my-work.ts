@@ -69,7 +69,15 @@ interface RawSessionAssignmentRow extends RawItemRow {
   assignmentLastActive: Date | string;
 }
 
-function isoOrString(value: Date | string): string {
+// Exported (rather than kept file-private, like `isoOrNull` in items/row.ts)
+// specifically so `claimedAt`/`lastActive`'s mapping can be unit-tested
+// directly: `$queryRawUnsafe` always deserializes `Assignment.claimedAt`/
+// `lastActive` (Postgres `timestamptz`) as a JS `Date`, so the DB-backed
+// tests in my-work-operation.test.ts can only ever exercise the `Date`
+// branch — the string-passthrough branch needs a direct call to be reached
+// honestly at all. See tests/my-work-operation.test.ts's "isoOrString"
+// describe block.
+export function isoOrString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
