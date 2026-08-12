@@ -15,6 +15,7 @@
 // form produce the identical `CommandMatch` — not merely an equivalent one.
 import { malformed, type ErrorEnvelope } from "./envelope";
 import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
+import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
 import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
 
 /** What building an input produced. */
@@ -212,6 +213,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     summary: "What this build exposes, and the limits a caller has to respect.",
     buildInput: noInput,
   },
+  ...OWNERSHIP_COMMANDS,
   ...CONFIG_COMMANDS, // row #83 — `standup config`
 ]);
 
@@ -227,6 +229,7 @@ export const ALIASES: Readonly<Record<string, readonly [string, string]>> = Obje
   ls: ["item", "list"],
   show: ["item", "get"],
   new: ["item", "create"],
+  ...OWNERSHIP_ALIASES,
 });
 
 /** A resolved command, plus the words left over for it. */

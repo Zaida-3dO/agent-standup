@@ -137,6 +137,7 @@ export type {
   OpenLoopNotDone,
 } from "./operations/orientation";
 export type { MyWorkInput, MyWorkOutput, MyWorkEntry } from "./operations/my-work";
+export type { GetCrewNameInput } from "./operations/get-crew-name";
 
 // Transition and complete (MILESTONES.md #27): the service calls and their
 // routes, over row #15's state machine. `RehearsalRollback` is exported so
