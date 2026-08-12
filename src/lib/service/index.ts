@@ -139,3 +139,12 @@ export {
   type SummaryValidationIssue,
   type WhatToTestEntry,
 } from "./summaries";
+
+export type { GetBoardInput, BoardOutput, BoardEntry } from "./operations/get-board";
+export {
+  BOARD_COLUMNS,
+  STATES_BY_COLUMN,
+  columnForProject,
+  columnForState,
+  type BoardColumn,
+} from "./board/columns";

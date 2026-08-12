@@ -30,6 +30,7 @@ import { createItem } from "./operations/create-item";
 import { getItem } from "./operations/get-item";
 import { updateItem } from "./operations/update-item";
 import { listItems } from "./operations/list-items";
+import { getBoard } from "./operations/get-board";
 
 /**
  * Every service operation, by name.
@@ -44,6 +45,7 @@ export const OPERATION_REGISTRY = {
   [getItem.name]: getItem,
   [updateItem.name]: updateItem,
   [listItems.name]: listItems,
+  [getBoard.name]: getBoard,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;
