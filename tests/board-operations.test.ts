@@ -313,6 +313,39 @@ describeIfDb("get_board against Postgres", () => {
       expect(allIds).toEqual([inRepoA.id]);
     });
 
+    it("repo AND kind filters combined still bind the right value to the right placeholder", async () => {
+      // repo is not the last condition built (kind can follow it), so a
+      // wrong paramIndex increment after the repo clause would bind kind's
+      // value into repo's placeholder (or vice versa) — a single-filter
+      // test can't observe that misalignment because there is only ever
+      // one placeholder in play. Two projects in the SAME repo, only one
+      // of the matching kind, is the case that tells them apart.
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Repo" ("id", "displayName", "defaultBranch", "host", "needsVisualReview")
+         VALUES ('board-repo-combo', 'Repo Combo', 'main', 'github', false)
+         ON CONFLICT ("id") DO NOTHING`,
+      );
+      const project = await createItem({ area: "board-filter-combo", repo: "board-repo-combo" });
+      await createItem({
+        area: "board-filter-combo",
+        repo: "board-repo-combo",
+        parentId: project.id,
+      });
+
+      const board = (await runtime.call("get_board", {
+        area: "board-filter-combo",
+        repo: "board-repo-combo",
+        kind: "project",
+      })) as BoardOutput;
+      const allIds = [
+        ...board.backlog,
+        ...board.in_progress,
+        ...board.waiting,
+        ...board.completed,
+      ].map((entry) => entry.item.id);
+      expect(allIds).toEqual([project.id]);
+    });
+
     it("a board with NO projects at all (only tasks) still resolves — the descendant-lookup query is genuinely skipped, not merely unused", async () => {
       // Distinguishes projectIds.length > 0 from a mutated >= 0 (always
       // true): with zero projects on the board, a task's own column must
@@ -340,6 +373,23 @@ describeIfDb("get_board against Postgres", () => {
       expect(board.in_progress).toEqual([]);
       expect(board.waiting).toEqual([]);
       expect(board.completed).toEqual([]);
+    });
+
+    it("with NO filters at all, an item from any area still appears — proves each filter clause is genuinely conditional on its input being present, not unconditionally applied", async () => {
+      // If `input.area !== undefined` (or priority's / repo's / kind's
+      // equivalent guard) were mutated to an unconditional `true`, this
+      // call would try to bind `undefined` into a WHERE clause no caller
+      // asked for and either error or wrongly exclude every item —
+      // including this one, which no filter here should ever touch.
+      const item = await createItem({ area: "board-no-filters-at-all" });
+      const board = (await runtime.call("get_board", {})) as BoardOutput;
+      const allIds = [
+        ...board.backlog,
+        ...board.in_progress,
+        ...board.waiting,
+        ...board.completed,
+      ].map((entry) => entry.item.id);
+      expect(allIds).toContain(item.id);
     });
   });
 });

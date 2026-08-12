@@ -110,6 +110,46 @@ describeIfDb("board HTTP route against Postgres", () => {
     expect(allIds).toEqual([inArea.id]);
   });
 
+  it("GET /board?repo= excludes an item in a different repo, over the actual query-string parsing", async () => {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Repo" ("id", "displayName", "defaultBranch", "host", "needsVisualReview")
+       VALUES ('board-route-repo-a', 'Repo A', 'main', 'github', false),
+              ('board-route-repo-b', 'Repo B', 'main', 'github', false)
+       ON CONFLICT ("id") DO NOTHING`,
+    );
+    const inRepoA = await createItem({ area: "board-route-repo", repo: "board-route-repo-a" });
+    await createItem({ area: "board-route-repo", repo: "board-route-repo-b" });
+
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?repo=board-route-repo-a"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: Record<string, { item: { id: string } }[]>;
+    };
+    const allIds = Object.values(payload.board)
+      .flat()
+      .map((entry) => entry.item.id);
+    expect(allIds).toEqual([inRepoA.id]);
+  });
+
+  it("GET /board?kind=project excludes a task, over the actual query-string parsing", async () => {
+    const project = await createItem({ area: "board-route-kind" });
+    await createItem({ area: "board-route-kind", parentId: project.id });
+
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?area=board-route-kind&kind=project"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: Record<string, { item: { id: string } }[]>;
+    };
+    const allIds = Object.values(payload.board)
+      .flat()
+      .map((entry) => entry.item.id);
+    expect(allIds).toEqual([project.id]);
+  });
+
   it("an invalid priority value is rejected as 400, not a 500", async () => {
     const response = await boardRoute.GET(
       new Request("http://localhost/api/board?priority=not-a-real-priority"),
