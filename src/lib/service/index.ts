@@ -207,6 +207,7 @@ export {
 } from "./summaries";
 
 export type { GetBoardInput, BoardOutput, BoardEntry } from "./operations/get-board";
+export type { ListPeopleInput, ListPeopleOutput, PersonRecord } from "./operations/list-people";
 export {
   BOARD_COLUMNS,
   STATES_BY_COLUMN,
