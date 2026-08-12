@@ -1,15 +1,23 @@
 {
   "name": "agent-standup",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
+  "bin": {
+    "standup": "dist/bin/standup.js"
+  },
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "prepare": "node scripts/install-git-hooks.mjs",
+    "prepack": "npm run build:cli",
     "dev": "next dev",
     "build": "next build",
+    "build:cli": "node scripts/build-cli.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -21,6 +29,7 @@
     "test:mutate:changed": "node scripts/run-mutation-tests.mjs --changed-only",
     "check:external-refs": "node scripts/check-external-refs.mjs",
     "check:db-imports": "node scripts/check-db-import-allowlist.mjs",
+    "version:from-tag": "node scripts/version-from-tag.mjs",
     "db:up": "docker compose up -d db",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -46,6 +55,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.0.0",
     "prettier": "^3.0.0",
