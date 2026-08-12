@@ -60,6 +60,7 @@ import { updateMachine } from "./operations/update-machine";
 import { listAccounts } from "./operations/list-accounts";
 import { getAccount } from "./operations/get-account";
 import { updateAccount } from "./operations/update-account";
+import { hookDecision } from "./operations/hook-decision";
 
 /**
  * Every service operation, by name.
@@ -103,6 +104,7 @@ export const OPERATION_REGISTRY = {
   [listAccounts.name]: listAccounts,
   [getAccount.name]: getAccount,
   [updateAccount.name]: updateAccount,
+  [hookDecision.name]: hookDecision,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;
