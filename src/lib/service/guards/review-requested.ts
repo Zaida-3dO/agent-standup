@@ -18,9 +18,9 @@
 // `plan_review` / `visual_review` — see review-approval-at-tip.ts, which is
 // exactly that artifact-side check. This guard enforces the request half:
 // an `Event` row of type `review_requested` for the item.
-import type { Guard, GuardInput } from "../guard";
-import { guardOk, guardRejected } from "../guard";
-import type { TransactionHandle } from "../../context";
+import type { Guard, GuardInput } from "../state-machine/guard";
+import { guardOk, guardRejected } from "../state-machine/guard";
+import type { TransactionHandle } from "../context";
 
 interface CountRow {
   count: bigint;

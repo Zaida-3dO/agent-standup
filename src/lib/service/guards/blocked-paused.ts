@@ -14,7 +14,7 @@
 // where the transition started, including a re-entry from `blocked` itself
 // (see transition.ts's own comment on why the clearing step is guarded by
 // `to`, not just `from`, for the reason that matters here).
-import { guardOk, guardRejected, type Guard, type GuardInput } from "../guard";
+import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 
 const BLOCKED_ON_TYPES = new Set(["person", "external_process", "time"]);
 

@@ -1,6 +1,12 @@
 // Registers every hand-written guard into `guardRegistry`
 // (`state-machine/guard.ts`). See docs/plans/MILESTONES.md #16-#19, #21-#22.
 //
+// Every hand-written guard lives directly under this directory — one home,
+// not two — so a new contributor never has to guess where a guard belongs,
+// and `tests/guards-registration.test.ts`'s canonicalisation sweep (which
+// reads this directory from source) sees every guard in the repository, not
+// a subset of them.
+//
 // Written out rather than assembled by scanning the directory at runtime —
 // same reasoning as `registry.ts`'s operation list: a glob would make
 // "every guard is registered" true by construction and untestable, and it
@@ -11,12 +17,13 @@
 //
 // Importing this module is what actually populates `guardRegistry` — a
 // guard file alone only *defines* its `Guard` object, it does not register
-// itself as a side effect of being imported for its type. Whatever wires the
-// running service (a later row, once `live.ts` or an adapter needs guards to
-// actually run) imports this module once, for its side effect, before the
-// first transition.
+// itself as a side effect of being imported for its type. `live.ts`, the
+// composition root, imports this module once, for its side effect, before
+// the first transition.
 import { guardRegistry } from "../state-machine/guard";
+import { blockedRequiredFieldsGuard, pausedRequiredFieldsGuard } from "./blocked-paused";
 import { deferralFollowUpGuard } from "./deferral";
+import { evidenceAtTipGuard } from "./evidence-at-tip";
 import { hierarchyGuard } from "./hierarchy";
 import {
   mergeRequiresApprovingCodeReviewGuard,
@@ -24,10 +31,17 @@ import {
   mergeRequiresCommitGuard,
   mergeRequiresVisualReviewGuard,
 } from "./merge";
+import { planApprovalGuard } from "./plan-approval";
+import { reviewRequestedGuard } from "./review-requested";
 import { summaryRequiredGuard } from "./summaries";
 
 /** Every hand-written guard, in the order it registers. */
 export const ALL_GUARDS = [
+  blockedRequiredFieldsGuard,
+  pausedRequiredFieldsGuard,
+  reviewRequestedGuard,
+  planApprovalGuard,
+  evidenceAtTipGuard,
   hierarchyGuard,
   mergeRequiresCommitGuard,
   mergeRequiresApprovingCodeReviewGuard,
@@ -43,6 +57,13 @@ for (const guard of ALL_GUARDS) {
   }
 }
 
+export {
+  blockedRequiredFieldsGuard,
+  pausedRequiredFieldsGuard,
+  BLOCKED_PAUSED_GUARDS,
+} from "./blocked-paused";
+export { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
+export { evidenceAtTipGuard } from "./evidence-at-tip";
 export { hierarchyGuard } from "./hierarchy";
 export {
   MERGE_GUARDS,
@@ -56,6 +77,8 @@ export {
   hasApprovingArtifactAtCurrentRound,
   hasApprovingArtifactAtCurrentRoundAndTip,
 } from "./merge-review-round";
+export { planApprovalGuard } from "./plan-approval";
+export { reviewRequestedGuard } from "./review-requested";
 export { SUMMARY_REQUIRED_GUARD_ID, findSimilarityIssues, summaryRequiredGuard } from "./summaries";
 export {
   DEFERRAL_FOLLOW_UP_GUARD_ID,

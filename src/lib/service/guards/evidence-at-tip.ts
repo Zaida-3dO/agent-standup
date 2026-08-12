@@ -21,8 +21,8 @@
 // deliberately identical to `plan-approval.ts`'s, not broader: this guard
 // has nothing to say about any other transition, and in particular says
 // nothing about `merged`, which is row #18's to gate.
-import type { Guard, GuardInput } from "../guard";
-import { guardOk, guardRejected } from "../guard";
+import type { Guard, GuardInput } from "../state-machine/guard";
+import { guardOk, guardRejected } from "../state-machine/guard";
 import { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
 
 export const evidenceAtTipGuard: Guard = {

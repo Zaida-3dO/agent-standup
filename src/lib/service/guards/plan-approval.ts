@@ -10,8 +10,8 @@
 // rejection here always means "never approved" and a rejection from the tip
 // guard always means "approved, but stale" — two distinct causes stay two
 // distinct rejections instead of collapsing into one guard's ambiguous "no".
-import type { Guard, GuardInput } from "../guard";
-import { guardOk, guardRejected } from "../guard";
+import type { Guard, GuardInput } from "../state-machine/guard";
+import { guardOk, guardRejected } from "../state-machine/guard";
 import { hasApproval } from "./artifact-tip";
 
 export const planApprovalGuard: Guard = {

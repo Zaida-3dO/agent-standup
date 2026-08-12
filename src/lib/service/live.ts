@@ -7,30 +7,15 @@
 // so little surface to cover.
 import { prisma } from "@/lib/prisma";
 import { SettingsCache, type SettingsSource, type StoredOverride } from "@/lib/settings";
-import { registerBlockedPausedGuards } from "./state-machine/guards/register";
 import { ServiceRuntime, prismaTransactionRunner } from "./runtime";
-// Side-effect import: registers row #17's artifact guards into the shared
-// guardRegistry. Imported here, not in state-machine/index.ts, so a test
-// that only wants the framework (state-machine-transition.test.ts, which
-// builds its own scratch GuardRegistry per test) never pulls in guards it
-// did not ask for — only the real composition root does.
-import "./state-machine/guards";
-
-// Installs row #16's guards (and rows #17-#19/#21 as they land) into the
-// shared `guardRegistry` singleton before any real transition can run
-// through this module. See `state-machine/guards/register.ts`.
-registerBlockedPausedGuards();
-
-// Every hand-written guard under `src/lib/service/guards/` (MILESTONES.md
-// #19, #21 — including this row's `summaryRequiredGuard`) registers into
-// `guardRegistry` as a side effect of importing `./guards` — see that
-// module's own header. Nothing needs to be done here for those: any caller
-// that reaches this composition root also reaches the service barrel
-// (`@/lib/service`, e.g. via `src/app/api/items/respond.ts`), which imports
-// `./guards` and runs that registration before a real transition can
-// happen. Rows #16/#17's guards are a separate directory
-// (`state-machine/guards/`) with their own explicit wiring above, because
-// they predate row #19's canonicalisation convention.
+// Side-effect import: every hand-written guard under `src/lib/service/guards/`
+// registers into the shared `guardRegistry` as a side effect of importing
+// this module — see that module's own header. Imported here, not in
+// state-machine/index.ts, so a test that only wants the framework
+// (state-machine-transition.test.ts, which builds its own scratch
+// GuardRegistry per test) never pulls in guards it did not ask for — only
+// the real composition root does.
+import "./guards";
 
 /**
  * Reads settings out of Postgres, honouring the contract `SettingsSource`
