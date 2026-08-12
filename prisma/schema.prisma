@@ -228,6 +228,9 @@ enum EventType {
   nudge
   escalation
   note
+  // A settings write — set, cleared or patched (SCHEMA.md §17.2, §17.8).
+  // `itemId` is null: this is a system-level event, not scoped to an item.
+  setting_change
 }
 
 model Event {
