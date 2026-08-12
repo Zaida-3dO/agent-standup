@@ -31,6 +31,7 @@ import {
 } from "./envelope";
 import type { Binding } from "./binding";
 import { doctorReport } from "./doctor";
+import { runInitCommand } from "./init";
 import { runMcpStdio } from "./mcp";
 
 /** What one run produced: the envelope, the exit code, and how to render it. */
@@ -137,6 +138,14 @@ export async function runCli(
       file: options.file,
     });
     return { envelope: ok(report), exitCode: report.configured ? EXIT.OK : EXIT.UNCONFIGURED };
+  }
+
+  // `init` is the other command that runs before `resolveConfig`'s "not
+  // configured, stop" gate — establishing that configuration is its whole
+  // job (MILESTONES.md #80), so it cannot itself require it to already
+  // exist. See `src/lib/cli/init/index.ts` for the command.
+  if (words[0] === "init") {
+    return runInitCommand({ flags, env: options.env, file: options.file });
   }
 
   // `mcp` is the other command that does not go through `resolution` above:

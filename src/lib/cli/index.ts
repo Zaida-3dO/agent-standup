@@ -39,6 +39,14 @@ export type {
 export { doctorReport } from "./doctor";
 export type { CapabilityCheck, DoctorReport } from "./doctor";
 
+export { runInitCommand } from "./init";
+export type { InitCommandOptions, InitOutcome, InitSequenceResult } from "./init";
+
+export { configFilePath, readConfigFile, writeConfigFile } from "./config-file";
+
+export { DEFAULT_APP_ROLE, DEFAULT_DATABASE_NAME, resolveInitSource } from "./init/resolve";
+export type { InitFlags, InitSource } from "./init/resolve";
+
 export { runMcpStdio } from "./mcp";
 export type { McpStdioOutcome, RunMcpStdioOptions } from "./mcp";
 
