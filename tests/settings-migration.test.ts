@@ -15,6 +15,8 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { effectiveSourceGlobs, readMachineSourceGlobs } from "@/lib/settings/overrides";
+import { resolveSettings } from "@/lib/settings/resolve";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -127,19 +129,30 @@ describeIfDb("the settings migration, against a real database", () => {
     });
   });
 
+  /**
+   * Seeds the three states — no override, an empty override, a populated
+   * one. Idempotent, and called by each test that needs them rather than
+   * left to whichever test happens to run first: a test that only passes
+   * because another one ran before it fails the day someone runs it alone
+   * with `-t`.
+   */
+  async function seedMachines(): Promise<void> {
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Machine" ("name", "liveSessions", "source_globs") VALUES ('machine-a', 0, NULL) ON CONFLICT DO NOTHING`,
+    );
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Machine" ("name", "liveSessions", "source_globs") VALUES ('machine-b', 0, '{}') ON CONFLICT DO NOTHING`,
+    );
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Machine" ("name", "liveSessions", "source_globs") VALUES ('machine-c', 0, '{"src/**"}') ON CONFLICT DO NOTHING`,
+    );
+  }
+
   it("keeps null and empty distinct on source_globs, because they mean opposite things", async () => {
     // Null is "no override, use minting.source_globs"; empty is "override,
     // and scan nothing". Under a COALESCE these are opposites, so a column
     // that could not hold both would silently collapse one into the other.
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Machine" ("name", "liveSessions", "source_globs") VALUES ('machine-a', 0, NULL)`,
-    );
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Machine" ("name", "liveSessions", "source_globs") VALUES ('machine-b', 0, '{}')`,
-    );
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Machine" ("name", "liveSessions", "source_globs") VALUES ('machine-c', 0, '{"src/**"}')`,
-    );
+    await seedMachines();
 
     const rows = await client.$queryRawUnsafe<
       { name: string; is_null: boolean; globs: string[] | null }[]
@@ -155,6 +168,67 @@ describeIfDb("the settings migration, against a real database", () => {
     ]);
     expect(rows[1]?.globs).toEqual([]);
     expect(rows[2]?.globs).toEqual(["src/**"]);
+  });
+
+  // The three tests below are the ones that join the two halves of this
+  // mechanism. The test above proves the *column* can hold three distinct
+  // states; the unit tests prove `readMachineSourceGlobs` maps three states
+  // correctly. Neither proves the reader gets those states out of a real
+  // Postgres — which is the only claim that matters, because the whole
+  // reason the reader exists is that the generated client cannot.
+  it("preserves all three states through readMachineSourceGlobs against real Postgres", async () => {
+    await seedMachines();
+    const notOverriding = await readMachineSourceGlobs(client, "machine-a");
+    const overridingWithNothing = await readMachineSourceGlobs(client, "machine-b");
+    const overridingWithSome = await readMachineSourceGlobs(client, "machine-c");
+
+    // Null and empty are the pair that must not collapse: "use the global"
+    // versus "scan nothing" are opposite instructions.
+    expect(notOverriding?.sourceGlobs).toBeNull();
+    expect(overridingWithNothing?.sourceGlobs).toEqual([]);
+    expect(overridingWithNothing?.sourceGlobs).not.toBeNull();
+    expect(overridingWithSome?.sourceGlobs).toEqual(["src/**"]);
+
+    expect(await readMachineSourceGlobs(client, "machine-absent")).toBeNull();
+  });
+
+  it("demonstrates the client mapping this reader exists to work around", async () => {
+    await seedMachines();
+    // Not a test of our code — a test of the assumption our code is built
+    // on. If a future Prisma release starts distinguishing SQL NULL from
+    // an empty array on a scalar list, this fails, and that is the signal
+    // that `readMachineSourceGlobs` can be deleted rather than a bug.
+    const viaClient = await client.machine.findMany({
+      where: { name: { in: ["machine-a", "machine-b"] } },
+      orderBy: { name: "asc" },
+    });
+    expect(viaClient.map((m) => m.sourceGlobs)).toEqual([[], []]);
+
+    // The same two rows, through the reader, are distinguishable.
+    const viaReader = [
+      (await readMachineSourceGlobs(client, "machine-a"))?.sourceGlobs,
+      (await readMachineSourceGlobs(client, "machine-b"))?.sourceGlobs,
+    ];
+    expect(viaReader).toEqual([null, []]);
+  });
+
+  it("resolves the effective globs per machine end to end", async () => {
+    await seedMachines();
+    // The §17.7 COALESCE, over values that came out of a real database.
+    const snapshot = resolveSettings({
+      overrides: [{ key: "minting.source_globs", value: ["global/**"] }],
+      revision: 1n,
+    });
+
+    const cases: [string, string[]][] = [
+      ["machine-a", ["global/**"]], // no override → the global
+      ["machine-b", []], // overrides with nothing → nothing
+      ["machine-c", ["src/**"]], // overrides with some → its own
+    ];
+    for (const [name, expected] of cases) {
+      const machine = await readMachineSourceGlobs(client, name);
+      expect(effectiveSourceGlobs(machine, snapshot), name).toEqual(expected);
+    }
   });
 
   it("stores a settings row and reads back JSON null as a value", async () => {

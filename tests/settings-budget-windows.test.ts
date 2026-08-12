@@ -75,21 +75,40 @@ describe("the boundary shapes", () => {
     expect(budgetWindowsSchema.safeParse(value).success).toBe(false);
   });
 
-  it("rejects an empty schedule, which would have no value at any moment", () => {
-    const value = {
-      fiveHour: windowWith({
-        selective: constant(50),
-        windDown: constant(80),
-        stop: { kind: "schedule", entries: [] },
-      }),
-    };
-    // Rejects — and does so by returning, not by throwing. safeParse is
-    // the whole contract of a write-time validator, and a validator that
-    // throws on malformed input is a 500 where a 400 was meant, on the one
-    // path whose entire job is to say no politely.
-    expect(() => budgetWindowsSchema.safeParse(value)).not.toThrow();
-    expect(budgetWindowsSchema.safeParse(value).success).toBe(false);
-  });
+  // A correctly-typed-but-empty `entries` is the one shape that reaches the
+  // crossing check without having been rejected first: zod runs `.min(1)`
+  // and `.superRefine()` in the same pass, so the refinement sees an array
+  // the schema is *about* to reject. Anything reached from a refinement
+  // therefore has to be total. `entries: "x"` never had this problem —
+  // it fails the array type, so the refinement gets nothing to walk.
+  //
+  // Every position, because the three boundaries are three separate call
+  // sites and a fix applied to one is not a fix applied to the others.
+  describe.each(["selective", "windDown", "stop"] as const)(
+    "an empty schedule in the %s position",
+    (position) => {
+      function withEmptySchedule(): Record<string, unknown> {
+        const boundaries: Record<string, unknown> = {
+          selective: constant(10),
+          windDown: constant(20),
+          stop: constant(30),
+        };
+        boundaries[position] = { kind: "schedule", entries: [] };
+        return { fiveHour: windowWith(boundaries) };
+      }
+
+      it("is rejected by returning, never by throwing", () => {
+        const value = withEmptySchedule();
+        // The order matters: assert it does not throw BEFORE reading
+        // `.success`, because a throw here is the failure mode, not a
+        // wrong verdict. `safeParse` returning is the entire contract of
+        // a write-time validator — one that throws is a 500 where a 400
+        // was meant, on the path whose only job is to say no politely.
+        expect(() => budgetWindowsSchema.safeParse(value)).not.toThrow();
+        expect(budgetWindowsSchema.safeParse(value).success).toBe(false);
+      });
+    },
+  );
 
   it("rejects rather than throws on every malformed shape a write could carry", () => {
     // A refinement runs even when the shape it refines failed to parse, so
