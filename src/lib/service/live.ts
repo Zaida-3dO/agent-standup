@@ -8,6 +8,12 @@
 import { prisma } from "@/lib/prisma";
 import { SettingsCache, type SettingsSource, type StoredOverride } from "@/lib/settings";
 import { ServiceRuntime, prismaTransactionRunner } from "./runtime";
+// Side-effect import: registers row #17's artifact guards into the shared
+// guardRegistry. Imported here, not in state-machine/index.ts, so a test
+// that only wants the framework (state-machine-transition.test.ts, which
+// builds its own scratch GuardRegistry per test) never pulls in guards it
+// did not ask for — only the real composition root does.
+import "./state-machine/guards";
 
 /**
  * Reads settings out of Postgres, honouring the contract `SettingsSource`
