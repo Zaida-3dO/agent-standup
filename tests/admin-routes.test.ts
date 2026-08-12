@@ -8,13 +8,16 @@
 // covers the service operations directly; this file covers the layer that
 // exposes them — the route handlers, `admin-respond.ts`'s error-to-status
 // mapping, and JSON parsing of the request body — none of which the
-// operations tests exercise at all. It also covers ground the mutation
-// harness structurally cannot: Stryker drops any file whose path contains
-// `[` (a known bug, fix in flight as PR #64), which silently excludes every
-// bracket-path route here — `repos/[id]`, `areas/[id]`, `machines/[name]`,
-// `accounts/[id]` — from instrumentation entirely. Their tests below are
-// written as if no mutation harness existed, because for these four files,
-// none effectively does.
+// operations tests exercise at all. It was also written to cover ground the
+// mutation harness could not see at the time: Stryker used to drop any file
+// whose path contains `[` (Next.js's bracket-path route directories,
+// `repos/[id]`, `areas/[id]`, `machines/[name]`, `accounts/[id]`), silently
+// excluding all four from instrumentation. That bug is now fixed (#64,
+// `scripts/lib/mutation-scope.mjs`) — those four files are mutation-tested
+// like any other as of this commit — but the tests below stay written as
+// thoroughly as when no mutation harness could see them at all, because a
+// route layer is exactly the kind of thin, easy-to-under-test shell where a
+// green mutation score is the least reassuring signal available.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
@@ -240,7 +243,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
   });
 
-  // ── machines — PATCH upserts; never mutated by Stryker (bracket path) ──
+  // ── machines — PATCH upserts (a bracket-path route; see this file's header) ──
   describe("machines", () => {
     it("GET /machines/{name} returns 404 for a name that has never been touched", async () => {
       const response = await machineItem.GET(
@@ -332,7 +335,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
   });
 
-  // ── accounts — PATCH upserts; never mutated by Stryker (bracket path) ──
+  // ── accounts — PATCH upserts (a bracket-path route; see this file's header) ──
   describe("accounts", () => {
     it("PATCH on a new id with vendor, displayName and planType creates it — the upsert path", async () => {
       const response = await accountItem.PATCH(
