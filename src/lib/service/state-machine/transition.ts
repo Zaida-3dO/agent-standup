@@ -241,32 +241,60 @@ export async function applyTransition(
     throw rejection;
   }
 
-  // Clearing `blocked`/`paused` fields on any transition leaving those two
-  // states (SCHEMA.md §16 "anything, from blocked/paused → those fields
-  // cleared in the same transaction") is base state-machine behaviour, not a
-  // guard: it is not something that can reject the move, only something the
-  // move itself must do. `completedAt` is stamped the same way — a fact
-  // about *this* write, not a rule a later row registers.
-  const clearingBlocked = from === "blocked";
-  const clearingPaused = from === "paused";
+  // Clearing `blocked`/`paused` fields is keyed off **`to`, not `from`**
+  // (SCHEMA.md §16 "anything, from blocked/paused → those fields cleared in
+  // the same transaction" reads as leaving the state, which a `to` that is
+  // still `blocked`/`paused` has not done). Keying off `from` alone would
+  // clear the very fields row #16's guards just required: `blocked →
+  // blocked` with a fresh `blocked_reason` would validate, write the new
+  // reason below, and then this same statement would immediately null it
+  // back out, because `from === "blocked"` is true regardless of where the
+  // move landed. `blocked → blocked` must end with the *new* reason stored,
+  // so clearing only fires on a genuine exit.
+  const clearingBlocked = from === "blocked" && to !== "blocked";
+  const clearingPaused = from === "paused" && to !== "paused";
   const completedStates = new Set(["merged", "research_done", "wont_do", "cancelled"]);
 
+  // Fields supplied alongside entry to `blocked`/`paused` are what row #16's
+  // guards just validated are present — they still have to land in the
+  // columns those guards are guarding, or `blocked_reason` (etc.) never
+  // actually changes even on an accepted transition. The write only fires
+  // when `enteringBlocked`/`enteringPaused` is true (`$6`/`$11` in the SQL
+  // below); every other transition falls through to `ELSE "<column>"`, which
+  // leaves the existing value exactly as it was — so a transition that isn't
+  // entering the state can never stomp it with `NULL` through this path.
+  // Clearing that value on a genuine exit is the
+  // `clearingBlocked`/`clearingPaused` branch's job, evaluated first in each
+  // `CASE`, not this one's.
+  const enteringBlocked = to === "blocked";
+  const enteringPaused = to === "paused";
+  const blockedReason = enteringBlocked ? toNullableString(request.fields?.blocked_reason) : null;
+  const blockedOnType = enteringBlocked ? toNullableString(request.fields?.blocked_on_type) : null;
+  const blockedOnPersonId = enteringBlocked
+    ? toNullableString(request.fields?.blocked_on_person)
+    : null;
+  const unblockAt = enteringBlocked ? toNullableDate(request.fields?.unblock_at) : null;
+  const pauseReason = enteringPaused ? toNullableString(request.fields?.pause_reason) : null;
+  const resumeCondition = enteringPaused
+    ? toNullableString(request.fields?.resume_condition)
+    : null;
+
   await ctx.db.$executeRawUnsafe(
-    // `$1::"ItemState"` — Postgres cannot infer that a text-typed bind
-    // parameter should coerce to the enum column it is being assigned to
-    // (unlike a literal, which it does infer), and refuses the statement
-    // outright rather than guessing. The other bind parameters below need
-    // no such cast: `$2`-`$4` bind against `CASE WHEN <bool>`, and Postgres
-    // infers `boolean` for those from context the same way it would for a
-    // literal `true`/`false`.
+    // `$1::"ItemState"` and `$3::"BlockedOnType"` — Postgres cannot infer
+    // that a text-typed bind parameter should coerce to the enum column it
+    // is being assigned to (unlike a literal, which it does infer), and
+    // refuses the statement outright rather than guessing. The other bind
+    // parameters need no such cast: the `CASE WHEN <bool>` ones infer
+    // `boolean` from context the same way a literal `true`/`false` would,
+    // and the plain value columns keep the type Prisma already declared.
     `UPDATE "Item" SET
        "state" = $1::"ItemState",
-       "blockedReason" = CASE WHEN $2 THEN NULL ELSE "blockedReason" END,
-       "blockedOnType" = CASE WHEN $2 THEN NULL ELSE "blockedOnType" END,
-       "blockedOnPersonId" = CASE WHEN $2 THEN NULL ELSE "blockedOnPersonId" END,
-       "unblockAt" = CASE WHEN $2 THEN NULL ELSE "unblockAt" END,
-       "pauseReason" = CASE WHEN $3 THEN NULL ELSE "pauseReason" END,
-       "resumeCondition" = CASE WHEN $3 THEN NULL ELSE "resumeCondition" END,
+       "blockedReason" = CASE WHEN $2 THEN NULL WHEN $6 THEN $7 ELSE "blockedReason" END,
+       "blockedOnType" = CASE WHEN $2 THEN NULL WHEN $6 THEN $8::"BlockedOnType" ELSE "blockedOnType" END,
+       "blockedOnPersonId" = CASE WHEN $2 THEN NULL WHEN $6 THEN $9 ELSE "blockedOnPersonId" END,
+       "unblockAt" = CASE WHEN $2 THEN NULL WHEN $6 THEN $10::timestamptz ELSE "unblockAt" END,
+       "pauseReason" = CASE WHEN $3 THEN NULL WHEN $11 THEN $12 ELSE "pauseReason" END,
+       "resumeCondition" = CASE WHEN $3 THEN NULL WHEN $11 THEN $13 ELSE "resumeCondition" END,
        "completedAt" = CASE WHEN $4 THEN now() ELSE "completedAt" END,
        "updatedAt" = now()
      WHERE "id" = $5`,
@@ -275,9 +303,39 @@ export async function applyTransition(
     clearingPaused,
     completedStates.has(to),
     request.itemId,
+    enteringBlocked,
+    blockedReason,
+    blockedOnType,
+    blockedOnPersonId,
+    unblockAt,
+    enteringPaused,
+    pauseReason,
+    resumeCondition,
   );
 
   return { itemId: request.itemId, from, to };
+}
+
+/** Coerces a guard-checked `fields` value to a string for a raw `UPDATE`, or `null`. */
+function toNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Coerces a guard-checked `fields` value to an ISO string for the
+ * `timestamptz` bind above, or `null`. Accepts the same two shapes the
+ * `unblock_at` guard in `guards/blocked-paused.ts` accepts — a `Date` (an
+ * in-process call) or an ISO string (an adapter that has already
+ * deserialised JSON) — so this and that guard never disagree about what
+ * counts as a valid value.
+ */
+function toNullableDate(value: unknown): string | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : value;
+  }
+  return null;
 }
 
 function buildOutcome(
