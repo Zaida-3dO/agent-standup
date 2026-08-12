@@ -429,6 +429,13 @@ model Account {
   usage5h     Decimal?
   usageWeekly Decimal?
   usageAt     DateTime?        @db.Timestamptz(3)
+  // Per-entity override of the `budget.windows` setting (SCHEMA.md §17.7).
+  // Null means "no override" — this account uses the global value. Bands
+  // key off the account and planType makes them mean different things, so
+  // one global value cannot describe two accounts. Validated by the
+  // registry's own validator, not a second schema: an override changes
+  // where a value is stored, never its type.
+  budgetWindows Json?          @map("budget_windows")
   machines    MachineAccount[]
 }
 
@@ -436,6 +443,10 @@ model Machine {
   name         String           @id
   lastPollAt   DateTime?        @db.Timestamptz(3)
   liveSessions Int              @default(0)
+  // Per-entity override of the `minting.source_globs` setting (§17.7).
+  // Null means "no override". Filesystem globs are a property of a machine
+  // and machines have different layouts. Same validator as above.
+  sourceGlobs  String[]         @map("source_globs")
   accounts     MachineAccount[]
 }
 
@@ -446,4 +457,49 @@ model MachineAccount {
   account     Account @relation(fields: [accountId], references: [id])
 
   @@id([machineName, accountId])
+}
+
+// Settings — overrides only (SCHEMA.md §17.2). Key, schema, default, label,
+// help and category are declared in code, in src/lib/settings/registry.ts;
+// a row exists here exactly when someone has deliberately set a key. A
+// fresh database therefore boots fully working with this table empty.
+//
+// Never a secret store: every value is served to the front end and printed
+// by the command line, with no redaction path. A value that must not be
+// read aloud belongs in the bootstrap environment, and the registry's own
+// test fails the build on a credential-shaped key.
+model Setting {
+  key String @id
+  // JSON null is a legal, meaningful value ("explicitly nothing" —
+  // notifications off, retention forever) and is NOT the same as no row,
+  // which means "at the default". Hence Json, not Json? — the column is
+  // NOT NULL and stores the JSON scalar null when that is what was chosen.
+  value         Json
+  updatedAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedByType ActorType
+  // → people.id or agents.name. Null for `system`.
+  updatedById   String?
+
+  @@map("settings")
+}
+
+// One row, one number (§17.2). Bumped in the same transaction as every
+// settings write, including a delete.
+//
+// A counter rather than max(settings.updated_at), because clearing an
+// override deletes a row and a delete can lower a maximum — a change that
+// moves state backwards would be invisible to anything watching a
+// high-water mark. The counter only goes up, so "have settings changed
+// since I last looked" is one comparison. It doubles as the entity tag for
+// GET /settings and as the cheap re-read signal for any process holding a
+// cached snapshot.
+model SettingsRevision {
+  // Always 1: a single row, enforced by the check constraint the migration
+  // adds. Prisma cannot express a check constraint, so the guarantee lives
+  // in the migration and is asserted by a test that tries to insert a
+  // second row and is refused.
+  id       Int    @id @default(1)
+  revision BigInt @default(0)
+
+  @@map("settings_revision")
 }
