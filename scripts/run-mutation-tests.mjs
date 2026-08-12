@@ -263,10 +263,23 @@ function main() {
   // both agreeing with stryker.config.json by coincidence.
   strykerArgs.push("--incrementalFile", INCREMENTAL_FILE_PATH);
 
+  // Captured rather than streamed live (`encoding: "utf8"` implies piped
+  // stdio) specifically so its text can be parsed below for Stryker's own
+  // file-resolution summary (`assertRequestedFilesMutated` needs to know
+  // how many of the requested files Stryker's glob actually matched, and
+  // that number is only ever printed to the console, never written to
+  // `mutation.json` — see that guard's doc comment in
+  // `mutation-report-guards.mjs`). Printed immediately after the process
+  // exits so nothing is lost — spawnSync already blocks until Stryker
+  // finishes either way, so visibility is delayed by at most the run's own
+  // duration, never actually withheld.
   const result = spawnSync(isWindows ? "npx.cmd" : "npx", strykerArgs, {
-    stdio: "inherit",
+    encoding: "utf8",
     shell: isWindows,
   });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  const strykerOutput = `${result.stdout ?? ""}${result.stderr ?? ""}`;
 
   // Deliberately NOT checking result.status here to decide pass/fail — see
   // the module doc comment. Stryker's own exit code is used only to decide
@@ -281,16 +294,15 @@ function main() {
   let attributedKills;
   try {
     attributedKills = verifyNamedKills(report);
-    // Reconciliation: every file this run was SCOPED to must actually show
-    // up as mutated in the report. Stryker's own project resolver produces
-    // no warning at all when a `--mutate` target pattern matches zero files
-    // (verified empirically — only the config-level `mutate` list gets that
-    // warning); the file is simply absent from the report, indistinguishable
-    // from "this file mutated cleanly" unless something checks for its
-    // absence. This is what caught the original bracket-route bug and is
+    // Reconciliation: every file this run was SCOPED to must actually have
+    // been MATCHED by Stryker's own glob resolution (never inferred from
+    // `report.files` presence alone — a legitimately mutant-free file, e.g.
+    // a pure re-export barrel, is indistinguishable from a silently-dropped
+    // one by presence alone; see `assertRequestedFilesMutated`'s doc
+    // comment). This is what caught the original bracket-route bug and is
     // what will catch the next special character nobody has hit yet.
     if (requestedFiles) {
-      assertRequestedFilesMutated(report, requestedFiles);
+      assertRequestedFilesMutated(report, requestedFiles, strykerOutput);
     }
   } catch (err) {
     console.error(`[run-mutation-tests] ${err.message}`);
