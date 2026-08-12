@@ -9,10 +9,13 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   ALLOWLIST_FILES,
   ALLOWLIST_PREFIXES,
+  CLIENT_MODULE_PATH,
+  PRISMA_PACKAGE_SPECIFIER,
   RESTRICTED_MODULE_SPECIFIERS,
   findViolations,
   isAllowlisted,
   isCheckable,
+  resolveRelativeSpecifier,
 } from "../scripts/check-db-import-allowlist.mjs";
 
 type Violation = { line: number; specifier: string; imported: string };
@@ -118,6 +121,106 @@ describe("check-db-import-allowlist — what it catches", () => {
 
     expect(violations).toHaveLength(2);
     expect(violations.map((v) => v.specifier)).toEqual(["@/lib/prisma", "@prisma/client"]);
+  });
+});
+
+describe("check-db-import-allowlist — relative-path evasion (round-2 finding)", () => {
+  // Both enforcement mechanisms used to match the client by exact specifier
+  // TEXT ("@/lib/prisma"), so a file that wrote a relative path to the same
+  // module instead of the alias — an ordinary spelling choice, not an
+  // adversarial one — passed clean. Fixed by resolving every specifier to
+  // the file it actually points at before comparing. These tests pin that
+  // resolution, at the level `findViolations` operates: given the
+  // *importing file's own path*, not just the specifier text.
+  it("catches a deep relative import from src/app/, the exact case reported in review", () => {
+    // A file two directories under src/ (src/app/api/) reaching
+    // src/lib/prisma via ../../ — one "../" per directory back up to src/,
+    // then down into lib/prisma.
+    const violations = scan('import { prisma } from "../../lib/prisma";\n', "src/app/api/route.ts");
+
+    expect(violations).toEqual([{ line: 1, specifier: "../../lib/prisma", imported: "prisma" }]);
+  });
+
+  it("catches a single-level relative import from a sibling directory of src/lib/", () => {
+    // A file one directory *below* a hypothetical non-allowlisted sibling of
+    // src/lib/service/ (e.g. src/lib/import/items.ts) reaching the client
+    // via ../prisma — one "../" walks back up to src/lib/.
+    const violations = scan('import { prisma } from "../prisma";\n', "src/lib/import/items.ts");
+
+    expect(violations).toEqual([{ line: 1, specifier: "../prisma", imported: "prisma" }]);
+  });
+
+  it("catches a same-directory relative import (./prisma) from inside src/lib/", () => {
+    const violations = scan('import { prisma } from "./prisma";\n', "src/lib/whatever.ts");
+
+    expect(violations).toEqual([{ line: 1, specifier: "./prisma", imported: "prisma" }]);
+  });
+
+  it("catches a relative import with an explicit .ts extension", () => {
+    const violations = scan('import { prisma } from "../prisma.ts";\n', "src/lib/import/items.ts");
+
+    expect(violations).toEqual([{ line: 1, specifier: "../prisma.ts", imported: "prisma" }]);
+  });
+
+  it("does NOT flag a relative import from inside the allowlist itself — no false positive", () => {
+    // src/lib/service/live.ts imports the singleton via the alias in the
+    // real tree; this proves the *relative* spelling of that same import,
+    // from that same allowlisted location, is still correctly left alone.
+    // isAllowlisted (checked by main(), not findViolations) is what
+    // actually exempts the file — findViolations only decides whether an
+    // import statement names the client, which it correctly does here too.
+    // The allowlist check happens one layer up; see the CLI-level test
+    // below ("passes on a relative import from inside the service layer")
+    // for the end-to-end proof.
+    const violations = scan('import { prisma } from "../prisma";\n', "src/lib/service/live.ts");
+
+    expect(violations).toEqual([{ line: 1, specifier: "../prisma", imported: "prisma" }]);
+  });
+
+  it("does not confuse a relative import of an unrelated sibling module with the client", () => {
+    const violations = scan('import { ensureArea } from "./areas";\n', "src/lib/import-items.ts");
+
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("check-db-import-allowlist — resolveRelativeSpecifier", () => {
+  it("resolves the @/ alias to src/", () => {
+    expect(resolveRelativeSpecifier("@/lib/prisma", "src/app/foo.ts")).toBe(CLIENT_MODULE_PATH);
+  });
+
+  it("resolves a deep relative path against the importing file's directory", () => {
+    expect(resolveRelativeSpecifier("../../lib/prisma", "src/app/api/route.ts")).toBe(
+      CLIENT_MODULE_PATH,
+    );
+  });
+
+  it("resolves a single-level relative path — one '../' from one directory below src/lib/", () => {
+    expect(resolveRelativeSpecifier("../prisma", "src/lib/import/items.ts")).toBe(
+      CLIENT_MODULE_PATH,
+    );
+  });
+
+  it("resolves a same-directory relative path from inside src/lib/ itself", () => {
+    expect(resolveRelativeSpecifier("./prisma", "src/lib/whatever.ts")).toBe(CLIENT_MODULE_PATH);
+  });
+
+  it("strips a known extension so foo and foo.ts compare equal", () => {
+    expect(resolveRelativeSpecifier("../prisma.ts", "src/lib/import/items.ts")).toBe(
+      CLIENT_MODULE_PATH,
+    );
+  });
+
+  it("resolves a relative import to something other than the client to a different path", () => {
+    expect(resolveRelativeSpecifier("./areas", "src/lib/import-items.ts")).toBe("src/lib/areas");
+    expect(resolveRelativeSpecifier("./areas", "src/lib/import-items.ts")).not.toBe(
+      CLIENT_MODULE_PATH,
+    );
+  });
+
+  it("returns null for a bare package specifier — it has no relative form to resolve", () => {
+    expect(resolveRelativeSpecifier(PRISMA_PACKAGE_SPECIFIER, "src/lib/whatever.ts")).toBeNull();
+    expect(resolveRelativeSpecifier("node:fs", "src/lib/whatever.ts")).toBeNull();
   });
 });
 
@@ -262,6 +365,65 @@ describe("check-db-import-allowlist — as CI runs it (the negative control)", (
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("src/adapters/another-rogue-adapter.ts:1");
     expect(result.stderr).toContain('imports "PrismaClient" from "@prisma/client"');
+  });
+
+  it("fails on a deep relative-path import that evades the alias entirely — round-2 negative control", () => {
+    // The exact evasion reported in review round 1: a file that never
+    // writes "@/lib/prisma" at all, reaching the same module by a relative
+    // path instead. Two directories under src/ (src/app/api/), so ../../
+    // walks back up to src/ before descending into lib/prisma.
+    const { dir, file } = seedFile(
+      "src/app/api/route.ts",
+      [
+        "// Deliberately non-compliant: reaches the database via a relative",
+        "// path instead of the @/ alias — no evidence in this file that it",
+        '// even names "@/lib/prisma".',
+        'import { prisma } from "../../lib/prisma";',
+        "",
+        "export async function GET() {",
+        "  return Response.json(await prisma.person.findMany());",
+        "}",
+      ].join("\n"),
+    );
+
+    const result = runCli([file], dir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/app/api/route.ts:4");
+    expect(result.stderr).toContain('imports "prisma" from "../../lib/prisma"');
+    expect(result.stderr).toContain("1 file outside the allowlist");
+  });
+
+  it("fails on a single-level relative-path import from a sibling directory of src/lib/service/", () => {
+    const { dir, file } = seedFile(
+      "src/lib/import/rogue-helper.ts",
+      'import { prisma } from "../prisma";\n',
+    );
+
+    const result = runCli([file], dir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/lib/import/rogue-helper.ts:1");
+    expect(result.stderr).toContain('imports "prisma" from "../prisma"');
+  });
+
+  it("passes on a relative-path import of the client from inside the service layer — no false positive", () => {
+    // The identical relative specifier as the negative control above,
+    // written from an allowlisted location one directory deeper
+    // (src/lib/service/, a sibling of the disallowed src/lib/import/ used
+    // above) so "../prisma" resolves to the same src/lib/prisma either way.
+    // Proves the allowlist decides the verdict for a relative import too,
+    // not only for the alias form already covered by the pre-existing
+    // "moved inside the service layer" test below.
+    const { dir, file } = seedFile(
+      "src/lib/service/another-live.ts",
+      'import { prisma } from "../prisma";\n',
+    );
+
+    const result = runCli([file], dir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("none found");
   });
 
   it("passes on the same fixture once it is moved inside the service layer", () => {

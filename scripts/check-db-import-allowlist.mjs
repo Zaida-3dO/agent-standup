@@ -33,11 +33,20 @@
  *
  * ── What this checks, precisely ─────────────────────────────────────────
  *
- * A **value** import of the database client:
+ * A **value** import of the database client, however it is spelled:
  *   - `import { prisma } from "@/lib/prisma"` (any binding name)
+ *   - `import { prisma } from "../../lib/prisma"` — the same module, reached
+ *     by a relative path instead of the alias. **This is resolved, not
+ *     string-matched**: every specifier that starts with `.` or `@/` is
+ *     resolved against the importing file's own path (relative) or `src/`
+ *     (the `@/` alias, per `tsconfig.json`'s `paths`), normalised, and
+ *     compared to the resolved location of `src/lib/prisma.ts` — so any
+ *     spelling that reaches that file is caught, not only the canonical one.
  *   - `import prisma from "@/lib/prisma"` (default import, if one existed)
  *   - `import { PrismaClient } from "@prisma/client"` as a **value** — i.e.
- *     used to construct a client, not merely to name a type
+ *     used to construct a client, not merely to name a type. `@prisma/client`
+ *     is a bare package specifier — Node package resolution, not a relative
+ *     path — so it has no `../` equivalent to resolve; it is matched by name.
  *
  * `import type { PrismaClient } from "@prisma/client"` — and any import
  * where every named specifier is written `type X` — is dependency injection
@@ -50,19 +59,20 @@
  * ── What a green run does, and does not, mean ───────────────────────────
  *
  * **A green run means no tracked `.ts`/`.tsx` file outside the allowlist
- * contains a value import of the database client.** It does not mean an
- * adapter never reaches the database — a file could still open its own
- * `pg` connection, call `fetch` against a database-backed HTTP API, or
- * require an unlisted module that itself wraps Prisma. This check only
- * inspects import *specifiers* of the two forms named above; it does not
- * trace transitive re-exports (a new `src/lib/db-handle.ts` that
- * re-exports `prisma` from `./prisma` would not itself be caught importing
- * `@/lib/prisma` outside the allowlist — the file *doing* the re-export
- * would be, because that file is not in the allowlist either, but a
- * hypothetical allowlisted file re-exporting the client under a new name
- * is a gap this script does not close). It is a backstop against the
- * common case — a plain import — not a proof that no adapter code path
- * ever reaches the database.
+ * contains a value import of the database client — resolved to the file it
+ * actually points at, so the alias and every relative spelling are treated
+ * as the same import.** It does not mean an adapter never reaches the
+ * database — a file could still open its own `pg` connection, call `fetch`
+ * against a database-backed HTTP API, or require an unlisted module that
+ * itself wraps Prisma. This check only inspects import *specifiers* of the
+ * two forms named above; it does not trace transitive re-exports (a new
+ * `src/lib/db-handle.ts` that re-exports `prisma` from `./prisma` would not
+ * itself be caught importing the client outside the allowlist — the file
+ * *doing* the re-export would be, because that file is not in the allowlist
+ * either, but a hypothetical allowlisted file re-exporting the client under
+ * a new name is a gap this script does not close). It is a backstop against
+ * the common case — a plain import, spelled any way — not a proof that no
+ * adapter code path ever reaches the database.
  *
  * Usage:
  *   node scripts/check-db-import-allowlist.mjs        # every tracked .ts/.tsx under src/
@@ -70,6 +80,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
@@ -85,14 +96,62 @@ export const ALLOWLIST_PREFIXES = ["src/lib/service/", "src/lib/settings/", "pri
  */
 export const ALLOWLIST_FILES = ["src/lib/prisma.ts"];
 
-/** The two import specifiers this script restricts. */
-export const RESTRICTED_MODULE_SPECIFIERS = ["@/lib/prisma", "@prisma/client"];
+/**
+ * The repo-relative, extensionless path `@/lib/prisma` and every relative
+ * spelling of it (`../lib/prisma`, `../../lib/prisma`, …) all resolve to.
+ * This is what `resolveRelativeSpecifier` compares against — by resolved
+ * location, not by specifier text, which is the whole point: a contributor
+ * who never uses the `@/` alias is not exempt from the rule.
+ */
+export const CLIENT_MODULE_PATH = "src/lib/prisma";
+
+/** The bare package specifier restricted by name (see the header comment). */
+export const PRISMA_PACKAGE_SPECIFIER = "@prisma/client";
+
+/** The two import specifiers this script restricts, kept for the CLI summary and older callers. */
+export const RESTRICTED_MODULE_SPECIFIERS = ["@/lib/prisma", PRISMA_PACKAGE_SPECIFIER];
 
 /** Only the named `PrismaClient` export of `@prisma/client` is restricted. */
 const RESTRICTED_NAME = "PrismaClient";
 
 function toPosix(p) {
   return p.split("\\").join("/");
+}
+
+/** Strip a trailing `.ts`/`.tsx`/`.js` extension so `foo` and `foo.ts` compare equal. */
+function stripKnownExtension(posixPath) {
+  return posixPath.replace(/\.(ts|tsx|js|jsx|mjs|cjs)$/, "");
+}
+
+/**
+ * Resolve an import specifier written inside `importingFilePath` (repo-
+ * relative, POSIX) to the repo-relative, extensionless path it points at —
+ * or `null` if it isn't a relative (`./`, `../`) or `@/`-aliased specifier
+ * (i.e. it's a bare package name, which `resolveRelativeSpecifier` does not
+ * handle; `@prisma/client` is matched separately, by name).
+ *
+ * This is a resolver for *this repository's* two path forms, not a general
+ * Node/TypeScript module resolver — it does not consult `node_modules`,
+ * `package.json` `exports`, or handle a bare specifier at all. That is
+ * enough to close the gap this check exists for (a relative path reaching
+ * `src/lib/prisma.ts` instead of the alias) without reimplementing the
+ * module system.
+ */
+export function resolveRelativeSpecifier(specifier, importingFilePath) {
+  const posixImporting = toPosix(importingFilePath);
+
+  let resolved;
+  if (specifier.startsWith("@/")) {
+    // tsconfig.json: "@/*": ["./src/*"]
+    resolved = path.posix.join("src", specifier.slice("@/".length));
+  } else if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    const importingDir = path.posix.dirname(posixImporting);
+    resolved = path.posix.normalize(path.posix.join(importingDir, specifier));
+  } else {
+    return null;
+  }
+
+  return stripKnownExtension(resolved);
 }
 
 export function isAllowlisted(relativePath) {
@@ -111,10 +170,21 @@ export function isCheckable(relativePath) {
 /**
  * Find every restricted-import violation in one file's text.
  *
+ * `fileName` is the repo-relative path of the file being scanned (POSIX or
+ * Windows separators; normalised internally) — it is not just a label for
+ * TypeScript's parser here, it is **required** to resolve a relative
+ * specifier (`../../lib/prisma`) to the file it actually points at. A
+ * caller passing a bare label like `"file.ts"` gets relative-specifier
+ * resolution rooted at the repo root, which is deliberately how the unit
+ * tests below exercise the matcher directly; the CLI (`main`, further down)
+ * always passes each file's real repo-relative path.
+ *
  * Returns `{ line, specifier, imported }[]` — `imported` is the binding that
- * triggered it: `"*"` for a bare/namespace import of `@/lib/prisma`, or the
- * specific named export (`"prisma"`, `"PrismaClient"`) that was imported as
- * a value.
+ * triggered it: `"*"` for a bare/namespace import of the client module, or
+ * the specific named export (`"prisma"`, `"PrismaClient"`) that was
+ * imported as a value. `specifier` is the literal text as written in the
+ * source (so the failure message shows what a contributor actually typed),
+ * not the resolved path used to decide whether it counts.
  */
 export function findViolations(sourceText, fileName = "file.ts") {
   const sourceFile = ts.createSourceFile(
@@ -132,14 +202,23 @@ export function findViolations(sourceText, fileName = "file.ts") {
     if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
 
     const specifier = statement.moduleSpecifier.text;
-    if (!RESTRICTED_MODULE_SPECIFIERS.includes(specifier)) continue;
+
+    // Two independent ways a specifier can name the restricted client:
+    //   - it resolves (by path, not by text) to src/lib/prisma — covers
+    //     the @/ alias and every relative spelling of the same file;
+    //   - it is literally the @prisma/client package specifier — a bare
+    //     package name has no relative form to resolve.
+    const resolvesToClientModule =
+      resolveRelativeSpecifier(specifier, fileName) === CLIENT_MODULE_PATH;
+    const isPrismaPackage = specifier === PRISMA_PACKAGE_SPECIFIER;
+    if (!resolvesToClientModule && !isPrismaPackage) continue;
 
     const clause = statement.importClause;
-    // `import "@/lib/prisma"` — a bare side-effect import. Nothing to
-    // restrict for `@prisma/client` (there is no value to name), but
-    // `@/lib/prisma`'s whole point is its `prisma` export, and a bare
-    // import still runs the module (constructs the client) for the side
-    // effect — so it counts.
+    // `import "@/lib/prisma"` (or any resolved spelling of it) — a bare
+    // side-effect import. Nothing to restrict for `@prisma/client` (there
+    // is no value to name), but the client module's whole point is its
+    // `prisma` export, and a bare import still runs the module (constructs
+    // the client) for the side effect — so it counts.
     if (!clause) {
       violations.push({
         line: lineOf(sourceFile, statement.getStart(sourceFile)),
@@ -187,7 +266,7 @@ export function findViolations(sourceText, fileName = "file.ts") {
 
       const importedName = (element.propertyName ?? element.name).text;
 
-      if (specifier === "@prisma/client" && importedName !== RESTRICTED_NAME) {
+      if (isPrismaPackage && importedName !== RESTRICTED_NAME) {
         // `@prisma/client` also exports enums/types this script does not
         // restrict (e.g. `ItemState`) — only the client constructor.
         continue;
