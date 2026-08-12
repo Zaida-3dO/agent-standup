@@ -13,6 +13,7 @@ jobs:
     outputs:
       workflows: ${{ steps.filter.outputs.workflows }}
       docker: ${{ steps.filter.outputs.docker }}
+      source: ${{ steps.filter.outputs.source }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -26,6 +27,9 @@ jobs:
               - '.dockerignore'
               - 'docker-compose.yml'
               - 'docker-compose.prod.yml'
+            source:
+              - 'src/**/*.ts'
+              - 'src/**/*.tsx'
 
   actionlint:
     name: Lint GitHub Actions workflows
@@ -116,6 +120,64 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  mutation-testing:
+    name: Mutation testing (changed files)
+    needs: [changes, build-and-test]
+    # Scoped to source changes and gated on the ordinary suite already
+    # being green — running mutation testing against a build that doesn't
+    # even pass its own tests wastes the slowest job in the pipeline
+    # telling us something the fast one already said.
+    if: needs.changes.outputs.source == 'true' && needs.build-and-test.result == 'success'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: standup
+          POSTGRES_PASSWORD: standup
+          POSTGRES_DB: standup
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U standup"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://standup:standup@localhost:5432/standup
+      TEST_DATABASE_URL: postgresql://standup:standup@localhost:5432/standup
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The incremental/changed-files scope diffs against origin/main,
+          # which needs real history, not the single-commit shallow clone
+          # actions/checkout defaults to.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Apply migrations to a clean database
+        run: npx prisma migrate deploy
+      - name: Mutation test changed source files
+        run: npm run test:mutate:changed
+
+  mutation-testing-gate:
+    name: Mutation testing (required)
+    needs: [changes, mutation-testing]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pass — no source files changed
+        if: needs.changes.outputs.source == 'false'
+        run: echo "No src/**/*.ts(x) files changed, skipping mutation testing"
+      - name: Fail — mutation testing failed or was skipped after a source change
+        if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result != 'success'
+        run: exit 1
 
   docker-build:
     name: Docker build (dry run)

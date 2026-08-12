@@ -42,6 +42,7 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 | **4** | Required status checks pointed at the CI jobs from #3 | 3 | `done` |
 | **5** | First published image — trigger a release, pull it, verify it runs | 3 | `done` |
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | `done` |
+| **95** | **Mutation testing**, wired into CI and scoped to changed files, with a threshold that blocks the pull request below it. Reads the mutation report's own kill attribution rather than a process exit code, so a mutant only counts as killed when a named test caused it — the same shape a whole-suite collection failure would otherwise misreport as a perfect score. Every run also checks a dedicated no-op fixture and refuses to trust its own numbers if that fixture is ever reported killed | 3 | `done` |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
 reaches `main` without passing checks.
@@ -321,3 +322,13 @@ gate; a second one earns its place only if it catches something review doesn't) 
 paths that can never auto-merge (dropped) · a real custom-field system (the escape-hatch field will
 do; keys that keep recurring get promoted to columns) · threaded discussion (cut, and only comes
 back designed properly with replies).
+
+> **The client-side validation gate's test is "catches something review doesn't" — mutation testing
+> (#95) is the proof that bar is real, not rhetorical.** A test that names a behaviour it cannot
+> possibly fail on reads as coverage in a diff and passes every check that runs the suite as a whole,
+> because nothing about it is syntactically wrong — only its assertion is empty. That shape survived
+> both a green CI run and a human read-through and was caught only once something mutated the
+> behaviour under test and confirmed no test noticed. That is exactly the gap #95 exists to close:
+> not "did tests run", but "would this test actually fail if the behaviour it names regressed". A
+> future gate earns its place the same way — by demonstrating a failure mode review provably misses,
+> not by asserting one in the abstract.
