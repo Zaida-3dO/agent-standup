@@ -305,9 +305,7 @@ describe("readReportOrThrow / clearReportFile (the false-PASS fix)", () => {
     // And with the stale file gone, a real run that then fails to write
     // its own report is correctly caught as "nothing was produced" —
     // never silently reads the deleted stale content.
-    expect(() => readReportOrThrow(reportPath, "--changed-only run")).toThrow(
-      /produced no report/,
-    );
+    expect(() => readReportOrThrow(reportPath, "--changed-only run")).toThrow(/produced no report/);
   });
 
   it("AC5: after clearReportFile + a fresh write, only the freshly written content is read back", () => {
