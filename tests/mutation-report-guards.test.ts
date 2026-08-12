@@ -15,7 +15,10 @@ import {
   assertDeadLineNeverKilled,
 } from "../scripts/lib/mutation-report-guards.mjs";
 
-function reportWith(mutants: Array<Record<string, unknown>>, testFiles: Record<string, unknown> = {}) {
+function reportWith(
+  mutants: Array<Record<string, unknown>>,
+  testFiles: Record<string, unknown> = {},
+) {
   return {
     schemaVersion: "1",
     thresholds: { high: 90, low: 70, break: 60 },
@@ -39,14 +42,23 @@ const namedTestFiles = {
 describe("verifyNamedKills", () => {
   it("accepts a Killed mutant whose killedBy names a real test, and resolves that test's name", () => {
     const report = reportWith(
-      [{ id: "1", mutatorName: "EqualityOperator", status: "Killed", killedBy: ["0"], location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } }],
+      [
+        {
+          id: "1",
+          mutatorName: "EqualityOperator",
+          status: "Killed",
+          killedBy: ["0"],
+          location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+        },
+      ],
       namedTestFiles,
     );
 
     const kills = verifyNamedKills(report);
 
     expect(kills).toHaveLength(1);
-    expect(kills[0].names).toEqual(["example does the thing"]);
+    const [onlyKill] = kills;
+    expect(onlyKill?.names).toEqual(["example does the thing"]);
   });
 
   // This is the exact false-positive shape a whole-suite collection
@@ -85,8 +97,18 @@ describe("verifyNamedKills", () => {
 
   it("ignores Survived and NoCoverage mutants — they are not kills and need no attribution", () => {
     const report = reportWith([
-      { id: "1", mutatorName: "StringLiteral", status: "Survived", location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } },
-      { id: "2", mutatorName: "BlockStatement", status: "NoCoverage", location: { start: { line: 2, column: 1 }, end: { line: 2, column: 2 } } },
+      {
+        id: "1",
+        mutatorName: "StringLiteral",
+        status: "Survived",
+        location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+      },
+      {
+        id: "2",
+        mutatorName: "BlockStatement",
+        status: "NoCoverage",
+        location: { start: { line: 2, column: 1 }, end: { line: 2, column: 2 } },
+      },
     ]);
 
     expect(() => verifyNamedKills(report)).not.toThrow();
@@ -95,22 +117,54 @@ describe("verifyNamedKills", () => {
 
   it("resolves an unresolvable test id to a labelled placeholder rather than silently dropping it", () => {
     const report = reportWith(
-      [{ id: "1", mutatorName: "EqualityOperator", status: "Killed", killedBy: ["does-not-exist"], location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } }],
+      [
+        {
+          id: "1",
+          mutatorName: "EqualityOperator",
+          status: "Killed",
+          killedBy: ["does-not-exist"],
+          location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+        },
+      ],
       namedTestFiles,
     );
 
     const kills = verifyNamedKills(report);
-    expect(kills[0].names[0]).toMatch(/unresolvable test id/);
+    const [onlyKill] = kills;
+    const [onlyName] = onlyKill?.names ?? [];
+    expect(onlyName).toMatch(/unresolvable test id/);
   });
 });
 
 describe("computeMutationScore", () => {
   it("computes Killed / (Killed + Survived + Timeout), excluding NoCoverage", () => {
     const report = reportWith([
-      { id: "1", status: "Killed", killedBy: ["0"], mutatorName: "X", location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } },
-      { id: "2", status: "Killed", killedBy: ["0"], mutatorName: "X", location: { start: { line: 2, column: 1 }, end: { line: 2, column: 2 } } },
-      { id: "3", status: "Survived", mutatorName: "X", location: { start: { line: 3, column: 1 }, end: { line: 3, column: 2 } } },
-      { id: "4", status: "NoCoverage", mutatorName: "X", location: { start: { line: 4, column: 1 }, end: { line: 4, column: 2 } } },
+      {
+        id: "1",
+        status: "Killed",
+        killedBy: ["0"],
+        mutatorName: "X",
+        location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+      },
+      {
+        id: "2",
+        status: "Killed",
+        killedBy: ["0"],
+        mutatorName: "X",
+        location: { start: { line: 2, column: 1 }, end: { line: 2, column: 2 } },
+      },
+      {
+        id: "3",
+        status: "Survived",
+        mutatorName: "X",
+        location: { start: { line: 3, column: 1 }, end: { line: 3, column: 2 } },
+      },
+      {
+        id: "4",
+        status: "NoCoverage",
+        mutatorName: "X",
+        location: { start: { line: 4, column: 1 }, end: { line: 4, column: 2 } },
+      },
     ]);
 
     // 2 killed out of 3 scoreable (2 Killed + 1 Survived); NoCoverage
@@ -120,7 +174,12 @@ describe("computeMutationScore", () => {
 
   it("returns null when there is nothing scoreable", () => {
     const report = reportWith([
-      { id: "1", status: "NoCoverage", mutatorName: "X", location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } },
+      {
+        id: "1",
+        status: "NoCoverage",
+        mutatorName: "X",
+        location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+      },
     ]);
     expect(computeMutationScore(report)).toBeNull();
   });
@@ -134,7 +193,12 @@ describe("assertDeadLineNeverKilled", () => {
       files: {
         [filePath]: {
           mutants: [
-            { id: "1", status: "NoCoverage", mutatorName: "StringLiteral", location: { start: { line: 37, column: 1 }, end: { line: 37, column: 2 } } },
+            {
+              id: "1",
+              status: "NoCoverage",
+              mutatorName: "StringLiteral",
+              location: { start: { line: 37, column: 1 }, end: { line: 37, column: 2 } },
+            },
           ],
         },
       },
@@ -165,7 +229,9 @@ describe("assertDeadLineNeverKilled", () => {
 
   it("throws when the file has no mutants at all", () => {
     const report = { files: { [filePath]: { mutants: [] } } };
-    expect(() => assertDeadLineNeverKilled(report, filePath, 37)).toThrow(/no mutants were generated/);
+    expect(() => assertDeadLineNeverKilled(report, filePath, 37)).toThrow(
+      /no mutants were generated/,
+    );
   });
 
   it("throws when the dead line itself has no mutant (fixture drifted from the constant)", () => {
@@ -173,12 +239,19 @@ describe("assertDeadLineNeverKilled", () => {
       files: {
         [filePath]: {
           mutants: [
-            { id: "1", status: "Survived", mutatorName: "X", location: { start: { line: 12, column: 1 }, end: { line: 12, column: 2 } } },
+            {
+              id: "1",
+              status: "Survived",
+              mutatorName: "X",
+              location: { start: { line: 12, column: 1 }, end: { line: 12, column: 2 } },
+            },
           ],
         },
       },
     };
 
-    expect(() => assertDeadLineNeverKilled(report, filePath, 37)).toThrow(/expected at least one mutant at/i);
+    expect(() => assertDeadLineNeverKilled(report, filePath, 37)).toThrow(
+      /expected at least one mutant at/i,
+    );
   });
 });

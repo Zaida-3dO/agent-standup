@@ -86,7 +86,7 @@ function changedSourceFiles(base) {
   if (fetchResult.status !== 0) {
     console.warn(
       `[run-mutation-tests] \`git fetch origin main\` failed (exit ${fetchResult.status}); ` +
-        `diffing against whatever ${base} currently resolves to locally.`,
+        `diffing against the local ref ${base} without refreshing it first.`,
     );
   }
 
