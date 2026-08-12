@@ -98,7 +98,7 @@ backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 | **16** | Guards — blocked and paused: required fields, clearing on exit | 15 | |
 | **17** | Guards — artifacts: review requested, plan approval, evidence at the tip commit | 15 | |
 | **18** | Guards — merge: commit, approving review, visual gate, who may authorise | 17 | |
-| **19** | Guards — hierarchy: cannot finish while a child is still actionable | 15 | |
+| **19** | Guards — hierarchy: cannot finish while a child is still actionable | 15 | `done` |
 | **20** | Events: append on every mutation, field-change rows, timestamps in the same transaction. Rows carry `tx_id`, the identifier of the writing transaction, so a reader can bound itself to the visibility horizon (`SCHEMA.md` §3) | 14 | `done` |
 | **21** | Summaries: shape, caps, reject-don't-truncate, similarity check, jargon denylist | 15 | |
 | **22** | Deferral proof for anything left undone — typed reasons, follow-up must be blocked | 19, 21 | |
