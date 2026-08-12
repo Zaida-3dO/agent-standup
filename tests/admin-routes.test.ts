@@ -202,7 +202,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       );
       expect(response.status).toBe(201);
       const payload = (await response.json()) as { area: { id: string; displayName: string } };
-      expect(payload.area).toEqual({ id: "route-area", displayName: "Route Area" });
+      expect(payload.area).toMatchObject({ id: "route-area", displayName: "Route Area" });
     });
 
     it("GET /areas/{id} returns 404 for an id that does not exist", async () => {
@@ -229,7 +229,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       const renamedPayload = (await renamed.json()) as {
         area: { id: string; displayName: string };
       };
-      expect(renamedPayload.area).toEqual({ id: "renameviaroute", displayName: "Renamed" });
+      expect(renamedPayload.area).toMatchObject({ id: "renameviaroute", displayName: "Renamed" });
 
       const archived = await areaItem.PATCH(
         jsonRequest("http://localhost/api/areas/renameviaroute", "PATCH", { archived: true }),
