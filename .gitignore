@@ -32,3 +32,8 @@ next-env.d.ts
 .DS_Store
 *.pem
 npm-debug.log*
+
+# unattended-windows-launch spike (#55) — run artefacts from TEST-PROTOCOL.md,
+# never fixtures
+docs/spikes/unattended-windows-launch/spike.log
+docs/spikes/unattended-windows-launch/screenshots/
