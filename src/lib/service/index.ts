@@ -54,3 +54,29 @@ export {
 } from "./runtime";
 
 export type { OperationDescriptor, ServiceInfo, ServiceInfoInput } from "./operations/service-info";
+
+// The state machine (MILESTONES.md #15). Rows #16-#19 and #21 import
+// `guardRegistry` from here to register their guards; row #27 imports
+// `rehearseTransition`/`applyTransition` to build the routed operation.
+export {
+  ITEM_STATES,
+  GuardRegistry,
+  ProjectHasNoStateError,
+  allStatePairs,
+  applyTransition,
+  guardOk,
+  guardRegistry,
+  guardRejected,
+  isItemState,
+  loadItemForTransition,
+  rehearseTransition,
+  runGuards,
+  type AppliedTransition,
+  type Guard,
+  type GuardInput,
+  type GuardResult,
+  type GuardableItem,
+  type ItemStateValue,
+  type TransitionOutcome,
+  type TransitionRequest,
+} from "./state-machine";
