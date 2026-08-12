@@ -45,6 +45,7 @@ import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 import { transitionItem } from "./operations/transition-item";
 import { completeItem } from "./operations/complete-item";
+import { hookDecision } from "./operations/hook-decision";
 
 /**
  * Every service operation, by name.
@@ -74,6 +75,7 @@ export const OPERATION_REGISTRY = {
   [myWork.name]: myWork,
   [transitionItem.name]: transitionItem,
   [completeItem.name]: completeItem,
+  [hookDecision.name]: hookDecision,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;
