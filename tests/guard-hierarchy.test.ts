@@ -7,12 +7,7 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
-import {
-  GuardRegistry,
-  applyTransition,
-  hierarchyGuard,
-  rehearseTransition,
-} from "@/lib/service";
+import { GuardRegistry, applyTransition, hierarchyGuard, rehearseTransition } from "@/lib/service";
 import type { GuardInput } from "@/lib/service";
 import { ITEM_STATES } from "@/lib/service/state-machine";
 import { defaultSnapshot } from "@/lib/settings";
@@ -35,7 +30,14 @@ const FINISHING_STATES = ["merged", "research_done", "wont_do", "cancelled"];
 // Every state that is NOT one of {blocked, paused, merged, research_done,
 // wont_do, cancelled} — read off SCHEMA.md §1.1's columns independently of
 // `hierarchy.ts`'s own `NON_ACTIONABLE_STATES`, for the same reason.
-const ACTIONABLE_STATES = ["someday", "on_deck", "planning", "plan_review", "executing", "in_review"];
+const ACTIONABLE_STATES = [
+  "someday",
+  "on_deck",
+  "planning",
+  "plan_review",
+  "executing",
+  "in_review",
+];
 const NON_ACTIONABLE_STATES = ["blocked", "paused", ...FINISHING_STATES];
 
 describeIfDb("the hierarchy guard, against Postgres", () => {
@@ -123,19 +125,22 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
   }
 
   describe("criterion 1 — refuses to finish while a child is actionable", () => {
-    it.each(FINISHING_STATES)("rejects entering %s when a direct child is executing", async (to) => {
-      const parent = await createItem({ kind: "task", state: "in_review" });
-      await createItem({ kind: "subtask", state: "executing", parentId: parent });
+    it.each(FINISHING_STATES)(
+      "rejects entering %s when a direct child is executing",
+      async (to) => {
+        const parent = await createItem({ kind: "task", state: "in_review" });
+        await createItem({ kind: "subtask", state: "executing", parentId: parent });
 
-      const error = await transition(parent, to).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { guard?: string }).guard).toBe(
-        "hierarchy.no_finish_with_actionable_child",
-      );
-      // The database, read directly, proves the refusal actually stopped
-      // the write — not merely that the promise rejected.
-      expect(await readState(parent)).toBe("in_review");
-    });
+        const error = await transition(parent, to).catch((e: unknown) => e);
+        expect((error as { code?: string }).code).toBe("guard_rejected");
+        expect((error as { guard?: string }).guard).toBe(
+          "hierarchy.no_finish_with_actionable_child",
+        );
+        // The database, read directly, proves the refusal actually stopped
+        // the write — not merely that the promise rejected.
+        expect(await readState(parent)).toBe("in_review");
+      },
+    );
 
     it("names the guard's own id, not a generic rejection", async () => {
       const parent = await createItem({ kind: "task", state: "in_review" });

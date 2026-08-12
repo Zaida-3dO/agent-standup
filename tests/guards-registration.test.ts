@@ -51,9 +51,7 @@ describe("the guard registry is canonical", () => {
     // `guards/index.ts` re-exports through `@/lib/service`, and the barrel
     // must not accidentally fork the list — a second copy is exactly how
     // "canonical" quietly stops being true.
-    expect([...ALL_GUARDS_FROM_BARREL].map((g) => g.id)).toEqual(
-      [...ALL_GUARDS].map((g) => g.id),
-    );
+    expect([...ALL_GUARDS_FROM_BARREL].map((g) => g.id)).toEqual([...ALL_GUARDS].map((g) => g.id));
   });
 
   it("actually registers each declared guard into the shared guardRegistry singleton", () => {
