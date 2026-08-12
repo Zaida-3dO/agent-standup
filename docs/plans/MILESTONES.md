@@ -135,7 +135,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **27** | Transition and complete — the service calls and their routes, with rehearsal mode | 15, 21 | |
 | **28** | Orientation — the service call and its route: checkpoint, state, what changed, open loops, crew. **Also my-work** — what this session holds right now and in what role — which no other row owned: it is the same session-scoped read over assignments and events, not a filter on the item list, because it answers *in what role* as well as *which items* | 20, 23 | |
 | **29** | Claim, release and heartbeat — the service calls and their routes. **Also the checkpoint and note write path**, which no other row owns: #28 delivers orientation, which only *reads* checkpoints | 23 | |
-| **30** | MCP adapter — a transport-agnostic server core (tool registration and handlers calling the service layer), wired to streamable HTTP. **Stateless.** The stdio wiring is #84 | 26 | |
+| **30** | MCP adapter — a transport-agnostic server core (tool registration and handlers calling the service layer), wired to streamable HTTP. **Stateless.** The stdio wiring is #84 | 26 | `done` |
 | **31** | MCP read tools: get item, list items, my work, orientation | 28, 30 | |
 | **32** | MCP write tools: create, update, transition, complete | 27, 30 | |
 | **33** | MCP session tools: claim, release, heartbeat, checkpoint, note | 29, 30 | |
@@ -163,7 +163,7 @@ every adapter passes the conformance harness.**
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **35** | Profile picker — choose a user profile, remembered in the browser, switchable from the top bar | 9, 26 | |
-| **36** | Board API: items grouped into columns, filters | 26 | |
+| **36** | Board API: items grouped into columns, filters | 26 | `done` |
 | **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
 | **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | |
