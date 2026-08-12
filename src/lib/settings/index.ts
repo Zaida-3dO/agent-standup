@@ -68,6 +68,8 @@ export {
   type CrossingProblem,
 } from "./budget-windows";
 
+export { capabilityDocSchema } from "./capability-doc";
+
 export {
   RetiredEnvVarError,
   checkFormerEnv,

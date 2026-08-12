@@ -25,7 +25,8 @@ export type EventType =
   | "checkpoint"
   | "nudge"
   | "escalation"
-  | "note";
+  | "note"
+  | "setting_change";
 
 export type ActorType = "person" | "agent" | "system";
 

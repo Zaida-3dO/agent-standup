@@ -113,6 +113,12 @@ export type { CreateItemInput } from "./operations/create-item";
 export type { GetItemInput } from "./operations/get-item";
 export type { UpdateItemInput } from "./operations/update-item";
 export type { ListItemsInput, ListItemsOutput } from "./operations/list-items";
+export type { GetSettingsInput, GetSettingsOutput } from "./operations/get-settings";
+export type { GetSettingInput } from "./operations/get-setting";
+export type { PatchSettingsInput, PatchSettingsOutput } from "./operations/patch-settings";
+export type { PutSettingInput } from "./operations/put-setting";
+export type { DeleteSettingInput } from "./operations/delete-setting";
+export type { RenderedSetting } from "./operations/settings-shared";
 
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
