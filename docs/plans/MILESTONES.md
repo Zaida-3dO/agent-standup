@@ -69,7 +69,7 @@ into it.*
 | **8** | DB client, connection pooling, migrate-on-boot wiring | 7 | `done` |
 | **9** | Seed: `people` (two user profiles), `agents` name roster, `accounts` | 8 | `done` |
 | **10** | Importer — items: a directory-per-task store → `items`, status remap, the source identifier into `custom_fields`. Resolves repositories and areas through the reference tables, mapping aliases of one repository as it goes rather than importing them as distinct values | 8, 91 | `done` |
-| **11** | Importer — events: the source store's history log → `events`, actor mapping | 10 | |
+| **11** | Importer — events: the source store's history log → `events`, actor mapping | 10 | `done` |
 | **12** | Importer — assignments and artifacts: claims, roles, review files | 10 | `done` |
 | **13** | Import verification: row counts, spot-check report, idempotent re-run | 11, 12 | |
 | **91** | **`repos` and `areas`.** Two reference tables and the two foreign keys; deliberate create for a repository, auto-create-with-normalisation for an area; the missing index on `items.repo`; near-duplicate surfacing | 8 | `done` |
@@ -103,7 +103,7 @@ backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 | **21** | Summaries: shape, caps, reject-don't-truncate, similarity check, jargon denylist | 15 | `done` |
 | **22** | Deferral proof for anything left undone — typed reasons, follow-up must be blocked | 19, 21 | `done` |
 | **23** | Claims: atomic, one orchestrator per item, root-session check — **also carries the two partial unique indexes deferred from the initial migration** (`SCHEMA.md` §2; `DECISIONS.md` §13d) | 14 | `done` |
-| **24** | Liveness ladder: quiet → stalled → dead, resume attempts, escalation to blocked. The same sweep re-verifies configured capability document paths and records `{ last_checked_by, last_checked_at, result }` | 23 | |
+| **24** | Liveness ladder: quiet → stalled → dead, resume attempts, escalation to blocked. The same sweep re-verifies configured capability document paths and records `{ last_checked_by, last_checked_at, result }` | 23 | `done` |
 | **25** | Notification rules: all-of / any-of, fires on the edge only, whitelisted fields | 20 | `done` |
 
 > **#77 comes before #14 on purpose.** The service layer resolves one settings snapshot per call and
