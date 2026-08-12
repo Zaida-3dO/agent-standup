@@ -158,4 +158,95 @@ describeIfDb("board HTTP route against Postgres", () => {
     const payload = (await response.json()) as { error: { code: string } };
     expect(payload.error.code).toBe("invalid_input");
   });
+
+  it("an invalid state value is rejected as 400, not a 500", async () => {
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?state=not-a-real-state"),
+    );
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("invalid_input");
+  });
+
+  it("GET /board?state= excludes an item in a different state, over the actual query-string parsing", async () => {
+    // A root item (no parentId) is a PROJECT — the state filter deliberately
+    // excludes those, so both items here must be tasks under a project or
+    // this would pass by excluding both rather than by narrowing.
+    const project = await createItem({ area: "board-route-state" });
+    const blocked = await createItem({ area: "board-route-state", parentId: project.id });
+    await prisma.$executeRawUnsafe(
+      `UPDATE "Item" SET "state" = 'blocked'::"ItemState" WHERE "id" = $1`,
+      blocked.id,
+    );
+    await createItem({ area: "board-route-state", parentId: project.id }); // stays on_deck
+
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?area=board-route-state&state=blocked"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: Record<string, { item: { id: string } }[]>;
+    };
+    const allIds = Object.values(payload.board)
+      .flat()
+      .map((entry) => entry.item.id);
+    expect(allIds).toEqual([blocked.id]);
+  });
+
+  it("GET /board?search= matches a title substring over the actual query-string parsing, and excludes a non-matching item", async () => {
+    const matching = await createItem({
+      area: "board-route-search",
+      title: "Fix the routing table",
+      body: "x",
+    });
+    await createItem({ area: "board-route-search", title: "Something else", body: "x" });
+
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?area=board-route-search&search=routing"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: Record<string, { item: { id: string } }[]>;
+    };
+    const allIds = Object.values(payload.board)
+      .flat()
+      .map((entry) => entry.item.id);
+    expect(allIds).toEqual([matching.id]);
+  });
+
+  it("GET /board?state=&priority= composed excludes an item matching only one of the two, over the actual query-string parsing", async () => {
+    // Root items are projects (excluded by the state filter, by design) —
+    // both items here must be tasks under a project.
+    const project = await createItem({ area: "board-route-compose" });
+    const target = await createItem({
+      area: "board-route-compose",
+      parentId: project.id,
+      priority: "P1",
+    });
+    await prisma.$executeRawUnsafe(
+      `UPDATE "Item" SET "state" = 'paused'::"ItemState" WHERE "id" = $1`,
+      target.id,
+    );
+    const wrongPriority = await createItem({
+      area: "board-route-compose",
+      parentId: project.id,
+      priority: "P3",
+    });
+    await prisma.$executeRawUnsafe(
+      `UPDATE "Item" SET "state" = 'paused'::"ItemState" WHERE "id" = $1`,
+      wrongPriority.id,
+    );
+
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?area=board-route-compose&state=paused&priority=P1"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: Record<string, { item: { id: string } }[]>;
+    };
+    const allIds = Object.values(payload.board)
+      .flat()
+      .map((entry) => entry.item.id);
+    expect(allIds).toEqual([target.id]);
+  });
 });
