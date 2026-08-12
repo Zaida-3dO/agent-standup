@@ -126,7 +126,7 @@ describeIfDb("importItems — against a real Postgres", () => {
     expect(result).toEqual({ imported: 1, skippedExisting: 0 });
 
     const row = await prisma.item.findFirstOrThrow({
-      where: { customFields: { path: ["sourceId"], equals: "src-1" } },
+      where: { customFields: { path: ["legacy_id"], equals: "src-1" } },
     });
     expect(row.state).toBe("on_deck");
     expect(row.originType).toBe("source");
@@ -136,7 +136,7 @@ describeIfDb("importItems — against a real Postgres", () => {
     // The source id must be readable back out of custom_fields exactly —
     // this is the field idempotency and any future events/assignments
     // importer (#11/#12) key their own lookups against.
-    expect(row.customFields).toEqual({ sourceId: "src-1" });
+    expect(row.customFields).toEqual({ legacy_id: "src-1" });
   });
 
   it("resolves two different source repo aliases of the SAME repository onto one row, never inserting them as distinct repos", async () => {
@@ -159,10 +159,10 @@ describeIfDb("importItems — against a real Postgres", () => {
     expect(after).toBe(before);
 
     const item1 = await prisma.item.findFirstOrThrow({
-      where: { customFields: { path: ["sourceId"], equals: "alias-1" } },
+      where: { customFields: { path: ["legacy_id"], equals: "alias-1" } },
     });
     const item2 = await prisma.item.findFirstOrThrow({
-      where: { customFields: { path: ["sourceId"], equals: "alias-2" } },
+      where: { customFields: { path: ["legacy_id"], equals: "alias-2" } },
     });
     expect(item1.repo).toBe("web");
     expect(item2.repo).toBe("web");
@@ -177,7 +177,7 @@ describeIfDb("importItems — against a real Postgres", () => {
 
     expect(await prisma.repo.findUnique({ where: { id: "mystery-repo" } })).toBeNull();
     const item = await prisma.item.findFirst({
-      where: { customFields: { path: ["sourceId"], equals: "unmapped-repo" } },
+      where: { customFields: { path: ["legacy_id"], equals: "unmapped-repo" } },
     });
     expect(item).toBeNull();
   });
@@ -194,7 +194,7 @@ describeIfDb("importItems — against a real Postgres", () => {
     await importItems(prisma, [task], { repoAliases: {} });
 
     const row = await prisma.item.findFirstOrThrow({
-      where: { customFields: { path: ["sourceId"], equals: "no-repo" } },
+      where: { customFields: { path: ["legacy_id"], equals: "no-repo" } },
     });
     expect(row.repo).toBeNull();
     expect(row.area).toBe("research");
@@ -212,7 +212,7 @@ describeIfDb("importItems — against a real Postgres", () => {
     expect(second).toEqual({ imported: 0, skippedExisting: 1 });
 
     const rows = await prisma.item.findMany({
-      where: { customFields: { path: ["sourceId"], equals: "idempotent-1" } },
+      where: { customFields: { path: ["legacy_id"], equals: "idempotent-1" } },
     });
     expect(rows).toHaveLength(1);
   });

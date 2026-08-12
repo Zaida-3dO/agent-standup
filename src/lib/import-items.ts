@@ -132,18 +132,20 @@ export interface ImportItemsResult {
 }
 
 /**
- * Imports `tasks` into `items`. Idempotent on `custom_fields.sourceId`
- * (SCHEMA.md §1 `custom_fields`, DECISIONS.md §11 "the source identifier
- * preserved") — a task whose source id has already been imported is
- * skipped, not re-inserted or updated, so re-running the importer against a
- * store that has since had items claimed, transitioned or annotated in the
- * app never clobbers that work. The item's own `id` is **generated** by the
- * app (a `crypto.randomUUID()`-shaped opaque id, per SCHEMA.md §1 "New items
- * get whatever the app generates") rather than reusing the source id
- * directly as the primary key — the source id is preserved verbatim, but as
- * data (`custom_fields.sourceId`), which is what idempotency checks against;
- * it is not repurposed as this table's own primary key, which numbers this
- * installation's rows, not the source store's.
+ * Imports `tasks` into `items`. Idempotent on `custom_fields.legacy_id`
+ * (SCHEMA.md §1 `custom_fields` — "Migration seeds `legacy_id` here, which
+ * is why `id` can be opaque"; DECISIONS.md "an imported identifier lives in
+ * `custom_fields.legacy_id`") — a task whose source id has already been
+ * imported is skipped, not re-inserted or updated, so re-running the
+ * importer against a store that has since had items claimed, transitioned
+ * or annotated in the app never clobbers that work. The item's own `id` is
+ * **generated** by the app (a `crypto.randomUUID()`-shaped opaque id, per
+ * SCHEMA.md §1 "New items get whatever the app generates") rather than
+ * reusing the source id directly as the primary key — the source id is
+ * preserved verbatim, but as data (`custom_fields.legacy_id`), which is what
+ * idempotency checks against; it is not repurposed as this table's own
+ * primary key, which numbers this installation's rows, not the source
+ * store's.
  *
  * `area` is resolved through `ensureArea` — auto-create-with-normalisation,
  * per areas.ts. `repo` is resolved through `options.repoAliases` only; there
@@ -166,7 +168,7 @@ export async function importItems(
 
   for (const task of tasks) {
     const existing = await client.item.findFirst({
-      where: { customFields: { path: ["sourceId"], equals: task.id } },
+      where: { customFields: { path: ["legacy_id"], equals: task.id } },
       select: { id: true },
     });
     if (existing) {
@@ -198,7 +200,7 @@ export async function importItems(
         area: area.id,
         repo: repoId,
         mergeAuthority: "needs_approval",
-        customFields: { sourceId: task.id },
+        customFields: { legacy_id: task.id },
       },
     });
     imported++;
