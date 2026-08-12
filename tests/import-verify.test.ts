@@ -50,6 +50,33 @@ describe("sampleTasks", () => {
     expect(sampleTasks(tasks, 5).map((t) => t.id)).toEqual(sample.map((t) => t.id));
   });
 
+  it("picks the EXACT stride-spaced indices for a known input — pins the arithmetic precisely", () => {
+    // 10 tasks, sample of 5: stride = 10/5 = 2, so indices are
+    // floor(0*2), floor(1*2), floor(2*2), floor(3*2), floor(4*2) = 0,2,4,6,8.
+    // Any change to the stride formula (division -> multiplication, min ->
+    // max, the -1 boundary) produces a DIFFERENT exact list, which this
+    // pins precisely rather than just checking "reaches the back half".
+    const tasks = Array.from({ length: 10 }, (_, i) => ({ id: `t${i}` }));
+    const sample = sampleTasks(tasks, 5);
+    expect(sample.map((t) => t.id)).toEqual(["t0", "t2", "t4", "t6", "t8"]);
+  });
+
+  it("never returns duplicate or out-of-range entries when sampleSize does not evenly divide the list", () => {
+    // 7 tasks, sample of 3: stride = 7/3 ≈ 2.33. Every index must be a real,
+    // distinct index into the source array — this catches a Math.min<->max
+    // swap (which would push every index to the last element, producing
+    // duplicates) as surely as an exact-list assertion would, without being
+    // tied to one specific division result.
+    const tasks = Array.from({ length: 7 }, (_, i) => ({ id: `t${i}` }));
+    const sample = sampleTasks(tasks, 3);
+    const indices = sample.map((t) => Number(t.id.slice(1)));
+    expect(new Set(indices).size).toBe(indices.length);
+    for (const i of indices) {
+      expect(i).toBeGreaterThanOrEqual(0);
+      expect(i).toBeLessThan(7);
+    }
+  });
+
   it("returns everything when sampleSize is 0 or negative", () => {
     const tasks = [{ id: "a" }, { id: "b" }, { id: "c" }];
     expect(sampleTasks(tasks, 0)).toEqual(tasks);
@@ -271,6 +298,54 @@ describeIfDb("import verification — against a real Postgres", () => {
       actualClaims: 1,
       expectedReviews: 1,
       actualReviews: 1,
+      matches: true,
+    });
+  });
+
+  it("verifyAssignmentArtifactRowCounts catches MORE rows landing than the source described — the duplication case matches exists to catch", async () => {
+    const { assignmentTasks } = await runFullImport();
+    const item = await prisma.item.findFirstOrThrow({
+      where: { customFields: { path: ["legacy_id"], equals: "verify-open-1" } },
+    });
+
+    // Directly insert an extra Assignment row not described by the source —
+    // simulates the exact bug this check exists to catch: a re-run that
+    // duplicates instead of skipping. expectedClaims stays 1 (unchanged
+    // source), actualClaims becomes 2.
+    await prisma.assignment.create({
+      data: {
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "duplicate-crew-member",
+        sessionId: "session-duplicate",
+        rootSessionId: "session-duplicate",
+        machine: "laptop",
+      },
+    });
+
+    const report = await verifyAssignmentArtifactRowCounts(prisma, assignmentTasks);
+    expect(report.expectedClaims).toBe(1);
+    expect(report.actualClaims).toBe(2);
+    expect(report.matches).toBe(false);
+  });
+
+  it("verifyAssignmentArtifactRowCounts: fewer actual claims than expected (a genuine source conflict) still reports matches: true — not itself a verification failure", async () => {
+    // Empty claims/reviews arrays exercise the "no matching item row looked
+    // up at all" early-continue path, and confirm 0-vs-0 counts as a clean
+    // match rather than tripping the comparison on an empty result set
+    // (kills the `artifactRows[0]?.count` / `assignmentRows[0]?.count`
+    // optional-chaining mutants: without the `?.`, a query returning zero
+    // rows would throw on `.count` instead of defaulting to "0").
+    await runFullImport();
+    const task = { id: "verify-no-history-1", claims: [], reviews: [] };
+
+    const report = await verifyAssignmentArtifactRowCounts(prisma, [task]);
+    expect(report).toEqual({
+      expectedClaims: 0,
+      actualClaims: 0,
+      expectedReviews: 0,
+      actualReviews: 0,
       matches: true,
     });
   });
