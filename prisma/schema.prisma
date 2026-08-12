@@ -88,7 +88,9 @@ model Item {
   originPersonId    String?
   originPerson      Person?        @relation("Origin", fields: [originPersonId], references: [id])
   area              String
+  areaRef           Area           @relation(fields: [area], references: [id])
   repo              String?
+  repoRef           Repo?          @relation(fields: [repo], references: [id])
   branch            String?
   needsVisualReview Boolean        @default(false)
   driveMode         DriveMode      @default(autonomous)
@@ -119,8 +121,38 @@ model Item {
   @@index([state])
   @@index([parentId])
   @@index([area])
+  @@index([repo])
   @@index([state, priority])
   @@index([sourceRef])
+}
+
+// Installation-owned reference data (SCHEMA.md §23) — not build-owned
+// configuration, so it does not live in the settings registry (#77).
+// Two tables, not one taxonomy table with a discriminator, because they
+// have different create postures (DECISIONS.md §13g):
+//   - Repo is created deliberately (explicit call only, never a side effect
+//     of an import) — a wrong repo aims the merge gate at the wrong repo.
+//   - Area is auto-created on first use, with normalisation — required on
+//     every item, so blocking that write is friction nobody should pay.
+model Repo {
+  id                String    @id
+  displayName       String
+  defaultBranch     String
+  host              String?
+  needsVisualReview Boolean   @default(false)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  archivedAt        DateTime? @db.Timestamptz(3)
+
+  items Item[]
+}
+
+model Area {
+  id          String    @id
+  displayName String
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  archivedAt  DateTime? @db.Timestamptz(3)
+
+  items Item[]
 }
 
 enum Role {
