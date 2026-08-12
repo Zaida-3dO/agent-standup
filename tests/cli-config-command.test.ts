@@ -56,6 +56,7 @@ describe("standup config — dispatch", () => {
     expect(binding.calls).toEqual([]);
     if (outcome.envelope.ok) throw new Error("unreachable");
     expect(outcome.envelope.error.fields).toEqual(["key"]);
+    expect(outcome.envelope.error.message).toBe("`standup config get` needs a setting key.");
   });
 
   it("`config describe <key>` calls the same operation as `get`, with the same input", async () => {
@@ -71,6 +72,9 @@ describe("standup config — dispatch", () => {
     const outcome = await runCommand(["config", "describe"], binding);
     expect(outcome.exitCode).toBe(2);
     expect(binding.calls).toEqual([]);
+    if (outcome.envelope.ok) throw new Error("unreachable");
+    expect(outcome.envelope.error.fields).toEqual(["key"]);
+    expect(outcome.envelope.error.message).toBe("`standup config describe` needs a setting key.");
   });
 
   it("`config set <key> <value>` on a non-sensitive key calls put_setting with the parsed value", async () => {
@@ -88,6 +92,9 @@ describe("standup config — dispatch", () => {
     expect(binding.calls).toEqual([]);
     if (outcome.envelope.ok) throw new Error("unreachable");
     expect(outcome.envelope.error.fields).toEqual(["key"]);
+    expect(outcome.envelope.error.message).toBe(
+      "`standup config set` needs a setting key and a value.",
+    );
   });
 
   it("refuses `config set <key>` with no value, before reaching the binding", async () => {
@@ -97,6 +104,9 @@ describe("standup config — dispatch", () => {
     expect(binding.calls).toEqual([]);
     if (outcome.envelope.ok) throw new Error("unreachable");
     expect(outcome.envelope.error.fields).toEqual(["value"]);
+    expect(outcome.envelope.error.message).toBe(
+      "`standup config set items.max_depth` needs a value.",
+    );
   });
 
   it("`config clear <key>` on a non-sensitive key calls delete_setting with the key", async () => {
@@ -112,6 +122,9 @@ describe("standup config — dispatch", () => {
     const outcome = await runCommand(["config", "clear"], binding);
     expect(outcome.exitCode).toBe(2);
     expect(binding.calls).toEqual([]);
+    if (outcome.envelope.ok) throw new Error("unreachable");
+    expect(outcome.envelope.error.fields).toEqual(["key"]);
+    expect(outcome.envelope.error.message).toBe("`standup config clear` needs a setting key.");
   });
 });
 
@@ -155,8 +168,10 @@ describe("standup config — the confirmation gate (MILESTONES.md #83, SCHEMA.md
     expect(outcome.exitCode).toBe(2); // EXIT.MALFORMED
     if (outcome.envelope.ok) throw new Error("unreachable");
     expect(outcome.envelope.error.fields).toEqual(["confirm"]);
-    expect(outcome.envelope.error.message).toContain("items.default_merge_authority");
-    expect(outcome.envelope.error.message).toContain("--confirm");
+    expect(outcome.envelope.error.message).toBe(
+      "items.default_merge_authority is sensitive — it relaxes something this build enforces. " +
+        "Re-run with --confirm to set it.",
+    );
   });
 
   it("accepts `config set` on a sensitive key WITH --confirm, reaching the binding with the value", async () => {
@@ -181,6 +196,10 @@ describe("standup config — the confirmation gate (MILESTONES.md #83, SCHEMA.md
     expect(outcome.exitCode).toBe(2);
     if (outcome.envelope.ok) throw new Error("unreachable");
     expect(outcome.envelope.error.fields).toEqual(["confirm"]);
+    expect(outcome.envelope.error.message).toBe(
+      "retention.tool_calls_days is irreversible — it can destroy data that cannot be recreated. " +
+        "Re-run with --confirm to set it.",
+    );
   });
 
   it("accepts `config set` on an irreversible key WITH --confirm", async () => {
@@ -202,6 +221,10 @@ describe("standup config — the confirmation gate (MILESTONES.md #83, SCHEMA.md
     expect(outcome.exitCode).toBe(2);
     if (outcome.envelope.ok) throw new Error("unreachable");
     expect(outcome.envelope.error.fields).toEqual(["confirm"]);
+    expect(outcome.envelope.error.message).toBe(
+      "items.default_merge_authority is sensitive — it relaxes something this build enforces. " +
+        "Re-run with --confirm to clear it.",
+    );
   });
 
   it("accepts `config clear` on a sensitive key WITH --confirm", async () => {
@@ -247,6 +270,13 @@ describe("standup config — the confirmation gate (MILESTONES.md #83, SCHEMA.md
     );
     expect(binding.calls).toEqual([]);
     expect(outcome.exitCode).toBe(2);
+    if (outcome.envelope.ok) throw new Error("unreachable");
+    // The gate hands `booleanFlag`'s own refusal straight back rather than
+    // building its own — a different message ("--confirm does not take a
+    // value.") from the gate's own ("… is sensitive … --confirm to set
+    // it.") proves that path, not the "no --confirm given at all" path, ran.
+    expect(outcome.envelope.error.message).toBe("--confirm does not take a value.");
+    expect(outcome.envelope.error.fields).toEqual(["confirm"]);
   });
 
   it("names irreversibility specifically, not just 'sensitive', in the refusal message", async () => {
