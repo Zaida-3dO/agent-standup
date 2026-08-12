@@ -254,6 +254,15 @@ you.
   unchanged branch against `main`. Never rebase onto `main` to try to recover it: an approval is
   granted against a specific set of commit shas, and a rebase mints a fresh set — so a rebase always
   needs a fresh approval to match, whatever the reason for rebasing.
+- **Every adapter is a thin shell over a service call.** No adapter may reach the database or a guard
+  directly — it resolves input, calls one service operation, and shapes the result for its transport.
+  Only the service layer (`src/lib/service/`), the settings resolver (`src/lib/settings/`), and
+  migrations/seeds (`prisma/`) may import the database client; everything else, including every
+  adapter, calls the service layer instead. This is enforced two ways — an ESLint
+  `no-restricted-imports` rule (`eslint.config.mjs`) and an independent import-graph check
+  (`npm run check:db-imports`, `scripts/check-db-import-allowlist.mjs`) — so the rule holds even if
+  one mechanism is bypassed or disabled. Read this before writing an adapter, not after a failing
+  lint: a service call is the only path in.
 
 ## Commits
 

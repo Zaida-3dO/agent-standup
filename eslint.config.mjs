@@ -22,6 +22,50 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  // The database-client import allowlist (MILESTONES.md #85, CLAUDE.md
+  // "Working in this repo"): only the service layer and the settings
+  // resolver may reach the database client at runtime. Everything else in
+  // `src/` — including every adapter — is expected to call the service
+  // layer instead of the database directly.
+  //
+  // This restricts the *value* import only (`allowTypeImports: true`), not
+  // `import type { PrismaClient }`. A `Pick<PrismaClient, "item">` parameter
+  // type is how the data-layer helpers under `src/lib/` accept an
+  // already-connected client from their caller without importing one
+  // themselves — that pattern is dependency injection, not a database
+  // reach, and stays legal everywhere.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    // Kept in sync with ALLOWLIST_PREFIXES/ALLOWLIST_FILES in
+    // scripts/check-db-import-allowlist.mjs, which enforces the same rule
+    // independently of lint.
+    ignores: ["src/lib/service/**", "src/lib/settings/**", "src/lib/prisma.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/lib/prisma",
+              message:
+                "Only the service layer (src/lib/service/) and the settings resolver " +
+                "(src/lib/settings/) may import the database client. Call the service " +
+                'layer instead — see CLAUDE.md, "Working in this repo".',
+            },
+            {
+              name: "@prisma/client",
+              importNames: ["PrismaClient"],
+              allowTypeImports: true,
+              message:
+                "Only the service layer (src/lib/service/) and the settings resolver " +
+                "(src/lib/settings/) may construct a database client. Call the service " +
+                'layer instead — see CLAUDE.md, "Working in this repo".',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;

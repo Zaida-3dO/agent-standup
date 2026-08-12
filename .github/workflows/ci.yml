@@ -112,6 +112,8 @@ jobs:
           SHADOW_DATABASE_URL: postgresql://standup:standup@localhost:5432/standup_shadow
       - name: Typecheck
         run: npx tsc --noEmit
+      - name: Check the database-client import allowlist
+        run: npm run check:db-imports
       - name: Lint
         run: npm run lint
       - name: Format check
