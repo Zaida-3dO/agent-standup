@@ -21,6 +21,14 @@ import "./state-machine/guards";
 // through this module. See `state-machine/guards/register.ts`.
 registerBlockedPausedGuards();
 
+// Row #21's summaries guard is not registered here — it lives at
+// `src/lib/service/guards/summaries.ts` and registers as a side effect of
+// importing `./guards` (see that directory's own `index.ts`), the same
+// mechanism row #19's `hierarchyGuard` uses. The service barrel
+// (`@/lib/service`) imports `./guards` for that side effect, and every real
+// caller of this composition root reaches the barrel too (e.g.
+// `src/app/api/items/respond.ts`), so nothing extra is needed here.
+
 /**
  * Reads settings out of Postgres, honouring the contract `SettingsSource`
  * states: the revision a snapshot is stamped with is the one read *with*

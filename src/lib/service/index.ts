@@ -96,3 +96,37 @@ export type { CreateItemInput } from "./operations/create-item";
 export type { GetItemInput } from "./operations/get-item";
 export type { UpdateItemInput } from "./operations/update-item";
 export type { ListItemsInput, ListItemsOutput } from "./operations/list-items";
+
+// Summaries (MILESTONES.md #21): the static validators row #27's
+// transition-and-complete operation will call directly, plus the guard
+// that enforces them at "entering any completed state" (SCHEMA.md §16).
+export {
+  HOW_VERIFIED_CHAR_CAP,
+  JARGON_TERMS,
+  NOT_DONE_MAX,
+  NOT_DONE_MIN,
+  NOT_DONE_REASONS,
+  NOT_DONE_TEXT_CHAR_CAP,
+  SHIPPED_CHAR_CAP,
+  SHIPPED_MAX,
+  SHIPPED_MIN,
+  SIMILARITY_REJECT_AT,
+  SUMMARY_REQUIRED_GUARD_ID,
+  WATCH_FOR_CHAR_CAP,
+  WATCH_FOR_MAX,
+  WHAT_TO_TEST_MAX,
+  WHAT_TO_TEST_MIN,
+  WHAT_TO_TEST_TEXT_CHAR_CAP,
+  findJargonHits,
+  findSimilarityIssues,
+  isTooSimilar,
+  jaccardSimilarity,
+  registerSummaryGuard,
+  summaryRequiredGuard,
+  validateSummaryShape,
+  type NotDoneEntry,
+  type NotDoneReason,
+  type SummaryCandidate,
+  type SummaryValidationIssue,
+  type WhatToTestEntry,
+} from "./summaries";
