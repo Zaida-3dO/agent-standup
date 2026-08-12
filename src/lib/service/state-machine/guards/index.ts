@@ -19,11 +19,7 @@ import { reviewRequestedGuard } from "./review-requested";
 export { evidenceAtTipGuard } from "./evidence-at-tip";
 export { planApprovalGuard } from "./plan-approval";
 export { reviewRequestedGuard } from "./review-requested";
-export {
-  currentTipCommitSha,
-  hasApproval,
-  latestApprovalAtTip,
-} from "./artifact-tip";
+export { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
 
 const ARTIFACT_GUARDS = [reviewRequestedGuard, planApprovalGuard, evidenceAtTipGuard];
 

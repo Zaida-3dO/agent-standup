@@ -47,9 +47,9 @@ export const evidenceAtTipGuard: Guard = {
       return guardRejected(
         tip
           ? `The most recent plan_review approval is not for the current tip commit (${tip}). ` +
-            "The plan has moved since it was approved — get it re-reviewed."
+              "The plan has moved since it was approved — get it re-reviewed."
           : "The most recent plan_review approval does not record which commit it applies to, " +
-            "so it cannot be trusted against the current tip. Get the plan re-reviewed.",
+              "so it cannot be trusted against the current tip. Get the plan re-reviewed.",
         { fields: ["state"] },
       );
     }
