@@ -93,15 +93,27 @@ export const updateItem = defineOperation({
 
     for (const field of EDITABLE_FIELDS) {
       if (!(field in edits)) continue;
-      const newValue = (edits as Record<string, unknown>)[field];
+      const rawNewValue = (edits as Record<string, unknown>)[field];
       const oldValue = (current as unknown as Record<string, unknown>)[field];
+      // `mergeAuthority` is the one editable field whose API encoding
+      // (hyphenated, `"needs-approval"`) differs from its stored encoding
+      // (underscored, `"needs_approval"` — the Postgres enum label). Every
+      // other editable field's API form and stored form are the same
+      // string (SCHEMA.md §1's enums: Priority, DriveMode use identical
+      // spellings on both sides). Diffing against the *stored* form here —
+      // rather than the raw input — is what makes "unchanged" actually mean
+      // unchanged: comparing the two encodings directly always disagrees,
+      // which is what produced a phantom field_change event on every
+      // mergeAuthority no-op (review round 1, MEDIUM 1).
+      const newValue =
+        field === "mergeAuthority" ? MERGE_AUTHORITY_TO_DB[rawNewValue as string] : rawNewValue;
       if (JSON.stringify(newValue) === JSON.stringify(oldValue)) continue;
 
       changes.push({ field, from: oldValue, to: newValue });
 
       if (field === "mergeAuthority") {
         setClauses.push(`"mergeAuthority" = $${paramIndex}::"MergeAuthority"`);
-        values.push(MERGE_AUTHORITY_TO_DB[newValue as string]);
+        values.push(newValue);
       } else if (field === "priority") {
         setClauses.push(`"priority" = $${paramIndex}::"Priority"`);
         values.push(newValue);

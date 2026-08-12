@@ -370,6 +370,62 @@ describeIfDb("item service operations against Postgres", () => {
       expect(events).toHaveLength(1); // only the create event
     });
 
+    it("is a genuine no-op on mergeAuthority — the API's hyphenated form and the stored underscored form must not read as changed (review round 1, MEDIUM 1)", async () => {
+      // mergeAuthority is the one editable field whose API encoding
+      // ("needs-approval") differs from its stored Postgres enum encoding
+      // ("needs_approval"). Resubmitting the exact value the item already
+      // has must be a true no-op — comparing the two encodings directly
+      // (rather than normalising first) always disagrees and writes a
+      // phantom field_change event on every call, which is the bug this
+      // test exists to catch.
+      const created = (await runtime.call("create_item", {
+        title: "Merge authority no-op",
+        body: "x",
+        area: "editing",
+        originType: "auto",
+        mergeAuthority: "needs-approval",
+      })) as { id: string; updatedAt: string; mergeAuthority: string };
+      expect(created.mergeAuthority).toBe("needs_approval"); // stored form
+
+      const result = (await runtime.call("update_item", {
+        id: created.id,
+        mergeAuthority: "needs-approval", // same value, API (hyphenated) form
+      })) as { updatedAt: string };
+
+      expect(result.updatedAt).toBe(created.updatedAt);
+      const events = await eventsFor(created.id);
+      expect(events).toHaveLength(1); // only the create event — no phantom update event
+    });
+
+    it("records a real mergeAuthority change with both from and to in the same (stored) encoding", async () => {
+      const created = (await runtime.call("create_item", {
+        title: "Merge authority change",
+        body: "x",
+        area: "editing",
+        originType: "auto",
+        mergeAuthority: "needs-approval",
+      })) as { id: string };
+
+      const updated = (await runtime.call("update_item", {
+        id: created.id,
+        mergeAuthority: "pre-approved",
+      })) as { mergeAuthority: string };
+      expect(updated.mergeAuthority).toBe("pre_approved");
+
+      const events = await eventsFor(created.id);
+      expect(events).toHaveLength(2);
+      // Both sides in the stored (underscored) encoding — a payload mixing
+      // "needs_approval" and "pre-approved" would be the same bug in a
+      // different shape: a ledger consumer comparing from/to by string
+      // needs one consistent vocabulary, not whichever encoding the caller
+      // happened to submit.
+      expect(events[1]?.payload).toEqual({
+        field: "mergeAuthority",
+        from: "needs_approval",
+        to: "pre_approved",
+      });
+    });
+
     it("refuses an id that does not exist", async () => {
       const error = await runtime
         .call("update_item", { id: "no-such-item", title: "x" })
