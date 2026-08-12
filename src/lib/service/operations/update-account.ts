@@ -30,6 +30,23 @@
 // this call already validated all three required fields as a precondition
 // of that same "does not exist" branch, so the values it supplies remain
 // legal whichever branch the statement actually takes.
+//
+// **The one Postgres subtlety that makes this harder than `update_machine`'s
+// version, found the hard way (CI, not read-review): `ON CONFLICT DO UPDATE`
+// still validates NOT NULL against the row the VALUES clause constructs,
+// even on a call that will end up routed to the UPDATE branch.** A bare `$2`
+// for `vendor` — null on a call that is only touching `budgetWindows` on an
+// *existing* row — makes Postgres reject the statement before it ever gets
+// to notice the id conflicts, with a raw `23502` violation naming a column
+// this call never touched. Each NOT NULL column's VALUES expression is
+// therefore `COALESCE(<supplied value>, (SELECT <column> FROM "Account"
+// WHERE "id" = $1))` — if the row exists, the subquery supplies its current
+// value so the constructed row is never actually null in a NOT NULL column;
+// if the row does not exist, the two `missing`-field checks above already
+// guarantee the supplied value is non-null, so the subquery (which would
+// find nothing) is never reached. `budget_windows` has no such constraint
+// and needs no COALESCE — a real, storable null is exactly what "no
+// override" means for it.
 import { z } from "zod";
 import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
@@ -105,7 +122,13 @@ export const updateAccount = defineOperation({
 
     const rows = await ctx.db.$queryRawUnsafe<RawAccountRow[]>(
       `INSERT INTO "Account" ("id", "vendor", "displayName", "planType", "budget_windows")
-       VALUES ($1, $2, $3, $4::"PlanType", $5::jsonb)
+       VALUES (
+         $1,
+         COALESCE($2, (SELECT "vendor" FROM "Account" WHERE "id" = $1)),
+         COALESCE($3, (SELECT "displayName" FROM "Account" WHERE "id" = $1)),
+         COALESCE($4::"PlanType", (SELECT "planType" FROM "Account" WHERE "id" = $1)),
+         $5::jsonb
+       )
        ON CONFLICT ("id") DO UPDATE
          SET "vendor" = CASE WHEN $6::boolean THEN $2 ELSE "Account"."vendor" END,
              "displayName" = CASE WHEN $7::boolean THEN $3 ELSE "Account"."displayName" END,
@@ -116,7 +139,18 @@ export const updateAccount = defineOperation({
       input.vendor ?? null,
       input.displayName ?? null,
       input.planType ?? null,
-      budgetWindowsProvided ? JSON.stringify(validatedBudgetWindows) : null,
+      // `JSON.stringify(null)` is the three-character *string* `"null"`, not
+      // a SQL NULL — passing that through `$5::jsonb` would store the JSON
+      // scalar null inside a non-null column instead of clearing the
+      // override the way `overrides.ts`'s "Null = no override" actually
+      // means. Guarded explicitly so "clear the override" writes a real
+      // column NULL, not a stored `null` value that merely reads back the
+      // same in JS.
+      budgetWindowsProvided
+        ? validatedBudgetWindows === null
+          ? null
+          : JSON.stringify(validatedBudgetWindows)
+        : null,
       vendorProvided,
       displayNameProvided,
       planTypeProvided,
