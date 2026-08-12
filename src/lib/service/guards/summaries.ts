@@ -1,23 +1,18 @@
-// The summaries guard — wires `validate.ts` into the state-machine guard
-// framework row #15 built. SCHEMA.md §16: "any completed state | A valid
-// summaries row." See MILESTONES.md #21.
+// Guard — summaries: entering any completed state requires a valid
+// `summaries` row. See docs/plans/MILESTONES.md #21, SCHEMA.md §16 ("any
+// completed state | A valid summaries row"), §5, §5a.
 //
-// This module owns *validating a candidate summary against everything
-// SCHEMA.md §5 states as a static rule* (shape, caps, reject-don't-truncate,
-// similarity, jargon) at the point an item tries to enter a completed state.
-// It does not own writing the `summaries` row — that is row #27's
-// transition-and-complete operation, which will supply `fields.summary` on
-// the transition request and can reuse `validateSummaryCandidate` directly
-// (exported below) without going through the guard registry at all, exactly
-// as `blocked`'s guard (row #16) reads `fields.blocked_reason`.
-import { GuardRejectedError } from "../errors";
-import {
-  guardRegistry,
-  guardOk,
-  guardRejected,
-  type Guard,
-  type GuardInput,
-} from "../state-machine";
+// Lives here — `src/lib/service/guards/`, alongside `hierarchy.ts` (#19) —
+// rather than self-registering from `../summaries/`, so it is covered by
+// `tests/guards-registration.test.ts`'s canonicalisation sweep the same way
+// every other hand-written guard is: that test reads every guard `id`
+// declared under this directory straight from source and asserts
+// `guards/index.ts`'s `ALL_GUARDS` lists it, which only works for a guard
+// that actually lives here. `../summaries/validate.ts` still owns the pure
+// shape/caps/similarity/jargon logic — reused by row #27's future
+// transition-and-complete operation directly, without going through the
+// guard registry at all, exactly as this file reuses it here.
+import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import {
   isTooSimilar,
   validateSummaryShape,
@@ -25,12 +20,10 @@ import {
   type SummaryCandidate,
   type SummaryValidationIssue,
   type WhatToTestEntry,
-} from "./validate";
+} from "../summaries/validate";
 
 /** The four completed states (SCHEMA.md §1.1's "Completed" column). Matches `transition.ts`'s own set. */
 const COMPLETED_STATES = new Set(["merged", "research_done", "wont_do", "cancelled"]);
-
-export const SUMMARY_REQUIRED_GUARD_ID = "summaries.required_and_valid";
 
 /**
  * Reads `fields.summary` off a `GuardInput` as a `SummaryCandidate`, or
@@ -99,7 +92,7 @@ function candidateTextFields(candidate: SummaryCandidate): { field: string; text
 
 /**
  * Runs the similarity check (SCHEMA.md §5, static validator 2) for one
- * candidate against every prior `events` row for `itemId`. Exported so the
+ * candidate against every prior `events` row for `itemId`. Exported so this
  * guard and a direct unit test can both drive it against a hand-built row
  * list without a database.
  */
@@ -126,10 +119,11 @@ export function findSimilarityIssues(
 }
 
 /**
- * The registered guard: entering any completed state requires a valid
- * `summaries` candidate in `fields.summary` — shape, caps, jargon and
- * similarity, all in one evaluation, so a caller sees every problem in one
- * rejection round rather than fixing them one at a time across retries.
+ * Registered as `summaries.required_and_valid`. Entering any completed
+ * state requires a valid `summaries` candidate in `fields.summary` — shape,
+ * caps, jargon and similarity, all in one evaluation, so a caller sees
+ * every problem in one rejection round rather than fixing them one at a
+ * time across retries.
  *
  * Fetches this item's own `events` rows inside `input.db` — the same
  * transaction handle every other guard runs in (`guard.ts`'s own doc: "a
@@ -137,7 +131,15 @@ export function findSimilarityIssues(
  * rather than opening a second connection.
  */
 export const summaryRequiredGuard: Guard = {
-  id: SUMMARY_REQUIRED_GUARD_ID,
+  // A literal string on this line, not a constant reference — the
+  // registration test in this repo's guards suite finds every guard by
+  // pattern-matching this directory's source text for a quoted id field,
+  // the same way `hierarchy.ts` declares its own id as a literal. A
+  // constant reference here would be invisible to that scan and silently
+  // under-count this guard. `SUMMARY_REQUIRED_GUARD_ID` below is derived
+  // *from* this literal instead, so there is exactly one place the real
+  // string is written.
+  id: "summaries.required_and_valid",
   description: "Entering a completed state requires a valid summaries row (SCHEMA.md §5).",
   appliesTo: (_from, to) => COMPLETED_STATES.has(to),
   async check(input: GuardInput) {
@@ -167,15 +169,5 @@ export const summaryRequiredGuard: Guard = {
   },
 };
 
-/** Installs the guard into the shared registry. Call once at process start (see `../index.ts`). */
-export function registerSummaryGuard(registry = guardRegistry): void {
-  if (!registry.has(SUMMARY_REQUIRED_GUARD_ID)) {
-    registry.register(summaryRequiredGuard);
-  }
-}
-
-// Re-exported so a future row (#22, #27) that needs to validate a summary
-// candidate directly — not through a transition — has one entry point, not
-// two competing ones.
-export { validateSummaryShape, type SummaryCandidate, type SummaryValidationIssue };
-export type { GuardRejectedError };
+/** `summaryRequiredGuard.id`, named for callers that want the id without importing the guard object. */
+export const SUMMARY_REQUIRED_GUARD_ID = summaryRequiredGuard.id;

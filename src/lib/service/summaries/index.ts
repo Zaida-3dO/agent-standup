@@ -28,9 +28,14 @@ export {
   type WhatToTestEntry,
 } from "./validate";
 
+// The guard itself now lives at `../guards/summaries.ts`, alongside every
+// other hand-written guard (MILESTONES.md #16-#19), so it is covered by
+// `tests/guards-registration.test.ts`'s canonicalisation sweep — a guard
+// declared outside `src/lib/service/guards/` is invisible to that test.
+// Re-exported here too so `@/lib/service/summaries` stays the one place to
+// import everything this row delivers, shape and guard alike.
 export {
   SUMMARY_REQUIRED_GUARD_ID,
   findSimilarityIssues,
-  registerSummaryGuard,
   summaryRequiredGuard,
-} from "./guard";
+} from "../guards/summaries";

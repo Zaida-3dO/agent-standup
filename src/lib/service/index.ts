@@ -59,7 +59,13 @@ export type { OperationDescriptor, ServiceInfo, ServiceInfoInput } from "./opera
 // from here is what registers them into `guardRegistry` — see
 // `guards/index.ts`'s header for why that is a deliberate side effect of the
 // import rather than a separate wiring step.
-export { ALL_GUARDS, hierarchyGuard } from "./guards";
+export {
+  ALL_GUARDS,
+  SUMMARY_REQUIRED_GUARD_ID,
+  findSimilarityIssues,
+  hierarchyGuard,
+  summaryRequiredGuard,
+} from "./guards";
 
 // The state machine (MILESTONES.md #15). Rows #16-#19 and #21 import
 // `guardRegistry` from here to register their guards; row #27 imports
@@ -98,8 +104,11 @@ export type { UpdateItemInput } from "./operations/update-item";
 export type { ListItemsInput, ListItemsOutput } from "./operations/list-items";
 
 // Summaries (MILESTONES.md #21): the static validators row #27's
-// transition-and-complete operation will call directly, plus the guard
-// that enforces them at "entering any completed state" (SCHEMA.md §16).
+// transition-and-complete operation will call directly. The guard itself
+// (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,
+// `findSimilarityIssues`) is exported above, from `./guards` — it lives
+// there now so `tests/guards-registration.test.ts` covers it like every
+// other hand-written guard.
 export {
   ALL_CAPS_PREFIXES,
   HOW_VERIFIED_CHAR_CAP,
@@ -112,18 +121,14 @@ export {
   SHIPPED_MAX,
   SHIPPED_MIN,
   SIMILARITY_REJECT_AT,
-  SUMMARY_REQUIRED_GUARD_ID,
   WATCH_FOR_CHAR_CAP,
   WATCH_FOR_MAX,
   WHAT_TO_TEST_MAX,
   WHAT_TO_TEST_MIN,
   WHAT_TO_TEST_TEXT_CHAR_CAP,
   findJargonHits,
-  findSimilarityIssues,
   isTooSimilar,
   jaccardSimilarity,
-  registerSummaryGuard,
-  summaryRequiredGuard,
   validateSummaryShape,
   type NotDoneEntry,
   type NotDoneReason,
