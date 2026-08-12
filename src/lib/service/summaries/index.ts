@@ -1,6 +1,7 @@
 // Summaries: shape, caps, reject-don't-truncate, similarity check, jargon
 // denylist. See docs/plans/MILESTONES.md #21, SCHEMA.md §5, §5a.
 export {
+  ALL_CAPS_PREFIXES,
   HOW_VERIFIED_CHAR_CAP,
   JARGON_TERMS,
   NOT_DONE_MAX,

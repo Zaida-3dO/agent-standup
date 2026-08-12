@@ -101,6 +101,7 @@ export type { ListItemsInput, ListItemsOutput } from "./operations/list-items";
 // transition-and-complete operation will call directly, plus the guard
 // that enforces them at "entering any completed state" (SCHEMA.md §16).
 export {
+  ALL_CAPS_PREFIXES,
   HOW_VERIFIED_CHAR_CAP,
   JARGON_TERMS,
   NOT_DONE_MAX,

@@ -8,6 +8,7 @@
 // into the completed-state transition.
 import { describe, expect, it } from "vitest";
 import {
+  ALL_CAPS_PREFIXES,
   HOW_VERIFIED_CHAR_CAP,
   JARGON_TERMS,
   NOT_DONE_MAX,
@@ -269,10 +270,71 @@ describe("jargon denylist (SCHEMA.md §5, static validator 3) — AC5", () => {
     ).toBe(true);
   });
 
-  it("refuses an ALL-CAPS prefix", () => {
+  it("refuses each curated ALL-CAPS prefix convention", () => {
+    // Review round 1, MEDIUM: the prior blanket regex (`\b[A-Z]{2,}[:_]/`)
+    // matched any two-or-more uppercase letters, not just the annotation
+    // conventions this rule means to catch. ALL_CAPS_PREFIXES is now an
+    // enumerated list — this sweeps every entry in it so a prefix silently
+    // dropped from the list in a future edit is caught here rather than
+    // discovered as a missed rejection later.
+    for (const prefix of ALL_CAPS_PREFIXES) {
+      const hits = findJargonHits("x", undefined, `${prefix}: revisit this later`);
+      expect(hits.some((h) => h.rule === "jargon")).toBe(true);
+    }
+  });
+
+  it("refuses an ALL-CAPS prefix using the underscore form too", () => {
     expect(
-      findJargonHits("x", undefined, "TODO: revisit this later").some((h) => h.rule === "jargon"),
+      findJargonHits("x", undefined, "FIXME_ this later").some((h) => h.rule === "jargon"),
     ).toBe(true);
+  });
+
+  it("does NOT refuse a legitimate technical acronym prefix — the exact false positives review round 1 reproduced", () => {
+    // The whole point of moving to a curated list: DB/URL/SQL/NB/OK are
+    // plausible, ordinary how_verified prose ("DB: migrations applied
+    // cleanly") and must pass now that the blanket regex is gone.
+    const legitimatePrefixes = [
+      "DB: migrations applied cleanly",
+      "URL: the health endpoint responded 200",
+      "SQL: the query returned the expected rows",
+      "NB: this only affects the staging area",
+      "OK: verified against the scratch database",
+    ];
+    for (const text of legitimatePrefixes) {
+      const hits = findJargonHits("how_verified", undefined, text);
+      expect(hits.some((h) => h.rule === "jargon")).toBe(false);
+    }
+  });
+
+  it("does NOT refuse other plausible technical acronyms not in the curated list either", () => {
+    // A broader sweep than the reviewer's five, proving this isn't a
+    // five-item special case — any two-or-more-letter uppercase acronym
+    // followed by a colon that isn't one of the enumerated conventions
+    // passes.
+    expect(
+      findJargonHits("x", undefined, "API: the endpoint is unauthenticated").some(
+        (h) => h.rule === "jargon",
+      ),
+    ).toBe(false);
+    expect(
+      findJargonHits("x", undefined, "CPU: usage stayed under 40%").some(
+        (h) => h.rule === "jargon",
+      ),
+    ).toBe(false);
+  });
+
+  it("full validateSummaryShape pass: a how_verified using DB: prose is accepted end to end", () => {
+    // The regression this MEDIUM was really about — a legitimate
+    // completion summary must not be blocked. Runs the whole shape
+    // validator, not just findJargonHits, since that is what a real
+    // transition actually calls.
+    const issues = validateSummaryShape(
+      baseCandidate({
+        how_verified:
+          "DB: migrations applied cleanly and the new guard rejected every seeded violation.",
+      }),
+    );
+    expect(issues).toEqual([]);
   });
 
   it("passes ordinary prose containing a superficially similar word — false-positive check", () => {

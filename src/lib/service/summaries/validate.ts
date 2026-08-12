@@ -89,8 +89,38 @@ export const JARGON_TERMS: readonly string[] = [
 /** A bare `#123`, `PR-123`, or `§12`-style cross-reference — matched structurally, not as a fixed string. */
 const CROSS_REFERENCE = /(^|[\s(])(#\d+|PR-\d+|§\d+(\.\d+)?[a-z]?)\b/;
 
-/** An ALL-CAPS prefix token of 2+ letters followed by `:` or `_` — e.g. `TODO:`, `FIXME_`, `NB:`. */
-const ALL_CAPS_PREFIX = /\b[A-Z]{2,}[:_]/;
+/**
+ * The ALL-CAPS-prefix conventions this denylist actually means to catch —
+ * an enumerated list (review round 1, MEDIUM), not a blanket
+ * `\b[A-Z]{2,}[:_]/` pattern.
+ *
+ * The blanket regex fired on any two-or-more uppercase letters followed by
+ * `:` or `_` — which also matches legitimate technical prefixes that happen
+ * to be all-caps abbreviations: `DB:`, `URL:`, `SQL:`, `NB:`, `OK:`. Those
+ * are plausible, ordinary `how_verified` prose ("DB: migrations applied
+ * cleanly"); rejecting them blocks a legitimate completion for a reason the
+ * author cannot see. The rule SCHEMA.md §5 actually describes is "ALL-CAPS
+ * prefixes" in the sense of annotation shorthand a writer drops into a
+ * comment or commit message — not every acronym that happens to be
+ * upper-case. Enumerating the real set is precise and asks for nothing this
+ * matcher cannot already do; it costs maintenance (a new prefix convention
+ * needs a line added here), which is the trade the option to keep the
+ * blanket regex plus an allowlist would avoid — but that alternative means
+ * guessing at the complement of an infinite set of legitimate technical
+ * prefixes, which is the wrong side of that trade to be guessing on.
+ */
+export const ALL_CAPS_PREFIXES: readonly string[] = [
+  "TODO",
+  "FIXME",
+  "WIP",
+  "HACK",
+  "XXX",
+  "NOTE",
+  "BUG",
+];
+
+/** Matches one of `ALL_CAPS_PREFIXES` at a word boundary, immediately followed by `:` or `_`. */
+const ALL_CAPS_PREFIX = new RegExp(`\\b(${ALL_CAPS_PREFIXES.join("|")})[:_]`);
 
 export interface SummaryValidationIssue {
   readonly field: string;
