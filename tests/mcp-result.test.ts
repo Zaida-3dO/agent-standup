@@ -61,6 +61,60 @@ describe("rendering a successful answer", () => {
     expect(result.content).toHaveLength(1);
     expect(result.content[0]?.type).toBe("text");
   });
+
+  // `checkpoint` and `note` return `AppendedEvent` (src/lib/events.ts) with
+  // real `bigint` `id`/`txId` — see `bigintSafe`'s own comment in
+  // src/lib/mcp/result.ts. Without it these two cases throw inside
+  // `toolSuccess` itself (`JSON.stringify` refuses a raw bigint outright),
+  // which `mcp-session-tools.test.ts` proves end to end through a real
+  // `checkpoint` call; these are the isolated unit cases for the renderer.
+  it("stringifies a top-level bigint field rather than throwing", () => {
+    const result = toolSuccess({ id: 42n, txId: 7n });
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual({ id: "42", txId: "7" });
+    expect(JSON.parse(result.content[0]?.text ?? "")).toEqual({ id: "42", txId: "7" });
+  });
+
+  it("preserves full precision — a value JS `number` cannot represent exactly", () => {
+    // Mutation evidence: a mutant that swapped `.toString()` for `Number(x)`
+    // (or dropped the bigint branch to fall through to a numeric coercion)
+    // would round this to `9007199254740992` — one off from the real value —
+    // which only a value past `Number.MAX_SAFE_INTEGER` can expose.
+    const huge = 9_007_199_254_740_993n; // MAX_SAFE_INTEGER + 2, odd — unrepresentable as a number
+    const result = toolSuccess({ id: huge });
+    expect(result.structuredContent).toEqual({ id: "9007199254740993" });
+    expect(result.content[0]?.text).toContain("9007199254740993");
+  });
+
+  it("stringifies a bigint nested inside an object", () => {
+    const result = toolSuccess({ event: { id: 5n, body: "note" } });
+    expect(result.structuredContent).toEqual({ event: { id: "5", body: "note" } });
+  });
+
+  it("stringifies a bigint nested inside an array", () => {
+    const result = toolSuccess({ events: [{ id: 1n }, { id: 2n }] });
+    expect(result.structuredContent).toEqual({ events: [{ id: "1" }, { id: "2" }] });
+  });
+
+  it("passes a Date through untouched rather than flattening it to an empty object", () => {
+    // Mutation evidence: dropping the `instanceof Date` branch would send a
+    // Date into the plain-object walk, where `Object.entries` finds no own
+    // enumerable properties — the field would render as `{}` instead of the
+    // timestamp, which this test's exact-string assertion catches.
+    const ts = new Date("2026-01-01T00:00:00.000Z");
+    const result = toolSuccess({ ts });
+    expect((result.structuredContent as { ts: Date }).ts).toBe(ts);
+    expect(JSON.parse(result.content[0]?.text ?? "")).toEqual({ ts: "2026-01-01T00:00:00.000Z" });
+  });
+
+  it("leaves a null field null rather than crashing while walking it", () => {
+    // Mutation evidence: dropping the `value !== null` guard on the
+    // object-walk branch would call `Object.entries(null)`, which throws —
+    // a shape every write operation here actually returns
+    // (`assignmentId: null` is normal, not exceptional).
+    const result = toolSuccess({ assignmentId: null, count: 3n });
+    expect(result.structuredContent).toEqual({ assignmentId: null, count: "3" });
+  });
 });
 
 describe("rendering a refusal", () => {
