@@ -36,7 +36,7 @@ export type NotifyOperator = "eq" | "neq" | "in" | "changed";
  * `camelCase` (`prisma/schema.prisma`: `blockedOnPersonId`, `driveMode`,
  * `mergeAuthority`, …), so a snapshot built by reading `ItemRecord`
  * (`src/lib/service/items/row.ts`) directly has the *wrong* key casing for
- * three of these nine fields. `isNotifyField`/`evaluateCondition` do not
+ * four of these nine fields. `isNotifyField`/`evaluateCondition` do not
  * — and are not meant to — bridge that gap: an unrecognised spelling
  * evaluates to `false`, which is the safe failure direction (a rule that
  * cannot fire is discoverable; a rule that fires on the wrong field is not)
