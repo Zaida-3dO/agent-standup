@@ -105,6 +105,22 @@ describe("all-of / any-of composition (AC1)", () => {
     // unmatchable.
     expect(ruleMatches(rule, before, after)).toBe(true);
   });
+
+  it("a rule with an explicitly empty when_any array is vacuously true too — not just an undefined bucket", () => {
+    // Distinct from the test above: `whenAny: []` is a present-but-empty
+    // array, not `undefined`. ruleMatches treats both as "no bucket", but
+    // that is two separate conditions ORed together
+    // (`rule.whenAny === undefined || rule.whenAny.length === 0`) and this
+    // is the only test that exercises the second half directly.
+    const rule: NotifyRule = { notify: ["user-a"], whenAll: [p0], whenAny: [] };
+    const before: FieldSnapshot = { priority: "P1" };
+    const after: FieldSnapshot = { priority: "P0" };
+    // A single-character change that would break this: `.length === 0` →
+    // `.length !== 0` in ruleMatches, which would make an explicitly empty
+    // when_any read as "has a bucket, and it's never satisfiable" —
+    // permanently unmatchable instead of vacuously true.
+    expect(ruleMatches(rule, before, after)).toBe(true);
+  });
 });
 
 // --- AC2: fires on the edge only ---
@@ -190,6 +206,29 @@ describe("field whitelisting (AC3)", () => {
     // `isNotifyField`, so any key present in the snapshot is addressable.
     expect(result.fired).toHaveLength(0);
     expect(result.recipients).toEqual([]);
+  });
+
+  it("ruleMatches itself never matches an unwhitelisted field, in a single evaluation with no edge symmetry to hide behind", () => {
+    // The evaluateRules test above pairs a matches(before) call with a
+    // matches(after) call — a naive mutant that makes every unwhitelisted
+    // condition evaluate to `true` still produces "no fire" there, because
+    // both sides of the edge comparison become `true` symmetrically. This
+    // test calls ruleMatches directly, once, so that symmetry can't hide
+    // the mutant: an `eq` condition on an unwhitelisted field, with a value
+    // that genuinely equals `condition.value`, must still not match.
+    //
+    // A single-character change that would break this: the `return false;`
+    // guarding an unwhitelisted field in evaluateCondition (the line
+    // directly under `if (!isNotifyField(condition.field))`) flipped to
+    // `return true;` — the field-gate would then report a match for a
+    // field the whitelist explicitly excludes.
+    const rule: NotifyRule = {
+      notify: ["user-a"],
+      whenAll: [{ field: "custom_fields", op: "eq", value: "anything" }],
+    };
+    expect(ruleMatches(rule, { custom_fields: "anything" }, { custom_fields: "anything" })).toBe(
+      false,
+    );
   });
 
   it("a change to a field that is real but simply not on the whitelist never fires, even with eq/in", () => {
@@ -376,5 +415,28 @@ describe("the `in` operator", () => {
     };
     expect(ruleMatches(rule, { state: "someday" }, { state: "blocked" })).toBe(true);
     expect(ruleMatches(rule, { state: "someday" }, { state: "cancelled" })).toBe(false);
+  });
+});
+
+// --- the `neq` operator ---
+
+describe("the `neq` operator", () => {
+  it("matches when the current value differs from the condition's value", () => {
+    const rule: NotifyRule = {
+      notify: ["user-a"],
+      whenAll: [{ field: "state", op: "neq", value: "blocked" }],
+    };
+    // A single-character change that would break this: `!==` → `===` in
+    // evaluateCondition's `neq` case (line 103), which would invert the
+    // sense and make this assert `true` where the mutant returns `false`.
+    expect(ruleMatches(rule, { state: "someday" }, { state: "someday" })).toBe(true);
+  });
+
+  it("rejects when the current value equals the condition's value", () => {
+    const rule: NotifyRule = {
+      notify: ["user-a"],
+      whenAll: [{ field: "state", op: "neq", value: "blocked" }],
+    };
+    expect(ruleMatches(rule, { state: "someday" }, { state: "blocked" })).toBe(false);
   });
 });
