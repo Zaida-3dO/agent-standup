@@ -432,21 +432,21 @@ enum PlanType {
 }
 
 model Account {
-  id          String           @id
-  vendor      String
-  displayName String
-  planType    PlanType
-  usage5h     Decimal?
-  usageWeekly Decimal?
-  usageAt     DateTime?        @db.Timestamptz(3)
+  id            String           @id
+  vendor        String
+  displayName   String
+  planType      PlanType
+  usage5h       Decimal?
+  usageWeekly   Decimal?
+  usageAt       DateTime?        @db.Timestamptz(3)
   // Per-entity override of the `budget.windows` setting (SCHEMA.md §17.7).
   // Null means "no override" — this account uses the global value. Bands
   // key off the account and planType makes them mean different things, so
   // one global value cannot describe two accounts. Validated by the
   // registry's own validator, not a second schema: an override changes
   // where a value is stored, never its type.
-  budgetWindows Json?          @map("budget_windows")
-  machines    MachineAccount[]
+  budgetWindows Json?            @map("budget_windows")
+  machines      MachineAccount[]
 }
 
 model Machine {
@@ -479,7 +479,7 @@ model MachineAccount {
 // read aloud belongs in the bootstrap environment, and the registry's own
 // test fails the build on a credential-shaped key.
 model Setting {
-  key String @id
+  key           String    @id
   // JSON null is a legal, meaningful value ("explicitly nothing" —
   // notifications off, retention forever) and is NOT the same as no row,
   // which means "at the default". Hence Json, not Json? — the column is
@@ -512,4 +512,53 @@ model SettingsRevision {
   revision BigInt @default(0)
 
   @@map("settings_revision")
+}
+
+// One row per capability setting whose path the liveness sweep re-verifies
+// (`notify.doc`, `visual_review.doc` — SCHEMA.md §17.5, DECISIONS.md §13f).
+// "Checked" is a fact about whichever machine ran the sweep, so the stored
+// state is who checked it, when, and what they found — never a bare
+// boolean, because a boolean can't distinguish "verified" from "the machine
+// that checked it could not see that filesystem" from "nobody has checked
+// since it changed". One row is overwritten in place per key: this is the
+// *latest* result, not a history — the ledger already has `events` for
+// anyone who wants the trail, via a `setting-change`-adjacent write this
+// milestone does not add (out of scope for row #24; see the sweep itself).
+model CapabilityCheck {
+  // The settings key this check is about (`notify.doc`, `visual_review.doc`,
+  // …). Not a foreign key into `settings` — a capability with no override
+  // row still resolves to its default and, when non-null, still needs
+  // checking; keying on the registry key rather than a settings row keeps
+  // that true.
+  key               String                @id
+  // The path or URL that was checked. Recorded alongside the result so this
+  // row stays visibly about the path it actually checked, rather than being
+  // silently reattributed to whatever the setting reads now if the setting
+  // has since been edited to point somewhere else.
+  path              String
+  result            CapabilityCheckResult
+  // Who ran the sweep. Never `person` — the sweep is a server or command-line
+  // process, not a human click — but typed the same way every other actor
+  // reference in this schema is, rather than a bare machine name, so a
+  // reader does not need a second lookup to know what kind of thing checked.
+  // `lastCheckedById` is nullable for the same reason `events.actor_id` is
+  // (SCHEMA.md §3): required unless the type is `system`, null for `system`.
+  lastCheckedByType ActorType
+  lastCheckedById   String?
+  lastCheckedAt     DateTime              @db.Timestamptz(3)
+
+  @@map("capability_checks")
+}
+
+// `exists`: the path was reachable and present, where the checking process
+// could see that filesystem. `missing`: reachable to check, and absent —
+// the loud warning case SCHEMA.md §17.5's "Still exists" row describes.
+// `unverified`: the process could not determine either way (no filesystem
+// access to the path, e.g. a URL or a path on a machine the sweep does not
+// run on) — recording "I could not check" rather than a false pass, per
+// §17.5's "Accept, mark unverified" row.
+enum CapabilityCheckResult {
+  exists
+  missing
+  unverified
 }
