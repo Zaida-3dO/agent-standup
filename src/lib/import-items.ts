@@ -34,6 +34,37 @@ export interface SourceTask {
   repo?: string;
   /** Free-text area label as the source spelled it. Always required on `items`; resolved via `ensureArea`. */
   area: string;
+  /**
+   * The task's history log, oldest first — optional because not every
+   * source store keeps one, and its absence is not an error. Read and
+   * imported by `import-events.ts` (MILESTONES.md #11), never by this
+   * module: `readSourceTasks` here treats it as opaque passthrough so the
+   * two importers agree on one `task.json` shape without either owning the
+   * other's column. See `import-events.ts` for `SourceHistoryEntry`.
+   */
+  history?: SourceHistoryEntry[];
+}
+
+/**
+ * One entry in a task's history log, exactly as the source store writes it.
+ * Declared here (not in `import-events.ts`) so `SourceTask` can reference it
+ * without a circular import between the two importer modules — the events
+ * importer re-exports this name for callers that only need the events side.
+ */
+export interface SourceHistoryEntry {
+  /** The source's own identifier for this history entry — unique within the task. */
+  id: string;
+  /**
+   * Free-text actor label as the source spelled it — a person's or agent's
+   * handle in the SOURCE vocabulary. Never null in the source: an
+   * unattributed entry is a data problem for `actorAliases` to refuse, not
+   * a case this type models as optional (`import-events.ts`).
+   */
+  actor: string;
+  /** ISO 8601 timestamp string, as the source wrote it. */
+  at: string;
+  /** Free-text one-line note — what happened, in the source's own words. */
+  note: string;
 }
 
 /**
