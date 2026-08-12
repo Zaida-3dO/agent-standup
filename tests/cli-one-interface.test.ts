@@ -82,7 +82,7 @@ const sharedService = {
 };
 
 // The route handlers import `service` from the composition root at module
-// scope. Replacing that module is what puts the HTTP adapter on the same
+// scope. Substituting that module is what puts the HTTP adapter on the same
 // service instance as the `direct` binding — and it means the HTTP side is
 // reached exactly as a deployed one is, through its own import, rather than
 // through a parameter this test handed it.

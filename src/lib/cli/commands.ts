@@ -152,9 +152,11 @@ export function verbsFor(noun: string): readonly string[] {
  *
  * The order is the design: an alias is rewritten into `<noun> <verb>` first,
  * and then exactly one lookup runs. A dispatcher that checked the alias
- * table *after* failing the command lookup would work for every case that
- * exists today and diverge the moment an alias shared a name with a noun,
- * because the two paths would then be reachable for the same input.
+ * table *after* failing the command lookup would diverge the moment an alias
+ * shared a name with a noun, because the two paths would then both be
+ * reachable for the same input — while behaving identically for every input
+ * where they do not collide, which is what makes it the wrong order to pick
+ * by testing.
  */
 export function lookupCommand(words: readonly string[]): LookupResult {
   const first = words[0];

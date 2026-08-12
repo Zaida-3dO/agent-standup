@@ -181,8 +181,9 @@ describe("the route map", () => {
     // The property that keeps the two bindings' *reach* equal: a command
     // whose operation has no route would work on `direct` and fail on
     // `http`, which is the divergence this row exists to prevent. Waived
-    // for `service_info`, which the API does not expose as a route today —
-    // named explicitly so adding a command without a route still fails.
+    // for `service_info`, which the API exposes through no route — named
+    // explicitly, so adding a command without a route still fails here
+    // rather than widening the waiver by accident.
     const { COMMANDS } = await import("@/lib/cli");
     const routedElsewhere = new Set(["service_info"]);
     const unrouted = COMMANDS.map((command) => command.operation)

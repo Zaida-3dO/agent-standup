@@ -34,10 +34,11 @@ export interface DoctorReport {
    * The capability paths this build re-checks locally — the row's "which
    * also re-checks configured capability paths locally".
    *
-   * Row #79 ships the reporting shape and the two paths that exist today:
-   * whether a server is addressable and whether a database is. Rows that
-   * add capabilities (#43's session registration, #84's stdio MCP) add
-   * their own checks here rather than a second report.
+   * Two paths are reported: whether a server is addressable and whether a
+   * database is. A row that adds a capability (#43's session registration,
+   * #84's stdio MCP) adds its own check to this list rather than a second
+   * report, so a person asking "what can this installation do" reads one
+   * answer.
    */
   readonly capabilities: readonly CapabilityCheck[];
 }
