@@ -8,16 +8,16 @@
 -- `Item.repo` keep their column types and nullability; only the foreign key
 -- and (for repo) the index are new.
 --
--- Backfill before constrain: `Item.area` is NOT NULL and `Item.repo` is
--- nullable free text today, so any row already written (seed data, manual
--- testing against a deployed database) can carry a value with no matching
--- row in the new reference tables. A NOT VALID-free foreign key added
--- straight onto that would fail to apply. Backfilling one row per distinct
--- existing value first — using the value itself as both `id` and
--- `display_name`, since that is the only information a bare text column
--- ever had — makes the constraint additive in the same sense the rest of
--- this migration is: it cannot break a database that already has rows, and
--- it adds nothing beyond what already existed as free text.
+-- Backfill before constrain: `Item.area` is NOT NULL free text and
+-- `Item.repo` is nullable free text, so any row already written (seed
+-- data, manual testing against a deployed database) can carry a value with
+-- no matching row in the new reference tables. A NOT VALID-free foreign
+-- key added straight onto that would fail to apply. Backfilling one row
+-- per distinct existing value first — using the value itself as both `id`
+-- and `display_name`, since that is the only information a bare text
+-- column ever had — makes the constraint additive in the same sense the
+-- rest of this migration is: it cannot break a database that already has
+-- rows, and it adds nothing beyond what already existed as free text.
 
 -- CreateTable
 CREATE TABLE "Repo" (
