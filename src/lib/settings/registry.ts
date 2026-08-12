@@ -10,6 +10,7 @@
 // these declarations rather than maintained alongside them.
 import { z } from "zod";
 import { budgetWindowsSchema } from "./budget-windows";
+import { capabilityDocSchema } from "./capability-doc";
 
 /**
  * The categories a setting can be filed under. Closed rather than free
@@ -278,10 +279,10 @@ export const SETTINGS_REGISTRY = {
   }),
 
   "notify.doc": define({
-    schema: z.string().min(1).nullable(),
+    schema: capabilityDocSchema,
     default: null,
     label: "Notification document",
-    help: "Path or URL of the document explaining how to reach people here. Null means notifications are off — including the escalation that puts a blocked item on somebody's list. Wanted whenever any notification rule exists.",
+    help: 'Path or URL of the document explaining how to reach people here. Null means notifications are off — including the escalation that puts a blocked item on somebody\'s list. Wanted whenever any notification rule exists. Must be a well-formed absolute path or URL, with no ".." traversal (SCHEMA.md §17.5).',
     category: "Capabilities",
     appliesWhen: "next-call",
     // Relaxes an enforcement: null silences every escalation path.
@@ -291,10 +292,10 @@ export const SETTINGS_REGISTRY = {
   }),
 
   "visual_review.doc": define({
-    schema: z.string().min(1).nullable(),
+    schema: capabilityDocSchema,
     default: null,
     label: "Visual review document",
-    help: "Path or URL of the document explaining how a visual review is performed here. Null means visual review is unavailable, and an item that needs one has no way through its gate.",
+    help: 'Path or URL of the document explaining how a visual review is performed here. Null means visual review is unavailable, and an item that needs one has no way through its gate. Must be a well-formed absolute path or URL, with no ".." traversal (SCHEMA.md §17.5).',
     category: "Capabilities",
     appliesWhen: "next-call",
     sensitive: false,
