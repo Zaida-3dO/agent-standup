@@ -16,6 +16,8 @@ import {
   verifyNamedKills,
   computeMutationScore,
   assertDeadLineNeverKilled,
+  assertRequestedFilesMutated,
+  parseMatchedFileSummary,
   clearReportFile,
   readReportOrThrow,
   validateIncrementalCache,
@@ -259,6 +261,247 @@ describe("assertDeadLineNeverKilled", () => {
     expect(() => assertDeadLineNeverKilled(report, filePath, 37)).toThrow(
       /expected at least one mutant at/i,
     );
+  });
+});
+
+// Stryker's own `Project.logFiles` (@stryker-mutator/core's `fs/project.js`)
+// logs exactly this shape after resolving `--mutate` patterns against the
+// project's file list — straight from the SAME glob resolution that decides
+// what gets instrumented, not a guess. `parseMatchedFileSummary` is the only
+// thing standing between a genuine drop and a legitimately mutant-free file
+// (see the `assertRequestedFilesMutated` suite below for why `report.files`
+// presence alone cannot make that distinction).
+describe("parseMatchedFileSummary", () => {
+  it("parses a real 'Found N of M' line (captured verbatim from a live stryker run)", () => {
+    const realOutput =
+      "[32m23:08:48 (61232) INFO ProjectReader[39m Found 2 of 242 file(s) to be mutated.\n";
+    expect(parseMatchedFileSummary(realOutput)).toEqual({ matched: 2, scanned: 242 });
+  });
+
+  it("parses the incremental-report suffix variant of the same line", () => {
+    const realOutput =
+      "Found 1 of 243 file(s) to be mutated using incremental report with 7 mutant(s), and 1 test(s).\n";
+    expect(parseMatchedFileSummary(realOutput)).toEqual({ matched: 1, scanned: 243 });
+  });
+
+  it("treats the 'No files found for mutation' warning as matched: 0", () => {
+    const realOutput =
+      "Warning: No files found for mutation with the given glob expressions. As a result, a dry-run will be performed without actually modifying anything.";
+    expect(parseMatchedFileSummary(realOutput)).toEqual({ matched: 0, scanned: null });
+  });
+
+  it("returns null when neither line is present anywhere in the output", () => {
+    expect(parseMatchedFileSummary("some unrelated Stryker log noise\n")).toBeNull();
+  });
+});
+
+// This is the reconciliation half of the mutation-glob fix. It went through
+// two rounds:
+//
+//   Round 1 checked `report.files` presence/mutant-count directly. That
+//   caught the six bracket-route files correctly, but a MEDIUM review
+//   finding (reproduced against a real Stryker report, not hypothetically)
+//   showed it ALSO hard-fails on a requested file that Stryker genuinely
+//   matched but which has no mutable code at all — e.g. a pure re-export
+//   barrel. `report.files` omits a file under BOTH conditions identically;
+//   presence alone cannot distinguish "matched, nothing to mutate" from
+//   "never matched at all".
+//
+//   Round 2 (this suite) switches the signal to Stryker's own file-count
+//   summary (`parseMatchedFileSummary`, from its captured console output)
+//   instead: if Stryker's own resolution matched at least as many files as
+//   were requested, every requested file WAS targeted, and an absence from
+//   `report.files` is legitimate. If it matched fewer, at least one
+//   requested file was silently dropped, and the run still hard-fails.
+describe("assertRequestedFilesMutated (reconciliation: closes the silent-glob-drop hole)", () => {
+  it("passes when Stryker's own count confirms every requested file was matched, even though one is absent from report.files", () => {
+    const report = {
+      files: {
+        "src/lib/areas.ts": {
+          mutants: [
+            {
+              id: "1",
+              status: "Survived",
+              mutatorName: "X",
+              location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+            },
+          ],
+        },
+        // "src/lib/service/index.ts" is deliberately absent — a
+        // legitimately mutant-free file, matched by its own --mutate
+        // pattern, contributes zero mutants and never appears here.
+      },
+    };
+    const strykerOutput = "Found 2 of 242 file(s) to be mutated.\n";
+
+    expect(() =>
+      assertRequestedFilesMutated(
+        report,
+        ["src/lib/service/index.ts", "src/lib/areas.ts"],
+        strykerOutput,
+      ),
+    ).not.toThrow();
+  });
+
+  // The genuine-drop shape: Stryker's own count says only 1 of the 2
+  // requested files was matched — the run still must not pass, and must
+  // still name the file that's missing, exactly as round 1 did.
+  it("throws naming a requested file that Stryker's own count confirms was never matched", () => {
+    const report = {
+      files: {
+        "src/lib/areas.ts": {
+          mutants: [
+            {
+              id: "1",
+              status: "Survived",
+              mutatorName: "X",
+              location: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } },
+            },
+          ],
+        },
+      },
+    };
+    const strykerOutput = "Found 1 of 243 file(s) to be mutated.\n";
+
+    expect(() =>
+      assertRequestedFilesMutated(
+        report,
+        ["src/lib/areas.ts", "src/app/api/items/[id]/route.ts"],
+        strykerOutput,
+      ),
+    ).toThrow(/src\/app\/api\/items\/\[id\]\/route\.ts/);
+  });
+
+  it("throws citing the match-count shortfall in its message", () => {
+    const report = { files: {} };
+    const strykerOutput = "Found 0 of 5 file(s) to be mutated.\n";
+
+    expect(() =>
+      assertRequestedFilesMutated(report, ["src/a.ts", "src/b.ts"], strykerOutput),
+    ).toThrow(/matched only 0 of the 2 requested file\(s\)/);
+  });
+
+  it("throws when neither summary line can be found in the captured output — refuses to trust an unverifiable run", () => {
+    const report = { files: { "src/a.ts": { mutants: [{ id: "1", status: "Survived" }] } } };
+
+    expect(() =>
+      assertRequestedFilesMutated(report, ["src/a.ts"], "totally unrelated log noise\n"),
+    ).toThrow(/could not verify/);
+  });
+
+  it("does nothing when the requested-files list is empty", () => {
+    const report = { files: {} };
+    expect(() =>
+      assertRequestedFilesMutated(report, [], "Found 0 of 5 file(s) to be mutated.\n"),
+    ).not.toThrow();
+  });
+});
+
+// The regression fixture for the MEDIUM finding, built from REAL data, not
+// synthesized: both the console text and the report shape below are copied
+// verbatim from actually running
+//   npx stryker run --mutate "src/lib/service/index.ts,src/lib/areas.ts" --force
+// against this repository as it stands. `src/lib/service/index.ts` is a
+// genuine pure re-export barrel (see that file) with zero mutable
+// statements. The mutant entries under `src/lib/areas.ts` are two real
+// entries copied from that run's actual `reports/mutation/mutation.json`
+// (trimmed from 38 for legibility — the trimming does not change what's
+// being proven, which is the barrel's absence alongside a real sibling
+// file's presence, not the sibling's own mutant count).
+describe("assertRequestedFilesMutated — real Stryker output regression (MEDIUM finding)", () => {
+  const REAL_STRYKER_OUTPUT_BARREL_RUN =
+    "[32m23:08:48 (61232) INFO ProjectReader[39m No incremental result file found at reports/stryker-incremental.json, a full mutation testing run will be performed.\n" +
+    "[32m23:08:48 (61232) INFO ProjectReader[39m Found 2 of 242 file(s) to be mutated.\n" +
+    "[32m23:08:49 (61232) INFO Instrumenter[39m Instrumented 2 source file(s) with 38 mutant(s)\n";
+
+  const REAL_REPORT_BARREL_RUN = {
+    schemaVersion: "1",
+    thresholds: { high: 90, low: 70, break: 60 },
+    testFiles: {},
+    files: {
+      // src/lib/service/index.ts is genuinely absent here — verified
+      // against the real report; this is not an omission in the fixture.
+      "src/lib/areas.ts": {
+        language: "typescript",
+        source: "",
+        mutants: [
+          {
+            id: "12",
+            mutatorName: "BlockStatement",
+            replacement: "{}",
+            status: "NoCoverage",
+            static: false,
+            coveredBy: [],
+            location: { end: { column: 4, line: 33 }, start: { column: 28, line: 30 } },
+          },
+          {
+            id: "13",
+            mutatorName: "StringLiteral",
+            replacement: "``",
+            status: "NoCoverage",
+            static: false,
+            coveredBy: [],
+            location: { end: { column: 66, line: 31 }, start: { column: 11, line: 31 } },
+          },
+        ],
+      },
+    },
+  };
+
+  // Requirement 1: the guard must NOT fail for a legitimately mutant-free
+  // file. This is the exact scenario the review round's MEDIUM finding
+  // reported as broken.
+  it("does not fail for a real pure re-export barrel matched by Stryker but absent from report.files", () => {
+    expect(() =>
+      assertRequestedFilesMutated(
+        REAL_REPORT_BARREL_RUN,
+        ["src/lib/service/index.ts", "src/lib/areas.ts"],
+        REAL_STRYKER_OUTPUT_BARREL_RUN,
+      ),
+    ).not.toThrow();
+  });
+
+  // Requirement 2: a real report/output pair must still catch a genuinely
+  // dropped file — proving the false-alarm fix did not weaken real
+  // detection. Built from a second, separate real run:
+  //   npx stryker run --mutate "src/app/api/items/[id]/route.ts,src/lib/areas.ts" --force
+  // (the bracket route's pattern deliberately left UNESCAPED, reproducing
+  // the original bug). Real captured output: "Found 1 of 242 file(s) to be
+  // mutated." — only 1 of the 2 requested files was actually matched by
+  // Stryker's own resolution; `report.files` again contains only
+  // `src/lib/areas.ts` (with the identical two real mutant entries — the
+  // same deterministic source, force-run without incremental reuse).
+  it("still fails on a real report for a genuinely dropped (unescaped bracket-route) file", () => {
+    const realStrykerOutputDroppedRun =
+      '[33m23:15:41 (44372) WARN ProjectReader[39m Glob pattern "src/app/api/items/[id]/route.ts" did not result in any files.\n' +
+      "[32m23:15:41 (44372) INFO ProjectReader[39m Found 1 of 242 file(s) to be mutated.\n" +
+      "[32m23:15:41 (44372) INFO Instrumenter[39m Instrumented 1 source file(s) with 38 mutant(s)\n";
+    const realReportDroppedRun = {
+      files: {
+        "src/lib/areas.ts": {
+          mutants: [
+            {
+              id: "12",
+              mutatorName: "BlockStatement",
+              status: "NoCoverage",
+              location: { end: { column: 4, line: 33 }, start: { column: 28, line: 30 } },
+            },
+          ],
+        },
+        // src/app/api/items/[id]/route.ts is genuinely absent — its
+        // --mutate pattern was never escaped in this fixture run, matching
+        // zero files (the WARN line above), not merely producing zero
+        // mutants.
+      },
+    };
+
+    expect(() =>
+      assertRequestedFilesMutated(
+        realReportDroppedRun,
+        ["src/app/api/items/[id]/route.ts", "src/lib/areas.ts"],
+        realStrykerOutputDroppedRun,
+      ),
+    ).toThrow(/src\/app\/api\/items\/\[id\]\/route\.ts/);
   });
 });
 

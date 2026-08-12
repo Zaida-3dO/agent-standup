@@ -120,6 +120,103 @@ export function assertDeadLineNeverKilled(report, filePath, deadLine) {
 }
 
 /**
+ * Parses Stryker's own file-resolution summary out of its captured console
+ * output (stdout + stderr, concatenated — see `runStrykerCommand` in
+ * `run-mutation-tests.mjs`). `@stryker-mutator/core`'s `Project.logFiles`
+ * (`fs/project.js`) logs exactly one of two lines after every run, straight
+ * from its own `filesToMutate`/`files` maps — i.e. from the SAME glob
+ * resolution that decides what actually gets instrumented, not a guess:
+ *
+ *   - `Found N of M file(s) to be mutated[...]` when at least one file
+ *     matched (N = files whose `--mutate` pattern matched, M = total files
+ *     scanned in the project).
+ *   - `Warning: No files found for mutation with the given glob
+ *     expressions...` when NOT ONE file matched (N would have been 0).
+ *
+ * Returns `{ matched, scanned }` (`scanned` is `null` in the
+ * all-zero/warning case, which doesn't carry the M figure) or `null` if
+ * neither line is present anywhere in the output — an unrecognised Stryker
+ * output shape this parser can't account for, which the caller must treat
+ * as "cannot verify", never as an implicit pass.
+ */
+export function parseMatchedFileSummary(strykerOutput) {
+  const foundMatch = /Found (\d+) of (\d+) file\(s\) to be mutated/.exec(strykerOutput);
+  if (foundMatch) {
+    return { matched: Number(foundMatch[1]), scanned: Number(foundMatch[2]) };
+  }
+  if (/No files found for mutation with the given glob expressions/.test(strykerOutput)) {
+    return { matched: 0, scanned: null };
+  }
+  return null;
+}
+
+/**
+ * Reconciliation guard for a `--changed-only` run: every file the caller
+ * SCOPED the run to (`requestedFiles`) must have actually been MATCHED by
+ * Stryker's own glob resolution — verified via `parseMatchedFileSummary`
+ * above, never via presence in `report.files`.
+ *
+ * `report.files` alone CANNOT make this distinction and must never be used
+ * for it: verified empirically (MEDIUM finding on this change's own first
+ * review round) that Stryker omits a file from `report.files` under BOTH of
+ * two completely different conditions — (a) its `--mutate` pattern matched
+ * nothing at all (the original bracket-route bug this guard exists to
+ * catch), and (b) its pattern matched correctly but the file has no
+ * mutable code at all, e.g. a pure re-export barrel. A real run reproduces
+ * this: `stryker run --mutate "src/lib/service/index.ts,src/lib/areas.ts"
+ * --force` — `src/lib/service/index.ts` is a type/re-export-only barrel —
+ * logs `Found 2 of 242 file(s) to be mutated` (both files WERE matched) yet
+ * `report.files` contains only `src/lib/areas.ts`; the barrel is absent
+ * with no marker distinguishing it from a silent drop. An earlier version
+ * of this guard checked `report.files` presence directly and hard-failed
+ * on exactly this legitimate case — see `tests/mutation-report-guards.test.ts`
+ * for the real-report regression test built from that exact run.
+ *
+ * The fix: trust Stryker's own resolution COUNT instead. If it matched at
+ * least as many files as were requested, every requested file WAS
+ * targeted — a requested file now absent from `report.files` legitimately
+ * has no mutable code, and that is not a failure. If it matched FEWER than
+ * were requested, at least one requested file's pattern silently matched
+ * nothing, and this throws — listing every requested file absent from
+ * `report.files` as a suspect (at least one of them is a genuine drop; a
+ * matched-but-empty file would also appear in that list and can't be
+ * distinguished from a drop by name alone once the count has already
+ * proven something IS wrong, but the run has already been refused a pass,
+ * which is what matters).
+ *
+ * If neither summary line is found in the captured output at all, this
+ * throws too — an unrecognised output shape is refused, not silently
+ * trusted.
+ */
+export function assertRequestedFilesMutated(report, requestedFiles, strykerOutput) {
+  const summary = parseMatchedFileSummary(strykerOutput);
+
+  if (summary === null) {
+    throw new Error(
+      `could not verify how many of the ${requestedFiles.length} requested file(s) Stryker actually ` +
+        `matched — its own "Found N of M file(s) to be mutated" summary (or the "No files found" ` +
+        `warning) was not present anywhere in its captured output. Refusing to trust a report whose ` +
+        `scope resolution can't be verified.`,
+    );
+  }
+
+  if (summary.matched < requestedFiles.length) {
+    const files = report.files ?? {};
+    const suspects = requestedFiles.filter((f) => !files[f]);
+    throw new Error(
+      `Stryker's own file resolution matched only ${summary.matched} of the ${requestedFiles.length} ` +
+        `requested file(s) — at least one requested file's --mutate pattern silently matched zero ` +
+        `files (most likely a glob-special character in the path being reinterpreted as a pattern ` +
+        `instead of matching itself). A run that never touched a requested file has proven nothing ` +
+        `about it and must never be treated as a pass. Requested file(s) absent from the report ` +
+        `(at least one of these is a genuine drop — a legitimately mutant-free file would also be ` +
+        `absent here, but the match count above already proves something is wrong):\n` +
+        `${suspects.map((f) => `  - ${f}`).join("\n")}`,
+    );
+  }
+}
+
+/**
  * Deletes any file at `reportPath` if one exists, otherwise does nothing.
  *
  * Called immediately before every Stryker invocation in
