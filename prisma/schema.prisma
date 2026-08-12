@@ -232,6 +232,15 @@ enum EventType {
 
 model Event {
   id           BigInt      @id @default(autoincrement())
+  // The identifier of the transaction that wrote this row, defaulted by
+  // Postgres itself (`txid_current()`) rather than supplied by the
+  // application — SCHEMA.md §3. `id` is handed out before commit, so
+  // sequence order is not commit order; `txId` is what lets a reader bound
+  // itself to rows whose writing transaction has definitely finished (the
+  // visibility horizon) instead of trusting `id` alone. Two rows written by
+  // the same call share a `txId` because they share the one transaction the
+  // service runtime opens per call.
+  txId         BigInt      @default(dbgenerated("txid_current()"))
   itemId       String?
   item         Item?       @relation(fields: [itemId], references: [id])
   ts           DateTime    @default(now()) @db.Timestamptz(3)
@@ -248,6 +257,7 @@ model Event {
   @@index([itemId, ts])
   @@index([type, ts])
   @@index([assignmentId, type, ts])
+  @@index([txId])
 }
 
 model EventSeen {
