@@ -17,13 +17,30 @@ succeeds right after lock says nothing about whether one still succeeds after di
 
    ```powershell
    cd docs\spikes\unattended-windows-launch
-   npm install --no-save --no-package-lock playwright
+   npm install --prefix . --no-save --no-package-lock playwright
    npx playwright install chromium
    ```
 
-   This installs into a local `node_modules/` inside this folder only — it does not touch this
-   repository's own `package.json` or `package-lock.json` (both are git-ignored at this path; see
-   `.gitignore`).
+   **`--prefix .` is load-bearing, not optional.** This folder has no `package.json` of its own, so
+   without `--prefix .` npm walks _up_ to the repository root and installs there instead —
+   `--no-package-lock` then disables lockfile-pinned resolution for that install **tree-wide**,
+   silently drifting the repository's real `node_modules/` away from what `package-lock.json`
+   describes. `git status` does not catch this: `--no-package-lock` also means `package-lock.json`
+   itself is never rewritten, so nothing shows as modified even though the actually-installed
+   `node_modules/` tree can quietly diverge from it — invisible to git, because `node_modules/` is
+   itself git-ignored. `--prefix .` genuinely isolates the install to a local `node_modules/`
+   inside this folder only — confirmed directly: run it, then check that
+   `docs\spikes\unattended-windows-launch\node_modules\playwright` exists and that
+   `node_modules\playwright` at the repository root does **not**. It does not touch this repository's
+   own `package.json` or `package-lock.json`, and the local `node_modules/` it creates is git-ignored
+   (the repository-wide `node_modules/` rule in `.gitignore` already covers any depth, so nothing
+   extra was needed there).
+
+   **If you already ran this command without `--prefix .`** — check whether
+   `node_modules\playwright` exists at the repository root (not `git status`, per the paragraph
+   above — it won't show anything). If it does, restore the root install with `npm ci` from the
+   repository root before doing anything else. `npm ci` reinstalls strictly from
+   `package-lock.json`, discarding whatever the stray install left behind.
 
 ## 1. Baseline — before locking anything
 
@@ -109,3 +126,15 @@ Unregister-ScheduledTask -TaskName AgentStandupSpike-UnattendedLaunch -Confirm:$
 This is a spike task, not meant to persist. Leave `spike.log` and the screenshots in place (or copy
 them out) until you've reported the result — both are git-ignored, so they won't show up as changes
 to commit.
+
+**Also remove the local Playwright install from step 0**, since it's a throwaway spike dependency,
+not something this folder should keep around indefinitely:
+
+```powershell
+Remove-Item -Recurse -Force docs\spikes\unattended-windows-launch\node_modules
+```
+
+Safe regardless of which form of the install command was used, because it only ever removes the
+`node_modules/` directory inside this spike folder. If step 0's restore check found a stray install
+at the repository root and you already ran `npm ci` there, there is nothing further to undo — `npm ci`
+is the complete recovery for that side.

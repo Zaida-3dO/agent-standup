@@ -37,7 +37,8 @@ try {
   );
   const buffer = await page.screenshot();
   await writeFile(outPath, buffer);
-  // The launcher reads the last line of stdout as the written path.
+  // This repository's own probe script (not the launcher, which never calls
+  // this file directly) reads the last line of stdout as the written path.
   console.log(outPath);
 } finally {
   await browser.close();

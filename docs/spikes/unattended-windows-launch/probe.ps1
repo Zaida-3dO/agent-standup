@@ -68,15 +68,33 @@ try {
         # external-ref-ok-next-line: this repository's own sibling scripts, named for a diagnostic message
         Write-SpikeLogLine "SCREENSHOT-CHECK FAILED: screenshot.mjs not found next to probe.ps1"
     } else {
-        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $outPath = & node $nodeScript $shotDir 2>&1
-        $exitCode = $LASTEXITCODE
-        $stopwatch.Stop()
-        if ($exitCode -eq 0 -and $outPath -and (Test-Path ($outPath | Select-Object -Last 1))) {
-            $finalPath = $outPath | Select-Object -Last 1
+        # stdout and stderr captured to separate files rather than merged
+        # with 2>&1: PowerShell wraps a native process's stderr lines as
+        # ErrorRecord objects interleaved into the *same* output collection
+        # 2>&1 produces, so "the last line" of a merged stream is not
+        # reliably the path screenshot.mjs printed -- a stray stderr line
+        # emitted after that print would silently become "the last line"
+        # instead. Keeping the streams apart makes $stdoutLines contain
+        # nothing but real stdout, so parsing the path out of it is
+        # unambiguous.
+        $stdoutFile = [System.IO.Path]::GetTempFileName()
+        $stderrFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            & node $nodeScript $shotDir 1>$stdoutFile 2>$stderrFile
+            $exitCode = $LASTEXITCODE
+            $stopwatch.Stop()
+            $stdoutLines = @(Get-Content -Path $stdoutFile -ErrorAction SilentlyContinue)
+            $stderrText = Get-Content -Raw -Path $stderrFile -ErrorAction SilentlyContinue
+        } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue -Path $stdoutFile, $stderrFile
+        }
+
+        $finalPath = $stdoutLines | Select-Object -Last 1
+        if ($exitCode -eq 0 -and $finalPath -and (Test-Path $finalPath)) {
             Write-SpikeLogLine "SCREENSHOT-CHECK OK: $finalPath ($($stopwatch.ElapsedMilliseconds)ms)"
         } else {
-            Write-SpikeLogLine "SCREENSHOT-CHECK FAILED: exit=$exitCode output='$outPath'"
+            Write-SpikeLogLine "SCREENSHOT-CHECK FAILED: exit=$exitCode stdout='$stdoutLines' stderr='$stderrText'"
         }
     }
 } catch {
