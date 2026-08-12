@@ -11,7 +11,7 @@
 // binding is still an adapter, and "every adapter is a thin shell over a
 // service call" applies to the binding that happens to run in the same
 // process as the service just as much as to the one that does not.
-import { toServiceError } from "@/lib/service";
+import { isRehearsalRollback, toServiceError } from "@/lib/service";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
 
 /** The narrow slice of the service runtime a binding uses. */
@@ -58,6 +58,21 @@ export function createDirectBinding({ service, sessionId, actor }: DirectBinding
       try {
         return bindingOk(await service.call(operation, input, { caller }));
       } catch (error) {
+        // `transition_item`'s `dryRun` branch always throws
+        // `RehearsalRollback` to abandon its own transaction, even when the
+        // move it rehearsed would have been *allowed* — see that class's
+        // own doc in `service/operations/rehearsal-rollback.ts`. That throw
+        // is not a refusal; it is how a rehearsal reports the outcome it
+        // computed. The HTTP route unwraps the identical throw into a 200
+        // `{ outcome }` body (`app/api/items/[id]/transition/route.ts`) —
+        // this is the same unwrapping for the binding that runs the service
+        // layer in this process instead of calling out to one over HTTP.
+        // Falling through to the generic handling below would report every
+        // `--dry-run` call as an `internal` failure, allowed or rejected
+        // alike, instead of the preview it exists to show.
+        if (isRehearsalRollback(error)) {
+          return bindingOk({ outcome: error.outcome });
+        }
         // `toServiceError` is what keeps the promise that everything
         // leaving here is in the taxonomy: a driver error or a TypeError
         // becomes `internal` rather than escaping as an unclassifiable
