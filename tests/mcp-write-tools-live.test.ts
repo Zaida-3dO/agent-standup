@@ -211,6 +211,13 @@ describeIfDb("MCP write tools against Postgres", () => {
     it("dryRun: false (or omitted) actually writes — the route reads the argument, not a hardcoded preview", async () => {
       const id = await createTaskViaMcp();
 
+      // One event already exists from `createTaskViaMcp`'s own `create_item`
+      // call (create_item.ts: "a create has no prior value to diff... recorded
+      // as a field-change from null") — the assertion below is relative to
+      // that baseline, not a hardcoded count, so it does not assume how many
+      // events an unrelated call appends.
+      const beforeEvents = await eventCount(id);
+
       const result = await client.callTool({
         name: "transition_item",
         arguments: { id, to: "executing" },
@@ -220,7 +227,7 @@ describeIfDb("MCP write tools against Postgres", () => {
       const structured = result.structuredContent as { outcome: { rehearsed: boolean } };
       expect(structured.outcome.rehearsed).toBe(false);
       expect(await itemState(id)).toBe("executing");
-      expect(await eventCount(id)).toBe(1);
+      expect(await eventCount(id)).toBe(beforeEvents + 1);
     });
   });
 
