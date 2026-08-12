@@ -6,7 +6,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { createRepo } from "@/lib/repos";
-import { importItems, type SourceTask } from "@/lib/import-items";
+import { importItems, STATUS_REMAP, type SourceTask } from "@/lib/import-items";
 import { importEvents } from "@/lib/import-events";
 import {
   importAssignmentsAndArtifacts,
@@ -386,6 +386,29 @@ describeIfDb("import verification — against a real Postgres", () => {
     });
     const repoField = result.fields.find((f) => f.field === "repo");
     expect(repoField).toEqual({ field: "repo", expected: "web", actual: "web", matches: true });
+    // state/area/mergeAuthority: proves each field is actually present and
+    // passing on a correctly-imported row, not just absent from the report.
+    const stateField = result.fields.find((f) => f.field === "state");
+    expect(stateField).toEqual({
+      field: "state",
+      expected: "executing", // status "in-progress" -> "executing"
+      actual: "executing",
+      matches: true,
+    });
+    const areaField = result.fields.find((f) => f.field === "area");
+    expect(areaField).toEqual({
+      field: "area",
+      expected: "web", // area "Web" normalises to "web"
+      actual: "web",
+      matches: true,
+    });
+    const mergeAuthorityField = result.fields.find((f) => f.field === "mergeAuthority");
+    expect(mergeAuthorityField).toEqual({
+      field: "mergeAuthority",
+      expected: "needs_approval",
+      actual: "needs_approval",
+      matches: true,
+    });
   });
 
   it("spotCheckTask reports found: false for a task never imported", async () => {
@@ -417,6 +440,91 @@ describeIfDb("import verification — against a real Postgres", () => {
     expect(titleField?.matches).toBe(false);
     expect(titleField?.expected).toBe("Fix the thing");
     expect(titleField?.actual).toBe("Corrupted title");
+  });
+
+  it("spotCheckTask catches area and mergeAuthority drifting from the source, each independently of the other fields", async () => {
+    const { tasks } = await runFullImport();
+    const task = tasks.find((t) => t.id === "verify-open-1")!;
+
+    const item = await prisma.item.findFirstOrThrow({
+      where: { customFields: { path: ["legacy_id"], equals: "verify-open-1" } },
+    });
+    // Corrupt area AND mergeAuthority in the same write — title/body/state
+    // stay correct, proving these two fields are checked independently
+    // rather than one flag standing in for "something's wrong somewhere".
+    // `area` is a real foreign key (Item.area -> Area.id), so the corrupted
+    // value must be a REAL, already-existing area — "research" is created
+    // by runFullImport's own fixture set (verify-no-history-1's area), not
+    // an id that would fail the constraint.
+    await prisma.item.update({
+      where: { id: item.id },
+      data: { area: "research", mergeAuthority: "pre_approved" },
+    });
+
+    const result = await spotCheckTask(prisma, task, { repoAliases });
+    expect(result.matches).toBe(false);
+
+    const areaField = result.fields.find((f) => f.field === "area");
+    expect(areaField?.matches).toBe(false);
+    expect(areaField?.expected).toBe("web");
+    expect(areaField?.actual).toBe("research");
+
+    const mergeAuthorityField = result.fields.find((f) => f.field === "mergeAuthority");
+    expect(mergeAuthorityField?.matches).toBe(false);
+    expect(mergeAuthorityField?.expected).toBe("needs_approval");
+    expect(mergeAuthorityField?.actual).toBe("pre_approved");
+
+    // Title/state remain correct — confirms these two new checks don't
+    // interfere with, or get conflated with, the pre-existing fields.
+    const titleField = result.fields.find((f) => f.field === "title");
+    expect(titleField?.matches).toBe(true);
+    const stateField = result.fields.find((f) => f.field === "state");
+    expect(stateField?.matches).toBe(true);
+  });
+
+  it("spotCheckTask catches a STATUS_REMAP regression — proves the state check is NOT derived from the same remap the importer used to write it", async () => {
+    // Simulates a one-line regression in import-items.ts's STATUS_REMAP by
+    // mutating the exported table at runtime, rather than editing the
+    // source file. This is the exact scenario spotCheckTask's state check
+    // exists to catch: the corruption lives in the MAPPING, not in an
+    // individual row, so a check that re-derives its "expected" value by
+    // calling the SAME (now-corrupted) mapping would agree with the
+    // corrupted row and report a false clean match.
+    // Non-null assertion: "done" is a hardcoded key in STATUS_REMAP's
+    // literal definition, provably present — noUncheckedIndexedAccess is
+    // what requires the assertion, not any real possibility of absence.
+    const originalDoneMapping = STATUS_REMAP.done!;
+    STATUS_REMAP.done = "on_deck";
+    try {
+      const task: SourceTask = {
+        id: "verify-remap-regression",
+        title: "Regression fixture",
+        body: "x",
+        status: "done",
+        area: "web",
+      };
+
+      // Import WITH the corrupted table — the item lands with the WRONG
+      // state, exactly as a real STATUS_REMAP regression would write it.
+      await importItems(prisma, [task], { repoAliases });
+      const written = await prisma.item.findFirstOrThrow({
+        where: { customFields: { path: ["legacy_id"], equals: "verify-remap-regression" } },
+      });
+      expect(written.state).toBe("on_deck"); // sanity: the corruption actually landed
+
+      // spotCheckTask must still catch this, even though the SAME corrupted
+      // table was used to import the row — because its "expected" state
+      // comes from THIS module's own independent EXPECTED_STATUS_REMAP, not
+      // from calling mapSourceStatus/STATUS_REMAP again.
+      const result = await spotCheckTask(prisma, task, { repoAliases });
+      expect(result.matches).toBe(false);
+      const stateField = result.fields.find((f) => f.field === "state");
+      expect(stateField?.matches).toBe(false);
+      expect(stateField?.expected).toBe("merged"); // the CORRECT mapping, from this module's own table
+      expect(stateField?.actual).toBe("on_deck"); // what the corrupted importer actually wrote
+    } finally {
+      STATUS_REMAP.done = originalDoneMapping;
+    }
   });
 
   it("spotCheckItems samples across the imported set and reports allMatch", async () => {
@@ -501,8 +609,13 @@ describeIfDb("import verification — against a real Postgres", () => {
     await importEvents(prisma, tasks, { actorAliases });
     await importAssignmentsAndArtifacts(prisma, assignmentTasks);
 
+    // Symmetric with the second-run test above: snapshot ALL FOUR tables,
+    // not just items/events — assignments/artifacts get the same
+    // byte-identical-count proof here that they already get after run two.
     const itemCount = await prisma.item.count();
     const eventCount = await prisma.event.count();
+    const assignmentCount = await prisma.assignment.count();
+    const artifactCount = await prisma.artifact.count();
 
     const itemsResult3 = await importItems(prisma, tasks, { repoAliases });
     const eventsResult3 = await importEvents(prisma, tasks, { actorAliases });
@@ -514,5 +627,7 @@ describeIfDb("import verification — against a real Postgres", () => {
     expect(assignmentsResult3.reviewsImported).toBe(0);
     expect(await prisma.item.count()).toBe(itemCount);
     expect(await prisma.event.count()).toBe(eventCount);
+    expect(await prisma.assignment.count()).toBe(assignmentCount);
+    expect(await prisma.artifact.count()).toBe(artifactCount);
   });
 });

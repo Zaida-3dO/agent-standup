@@ -22,7 +22,8 @@
 // Reads only. Never writes to `items`/`events`/`assignments`/`artifacts` or
 // to the source tree — a verification pass that could itself corrupt state
 // would defeat its own purpose.
-import type { PrismaClient } from "@prisma/client";
+import type { ItemState, PrismaClient } from "@prisma/client";
+import { normalizeAreaKey } from "./areas";
 import { TERMINAL_STATES } from "./import-events";
 import type { SourceTask } from "./import-items";
 import type { SourceTaskAssignmentsArtifacts } from "./import-assignments-artifacts";
@@ -218,18 +219,79 @@ export function sampleTasks<T extends { id: string }>(
 }
 
 /**
- * Field-by-field comparison of one imported task against what actually
- * landed in `items`. Checks exactly the fields `import-items.ts`'s
- * `importItems` sets deliberately (SCHEMA.md's per-field mapping is in that
- * module's own doc comments) — title, body, state (via `mapSourceStatus`,
- * so a spot-check failure here would mean either the importer's remap table
- * or the row itself drifted), area (via `normalizeAreaKey`), and repo (via
- * `repoAliases`, when the source task named one).
+ * An INDEPENDENT restatement of `import-items.ts`'s `STATUS_REMAP` (source
+ * status -> `items.state`) — a second copy, maintained by hand, rather than
+ * this module calling `import-items.ts`'s own `mapSourceStatus`. That is
+ * deliberate, not an oversight or duplication-for-its-own-sake.
  *
- * `repoAliases`/`areaOverride` are optional and only needed to compute the
- * EXPECTED side identically to how the importer resolved them; when a
- * caller doesn't have them (e.g. checking area alone), area/repo checks are
- * skipped for that field rather than guessed at.
+ * If `spotCheckTask` computed its "expected" state by calling the SAME
+ * function the importer uses to WRITE that state, a regression in that
+ * remap table would corrupt both sides of the comparison identically: the
+ * importer would write the wrong state, and this module's "expected" value
+ * would be derived the same wrong way from the same broken table — so the
+ * two would still agree, and a spot-check built that way would report a
+ * clean match against a genuinely corrupted database. That failure mode was
+ * demonstrated for real (not just argued) against an earlier version of
+ * this file, by mutating `import-items.ts`'s exported `STATUS_REMAP` object
+ * at runtime and confirming every check here still reported clean — see
+ * "spotCheckTask catches a STATUS_REMAP regression" in
+ * tests/import-verify.test.ts, which now asserts the OPPOSITE: this table
+ * still disagrees with a corrupted `STATUS_REMAP`, because it never reads
+ * from it.
+ *
+ * This is the differential test DECISIONS.md §13h #2 names as the reason
+ * #13 exists at all — two independently-stated sources of truth that must
+ * agree, not one function checked against its own output.
+ *
+ * **The cost is real and is stated plainly**, not hidden: this table must
+ * be kept in sync by hand if `import-items.ts`'s `STATUS_REMAP` ever gains
+ * a new source status value. A missed update surfaces loudly, though — see
+ * `spotCheckTask`'s handling of a status with no entry here, which reports
+ * a visible unrecognised-status mismatch rather than silently skipping the
+ * field.
+ */
+const EXPECTED_STATUS_REMAP: Record<string, ItemState> = {
+  todo: "on_deck",
+  "in-progress": "executing",
+  review: "in_review",
+  waiting: "paused",
+  done: "merged",
+};
+
+/**
+ * Field-by-field comparison of one imported task against what actually
+ * landed in `items`. Checks title, body, state, area, `mergeAuthority`,
+ * `custom_fields.legacy_id`, and repo (when the source task named one) —
+ * every field `import-items.ts`'s `importItems` sets deliberately.
+ *
+ * **state is checked against `EXPECTED_STATUS_REMAP` (above), an
+ * INDEPENDENT table — never by calling `mapSourceStatus`.** See that
+ * constant's own doc comment for why: calling the same function the
+ * importer used to WRITE the state would let a bug in that function corrupt
+ * both sides of the comparison identically, and this check exists
+ * specifically to catch that class of bug, not just a corrupted row.
+ *
+ * **area is checked via `normalizeAreaKey`** (areas.ts) — the SAME pure
+ * normalisation function the importer's `ensureArea` calls. Unlike state's
+ * remap table (a lookup with several independently-wrong-able entries),
+ * area's transform is one mechanical string operation with no table for one
+ * value to go silently wrong in isolation; reusing it here is a narrower,
+ * deliberate choice than state's independent table, not an inconsistency.
+ *
+ * **`mergeAuthority` is checked against the literal `"needs_approval"`** —
+ * `importItems` writes this as a hardcoded constant on every row, never
+ * derived from any source field (see that function's own doc comment), so
+ * there is no "remap under test" to be tautological about: comparing
+ * against the literal value is exactly as independent as a lookup table
+ * would be, because nothing here calls back into the importer's own code.
+ *
+ * `repoAliases` is optional and only needed to compute repo's EXPECTED
+ * value identically to how the importer resolved it (via `repoAliases`,
+ * never auto-created — repos are deliberate-create only, `repos.ts`); when
+ * a caller doesn't supply it, the repo field is skipped for that task
+ * rather than guessed at. There is no equivalent option for state or area —
+ * neither needs anything but the raw source task to compute its expected
+ * value.
  */
 export async function spotCheckTask(
   client: VerifyClient,
@@ -257,6 +319,33 @@ export async function spotCheckTask(
     expected: task.body,
     actual: item.body,
     matches: item.body === task.body,
+  });
+
+  // Independent table, not mapSourceStatus — see EXPECTED_STATUS_REMAP's
+  // doc comment. A status with no entry here (importer gained a status this
+  // table was never updated for) reports a labelled, visible mismatch
+  // rather than silently skipping the state field.
+  const expectedState = EXPECTED_STATUS_REMAP[task.status];
+  fields.push({
+    field: "state",
+    expected: expectedState ?? `<unrecognised source status ${JSON.stringify(task.status)}>`,
+    actual: item.state,
+    matches: expectedState !== undefined && item.state === expectedState,
+  });
+
+  const expectedArea = normalizeAreaKey(task.area);
+  fields.push({
+    field: "area",
+    expected: expectedArea,
+    actual: item.area,
+    matches: item.area === expectedArea,
+  });
+
+  fields.push({
+    field: "mergeAuthority",
+    expected: "needs_approval",
+    actual: item.mergeAuthority,
+    matches: item.mergeAuthority === "needs_approval",
   });
 
   const customFields = item.customFields as { legacy_id?: string } | null;
