@@ -137,6 +137,7 @@ export type {
   OpenLoopNotDone,
 } from "./operations/orientation";
 export type { MyWorkInput, MyWorkOutput, MyWorkEntry } from "./operations/my-work";
+export type { GetCrewNameInput } from "./operations/get-crew-name";
 
 // Transition and complete (MILESTONES.md #27): the service calls and their
 // routes, over row #15's state machine. `RehearsalRollback` is exported so
@@ -154,6 +155,23 @@ export {
   type CompleteItemResult,
 } from "./operations/complete-item";
 export { RehearsalRollback, isRehearsalRollback } from "./operations/rehearsal-rollback";
+
+// The hook decision (MILESTONES.md #41): allow-list silent, ask-list
+// answered, denies when unsure. `decideHook` is the pure classification the
+// operation and any future caller (`standup hook`, MILESTONES.md #88) share;
+// the operation is the one entry point the service layer exposes for it.
+export {
+  decideHook,
+  HOOK_DECISIONS,
+  type HookDecision,
+  type HookDecisionInput,
+  type HookDecisionResult,
+} from "./hook-decision";
+export {
+  hookDecision,
+  type HookDecisionOperationInput,
+  type HookDecisionOperationOutput,
+} from "./operations/hook-decision";
 
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
@@ -190,6 +208,7 @@ export {
 } from "./summaries";
 
 export type { GetBoardInput, BoardOutput, BoardEntry } from "./operations/get-board";
+export type { ListPeopleInput, ListPeopleOutput, PersonRecord } from "./operations/list-people";
 export {
   BOARD_COLUMNS,
   STATES_BY_COLUMN,
