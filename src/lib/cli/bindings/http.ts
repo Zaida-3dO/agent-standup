@@ -101,6 +101,37 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     request: (input) => ({ path: `/api/items${queryString(input)}` }),
     unwrap: (body) => body,
   },
+  transition_item: {
+    method: "POST",
+    request: (input) => {
+      // `dryRun` travels as the `?dry_run=` query parameter the route reads
+      // (SCHEMA.md §19), not in the body — mirroring how `id` above always
+      // moves from the operation's flat input into the path. Only ever set
+      // to `true`; the route treats anything else, including the parameter
+      // being absent, as a real move.
+      const { id, dryRun, ...rest } = input;
+      const query = dryRun === true ? "?dry_run=true" : "";
+      return {
+        path: `/api/items/${encodeURIComponent(String(id ?? ""))}/transition${query}`,
+        body: rest,
+      };
+    },
+    // The route answers `{ item, outcome }` for a real move and `{ outcome }`
+    // alone for a rehearsal (`transition/route.ts`'s `RehearsalRollback`
+    // unwrapping) — the same two shapes the `direct` binding's own
+    // rehearsal handling produces. Returning the body unchanged, rather
+    // than pulling one key out the way the single-item routes above do, is
+    // what keeps those two shapes identical between bindings.
+    unwrap: (body) => body,
+  },
+  complete_item: {
+    method: "POST",
+    request: (input) => {
+      const { id, ...rest } = input;
+      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}/complete`, body: rest };
+    },
+    unwrap: (body) => property(body, "item"),
+  },
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */
