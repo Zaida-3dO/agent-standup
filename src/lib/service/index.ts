@@ -119,6 +119,11 @@ export type { PatchSettingsInput, PatchSettingsOutput } from "./operations/patch
 export type { PutSettingInput } from "./operations/put-setting";
 export type { DeleteSettingInput } from "./operations/delete-setting";
 export type { RenderedSetting } from "./operations/settings-shared";
+export type { ClaimOperationInput } from "./operations/claim";
+export type { ReleaseOperationInput } from "./operations/release";
+export type { HeartbeatOperationInput } from "./operations/heartbeat";
+export type { CheckpointOperationInput } from "./operations/checkpoint";
+export type { NoteOperationInput } from "./operations/note";
 
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself

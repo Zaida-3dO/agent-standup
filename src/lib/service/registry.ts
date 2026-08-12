@@ -36,6 +36,11 @@ import { getSetting } from "./operations/get-setting";
 import { patchSettings } from "./operations/patch-settings";
 import { putSetting } from "./operations/put-setting";
 import { deleteSetting } from "./operations/delete-setting";
+import { claim } from "./operations/claim";
+import { release } from "./operations/release";
+import { heartbeat } from "./operations/heartbeat";
+import { checkpoint } from "./operations/checkpoint";
+import { note } from "./operations/note";
 
 /**
  * Every service operation, by name.
@@ -56,6 +61,11 @@ export const OPERATION_REGISTRY = {
   [patchSettings.name]: patchSettings,
   [putSetting.name]: putSetting,
   [deleteSetting.name]: deleteSetting,
+  [claim.name]: claim,
+  [release.name]: release,
+  [heartbeat.name]: heartbeat,
+  [checkpoint.name]: checkpoint,
+  [note.name]: note,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;
