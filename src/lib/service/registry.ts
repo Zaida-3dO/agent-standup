@@ -1,0 +1,102 @@
+// The operation registry — the canonical index of service operations.
+// See docs/plans/SCHEMA.md §22.
+//
+// This is the module the conformance harness iterates to decide what every
+// adapter must expose, so it has to be genuinely canonical rather than
+// documentation that happens to be in TypeScript. Two properties make it
+// so, and both are structural:
+//
+//   1. `callOperation` dispatches by looking a name up *here*. An operation
+//      absent from this index is not merely undocumented — it is
+//      unreachable through the service layer, so an adapter cannot expose
+//      it and the harness cannot miss it.
+//   2. `OperationName` is derived from this object's keys, so a map typed
+//      by it (an adapter's handler table, a driver map) does not compile
+//      while an operation is missing. That is the compile-time half of
+//      §22's completeness assertion, paid once here rather than per
+//      adapter.
+//
+// The list is written out rather than assembled by scanning the directory
+// at runtime. A glob would make "every operation is registered" true by
+// construction and untestable, and it does not survive bundling — the
+// application ships as a Next.js bundle where the operations directory does
+// not exist as a directory at run time. Written out, forgetting an entry is
+// a mistake a test can catch; that test is `tests/service-registry.test.ts`,
+// which reads the directory from source and asserts every operation
+// declared there appears here.
+import type { AnyOperation, Operation, OperationKind } from "./operation";
+import { provideCatalogue, serviceInfo, type OperationDescriptor } from "./operations/service-info";
+
+/**
+ * Every service operation, by name.
+ *
+ * `as const satisfies` rather than an annotated type: the annotation would
+ * widen every value to `AnyOperation` and lose the per-operation input and
+ * output types that make `callOperation` typed at its call sites.
+ */
+export const OPERATION_REGISTRY = {
+  [serviceInfo.name]: serviceInfo,
+} as const satisfies Record<string, AnyOperation>;
+
+export type OperationRegistry = typeof OPERATION_REGISTRY;
+
+/** The name of every registered operation. An adapter map keys on this. */
+export type OperationName = keyof OperationRegistry & string;
+
+/** The input type of one operation, so a caller is checked against its schema. */
+export type OperationInput<N extends OperationName> =
+  OperationRegistry[N] extends Operation<string, infer I, unknown> ? I : never;
+
+/** The output type of one operation. */
+export type OperationOutput<N extends OperationName> = OperationRegistry[N] extends {
+  handler: (...args: never[]) => Promise<infer O>;
+}
+  ? O
+  : never;
+
+/**
+ * Every operation name, enumerable and stable.
+ *
+ * Sorted so the harness's report and any snapshot of it does not reorder
+ * when an entry is added in the middle of the object above.
+ */
+export const OPERATION_NAMES: readonly OperationName[] = Object.freeze(
+  (Object.keys(OPERATION_REGISTRY) as OperationName[]).sort(),
+);
+
+/** Whether a string names a registered operation. */
+export function isOperationName(value: string): value is OperationName {
+  return Object.prototype.hasOwnProperty.call(OPERATION_REGISTRY, value);
+}
+
+/**
+ * One operation by name, with its types erased.
+ *
+ * Returns `undefined` rather than throwing, because the caller that needs
+ * this is an adapter handling a name that arrived over the wire — a name a
+ * user typed is not an exceptional condition, it is an input to validate.
+ */
+export function getOperation(name: string): AnyOperation | undefined {
+  return isOperationName(name) ? (OPERATION_REGISTRY[name] as unknown as AnyOperation) : undefined;
+}
+
+/** Every registered operation, in `OPERATION_NAMES` order. */
+export function listOperations(): readonly AnyOperation[] {
+  return OPERATION_NAMES.map((name) => OPERATION_REGISTRY[name] as unknown as AnyOperation);
+}
+
+/** The catalogue as a caller reads it: name, kind and one-line summary. */
+export function describeOperations(): readonly OperationDescriptor[] {
+  return listOperations().map(({ name, kind, summary }) => ({ name, kind, summary }));
+}
+
+/** Every operation of one kind. §22's waiver rule asks this question. */
+export function operationsOfKind(kind: OperationKind): readonly AnyOperation[] {
+  return listOperations().filter((operation) => operation.kind === kind);
+}
+
+// `service_info` answers with the catalogue, and the catalogue is this
+// module — installed rather than imported, because the registry imports
+// every operation and an operation importing the registry back would be a
+// cycle.
+provideCatalogue(describeOperations);
