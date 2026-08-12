@@ -1,0 +1,33 @@
+#!/bin/sh
+# Pre-push gate: runs the same fast checks CI's build-and-test job runs first,
+# before any push leaves this machine. It only runs the checks that need
+# nothing but the source tree — no database, no container — because those are
+# also the checks CI fails on most often. A slow hook gets bypassed and then
+# protects nothing, so the full test suite and the mutation harness are
+# deliberately NOT here; they still run in CI, on every PR.
+#
+# Installed automatically by `npm install` via the `prepare` script, which
+# points git at this directory with `git config core.hooksPath .githooks`.
+# That is the whole install step — nothing to remember, nothing to run by
+# hand. Git invokes hook files under core.hooksPath directly (no npm, no
+# node wrapper needed), and does so with `sh` on both platforms — Git for
+# Windows ships its own POSIX shell for exactly this reason — so this one
+# script covers Windows and Linux without a platform branch.
+#
+# Bypass in an emergency: git push --no-verify
+
+echo "pre-push: running format:check and lint (see CLAUDE.md for what this checks and how to skip it)"
+
+npm run format:check
+format_status=$?
+
+npm run lint
+lint_status=$?
+
+if [ "$format_status" -ne 0 ] || [ "$lint_status" -ne 0 ]; then
+  echo ""
+  echo "pre-push: blocked — fix the above, or bypass with 'git push --no-verify' (emergency use only, CI still runs these)."
+  exit 1
+fi
+
+exit 0
