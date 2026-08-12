@@ -1087,7 +1087,7 @@ Installation-owned entities (§23):
 
 | Endpoint | Purpose |
 |---|---|
-| `GET`/`POST`/`PATCH` `/repos`, `/areas` | The reference tables. Creating a repository is deliberate; an area is created on first use with normalisation, so `POST /areas` is mostly used for renaming and archiving. |
+| `GET`/`POST`/`PATCH` `/repos`, `/areas` | The reference tables. Creating a repository is deliberate; `POST /areas` finds-or-creates by normalised name (the same mechanism an item write triggers on first use), and `PATCH /areas/{id}` is what renames or archives one. |
 | `GET`/`PATCH` `/machines` | Including `source_globs`, the per-machine override of `minting.source_globs`. |
 | `GET`/`PATCH` `/accounts` | Including `vendor` — validated against the registered adapter list — and `budget_windows`, the per-account override, validated by the registry's own validator. |
 | `GET`/`POST`/`PATCH` `/people` | Profiles. Archive rather than delete; attribution rows point here. |

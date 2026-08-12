@@ -13,8 +13,25 @@
 // checked in application code rather than left to the database, so a
 // caller creating an account with a missing field gets `invalid_input`
 // naming it rather than a raw constraint violation.
+//
+// **One atomic statement, race-free — same shape as `update_machine`.** The
+// existence check below decides only whether the three required fields must
+// be present in *this* request (a clean `invalid_input` for a genuinely new
+// row with a missing field, rather than a raw NOT NULL violation); the
+// write itself is a single `INSERT … ON CONFLICT DO UPDATE`, so two
+// concurrent calls creating the same new id race to a deterministic
+// last-write-wins update rather than one of them throwing an unhandled
+// unique-constraint error. This is safe against the one race that matters
+// here — the existence check going stale between it and the write — because
+// `Account` rows are never deleted: if the check saw "exists", the row is
+// still there when the statement runs (so the ON CONFLICT branch fires, and
+// the CASE below leaves any field this call did not supply untouched); if
+// the check saw "does not exist" and lost a race to a concurrent creator,
+// this call already validated all three required fields as a precondition
+// of that same "does not exist" branch, so the values it supplies remain
+// legal whichever branch the statement actually takes.
 import { z } from "zod";
-import { InvalidInputError, NotFoundError } from "../errors";
+import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { validateOverrideColumn } from "@/lib/settings";
@@ -80,66 +97,31 @@ export const updateAccount = defineOperation({
           { fields: missing },
         );
       }
-
-      const rows = await ctx.db.$queryRawUnsafe<RawAccountRow[]>(
-        `INSERT INTO "Account" ("id", "vendor", "displayName", "planType", "budget_windows")
-         VALUES ($1, $2, $3, $4::"PlanType", $5::jsonb)
-         RETURNING ${ACCOUNT_COLUMNS}`,
-        input.id,
-        input.vendor,
-        input.displayName,
-        input.planType,
-        budgetWindowsProvided ? JSON.stringify(validatedBudgetWindows) : null,
-      );
-      return toAccountRecord(rows[0]!);
     }
 
-    const setClauses: string[] = [];
-    const values: unknown[] = [];
-    let paramIndex = 1;
+    const vendorProvided = input.vendor !== undefined;
+    const displayNameProvided = input.displayName !== undefined;
+    const planTypeProvided = input.planType !== undefined;
 
-    if (input.vendor !== undefined) {
-      setClauses.push(`"vendor" = $${paramIndex}`);
-      values.push(input.vendor);
-      paramIndex++;
-    }
-    if (input.displayName !== undefined) {
-      setClauses.push(`"displayName" = $${paramIndex}`);
-      values.push(input.displayName);
-      paramIndex++;
-    }
-    if (input.planType !== undefined) {
-      setClauses.push(`"planType" = $${paramIndex}::"PlanType"`);
-      values.push(input.planType);
-      paramIndex++;
-    }
-    if (budgetWindowsProvided) {
-      setClauses.push(`"budget_windows" = $${paramIndex}::jsonb`);
-      values.push(validatedBudgetWindows === null ? null : JSON.stringify(validatedBudgetWindows));
-      paramIndex++;
-    }
-
-    if (setClauses.length === 0) {
-      const currentRows = await ctx.db.$queryRawUnsafe<RawAccountRow[]>(
-        `SELECT ${ACCOUNT_COLUMNS} FROM "Account" WHERE "id" = $1`,
-        input.id,
-      );
-      const current = currentRows[0];
-      if (!current) {
-        throw new NotFoundError(`No such account: ${input.id}.`, { fields: ["id"] });
-      }
-      return toAccountRecord(current);
-    }
-
-    values.push(input.id);
     const rows = await ctx.db.$queryRawUnsafe<RawAccountRow[]>(
-      `UPDATE "Account" SET ${setClauses.join(", ")} WHERE "id" = $${paramIndex} RETURNING ${ACCOUNT_COLUMNS}`,
-      ...values,
+      `INSERT INTO "Account" ("id", "vendor", "displayName", "planType", "budget_windows")
+       VALUES ($1, $2, $3, $4::"PlanType", $5::jsonb)
+       ON CONFLICT ("id") DO UPDATE
+         SET "vendor" = CASE WHEN $6::boolean THEN $2 ELSE "Account"."vendor" END,
+             "displayName" = CASE WHEN $7::boolean THEN $3 ELSE "Account"."displayName" END,
+             "planType" = CASE WHEN $8::boolean THEN $4::"PlanType" ELSE "Account"."planType" END,
+             "budget_windows" = CASE WHEN $9::boolean THEN $5::jsonb ELSE "Account"."budget_windows" END
+       RETURNING ${ACCOUNT_COLUMNS}`,
+      input.id,
+      input.vendor ?? null,
+      input.displayName ?? null,
+      input.planType ?? null,
+      budgetWindowsProvided ? JSON.stringify(validatedBudgetWindows) : null,
+      vendorProvided,
+      displayNameProvided,
+      planTypeProvided,
+      budgetWindowsProvided,
     );
-    const updated = rows[0];
-    if (!updated) {
-      throw new NotFoundError(`No such account: ${input.id}.`, { fields: ["id"] });
-    }
-    return toAccountRecord(updated);
+    return toAccountRecord(rows[0]!);
   },
 });
