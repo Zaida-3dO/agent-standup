@@ -53,9 +53,10 @@ export interface RenderedRejection extends Rejection {
  * A successful call.
  *
  * The value is rendered as JSON text *and* as `structuredContent`, because
- * clients are split on which they read: an older one sees only `content`,
- * a newer one prefers the structured field. Sending both costs a
- * serialisation and removes a class of "the tool returned nothing" report.
+ * clients are split on which they read: `content` is the field every client
+ * understands, and `structuredContent` is the one that arrives as data
+ * rather than as text to be re-parsed. Sending both costs a serialisation
+ * and removes a class of "the tool returned nothing" report.
  *
  * `undefined` — an operation that answers with nothing — is rendered as
  * `null` rather than as the empty string, because `JSON.stringify(undefined)`

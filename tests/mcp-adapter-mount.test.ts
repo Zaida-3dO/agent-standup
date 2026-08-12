@@ -23,7 +23,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ADAPTER_REGISTRY, isAdapterName } from "@/lib/adapters";
 import { defineOperation, listOperations } from "@/lib/service";
-import { toolsFromOperations } from "@/lib/mcp";
+import { advertisedSchema, toolsFromOperations } from "@/lib/mcp";
 import { MCP_HTTP_TRANSPORT } from "@/lib/mcp/http";
 import { MCP_HTTP_ADAPTER } from "@/app/api/mcp/route";
 
@@ -103,8 +103,8 @@ describe("MCP tools are derived from the operation registry", () => {
       // The scan sees it — proving the scan is capable of finding a gap.
       expect(declaredOperationNamesIn(scratchDir)).toEqual(["planted_operation"]);
 
-      // And it is genuinely absent from what the adapter exposes today, so
-      // the gap is real rather than self-referential.
+      // And it is genuinely absent from what the adapter exposes, so the
+      // gap is real rather than self-referential.
       const liveToolNames = toolsFromOperations(listOperations()).map((tool) => tool.name);
       expect(liveToolNames).not.toContain("planted_operation");
 
@@ -179,5 +179,43 @@ describe("the MCP adapter is mounted through the adapter registry", () => {
     // The two are deliberately different vocabularies, so this pins the one
     // the service actually receives.
     expect(MCP_HTTP_TRANSPORT).toBe("mcp-http");
+  });
+});
+
+describe("the advertised schema", () => {
+  it("never rejects, whatever it is handed", () => {
+    // The property the whole wrapper exists for: the SDK must not refuse a
+    // bad input before the service sees it, or MCP's rejection would carry
+    // no code and no fields.
+    const strict = z.object({ title: z.string().min(1) }).strict();
+    const advertised = advertisedSchema(strict);
+
+    expect(strict.safeParse({ nope: 1 }).success).toBe(false);
+    const permissive = advertised.safeParse({ nope: 1 });
+    expect(permissive.success).toBe(true);
+    // And the original input survives, unsubstituted, so the service can
+    // name the fields it objected to.
+    expect(permissive.success && permissive.data).toEqual({ nope: 1 });
+  });
+
+  it("delegates the shape of an object schema, which is what makes it discoverable", () => {
+    // `normalizeObjectSchema` decides whether the SDK renders a tool's real
+    // JSON Schema or falls back to an empty one, and for a v3 schema it
+    // decides by looking for `shape`. Without this delegation every tool
+    // advertises `{}` — see `advertisedSchema`'s comment.
+    const strict = z.object({ title: z.string(), count: z.number() }).strict();
+    const advertised = advertisedSchema(strict) as unknown as { shape: Record<string, unknown> };
+    expect(Object.keys(advertised.shape).sort()).toEqual(["count", "title"]);
+  });
+
+  it("adds no shape to a schema that is not an object", () => {
+    // The other arm of that branch. A non-object schema has no shape to
+    // delegate, and inventing one would make `normalizeObjectSchema` claim
+    // an object where there is none.
+    const scalar = z.string();
+    const advertised = advertisedSchema(scalar);
+    expect((advertised as unknown as { shape?: unknown }).shape).toBeUndefined();
+    // It still must not reject — that property is independent of shape.
+    expect(advertised.safeParse(12345).success).toBe(true);
   });
 });

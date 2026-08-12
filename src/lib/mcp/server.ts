@@ -93,10 +93,12 @@ export function createMcpServer({
   operations = listOperations(),
   serverInfo = MCP_SERVER_INFO,
 }: McpServerOptions): McpServer {
-  const server = new McpServer(
-    { name: serverInfo.name, version: serverInfo.version },
-    { capabilities: { tools: {} } },
-  );
+  // No explicit `capabilities` argument: registering the first tool makes
+  // the SDK declare the `tools` capability itself, so passing one here is
+  // a second source of truth that agrees by coincidence. Mutation testing
+  // found it — the mutant that emptied the object changed nothing
+  // observable, which is exactly what a redundant argument looks like.
+  const server = new McpServer({ name: serverInfo.name, version: serverInfo.version });
 
   for (const tool of toolsFromOperations(operations)) {
     server.registerTool(

@@ -80,9 +80,9 @@ export interface McpToolDescriptor {
  * twice — once here and once inside `service.call` — so a schema whose
  * `.default()` is not idempotent (a timestamp, a random identifier) would
  * have that default computed on the first parse and then re-derived on the
- * second. No operation declares such a default today, and the honest fix if
- * one ever does is for the default to be resolved inside the operation
- * body, where the transaction's clock applies, rather than in its schema.
+ * second. No operation declares such a default, and the honest fix if one
+ * ever does is for the default to be resolved inside the operation body,
+ * where the transaction's clock applies, rather than in its schema.
  */
 export function advertisedSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
   const permissive = schema.catch((ctx: { input: unknown }) => ctx.input) as z.ZodTypeAny;

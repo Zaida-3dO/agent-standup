@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { ServiceRuntime, type TransactionHandle } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceCall } from "@/lib/mcp";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { MCP_HTTP_TRANSPORT, createStatelessTransport, handleMcpRequest } from "@/lib/mcp/http";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -206,5 +207,51 @@ describe("stateless", () => {
     expect(writeOnly.length).toBeGreaterThan(0);
     expect(readOnly.every((operation) => operation.kind === "read")).toBe(true);
     expect(writeOnly.every((operation) => operation.kind === "write")).toBe(true);
+  });
+});
+
+describe("nothing is left running after a request", () => {
+  it("closes the transport even when the service throws", async () => {
+    // The `finally` in `handleMcpRequest`. A handler that returned early on
+    // an error path would leak a transport per failed request — invisible
+    // in a passing test suite and fatal in a long-running process. Proven
+    // by observing the transport's own `onclose`, which the SDK fires when
+    // `close()` runs.
+    const closed: string[] = [];
+    const originalClose = WebStandardStreamableHTTPServerTransport.prototype.close;
+    WebStandardStreamableHTTPServerTransport.prototype.close = async function patched(
+      this: WebStandardStreamableHTTPServerTransport,
+    ) {
+      closed.push("closed");
+      return originalClose.call(this);
+    };
+    try {
+      await rpc(
+        async () => {
+          throw new Error("the service fell over");
+        },
+        callToolMessage("service_info", {}, 30),
+      );
+      expect(closed.length).toBe(1);
+    } finally {
+      WebStandardStreamableHTTPServerTransport.prototype.close = originalClose;
+    }
+  });
+
+  it("closes the transport on the success path too", async () => {
+    const closed: string[] = [];
+    const originalClose = WebStandardStreamableHTTPServerTransport.prototype.close;
+    WebStandardStreamableHTTPServerTransport.prototype.close = async function patched(
+      this: WebStandardStreamableHTTPServerTransport,
+    ) {
+      closed.push("closed");
+      return originalClose.call(this);
+    };
+    try {
+      await rpc(realRuntimeCall(), callToolMessage("service_info", {}, 31));
+      expect(closed.length).toBe(1);
+    } finally {
+      WebStandardStreamableHTTPServerTransport.prototype.close = originalClose;
+    }
   });
 });
