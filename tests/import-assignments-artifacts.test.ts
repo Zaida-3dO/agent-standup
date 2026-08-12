@@ -136,7 +136,9 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
     return itemId;
   }
 
-  function baseClaim(overrides: Partial<SourceClaim> & Pick<SourceClaim, "id" | "sessionId">): SourceClaim {
+  function baseClaim(
+    overrides: Partial<SourceClaim> & Pick<SourceClaim, "id" | "sessionId">,
+  ): SourceClaim {
     return {
       role: "builder",
       holderType: "agent",
@@ -166,7 +168,12 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
     const task: SourceTaskAssignmentsArtifacts = {
       id: "src-1",
       claims: [
-        baseClaim({ id: "claim-1", sessionId: "session-a", role: "visual-reviewer", holderId: "agent-x" }),
+        baseClaim({
+          id: "claim-1",
+          sessionId: "session-a",
+          role: "visual-reviewer",
+          holderId: "agent-x",
+        }),
       ],
     };
 
@@ -350,6 +357,32 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
     const result = await importAssignments(prisma, [task]);
     expect(result).toEqual({ claimsImported: 2, claimsSkippedExisting: 0, claimsConflicted: 0 });
     expect(await prisma.assignment.count({ where: { itemId, releasedAt: null } })).toBe(2);
+  });
+
+  it("preserves an EXPLICIT rootSessionId rather than always defaulting it to the claim's own session", async () => {
+    // Distinct from "imports a claim..." above, which only exercises the
+    // OMITTED case (root defaults to self) and so cannot tell a real
+    // pass-through apart from a hardcoded default. This is the builder half
+    // of a two-member crew: its rootSessionId must read back as the
+    // orchestrator's session, not its own.
+    await seedImportedItem("src-root-explicit");
+    const task: SourceTaskAssignmentsArtifacts = {
+      id: "src-root-explicit",
+      claims: [
+        baseClaim({
+          id: "claim-1",
+          sessionId: "builder-session",
+          rootSessionId: "orchestrator-session",
+        }),
+      ],
+    };
+
+    await importAssignments(prisma, [task]);
+    const row = await prisma.assignment.findFirstOrThrow({
+      where: { sessionId: "builder-session" },
+    });
+    expect(row.rootSessionId).toBe("orchestrator-session");
+    expect(row.rootSessionId).not.toBe("builder-session");
   });
 
   // -- AC5: re-runnable without duplicating rows --------------------------

@@ -28,7 +28,8 @@ import type { PrismaClient } from "@prisma/client";
  * value, which is why `ROLE_REMAP` exists at all rather than a direct pass
  * through.
  */
-export type DbRole = "orchestrator" | "builder" | "reviewer" | "visual_reviewer" | "scout" | "custom";
+export type DbRole =
+  "orchestrator" | "builder" | "reviewer" | "visual_reviewer" | "scout" | "custom";
 
 /**
  * Maps a source role string onto `assignments.role` (SCHEMA.md §2). Every
@@ -127,7 +128,9 @@ const VERDICTS = new Set(["approved", "changes_required", "na"]);
 
 export class UnknownArtifactKindError extends Error {
   constructor(kind: string, reviewId: string) {
-    super(`unrecognised artifact kind ${JSON.stringify(kind)} on review ${JSON.stringify(reviewId)}`);
+    super(
+      `unrecognised artifact kind ${JSON.stringify(kind)} on review ${JSON.stringify(reviewId)}`,
+    );
     this.name = "UnknownArtifactKindError";
   }
 }
@@ -244,7 +247,12 @@ export class UnresolvedTaskError extends Error {
 export async function importAssignments(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
-): Promise<Pick<ImportAssignmentsArtifactsResult, "claimsImported" | "claimsSkippedExisting" | "claimsConflicted">> {
+): Promise<
+  Pick<
+    ImportAssignmentsArtifactsResult,
+    "claimsImported" | "claimsSkippedExisting" | "claimsConflicted"
+  >
+> {
   let claimsImported = 0;
   let claimsSkippedExisting = 0;
   let claimsConflicted = 0;
