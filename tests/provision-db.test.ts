@@ -88,7 +88,13 @@ describeIfDb("provisionAppDatabase against real Postgres", () => {
 
   it("the application role's connection string differs from the provisioning connection", () => {
     expect(appUrl).not.toBe(testDatabaseUrl);
-    expect(appUrl).not.toContain(new URL(testDatabaseUrl!).username);
+    // A substring check here would be a false positive by construction —
+    // the scratch database name itself starts with "agent_standup_test_",
+    // so it always contains the provisioning role's own name as a
+    // substring regardless of which role authenticates. The actual claim
+    // ("a different role") is only meaningful compared structurally.
+    expect(new URL(appUrl).username).toBe(roleName);
+    expect(new URL(appUrl).username).not.toBe(new URL(testDatabaseUrl!).username);
   });
 
   it("the application role can read and write a migrated table", async () => {
