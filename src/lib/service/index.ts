@@ -55,13 +55,16 @@ export {
 
 export type { OperationDescriptor, ServiceInfo, ServiceInfoInput } from "./operations/service-info";
 
-// Hand-written guards (MILESTONES.md #16-#19, #21). Importing `ALL_GUARDS`
-// from here is what registers them into `guardRegistry` — see
+// Hand-written guards (MILESTONES.md #16-#19, #21-#22). Importing
+// `ALL_GUARDS` from here is what registers them into `guardRegistry` — see
 // `guards/index.ts`'s header for why that is a deliberate side effect of the
 // import rather than a separate wiring step.
 export {
   ALL_GUARDS,
+  DEFERRAL_FOLLOW_UP_GUARD_ID,
+  DEFERRAL_REASONS_REQUIRING_ITEM,
   SUMMARY_REQUIRED_GUARD_ID,
+  deferralFollowUpGuard,
   findSimilarityIssues,
   hierarchyGuard,
   summaryRequiredGuard,
