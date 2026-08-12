@@ -21,6 +21,17 @@ import "./state-machine/guards";
 // through this module. See `state-machine/guards/register.ts`.
 registerBlockedPausedGuards();
 
+// Every hand-written guard under `src/lib/service/guards/` (MILESTONES.md
+// #19, #21 — including this row's `summaryRequiredGuard`) registers into
+// `guardRegistry` as a side effect of importing `./guards` — see that
+// module's own header. Nothing needs to be done here for those: any caller
+// that reaches this composition root also reaches the service barrel
+// (`@/lib/service`, e.g. via `src/app/api/items/respond.ts`), which imports
+// `./guards` and runs that registration before a real transition can
+// happen. Rows #16/#17's guards are a separate directory
+// (`state-machine/guards/`) with their own explicit wiring above, because
+// they predate row #19's canonicalisation convention.
+
 /**
  * Reads settings out of Postgres, honouring the contract `SettingsSource`
  * states: the revision a snapshot is stamped with is the one read *with*

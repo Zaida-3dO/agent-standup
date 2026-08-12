@@ -17,9 +17,10 @@
 // first transition.
 import { guardRegistry } from "../state-machine/guard";
 import { hierarchyGuard } from "./hierarchy";
+import { summaryRequiredGuard } from "./summaries";
 
 /** Every hand-written guard, in the order it registers. */
-export const ALL_GUARDS = [hierarchyGuard] as const;
+export const ALL_GUARDS = [hierarchyGuard, summaryRequiredGuard] as const;
 
 for (const guard of ALL_GUARDS) {
   if (!guardRegistry.has(guard.id)) {
@@ -28,3 +29,4 @@ for (const guard of ALL_GUARDS) {
 }
 
 export { hierarchyGuard } from "./hierarchy";
+export { SUMMARY_REQUIRED_GUARD_ID, findSimilarityIssues, summaryRequiredGuard } from "./summaries";
