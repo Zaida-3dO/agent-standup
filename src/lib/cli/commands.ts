@@ -15,6 +15,7 @@
 // form produce the identical `CommandMatch` — not merely an equivalent one.
 import { malformed, type ErrorEnvelope } from "./envelope";
 import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
+import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
 
 /** What building an input produced. */
 export type InputResult =
@@ -211,6 +212,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     summary: "What this build exposes, and the limits a caller has to respect.",
     buildInput: noInput,
   },
+  ...CONFIG_COMMANDS, // row #83 — `standup config`
 ]);
 
 /**

@@ -86,6 +86,19 @@ export function doctorReport(inputs: ResolveInputs = {}): DoctorReport {
         ? "A database is configured; commands can run the service layer in this process."
         : "No database configured. --direct and `standup init` need one.",
     },
+    {
+      // #84's own check, as this file's other comment named it: `standup
+      // mcp` is `--direct`-only (`./mcp.ts`), so it is available under
+      // exactly the same condition as the `database` capability above — a
+      // separate entry rather than folding it into that one because a
+      // person asking "what can this installation do" reads MCP over stdio
+      // as its own capability, not as a detail of the database's.
+      name: "mcp_stdio",
+      status: databaseConfigured ? "available" : "unavailable",
+      detail: databaseConfigured
+        ? "A database is configured; `standup mcp` can serve MCP over stdio."
+        : "No database configured. `standup mcp` needs one, the same as --direct.",
+    },
   ];
 
   if (resolution.ok) {
