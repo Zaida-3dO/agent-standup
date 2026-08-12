@@ -16,6 +16,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutate": "node scripts/run-mutation-tests.mjs",
+    "test:mutate:changed": "node scripts/run-mutation-tests.mjs --changed-only",
     "check:external-refs": "node scripts/check-external-refs.mjs",
     "db:up": "docker compose up -d db",
     "db:migrate": "prisma migrate dev",
@@ -37,6 +39,8 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

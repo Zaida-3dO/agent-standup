@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "reporters": ["json", "progress", "clear-text"],
+  "coverageAnalysis": "perTest",
+  "ignoreStatic": true,
+  "thresholds": {
+    "high": 90,
+    "low": 70,
+    "break": 60
+  },
+  "mutate": [
+    "src/lib/areas.ts",
+    "src/lib/db-url.ts",
+    "src/lib/near-duplicates.ts",
+    "src/lib/repos.ts",
+    "src/app/api/health/route.ts"
+  ]
+}
