@@ -7,7 +7,13 @@
 // so little surface to cover.
 import { prisma } from "@/lib/prisma";
 import { SettingsCache, type SettingsSource, type StoredOverride } from "@/lib/settings";
+import { registerBlockedPausedGuards } from "./state-machine/guards/register";
 import { ServiceRuntime, prismaTransactionRunner } from "./runtime";
+
+// Installs row #16's guards (and rows #17-#19/#21 as they land) into the
+// shared `guardRegistry` singleton before any real transition can run
+// through this module. See `state-machine/guards/register.ts`.
+registerBlockedPausedGuards();
 
 /**
  * Reads settings out of Postgres, honouring the contract `SettingsSource`
