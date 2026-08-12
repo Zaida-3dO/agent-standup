@@ -492,6 +492,36 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       expect(result.item.state).toBe("merged");
     });
 
+    it("not_done reason follow-up rejects an item_id that does not name an existing item", async () => {
+      const id = await createTask({ state: "in_review" });
+      const error = (await runtime
+        .call("complete_item", {
+          id,
+          to: "merged",
+          summary: validSummary({
+            not_done: [{ text: "Do it later.", reason: "follow-up", item_id: "does-not-exist" }],
+          }),
+        })
+        .catch((e: unknown) => e)) as { code?: string; fields?: readonly string[] };
+
+      expect(error.code).toBe("guard_rejected");
+      expect(error.fields).toContain("not_done[0].item_id");
+    });
+
+    it("rejects fields.summary as a smuggled second summary — the top-level summary field is the only path", async () => {
+      const id = await createTask({ state: "in_review" });
+      const error = (await runtime
+        .call("complete_item", {
+          id,
+          to: "merged",
+          summary: validSummary(),
+          fields: { summary: { shipped: ["a different summary entirely"] } },
+        })
+        .catch((e: unknown) => e)) as { code?: string };
+
+      expect(error.code).toBe("invalid_input");
+    });
+
     it("hierarchy guard still applies: cannot complete while a child is actionable", async () => {
       const parent = await createTask({ state: "in_review" });
       await createTask({ state: "executing", parentId: parent });
