@@ -139,6 +139,21 @@ covered by the integration tests" is not an answer when those don't exist yet.
 
 If a change is genuinely untestable, say why in the PR rather than skipping quietly.
 
+### Every gating script ships a self-test
+
+Any script used as a gate — the checks under `scripts/*.mjs` that CI runs on every PR — must ship a
+test proving it **fails on a seeded violation**, not merely that it passes on clean input. A gate that
+has only ever been proven to pass has never actually been run against the thing it exists to catch,
+and a check that cannot fail is functionally a no-op with a green checkmark next to it.
+
+That test must also **state plainly what a green result does, and does not, mean.** A check written
+against a fixed set of known shapes can only certify the absence of those shapes — it was never taught
+to look for anything else, and a shape it was never given cannot be caught by widening intent alone.
+`scripts/check-external-refs.mjs` and its test (`tests/check-external-refs.test.ts`) are the precedent
+to follow: the script's own header states outright that a green run means the recurring phrasings are
+absent, not that the prose is clean, and the test both seeds a violation to prove the gate fires and
+asserts the exemption lists stay exactly as narrow as intended.
+
 ## Standing authorisation — keep the queue moving
 
 **Merging is pre-authorised. Do not stop to ask.** Once a change has been through review and its
@@ -229,6 +244,16 @@ you.
   makes the milestone list a work queue instead of a wish list.
 - **Migrations are additive.** The whole schema lands as one baseline; change it with an `ALTER`,
   never by editing a migration that has already been applied.
+- **Branch from `main`, never from another PR's branch.** CI's `pull_request` trigger filters on
+  `branches: [main]`, so a PR opened against a branch that is itself not `main` matches no event and
+  runs **zero** checks — and a PR with no runs at all reads as quiet, not red, which is easy to miss
+  when several agents are working in parallel here. No checks is not the same claim as checks passed.
+  There is also a sharp corollary worth knowing before it happens: merging a parent PR with
+  `--delete-branch` **auto-closes any PR still open against that branch**, and this cannot be undone
+  by reopening or retargeting the closed PR — the only way out is a new PR opened from the same,
+  unchanged branch against `main`. Never rebase onto `main` to try to recover it: an approval is
+  granted against a specific set of commit shas, and a rebase mints a fresh set — so a rebase always
+  needs a fresh approval to match, whatever the reason for rebasing.
 
 ## Commits
 
