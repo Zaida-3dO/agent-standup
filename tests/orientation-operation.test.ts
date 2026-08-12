@@ -125,6 +125,22 @@ describeIfDb("orientation against Postgres", () => {
     expect((error as { code: string }).code).toBe("not_found");
   });
 
+  it("refuses a non-numeric `since` — the input schema's own regex, not a runtime crash", async () => {
+    const item = await makeItem({ title: "Bad since" });
+    // Mutation this catches, actually applied and confirmed locally: widen
+    // the schema's `/^\d+$/` to `/^.+$/` (any character instead of only
+    // digits) in orientation.ts — "not-a-number" then PASSES validation and
+    // reaches `BigInt(input.since)` in the handler, which throws and
+    // surfaces as `internal` instead of `invalid_input`. Confirms the
+    // schema is what turns a malformed `since` into a clean rejection
+    // rather than a crash.
+    const error = await runtime
+      .call("orientation", { itemId: item.id, since: "not-a-number" })
+      .catch((e: unknown) => e);
+    expect((error as { code: string }).code).toBe("invalid_input");
+    expect((error as { fields: string[] }).fields).toContain("since");
+  });
+
   it("checkpoint is null and whatChanged is exactly the create event when nothing else has happened", async () => {
     // Single-character mutation this test would catch: change the SQL's
     // `ORDER BY "id" DESC` to `ASC` in orientation.ts's checkpoint query —

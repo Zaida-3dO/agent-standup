@@ -72,6 +72,30 @@ describeIfDb("my_work against Postgres", () => {
     expect(result.items).toEqual([]);
   });
 
+  it("carries roleCustom through for a role:'custom' assignment", async () => {
+    // Single-character mutation this catches: swap `a."roleCustom"` for
+    // `a."role"` (or drop the alias) in my-work.ts's SELECT — roleCustom
+    // would then read back null or the wrong column, failing this
+    // assertion specifically (role stays correctly "custom" either way,
+    // so a test that only checked `role` would miss this).
+    const item = await makeItem({ title: "Custom role" });
+    await claim({
+      itemId: item.id,
+      role: "custom",
+      roleCustom: "domain-expert",
+      holderType: "agent",
+      holderId: "crew-custom",
+      sessionId: "session-custom-role",
+      machine: "laptop",
+    });
+
+    const result = (await runtime.call("my_work", { sessionId: "session-custom-role" })) as {
+      items: readonly { assignment: { role: string; roleCustom: string | null } }[];
+    };
+    expect(result.items[0]?.assignment.role).toBe("custom");
+    expect(result.items[0]?.assignment.roleCustom).toBe("domain-expert");
+  });
+
   it("returns the item this session holds, with its OWN role attached", async () => {
     const item = await makeItem({ title: "Held by one session" });
     await claim({
