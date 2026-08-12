@@ -1,0 +1,121 @@
+// The HTTP adapter's board route, driven directly as a route handler
+// (SCHEMA.md §22 — "call the route handler directly"), against a real
+// Postgres. Same import-ordering constraint as tests/items-routes.test.ts:
+// DATABASE_URL must point at the scratch database before the route module
+// (which reaches `service/live.ts`'s process-global singleton) is imported.
+//
+// Skips without TEST_DATABASE_URL, like every other DB-backed file here.
+import { PrismaClient } from "@prisma/client";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runMigrations } from "../scripts/lib/run-migrations.mjs";
+import {
+  createScratchDatabase,
+  dropScratchDatabase,
+  scratchDatabaseName,
+} from "./helpers/scratch-db";
+
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+const describeIfDb = testDatabaseUrl ? describe : describe.skip;
+
+describeIfDb("board HTTP route against Postgres", () => {
+  const dbName = scratchDatabaseName("board_routes");
+  let scratchUrl: string;
+  let prisma: PrismaClient;
+  let boardRoute: typeof import("@/app/api/board/route");
+  let itemsRoute: typeof import("@/app/api/items/route");
+
+  beforeAll(async () => {
+    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
+    if (!result.ok) {
+      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
+    }
+    process.env.DATABASE_URL = scratchUrl;
+    boardRoute = await import("@/app/api/board/route");
+    itemsRoute = await import("@/app/api/items/route");
+    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+  }, 60_000);
+
+  afterAll(async () => {
+    await prisma?.$disconnect();
+    dropScratchDatabase(testDatabaseUrl!, dbName);
+  });
+
+  function jsonRequest(url: string, method: string, body?: unknown): Request {
+    return new Request(url, {
+      method,
+      headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  async function createItem(overrides: Record<string, unknown>): Promise<{ id: string }> {
+    const response = await itemsRoute.POST(
+      jsonRequest("http://localhost/api/items", "POST", {
+        title: "route board item",
+        body: "x",
+        area: "board-route-tests",
+        originType: "auto",
+        ...overrides,
+      }),
+    );
+    const payload = (await response.json()) as { item: { id: string } };
+    return payload.item;
+  }
+
+  it("GET /board returns 200 with all four columns present", async () => {
+    const response = await boardRoute.GET(new Request("http://localhost/api/board"));
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: {
+        backlog: unknown[];
+        in_progress: unknown[];
+        waiting: unknown[];
+        completed: unknown[];
+      };
+    };
+    expect(payload.board).toHaveProperty("backlog");
+    expect(payload.board).toHaveProperty("in_progress");
+    expect(payload.board).toHaveProperty("waiting");
+    expect(payload.board).toHaveProperty("completed");
+  });
+
+  it("a newly created item (on_deck) shows up on the board in backlog, over the real HTTP round trip", async () => {
+    const created = await createItem({ area: "board-route-backlog" });
+
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?area=board-route-backlog"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: { backlog: { item: { id: string } }[] };
+    };
+    expect(payload.board.backlog.some((entry) => entry.item.id === created.id)).toBe(true);
+  });
+
+  it("GET /board?area= excludes items in a different area, over the actual query-string parsing", async () => {
+    const inArea = await createItem({ area: "board-route-filter-target" });
+    await createItem({ area: "board-route-filter-other" });
+
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?area=board-route-filter-target"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      board: Record<string, { item: { id: string } }[]>;
+    };
+    const allIds = Object.values(payload.board)
+      .flat()
+      .map((entry) => entry.item.id);
+    expect(allIds).toEqual([inArea.id]);
+  });
+
+  it("an invalid priority value is rejected as 400, not a 500", async () => {
+    const response = await boardRoute.GET(
+      new Request("http://localhost/api/board?priority=not-a-real-priority"),
+    );
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("invalid_input");
+  });
+});
