@@ -66,12 +66,12 @@ into it.*
 |---|---|---|---|
 | **7** | Initial migration — the **whole schema** in one baseline | 3 | `done` |
 | **8** | DB client, connection pooling, migrate-on-boot wiring | 7 | `done` |
-| **9** | Seed: `people` (two user profiles), `agents` name roster, `accounts` | 8 | |
+| **9** | Seed: `people` (two user profiles), `agents` name roster, `accounts` | 8 | `done` |
 | **10** | Importer — items: a directory-per-task store → `items`, status remap, the source identifier into `custom_fields`. Resolves repositories and areas through the reference tables, mapping aliases of one repository as it goes rather than importing them as distinct values | 8, 91 | |
 | **11** | Importer — events: the source store's history log → `events`, actor mapping | 10 | |
 | **12** | Importer — assignments and artifacts: claims, roles, review files | 10 | |
 | **13** | Import verification: row counts, spot-check report, idempotent re-run | 11, 12 | |
-| **91** | **`repos` and `areas`.** Two reference tables and the two foreign keys; deliberate create for a repository, auto-create-with-normalisation for an area; the missing index on `items.repo`; near-duplicate surfacing | 8 | `open` |
+| **91** | **`repos` and `areas`.** Two reference tables and the two foreign keys; deliberate create for a repository, auto-create-with-normalisation for an area; the missing index on `items.repo`; near-duplicate surfacing | 8 | `done` |
 
 > **#91 before #10.** The importer is the first thing to write these columns in volume, and an import
 > set contains aliases of one repository — importing them as free text bakes the fragmentation in
