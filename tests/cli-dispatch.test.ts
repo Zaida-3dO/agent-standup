@@ -287,7 +287,11 @@ describe("standup doctor", () => {
   it("re-checks the capability paths locally, reporting each", () => {
     const report = doctorReport({ env: { DATABASE_URL: "postgresql://u@h/d" } });
     const byName = Object.fromEntries(report.capabilities.map((c) => [c.name, c.status]));
-    expect(byName).toEqual({ server: "unavailable", database: "available" });
+    expect(byName).toEqual({
+      server: "unavailable",
+      database: "available",
+      mcp_stdio: "available",
+    });
   });
 
   it("reports what is wrong, rather than stopping, when nothing is configured", () => {
