@@ -158,6 +158,22 @@ describe("standup config — the confirmation gate (MILESTONES.md #83, SCHEMA.md
     expect(getDefinition("items.max_depth").irreversible).toBe(false);
   });
 
+  it("gates a key declared after this row shipped, with no CLI-side change needed", async () => {
+    // `hook.allow_patterns` (row #41, merged after this row's own commits)
+    // didn't exist when config-command.ts was written. The gate reads
+    // `getDefinition(key).sensitive` off the live registry, so a brand-new
+    // sensitive key is covered automatically — this is the property "do not
+    // hardcode key metadata the registry already owns" is actually for, and
+    // this test is what proves it held rather than merely being asserted.
+    expect(getDefinition("hook.allow_patterns").sensitive).toBe(true);
+    const binding = recorder();
+    const outcome = await runCommand(["config", "set", "hook.allow_patterns", "[]"], binding);
+    expect(binding.calls).toEqual([]);
+    expect(outcome.exitCode).toBe(2);
+    if (outcome.envelope.ok) throw new Error("unreachable");
+    expect(outcome.envelope.error.fields).toEqual(["confirm"]);
+  });
+
   it("refuses `config set` on a sensitive key without --confirm, never reaching the binding", async () => {
     const binding = recorder();
     const outcome = await runCommand(
