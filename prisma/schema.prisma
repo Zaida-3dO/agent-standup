@@ -349,6 +349,16 @@ model Agent {
   roleHint  Role?
   persona   String?
   retiredAt DateTime? @db.Timestamptz(3)
+
+  // The pre-item hold (MILESTONES.md #34, src/lib/agent-names.ts). A name is
+  // "handed out" the moment a session takes it and stays held until that
+  // session releases it or the name is retired — independent of
+  // `Assignment`, which cannot exist before an item does (`Assignment.itemId`
+  // is required) and so cannot represent "this session has claimed a crew
+  // name but hasn't touched an item yet". Both columns are set and cleared
+  // together; `heldAt` is never read on its own.
+  heldBySessionId String?
+  heldAt          DateTime? @db.Timestamptz(3)
 }
 
 model ToolCall {
