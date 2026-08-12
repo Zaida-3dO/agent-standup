@@ -26,8 +26,13 @@ import type { SourceHistoryEntry, SourceTask } from "./import-items";
 
 export type { SourceHistoryEntry } from "./import-items";
 
-/** `items.state` values that collapse history to one summary row (DECISIONS.md §13c). */
-const TERMINAL_STATES = new Set(["merged", "research_done", "wont_do", "cancelled"]);
+/**
+ * `items.state` values that collapse history to one summary row (DECISIONS.md
+ * §13c). Exported (not just module-private) so import-verify.ts (#13) can
+ * compute the SAME expected event count this module actually writes, rather
+ * than keeping a second copy of this list that could silently drift from it.
+ */
+export const TERMINAL_STATES = new Set(["merged", "research_done", "wont_do", "cancelled"]);
 
 export class UnknownActorAliasError extends Error {
   constructor(alias: string, taskId: string, historyEntryId: string) {
