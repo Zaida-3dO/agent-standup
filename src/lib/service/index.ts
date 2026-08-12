@@ -156,6 +156,23 @@ export {
 } from "./operations/complete-item";
 export { RehearsalRollback, isRehearsalRollback } from "./operations/rehearsal-rollback";
 
+// The hook decision (MILESTONES.md #41): allow-list silent, ask-list
+// answered, denies when unsure. `decideHook` is the pure classification the
+// operation and any future caller (`standup hook`, MILESTONES.md #88) share;
+// the operation is the one entry point the service layer exposes for it.
+export {
+  decideHook,
+  HOOK_DECISIONS,
+  type HookDecision,
+  type HookDecisionInput,
+  type HookDecisionResult,
+} from "./hook-decision";
+export {
+  hookDecision,
+  type HookDecisionOperationInput,
+  type HookDecisionOperationOutput,
+} from "./operations/hook-decision";
+
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
 // (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,
