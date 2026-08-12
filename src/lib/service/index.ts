@@ -138,6 +138,23 @@ export type {
 } from "./operations/orientation";
 export type { MyWorkInput, MyWorkOutput, MyWorkEntry } from "./operations/my-work";
 
+// Transition and complete (MILESTONES.md #27): the service calls and their
+// routes, over row #15's state machine. `RehearsalRollback` is exported so
+// the HTTP route (the only intended catcher) can recognise it without a
+// second copy of the class living outside the service layer.
+export {
+  transitionItem,
+  type AppliedTransitionOutcome,
+  type TransitionItemInput,
+  type TransitionItemResult,
+} from "./operations/transition-item";
+export {
+  completeItem,
+  type CompleteItemInput,
+  type CompleteItemResult,
+} from "./operations/complete-item";
+export { RehearsalRollback, isRehearsalRollback } from "./operations/rehearsal-rollback";
+
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
 // (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,
