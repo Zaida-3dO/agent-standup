@@ -284,6 +284,51 @@ describeIfDb("import-events — against a real Postgres", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("re-running after a task transitions from in-flight to terminal does not duplicate the entries already imported in full", async () => {
+    // A realistic re-run shape: import while the task is still in progress
+    // (full history, one row per entry), then the task finishes and the
+    // import runs again against the SAME populated database with the SAME
+    // history array but a now-terminal currentState. The collapsed-summary
+    // path keys its one row on history[0].id — which was already imported
+    // as one of the full-history rows on the first run — so the second run
+    // must recognise it as already present and skip, not add a duplicate
+    // "collapsed" row alongside the three individual rows already there.
+    const taskId = nextId("transition");
+    const task: SourceTask = {
+      id: taskId,
+      title: "Transitions to done",
+      body: "Body.",
+      status: "in-progress",
+      area: "web",
+      history: [
+        { id: "h1", actor: "user-a", at: "2026-01-01T00:00:00Z", note: "created" },
+        { id: "h2", actor: "agent-alpha", at: "2026-01-02T00:00:00Z", note: "worked on it" },
+        { id: "h3", actor: "user-a", at: "2026-01-03T00:00:00Z", note: "merged" },
+      ],
+    };
+    const { itemId } = await importOneTask(task);
+
+    const first = await importEventsForTask(
+      prisma,
+      { itemId, taskId, currentState: "executing", history: task.history! },
+      { actorAliases },
+    );
+    expect(first).toEqual({ imported: 3, skippedExisting: 0 });
+
+    // Re-run with the SAME history, now reporting a terminal state — the
+    // load-bearing assertion: total row count must stay 3, not become 4
+    // (3 full-history rows + 1 collapsed summary).
+    const second = await importEventsForTask(
+      prisma,
+      { itemId, taskId, currentState: "merged", history: task.history! },
+      { actorAliases },
+    );
+    expect(second).toEqual({ imported: 0, skippedExisting: 1 });
+
+    const rows = await prisma.event.findMany({ where: { itemId } });
+    expect(rows).toHaveLength(3);
+  });
+
   it("writes each row via appendEvent's own INSERT path — the timestamptz column stays typed", async () => {
     const taskId = nextId("tz");
     const task: SourceTask = {
