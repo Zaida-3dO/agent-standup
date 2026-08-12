@@ -165,3 +165,71 @@ export function readReportOrThrow(reportPath, label) {
   }
   return JSON.parse(readFileSync(reportPath, "utf8"));
 }
+
+/**
+ * Guards the incremental result cache — a second piece of persisted state
+ * beyond `mutation.json`, introduced by `--incremental` (see
+ * `stryker.config.json`). Stryker reuses a prior mutant's verdict from this
+ * file instead of re-testing it, so unlike `mutation.json` (read once, right
+ * after the run that wrote it, then deleted) this file is deliberately kept
+ * across invocations — which is exactly the shape that produced the
+ * false-PASS bug `clearReportFile`/`readReportOrThrow` above exist to close:
+ * a persisted file that could be read as current when it isn't.
+ *
+ * This function does NOT try to re-verify what Stryker's own incremental
+ * differ decides is reusable — that decision is keyed on a diff of the
+ * exact source text at each mutant's location (and, for a killed mutant,
+ * the killing test's own source text too), which is Stryker's job, tested
+ * empirically for this repository rather than re-implemented here. What
+ * this function guards against is narrower and precedes that: a file that
+ * isn't even a well-formed incremental report at all — the cache
+ * equivalent of the stale/corrupt `mutation.json` this harness already
+ * refuses to trust.
+ *
+ * Un-parseable JSON at `incrementalFile` is NOT a condition Stryker's own
+ * project reader recovers from — `JSON.parse` throwing there is left to
+ * propagate and crashes the dry run before any mutant runs, which
+ * `readReportOrThrow` already turns into a hard failure (no `mutation.json`
+ * gets written). That is a safe failure mode — loud, never a false PASS —
+ * but it reports as an opaque Stryker crash rather than naming the actual
+ * cause. Calling this FIRST, before invoking Stryker at all, turns that
+ * same corruption into a clear, named error and self-heals by deleting the
+ * bad file (a missing incremental file is an ordinary, supported Stryker
+ * state — "no history yet, run everything" — never a failure), so a run
+ * degrades to a full mutation run instead of dying opaquely.
+ *
+ * A well-formed-but-semantically-wrong file (valid JSON, wrong/missing
+ * top-level keys) is treated the same way: deleted and logged, not
+ * silently handed to Stryker to fail on in some less legible way.
+ */
+export function validateIncrementalCache(incrementalFilePath) {
+  if (!existsSync(incrementalFilePath)) {
+    return { hadCache: false, reason: null };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(incrementalFilePath, "utf8"));
+  } catch (err) {
+    rmSync(incrementalFilePath, { force: true });
+    return {
+      hadCache: false,
+      reason: `the incremental cache at ${incrementalFilePath} was not valid JSON (${err.message}) — deleted it; this run will not reuse any prior mutant result.`,
+    };
+  }
+
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    typeof parsed.files !== "object" ||
+    parsed.files === null
+  ) {
+    rmSync(incrementalFilePath, { force: true });
+    return {
+      hadCache: false,
+      reason: `the incremental cache at ${incrementalFilePath} was valid JSON but not a recognisable mutation-testing report (missing/invalid "files") — deleted it; this run will not reuse any prior mutant result.`,
+    };
+  }
+
+  return { hadCache: true, reason: null };
+}
