@@ -269,6 +269,69 @@ describeIfDb("get_board against Postgres", () => {
       expect(allIds).toEqual([project.id]);
     });
 
+    it("kind=task EXCLUDES the project itself, keeping only the task", async () => {
+      // Together with the kind=project case above, this pins the
+      // project/task split in both directions — a filter that always
+      // returned everything (or a project-detection that treated every
+      // item as a project) would pass one of the two but not both.
+      const project = await createItem({ area: "board-filter-kind-task" });
+      const task = await createItem({ area: "board-filter-kind-task", parentId: project.id });
+
+      const board = (await runtime.call("get_board", {
+        area: "board-filter-kind-task",
+        kind: "task",
+      })) as BoardOutput;
+      const allIds = [
+        ...board.backlog,
+        ...board.in_progress,
+        ...board.waiting,
+        ...board.completed,
+      ].map((entry) => entry.item.id);
+      expect(allIds).toEqual([task.id]);
+    });
+
+    it("repo filter genuinely EXCLUDES an item in a different repo", async () => {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Repo" ("id", "displayName", "defaultBranch", "host", "needsVisualReview")
+         VALUES ('board-repo-a', 'Repo A', 'main', 'github', false),
+                ('board-repo-b', 'Repo B', 'main', 'github', false)
+         ON CONFLICT ("id") DO NOTHING`,
+      );
+      const inRepoA = await createItem({ area: "board-filter-repo", repo: "board-repo-a" });
+      await createItem({ area: "board-filter-repo", repo: "board-repo-b" });
+
+      const board = (await runtime.call("get_board", {
+        area: "board-filter-repo",
+        repo: "board-repo-a",
+      })) as BoardOutput;
+      const allIds = [
+        ...board.backlog,
+        ...board.in_progress,
+        ...board.waiting,
+        ...board.completed,
+      ].map((entry) => entry.item.id);
+      expect(allIds).toEqual([inRepoA.id]);
+    });
+
+    it("a board with NO projects at all (only tasks) still resolves — the descendant-lookup query is genuinely skipped, not merely unused", async () => {
+      // Distinguishes projectIds.length > 0 from a mutated >= 0 (always
+      // true): with zero projects on the board, a task's own column must
+      // still come from columnForState, not from an empty/undefined
+      // descendant-states path silently succeeding for the wrong reason.
+      const root = await createItem({ area: "board-no-projects" });
+      await setState(root.id, "executing");
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "kind" = 'task'::"ItemKind" WHERE "id" = $1`,
+        root.id,
+      );
+
+      const board = (await runtime.call("get_board", {
+        area: "board-no-projects",
+        kind: "task",
+      })) as BoardOutput;
+      expect(board.in_progress.some((entry) => entry.item.id === root.id)).toBe(true);
+    });
+
     it("empty result when the filter matches nothing — every column present but empty", async () => {
       const board = (await runtime.call("get_board", {
         area: "an-area-nothing-uses",
