@@ -145,8 +145,8 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **80** | `standup init` — find, accept or provision a database; create it; migrate; seed; write local configuration; prove it with a live round trip. Asks for a provisioning connection separately from the application role, and falls back to a supplied connection string rather than abandoning | 9, 79 | |
 | **81** | Command line: items — list, get, create, update, transition with `--dry-run`, complete | 15, 21, 26, 27, 79 | `done` |
 | **82** | Command line: ownership and orientation — claim, release, heartbeat, checkpoint, note, my-work, orientation, crew name | 23, 28, 29, 34, 79 | |
-| **83** | `standup config` — list, get, set, clear, describe, rendering label, help and validation from the registry; `sensitive` and `irreversible` keys require the confirmation flag | 78, 79 | |
-| **84** | MCP over **stdio**, wiring the same transport-agnostic server core as the HTTP transport | 30, 79 | |
+| **83** | `standup config` — list, get, set, clear, describe, rendering label, help and validation from the registry; `sensitive` and `irreversible` keys require the confirmation flag | 78, 79 | `done` |
+| **84** | MCP over **stdio**, wiring the same transport-agnostic server core as the HTTP transport | 30, 79 | `done` |
 | **90** | **Retiring the environment variables.** A startup check, derived from the registry's `formerEnv` entries, that fails in development and logs loudly in production when a retired name is still set; plus `.env.example`, the production compose environment block, and the README's configuration and database-requirement sections | 77 | `done` |
 | **92** | **Administration API and command line** for installation-owned entities — repositories, areas, machines (including `source_globs`), accounts (including `vendor`, validated against the registered adapter list, and `budget_windows`) | 79, 91 | |
 | **94** | **Adapter conformance harness.** Drivers behind a map typed from the adapter registry; cases authored once per operation, run against every driver; four assertions — identical outcomes by `code`, `guard` and fields · accept-and-reject per operation · **every registered guard covered by an observed rejection** · adapter completeness with bounded waivers — plus a negative control per assertion and a non-empty-guard-registry assertion | 26, 27, 29, 81, 82, 85 | |
@@ -162,7 +162,7 @@ every adapter passes the conformance harness.**
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **35** | Profile picker — choose a user profile, remembered in the browser, switchable from the top bar | 9, 26 | |
+| **35** | Profile picker — choose a user profile, remembered in the browser, switchable from the top bar | 9, 26 | `done` |
 | **36** | Board API: items grouped into columns, filters | 26 | `done` |
 | **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
@@ -185,7 +185,7 @@ environment.**
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **41** | The hook decision as a service call, and its route: allow-list silent, ask-list answered, **denies when unsure**. The route is one caller; `standup hook` is another | 14 | |
+| **41** | The hook decision as a service call, and its route: allow-list silent, ask-list answered, **denies when unsure**. The route is one caller; `standup hook` is another | 14 | `done` |
 | **42** | The hook script: one file, fires after each tool call and at stop, cached rules | 41 | |
 | **43** | Session registration handshake: the `sessions` table (additive migration), the registration transport recorded as the capability signal in five values matching the adapter names, `standup session register` and its route, a transport-specific reply naming the matching hook variant, and per-variant protocol version comparison — advisory when stale, refusing a claim when incompatible or absent. Plus a CI assertion that the shipped hook's declared version equals the build constant, so nobody has to remember to bump the right one | 42, 79 | |
 | **44** | Merge gate: the judgement server-side, only command parsing local | 18, 42 | |
@@ -227,7 +227,7 @@ the client is the handful of checks that cannot run anywhere else.
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **55** | **Spike:** launching a session unattended on Windows, locked and logged in | — | |
+| **55** | **Spike:** launching a session unattended on Windows, locked and logged in | — | `done` |
 | **56** | Accounts and usage readings, from the hook and from polling; handling stale readings | 9, 50 | |
 | **57** | Budget bands: four of them, boundaries that move with the clock, strictest window wins. Reads `budget.windows` as a typed setting, and `accounts.budget_windows` where an account overrides it | 56, 77 | |
 | **58** | The poll: a machine reports its sessions, usage, and anything waiting to be minted. Reads `machines.source_globs`, falling back to `minting.source_globs` | 56, 77 | |
