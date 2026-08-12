@@ -195,7 +195,7 @@ export async function sweepLiveness(
     );
     const itemRow = attemptRows[0];
     if (!itemRow) {
-      // The assignment referenced an item that no longer exists. Nothing
+      // The `UPDATE` matched nothing, so this item does not exist. Nothing
       // further to escalate — the row above already recorded the release.
       continue;
     }
