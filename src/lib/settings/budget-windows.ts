@@ -98,14 +98,27 @@ function perHours(per: "hour" | "day"): number {
 }
 
 /**
- * The value of a boundary at `elapsedHours` into a window `lengthHours` long.
+ * The value of a boundary at `elapsedHours` into a window `lengthHours` long,
+ * or `null` where the boundary has no value at that moment.
  *
  * A schedule holds until its next entry starts: the entry in force at a
  * moment is the last one whose anchor is at or before it, and before the
  * first entry the first entry's value applies (a schedule that says nothing
  * about the opening minute is not a hole, it is the same rule from the top).
+ *
+ * **Total, rather than assuming its input is already valid.** A schedule
+ * with no entries has no value at any moment, and the schema does reject
+ * one — but `superRefine` runs even when the shape it is refining failed,
+ * so this function is reached with input the schema has already refused.
+ * Returning null there is what keeps a malformed write a *rejection*
+ * instead of a crash: a validator that throws is a 500 where a 400 was
+ * meant, on the one path whose entire job is to say no politely.
  */
-export function boundaryAt(boundary: Boundary, elapsedHours: number, lengthHours: number): number {
+export function boundaryAt(
+  boundary: Boundary,
+  elapsedHours: number,
+  lengthHours: number,
+): number | null {
   switch (boundary.kind) {
     case "constant":
       return boundary.value;
@@ -122,8 +135,8 @@ export function boundaryAt(boundary: Boundary, elapsedHours: number, lengthHours
         }))
         .sort((a, b) => a.startHours - b.startHours);
 
-      // `anchored` is non-empty: the schema requires at least one entry.
-      let inForce = anchored[0]!;
+      let inForce = anchored[0];
+      if (!inForce) return null;
       for (const candidate of anchored) {
         if (candidate.startHours <= elapsedHours) inForce = candidate;
       }
@@ -145,11 +158,30 @@ export interface CrossingProblem {
  * Samples a window across its length and reports every moment at which its
  * boundaries cross or leave 0–100.
  *
- * Sampling rather than solving: a schedule is piecewise and the pieces are
- * arbitrary, so there is no closed form to solve. The sample points include
- * every schedule entry's own start, which is where a piecewise function's
- * discontinuities are — an even grid alone could step over a rule that is in
- * force for less than one interval.
+ * **Why sampling, and why these points.** Sampling rather than solving,
+ * because a schedule is piecewise with arbitrary pieces and there is no
+ * closed form to solve. The point set is three things unioned, and each
+ * earns its place:
+ *
+ * - **The two endpoints.** Constants and linears are monotonic, so any two
+ *   of them cross at most once and can never re-order; a violation between
+ *   two monotonic boundaries is therefore still present at an endpoint.
+ * - **Every schedule entry's own start.** That is where a piecewise
+ *   function jumps, and a jump is invisible to any grid that does not land
+ *   on it — an entry in force for less than one grid interval would
+ *   otherwise be stepped over entirely.
+ * - **An even grid across the length.** The case the first two miss: a
+ *   schedule entry holding a *linear*, which moves within its own segment.
+ *   Between two switch points that are each fine, its interior can leave
+ *   the range or cross another boundary, and only a point inside the
+ *   segment sees it.
+ *
+ * The grid is a bound on how short a violation can be and still be found,
+ * not a guarantee: a segment narrower than one interval and violating only
+ * strictly between its own switch points can pass. That residual is
+ * accepted rather than hidden — closing it needs per-segment interval
+ * arithmetic, which is a different and much larger piece of work than the
+ * check this section asks for.
  */
 export function findCrossings(window: BudgetWindow): CrossingProblem[] {
   const problems: CrossingProblem[] = [];
@@ -178,7 +210,12 @@ export function findCrossings(window: BudgetWindow): CrossingProblem[] {
     }));
 
     for (const { key, value } of values) {
-      if (!Number.isFinite(value) || value < 0 || value > 100) {
+      if (value === null) {
+        problems.push({
+          atHours,
+          message: `${key} has no value at ${atHours}h`,
+        });
+      } else if (!Number.isFinite(value) || value < 0 || value > 100) {
         problems.push({
           atHours,
           message: `${key} is ${value} at ${atHours}h, outside 0–100`,
@@ -186,9 +223,14 @@ export function findCrossings(window: BudgetWindow): CrossingProblem[] {
       }
     }
 
+    // Ordering is only a question where both sides have a value; a
+    // boundary reported as missing above is not also reported as
+    // mis-ordered against one, which would be two complaints about one
+    // fault.
     for (let i = 0; i + 1 < values.length; i += 1) {
       const lower = values[i]!;
       const upper = values[i + 1]!;
+      if (lower.value === null || upper.value === null) continue;
       if (lower.value > upper.value) {
         problems.push({
           atHours,
@@ -196,11 +238,6 @@ export function findCrossings(window: BudgetWindow): CrossingProblem[] {
         });
       }
     }
-
-    // One report per moment is enough to name it; further moments still
-    // get their own entry, so a rule that is wrong across the whole window
-    // is distinguishable from one wrong at a single point.
-    if (problems.length > 0 && problems[problems.length - 1]!.atHours === atHours) continue;
   }
 
   return problems;
@@ -216,6 +253,13 @@ export const budgetWindowsSchema = z
   .record(z.string().min(1), windowShape)
   .superRefine((windows, ctx) => {
     for (const [name, window] of Object.entries(windows)) {
+      // A refinement runs even when the shape it refines failed to parse,
+      // so `window` here is only typed as valid, not known to be. Re-check
+      // it and let the shape errors stand alone: a window that is not the
+      // right shape yet has no coherent answer to "do its boundaries
+      // cross", and reporting both would bury the error that has to be
+      // fixed first under one derived from it.
+      if (!windowShape.safeParse(window).success) continue;
       for (const problem of findCrossings(window)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
