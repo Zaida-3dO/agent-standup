@@ -1,5 +1,5 @@
 // Registers every hand-written guard into `guardRegistry`
-// (`state-machine/guard.ts`). See docs/plans/MILESTONES.md #16-#19, #21.
+// (`state-machine/guard.ts`). See docs/plans/MILESTONES.md #16-#19, #21-#22.
 //
 // Written out rather than assembled by scanning the directory at runtime —
 // same reasoning as `registry.ts`'s operation list: a glob would make
@@ -16,11 +16,12 @@
 // actually run) imports this module once, for its side effect, before the
 // first transition.
 import { guardRegistry } from "../state-machine/guard";
+import { deferralFollowUpGuard } from "./deferral";
 import { hierarchyGuard } from "./hierarchy";
 import { summaryRequiredGuard } from "./summaries";
 
 /** Every hand-written guard, in the order it registers. */
-export const ALL_GUARDS = [hierarchyGuard, summaryRequiredGuard] as const;
+export const ALL_GUARDS = [hierarchyGuard, summaryRequiredGuard, deferralFollowUpGuard] as const;
 
 for (const guard of ALL_GUARDS) {
   if (!guardRegistry.has(guard.id)) {
@@ -30,3 +31,8 @@ for (const guard of ALL_GUARDS) {
 
 export { hierarchyGuard } from "./hierarchy";
 export { SUMMARY_REQUIRED_GUARD_ID, findSimilarityIssues, summaryRequiredGuard } from "./summaries";
+export {
+  DEFERRAL_FOLLOW_UP_GUARD_ID,
+  DEFERRAL_REASONS_REQUIRING_ITEM,
+  deferralFollowUpGuard,
+} from "./deferral";
