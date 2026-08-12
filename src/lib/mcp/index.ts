@@ -21,8 +21,9 @@ export { toolRejection, toolSuccess, type RenderedRejection, type ToolResult } f
 // normal successful result, for whichever mount point needs it.
 export { withRehearsalUnwrapping } from "./rehearsal";
 
-// Not re-exported here: `./http.ts`. It is one transport's wiring, and a
-// module importing the core should not acquire a dependency on streamable
-// HTTP by doing so — the same reasoning `../service/index.ts` gives for
-// keeping `live.ts` out of its own re-exports. The route handler imports it
-// by name, and a reviewer sees that in the diff.
+// Not re-exported here: `./http.ts` or `./stdio.ts`. Each is one transport's
+// wiring, and a module importing the core should not acquire a dependency on
+// streamable HTTP or stdio by doing so — the same reasoning `../service/index.ts`
+// gives for keeping `live.ts` out of its own re-exports. The route handler
+// and the `standup mcp` command import them by name, and a reviewer sees
+// that in the diff.
