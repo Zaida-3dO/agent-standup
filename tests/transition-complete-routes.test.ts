@@ -8,6 +8,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import {
   createScratchDatabase,
@@ -99,6 +100,37 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
   async function readState(id: string): Promise<string> {
     const row = await prisma.item.findUniqueOrThrow({ where: { id } });
     return row.state;
+  }
+
+  /**
+   * Seeds what row #18's merge guards actually require before a real
+   * `POST /items/{id}/complete` call into `merged` can succeed — same
+   * fixture shape as `tests/merge-guards.test.ts`'s "all four together"
+   * happy path and `tests/transition-complete-operations.test.ts`'s
+   * `satisfyMergeGuards`: a `commit` artifact recording the tip commit sha,
+   * then a `code_review` artifact approved by a **person** (the item's
+   * `items.default_merge_authority` setting defaults to `needs-approval`,
+   * which specifically requires a human sign-off) at that same commit and
+   * the item's current review round. Items created via `createItemViaRoute`
+   * default `needsVisualReview` to false, so the visual-review guard passes
+   * unconditionally and needs no artifact here.
+   */
+  async function satisfyMergeGuards(itemId: string, commitSha = "commit-a"): Promise<void> {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Artifact" ("id", "itemId", "kind", "commitSha", "createdByType", "createdById")
+       VALUES ($1, $2, 'commit'::"ArtifactKind", $3, 'agent'::"HolderType", 'test-actor')`,
+      randomUUID(),
+      itemId,
+      commitSha,
+    );
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Artifact"
+         ("id", "itemId", "kind", "verdict", "commitSha", "reviewRound", "createdByType", "createdById")
+       VALUES ($1, $2, 'code_review'::"ArtifactKind", 'approved'::"Verdict", $3, 1, 'person'::"HolderType", 'test-reviewer')`,
+      randomUUID(),
+      itemId,
+      commitSha,
+    );
   }
 
   describe("AC1 — POST /items/{id}/transition", () => {
@@ -223,7 +255,11 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
       // straight to `merged`, the same way `transition` can. Routing through
       // `in_review` first would additionally need a `review_requested`
       // artifact (row #17's guard), which is not what this test is about.
+      // `merged` does additionally need row #18's merge guards satisfied —
+      // `satisfyMergeGuards` seeds a genuine commit + person-approved
+      // code_review, the same evidence a real merge would have recorded.
       const id = await createItemViaRoute();
+      await satisfyMergeGuards(id);
 
       const response = await completeRoute.POST(
         jsonRequest(`http://localhost/api/items/${id}/complete`, "POST", {

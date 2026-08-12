@@ -7,6 +7,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import {
   GuardRegistry,
@@ -16,7 +17,6 @@ import {
   guardRegistry,
   isServiceError,
   prismaTransactionRunner,
-  registerBlockedPausedGuards,
 } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { defaultSnapshot } from "@/lib/settings";
@@ -60,7 +60,9 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
     // Register the real guards this row's operations run against — the same
     // production registry `live.ts` populates, so this suite proves the
     // actual wiring rather than a scratch registry standing in for it.
-    registerBlockedPausedGuards();
+    // `ALL_GUARDS` (`src/lib/service/guards/index.ts`) is every hand-written
+    // guard, including the blocked/paused required-field checks — a single
+    // canonical list, so this one loop covers all of it.
     for (const guard of ALL_GUARDS) {
       if (!guardRegistry.has(guard.id)) guardRegistry.register(guard);
     }
@@ -77,10 +79,12 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
   });
 
   afterEach(async () => {
-    // Summary has no cascade off Item (SCHEMA.md §5's 1:1 FK), and Event's
-    // itemId FK likewise, so both must go before the Item row they point at.
+    // Summary/Event/Artifact have no cascade off Item (SCHEMA.md §5's 1:1
+    // FK for Summary; Event and Artifact likewise), so all three must go
+    // before the Item row they point at.
     await prisma.$executeRawUnsafe(`DELETE FROM "Summary"`);
     await prisma.$executeRawUnsafe(`DELETE FROM "Event"`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "Artifact"`);
     await prisma.item.deleteMany({});
   });
 
@@ -104,6 +108,46 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       },
     });
     return id;
+  }
+
+  /**
+   * Seeds what row #18's merge guards (`merge.requires_commit`,
+   * `merge.requires_approving_code_review`, `merge.requires_authorisation`
+   * for `mergeAuthority: "needs_approval"`) actually require before a real
+   * `complete_item({ to: "merged" })` call can succeed: a `commit` artifact
+   * recording the tip commit sha, then a `code_review` artifact approved by
+   * a **person** (not an agent — `needs_approval` specifically requires a
+   * human sign-off) at that same commit and the item's current review round.
+   * `needsVisualReview` defaults false on `createTask`, so
+   * `merge.requires_visual_review` passes unconditionally and needs no
+   * artifact here. Mirrors the fixture shape `tests/merge-guards.test.ts`'s
+   * "all four together" test already establishes as the genuine happy path
+   * for this guard set — this does not stub or bypass a guard, it gives the
+   * real guards evidence that genuinely satisfies them.
+   */
+  async function satisfyMergeGuards(itemId: string, commitSha = "commit-a"): Promise<void> {
+    await prisma.artifact.create({
+      data: {
+        id: randomUUID(),
+        itemId,
+        kind: "commit",
+        commitSha,
+        createdByType: "agent",
+        createdById: "test-actor",
+      },
+    });
+    await prisma.artifact.create({
+      data: {
+        id: randomUUID(),
+        itemId,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha,
+        reviewRound: 1,
+        createdByType: "person",
+        createdById: "test-reviewer",
+      },
+    });
   }
 
   async function readState(itemId: string): Promise<string> {
@@ -306,6 +350,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
   describe("complete_item — AC2: the service call and its route's underlying operation", () => {
     it("moves the item into the completed state and persists a Summary row", async () => {
       const id = await createTask({ state: "in_review" });
+      await satisfyMergeGuards(id);
       const result = (await runtime.call("complete_item", {
         id,
         to: "merged",
@@ -326,6 +371,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
 
     it("persists what_to_test and userFacing=true for a user-facing summary, not just the not-user-facing branch", async () => {
       const id = await createTask({ state: "in_review" });
+      await satisfyMergeGuards(id);
       await runtime.call("complete_item", {
         id,
         to: "merged",
@@ -346,6 +392,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
 
     it("attributes the state_change event to the calling actor when one is supplied", async () => {
       const id = await createTask({ state: "in_review" });
+      await satisfyMergeGuards(id);
       await runtime.call(
         "complete_item",
         { id, to: "merged", summary: validSummary() },
@@ -422,6 +469,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
     it("not_done reason follow-up succeeds when the linked item is genuinely non-actionable (blocked)", async () => {
       const id = await createTask({ state: "in_review" });
       const followUp = await createTask({ state: "blocked" });
+      await satisfyMergeGuards(id);
 
       const result = (await runtime.call("complete_item", {
         id,
@@ -481,6 +529,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
 
     it("not_done reason descoped needs no linked item_id at all", async () => {
       const id = await createTask({ state: "in_review" });
+      await satisfyMergeGuards(id);
       const result = (await runtime.call("complete_item", {
         id,
         to: "merged",
