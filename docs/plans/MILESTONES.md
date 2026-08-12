@@ -71,7 +71,7 @@ into it.*
 | **11** | Importer — events: the source store's history log → `events`, actor mapping | 10 | |
 | **12** | Importer — assignments and artifacts: claims, roles, review files | 10 | |
 | **13** | Import verification: row counts, spot-check report, idempotent re-run | 11, 12 | |
-| **91** | **`repos` and `areas`.** Two reference tables and the two foreign keys; deliberate create for a repository, auto-create-with-normalisation for an area; the missing index on `items.repo`; near-duplicate surfacing | 8 | |
+| **91** | **`repos` and `areas`.** Two reference tables and the two foreign keys; deliberate create for a repository, auto-create-with-normalisation for an area; the missing index on `items.repo`; near-duplicate surfacing | 8 | `open` |
 
 > **#91 before #10.** The importer is the first thing to write these columns in volume, and an import
 > set contains aliases of one repository — importing them as free text bakes the fragmentation in
