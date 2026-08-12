@@ -16,6 +16,7 @@
 import type { Rejection, ServiceErrorCode } from "@/lib/service";
 import { SERVICE_ERROR_CODES } from "@/lib/service";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
+import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
 
 /** How one operation is expressed as an HTTP request. */
 export interface RouteSpec {
@@ -101,6 +102,11 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     request: (input) => ({ path: `/api/items${queryString(input)}` }),
     unwrap: (body) => body,
   },
+  // MILESTONES.md #92 — repo/area/machine/account routes, kept in their own
+  // module (./http-routes-admin.ts) and spread in as a single line, per
+  // that module's own header, so concurrent CLI rows adding entries above
+  // never conflict with this one.
+  ...ADMIN_HTTP_ROUTES,
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */
