@@ -116,29 +116,69 @@ describe("show", () => {
 });
 
 describe("create", () => {
-  it("requires --title, --body and --area before ever calling the network", async () => {
-    const { sinks } = streams();
+  it("requires --title, --body and --area before ever calling the network — exact messages", async () => {
+    // Fresh streams per case, and the exact message asserted rather than
+    // just the exit code: a mutant that skips the local guard entirely
+    // still exits 1 further downstream (the `neverCalled()` fetch throws,
+    // which `client.ts` converts into its own `ok: false` refusal) — only
+    // the *message* tells "validation refused this before any network call"
+    // apart from "validation was bypassed and the network layer refused
+    // instead", and the second is exactly the regression this row exists to
+    // catch.
+    const missingTitle = streams();
     expect(
       await run(["create", "--body", "b", "--area", "a"], {
         env,
         fetch: neverCalled(),
-        streams: sinks,
+        streams: missingTitle.sinks,
       }),
     ).toBe(1);
+    expect(missingTitle.err.join("")).toContain("Error: --title is required.");
+
+    const missingBody = streams();
     expect(
       await run(["create", "--title", "t", "--area", "a"], {
         env,
         fetch: neverCalled(),
-        streams: sinks,
+        streams: missingBody.sinks,
       }),
     ).toBe(1);
+    expect(missingBody.err.join("")).toContain("Error: --body is required.");
+
+    const missingArea = streams();
     expect(
       await run(["create", "--title", "t", "--body", "b"], {
         env,
         fetch: neverCalled(),
-        streams: sinks,
+        streams: missingArea.sinks,
       }),
     ).toBe(1);
+    expect(missingArea.err.join("")).toContain("Error: --area is required.");
+  });
+
+  it("treats a bare --title (empty string) the same as an omitted one", async () => {
+    // `--title` with no value parses to `""` (args.ts), not `undefined` —
+    // the guard checks both, and only an empty-value case can tell the two
+    // checks apart.
+    const { err, sinks } = streams();
+    const code = await run(["create", "--title", "--body", "b", "--area", "a"], {
+      env,
+      fetch: neverCalled(),
+      streams: sinks,
+    });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("Error: --title is required.");
+  });
+
+  it("treats a bare --area (empty string) the same as an omitted one", async () => {
+    const { err, sinks } = streams();
+    const code = await run(["create", "--title", "t", "--body", "b", "--area"], {
+      env,
+      fetch: neverCalled(),
+      streams: sinks,
+    });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("Error: --area is required.");
   });
 
   it("creates and prints the projected task", async () => {
@@ -162,13 +202,74 @@ describe("create", () => {
       area: "web",
     });
   });
+
+  it("sends the full payload on the wire — title, body, area and repo", async () => {
+    const seen: unknown[] = [];
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      seen.push(JSON.parse(init.body as string));
+      return json({
+        item: { id: "item-3", title: "T", body: "B", state: "on_deck", area: "web", repo: "web" },
+      });
+    };
+    const { sinks } = streams();
+    const code = await run(
+      ["create", "--title", "T", "--body", "B", "--area", "web", "--repo", "web"],
+      { env, fetch: fetchImpl, streams: sinks },
+    );
+    expect(code).toBe(0);
+    // originType is added by client.ts's createTask, not commands.ts — real
+    // enough to belong in this assertion, since this test is verifying the
+    // actual bytes that leave the process, not one layer's local contract.
+    expect(seen[0]).toEqual({
+      title: "T",
+      body: "B",
+      area: "web",
+      repo: "web",
+      originType: "source",
+    });
+  });
+
+  it("omits repo from the wire payload when --repo is not given", async () => {
+    const seen: unknown[] = [];
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      seen.push(JSON.parse(init.body as string));
+      return json({
+        item: { id: "item-4", title: "T", body: "B", state: "on_deck", area: "web", repo: null },
+      });
+    };
+    const { sinks } = streams();
+    await run(["create", "--title", "T", "--body", "B", "--area", "web"], {
+      env,
+      fetch: fetchImpl,
+      streams: sinks,
+    });
+    expect(seen[0]).toEqual({ title: "T", body: "B", area: "web", originType: "source" });
+  });
+
+  it("omits repo from the wire payload when --repo is bare (empty), not just when it's absent", async () => {
+    const seen: unknown[] = [];
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      seen.push(JSON.parse(init.body as string));
+      return json({
+        item: { id: "item-5", title: "T", body: "B", state: "on_deck", area: "web", repo: null },
+      });
+    };
+    const { sinks } = streams();
+    await run(["create", "--title", "T", "--body", "B", "--area", "web", "--repo"], {
+      env,
+      fetch: fetchImpl,
+      streams: sinks,
+    });
+    expect(seen[0]).toEqual({ title: "T", body: "B", area: "web", originType: "source" });
+  });
 });
 
 describe("update", () => {
-  it("needs an id", async () => {
-    const { sinks } = streams();
+  it("needs an id, with the exact message — not just whatever exit code a bypassed guard happens to produce", async () => {
+    const { err, sinks } = streams();
     const code = await run(["update"], { env, fetch: neverCalled(), streams: sinks });
     expect(code).toBe(1);
+    expect(err.join("")).toContain("Error: `task update` needs an id.");
   });
 
   it("refuses an edit with nothing to change, without calling the network", async () => {
@@ -186,6 +287,65 @@ describe("update", () => {
     };
     const { sinks } = streams();
     const code = await run(["update", "item-1", "--title", "Renamed"], {
+      env,
+      fetch: fetchImpl,
+      streams: sinks,
+    });
+    expect(code).toBe(0);
+    expect(seen[0]).toEqual({ title: "Renamed" });
+  });
+
+  it("treats a bare --title (empty string) as no edit at all", async () => {
+    const { err, sinks } = streams();
+    const code = await run(["update", "item-1", "--title"], {
+      env,
+      fetch: neverCalled(),
+      streams: sinks,
+    });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("nothing to update");
+  });
+
+  it("forwards --body on its own, unlike title/repo/area it has no empty-string check", async () => {
+    const seen: unknown[] = [];
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      seen.push(JSON.parse(init.body as string));
+      return json({ item: { id: "item-1", state: "on_deck", area: "web" } });
+    };
+    const { sinks } = streams();
+    const code = await run(["update", "item-1", "--body", "new body"], {
+      env,
+      fetch: fetchImpl,
+      streams: sinks,
+    });
+    expect(code).toBe(0);
+    expect(seen[0]).toEqual({ body: "new body" });
+  });
+
+  it("forwards --repo and --area edits on the wire", async () => {
+    const seen: unknown[] = [];
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      seen.push(JSON.parse(init.body as string));
+      return json({ item: { id: "item-1", state: "on_deck", area: "infra", repo: "web" } });
+    };
+    const { sinks } = streams();
+    const code = await run(["update", "item-1", "--repo", "web", "--area", "infra"], {
+      env,
+      fetch: fetchImpl,
+      streams: sinks,
+    });
+    expect(code).toBe(0);
+    expect(seen[0]).toEqual({ repo: "web", area: "infra" });
+  });
+
+  it("excludes a bare (empty) --repo and --area from the wire, keeping only the real edit", async () => {
+    const seen: unknown[] = [];
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      seen.push(JSON.parse(init.body as string));
+      return json({ item: { id: "item-1", title: "Renamed", state: "on_deck", area: "web" } });
+    };
+    const { sinks } = streams();
+    const code = await run(["update", "item-1", "--title", "Renamed", "--repo", "--area"], {
       env,
       fetch: fetchImpl,
       streams: sinks,
@@ -218,6 +378,56 @@ describe("list", () => {
     expect(new URL(seen[0]!).searchParams.get("state")).toBe("executing");
   });
 
+  it("forwards --repo and --area to the query string, and sends no state without --status", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      return json({ items: [], nextCursor: null });
+    };
+    const { sinks } = streams();
+    await run(["list", "--repo", "web", "--area", "infra"], {
+      env,
+      fetch: fetchImpl,
+      streams: sinks,
+    });
+    const params = new URL(seen[0]!).searchParams;
+    expect(params.get("repo")).toBe("web");
+    expect(params.get("area")).toBe("infra");
+    expect(params.has("state")).toBe(false);
+  });
+
+  it("sends no filters at all for bare (empty) --status, --repo and --area", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      return json({ items: [], nextCursor: null });
+    };
+    const { sinks } = streams();
+    const code = await run(["list", "--status", "--repo", "--area"], {
+      env,
+      fetch: fetchImpl,
+      streams: sinks,
+    });
+    expect(code).toBe(0);
+    const params = new URL(seen[0]!).searchParams;
+    expect(params.has("state")).toBe(false);
+    expect(params.has("repo")).toBe(false);
+    expect(params.has("area")).toBe(false);
+  });
+
+  it("surfaces a server refusal by its message and exits 1, rather than printing an empty task list", async () => {
+    const fetchImpl = async () =>
+      json(
+        { error: { code: "internal", message: "The database is unreachable.", fields: [] } },
+        500,
+      );
+    const { out, err, sinks } = streams();
+    const code = await run(["list"], { env, fetch: fetchImpl, streams: sinks });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("Error: The database is unreachable.");
+    expect(out).toEqual([]);
+  });
+
   it("prints { tasks: [...] } with each item's status translated", async () => {
     const fetchImpl = async () =>
       json({
@@ -247,9 +457,15 @@ describe("status — the honesty test", () => {
     expect(err.join("")).toContain('unknown status "bogus"');
   });
 
-  it("needs both an id and a status", async () => {
-    const { sinks } = streams();
-    expect(await run(["status", "item-1"], { env, fetch: neverCalled(), streams: sinks })).toBe(1);
+  it("needs both an id and a status, with the exact message", async () => {
+    // Exact message, not just the exit code: a mutant that lets this guard
+    // fall through still reaches `isShimStatus(undefined)`, which is also
+    // falsy and also exits 1 — with a *different* message ("unknown status
+    // ...") that only a message assertion, not an exit code, distinguishes.
+    const { err, sinks } = streams();
+    const code = await run(["status", "item-1"], { env, fetch: neverCalled(), streams: sinks });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("Error: `task status` needs an id and a status.");
   });
 
   it("sends exactly { to: <mapped state> }, nothing invented to satisfy a guard", async () => {
