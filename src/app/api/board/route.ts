@@ -23,6 +23,12 @@ export async function GET(request: Request) {
   if (repo !== null) input.repo = repo;
   const kind = url.searchParams.get("kind");
   if (kind !== null) input.kind = kind;
+  const state = url.searchParams.get("state");
+  if (state !== null) input.state = state;
+  const assignee = url.searchParams.get("assignee");
+  if (assignee !== null) input.assignee = assignee;
+  const search = url.searchParams.get("search");
+  if (search !== null) input.search = search;
 
   try {
     const board = await service.call("get_board", input, { caller: { transport: "http" } });

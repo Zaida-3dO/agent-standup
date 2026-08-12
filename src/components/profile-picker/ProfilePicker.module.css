@@ -1,0 +1,94 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 12, 0.85);
+  z-index: 100;
+}
+
+.panel {
+  position: relative;
+  max-width: 32rem;
+  width: calc(100% - 2rem);
+  padding: 2rem;
+  border-radius: 0.75rem;
+  background: #16161a;
+  color: #f4f4f5;
+  text-align: center;
+}
+
+.heading {
+  margin: 0 0 1.5rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 7rem;
+  padding: 0.75rem 0.5rem;
+  border: 2px solid #3f3f46;
+  border-radius: 0.5rem;
+  background: #1f1f24;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tile:hover,
+.tile:focus-visible {
+  border-color: #a1a1aa;
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 999px;
+  background: #3f3f46;
+  font-size: 1.5rem;
+}
+
+.name {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  color: #a1a1aa;
+}

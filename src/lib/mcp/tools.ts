@@ -76,6 +76,10 @@ export interface McpToolDescriptor {
  * `tools/list`, and goes red if a future SDK identifies object schemas
  * differently.
  *
+ * The shape has to be found through `shapeOf` below, not read off `schema`
+ * directly — see that function's own comment (MILESTONES.md #32) for why an
+ * operation validated with `.refine()` has no `.shape` of its own to find.
+ *
  * The one cost, stated plainly: on the *success* path the input is parsed
  * twice — once here and once inside `service.call` — so a schema whose
  * `.default()` is not idempotent (a timestamp, a random identifier) would
@@ -86,7 +90,7 @@ export interface McpToolDescriptor {
  */
 export function advertisedSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
   const permissive = schema.catch((ctx: { input: unknown }) => ctx.input) as z.ZodTypeAny;
-  const shape = (schema as { shape?: unknown }).shape;
+  const shape = shapeOf(schema);
   if (shape !== undefined) {
     Object.defineProperty(permissive, "shape", {
       get: () => shape,
@@ -95,6 +99,36 @@ export function advertisedSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
     });
   }
   return permissive;
+}
+
+/**
+ * An object schema's shape, unwrapping `ZodEffects` to find it.
+ *
+ * `create_item` and `complete_item` (MILESTONES.md #26, #27) each validate a
+ * cross-field rule with `.refine()` after `.strict()` — `create_item`
+ * requires `originPersonId` alongside `originType: "person"`; `complete_item`
+ * forbids smuggling a second `summary` through `fields`. `.refine()` wraps
+ * the object in `ZodEffects`, a type with no `.shape` of its own, so reading
+ * `schema.shape` directly finds nothing for either — and the SDK falls back
+ * to advertising `{}`: no properties, no required list. For `complete_item`
+ * that isn't merely a smaller tool description, it defeats the reason the
+ * tool exists as its own operation at all — SCHEMA.md §18: "Separate from
+ * `transition` on purpose — the required summary shape is in this tool's
+ * schema, where the agent can see it."
+ *
+ * `ZodEffects._def.schema` is the schema being refined — always the object
+ * whose shape the caller actually wants advertised, whatever kind of effect
+ * wraps it (`.refine()`, `.superRefine()`, `.transform()` all use the same
+ * `ZodEffects` wrapper around the same field, and MCP only ever needs the
+ * *input* shape, not what a transform produces). Recurses rather than
+ * unwrapping once, so a schema refined more than once is found the same way
+ * a singly-refined one is.
+ */
+function shapeOf(schema: z.ZodTypeAny): unknown {
+  const direct = (schema as { shape?: unknown }).shape;
+  if (direct !== undefined) return direct;
+  const inner = (schema as { _def?: { schema?: z.ZodTypeAny } })._def?.schema;
+  return inner ? shapeOf(inner) : undefined;
 }
 
 /**

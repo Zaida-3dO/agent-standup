@@ -70,6 +70,8 @@ export {
 
 export { capabilityDocSchema } from "./capability-doc";
 
+export { hookPatternListSchema, type HookPatternList } from "./hook-pattern";
+
 export {
   RetiredEnvVarError,
   checkFormerEnv,

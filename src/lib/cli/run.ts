@@ -32,6 +32,7 @@ import {
 import type { Binding } from "./binding";
 import { doctorReport } from "./doctor";
 import { runInitCommand } from "./init";
+import { runMcpStdio } from "./mcp";
 
 /** What one run produced: the envelope, the exit code, and how to render it. */
 export interface RunOutcome {
@@ -145,6 +146,15 @@ export async function runCli(
   // exist. See `src/lib/cli/init/index.ts` for the command.
   if (words[0] === "init") {
     return runInitCommand({ flags, env: options.env, file: options.file });
+  }
+
+  // `mcp` is the other command that does not go through `resolution` above:
+  // it is not one operation call but a long-lived connection, and it is
+  // `--direct`-only by design (`./mcp.ts`'s own header), so it resolves its
+  // own binding rather than reusing the identity/`--direct`-flag resolution
+  // built for the noun/verb commands below.
+  if (words[0] === "mcp") {
+    return runMcpStdio({ env: options.env, file: options.file });
   }
 
   if (!resolution.ok) {

@@ -16,10 +16,14 @@
 import type { Rejection, ServiceErrorCode } from "@/lib/service";
 import { SERVICE_ERROR_CODES } from "@/lib/service";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
+import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
 
 /** How one operation is expressed as an HTTP request. */
 export interface RouteSpec {
-  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
+  // "PUT" added by row #83 for `PUT /settings/{key}` (SCHEMA.md §19) — the
+  // first route this table needs it for; `create_item`/`update_item`/etc.
+  // stay on the four already listed.
+  readonly method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   /**
    * Builds the path and the body from the operation's input.
    *
@@ -101,6 +105,68 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     request: (input) => ({ path: `/api/items${queryString(input)}` }),
     unwrap: (body) => body,
   },
+  // Row #83 — `standup config`. `src/app/api/settings/**` returns every
+  // settings operation's result unwrapped already (SCHEMA.md §19), so
+  // `unwrap` is the identity for all four — the same shape `direct` returns.
+  get_settings: {
+    method: "GET",
+    request: () => ({ path: "/api/settings" }),
+    unwrap: (body) => body,
+  },
+  get_setting: {
+    method: "GET",
+    request: (input) => ({
+      path: `/api/settings/${encodeURIComponent(String(input.key ?? ""))}`,
+    }),
+    unwrap: (body) => body,
+  },
+  put_setting: {
+    method: "PUT",
+    request: (input) => {
+      const { key, ...rest } = input;
+      return { path: `/api/settings/${encodeURIComponent(String(key ?? ""))}`, body: rest };
+    },
+    unwrap: (body) => body,
+  },
+  delete_setting: {
+    method: "DELETE",
+    request: (input) => ({
+      path: `/api/settings/${encodeURIComponent(String(input.key ?? ""))}`,
+    }),
+    unwrap: (body) => body,
+  },
+  transition_item: {
+    method: "POST",
+    request: (input) => {
+      // `dryRun` travels as the `?dry_run=` query parameter the route reads
+      // (SCHEMA.md §19), not in the body — mirroring how `id` above always
+      // moves from the operation's flat input into the path. Only ever set
+      // to `true`; the route treats anything else, including the parameter
+      // being absent, as a real move.
+      const { id, dryRun, ...rest } = input;
+      const query = dryRun === true ? "?dry_run=true" : "";
+      return {
+        path: `/api/items/${encodeURIComponent(String(id ?? ""))}/transition${query}`,
+        body: rest,
+      };
+    },
+    // The route answers `{ item, outcome }` for a real move and `{ outcome }`
+    // alone for a rehearsal (`transition/route.ts`'s `RehearsalRollback`
+    // unwrapping) — the same two shapes the `direct` binding's own
+    // rehearsal handling produces. Returning the body unchanged, rather
+    // than pulling one key out the way the single-item routes above do, is
+    // what keeps those two shapes identical between bindings.
+    unwrap: (body) => body,
+  },
+  complete_item: {
+    method: "POST",
+    request: (input) => {
+      const { id, ...rest } = input;
+      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}/complete`, body: rest };
+    },
+    unwrap: (body) => property(body, "item"),
+  },
+  ...OWNERSHIP_HTTP_ROUTES,
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */

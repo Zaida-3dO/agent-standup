@@ -23,6 +23,9 @@ export type { ParsedArgs, ParseResult } from "./args";
 export { ALIASES, COMMANDS, identityFlags, lookupCommand, nouns, verbsFor } from "./commands";
 export type { CommandMatch, CommandSpec, LookupResult } from "./commands";
 
+// Row #83 — `standup config`.
+export { CONFIG_COMMANDS, parseSettingValue } from "./config-command";
+
 export { describeResolution, firstDefined, resolveConfig } from "./config";
 export type {
   CliEnvironment,
@@ -43,6 +46,9 @@ export { configFilePath, readConfigFile, writeConfigFile } from "./config-file";
 
 export { DEFAULT_APP_ROLE, DEFAULT_DATABASE_NAME, resolveInitSource } from "./init/resolve";
 export type { InitFlags, InitSource } from "./init/resolve";
+
+export { runMcpStdio } from "./mcp";
+export type { McpStdioOutcome, RunMcpStdioOptions } from "./mcp";
 
 export { helpText, runCli, runCommand } from "./run";
 export type { RunCliOptions, RunOutcome } from "./run";
