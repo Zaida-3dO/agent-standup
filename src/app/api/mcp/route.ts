@@ -13,6 +13,7 @@
 // than a list maintained for a test."
 import { ADAPTER_REGISTRY } from "@/lib/adapters";
 import { handleMcpRequest } from "@/lib/mcp/http";
+import { withRehearsalUnwrapping } from "@/lib/mcp";
 import { service } from "@/lib/service/live";
 
 /** The registry entry this route serves. Exported so a test can assert the mount. */
@@ -28,9 +29,18 @@ export const MCP_HTTP_ADAPTER = ADAPTER_REGISTRY.mcp_http;
  * which is a better answer than a 404 from a route that declined to
  * implement them, because a client can tell "this server is stateless"
  * apart from "this endpoint does not exist".
+ *
+ * The call handed to the core is wrapped with `withRehearsalUnwrapping`
+ * (MILESTONES.md #32) — the MCP equivalent of the transition route's own
+ * `RehearsalRollback` catch, applied here because this is this transport's
+ * mount point, the same way the web API does its own unwrapping in its own
+ * route rather than in a shared renderer.
  */
 async function serve(request: Request): Promise<Response> {
-  return handleMcpRequest(request, (name, input, options) => service.call(name, input, options));
+  return handleMcpRequest(
+    request,
+    withRehearsalUnwrapping((name, input, options) => service.call(name, input, options)),
+  );
 }
 
 export const POST = serve;

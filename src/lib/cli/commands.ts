@@ -14,7 +14,7 @@
 // `<noun> <verb>`, resolved before lookup, so an aliased command and its long
 // form produce the identical `CommandMatch` — not merely an equivalent one.
 import { malformed, type ErrorEnvelope } from "./envelope";
-import { stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
 import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
 
 /** What building an input produced. */
@@ -62,6 +62,29 @@ function flagsToInput(flags: ParsedArgs["flags"]): InputResult {
 }
 
 /**
+ * Reads a flag carrying a JSON-encoded value — row #81's answer for the one
+ * shape `flagsToInput` above cannot express: a nested object, such as the
+ * guard-required `fields` on a transition or the summary a completion
+ * requires. Refusing invalid JSON here is the same kind of thing this
+ * file's header calls out as fair to check without the schema — a string
+ * that is not JSON at all is not a question the operation's schema could
+ * ever be asked to answer.
+ */
+function jsonFlag(
+  flags: ParsedArgs["flags"],
+  name: string,
+): { ok: true; value?: unknown } | { ok: false; envelope: ErrorEnvelope } {
+  const raw = stringFlag(flags, name);
+  if (!raw.ok) return raw;
+  if (raw.value === undefined) return { ok: true };
+  try {
+    return { ok: true, value: JSON.parse(raw.value) };
+  } catch {
+    return { ok: false, envelope: malformed(`--${name} must be valid JSON.`, [name]) };
+  }
+}
+
+/**
  * The commands this row ships.
  *
  * Row #79 is the foundation: the entry point, the dispatch, the bindings and
@@ -100,6 +123,87 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "create_item",
     summary: "Create an item.",
     buildInput: (_rest, flags) => flagsToInput(flags),
+  },
+  {
+    noun: "item",
+    verb: "update",
+    operation: "update_item",
+    summary: "Edit an item's non-state fields.",
+    buildInput: (rest, flags) => {
+      const id = rest[0];
+      if (id === undefined) {
+        return {
+          ok: false,
+          envelope: malformed("`standup item update` needs an item id.", ["id"]),
+        };
+      }
+      const built = flagsToInput(flags);
+      if (!built.ok) return built;
+      return { ok: true, input: { id, ...(built.input as Record<string, unknown>) } };
+    },
+  },
+  {
+    noun: "item",
+    verb: "transition",
+    operation: "transition_item",
+    summary:
+      "Move an item to a new state. --dry-run previews the outcome, including a rejection, without writing (routes to the service layer's rehearsal mode — MILESTONES.md #27).",
+    buildInput: (rest, flags) => {
+      const id = rest[0];
+      if (id === undefined) {
+        return {
+          ok: false,
+          envelope: malformed("`standup item transition` needs an item id.", ["id"]),
+        };
+      }
+      const to = stringFlag(flags, "to");
+      if (!to.ok) return to;
+      if (to.value === undefined) {
+        return { ok: false, envelope: malformed("`standup item transition` needs --to.", ["to"]) };
+      }
+      const dryRun = booleanFlag(flags, "dry-run");
+      if (!dryRun.ok) return dryRun;
+      const fields = jsonFlag(flags, "fields");
+      if (!fields.ok) return fields;
+
+      const input: Record<string, unknown> = { id, to: to.value, dryRun: dryRun.value };
+      if (fields.value !== undefined) input.fields = fields.value;
+      return { ok: true, input };
+    },
+  },
+  {
+    noun: "item",
+    verb: "complete",
+    operation: "complete_item",
+    summary: "Finish an item: move it into a completed state and record the closing summary.",
+    buildInput: (rest, flags) => {
+      const id = rest[0];
+      if (id === undefined) {
+        return {
+          ok: false,
+          envelope: malformed("`standup item complete` needs an item id.", ["id"]),
+        };
+      }
+      const to = stringFlag(flags, "to");
+      if (!to.ok) return to;
+      if (to.value === undefined) {
+        return { ok: false, envelope: malformed("`standup item complete` needs --to.", ["to"]) };
+      }
+      const summary = jsonFlag(flags, "summary");
+      if (!summary.ok) return summary;
+      if (summary.value === undefined) {
+        return {
+          ok: false,
+          envelope: malformed("`standup item complete` needs --summary (JSON).", ["summary"]),
+        };
+      }
+      const fields = jsonFlag(flags, "fields");
+      if (!fields.ok) return fields;
+
+      const input: Record<string, unknown> = { id, to: to.value, summary: summary.value };
+      if (fields.value !== undefined) input.fields = fields.value;
+      return { ok: true, input };
+    },
   },
   {
     noun: "service",
