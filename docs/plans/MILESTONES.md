@@ -138,7 +138,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **30** | MCP adapter — a transport-agnostic server core (tool registration and handlers calling the service layer), wired to streamable HTTP. **Stateless.** The stdio wiring is #84 | 26 | `done` |
 | **31** | MCP read tools: get item, list items, my work, orientation | 28, 30 | `done` |
 | **32** | MCP write tools: create, update, transition, complete | 27, 30 | |
-| **33** | MCP session tools: claim, release, heartbeat, checkpoint, note | 29, 30 | |
+| **33** | MCP session tools: claim, release, heartbeat, checkpoint, note | 29, 30 | `done` |
 | **34** | Crew naming: hand out a name, assign it, retire it | 9, 14 | `done` |
 | **78** | Settings service and its routes — `GET`, `PATCH` (a map, one transaction), `PUT`/`DELETE` for the one-key case — with write-time validation including the capability documents, the `setting-change` audit event, and the revision bump in the same transaction | 20, 77 | `done` |
 | **79** | **Command-line foundation.** The `standup` entry point, `<noun> <verb>` dispatch with aliases, both bindings (`direct` over the service layer, `http` over the API) behind one interface, `--json` envelope and exit codes, identity resolution, configuration precedence, preflight, and `standup doctor` — which also re-checks configured capability paths locally | 14, 26 | `done` |

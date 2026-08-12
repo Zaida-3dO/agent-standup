@@ -50,6 +50,49 @@ export interface RenderedRejection extends Rejection {
 }
 
 /**
+ * Recursively converts every `bigint` in `value` to its decimal string.
+ *
+ * `checkpoint` and `note` (`src/lib/service/operations/checkpoint.ts`,
+ * `.../note.ts`) return `AppendedEvent` (`src/lib/events.ts`) unmapped —
+ * `id`/`txId` arrive as real `bigint`, chosen there because Postgres's
+ * `bigserial`/`xid8` values do not fit `number` without precision loss at
+ * realistic table sizes. `JSON.stringify` throws on a raw `bigint` outright
+ * rather than truncating it, so without this step both `toolSuccess`'s own
+ * `text` field *and* the SDK's later serialisation of `structuredContent`
+ * would fail — turning a checkpoint or note that was **already committed**
+ * into a call the caller is told failed. HTTP's adapter carries the same fix
+ * for the same two operations, once, at the route
+ * (`serializeAppendedEvent`, `src/app/api/_shared/respond.ts`); MCP has one
+ * rendering function for every operation rather than one route per
+ * operation, so the fix belongs here instead, generically, rather than as a
+ * per-tool special case this core has no mechanism to express (`tools.ts`:
+ * "derived, not listed" — and `tests/mcp-adapter-mount.test.ts` asserts no
+ * operation name is ever hand-written into this directory).
+ *
+ * Stringified, not left numeric, for the same reason `serializeAppendedEvent`
+ * gives: a bigint serialised as a JSON number round-trips through a client's
+ * `JSON.parse` as an imprecise `number`, the exact loss the `bigint` type
+ * exists to avoid.
+ *
+ * A `Date` is passed through untouched rather than walked as a plain object
+ * — `Object.entries` on a `Date` finds no own enumerable properties, so
+ * walking one would silently replace it with `{}` and JSON.stringify's own
+ * `Date.prototype.toJSON` (already relied on everywhere else here) would
+ * never run.
+ */
+function bigintSafe(value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map(bigintSafe);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, bigintSafe(entry)]),
+    );
+  }
+  return value;
+}
+
+/**
  * A successful call.
  *
  * The value is rendered as JSON text *and* as `structuredContent`, because
@@ -64,8 +107,9 @@ export interface RenderedRejection extends Rejection {
  * protocol error rather than an empty answer.
  */
 export function toolSuccess(value: unknown): ToolResult {
-  const text = value === undefined ? "null" : JSON.stringify(value, null, 2);
-  const structuredContent = isPlainRecord(value) ? value : { result: value ?? null };
+  const safe = bigintSafe(value);
+  const text = safe === undefined ? "null" : JSON.stringify(safe, null, 2);
+  const structuredContent = isPlainRecord(safe) ? safe : { result: safe ?? null };
   return {
     content: [{ type: "text", text }],
     structuredContent,
