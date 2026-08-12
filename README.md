@@ -37,6 +37,22 @@ npx prisma generate
 npm run dev                   # http://localhost:3000
 ```
 
+### Configuration
+
+Only what must be known before the process can reach a database is an
+environment variable — `DATABASE_URL`, plus `HOSTNAME` and `PORT` for what
+interface and port the server listens on. `.env.example` lists these and the
+handful of others that are genuinely bootstrap (the local Postgres readiness
+wait, the disposable shadow database the migration drift check uses).
+
+Everything else is a setting: typed, defaulted in code, and readable and
+writable once the app is running, from `/settings` in the front end or
+`standup config set` on the command line. A fresh database boots fully
+working with no settings configured at all — each one has a default. Setting
+an old environment variable that has moved into settings does nothing; a
+startup check catches this — it fails immediately in development, and logs
+loudly (without stopping the process) in production.
+
 Useful scripts:
 
 | Command                           | What it does                                                                                                                    |

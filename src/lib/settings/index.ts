@@ -69,6 +69,13 @@ export {
 } from "./budget-windows";
 
 export {
+  RetiredEnvVarError,
+  checkFormerEnv,
+  findFormerEnvHits,
+  type FormerEnvHit,
+} from "./former-env-check";
+
+export {
   effectiveBudgetWindows,
   effectiveSourceGlobs,
   readMachineSourceGlobs,

@@ -32,16 +32,18 @@ services:
       - "${APP_PORT:-3000}:3000"
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
-      NOTIFY_DOC: ${NOTIFY_DOC:-}
-      VISUAL_REVIEW_DOC: ${VISUAL_REVIEW_DOC:-}
+      # Everything the application reads once it is running is a database
+      # setting, configured via /settings or `standup config set` — not an
+      # environment variable. What's left here is only what must be known
+      # before the process can reach the database (see SCHEMA.md §17).
       # How long scripts/entrypoint.mjs waits for Postgres to accept a query
       # before giving up, and how often it retries. Given an explicit default
       # here (rather than left to fall through to entrypoint.mjs's own) so
-      # the knob is discoverable without reading the code — and given a
-      # numeric default rather than `${VAR:-}`, unlike NOTIFY_DOC above:
-      # entrypoint.mjs treats an explicitly-set-but-invalid value (including
-      # "") as a boot-time configuration error, not a silent fallback, so an
-      # unset var must resolve to a real number here, never to "".
+      # the knob is discoverable without reading the code — given a numeric
+      # default rather than `${VAR:-}` because entrypoint.mjs treats an
+      # explicitly-set-but-invalid value (including "") as a boot-time
+      # configuration error, not a silent fallback, so an unset var must
+      # resolve to a real number here, never to "".
       DB_WAIT_TIMEOUT_SECONDS: ${DB_WAIT_TIMEOUT_SECONDS:-180}
       DB_WAIT_INTERVAL_SECONDS: ${DB_WAIT_INTERVAL_SECONDS:-2}
       TZ: ${TZ:-UTC}
