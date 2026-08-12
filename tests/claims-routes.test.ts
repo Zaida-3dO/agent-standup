@@ -107,6 +107,18 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
       }),
     );
     expect(response.status).toBe(400);
+    // Mutation evidence: `_shared/respond.ts`'s invalidJsonResponse literal
+    // — a mutant that changed `code`, `message` or `fields` would still
+    // return 400 (caught above), but only this body assertion catches a
+    // change to the envelope's own content.
+    const payload = (await response.json()) as {
+      error: { code: string; message: string; fields: string[] };
+    };
+    expect(payload.error).toEqual({
+      code: "invalid_input",
+      message: "Request body must be valid JSON.",
+      fields: [],
+    });
   });
 
   it("POST /api/claims returns 409 (conflict) for a second orchestrator, not 500", async () => {
@@ -214,6 +226,11 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
       }),
     );
     expect(response.status).toBe(200);
+    // Mutation evidence: `NextResponse.json({ assignment })` — a mutant
+    // that emptied the response body would still return 200 (caught
+    // above) but the `assignment` key would be missing.
+    const payload = (await response.json()) as { assignment: { sessionId: string } };
+    expect(payload.assignment.sessionId).toBe("beat-s1");
   });
 
   it("POST /api/claims/heartbeat returns 409 for a session holding nothing", async () => {

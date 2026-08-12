@@ -160,6 +160,40 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("invalid_input");
     });
+
+    it("passes every optional field through to the assignment, not just the required ones", async () => {
+      // Mutation evidence: claim.ts delegates to claimItem with each
+      // optional field written `input.x ?? null`. A mutant that changes any
+      // one of those to `input.x && null` still typechecks and passes every
+      // OTHER test here (all of which omit the optional fields, so `?? null`
+      // and `&& null` agree on undefined), but it silently drops a real,
+      // truthy value — exactly what this test exists to catch.
+      const itemId = await seedItem();
+      const assignment = (await runtime.call(
+        "claim",
+        claimInput(itemId, {
+          parentSessionId: "parent-s1",
+          pid: 4242,
+          branch: "feature/x",
+          worktree: "/tmp/wt-x",
+          model: "claude-sonnet-5",
+          effort: "medium",
+        }),
+      )) as {
+        parentSessionId: string | null;
+        pid: number | null;
+        branch: string | null;
+        worktree: string | null;
+        model: string | null;
+        effort: string | null;
+      };
+      expect(assignment.parentSessionId).toBe("parent-s1");
+      expect(assignment.pid).toBe(4242);
+      expect(assignment.branch).toBe("feature/x");
+      expect(assignment.worktree).toBe("/tmp/wt-x");
+      expect(assignment.model).toBe("claude-sonnet-5");
+      expect(assignment.effort).toBe("medium");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -185,14 +219,27 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
       expect(Number(rows[0]?.count ?? 1n)).toBe(0);
     });
 
-    it("appends a release event in the same transaction", async () => {
+    it("appends a release event in the same transaction, with the assignment's role and holder in the payload", async () => {
       const itemId = await seedItem();
-      const assignment = (await runtime.call("claim", claimInput(itemId))) as { id: string };
+      const assignment = (await runtime.call(
+        "claim",
+        claimInput(itemId, { role: "reviewer", holderId: "crew-member" }),
+      )) as { id: string };
       await runtime.call("release", { itemId, sessionId: "s1" });
 
       const events = await prisma.event.findMany({ where: { itemId, type: "release" } });
       expect(events).toHaveLength(1);
       expect(events[0]?.assignmentId).toBe(assignment.id);
+      // Mutation evidence: the payload object literal at release.ts's
+      // appendEvent call (`{ assignmentId, role, holderId }`) — a mutant
+      // that replaced it with `{}` would leave `assignmentId` (asserted
+      // above, via the top-level column) untouched but silently drop
+      // `role`/`holderId` from the payload, which nothing else here checks.
+      expect(events[0]?.payload).toEqual({
+        assignmentId: assignment.id,
+        role: "reviewer",
+        holderId: "crew-member",
+      });
     });
 
     it("refuses to release a session that holds nothing on this item", async () => {
@@ -201,6 +248,7 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
         .call("release", { itemId, sessionId: "ghost" })
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("conflict");
+      expect((error as { fields: string[] }).fields).toEqual(["itemId", "sessionId"]);
     });
 
     it("refuses to release an ALREADY-released assignment (double release)", async () => {
@@ -299,6 +347,7 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
         .call("heartbeat", { itemId, sessionId: "ghost" })
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("conflict");
+      expect((error as { fields: string[] }).fields).toEqual(["itemId", "sessionId"]);
     });
 
     it("refuses a heartbeat after the session has released", async () => {
@@ -352,6 +401,7 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
         .call("checkpoint", { itemId, sessionId: "ghost", body: "x" })
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("conflict");
+      expect((error as { fields: string[] }).fields).toEqual(["itemId", "sessionId"]);
     });
 
     it("two agents on the same item get INDEPENDENT checkpoint history (per-agent, not just per-item)", async () => {
@@ -439,6 +489,11 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
     });
 
     it("a sessionId that holds nothing live still succeeds — a note needs no claim", async () => {
+      // Mutation evidence: `sessionId: input.sessionId ?? null` on the
+      // event's actor — a mutant that changed `??` to `&&` still passes an
+      // undefined-sessionId call (every OTHER test path) but silently drops
+      // a real sessionId here, since `"unrelated-session" && null` is
+      // `null`. The sessionId assertion below is what catches that.
       const itemId = await seedItem();
       const event = (await runtime.call("note", {
         itemId,
@@ -449,6 +504,7 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
 
       const rows = await prisma.event.findMany({ where: { itemId, type: "note" } });
       expect(rows[0]?.assignmentId).toBeNull();
+      expect(rows[0]?.sessionId).toBe("unrelated-session");
     });
 
     it("refuses a note on a non-existent item as not_found", async () => {
@@ -456,6 +512,7 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
         .call("note", { itemId: "no-such-item", body: "x" })
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("not_found");
+      expect((error as { fields: string[] }).fields).toEqual(["itemId"]);
     });
 
     it("rejects an empty note body", async () => {
