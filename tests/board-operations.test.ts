@@ -393,9 +393,14 @@ describeIfDb("get_board against Postgres", () => {
     });
 
     it("state filter genuinely EXCLUDES a task in a different state", async () => {
-      const executing = await createItem({ area: "board-filter-state" });
+      // A root item (no parentId) is a PROJECT (kind derived from depth,
+      // create-item.ts) — the state filter excludes those by design (see
+      // the next test), so both items here must be TASKS under a project,
+      // or this would trivially pass by excluding both, not by narrowing.
+      const project = await createItem({ area: "board-filter-state" });
+      const executing = await createItem({ area: "board-filter-state", parentId: project.id });
       await setState(executing.id, "executing");
-      const blocked = await createItem({ area: "board-filter-state" });
+      const blocked = await createItem({ area: "board-filter-state", parentId: project.id });
       await setState(blocked.id, "blocked");
 
       const board = (await runtime.call("get_board", {
@@ -562,26 +567,37 @@ describeIfDb("get_board against Postgres", () => {
         // Three items, each matching exactly two of the three filters, plus
         // one matching all three — a test that only ANDs two dimensions
         // could still pass if the implementation quietly ORed a third in.
+        // Each is a TASK under a project, not a bare root item — a root
+        // item is itself a project (kind derived from depth), and the
+        // state filter deliberately excludes projects (see the dedicated
+        // test above), which would make this test pass by exclusion rather
+        // than by genuinely narrowing on all three dimensions.
+        const project = await createItem({ area: "board-compose-target" });
         const target = await createItem({
           area: "board-compose-target",
+          parentId: project.id,
           priority: "P0",
         });
         await setState(target.id, "blocked");
 
         const wrongPriority = await createItem({
           area: "board-compose-target",
+          parentId: project.id,
           priority: "P2",
         });
         await setState(wrongPriority.id, "blocked");
 
         const wrongState = await createItem({
           area: "board-compose-target",
+          parentId: project.id,
           priority: "P0",
         });
         await setState(wrongState.id, "executing");
 
+        const otherAreaProject = await createItem({ area: "board-compose-other-area" });
         const wrongArea = await createItem({
           area: "board-compose-other-area",
+          parentId: otherAreaProject.id,
           priority: "P0",
         });
         await setState(wrongArea.id, "blocked");

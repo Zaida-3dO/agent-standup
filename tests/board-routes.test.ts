@@ -169,12 +169,16 @@ describeIfDb("board HTTP route against Postgres", () => {
   });
 
   it("GET /board?state= excludes an item in a different state, over the actual query-string parsing", async () => {
-    const blocked = await createItem({ area: "board-route-state" });
+    // A root item (no parentId) is a PROJECT — the state filter deliberately
+    // excludes those, so both items here must be tasks under a project or
+    // this would pass by excluding both rather than by narrowing.
+    const project = await createItem({ area: "board-route-state" });
+    const blocked = await createItem({ area: "board-route-state", parentId: project.id });
     await prisma.$executeRawUnsafe(
       `UPDATE "Item" SET "state" = 'blocked'::"ItemState" WHERE "id" = $1`,
       blocked.id,
     );
-    await createItem({ area: "board-route-state" }); // stays on_deck
+    await createItem({ area: "board-route-state", parentId: project.id }); // stays on_deck
 
     const response = await boardRoute.GET(
       new Request("http://localhost/api/board?area=board-route-state&state=blocked"),
@@ -211,12 +215,23 @@ describeIfDb("board HTTP route against Postgres", () => {
   });
 
   it("GET /board?state=&priority= composed excludes an item matching only one of the two, over the actual query-string parsing", async () => {
-    const target = await createItem({ area: "board-route-compose", priority: "P1" });
+    // Root items are projects (excluded by the state filter, by design) —
+    // both items here must be tasks under a project.
+    const project = await createItem({ area: "board-route-compose" });
+    const target = await createItem({
+      area: "board-route-compose",
+      parentId: project.id,
+      priority: "P1",
+    });
     await prisma.$executeRawUnsafe(
       `UPDATE "Item" SET "state" = 'paused'::"ItemState" WHERE "id" = $1`,
       target.id,
     );
-    const wrongPriority = await createItem({ area: "board-route-compose", priority: "P3" });
+    const wrongPriority = await createItem({
+      area: "board-route-compose",
+      parentId: project.id,
+      priority: "P3",
+    });
     await prisma.$executeRawUnsafe(
       `UPDATE "Item" SET "state" = 'paused'::"ItemState" WHERE "id" = $1`,
       wrongPriority.id,
