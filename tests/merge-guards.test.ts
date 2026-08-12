@@ -12,8 +12,11 @@ import { randomUUID } from "node:crypto";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { GuardRegistry, applyTransition, rehearseTransition } from "@/lib/service/state-machine";
 import {
+  ALL_GUARDS,
+  MERGE_GUARDS,
   currentReviewRound,
   hasApprovingArtifactAtCurrentRound,
+  hasApprovingArtifactAtCurrentRoundAndTip,
   mergeRequiresApprovingCodeReviewGuard,
   mergeRequiresAuthorisationGuard,
   mergeRequiresCommitGuard,
@@ -172,6 +175,21 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         expect(guard.appliesTo("in_review", "executing")).toBe(false);
       }
     });
+
+    it("MERGE_GUARDS is exactly the four merge guard ids ALL_GUARDS registers for this row — not a fork", () => {
+      // Makes the "against MERGE_GUARDS exactly as ALL_GUARDS registers
+      // them" claim below verifiable rather than asserted only in prose:
+      // MERGE_GUARDS is what several tests in this file register instead of
+      // the full ALL_GUARDS (to avoid tangling with row #21's orthogonal
+      // summary requirement), so this pins that it is not a second,
+      // independently-maintained list that could silently drift from what
+      // guards/index.ts actually installs.
+      const mergeIdsInAllGuards = [...ALL_GUARDS]
+        .map((g) => g.id)
+        .filter((id) => id.startsWith("merge."))
+        .sort();
+      expect([...MERGE_GUARDS].map((g) => g.id).sort()).toEqual(mergeIdsInAllGuards);
+    });
   });
 
   describe("criterion 1 — merge.requires_commit", () => {
@@ -285,6 +303,75 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         kind: "code_review",
         verdict: "approved",
         reviewRound: 2,
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES: approved at the current round, but for a commit a newer, same-round commit has since superseded — round-currency alone is not commit-currency", async () => {
+      // The second composition bug review round 1's fix surfaced: round 1
+      // is approved against commit-a, which is the tip at that moment — but
+      // then a NEW commit (commit-b) lands still at round 1 (nothing bumps
+      // the round). Round-only scoping alone would accept the round-1
+      // approval as "current", even though it names a commit the tip has
+      // moved past and nobody has reviewed commit-b at all.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 120_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-b",
+        reviewRound: 1,
+        createdAt: new Date(),
+      });
+
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+        fields?: readonly string[];
+      };
+      expect(error.guard).toBe("merge.requires_approving_code_review");
+      expect(error.message).toMatch(
+        /not for the current review round \(1\) and tip commit \(commit-b\)/,
+      );
+      expect(error.fields).toEqual(["state"]);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("ALLOWS: approved at the current round AND naming the current tip commit", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(),
       });
       await callTransition(id, "merged", reg);
       expect(await readState(id)).toBe("merged");
@@ -454,6 +541,137 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
+    it("needs_approval: REFUSES when the person's approval is at an EARLIER round than the current one, even though a person approved at some point — round-2 review-1 defect", async () => {
+      // The regression test for the composition bug review round 1 found:
+      // a person approved code_review at round 1; the item was then
+      // re-reviewed and approved again, this time only by an agent, at
+      // round 2 (the current round). `merge.requires_approving_code_review`
+      // is satisfied by the round-2 (agent) approval; before the fix,
+      // `hasPersonApprovedCodeReview` scanned every round and was satisfied
+      // by the round-1 (person) approval — two DIFFERENT artifacts, each
+      // individually satisfying its own guard, letting the item merge with
+      // no human having looked at what actually shipped at round 2.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "person",
+        reviewRound: 1,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "agent",
+        reviewRound: 2,
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        fields?: readonly string[];
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.fields).toEqual(["state"]);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("needs_approval: ALLOWS when the person's approval IS the current round's approval", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "changes_required",
+        createdByType: "person",
+        reviewRound: 1,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "person",
+        reviewRound: 2,
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("needs_approval: REFUSES when the person's approval is at the current round but for a superseded commit — round-currency alone is not commit-currency", async () => {
+      // The second composition bug: a person's approval sits at the
+      // current round, but for a commit a newer, same-round commit has
+      // since superseded. The current round's actual tip-matching approval
+      // is agent-only — so a person having approved *something* at the
+      // current round is not the same as a person having approved what
+      // actually shipped.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-a",
+        createdAt: new Date(Date.now() - 120_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "person",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 90_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-b",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "agent",
+        commitSha: "commit-b",
+        reviewRound: 1,
+        createdAt: new Date(),
+      });
+
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        fields?: readonly string[];
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.fields).toEqual(["state"]);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("needs_approval: ALLOWS when the person's approval matches BOTH the current round and the current tip commit", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-a",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "person",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(),
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
     it("REFUSES a merge_authority value outside the three declared ones — defensive against an enum drift", async () => {
       // Exercised at the guard's own `check()`, not through the database:
       // `mergeAuthority` is a Prisma enum column with only the three
@@ -519,6 +737,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         kind: "code_review",
         verdict: "approved",
         createdByType: "agent",
+        commitSha: "commit-a",
       });
       error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
       expect((error as { guard?: string }).guard).toBe("merge.requires_visual_review");
@@ -539,10 +758,83 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         kind: "code_review",
         verdict: "approved",
         createdByType: "person",
+        commitSha: "commit-a",
         reviewRound: 1,
       });
       await callTransition(id, "merged", reg);
       expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES the review round 1 defect: person-approved at an earlier round, agent-only approved at the current round, commit present — against MERGE_GUARDS exactly as ALL_GUARDS registers them", async () => {
+      // Reproduces review round 1's finding verbatim, against
+      // `MERGE_GUARDS` — the exact four-guard array `ALL_GUARDS`
+      // (`src/lib/service/guards/index.ts`) installs into `guardRegistry`
+      // for this row, not a hand-picked subset built here independently —
+      // so this proves the composed *merge* gate, not just one guard in
+      // isolation. (Not the full `ALL_GUARDS`: that also includes row
+      // #21's `summaries.required_and_valid`, which fires first on
+      // entering `merged` per `runGuards`'s stop-at-first-rejection order
+      // and would mask this scenario behind an unrelated "no summary
+      // supplied" rejection — an orthogonal requirement this test isn't
+      // about.) Before the fix: commit present, round-1 approved by a
+      // person, round-2 approved only by an agent →
+      // `merge.requires_approving_code_review` accepted the round-2
+      // (agent) approval as "the current round's approval", and
+      // `merge.requires_authorisation`'s old `hasPersonApprovedCodeReview`
+      // (unscoped to round) accepted the round-1 (person) approval as
+      // evidence a person approved *something* — two different artifacts,
+      // each satisfying a different guard, and the item merged with no
+      // human ever having reviewed the code that actually shipped at
+      // round 2. `mergeAuthority: needs_approval`, `needsVisualReview:
+      // false` (isolating this to the two guards under test — the visual
+      // gate is covered separately above).
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) {
+        reg.register(guard);
+      }
+      const id = await createTask({
+        state: "in_review",
+        needsVisualReview: false,
+        mergeAuthority: "needs_approval",
+      });
+
+      // A commit lands (the tip). Round 1 is approved by a person against
+      // an EARLIER commit (the item then moves on) — round 2's approval,
+      // by an agent only, is the one that actually matches the tip.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-a",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "person",
+        commitSha: "commit-a",
+        reviewRound: 1,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-b",
+        createdAt: new Date(),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "agent",
+        commitSha: "commit-b",
+        reviewRound: 2,
+      });
+
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
     });
   });
 
@@ -570,6 +862,59 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
       expect(await hasApprovingArtifactAtCurrentRound(prisma, id, "code_review")).toBe(false);
+    });
+
+    it("hasApprovingArtifactAtCurrentRoundAndTip is false when the current-round approval names a commit the tip has moved past", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 120_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-b",
+        reviewRound: 1,
+        createdAt: new Date(),
+      });
+      // Round-only: the round-1 approval IS at the current round (round
+      // never advanced past 1), so this stays true — proving the two
+      // helpers really do answer different questions.
+      expect(await hasApprovingArtifactAtCurrentRound(prisma, id, "code_review")).toBe(true);
+      // Round-and-tip: false, because that same approval names commit-a,
+      // not the current tip (commit-b).
+      expect(await hasApprovingArtifactAtCurrentRoundAndTip(prisma, id, "code_review")).toBe(false);
+    });
+
+    it("hasApprovingArtifactAtCurrentRoundAndTip is true when the current-round approval names the current tip commit", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "commit-a",
+        reviewRound: 1,
+        createdAt: new Date(),
+      });
+      expect(await hasApprovingArtifactAtCurrentRoundAndTip(prisma, id, "code_review")).toBe(true);
     });
   });
 

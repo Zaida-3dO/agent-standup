@@ -51,7 +51,11 @@ export {
   mergeRequiresCommitGuard,
   mergeRequiresVisualReviewGuard,
 } from "./merge";
-export { currentReviewRound, hasApprovingArtifactAtCurrentRound } from "./merge-review-round";
+export {
+  currentReviewRound,
+  hasApprovingArtifactAtCurrentRound,
+  hasApprovingArtifactAtCurrentRoundAndTip,
+} from "./merge-review-round";
 export { SUMMARY_REQUIRED_GUARD_ID, findSimilarityIssues, summaryRequiredGuard } from "./summaries";
 export {
   DEFERRAL_FOLLOW_UP_GUARD_ID,

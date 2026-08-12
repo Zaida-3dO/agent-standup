@@ -13,6 +13,7 @@
 // column, so it earns its own small module rather than overloading
 // `artifact-tip.ts` with a second axis it was never asked to compare on.
 import type { TransactionHandle } from "../context";
+import { currentTipCommitSha } from "../state-machine/guards/artifact-tip";
 
 interface ReviewRoundRow {
   reviewRound: number;
@@ -40,6 +41,7 @@ interface ArtifactRow {
   id: string;
   verdict: string | null;
   reviewRound: number;
+  commitSha: string | null;
 }
 
 /**
@@ -51,6 +53,23 @@ interface ArtifactRow {
  * earlier round is not evidence for the round that's here now, even if
  * nothing about the code changed between rounds — a new round means someone
  * re-requested review, and only a review answering *that* request counts.
+ *
+ * **Round-currency alone is not commit-currency — see
+ * `approvingArtifactAtCurrentRoundAndTip` below, which callers that also
+ * care about the shipped commit should use instead.** Nothing here compares
+ * `commitSha`: `review_round` is bumped by *any* artifact kind landing at a
+ * higher round (this module's own `currentReviewRound` doc — "however
+ * review actually happened, a fresh plan, a code_review, a commit"), so a
+ * new `commit` artifact inserted at the *same* round as an already-approved
+ * `code_review` does not, by itself, make that approval stale by this
+ * function's reading — it is still "at the current round" even though a
+ * newer, unreviewed commit is now the tip. That gap is exactly what
+ * `merge.requires_approving_code_review` in `merge.ts` closes by pairing
+ * this with a tip-commit check, not by widening this function's own
+ * definition of "current round" (round-currency is still a real,
+ * independently useful question — `evidence-at-tip.ts`'s sibling split for
+ * row #17 is the same shape: "was it ever approved" stays separate from "is
+ * it still current").
  */
 export async function hasApprovingArtifactAtCurrentRound(
   db: TransactionHandle,
@@ -61,7 +80,7 @@ export async function hasApprovingArtifactAtCurrentRound(
   const rows = await db.$queryRawUnsafe<ArtifactRow[]>(
     // `$2::"ArtifactKind"` — Postgres infers an enum type for a literal but
     // not for a bind parameter; see artifact-tip.ts's identical comment.
-    `SELECT "id", "verdict", "reviewRound"
+    `SELECT "id", "verdict", "reviewRound", "commitSha"
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
         AND "verdict" = 'approved' AND "reviewRound" = $3
@@ -71,4 +90,46 @@ export async function hasApprovingArtifactAtCurrentRound(
     round,
   );
   return rows.length > 0;
+}
+
+/**
+ * Whether an **approving** artifact of `kind` exists at the item's current
+ * review round **and** names the item's current tip commit — the
+ * conjunction `merge.requires_approving_code_review` actually needs.
+ *
+ * Round-currency and commit-currency are genuinely two different axes (see
+ * `hasApprovingArtifactAtCurrentRound`'s doc), and an approval can satisfy
+ * one without the other: approved at the current round but for an earlier
+ * commit that a newer, still-same-round `commit` artifact has since
+ * superseded. Requiring both closes that gap — the equivalent, for the
+ * round+commit pair, of what `evidence-at-tip.ts` already enforces for
+ * `plan_review` against the tip alone.
+ */
+export async function hasApprovingArtifactAtCurrentRoundAndTip(
+  db: TransactionHandle,
+  itemId: string,
+  kind: string,
+): Promise<boolean> {
+  const round = await currentReviewRound(db, itemId);
+  const rows = await db.$queryRawUnsafe<ArtifactRow[]>(
+    `SELECT "id", "verdict", "reviewRound", "commitSha"
+       FROM "Artifact"
+      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
+        AND "verdict" = 'approved' AND "reviewRound" = $3
+      LIMIT 1`,
+    itemId,
+    kind,
+    round,
+  );
+  const approval = rows[0];
+  if (!approval) {
+    return false;
+  }
+  const tip = await currentTipCommitSha(db, itemId);
+  // Same reading `artifact-tip.ts`'s `latestApprovalAtTip` documents: with
+  // no `commit` artifact for the item at all, tip is `null`, and an
+  // approval with `commitSha: null` matches — nothing exists for it to be
+  // stale against. Once a real tip exists, a `null` `commitSha` on the
+  // approval is correctly refused as unverifiable against it.
+  return approval.commitSha === tip;
 }

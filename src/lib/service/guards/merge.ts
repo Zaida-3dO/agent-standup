@@ -15,15 +15,25 @@
 // Reuses row #17's `artifact-tip.ts` primitives directly for the commit-sha
 // and tip-staleness questions (its own header: "#18's merge guard needs
 // exactly this same comparison") rather than reimplementing them, and adds
-// `merge-review-round.ts` alongside for the one question `artifact-tip.ts`
-// does not answer — round-scoped, not commit-scoped.
+// `merge-review-round.ts` alongside for the question `artifact-tip.ts` does
+// not answer on its own — round-scoped, not commit-scoped.
+//
+// **Round-currency and commit-currency are checked together, not
+// separately** — the composition gap review round 1 found. Round-scoping
+// alone lets a *newer, unreviewed* commit land at the same round as an
+// already-approved review, so `merge.requires_approving_code_review` and
+// `merge.requires_authorisation`'s `needs_approval` branch both require
+// their approving artifact to match the current review round **and** the
+// current tip commit (`hasApprovingArtifactAtCurrentRoundAndTip` /
+// `hasPersonApprovedCodeReviewAtCurrentRoundAndTip`) — see each function's
+// own doc for the exact scenario this closes.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import {
   currentTipCommitSha,
   hasApproval,
   latestApprovalAtTip,
 } from "../state-machine/guards/artifact-tip";
-import { currentReviewRound, hasApprovingArtifactAtCurrentRound } from "./merge-review-round";
+import { currentReviewRound, hasApprovingArtifactAtCurrentRoundAndTip } from "./merge-review-round";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement"]);
 
@@ -57,24 +67,34 @@ export const mergeRequiresCommitGuard: Guard = {
 
 /**
  * Requires an approving `code_review` artifact **at the item's current
- * review round** — SCHEMA.md §16's "an approving `code-review` artifact at
- * the current `max(artifacts.review_round)`".
+ * review round, and naming the item's current tip commit** — SCHEMA.md
+ * §16's "an approving `code-review` artifact at the current
+ * `max(artifacts.review_round)`", read together with the tip-commit
+ * requirement `merge.requires_commit` already enforces, because the two are
+ * not independent: review round 1 found that checking round-currency alone
+ * lets a *newer, unreviewed* commit land at the same round as an
+ * already-approved review — the approval is still "at the current round" by
+ * that reading even though it names a commit the tip has since moved past.
+ * §16's own point in naming `max(review_round)` is "was this reviewed
+ * recently, not stale" — and a review that is current-round but not
+ * current-*commit* has not actually reviewed what would ship. Pairing both
+ * checks (`hasApprovingArtifactAtCurrentRoundAndTip`) is what makes "current
+ * round" mean what it is meant to: the round that reviewed *this* commit.
  *
  * Two distinct failure causes, kept as two distinct rejections rather than
  * folded into one guard's ambiguous "no" — the same split row #17 makes
  * between `plan-approval.ts` (existence) and `evidence-at-tip.ts`
  * (currency): `hasApproval` is missing entirely → this guard rejects with
- * its own id; approved but not at the current round → this guard also
- * rejects (round-currency is the one question `artifact-tip.ts` cannot
- * answer, since it only compares commits), naming the same id either way,
- * because unlike the tip-commit case there is no separate guard registered
- * on this exact clause to hand the second cause to — SCHEMA.md §16 states
- * this as a single required clause, not two.
+ * its own id; approved but not at the current round-and-tip → this guard
+ * also rejects, naming the same id either way, because unlike the
+ * plan-review case there is no separate guard registered on this exact
+ * clause to hand the second cause to — SCHEMA.md §16 states this as a
+ * single required clause, not two.
  */
 export const mergeRequiresApprovingCodeReviewGuard: Guard = {
   id: "merge.requires_approving_code_review",
   description:
-    "Entering merged requires an approving code_review artifact at the item's current review round.",
+    "Entering merged requires an approving code_review artifact at the item's current review round and tip commit.",
   appliesTo: (_from, to) => to === "merged",
   async check(input: GuardInput) {
     const approvedAtAll = await hasApproval(input.db, input.item.id, "code_review");
@@ -84,16 +104,17 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
         { fields: ["state"] },
       );
     }
-    const atCurrentRound = await hasApprovingArtifactAtCurrentRound(
+    const atCurrentRoundAndTip = await hasApprovingArtifactAtCurrentRoundAndTip(
       input.db,
       input.item.id,
       "code_review",
     );
-    if (!atCurrentRound) {
+    if (!atCurrentRoundAndTip) {
       const round = await currentReviewRound(input.db, input.item.id);
+      const tip = await currentTipCommitSha(input.db, input.item.id);
       return guardRejected(
-        `The most recent code_review approval is not for the current review round (${round}). ` +
-          "The item has moved to a new round since it was approved — get it re-reviewed.",
+        `The most recent code_review approval is not for the current review round (${round}) ` +
+          `and tip commit (${tip ?? "none"}). The item has moved since it was approved — get it re-reviewed.`,
         { fields: ["state"] },
       );
     }
@@ -163,7 +184,18 @@ export const mergeRequiresVisualReviewGuard: Guard = {
  *     same transition already requires, so this clause is satisfied by that
  *     artifact having been recorded by a **person**, not an agent
  *     (`created_by_type`), which is the one place §16's requirement actually
- *     has a row to point at.
+ *     has a row to point at. **Deliberately the same artifact
+ *     `merge.requires_approving_code_review` requires — scoped to the
+ *     current review round AND the current tip commit, not "a person ever
+ *     approved any round"** — see
+ *     `hasPersonApprovedCodeReviewAtCurrentRoundAndTip`'s own doc for the two
+ *     composition bugs this closes: without the round scope, a person's
+ *     approval at an earlier round and an agent-only approval at the current
+ *     round could each satisfy a different one of these two guards; without
+ *     the tip scope too, a person's approval could sit at the current round
+ *     but for a commit a newer, same-round commit has since superseded.
+ *     Either gap lets the item merge with no human having reviewed what
+ *     actually shipped.
  *   - `agent_judgement` — DECISIONS.md §9: "the agent decides at the gate
  *     ... and must record a one-line rationale". No schema column or event
  *     payload carries this yet (row #27, the transition operation itself,
@@ -186,11 +218,14 @@ export const mergeRequiresAuthorisationGuard: Guard = {
     }
 
     if (authority === "needs_approval") {
-      const approvedByPerson = await hasPersonApprovedCodeReview(input.db, input.item.id);
+      const approvedByPerson = await hasPersonApprovedCodeReviewAtCurrentRoundAndTip(
+        input.db,
+        input.item.id,
+      );
       if (!approvedByPerson) {
         return guardRejected(
           "merge_authority is needs_approval — a person must record the approving code_review " +
-            "artifact before this item can merge.",
+            "artifact at the current review round and tip commit before this item can merge.",
           { fields: ["state"] },
         );
       }
@@ -210,29 +245,61 @@ export const mergeRequiresAuthorisationGuard: Guard = {
 
 interface ApprovingArtifactRow {
   createdByType: string;
+  commitSha: string | null;
 }
 
 /**
- * Whether the item's approving `code_review` artifact (at whichever round
- * approved it — this asks *who*, not *when*, so it deliberately does not
- * scope to the current round the way `hasApprovingArtifactAtCurrentRound`
- * does) was recorded by a person rather than an agent. `merge.
- * requires_approving_code_review` above already enforces that an approving,
- * current-round artifact exists at all; this only adds "and by a person" for
- * `needs_approval`'s sake, so it deliberately looks at every approved round,
- * not only the current one — an agent could not launder a person's earlier
- * sign-off through a private route this guard fails to see.
+ * Whether the item's approving `code_review` artifact **at the current
+ * review round and the current tip commit** was recorded by a person rather
+ * than an agent.
+ *
+ * Deliberately scoped to round **and** tip, not "any approved round ever" —
+ * two composition bugs, found the same way (review round 1), both closed
+ * here:
+ *
+ *   1. An earlier version of this function checked every round, on the
+ *      reasoning that "an agent could not launder a person's earlier
+ *      sign-off through a private route this guard fails to see." That
+ *      reasoning was backwards: it let the *opposite* case through
+ *      unnoticed — a person's approval from an *earlier* round while the
+ *      current round was only ever approved by an agent, letting the item
+ *      merge with no human having reviewed the code that actually shipped.
+ *   2. Scoping to round alone is still not enough, because round-currency
+ *      and commit-currency are different axes (`merge-review-round.ts`'s
+ *      `hasApprovingArtifactAtCurrentRoundAndTip` doc): a person's approval
+ *      could sit at the current round but for a commit a newer,
+ *      still-same-round `commit` artifact has since superseded, while a
+ *      *different*, agent-authored artifact at that same round is the one
+ *      that actually matches the tip and satisfies
+ *      `merge.requires_approving_code_review`. Requiring the person's
+ *      approval to match round **and** tip ties this check to the exact
+ *      same artifact that guard requires, so there is no artifact it
+ *      accepts that this one could accept a different one for instead.
+ *
+ * See `tests/merge-guards.test.ts`'s "person-approved at an earlier round,
+ * agent-only at the current round" case for regression (1), and the tip
+ * commit case for regression (2).
  */
-async function hasPersonApprovedCodeReview(db: GuardInput["db"], itemId: string): Promise<boolean> {
+async function hasPersonApprovedCodeReviewAtCurrentRoundAndTip(
+  db: GuardInput["db"],
+  itemId: string,
+): Promise<boolean> {
+  const round = await currentReviewRound(db, itemId);
   const rows = await db.$queryRawUnsafe<ApprovingArtifactRow[]>(
-    `SELECT "createdByType"
+    `SELECT "createdByType", "commitSha"
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = 'code_review' AND "verdict" = 'approved'
-        AND "createdByType" = 'person'
+        AND "createdByType" = 'person' AND "reviewRound" = $2
       LIMIT 1`,
     itemId,
+    round,
   );
-  return rows.length > 0;
+  const approval = rows[0];
+  if (!approval) {
+    return false;
+  }
+  const tip = await currentTipCommitSha(db, itemId);
+  return approval.commitSha === tip;
 }
 
 /** All four merge guards, for the registration module to install in one call. */
