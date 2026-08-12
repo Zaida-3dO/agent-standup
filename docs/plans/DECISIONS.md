@@ -282,12 +282,21 @@ The server can't see the files, so **the poll carries a local scan** — paths a
 globs. Hashing a handful of files every five minutes is free.
 
 ### Open on the heartbeat
-Unattended Windows launch is **well-understood, not a research question**. A scheduled task
-registered against the desktop user with **LogonType: Interactive** fires while the machine is
-locked, and does **not** fire when nobody is logged on. That is the constraint to design around: a
-machine that stays logged in works, one that logs out does not. The user: acceptable, because the
-machines this dispatches to stay logged in. An installation where they don't loses unattended launch
-on those machines — which is survivable, since the heartbeat is optional by design.
+A scheduled task registered against the desktop user with **LogonType: Interactive** and
+**RunLevel: Limited** fires while the machine is locked, and does **not** fire when nobody is logged
+on. That is the constraint to design around: a machine that stays logged in works, one that logs out
+does not. Acceptable, because the machines this dispatches to stay logged in — an installation where
+they don't loses unattended launch on those machines, which is survivable since the heartbeat is
+optional by design.
+
+**Status: the scheduling mechanism is well-founded by production precedent, not verified against
+this repository.** What is genuinely open is whether a *headed* browser session survives a real
+lock-and-display-sleep cycle on the target hardware — display sleep is a separate power event from
+lock, and GPU-driver/swapchain recovery on wake is a documented rough edge, not a guarantee. A pure
+console process sidesteps this entirely, which is why headless is the recommendation for anything
+that must be reliable unattended. The full mechanism comparison, the "run whether logged on or not"
+trap, and the test protocol that would settle the headed-browser question live in
+`docs/spikes/unattended-windows-launch/` (row #55).
 
 Auth deferred: reachable on a trusted network without a token for v0. Not designing around container
 networking yet.
@@ -515,7 +524,7 @@ Each of these was checked rather than assumed, and each one a decision above lea
 | Tool-list cost | Every tool description is resident in the agent's context on every turn, used or not. A server exposing sixty-odd tools is therefore a permanent tax on every session that connects to it. |
 | Cache TTL | A **1-hour** prompt-cache TTL **drops to 5 minutes under usage overage** — i.e. exactly when running hot — and nothing signals the transition. Hence `crew.wait_timeout_seconds = 240`, not 300. |
 | Cache pricing | Write **1.25×** base (5-min TTL) or **2×** (1-hour); read **0.1×**. Marginal cost of a wait: do nothing 1.25N · 1-hour TTL 0.85N · pinging 0.025N/min. **The 1-hour TTL is cheaper than doing nothing, always.** |
-| Unattended Windows launch | A scheduled task registered against the desktop user with **LogonType: Interactive** fires while the machine is locked and does **not** fire when nobody is logged on. RunLevel Limited is sufficient. |
+| Unattended Windows launch | A scheduled task registered against the desktop user with **LogonType: Interactive** and **RunLevel: Limited** fires while the machine is locked and does **not** fire when nobody is logged on — well-founded by production precedent, **not independently verified against this repository**. Genuinely untested: whether a headed browser survives lock plus display sleep. See `docs/spikes/unattended-windows-launch/` for the mechanism table and the test protocol that would close that gap. |
 | Prose ledgers | A ledger kept as prose is read whole or not at all — a hundred thousand characters is tens of thousands of tokens resident in every session that loads it, whether or not one line of it is relevant. The same content as rows is a query with a `WHERE` clause. |
 | Codex | No background-completion re-invocation found. `notify` fires `agent-turn-complete` **outward**; cloud tasks are fire-and-forget. |
 | Claude Code plugins | Bundle `hooks/hooks.json`, `.mcp.json`, `skills/`, `agents/`, `bin/`, `monitors/`, `settings.json` in one installable unit; marketplace can be a private repo. |
