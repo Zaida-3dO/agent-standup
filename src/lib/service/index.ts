@@ -80,3 +80,9 @@ export {
   type TransitionOutcome,
   type TransitionRequest,
 } from "./state-machine";
+
+export type { ItemRecord } from "./items/row";
+export type { CreateItemInput } from "./operations/create-item";
+export type { GetItemInput } from "./operations/get-item";
+export type { UpdateItemInput } from "./operations/update-item";
+export type { ListItemsInput, ListItemsOutput } from "./operations/list-items";

@@ -26,6 +26,10 @@
 // declared there appears here.
 import type { AnyOperation, Operation, OperationKind } from "./operation";
 import { provideCatalogue, serviceInfo, type OperationDescriptor } from "./operations/service-info";
+import { createItem } from "./operations/create-item";
+import { getItem } from "./operations/get-item";
+import { updateItem } from "./operations/update-item";
+import { listItems } from "./operations/list-items";
 
 /**
  * Every service operation, by name.
@@ -36,6 +40,10 @@ import { provideCatalogue, serviceInfo, type OperationDescriptor } from "./opera
  */
 export const OPERATION_REGISTRY = {
   [serviceInfo.name]: serviceInfo,
+  [createItem.name]: createItem,
+  [getItem.name]: getItem,
+  [updateItem.name]: updateItem,
+  [listItems.name]: listItems,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;
