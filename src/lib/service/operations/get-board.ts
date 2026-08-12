@@ -130,12 +130,9 @@ export const getBoard = defineOperation({
         projectIds,
       );
       for (const row of descendantRows) {
-        const list = descendantStatesByProject.get(row.rootId);
-        if (list) {
-          list.push(row.state);
-        } else {
-          descendantStatesByProject.set(row.rootId, [row.state]);
-        }
+        const list = descendantStatesByProject.get(row.rootId) ?? [];
+        list.push(row.state);
+        descendantStatesByProject.set(row.rootId, list);
       }
     }
 

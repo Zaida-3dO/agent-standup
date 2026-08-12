@@ -115,13 +115,13 @@ describe("columnForProject — DECISIONS.md §13c: derived from children, never 
   it("the best-so-far comparison must be STRICTLY less-than, and order-independent — the most-active state wins even when it is NOT last in iteration order", () => {
     // Kills two specific mutants in the rank comparison
     // (COLUMN_RANK[column] < COLUMN_RANK[best]):
-    //   - replacing `<` with `true` would let every later state overwrite
-    //     `best` unconditionally, so the LAST element in the array would
-    //     always win regardless of rank — here that is "blocked"
-    //     (waiting), not "executing" (in_progress).
-    //   - replacing `<` with `<=` has the same effect whenever two states
-    //     tie in rank, and would also let a later equal-or-worse state
-    //     overwrite an already-better `best`.
+    //   - an unconditional overwrite (as if the comparison were always
+    //     true) would let every later state overwrite `best` regardless
+    //     of rank, so the LAST element in the array would always win —
+    //     here that is "blocked" (waiting), not "executing" (in_progress).
+    //   - a non-strict comparison (<=) has the same effect whenever two
+    //     states tie in rank, and would also let a later equal-or-worse
+    //     state overwrite an already-better `best`.
     // The most-active state (in_progress) is placed FIRST and a less-active
     // one (waiting) LAST, so only a genuinely correct "keep the best seen"
     // comparison returns in_progress; both mutants above would return
