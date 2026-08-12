@@ -102,7 +102,7 @@ backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 | **20** | Events: append on every mutation, field-change rows, timestamps in the same transaction. Rows carry `tx_id`, the identifier of the writing transaction, so a reader can bound itself to the visibility horizon (`SCHEMA.md` §3) | 14 | `done` |
 | **21** | Summaries: shape, caps, reject-don't-truncate, similarity check, jargon denylist | 15 | |
 | **22** | Deferral proof for anything left undone — typed reasons, follow-up must be blocked | 19, 21 | |
-| **23** | Claims: atomic, one orchestrator per item, root-session check — **also carries the two partial unique indexes deferred from the initial migration** (`SCHEMA.md` §2; `DECISIONS.md` §13d) | 14 | |
+| **23** | Claims: atomic, one orchestrator per item, root-session check — **also carries the two partial unique indexes deferred from the initial migration** (`SCHEMA.md` §2; `DECISIONS.md` §13d) | 14 | `done` |
 | **24** | Liveness ladder: quiet → stalled → dead, resume attempts, escalation to blocked. The same sweep re-verifies configured capability document paths and records `{ last_checked_by, last_checked_at, result }` | 23 | |
 | **25** | Notification rules: all-of / any-of, fires on the edge only, whitelisted fields | 20 | |
 
