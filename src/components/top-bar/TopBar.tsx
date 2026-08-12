@@ -32,7 +32,7 @@ export function TopBar({ activeProfile, onSwitchProfile }: TopBarProps) {
           type="button"
           className={styles.switcher}
           onClick={onSwitchProfile}
-          aria-label={`Switch profile (currently ${activeProfile.displayName})`}
+          aria-label={`Switch profile (active: ${activeProfile.displayName})`}
         >
           <span
             className={styles.avatar}

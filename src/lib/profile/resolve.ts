@@ -6,9 +6,9 @@ import type { Profile } from "./types";
  * explicitly:
  *
  *   - **no profile chosen yet** — `storedId` is `null` (nothing remembered).
- *   - **unknown/stale profile** — `storedId` names a profile that no longer
- *     appears in `people` (deleted, archived, or simply never existed —
- *     e.g. a value edited by hand in devtools).
+ *   - **unknown/stale profile** — `storedId` doesn't match any profile in
+ *     `people` (archived, deleted, or simply never a real id — e.g. a
+ *     value edited by hand in devtools).
  *
  * Both read identically to a caller: show the picker rather than crash or
  * silently attribute work to a profile that isn't real.

@@ -13,7 +13,11 @@ const userB: Profile = { id: "user-b", displayName: "User B", avatar: "🙂", co
 
 describe("ProfilePicker", () => {
   it("renders one tile per profile", () => {
-    const element = ProfilePicker({ people: [userA, userB], onChoose: () => {}, onClose: undefined });
+    const element = ProfilePicker({
+      people: [userA, userB],
+      onChoose: () => {},
+      onClose: undefined,
+    });
     const tiles = findAllByType(element, "button");
     expect(tiles.length).toBe(2);
   });
@@ -46,7 +50,7 @@ describe("ProfilePicker", () => {
   it("shows the profile's own avatar when it has one", () => {
     const element = ProfilePicker({ people: [userB], onChoose: () => {}, onClose: undefined });
     const text = [...walk(element)]
-      .map((el) => (el.props as { children?: unknown; "aria-hidden"?: string }))
+      .map((el) => el.props as { children?: unknown; "aria-hidden"?: string })
       .find((props) => props["aria-hidden"] === "true")?.children;
     expect(text).toBe("🙂");
   });

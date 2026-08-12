@@ -1,7 +1,6 @@
 // src/lib/profile/resolve.ts — the two cases MILESTONES.md #35 names
-// explicitly: "handle the no-profile-chosen-yet and unknown/stale-profile
-// cases explicitly; a stale remembered profile that no longer exists must
-// not break the app."
+// explicitly: a profile that hasn't been chosen yet, and a remembered id
+// that doesn't match any current profile. Neither may crash the app.
 import { describe, expect, it } from "vitest";
 import { resolveActiveProfile } from "@/lib/profile/resolve";
 import type { Profile } from "@/lib/profile/types";

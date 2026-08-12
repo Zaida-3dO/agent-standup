@@ -60,7 +60,7 @@ describe("writeStoredProfileId", () => {
     expect(storage.data[PROFILE_STORAGE_KEY]).toBe("user-b");
   });
 
-  it("overwrites a previously stored id rather than merging", () => {
+  it("overwrites an id that is already stored, rather than merging", () => {
     const storage = fakeStorage({ [PROFILE_STORAGE_KEY]: "user-a" });
     writeStoredProfileId("user-b", storage);
     expect(readStoredProfileId(storage)).toBe("user-b");

@@ -42,7 +42,9 @@ export function findAllByType(root: ReactNode, type: unknown): ReactElement[] {
 export function findOneByType(root: ReactNode, type: unknown): ReactElement {
   const matches = findAllByType(root, type);
   if (matches.length !== 1) {
-    throw new Error(`Expected exactly one element of type ${String(type)}, found ${matches.length}.`);
+    throw new Error(
+      `Expected exactly one element of type ${String(type)}, found ${matches.length}.`,
+    );
   }
   return matches[0]!;
 }

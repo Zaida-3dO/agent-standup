@@ -59,8 +59,8 @@ export function AppShellView({
 
   // No-profile-chosen-yet AND unknown/stale-profile both land here —
   // `activeProfile` is `null` for either reason — and there is nothing to
-  // cancel back to, so the picker replaces the whole page rather than
-  // opening over it.
+  // cancel back to, so the picker fills the whole page rather than opening
+  // over it.
   if (!activeProfile) {
     return <ProfilePicker people={people} onChoose={choose} />;
   }
