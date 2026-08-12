@@ -21,7 +21,7 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
-import { GuardRegistry, registerBlockedPausedGuards } from "@/lib/service";
+import { BLOCKED_PAUSED_GUARDS, GuardRegistry } from "@/lib/service";
 import type { TransactionHandle } from "@/lib/service";
 import { resolveSettings } from "@/lib/settings";
 import {
@@ -191,8 +191,21 @@ describeIfDb("sweepLiveness — against a real database", () => {
   }
 
   beforeAll(() => {
+    // Builds its own scratch registry rather than reaching for the shared
+    // `guardRegistry` singleton (the one `src/lib/service/guards` populates
+    // as a side effect of `live.ts`'s import) — same isolation every other
+    // state-machine test uses, so this file's guard state never depends on
+    // import order relative to the composition root. Registration into an
+    // arbitrary registry is a fixed side effect of importing
+    // `guards/index.ts` for the shared singleton, so a scratch registry
+    // needs its own skip-if-already-registered loop directly over the
+    // exported guard list, `BLOCKED_PAUSED_GUARDS`.
     guards = new GuardRegistry();
-    registerBlockedPausedGuards(guards);
+    for (const guard of BLOCKED_PAUSED_GUARDS) {
+      if (!guards.has(guard.id)) {
+        guards.register(guard);
+      }
+    }
   });
 
   // -- AC1: the ladder itself -----------------------------------------------
@@ -351,6 +364,20 @@ describeIfDb("sweepLiveness — against a real database", () => {
   // -- AC2/AC3: resume attempts and escalation -------------------------------
 
   describe("criteria 2/3 — resume attempts and escalation to blocked", () => {
+    it("the scratch registry actually holds the blocked/paused guards escalation depends on", () => {
+      // `escalateToBlocked` runs through the real, guarded transition path
+      // (`applyTransition`) — but `runGuards` silently allows anything
+      // through an EMPTY registry (an empty array has no guard to reject
+      // it), so every test in this describe block would pass just as well
+      // against a `guards` that was constructed but never populated. This
+      // is the one direct check on the registration this file's `beforeAll`
+      // performs, so a regression there (the registry going empty again)
+      // fails HERE by name instead of silently by nothing failing at all.
+      for (const guard of BLOCKED_PAUSED_GUARDS) {
+        expect(guards.has(guard.id)).toBe(true);
+      }
+    });
+
     it("going dead increments the item's resumeAttempts by exactly one", async () => {
       const itemId = await seedItem({ resumeAttempts: 0 });
       await seedAssignment(itemId, {
