@@ -55,6 +55,12 @@ export {
 
 export type { OperationDescriptor, ServiceInfo, ServiceInfoInput } from "./operations/service-info";
 
+// Hand-written guards (MILESTONES.md #16-#19, #21). Importing `ALL_GUARDS`
+// from here is what registers them into `guardRegistry` — see
+// `guards/index.ts`'s header for why that is a deliberate side effect of the
+// import rather than a separate wiring step.
+export { ALL_GUARDS, hierarchyGuard } from "./guards";
+
 // The state machine (MILESTONES.md #15). Rows #16-#19 and #21 import
 // `guardRegistry` from here to register their guards; row #27 imports
 // `rehearseTransition`/`applyTransition` to build the routed operation.
