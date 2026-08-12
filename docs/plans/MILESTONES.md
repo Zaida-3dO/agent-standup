@@ -137,13 +137,13 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **29** | Claim, release and heartbeat — the service calls and their routes. **Also the checkpoint and note write path**, which no other row owns: #28 delivers orientation, which only *reads* checkpoints | 23 | `done` |
 | **30** | MCP adapter — a transport-agnostic server core (tool registration and handlers calling the service layer), wired to streamable HTTP. **Stateless.** The stdio wiring is #84 | 26 | `done` |
 | **31** | MCP read tools: get item, list items, my work, orientation | 28, 30 | `done` |
-| **32** | MCP write tools: create, update, transition, complete | 27, 30 | |
+| **32** | MCP write tools: create, update, transition, complete | 27, 30 | `done` |
 | **33** | MCP session tools: claim, release, heartbeat, checkpoint, note | 29, 30 | `done` |
 | **34** | Crew naming: hand out a name, assign it, retire it | 9, 14 | `done` |
 | **78** | Settings service and its routes — `GET`, `PATCH` (a map, one transaction), `PUT`/`DELETE` for the one-key case — with write-time validation including the capability documents, the `setting-change` audit event, and the revision bump in the same transaction | 20, 77 | `done` |
 | **79** | **Command-line foundation.** The `standup` entry point, `<noun> <verb>` dispatch with aliases, both bindings (`direct` over the service layer, `http` over the API) behind one interface, `--json` envelope and exit codes, identity resolution, configuration precedence, preflight, and `standup doctor` — which also re-checks configured capability paths locally | 14, 26 | `done` |
 | **80** | `standup init` — find, accept or provision a database; create it; migrate; seed; write local configuration; prove it with a live round trip. Asks for a provisioning connection separately from the application role, and falls back to a supplied connection string rather than abandoning | 9, 79 | |
-| **81** | Command line: items — list, get, create, update, transition with `--dry-run`, complete | 15, 21, 26, 27, 79 | |
+| **81** | Command line: items — list, get, create, update, transition with `--dry-run`, complete | 15, 21, 26, 27, 79 | `done` |
 | **82** | Command line: ownership and orientation — claim, release, heartbeat, checkpoint, note, my-work, orientation, crew name | 23, 28, 29, 34, 79 | |
 | **83** | `standup config` — list, get, set, clear, describe, rendering label, help and validation from the registry; `sensitive` and `irreversible` keys require the confirmation flag | 78, 79 | |
 | **84** | MCP over **stdio**, wiring the same transport-agnostic server core as the HTTP transport | 30, 79 | |
@@ -166,7 +166,7 @@ every adapter passes the conformance harness.**
 | **36** | Board API: items grouped into columns, filters | 26 | `done` |
 | **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
-| **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | |
+| **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | `done` |
 | **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim. **Performed on a day when nothing is executing** — duplicate, verify against the duplicate, then switch; never a wholesale swap with items in flight (`DECISIONS.md` §11, §13h) | 13, 37, 39 | |
 | **86** | `/settings` — categories, widgets, per-field help and validation all rendered from the registry; value-source badges; reset-to-default; the `sensitive` section with typed confirmation; unrecognised and invalid override sections; the read-only build-constants and bootstrap panels; first-run entry when no profiles exist | 35, 78 | |
 | **87** | Budget-window editor — per-window cards, the three boundary kinds in plain words, the band chart, drawn validation errors, the time scrubber, and presets. Plots an account's position **once usage readings exist**; before that the chart is the boundaries alone | 86 | |
@@ -195,7 +195,7 @@ environment.**
 | **48** | Plugin package — MCP config, hook config, and the command line in one install. **Consumes the published package rather than carrying a copy of the binary** | 30, 42, 89 | |
 | **49** | `/setup-agent-standup` — registers the scheduled task, then **proves it works** with a live call | 48 | |
 | **88** | `standup hook` — the hook payload on stdin, the local telemetry spool and its batched flush | 42, 79 | |
-| **89** | Publish the package with the `standup` binary on the same version tag that publishes the image | 79 | |
+| **89** | Publish the package with the `standup` binary on the same version tag that publishes the image | 79 | `done` |
 
 **Milestone done when:** one hook script covers every guarded event, and the only judgement left on
 the client is the handful of checks that cannot run anywhere else.
@@ -271,7 +271,7 @@ since M7.
 | **72** | Item detail: subtask tree, artifacts, history, summary | 37 | |
 | **73** | Drag between columns, with the move showing immediately | 37 | |
 | **74** | Project view and progress view | 72 | |
-| **75** | Filters and search: area, repo, state, who's on it, priority | 36 | |
+| **75** | Filters and search: area, repo, state, who's on it, priority | 36 | `done` |
 | **76** | **Mobile** — P3. A different flow, not a squeezed desktop: a list with a status picker instead of drag, filters in a sheet, thumb-sized sliders, and you can still mint work | 68, 73, 75 | |
 
 ---
