@@ -97,7 +97,7 @@ backfilled if it turns out to be wanted. See `DECISIONS.md` §13c.
 | **15** | State machine: all-to-all transitions, guard framework, rehearsal mode. Projects have **no stored state** — theirs is derived from their children, so guards never run against one | 14 | `done` |
 | **16** | Guards — blocked and paused: required fields, clearing on exit | 15 | `done` |
 | **17** | Guards — artifacts: review requested, plan approval, evidence at the tip commit | 15 | `done` |
-| **18** | Guards — merge: commit, approving review, visual gate, who may authorise | 17 | |
+| **18** | Guards — merge: commit, approving review, visual gate, who may authorise | 17 | `done` |
 | **19** | Guards — hierarchy: cannot finish while a child is still actionable | 15 | `done` |
 | **20** | Events: append on every mutation, field-change rows, timestamps in the same transaction. Rows carry `tx_id`, the identifier of the writing transaction, so a reader can bound itself to the visibility horizon (`SCHEMA.md` §3) | 14 | `done` |
 | **21** | Summaries: shape, caps, reject-don't-truncate, similarity check, jargon denylist | 15 | `done` |
@@ -139,7 +139,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **31** | MCP read tools: get item, list items, my work, orientation | 28, 30 | |
 | **32** | MCP write tools: create, update, transition, complete | 27, 30 | |
 | **33** | MCP session tools: claim, release, heartbeat, checkpoint, note | 29, 30 | |
-| **34** | Crew naming: hand out a name, assign it, retire it | 9, 14 | |
+| **34** | Crew naming: hand out a name, assign it, retire it | 9, 14 | `done` |
 | **78** | Settings service and its routes — `GET`, `PATCH` (a map, one transaction), `PUT`/`DELETE` for the one-key case — with write-time validation including the capability documents, the `setting-change` audit event, and the revision bump in the same transaction | 20, 77 | |
 | **79** | **Command-line foundation.** The `standup` entry point, `<noun> <verb>` dispatch with aliases, both bindings (`direct` over the service layer, `http` over the API) behind one interface, `--json` envelope and exit codes, identity resolution, configuration precedence, preflight, and `standup doctor` — which also re-checks configured capability paths locally | 14, 26 | `done` |
 | **80** | `standup init` — find, accept or provision a database; create it; migrate; seed; write local configuration; prove it with a live round trip. Asks for a provisioning connection separately from the application role, and falls back to a supplied connection string rather than abandoning | 9, 79 | |
