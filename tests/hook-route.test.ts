@@ -4,10 +4,29 @@
 // tests/claims-routes.test.ts and tests/settings-routes.test.ts.
 //
 // This is the end-to-end proof for MILESTONES.md #41's "The route is one
-// caller": a setting written through the real settings HTTP route is read
-// back by the hook route's own decision, with no shortcut between them.
+// caller": a setting override, once stored, is read back by the hook
+// route's own decision through the real settings snapshot the running
+// process resolves — not a shortcut that hands the operation a value
+// directly.
 //
-// Skips without TEST_DATABASE_URL, like every other DB-backed file here.
+// Overrides are written with a direct SQL insert plus a revision bump
+// (`putSettingRow` below — the same two statements `put_setting`'s handler
+// issues, src/lib/service/operations/put-setting.ts) rather than through
+// the live `PUT /settings/{key}` HTTP route, and `settingsCache.invalidate()`
+// is called immediately afterward. That combination is deliberate:
+// `service/live.ts` composes `hookRoute`'s runtime with a `SettingsCache`
+// that serves a held snapshot from memory for up to `revalidateAfterMs`
+// (SCHEMA.md §17.3) — real, and correct: a hook decision made on every tool
+// call must not cost a database read each time. `invalidate()` is the
+// documented escape hatch for "a process that has just written a setting"
+// (`src/lib/settings/cache.ts`), which is exactly this test's position.
+// Nothing in the application's own write routes calls it yet — a
+// pre-existing gap in the settings write path (rows #78/#83), not something
+// #41 introduces or is scoped to fix — so this test reaches the same
+// process-global `settingsCache` `service/live.ts` exports and calls it
+// directly, rather than waiting out the interval or masking the gap by
+// constructing a fresh, uncached runtime that would prove nothing about the
+// real one.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
@@ -25,7 +44,7 @@ describeIfDb("POST /hook route against Postgres", () => {
   let scratchUrl: string;
   let prisma: PrismaClient;
   let hookRoute: typeof import("@/app/api/hook/route");
-  let settingsKeyRoute: typeof import("@/app/api/settings/[key]/route");
+  let settingsCache: typeof import("@/lib/service/live").settingsCache;
 
   beforeAll(async () => {
     scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
@@ -38,7 +57,7 @@ describeIfDb("POST /hook route against Postgres", () => {
     // reaches service/live.ts's process-global singleton.
     process.env.DATABASE_URL = scratchUrl;
     hookRoute = await import("@/app/api/hook/route");
-    settingsKeyRoute = await import("@/app/api/settings/[key]/route");
+    ({ settingsCache } = await import("@/lib/service/live"));
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   }, 60_000);
 
@@ -55,16 +74,23 @@ describeIfDb("POST /hook route against Postgres", () => {
     });
   }
 
-  async function putSetting(key: string, value: unknown): Promise<void> {
-    const response = await settingsKeyRoute.PUT(
-      jsonRequest(`http://localhost/api/settings/${key}`, "PUT", { value }),
-      { params: Promise.resolve({ key }) },
+  /** Writes one settings override row and bumps the revision — see header. */
+  async function putSettingRow(key: string, value: unknown): Promise<void> {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "settings" ("key", "value", "updatedByType", "updatedById")
+       VALUES ($1, $2::jsonb, 'system'::"ActorType", NULL)
+       ON CONFLICT ("key") DO UPDATE
+         SET "value" = EXCLUDED."value", "updatedAt" = CURRENT_TIMESTAMP`,
+      key,
+      JSON.stringify(value),
     );
-    if (response.status !== 200) {
-      throw new Error(
-        `PUT /settings/${key} failed with ${response.status}: ${await response.text()}`,
-      );
-    }
+    await prisma.$executeRawUnsafe(
+      `UPDATE "settings_revision" SET "revision" = "revision" + 1 WHERE "id" = 1`,
+    );
+    // The documented "immediate in the process that made the change" path
+    // (src/lib/settings/cache.ts) — see this file's header for why the
+    // test calls it directly rather than the write route doing so.
+    settingsCache.invalidate();
   }
 
   it("denies a command matching neither list by default — nothing configured yet", async () => {
@@ -82,7 +108,7 @@ describeIfDb("POST /hook route against Postgres", () => {
   });
 
   it("allows silently once the command matches a written allow-list override", async () => {
-    await putSetting("hook.allow_patterns", ["^git status$"]);
+    await putSettingRow("hook.allow_patterns", ["^git status$"]);
 
     const response = await hookRoute.POST(
       jsonRequest("http://localhost/api/hook", "POST", {
@@ -104,7 +130,7 @@ describeIfDb("POST /hook route against Postgres", () => {
   });
 
   it("asks once the command matches a written ask-list override, and is not allowed", async () => {
-    await putSetting("hook.ask_patterns", ["^rm "]);
+    await putSettingRow("hook.ask_patterns", ["^rm "]);
 
     const response = await hookRoute.POST(
       jsonRequest("http://localhost/api/hook", "POST", {
