@@ -16,6 +16,7 @@
 import type { Rejection, ServiceErrorCode } from "@/lib/service";
 import { SERVICE_ERROR_CODES } from "@/lib/service";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
+import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
 
 /** How one operation is expressed as an HTTP request. */
 export interface RouteSpec {
@@ -101,6 +102,7 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     request: (input) => ({ path: `/api/items${queryString(input)}` }),
     unwrap: (body) => body,
   },
+  ...OWNERSHIP_HTTP_ROUTES,
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */
