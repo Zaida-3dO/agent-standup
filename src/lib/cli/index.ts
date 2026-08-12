@@ -23,6 +23,9 @@ export type { ParsedArgs, ParseResult } from "./args";
 export { ALIASES, COMMANDS, identityFlags, lookupCommand, nouns, verbsFor } from "./commands";
 export type { CommandMatch, CommandSpec, LookupResult } from "./commands";
 
+// Row #83 — `standup config`.
+export { CONFIG_COMMANDS, parseSettingValue } from "./config-command";
+
 export { describeResolution, firstDefined, resolveConfig } from "./config";
 export type {
   CliEnvironment,
