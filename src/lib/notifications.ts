@@ -29,6 +29,23 @@ export type NotifyOperator = "eq" | "neq" | "in" | "changed";
  * carries it as a computed key the same as any stored field. That's a
  * deliberate parity: the whitelist names what a rule may *ask about*, not
  * where the value physically lives.
+ *
+ * **Casing, stated so the next row does not have to rediscover it.** These
+ * spellings are `snake_case`, matching SCHEMA.md §1.1b exactly — do not
+ * change them to match the database. `Item`'s own Prisma columns are
+ * `camelCase` (`prisma/schema.prisma`: `blockedOnPersonId`, `driveMode`,
+ * `mergeAuthority`, …), so a snapshot built by reading `ItemRecord`
+ * (`src/lib/service/items/row.ts`) directly has the *wrong* key casing for
+ * three of these nine fields. `isNotifyField`/`evaluateCondition` do not
+ * — and are not meant to — bridge that gap: an unrecognised spelling
+ * evaluates to `false`, which is the safe failure direction (a rule that
+ * cannot fire is discoverable; a rule that fires on the wrong field is not)
+ * but it is still a silent one. **Whoever builds the before/after snapshot
+ * at the eventual mutation call site (#27 or a follow-up) owns mapping
+ * `blockedOnType → blocked_on_type`, `blockedOnPersonId →
+ * blocked_on_person`, `driveMode → drive_mode`, `mergeAuthority →
+ * merge_authority` before calling `evaluateRules` — this module has no way
+ * to enforce that mapping happened, only to fail closed if it didn't.**
  */
 export const NOTIFY_FIELD_WHITELIST = [
   "state",

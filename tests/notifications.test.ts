@@ -440,3 +440,60 @@ describe("the `neq` operator", () => {
     expect(ruleMatches(rule, { state: "someday" }, { state: "blocked" })).toBe(false);
   });
 });
+
+// --- the `changed` operator, against a WHITELISTED field ---
+//
+// A prior `op: "changed"` test used `custom_fields`, which isn't
+// whitelisted — so evaluation short-circuits at the `isNotifyField` guard
+// before ever reaching the `changed` branch of the switch. Confirmed by
+// hand-mutating that branch's body to `return false`, which left every
+// other test in this file green. These three tests use `state`, a
+// whitelisted field, specifically so they exercise the branch itself
+// rather than the guard in front of it.
+
+describe("the `changed` operator, against a whitelisted field", () => {
+  it("matches when the value differs between before and after", () => {
+    const rule: NotifyRule = {
+      notify: ["user-a"],
+      whenAll: [{ field: "state", op: "changed" }],
+    };
+    // A single-character change that would break this: the `changed` case
+    // body (`return before[condition.field] !== current;`) replaced with
+    // `return false;` — the exact mutant review round 1 hand-verified
+    // survives every pre-existing test in this file.
+    expect(ruleMatches(rule, { state: "someday" }, { state: "blocked" })).toBe(true);
+  });
+
+  it("does not match when the value is the same in before and after", () => {
+    const rule: NotifyRule = {
+      notify: ["user-a"],
+      whenAll: [{ field: "state", op: "changed" }],
+    };
+    // A single-character change that would break this: the `changed` case
+    // body replaced with `return true;` — every no-op save would then
+    // report a change that never happened.
+    expect(ruleMatches(rule, { state: "someday" }, { state: "someday" })).toBe(false);
+  });
+
+  it("fires exactly once on the edge, through evaluateRules — not on a subsequent no-op mutation", () => {
+    const rule: NotifyRule = {
+      notify: ["user-a"],
+      whenAll: [{ field: "priority", op: "changed" }],
+    };
+
+    // First mutation: the field actually changes. Fires once.
+    const first = evaluateRules([rule], { priority: "P2" }, { priority: "P0" });
+    expect(first.fired).toHaveLength(1);
+    expect(first.recipients).toEqual(["user-a"]);
+
+    // Second mutation: field stays at its new value (an edit to something
+    // else). `changed` must not re-fire just because it's evaluated again.
+    //
+    // A single-character change that would break this: the `changed` case
+    // body replaced with `return true;` (or any change that makes it
+    // ignore `before`), which would make every call report a change and
+    // this second evaluation would spuriously fire again.
+    const second = evaluateRules([rule], { priority: "P0" }, { priority: "P0" });
+    expect(second.fired).toHaveLength(0);
+  });
+});
