@@ -24,12 +24,11 @@ function compiles(pattern: string): boolean {
 
 /**
  * One list of hook patterns: non-empty strings, each a valid regular
- * expression. Order is preserved and is significant to nobody currently —
- * `decideHook` checks a whole list for *any* match, not first-match
- * semantics that would make ordering load-bearing — but the type is an
- * array rather than a set because a person editing `/settings` reasons
- * about a list, not a set, and a duplicate pattern is harmless rather than
- * a validation failure worth surfacing.
+ * expression. Order is not load-bearing — `decideHook` checks a whole list
+ * for *any* match, not first-match semantics that would make ordering
+ * matter — but the type is an array rather than a set because a person
+ * editing `/settings` reasons about a list, not a set, and a duplicate
+ * pattern is harmless rather than a validation failure worth surfacing.
  */
 export const hookPatternListSchema = z.array(
   z
