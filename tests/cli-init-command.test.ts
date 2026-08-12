@@ -55,6 +55,20 @@ describe("runInitCommand — the accept path", () => {
     // Never printed: the whole connection string does not appear anywhere
     // in the rendered envelope, only structural facts (SCHEMA.md §20).
     expect(JSON.stringify(outcome.envelope)).not.toContain("postgres://someone:pw@host/db");
+
+    if (!outcome.envelope.ok) throw new Error("expected success");
+    // The full reported shape, not just "it's ok": `configWritten` and
+    // `configPath` are the caller's only way to know the write actually
+    // happened and where, and `appRole` must be genuinely absent here —
+    // the accept path never created one.
+    expect(outcome.envelope.data).toEqual({
+      source: "accepted",
+      database: { host: "host", name: "db" },
+      steps: { migrated: true, seeded: true, verified: true },
+      configWritten: true,
+      configPath: "/fake/config.json",
+    });
+    expect("appRole" in (outcome.envelope.data as object)).toBe(false);
   });
 });
 

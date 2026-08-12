@@ -43,6 +43,21 @@ describe("configFilePath", () => {
     const path = configFilePath({ HOME: dir, XDG_CONFIG_HOME: xdg });
     expect(path).toBe(join(xdg, "agent-standup", "config.json"));
   });
+
+  it("falls back to ~/.config exactly (not the XDG branch) when XDG_CONFIG_HOME is unset", () => {
+    const path = configFilePath({ HOME: dir });
+    expect(path).toBe(join(dir, ".config", "agent-standup", "config.json"));
+  });
+
+  it("treats a blank XDG_CONFIG_HOME as unset, same as a blank STANDUP_CONFIG_FILE", () => {
+    const path = configFilePath({ HOME: dir, XDG_CONFIG_HOME: "   " });
+    expect(path).toBe(join(dir, ".config", "agent-standup", "config.json"));
+  });
+
+  it("falls back to USERPROFILE when HOME is not set (the ordinary case on Windows)", () => {
+    const path = configFilePath({ USERPROFILE: dir });
+    expect(path).toBe(join(dir, ".config", "agent-standup", "config.json"));
+  });
 });
 
 describe("writeConfigFile / readConfigFile — the real round trip", () => {
@@ -93,6 +108,27 @@ describe("writeConfigFile / readConfigFile — the real round trip", () => {
       "utf-8",
     );
     expect(readConfigFile(path)).toEqual({ databaseUrl: "postgres://x/y" });
+  });
+
+  it("returns {} for valid JSON that isn't an object at all — a bare number or string", () => {
+    const path = join(dir, "config.json");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path, "42", "utf-8");
+    expect(readConfigFile(path)).toEqual({});
+  });
+
+  it("returns {} for a JSON null — typeof null is 'object' in JS, so this needs its own check", () => {
+    const path = join(dir, "config.json");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path, "null", "utf-8");
+    expect(readConfigFile(path)).toEqual({});
+  });
+
+  it("drops a field that is present but blank, the same as if it were never written", () => {
+    const path = join(dir, "config.json");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path, JSON.stringify({ databaseUrl: "   ", actor: "user-a" }), "utf-8");
+    expect(readConfigFile(path)).toEqual({ actor: "user-a" });
   });
 
   it("writes the file with owner-only permissions on POSIX", () => {
