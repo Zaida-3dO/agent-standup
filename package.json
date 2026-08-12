@@ -21,7 +21,11 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:check-drift": "node scripts/check-migration-drift.mjs"
+    "db:check-drift": "node scripts/check-migration-drift.mjs",
+    "db:seed": "node prisma/seed.mjs"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
