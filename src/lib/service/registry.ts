@@ -41,6 +41,8 @@ import { release } from "./operations/release";
 import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
+import { orientation } from "./operations/orientation";
+import { myWork } from "./operations/my-work";
 
 /**
  * Every service operation, by name.
@@ -66,6 +68,8 @@ export const OPERATION_REGISTRY = {
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
   [note.name]: note,
+  [orientation.name]: orientation,
+  [myWork.name]: myWork,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;

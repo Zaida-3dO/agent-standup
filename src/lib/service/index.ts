@@ -124,6 +124,14 @@ export type { ReleaseOperationInput } from "./operations/release";
 export type { HeartbeatOperationInput } from "./operations/heartbeat";
 export type { CheckpointOperationInput } from "./operations/checkpoint";
 export type { NoteOperationInput } from "./operations/note";
+export type {
+  OrientationInput,
+  OrientationOutput,
+  OrientationCheckpoint,
+  OpenLoopChild,
+  OpenLoopNotDone,
+} from "./operations/orientation";
+export type { MyWorkInput, MyWorkOutput, MyWorkEntry } from "./operations/my-work";
 
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
