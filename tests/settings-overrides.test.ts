@@ -254,7 +254,7 @@ describe("the effective value at the point of use", () => {
     expect(rejected).toBeNull();
   });
 
-  it("falls back and reports when a stored account override no longer validates", () => {
+  it("falls back and reports when a stored account override fails its schema", () => {
     // The same posture §17.3 takes for a bad settings row: the global value
     // is used and the failure is reported, rather than the account being
     // refused service or handed a coerced value nobody chose.
