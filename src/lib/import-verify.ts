@@ -205,9 +205,14 @@ export function sampleTasks<T extends { id: string }>(
   const stride = tasks.length / sampleSize;
   const sample: T[] = [];
   for (let i = 0; i < sampleSize; i++) {
+    // Provably in range: i < sampleSize < tasks.length (the early return
+    // above handles sampleSize >= tasks.length), and Math.min caps the
+    // upper bound at tasks.length - 1 — so `index` is always a valid
+    // existing index, never out of bounds. Non-null assertion, not a
+    // defensive `if`, matching import-events.ts's own convention
+    // (`history[0]!`) for the same "provably in range" situation.
     const index = Math.min(tasks.length - 1, Math.floor(i * stride));
-    const task = tasks[index];
-    if (task) sample.push(task);
+    sample.push(tasks[index]!);
   }
   return sample;
 }

@@ -247,6 +247,24 @@ describeIfDb("import verification — against a real Postgres", () => {
     expect(report.importedItemCount).toBe(3);
   });
 
+  it("verifyItemRowCounts returns missingFromDb SORTED, not in encounter order — pins the .sort() call", async () => {
+    const { tasks } = await runFullImport();
+
+    // Two never-imported ids, deliberately handed in DESCENDING order so an
+    // unsorted result would read back ["z-...", "a-..."] — a `.sort()`
+    // removal (or `[...dbIds]` -> `[...sourceIds]` swap) changes this exact
+    // list, which a single-missing-id test can never distinguish from
+    // "happened to come out sorted by coincidence".
+    const tasksPlusTwo: SourceTask[] = [
+      ...tasks,
+      { id: "z-never-imported", title: "Z", body: "x", status: "todo", area: "web" },
+      { id: "a-never-imported", title: "A", body: "x", status: "todo", area: "web" },
+    ];
+
+    const report = await verifyItemRowCounts(prisma, tasksPlusTwo);
+    expect(report.missingFromDb).toEqual(["a-never-imported", "z-never-imported"]);
+  });
+
   it("verifyItemRowCounts reports unexpectedInDb when the db has more legacy_id rows than the source list given", async () => {
     const { tasks } = await runFullImport();
 
