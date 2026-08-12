@@ -154,6 +154,20 @@ to follow: the script's own header states outright that a green run means the re
 absent, not that the prose is clean, and the test both seeds a violation to prove the gate fires and
 asserts the exemption lists stay exactly as narrow as intended.
 
+## Local checks before a push
+
+`npm install` (or `npm ci`) wires a pre-push git hook (`.githooks/pre-push`, installed by the
+`prepare` script — nothing to run by hand) that runs `format:check` and `lint` before a push
+leaves the machine. Those are the two fastest checks CI runs, and the two that need nothing but
+the source tree — no database, no container. The hook does **not** run the test suite or the
+mutation harness: both need a live database and take minutes, and a slow hook is one that gets
+bypassed and then protects nothing. It works identically on Windows and Linux — git runs a
+`core.hooksPath` script with `sh`, and Git for Windows ships one for that purpose, so there is
+nothing to install or branch on per platform.
+
+**Bypass in an emergency:** `git push --no-verify`. CI still runs the full check list regardless,
+so a bypass costs a slower feedback loop, not correctness.
+
 ## Standing authorisation — keep the queue moving
 
 **Merging is pre-authorised. Do not stop to ask.** Once a change has been through review and its
