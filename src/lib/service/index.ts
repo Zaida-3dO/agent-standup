@@ -68,6 +68,14 @@ export {
   findSimilarityIssues,
   hierarchyGuard,
   summaryRequiredGuard,
+  MERGE_GUARDS,
+  mergeRequiresApprovingCodeReviewGuard,
+  mergeRequiresAuthorisationGuard,
+  mergeRequiresCommitGuard,
+  mergeRequiresVisualReviewGuard,
+  currentReviewRound,
+  hasApprovingArtifactAtCurrentRound,
+  hasApprovingArtifactAtCurrentRoundAndTip,
 } from "./guards";
 
 // The state machine (MILESTONES.md #15). Rows #16-#19 and #21 import

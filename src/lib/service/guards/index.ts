@@ -18,10 +18,24 @@
 import { guardRegistry } from "../state-machine/guard";
 import { deferralFollowUpGuard } from "./deferral";
 import { hierarchyGuard } from "./hierarchy";
+import {
+  mergeRequiresApprovingCodeReviewGuard,
+  mergeRequiresAuthorisationGuard,
+  mergeRequiresCommitGuard,
+  mergeRequiresVisualReviewGuard,
+} from "./merge";
 import { summaryRequiredGuard } from "./summaries";
 
 /** Every hand-written guard, in the order it registers. */
-export const ALL_GUARDS = [hierarchyGuard, summaryRequiredGuard, deferralFollowUpGuard] as const;
+export const ALL_GUARDS = [
+  hierarchyGuard,
+  mergeRequiresCommitGuard,
+  mergeRequiresApprovingCodeReviewGuard,
+  mergeRequiresVisualReviewGuard,
+  mergeRequiresAuthorisationGuard,
+  summaryRequiredGuard,
+  deferralFollowUpGuard,
+] as const;
 
 for (const guard of ALL_GUARDS) {
   if (!guardRegistry.has(guard.id)) {
@@ -30,6 +44,18 @@ for (const guard of ALL_GUARDS) {
 }
 
 export { hierarchyGuard } from "./hierarchy";
+export {
+  MERGE_GUARDS,
+  mergeRequiresApprovingCodeReviewGuard,
+  mergeRequiresAuthorisationGuard,
+  mergeRequiresCommitGuard,
+  mergeRequiresVisualReviewGuard,
+} from "./merge";
+export {
+  currentReviewRound,
+  hasApprovingArtifactAtCurrentRound,
+  hasApprovingArtifactAtCurrentRoundAndTip,
+} from "./merge-review-round";
 export { SUMMARY_REQUIRED_GUARD_ID, findSimilarityIssues, summaryRequiredGuard } from "./summaries";
 export {
   DEFERRAL_FOLLOW_UP_GUARD_ID,
