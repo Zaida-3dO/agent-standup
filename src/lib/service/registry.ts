@@ -46,6 +46,7 @@ import { myWork } from "./operations/my-work";
 import { transitionItem } from "./operations/transition-item";
 import { completeItem } from "./operations/complete-item";
 import { getCrewName } from "./operations/get-crew-name";
+import { listPeople } from "./operations/list-people";
 import { hookDecision } from "./operations/hook-decision";
 
 /**
@@ -77,6 +78,7 @@ export const OPERATION_REGISTRY = {
   [transitionItem.name]: transitionItem,
   [completeItem.name]: completeItem,
   [getCrewName.name]: getCrewName,
+  [listPeople.name]: listPeople,
   [hookDecision.name]: hookDecision,
 } as const satisfies Record<string, AnyOperation>;
 

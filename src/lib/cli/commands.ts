@@ -16,6 +16,7 @@
 import { malformed, type ErrorEnvelope } from "./envelope";
 import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
 import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
+import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
 
 /** What building an input produced. */
 export type InputResult =
@@ -213,6 +214,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     buildInput: noInput,
   },
   ...OWNERSHIP_COMMANDS,
+  ...CONFIG_COMMANDS, // row #83 — `standup config`
 ]);
 
 /**
