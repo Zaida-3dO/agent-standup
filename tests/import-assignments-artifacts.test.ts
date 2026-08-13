@@ -12,6 +12,7 @@ import {
   mapSourceRole,
   mapSourceArtifactKind,
   mapSourceVerdict,
+  VERDICTS,
   UnknownSourceRoleError,
   UnknownArtifactKindError,
   UnknownVerdictError,
@@ -79,8 +80,45 @@ describe("mapSourceVerdict", () => {
     expect(mapSourceVerdict("na", "r1")).toBe("na");
   });
 
-  it("rejects a verdict outside the closed set", () => {
+  it("accepts the tiered verdicts", () => {
+    // A review outcome is tiered: a plain pass, a pass with cosmetic notes,
+    // and a pass with follow-up work are different answers.
+    expect(mapSourceVerdict("lgtm", "r1")).toBe("lgtm");
+    expect(mapSourceVerdict("lgtm_with_nits", "r1")).toBe("lgtm_with_nits");
+    expect(mapSourceVerdict("lgtm_with_followups", "r1")).toBe("lgtm_with_followups");
+  });
+
+  it("keeps `approved` working as a synonym rather than dropping it", () => {
+    // Removing an enum label in Postgres is a type rebuild, not an ALTER —
+    // so every verdict already on record has to keep deciding identically.
+    expect(mapSourceVerdict("approved", "r1")).toBe("approved");
+    expect(VERDICTS.has("approved")).toBe(true);
+  });
+
+  it("maps a caller's own spelling through verdictAliases", () => {
+    // The hyphenated spelling is a CALLER's, not this application's. It is
+    // translated by a map the caller supplies, exactly like a repo or an
+    // actor label — never by a table of somebody else's vocabulary here.
+    expect(mapSourceVerdict("lgtm-with-nits", "r1", { "lgtm-with-nits": "lgtm_with_nits" })).toBe(
+      "lgtm_with_nits",
+    );
+  });
+
+  it("still REJECTS a verdict outside the set — widening is not a pass-through", () => {
+    // The value of this check is precisely that it refuses what nobody
+    // taught it. A version that simply returned the verdict unchecked would
+    // pass the happy-path cases above and protect nothing.
     expect(() => mapSourceVerdict("pending", "r1")).toThrow(UnknownVerdictError);
+    expect(() => mapSourceVerdict("lgtm-with-nits", "r1")).toThrow(UnknownVerdictError);
+    expect(() => mapSourceVerdict("LGTM", "r1")).toThrow(UnknownVerdictError);
+  });
+
+  it("REJECTS an alias whose target is not one of this application's verdicts", () => {
+    // A hyphen-to-underscore transform would happily accept this and fail
+    // deep inside an insert instead.
+    expect(() => mapSourceVerdict("odd", "r1", { odd: "not_a_verdict" })).toThrow(
+      UnknownVerdictError,
+    );
   });
 });
 

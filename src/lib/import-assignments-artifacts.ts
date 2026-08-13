@@ -124,7 +124,33 @@ const ARTIFACT_KINDS = new Set([
   "other",
 ]);
 
-const VERDICTS = new Set(["approved", "changes_required", "na"]);
+/**
+ * **This application's own verdict vocabulary** (SCHEMA.md §6) — the values
+ * an `artifacts.verdict` may hold, and the set a caller maps onto.
+ *
+ * Six values, not three, because a review outcome is tiered: a plain pass,
+ * a pass that records cosmetic notes, and a pass that records follow-up
+ * work are genuinely different answers, and collapsing them onto one label
+ * loses the distinction at the column that is queried for it.
+ *
+ * `approved` is retained alongside `lgtm` as an accepted synonym rather
+ * than replaced. Removing a label from a Postgres enum is a type rebuild,
+ * not an `ALTER`, so every verdict already on record keeps deciding
+ * identically — which is the point: a migration must never silently change
+ * what a stored row means.
+ *
+ * As with statuses, this application ships ITS vocabulary and no table
+ * translating anybody else's spellings into it. A caller whose source
+ * writes `lgtm-with-nits` supplies that mapping in `verdictAliases`.
+ */
+export const VERDICTS = new Set([
+  "approved",
+  "changes_required",
+  "na",
+  "lgtm",
+  "lgtm_with_nits",
+  "lgtm_with_followups",
+]);
 
 export class UnknownArtifactKindError extends Error {
   constructor(kind: string, reviewId: string) {
@@ -149,11 +175,96 @@ export function mapSourceArtifactKind(kind: string, reviewId: string): string {
   return kind;
 }
 
-export function mapSourceVerdict(verdict: string, reviewId: string): string {
-  if (!VERDICTS.has(verdict)) {
+/**
+ * Resolves a source verdict onto one of this application's own.
+ *
+ * A caller-supplied `verdictAliases` wins, then the application's own set;
+ * anything in neither is **refused**. Widening the accepted set must never
+ * become a pass-through — the whole value of this check is that it refuses
+ * a verdict nobody taught it, and a review outcome is exactly the field
+ * where guessing is most expensive: it decides whether a change was passed.
+ *
+ * An explicit alias map rather than a normalising transform (hyphen ->
+ * underscore, lowercase) even though a transform would handle the common
+ * spellings in one line. A transform quietly accepts anything shaped
+ * right — `lgtm-with-nitpicks` would normalise to a value that does not
+ * exist and fail deep inside an insert, and `changes-required` and
+ * `changes_required` would stop being distinguishable from a typo. The map
+ * says exactly which foreign spellings are recognised and refuses the rest,
+ * which is the same posture `repoAliases` and `actorAliases` already take
+ * for the same reason.
+ */
+export function mapSourceVerdict(
+  verdict: string,
+  reviewId: string,
+  verdictAliases: Record<string, string> = {},
+): string {
+  // An alias's TARGET is validated too, not trusted. A caller-supplied map
+  // is input, and an entry pointing at something this application does not
+  // store is the same data problem as an unmapped verdict — caught here
+  // rather than deep inside an insert. (The payload schema also constrains
+  // it; this is the check for every other caller of this function.)
+  const mapped = verdictAliases[verdict] ?? verdict;
+  if (!VERDICTS.has(mapped)) {
     throw new UnknownVerdictError(verdict, reviewId);
   }
-  return verdict;
+  return mapped;
+}
+
+export class VerdictNotStorableError extends Error {
+  constructor(missing: readonly string[], available: readonly string[]) {
+    super(
+      `the database's Verdict type cannot store ${missing.length} verdict(s) this import would ` +
+        `write: ${missing.join(", ")}. It accepts: ${available.join(", ")}. Apply the ` +
+        "migration that adds them, or map them onto a value it does accept in verdictAliases.",
+    );
+    this.name = "VerdictNotStorableError";
+  }
+}
+
+interface EnumLabelRow {
+  label: string;
+}
+
+/**
+ * Refuses, up front, any verdict the database's own `Verdict` type cannot
+ * hold.
+ *
+ * This exists because the application's accepted set and the database's
+ * enum labels are versioned separately: a build that knows about tiered
+ * verdicts can be pointed at a database whose migration adding them has not
+ * been applied yet. Without this the mismatch surfaces partway through a
+ * bulk insert as `invalid input value for enum "Verdict"` — naming no task,
+ * no artifact and no remedy, after some of the import has already run.
+ *
+ * Checked against `pg_enum` rather than against a constant, because the
+ * question is not "what does this build believe" but "what will this
+ * database actually accept", and only the database can answer that. Every
+ * offender is reported at once, so one run tells the operator the whole
+ * story instead of one failure at a time.
+ */
+export async function assertVerdictsStorable(
+  client: Pick<PrismaClient, "$queryRawUnsafe">,
+  verdicts: readonly string[],
+): Promise<void> {
+  const wanted = [...new Set(verdicts)].sort();
+  if (wanted.length === 0) return;
+
+  const rows = await client.$queryRawUnsafe<EnumLabelRow[]>(
+    `SELECT e.enumlabel AS label
+       FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+      WHERE t.typname = 'Verdict'`,
+  );
+  const available = rows.map((row) => row.label);
+  // No rows means the type is not there at all — a database this importer
+  // was never migrated against. Leave that to the insert's own error
+  // rather than reporting every verdict as individually unstorable.
+  if (available.length === 0) return;
+
+  const missing = wanted.filter((verdict) => !available.includes(verdict));
+  if (missing.length > 0) {
+    throw new VerdictNotStorableError(missing, available.sort());
+  }
 }
 
 /** A `task.json` entry as this importer reads it — the fields #10's `SourceTask` doesn't need. */
@@ -346,6 +457,7 @@ interface ArtifactIdRow {
 export async function importArtifacts(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
+  options: { readonly verdictAliases?: Record<string, string> } = {},
 ): Promise<Pick<ImportAssignmentsArtifactsResult, "reviewsImported" | "reviewsSkippedExisting">> {
   let reviewsImported = 0;
   let reviewsSkippedExisting = 0;
@@ -361,7 +473,10 @@ export async function importArtifacts(
 
     for (const review of reviews) {
       const kind = mapSourceArtifactKind(review.kind, review.id);
-      const verdict = review.verdict != null ? mapSourceVerdict(review.verdict, review.id) : null;
+      const verdict =
+        review.verdict != null
+          ? mapSourceVerdict(review.verdict, review.id, options.verdictAliases)
+          : null;
       const reviewRound = review.reviewRound ?? 1;
 
       const existing = await client.$queryRawUnsafe<ArtifactIdRow[]>(
@@ -416,8 +531,9 @@ export async function importArtifacts(
 export async function importAssignmentsAndArtifacts(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
+  options: { readonly verdictAliases?: Record<string, string> } = {},
 ): Promise<ImportAssignmentsArtifactsResult> {
   const assignments = await importAssignments(client, tasks);
-  const artifacts = await importArtifacts(client, tasks);
+  const artifacts = await importArtifacts(client, tasks, options);
   return { ...assignments, ...artifacts };
 }

@@ -55,6 +55,24 @@ export const ITEM_STATES = [
   "cancelled",
 ] as const;
 
+/**
+ * **This application's own review verdicts** (SCHEMA.md §6) — the target
+ * vocabulary a caller maps onto.
+ *
+ * `approved` is kept alongside `lgtm` as an accepted synonym rather than
+ * replaced: removing a label from a Postgres enum is a type rebuild rather
+ * than an `ALTER`, so every verdict already on record keeps meaning exactly
+ * what it meant.
+ */
+export const VERDICT_VALUES = [
+  "approved",
+  "changes_required",
+  "na",
+  "lgtm",
+  "lgtm_with_nits",
+  "lgtm_with_followups",
+] as const;
+
 const timestamp = z
   .string()
   .min(1)
@@ -206,6 +224,19 @@ export const backfillPayloadSchema = z
      * it is not there either, is refused rather than guessed at.
      */
     statusAliases: z.record(z.string(), z.enum(ITEM_STATES)).optional(),
+    /**
+     * Converter verdict spelling -> one of **this application's** verdicts
+     * (`VERDICT_VALUES`).
+     *
+     * The fourth alias map, and it exists for a concrete reason rather than
+     * symmetry: review vocabularies differ in punctuation as well as in
+     * meaning — a source writing `lgtm-with-nits` has to say so, because
+     * this application stores `lgtm_with_nits` and will not guess that a
+     * hyphen was meant to be an underscore. A verdict with no entry falls
+     * back to being taken literally, and is refused if it is not one of
+     * ours.
+     */
+    verdictAliases: z.record(z.string(), z.enum(VERDICT_VALUES)).optional(),
     tasks: z.array(taskSchema),
   })
   .strict();

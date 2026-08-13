@@ -8,6 +8,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { importItems, UnknownRepoAliasError } from "@/lib/import-items";
+import { VerdictNotStorableError } from "@/lib/import-assignments-artifacts";
 import type { BackfillPayload } from "@/lib/backfill/contract";
 import {
   actorsIn,
@@ -494,6 +495,76 @@ describeDb("runBackfill (real database)", () => {
       tasks: [{ ...base.tasks[0]!, status: "invented-status" }, base.tasks[1]!],
     });
     await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(/invented-status/);
+  }, 120_000);
+
+  it("REFUSES up front a verdict the database's own enum cannot store", async () => {
+    // Merge-order safety. This build knows the tiered verdicts; a database
+    // whose migration adding them has not been applied does not. Without
+    // this pre-flight the mismatch surfaces partway through a bulk insert
+    // as `invalid input value for enum "Verdict"`, naming no artifact and
+    // no remedy, after part of the import has already run.
+    //
+    // Simulated by asking for a label this database genuinely does not
+    // have, which is exactly the shape of the real case.
+    const base = payloadFixture();
+    const payload = parsePayload({
+      ...base,
+      verdictAliases: { "some-future-verdict": "lgtm_with_followups" },
+      tasks: base.tasks.map((task) => ({
+        ...task,
+        reviews: (task.reviews ?? []).map((review) => ({
+          ...review,
+          verdict: "some-future-verdict",
+        })),
+      })),
+    });
+
+    const labels = await prisma.$queryRawUnsafe<{ label: string }[]>(
+      `SELECT e.enumlabel AS label FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+        WHERE t.typname = 'Verdict'`,
+    );
+    const available = labels.map((row) => row.label);
+
+    if (available.includes("lgtm_with_followups")) {
+      // The migration has landed: the value stores, and nothing is refused.
+      const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+      expect(report.counts.artifactsImported).toBeGreaterThan(0);
+    } else {
+      // The migration has not landed: refused BEFORE anything is written,
+      // naming the value and the remedy.
+      await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(
+        VerdictNotStorableError,
+      );
+      await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(
+        /lgtm_with_followups/,
+      );
+      const artifacts = await prisma.artifact.count();
+      expect(artifacts).toBe(0);
+    }
+  }, 120_000);
+
+  it("imports a caller's hyphenated verdict spelling through verdictAliases", async () => {
+    // The 36-artifact case: a source writing `lgtm-with-nits` maps it in
+    // the payload rather than this application knowing that spelling.
+    const base = payloadFixture();
+    const payload = parsePayload({
+      ...base,
+      verdictAliases: { "changes-required": "changes_required" },
+      tasks: base.tasks.map((task) => ({
+        ...task,
+        reviews: (task.reviews ?? []).map((review) => ({
+          ...review,
+          verdict: "changes-required",
+        })),
+      })),
+    });
+
+    const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+    expect(report.counts.artifactsImported).toBe(2);
+    const rows = await prisma.$queryRawUnsafe<{ verdict: string }[]>(
+      `SELECT "verdict"::text AS verdict FROM "Artifact"`,
+    );
+    expect(rows.every((row) => row.verdict === "changes_required")).toBe(true);
   }, 120_000);
 
   it("reconciles history: every source entry is accounted for and none is lost", async () => {

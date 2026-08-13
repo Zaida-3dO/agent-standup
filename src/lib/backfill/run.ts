@@ -9,7 +9,11 @@
 // insert logic of its own, so the three importers stay the only writers to
 // their own tables.
 import type { PrismaClient } from "@prisma/client";
-import { importAssignmentsAndArtifacts } from "../import-assignments-artifacts";
+import {
+  assertVerdictsStorable,
+  importAssignmentsAndArtifacts,
+  mapSourceVerdict,
+} from "../import-assignments-artifacts";
 import type { SourceClaim, SourceReview } from "../import-assignments-artifacts";
 import { importEvents } from "../import-events";
 import type { ActorAliasTarget } from "../import-events";
@@ -113,7 +117,21 @@ export async function backfillTasks(
   const actorAliases = (payload.actorAliases ?? {}) as Record<string, ActorAliasTarget>;
   const events = await importEvents(client, tasks, { actorAliases });
 
-  const assignmentsArtifacts = await importAssignmentsAndArtifacts(client, tasks);
+  // Checked BEFORE anything is written: a build that knows about a verdict
+  // the target database's enum does not yet have would otherwise fail
+  // partway through a bulk insert with an opaque enum error. Resolving the
+  // verdicts here also surfaces an unmapped spelling before the first row.
+  const verdictAliases = payload.verdictAliases ?? {};
+  const verdicts = tasks.flatMap((task) =>
+    (task.reviews ?? [])
+      .filter((review) => review.verdict != null)
+      .map((review) => mapSourceVerdict(review.verdict as string, review.id, verdictAliases)),
+  );
+  await assertVerdictsStorable(client, verdicts);
+
+  const assignmentsArtifacts = await importAssignmentsAndArtifacts(client, tasks, {
+    verdictAliases,
+  });
 
   return {
     tasks: tasks.length,

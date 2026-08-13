@@ -23,6 +23,7 @@ know nothing about the shape the data was read from.
     "someone": { "actorType": "person", "actorId": "user-a" }
   },
   "statusAliases": { "in-flight": "executing", "shipped": "merged", "shelved": "paused" },
+  "verdictAliases": { "looks-good": "lgtm", "looks-good-with-nits": "lgtm_with_nits" },
   "tasks": [
     {
       "id": "T-19700101-example-one",
@@ -60,7 +61,7 @@ know nothing about the shape the data was read from.
         {
           "id": "example-one:artifact:r01",
           "kind": "code_review",
-          "verdict": "approved",
+          "verdict": "looks-good-with-nits",
           "reviewRound": 1,
           "commitSha": "abc1234",
           "body": "{\"verdict\":\"lgtm\"}",
@@ -120,6 +121,38 @@ collapse is lossy in the column and reversible in the row:** put your original s
 A status with no alias falls back to a small default vocabulary this application uses for its own
 command-line surface (`todo`, `in-progress`, `review`, `waiting`, `done`). **A status in neither is
 refused**, never defaulted — guessing files somebody's work under a state they never chose.
+
+### `verdict` — you supply the spelling, this application supplies the values
+
+Same shape as `status`, for the same reason. This application stores six verdicts:
+
+| Verdict | Means |
+|---|---|
+| `lgtm` | Passed. |
+| `lgtm_with_nits` | Passed, with cosmetic notes recorded. |
+| `lgtm_with_followups` | Passed, with follow-up work recorded. |
+| `changes_required` | Did not pass. |
+| `approved` | An accepted synonym of `lgtm`. |
+| `na` | The artifact carries no verdict. Also what an absent verdict becomes. |
+
+`approved` is kept rather than replaced by `lgtm`: removing a label from a Postgres enum is a type
+rebuild rather than an `ALTER`, so every verdict already on record keeps meaning exactly what it
+meant.
+
+```jsonc
+"verdictAliases": { "looks-good": "lgtm", "looks-good-with-nits": "lgtm_with_nits" }
+```
+
+Punctuation counts. If your source writes `lgtm-with-nits`, say so — this application stores
+`lgtm_with_nits` and **will not guess that a hyphen was meant to be an underscore**. That is
+deliberate: a normalising transform would quietly accept `lgtm-with-nitpicks` too, and fail deep
+inside an insert instead of at the mapping. A verdict with no alias is taken literally and refused
+if it is not one of ours — refusal is the point, because a verdict decides whether a change passed.
+
+**Verdicts are checked against the database's own enum before anything is written.** A build can
+know a verdict whose migration has not been applied to the database you are pointing at; rather
+than failing partway through a bulk insert with an opaque enum error, the run refuses up front,
+naming every value the database cannot store and what to do about it.
 
 ### `repo` — refused, never invented
 
