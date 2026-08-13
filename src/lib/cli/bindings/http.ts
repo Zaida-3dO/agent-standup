@@ -16,6 +16,7 @@
 import type { Rejection, ServiceErrorCode } from "@/lib/service";
 import { SERVICE_ERROR_CODES } from "@/lib/service";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
+import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
 import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
 
 /** How one operation is expressed as an HTTP request. */
@@ -166,6 +167,11 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     },
     unwrap: (body) => property(body, "item"),
   },
+  // MILESTONES.md #92 — repo/area/machine/account routes, kept in their own
+  // module (./http-routes-admin.ts) and spread in as a single line, per
+  // that module's own header, so concurrent CLI rows adding entries above
+  // never conflict with this one.
+  ...ADMIN_HTTP_ROUTES,
   ...OWNERSHIP_HTTP_ROUTES,
 });
 

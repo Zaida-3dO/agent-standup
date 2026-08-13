@@ -45,6 +45,21 @@ import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 import { transitionItem } from "./operations/transition-item";
 import { completeItem } from "./operations/complete-item";
+// Admin — installation-owned entities (MILESTONES.md #92, SCHEMA.md §23).
+import { listRepos } from "./operations/list-repos";
+import { getRepo } from "./operations/get-repo";
+import { createRepo } from "./operations/create-repo";
+import { updateRepo } from "./operations/update-repo";
+import { listAreas } from "./operations/list-areas";
+import { getArea } from "./operations/get-area";
+import { createArea } from "./operations/create-area";
+import { updateArea } from "./operations/update-area";
+import { listMachines } from "./operations/list-machines";
+import { getMachine } from "./operations/get-machine";
+import { updateMachine } from "./operations/update-machine";
+import { listAccounts } from "./operations/list-accounts";
+import { getAccount } from "./operations/get-account";
+import { updateAccount } from "./operations/update-account";
 import { getCrewName } from "./operations/get-crew-name";
 import { listPeople } from "./operations/list-people";
 import { hookDecision } from "./operations/hook-decision";
@@ -77,6 +92,20 @@ export const OPERATION_REGISTRY = {
   [myWork.name]: myWork,
   [transitionItem.name]: transitionItem,
   [completeItem.name]: completeItem,
+  [listRepos.name]: listRepos,
+  [getRepo.name]: getRepo,
+  [createRepo.name]: createRepo,
+  [updateRepo.name]: updateRepo,
+  [listAreas.name]: listAreas,
+  [getArea.name]: getArea,
+  [createArea.name]: createArea,
+  [updateArea.name]: updateArea,
+  [listMachines.name]: listMachines,
+  [getMachine.name]: getMachine,
+  [updateMachine.name]: updateMachine,
+  [listAccounts.name]: listAccounts,
+  [getAccount.name]: getAccount,
+  [updateAccount.name]: updateAccount,
   [getCrewName.name]: getCrewName,
   [listPeople.name]: listPeople,
   [hookDecision.name]: hookDecision,
