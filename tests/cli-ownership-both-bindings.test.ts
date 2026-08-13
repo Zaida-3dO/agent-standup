@@ -131,7 +131,7 @@ const sharedService = {
           whatChanged: [],
           changedSince: "0",
           horizon: "0",
-          openLoops: { notDone: [], children: [] },
+          openLoops: { notDone: [], children: [], loops: [] },
           crew: [],
           // Present only when the caller sent `since` — proves the query
           // string round-trips, not just the path.

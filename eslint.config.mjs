@@ -75,6 +75,57 @@ const eslintConfig = [
       ],
     },
   },
+  // The backfill boundary (SCHEMA.md §3, src/lib/events-backfill.ts). Only
+  // the import path may write an `events` row with a timestamp of its own;
+  // everything else appends through `events.ts`, which stamps `now()` and
+  // has no way to be told otherwise.
+  //
+  // This is the structural half of that rule. The other two halves live in
+  // the code — `AppendEventInput` has no `ts` field, and `appendEvent`
+  // refuses an input carrying one at run time — but both of those protect
+  // the normal FUNCTION, not the module underneath it. Without this zone a
+  // caller could simply import `events-backfill.ts` (or the shared
+  // `events-insert.ts` below it) and never touch `appendEvent` at all, which
+  // is why the boundary has to be on the module, not only on the argument.
+  //
+  // The allowlist is deliberately the import path and `events.ts` itself.
+  // Tests are outside `src/` and so outside this rule entirely, which is
+  // correct: proving the backfill path works requires calling it.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/lib/events.ts", "src/lib/events-backfill.ts", "src/lib/import-*.ts"],
+    settings: {
+      "import/resolver": {
+        typescript: { project: "./tsconfig.json" },
+      },
+    },
+    rules: {
+      "import/no-restricted-paths": [
+        "error",
+        {
+          zones: [
+            {
+              target: "./src/**/*",
+              from: "./src/lib/events-backfill.ts",
+              message:
+                "Only the one-time import path may append an event with a timestamp of its own. " +
+                "Everything else calls appendEvent (src/lib/events.ts), which stamps now() — see " +
+                "src/lib/events-backfill.ts's header for why a general-purpose override is a way " +
+                "to forge history.",
+            },
+            {
+              target: "./src/**/*",
+              from: "./src/lib/events-insert.ts",
+              message:
+                "src/lib/events-insert.ts is the shared INSERT underneath appendEvent and " +
+                "appendBackfillEvent, not a third way to write an event. Call appendEvent " +
+                "(src/lib/events.ts).",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // The other half of the allowlist: constructing a raw client instead of
   // importing the singleton. `import/no-restricted-paths` matches a module,
   // not a named export, so `@prisma/client`'s `PrismaClient` value import

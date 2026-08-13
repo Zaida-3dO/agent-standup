@@ -14,6 +14,7 @@ import type { ServiceContext } from "../context";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
 import { readSinceBounded, type EventRow } from "../../events";
 import { liveAssignments, type Assignment } from "../../claims";
+import { deriveOpenLoops, type LoopEventLike, type OpenLoop } from "../../open-loops";
 
 const inputSchema = z
   .object({
@@ -91,9 +92,28 @@ export interface OrientationOutput {
   readonly changedSince: string;
   /** The horizon `whatChanged` was bounded to (SCHEMA.md §3) — how far "what changed" can be trusted. */
   readonly horizon: string;
+  /**
+   * Three genuinely different sources of "something is still outstanding on
+   * this item", reported side by side rather than flattened into one list.
+   *
+   * They are not interchangeable and a caller usually wants a specific one:
+   * `notDone` is what a **completed** item deliberately left undone
+   * (`Summary`, written once at completion); `children` is unfinished work
+   * that is itself an item; `loops` is a loose end the current session is
+   * carrying that is not work anybody has filed. Merging them would need a
+   * common shape none of them has, and would lose which kind of thing each
+   * entry is — which is the first thing a resuming session needs to know,
+   * because the three call for completely different responses.
+   */
   readonly openLoops: {
     readonly notDone: readonly OpenLoopNotDone[];
     readonly children: readonly OpenLoopChild[];
+    /**
+     * Loops opened against this item and not yet closed — the only one of
+     * the three an item can carry while it is still `executing`. See
+     * `src/lib/open-loops.ts`.
+     */
+    readonly loops: readonly OpenLoop[];
   };
   /** Live assignments on this item — who is on it and in what role (SCHEMA.md §2). */
   readonly crew: readonly Assignment[];
@@ -114,6 +134,14 @@ interface RawChildRow {
   id: string;
   title: string;
   state: string;
+}
+
+/** One `open_loop`/`open_loop_closed` row as the driver returns it — `LoopEventLike`'s concrete shape. */
+interface RawLoopEventRow extends LoopEventLike {
+  id: bigint;
+  ts: Date;
+  type: string;
+  payload: unknown;
 }
 
 /**
@@ -229,6 +257,25 @@ export const orientation = defineOperation({
       actionable: !NON_ACTIONABLE_STATES.has(child.state),
     }));
 
+    // Open loops, part three: loops opened against this item and never
+    // closed (SCHEMA.md §3a).
+    //
+    // Read as its own query rather than sliced out of `whatChanged` above:
+    // `whatChanged` is bounded twice — by the caller's cursor and by the
+    // visibility horizon — and both bounds are wrong for this question. A
+    // loop opened before the last checkpoint is still open now, and it is
+    // precisely the oldest loops, the ones that have survived several
+    // sessions, that a resuming session most needs to be told about. Scoping
+    // them to "since you last looked" would hide exactly the ones that
+    // matter.
+    const loopRows = await ctx.db.$queryRawUnsafe<RawLoopEventRow[]>(
+      `SELECT "id", "ts", "type", "payload" FROM "Event"
+       WHERE "itemId" = $1 AND "type" IN ('open_loop'::"EventType", 'open_loop_closed'::"EventType")
+       ORDER BY "id" ASC`,
+      input.itemId,
+    );
+    const loops = deriveOpenLoops(loopRows);
+
     const crew = await liveAssignments(ctx.db, input.itemId);
 
     return {
@@ -237,7 +284,7 @@ export const orientation = defineOperation({
       whatChanged,
       changedSince: since.toString(),
       horizon: horizon.toString(),
-      openLoops: { notDone, children },
+      openLoops: { notDone, children, loops },
       crew,
     };
   },

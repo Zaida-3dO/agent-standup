@@ -20,6 +20,7 @@ import {
   mergeRequiresApprovingCodeReviewGuard,
   mergeRequiresAuthorisationGuard,
   mergeRequiresCommitGuard,
+  mergeRequiresLinkedFollowUpGuard,
   mergeRequiresVisualReviewGuard,
 } from "@/lib/service/guards";
 import { guardRegistry, type GuardInput } from "@/lib/service/state-machine/guard";
@@ -110,6 +111,8 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     reviewRound?: number;
     createdByType?: string;
     createdAt?: Date;
+    followUpItemId?: string | null;
+    findings?: unknown;
   }) {
     await prisma.artifact.create({
       data: {
@@ -121,6 +124,8 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: overrides.reviewRound ?? 1,
         createdByType: (overrides.createdByType ?? "agent") as never,
         createdById: "test-actor",
+        followUpItemId: overrides.followUpItemId ?? null,
+        ...(overrides.findings === undefined ? {} : { findings: overrides.findings as never }),
         ...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
       },
     });
@@ -155,19 +160,21 @@ describeIfDb("merge guards (#18), against Postgres", () => {
   }
 
   describe("registration — canonical service/guards convention, no parallel mechanism", () => {
-    it("registers all four merge guards into the shared guardRegistry, exactly once", () => {
+    it("registers all five merge guards into the shared guardRegistry, exactly once", () => {
       expect(guardRegistry.has("merge.requires_commit")).toBe(true);
       expect(guardRegistry.has("merge.requires_approving_code_review")).toBe(true);
       expect(guardRegistry.has("merge.requires_visual_review")).toBe(true);
       expect(guardRegistry.has("merge.requires_authorisation")).toBe(true);
+      expect(guardRegistry.has("merge.requires_linked_followup")).toBe(true);
     });
 
-    it("all four apply only to entering merged, not other transitions", () => {
+    it("all five apply only to entering merged, not other transitions", () => {
       for (const guard of [
         mergeRequiresCommitGuard,
         mergeRequiresApprovingCodeReviewGuard,
         mergeRequiresVisualReviewGuard,
         mergeRequiresAuthorisationGuard,
+        mergeRequiresLinkedFollowUpGuard,
       ]) {
         expect(guard.appliesTo("in_review", "merged")).toBe(true);
         expect(guard.appliesTo("executing", "merged")).toBe(true);
@@ -176,7 +183,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       }
     });
 
-    it("MERGE_GUARDS is exactly the four merge guard ids ALL_GUARDS registers for this row — not a fork", () => {
+    it("MERGE_GUARDS is exactly the merge guard ids ALL_GUARDS registers for this row — not a fork", () => {
       // Makes the "against MERGE_GUARDS exactly as ALL_GUARDS registers
       // them" claim below verifiable rather than asserted only in prose:
       // MERGE_GUARDS is what several tests in this file register instead of
@@ -915,6 +922,332 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdAt: new Date(),
       });
       expect(await hasApprovingArtifactAtCurrentRoundAndTip(prisma, id, "code_review")).toBe(true);
+    });
+  });
+
+  // ── The tiered review vocabulary (SCHEMA.md §6a) ────────────────────────
+  //
+  // These prove the two halves of "additive": every tier now satisfies the
+  // clauses that only `'approved'` used to, and nothing that was refused
+  // before is accepted now.
+  describe("tiered verdicts — which ones the merge gate accepts", () => {
+    for (const verdict of ["lgtm", "lgtm_with_nits", "approved"]) {
+      it(`ACCEPTS: a ${verdict} code_review at the current round and tip`, async () => {
+        const reg = new GuardRegistry();
+        reg.register(mergeRequiresApprovingCodeReviewGuard);
+        const id = await createTask({ state: "in_review" });
+        await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tier" });
+        await createArtifact({
+          itemId: id,
+          kind: "code_review",
+          verdict,
+          commitSha: "sha-tier",
+        });
+        await callTransition(id, "merged", reg);
+        expect(await readState(id)).toBe("merged");
+      });
+    }
+
+    it("REFUSES: an `na` verdict — a legal value that is not an approval", async () => {
+      // The interesting rejection. An "everything except changes_required"
+      // reading of the enum would wave this through, and `na` is what a
+      // commit or a test-run artifact carries — an item would merge on the
+      // strength of an artifact that reviewed nothing.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-na" });
+      await createArtifact({ itemId: id, kind: "code_review", verdict: "na", commitSha: "sha-na" });
+      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect(isServiceError(error)).toBe(true);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("REFUSES: changes_required, unchanged by the tiering", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-cr" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "changes_required",
+        commitSha: "sha-cr",
+      });
+      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect(isServiceError(error)).toBe(true);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("REFUSES at the database: a verdict outside the enum", async () => {
+      // The hyphenated spelling is the one a human or a source store writes,
+      // and the column does not hold it. Proven against Postgres because
+      // TypeScript's union says nothing about what the column accepts.
+      const id = await createTask({ state: "in_review" });
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO "Artifact" ("id", "itemId", "kind", "verdict", "createdByType", "createdById")
+           VALUES ($1, $2, 'code_review'::"ArtifactKind", $3::"Verdict", 'agent'::"HolderType", 'x')`,
+          randomUUID(),
+          id,
+          "lgtm-with-nits",
+        ),
+      ).rejects.toThrow();
+    });
+
+    it("stores a findings list with severities, and changes no merge outcome by doing so", async () => {
+      // Storage only. A medium-severity finding recorded against an
+      // approving review does not, on its own, block anything: no
+      // severity-derived gate exists in this system and this change does not
+      // add one. The gate still reads the verdict and the artifact's
+      // currency, exactly as before.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-find" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        commitSha: "sha-find",
+        findings: [
+          { text: "the retry path is untested", severity: "medium" },
+          { text: "a stray log line", severity: "low" },
+        ],
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+
+      const stored = await prisma.artifact.findFirstOrThrow({
+        where: { itemId: id, kind: "code_review" },
+      });
+      expect(stored.findings).toEqual([
+        { text: "the retry path is untested", severity: "medium" },
+        { text: "a stray log line", severity: "low" },
+      ]);
+    });
+
+    it("lgtm_with_nits goes stale when the nits are addressed, and merges again once re-reviewed", async () => {
+      // This is the whole "merge after nits" rule, and it needs no gate of
+      // its own: addressing a nit produces a commit, the commit moves the
+      // tip, and the existing tip-currency check refuses the now-stale
+      // approval until a light re-review lands at the new tip.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "sha-before-nits",
+        createdAt: new Date("2026-01-01T10:00:00Z"),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        commitSha: "sha-before-nits",
+        createdAt: new Date("2026-01-01T10:01:00Z"),
+      });
+      // The nit is addressed — a new commit, and the approval is now stale.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "sha-after-nits",
+        createdAt: new Date("2026-01-01T11:00:00Z"),
+      });
+      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect(isServiceError(error)).toBe(true);
+      expect(await readState(id)).toBe("in_review");
+
+      // The light re-review at the new tip.
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "sha-after-nits",
+        createdAt: new Date("2026-01-01T11:05:00Z"),
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+  });
+
+  // ── criterion 5 — merge.requires_linked_followup ────────────────────────
+  describe("criterion 5 — merge.requires_linked_followup", () => {
+    /** An item approved with `verdict` at its own tip, optionally linking a follow-up. */
+    async function approvedWith(verdict: string, followUpItemId?: string | null) {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: `sha-${id}` });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict,
+        commitSha: `sha-${id}`,
+        followUpItemId: followUpItemId ?? null,
+      });
+      return id;
+    }
+
+    function registry() {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresLinkedFollowUpGuard);
+      return reg;
+    }
+
+    it("REFUSES: lgtm_with_followups with no follow-up linked", async () => {
+      // The rejection this verdict exists to make possible. Without it the
+      // verdict is strictly the cheapest option available to a reviewer and
+      // nothing ever checks the other half of the bargain.
+      const id = await approvedWith("lgtm_with_followups");
+      const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
+      expect(isServiceError(error)).toBe(true);
+      expect((error as { guard?: string }).guard).toBe("merge.requires_linked_followup");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("ACCEPTS: lgtm_with_followups linking an open follow-up item", async () => {
+      const followUp = await createTask({ state: "on_deck" });
+      const id = await approvedWith("lgtm_with_followups", followUp);
+      await callTransition(id, "merged", registry());
+      expect(await readState(id)).toBe("merged");
+    });
+
+    for (const closedState of ["merged", "wont_do", "cancelled", "research_done"]) {
+      it(`REFUSES: lgtm_with_followups linking a follow-up already ${closedState}`, async () => {
+        // Linking a dead item would satisfy the letter of the rule and
+        // defeat it entirely — the findings would be attached to something
+        // nobody is going to pick up. Single-character mutation this
+        // catches: removing any one entry from CLOSED_ITEM_STATES.
+        const followUp = await createTask({ state: closedState });
+        const id = await approvedWith("lgtm_with_followups", followUp);
+        const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
+        expect(isServiceError(error)).toBe(true);
+        expect((error as { message?: string }).message).toContain(closedState);
+        expect(await readState(id)).toBe("in_review");
+      });
+    }
+
+    for (const openState of ["on_deck", "executing", "blocked", "paused", "planning"]) {
+      it(`ACCEPTS: a follow-up in the open state ${openState}`, async () => {
+        // `blocked` and `paused` are deliberately accepted: the work is
+        // still owed, it is just waiting on something. Refusing them would
+        // make the verdict unusable in exactly the situations that produce
+        // follow-ups most often.
+        const followUp = await createTask({ state: openState });
+        const id = await approvedWith("lgtm_with_followups", followUp);
+        await callTransition(id, "merged", registry());
+        expect(await readState(id)).toBe("merged");
+      });
+    }
+
+    for (const verdict of ["lgtm", "lgtm_with_nits", "approved"]) {
+      it(`does NOT fire for a ${verdict} approval with no follow-up linked`, async () => {
+        // The over-blocking check. A guard that demanded a follow-up from
+        // every tier would make the other three unmergeable, which no test
+        // asserting only the refusal would notice.
+        const id = await approvedWith(verdict);
+        await callTransition(id, "merged", registry());
+        expect(await readState(id)).toBe("merged");
+      });
+    }
+
+    it("stays silent when there is no qualifying approval at all", async () => {
+      // That item is already refused by merge.requires_approving_code_review,
+      // and a second rejection naming a different cause would only obscure
+      // the real one. Registered alone here, so "silent" is observable: the
+      // transition succeeds.
+      const id = await createTask({ state: "in_review" });
+      await callTransition(id, "merged", registry());
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES: the link is on a STALE approval and the tip approval has none", async () => {
+      // Guards against the obvious way round this rule: link a follow-up
+      // once, then keep re-reviewing with lgtm_with_followups and no link.
+      // The guard reads the same artifact the merge is resting on — the one
+      // at the current tip — not any artifact that ever carried a link.
+      const followUp = await createTask({ state: "on_deck" });
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "sha-old",
+        createdAt: new Date("2026-01-01T10:00:00Z"),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "sha-old",
+        followUpItemId: followUp,
+        createdAt: new Date("2026-01-01T10:01:00Z"),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "sha-new",
+        createdAt: new Date("2026-01-01T11:00:00Z"),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "sha-new",
+        followUpItemId: null,
+        createdAt: new Date("2026-01-01T11:01:00Z"),
+      });
+      const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
+      expect(isServiceError(error)).toBe(true);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("reads the NEWEST approval at the tip when two exist at the same round", async () => {
+      // Two approvals at the same round and tip is ordinary — a first review
+      // defers findings, a second finds it clean. The newest is the current
+      // word on the change, so a later plain `lgtm` releases the follow-up
+      // requirement the earlier one imposed.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-two" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "sha-two",
+        createdAt: new Date("2026-01-01T10:00:00Z"),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "sha-two",
+        createdAt: new Date("2026-01-01T10:30:00Z"),
+      });
+      await callTransition(id, "merged", registry());
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES when the newest approval at the tip is the one deferring findings", async () => {
+      // The mirror of the case above, so "newest wins" is pinned in both
+      // directions rather than only in the direction that permits a merge.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-two-b" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "sha-two-b",
+        createdAt: new Date("2026-01-01T10:00:00Z"),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "sha-two-b",
+        createdAt: new Date("2026-01-01T10:30:00Z"),
+      });
+      const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
+      expect(isServiceError(error)).toBe(true);
+      expect(await readState(id)).toBe("in_review");
     });
   });
 

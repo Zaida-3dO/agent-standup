@@ -8,6 +8,7 @@
 // shape of the same question this module answers for commits) and MILESTONES
 // #17's own row says to "keep the artifact-checking surface reusable."
 import type { TransactionHandle } from "../context";
+import { APPROVING_VERDICTS } from "../../verdicts";
 
 /** The one row shape every function here reads out of `"Artifact"`. */
 interface ArtifactRow {
@@ -47,7 +48,20 @@ export async function currentTipCommitSha(
   return rows[0]?.commitSha ?? null;
 }
 
-/** Every approved artifact of `kind` for `itemId`, newest first. */
+/**
+ * Every approving artifact of `kind` for `itemId`, newest first.
+ *
+ * "Approving" is the SET in `../../verdicts.ts`, not the single literal
+ * `'approved'` this used to compare against. Review is tiered (SCHEMA.md
+ * §6a): `lgtm`, `lgtm_with_nits` and `lgtm_with_followups` all say the change
+ * is sound and differ only in what else must be true before it lands. Reading
+ * only `'approved'` would treat every tiered review as no review at all.
+ *
+ * The set is bound as a parameter and cast to `"Verdict"[]` rather than
+ * interpolated into the SQL — the values come from a module constant, not
+ * from a caller, but building a query string out of an array is a habit that
+ * stops being safe the first time the array's source changes.
+ */
 async function approvedArtifacts(
   db: TransactionHandle,
   itemId: string,
@@ -60,13 +74,15 @@ async function approvedArtifacts(
     // "operator does not exist: ArtifactKind = text" rather than silently
     // comparing as text. Caught by this module's own DB-backed test run,
     // not by typecheck or lint — a raw-SQL enum comparison is invisible to
-    // both.
+    // both. `$3::"Verdict"[]` is the same rule for the array form.
     `SELECT "id", "kind", "verdict", "commitSha", "createdAt"
        FROM "Artifact"
-      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind" AND "verdict" = 'approved'
+      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
+        AND "verdict" = ANY($3::"Verdict"[])
       ORDER BY "createdAt" DESC, "id" DESC`,
     itemId,
     kind,
+    APPROVING_VERDICTS,
   );
 }
 
