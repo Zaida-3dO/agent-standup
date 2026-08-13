@@ -7,6 +7,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
 import {
+  applySeverityAliases,
+  UnknownSeverityError,
   importAssignments,
   importArtifacts,
   importAssignmentsAndArtifacts,
@@ -96,6 +98,49 @@ describe("findings on an imported artifact", () => {
     for (const severity of FINDING_SEVERITIES) {
       expect(parseFindings([{ text: "t", severity }])[0]!.severity).toBe(severity);
     }
+  });
+});
+
+describe("applySeverityAliases", () => {
+  it("translates a caller's spelling onto this application's ladder", () => {
+    const out = applySeverityAliases([{ text: "t", severity: "HIGH" }], "r1", {
+      HIGH: "high",
+    }) as { severity: string }[];
+    expect(out[0]!.severity).toBe("high");
+  });
+
+  it("REFUSES an unmapped severity rather than downgrading or dropping it", () => {
+    // The whole reason the map exists. A case-folding or punctuation-
+    // stripping transform would silently mangle a hedge like `low-medium`
+    // into a level nobody chose; this refuses and says where.
+    expect(() => applySeverityAliases([{ text: "t", severity: "low-medium" }], "r1")).toThrow(
+      UnknownSeverityError,
+    );
+    expect(() => applySeverityAliases([{ text: "t", severity: "low-medium" }], "r1")).toThrow(
+      /findings\[0\]/,
+    );
+    expect(() => applySeverityAliases([{ text: "t", severity: "HIGH" }], "r1")).toThrow(
+      UnknownSeverityError,
+    );
+  });
+
+  it("accepts a level already in this application's own spelling without an alias", () => {
+    const out = applySeverityAliases([{ text: "t", severity: "high" }], "r1") as {
+      severity: string;
+    }[];
+    expect(out[0]!.severity).toBe("high");
+  });
+
+  it("leaves an ungraded finding ungraded — absence is not a spelling to translate", () => {
+    const out = applySeverityAliases([{ text: "t" }], "r1", { HIGH: "high" }) as object[];
+    expect(out[0]).toEqual({ text: "t" });
+    expect("severity" in out[0]!).toBe(false);
+  });
+
+  it("does not invent an alias target outside the ladder", () => {
+    expect(() =>
+      applySeverityAliases([{ text: "t", severity: "x" }], "r1", { x: "urgent" }),
+    ).toThrow(UnknownSeverityError);
   });
 });
 

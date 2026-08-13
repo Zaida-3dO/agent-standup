@@ -139,6 +139,7 @@ export async function backfillTasks(
 
   const assignmentsArtifacts = await importAssignmentsAndArtifacts(client, tasks, {
     verdictAliases,
+    severityAliases: payload.severityAliases ?? {},
   });
 
   return {

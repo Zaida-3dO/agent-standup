@@ -17,7 +17,7 @@
 // .legacy_id` lookup #10's idempotency check uses, so it never needs its own
 // notion of which items exist.
 import type { PrismaClient } from "@prisma/client";
-import { parseFindings, type Finding } from "./findings";
+import { isFindingSeverity, parseFindings, type Finding } from "./findings";
 
 /**
  * The literal values `assignments.role` can hold in the DATABASE — mirrors
@@ -223,6 +223,57 @@ export function mapSourceVerdict(
     throw new UnknownVerdictError(verdict, reviewId);
   }
   return mapped;
+}
+
+export class UnknownSeverityError extends Error {
+  constructor(severity: string, reviewId: string, index: number) {
+    super(
+      `unrecognised finding severity ${JSON.stringify(severity)} on review ` +
+        `${JSON.stringify(reviewId)}, findings[${index}]. Map it onto one of this application's ` +
+        "levels in severityAliases, or correct the source — it is not downgraded or dropped.",
+    );
+    this.name = "UnknownSeverityError";
+  }
+}
+
+/**
+ * Translates a review's findings out of the caller's severity spelling into
+ * this application's ladder, leaving everything else untouched.
+ *
+ * The same shape as every other vocabulary in this importer: the
+ * application ships its levels, the caller declares how theirs map onto
+ * them. That keeps a judgement call — and a coercion between vocabularies
+ * is always a judgement call — **visible and reviewable in the payload**
+ * rather than buried in a normalising transform the next reader has to
+ * reverse-engineer.
+ *
+ * Deliberately NOT a case-folding or punctuation-stripping transform. A
+ * transform would silently accept `low-medium` by mangling it into
+ * something, and the whole question of what a hedge between two levels
+ * should become is one only whoever wrote it can answer. Unmapped is
+ * refused, never downgraded and never dropped.
+ *
+ * An absent severity stays absent — it is not a spelling to translate, and
+ * "ungraded" is a different claim from any level.
+ */
+export function applySeverityAliases(
+  findings: unknown,
+  reviewId: string,
+  severityAliases: Record<string, string> = {},
+): unknown {
+  if (!Array.isArray(findings)) return findings;
+  return findings.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return entry;
+    const record = entry as Record<string, unknown>;
+    const raw = record.severity;
+    if (raw === undefined || raw === null) return entry;
+    if (typeof raw !== "string") return entry; // left for parseFindings to refuse
+    const mapped = severityAliases[raw] ?? raw;
+    if (!isFindingSeverity(mapped)) {
+      throw new UnknownSeverityError(raw, reviewId, index);
+    }
+    return { ...record, severity: mapped };
+  });
 }
 
 export class VerdictNotStorableError extends Error {
@@ -485,7 +536,10 @@ interface ArtifactIdRow {
 export async function importArtifacts(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
-  options: { readonly verdictAliases?: Record<string, string> } = {},
+  options: {
+    readonly verdictAliases?: Record<string, string>;
+    readonly severityAliases?: Record<string, string>;
+  } = {},
 ): Promise<
   Pick<
     ImportAssignmentsArtifactsResult,
@@ -522,7 +576,9 @@ export async function importArtifacts(
       const findings: Finding[] =
         review.findings === undefined || review.findings === null
           ? []
-          : parseFindings(review.findings);
+          : parseFindings(
+              applySeverityAliases(review.findings, review.id, options.severityAliases),
+            );
       findingsIn += findings.length;
       findingsWithoutSeverity += findings.filter((f) => f.severity === undefined).length;
       const verdict =
@@ -597,7 +653,10 @@ export async function importArtifacts(
 export async function importAssignmentsAndArtifacts(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
-  options: { readonly verdictAliases?: Record<string, string> } = {},
+  options: {
+    readonly verdictAliases?: Record<string, string>;
+    readonly severityAliases?: Record<string, string>;
+  } = {},
 ): Promise<ImportAssignmentsArtifactsResult> {
   const assignments = await importAssignments(client, tasks);
   const artifacts = await importArtifacts(client, tasks, options);

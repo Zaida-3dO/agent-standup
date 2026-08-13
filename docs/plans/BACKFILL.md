@@ -24,6 +24,7 @@ know nothing about the shape the data was read from.
   },
   "statusAliases": { "in-flight": "executing", "shipped": "merged", "shelved": "paused" },
   "verdictAliases": { "looks-good": "lgtm", "looks-good-with-nits": "lgtm_with_nits" },
+  "severityAliases": { "MAJOR": "high", "nitpick": "info" },
   "tasks": [
     {
       "id": "T-19700101-example-one",
@@ -139,15 +140,35 @@ afterwards.
 ]
 ```
 
-`text` is required and non-empty. `where` is free-form and never parsed. `severity` is **optional**
-and one of `info` · `low` · `medium` · `high` · `critical`, lowest to highest.
+`text` is required and non-empty. `where` is free-form and never parsed. `severity` is **optional**,
+and resolves through `severityAliases` onto one of `info` · `low` · `medium` · `high` · `critical`,
+lowest to highest.
+
+```jsonc
+"severityAliases": { "MAJOR": "high", "nitpick": "info" }
+```
+
+Same pattern as the other four maps, and severity is the one where it earns the most. Renaming
+`HIGH` to `high` is mechanical; deciding what a source's hedge *between* two levels becomes, or a
+word that is not a level at all, is a **judgement**. Declaring it in the payload keeps that
+judgement visible, reviewable and attributable, instead of burying it in a coercion a later reader
+has to reverse-engineer.
+
+There is deliberately no case-folding or punctuation-stripping fallback, and an unmapped severity is
+**refused** — never downgraded, never dropped. A transform would silently accept a hedge by mangling
+it into a level nobody chose, which is exactly the loss this contract exists to prevent.
+
+> **On which way to round a hedge.** The instinct is to round *up*, because under-grading is the
+> dangerous direction. On a **live** grading rule that instinct is right, because the outcome is
+> still open. On a **migration of historical records it is wrong**, because the goal is what
+> actually happened. If the review that recorded the hedge went on to pass the change, that recorded
+> decision is a more reliable signal than the hedge itself — and rounding up can retroactively
+> render a closed, correctly-merged review as though it should have been blocked. Decide per source,
+> and write down why.
 
 **`severity` is never defaulted.** A review that did not grade a finding did not grade it, and
 inventing a level puts a number nobody chose into the field this is stored to preserve — *ungraded*
 is a different claim from *graded low*. Omit the key; do not send `null`.
-
-If your source grades findings `HIGH`/`MEDIUM`, map them on your side. As with statuses and
-verdicts, this application ships the ladder and no table translating anybody's spelling into it.
 
 **A malformed findings list is refused, not repaired** — per entry, with the offending index named.
 A parser that quietly dropped two bad entries out of fifty would produce a list that looks complete

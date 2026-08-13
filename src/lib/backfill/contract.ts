@@ -150,7 +150,17 @@ const artifactSchema = z
         z
           .object({
             text: z.string().trim().min(1),
-            severity: z.enum(FINDING_SEVERITIES).optional(),
+            /**
+             * The caller's own spelling. Resolved through `severityAliases`
+             * and then against this application's ladder; anything in
+             * neither is refused, never downgraded and never dropped.
+             *
+             * A free string here rather than the enum because the
+             * translation table lives at the payload's root and Zod cannot
+             * reach across to it — the refusal happens in the importer
+             * instead, naming the value, the review and the index.
+             */
+            severity: z.string().min(1).optional(),
             where: z.string().optional(),
           })
           .strict(),
@@ -262,6 +272,24 @@ export const backfillPayloadSchema = z
      * ours.
      */
     verdictAliases: z.record(z.string(), z.enum(VERDICT_VALUES)).optional(),
+    /**
+     * Converter finding-severity spelling -> one of **this application's**
+     * levels (`FINDING_SEVERITIES`).
+     *
+     * The fifth alias map. Severity is the one vocabulary where a
+     * translation is most often a judgement rather than a rename — a source
+     * that grades `HIGH` is only renaming, but a source carrying a hedge
+     * between two levels, or a word that is not a level at all, is making a
+     * call about what it meant. Putting that call in the payload is the
+     * point: it is then declared, reviewable, and attributable to whoever
+     * decided it, instead of buried in a coercion.
+     *
+     * There is deliberately no case-folding or punctuation-stripping
+     * fallback. A transform would silently accept a hedge by mangling it
+     * into a level nobody chose, which is precisely the loss this whole
+     * contract exists to avoid.
+     */
+    severityAliases: z.record(z.string(), z.enum(FINDING_SEVERITIES)).optional(),
     tasks: z.array(taskSchema),
   })
   .strict();

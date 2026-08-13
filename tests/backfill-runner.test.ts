@@ -598,6 +598,57 @@ describeDb("runBackfill (real database)", () => {
     expect("severity" in first[1]!).toBe(false);
   }, 120_000);
 
+  it("resolves a caller's severity spelling through severityAliases, including a hedge", async () => {
+    // A hedge between two levels, and a word that is not a level at all,
+    // are both judgement calls. Putting them in the payload keeps the call
+    // declared and reviewable instead of buried in a coercion.
+    const base = payloadFixture();
+    const payload = parsePayload({
+      ...base,
+      severityAliases: { "low-medium": "low", note: "info", HIGH: "high" },
+      tasks: base.tasks.map((task) => ({
+        ...task,
+        reviews: (task.reviews ?? []).map((review) => ({
+          ...review,
+          findings: [
+            { text: "a hedged finding", severity: "low-medium" },
+            { text: "not a severity at all", severity: "note" },
+            { text: "an uppercase level", severity: "HIGH" },
+          ],
+        })),
+      })),
+    });
+
+    await runBackfill(prisma, payload, RUN_OPTIONS);
+    const rows = await prisma.$queryRawUnsafe<{ s: string; n: bigint }[]>(
+      `SELECT f->>'severity' AS s, count(*) AS n
+         FROM "Artifact" a, jsonb_array_elements(a."findings") f
+        WHERE jsonb_typeof(a."findings") = 'array' GROUP BY 1`,
+    );
+    const bySeverity = Object.fromEntries(rows.map((r) => [r.s, Number(r.n)]));
+    expect(bySeverity).toEqual({ low: 2, info: 2, high: 2 });
+  }, 120_000);
+
+  it("REFUSES an unmapped severity outright rather than importing the review without it", async () => {
+    const base = payloadFixture();
+    await expect(
+      runBackfill(
+        prisma,
+        parsePayload({
+          ...base,
+          tasks: base.tasks.map((task) => ({
+            ...task,
+            reviews: (task.reviews ?? []).map((review) => ({
+              ...review,
+              findings: [{ text: "a hedged finding", severity: "low-medium" }],
+            })),
+          })),
+        }),
+        RUN_OPTIONS,
+      ),
+    ).rejects.toThrow(/low-medium/);
+  }, 120_000);
+
   it("reconciles findings: every one accounted for, and read back from the database", async () => {
     const payload = payloadFixture();
     const report = await runBackfill(prisma, payload, RUN_OPTIONS);
