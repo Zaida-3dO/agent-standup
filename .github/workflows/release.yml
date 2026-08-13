@@ -54,25 +54,25 @@ jobs:
   # tag. `package.json`'s own checked-in "version" is not used for what gets
   # published; see the script's header for why that is the safer default.
   #
-  # ⚠️ DORMANT until an `NPM_TOKEN` repository secret exists.
+  # ⚠️ DORMANT — gated off until npm publishing is configured.
   #
   # This job is gated on `vars.ENABLE_NPM_PUBLISH == 'true'` rather than
-  # deleted, because everything in it is known-good: the v0.3.0 run built the
-  # binary and assembled a correct 6-file tarball, then failed at the final
-  # step with ENEEDAUTH because `secrets.NPM_TOKEN` resolved to an empty
-  # string. The machinery works; only the credential is absent. Deleting it
-  # would mean rebuilding all of this later, so it stays here, skipped.
+  # deleted. Publishing needs an `NPM_TOKEN` secret; without one,
+  # `NODE_AUTH_TOKEN` is an empty string and `npm publish` fails with
+  # ENEEDAUTH after doing all of its work. Everything else in the job — the
+  # tag-to-version derivation, the prepack build, the tarball — runs
+  # correctly, so the job is worth keeping intact behind a flag.
   #
-  # A skipped job is deliberately visible in the checks UI — you can see the
-  # publish did not happen, which a deleted job could not tell you.
+  # A skipped job stays visible in the checks UI, so it is apparent that the
+  # publish did not happen. A deleted job cannot say that.
   #
-  # To turn it on (see issue: "Publish the standup binary to npm"):
-  #   1. Create an npm *Automation* token (that type bypasses 2FA, which CI
-  #      requires) for the `agent-standup` package.
+  # To turn it on (see the "Publish the standup binary to npm" issue):
+  #   1. Create an npm *Automation* token for the package — that token type
+  #      bypasses 2FA, which CI cannot satisfy interactively.
   #   2. `gh secret set NPM_TOKEN --repo Zaida-3dO/agent-standup`
   #   3. `gh variable set ENABLE_NPM_PUBLISH --body true --repo Zaida-3dO/agent-standup`
-  # Note the npm name `agent-standup` is currently unregistered, so the first
-  # successful publish claims it permanently.
+  # Check who owns the `agent-standup` name on the registry before enabling:
+  # the first successful publish of an unclaimed name claims it permanently.
   publish-npm:
     name: Publish npm package (standup binary)
     needs: build-and-push

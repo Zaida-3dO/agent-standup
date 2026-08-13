@@ -206,14 +206,10 @@ Real example: three PRs bumped a framework major. Two were green but bumped only
 its companion lint config — passing checks while quietly mismatched underneath. The third did the
 full migration and failed, on a formatting nit. Merging on green would have picked a worse change.
 
-### You do NOT have to be up to date with `main` to merge — stop chasing it
+### You do not have to be up to date with `main` to merge — do not chase it
 
-**Changed 2026-08-13 — a deliberate policy decision by the repository owner. If you have read an
-older copy of this file, or were briefed before that date, this section is the one that changed.**
-
-Branch protection on `main` is **no longer strict**. A PR merges when its **required checks pass** and
-**git can merge it cleanly** — being `BEHIND` `main` does not block it, and `main` moving while you
-work does not invalidate your green run.
+A PR merges when its **required checks pass** and **git can merge it cleanly**. Being `BEHIND` `main`
+does not block a merge, and `main` moving while you work does not invalidate your green run.
 
 **What this means for you:**
 
@@ -222,8 +218,8 @@ work does not invalidate your green run.
 - **Only bring `main` in if you actually need to** — a genuine textual conflict blocking the merge, or
   a fix on `main` your work truly depends on.
 - **If you do have to resolve a conflict: resolve it once, push, and hand back.** Do not re-pull
-  `main` repeatedly to stay level with it. One builder previously merged `main` **eight times** to
-  land a single PR; that is exactly the waste this change removes.
+  `main` repeatedly to stay level with it. Chasing a moving branch can cost a dozen merges to land a
+  single PR, and none of them buy anything.
 - **Rebase, not merge**, if you do need to integrate — `main` requires linear history, so a merge
   commit still cannot land. When you do:
   - **Expect conflicts in shared files.** `package.json`, `package-lock.json` and config files are the
@@ -234,26 +230,25 @@ work does not invalidate your green run.
   - **Re-run the full verification after rebasing, not just before.** You are now on code you have
     never tested against.
 
-**The tradeoff you should understand, because it will occasionally land on you.** Requiring
-up-to-date branches did catch a real class of bug: two PRs that are each green, each correct, and
-cleanly mergeable, but that **do not work together** — one deletes a symbol the other's test imports,
-or adds a guard that invalidates the other's fixtures. Git stays silent, because the changes are in
-different files.
+**The tradeoff you should understand, because it will occasionally land on you.** Two PRs can each be
+green, each be correct, and merge cleanly, and still **not work together** — one deletes a symbol the
+other's test imports, or adds a guard that invalidates the other's fixtures. Git stays silent, because
+the changes sit in different files. Nothing catches that combination before it lands; `main`'s own CI
+catches it after.
 
-That class is now caught **after** merging, by `main`'s own CI, instead of before. **This is
-deliberate.** Neither PR is wrong; a semantic conflict between two correct changes is a normal
-integration event. The accepted posture is:
+**This is deliberate.** Neither PR is wrong. A semantic conflict between two independently-correct
+changes is a normal integration event, and the posture here is:
 
 > `main` goes red → we notice → we put up a small follow-up PR that fixes it. That is cheap and easy.
-> Paying a constant tax on **every** open PR to prevent it was not.
+> Taxing **every** open PR to prevent it costs far more than it saves.
 
 So: **if `main` is red and it wasn't you, don't panic and don't hunt for a culprit.** Read the first
 lines of the failing CI step — this class is almost always diagnosable straight from there — and open
-a fix PR. If your own PR goes red right after someone else merged, it is very likely this, and **it is
+a fix PR. If your own PR goes red right after someone else merges, it is very likely this, and **it is
 not your fault**.
 
-**Required checks still gate everything.** `Build & test`, `Actionlint (required)` and
-`Docker build (required)` must pass. Nothing about "green is not the same as right" has relaxed.
+**Required checks gate every merge.** `Build & test`, `Actionlint (required)` and
+`Docker build (required)` must pass. "Green is not the same as right" applies in full.
 
 ### Don't pull the ground out from under a running crew
 
