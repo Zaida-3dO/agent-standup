@@ -14,7 +14,7 @@
 // function here only reads the directory tree and writes to `items`.
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ItemState, PrismaClient } from "@prisma/client";
+import type { ItemState, MergeAuthority, OriginType, PrismaClient, Priority } from "@prisma/client";
 import { ensureArea } from "./areas";
 
 /** One task directory's `task.json`, exactly as the source store writes it. */
@@ -43,6 +43,67 @@ export interface SourceTask {
    * other's column. See `import-events.ts` for `SourceHistoryEntry`.
    */
   history?: SourceHistoryEntry[];
+  /**
+   * `items.priority`, when the source records one. Optional because a
+   * backlog that has no notion of priority is a perfectly ordinary source;
+   * omitted leaves the column's own default (`P2`) in place rather than
+   * inventing a value.
+   */
+  priority?: Priority;
+  /** `items.branch` — the deliverable's integration branch (SCHEMA.md §1). Omitted leaves it null. */
+  branch?: string;
+  /** `items.needs_visual_review` — the merge gate's visual flag (SCHEMA.md §1). Omitted leaves it false. */
+  needsVisualReview?: boolean;
+  /**
+   * `items.source_ref` — `path@content_hash` (SCHEMA.md §1), the version of
+   * the source file this item was read from. A **relative** path: an
+   * absolute one would record the importing machine's directory layout in
+   * every row.
+   */
+  sourceRef?: string;
+  /**
+   * `items.created_at` — when the source says the work was created, not
+   * when it was imported. Optional; omitted leaves the column's own
+   * `now()` default.
+   *
+   * Worth a slot rather than a note in the escape hatch, because a
+   * timestamp is the field an imported backlog is most often READ by:
+   * without it every row in a decade-old backlog is stamped within the same
+   * second of the import and the ordering that made the history meaningful
+   * is gone from the column that sorts it.
+   */
+  createdAt?: string;
+  /** `items.updated_at`. Optional; omitted stamps the import moment. */
+  updatedAt?: string;
+  /**
+   * `items.origin_type` — who or what created the work. Optional; omitted
+   * defaults to `source`, which is what an import without an opinion is.
+   * `person` additionally requires `originPersonId`, per SCHEMA.md §1.
+   */
+  originType?: OriginType;
+  /** `items.origin_person` — required when `originType` is `person`, ignored otherwise. */
+  originPersonId?: string;
+  /**
+   * `items.merge_authority`. Optional; omitted defaults to
+   * `needs_approval`. A slot rather than a constant because an
+   * installation that pre-authorises its merges would otherwise have every
+   * imported row contradict its own standing policy on arrival.
+   */
+  mergeAuthority?: MergeAuthority;
+  /**
+   * Extra source fields to preserve verbatim in `items.custom_fields`
+   * alongside `legacy_id` — the "arbitrary key/value bag, opaque to the
+   * core" escape hatch SCHEMA.md §1 defines, whose stated purpose is exactly
+   * this: keeping a source field that has no typed column of its own rather
+   * than dropping it. `legacy_id` always wins over a same-named key here,
+   * because idempotency keys on it (see `importItems`).
+   *
+   * SCHEMA.md's second rule on the bag applies to whatever a caller puts
+   * here: **if a key recurs, promote it to a column.** This is for the
+   * genuinely source-specific, not a parking space for fields that deserve
+   * a schema.
+   */
+  customFields?: Record<string, unknown>;
 }
 
 /**
@@ -92,8 +153,27 @@ export class UnknownSourceStatusError extends Error {
   }
 }
 
-export function mapSourceStatus(status: string, taskId: string): ItemState {
-  const mapped = STATUS_REMAP[status];
+/**
+ * Resolves a source status onto an `items.state`.
+ *
+ * **A caller-supplied `statusAliases` wins over this application's own
+ * table**, and that ordering is the whole design. Every source has its own
+ * state machine; this application ships ITS states and nobody else's, and
+ * the translation between the two belongs to whoever knows both — the
+ * caller. That is exactly how `repoAliases` and `actorAliases` already
+ * work, and there is no reason status should be the one vocabulary an
+ * outside caller has to edit application source to extend.
+ *
+ * A status in neither map is refused. An unrecognised status is a mapping
+ * gap to fix, not a default to fall back on: guessing files somebody's work
+ * under a state they never chose, silently.
+ */
+export function mapSourceStatus(
+  status: string,
+  taskId: string,
+  statusAliases: Record<string, ItemState> = {},
+): ItemState {
+  const mapped = statusAliases[status] ?? STATUS_REMAP[status];
   if (!mapped) {
     throw new UnknownSourceStatusError(status, taskId);
   }
@@ -155,6 +235,14 @@ export interface ImportItemsOptions {
    * to invent one.
    */
   repoAliases: Record<string, string>;
+  /**
+   * Maps a source status label onto an `items.state`, consulted BEFORE this
+   * application's own `STATUS_REMAP`. Caller-owned for the same reason
+   * `repoAliases` is: a source's status vocabulary is the source's, and
+   * baking one into the application makes every other source a source-code
+   * change. See `mapSourceStatus`.
+   */
+  statusAliases?: Record<string, ItemState>;
 }
 
 export interface ImportItemsResult {
@@ -207,7 +295,7 @@ export async function importItems(
       continue;
     }
 
-    const state = mapSourceStatus(task.status, task.id);
+    const state = mapSourceStatus(task.status, task.id, options.statusAliases);
 
     let repoId: string | null = null;
     if (task.repo) {
@@ -227,11 +315,24 @@ export async function importItems(
         title: task.title,
         body: task.body,
         state,
-        originType: "source",
+        originType: task.originType ?? "source",
+        ...(task.originPersonId !== undefined ? { originPersonId: task.originPersonId } : {}),
         area: area.id,
         repo: repoId,
-        mergeAuthority: "needs_approval",
-        customFields: { legacy_id: task.id },
+        mergeAuthority: task.mergeAuthority ?? "needs_approval",
+        ...(task.createdAt !== undefined ? { createdAt: new Date(task.createdAt) } : {}),
+        ...(task.updatedAt !== undefined ? { updatedAt: new Date(task.updatedAt) } : {}),
+        ...(task.priority !== undefined ? { priority: task.priority } : {}),
+        ...(task.branch !== undefined ? { branch: task.branch } : {}),
+        ...(task.needsVisualReview !== undefined
+          ? { needsVisualReview: task.needsVisualReview }
+          : {}),
+        ...(task.sourceRef !== undefined ? { sourceRef: task.sourceRef } : {}),
+        // `legacy_id` is spread LAST so a source-supplied `customFields`
+        // carrying its own `legacy_id` cannot displace the one idempotency
+        // keys on — a displaced key would make the second run of an import
+        // re-insert every row it had already written.
+        customFields: { ...(task.customFields ?? {}), legacy_id: task.id },
       },
     });
     imported++;

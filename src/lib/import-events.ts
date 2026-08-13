@@ -7,15 +7,22 @@
 // directly with a raw query of its own; #20's helper is the only writer.
 //
 // **Collapsed-summary rule (DECISIONS.md §13c):** finished work is the bulk
-// of the volume of an established backlog and the least useful part of it —
-// importing full event streams for it mostly imports noise nobody will
-// query. So a task whose *current* `items.state` is terminal (`merged`,
-// `research_done`, `wont_do`, `cancelled`) gets its history collapsed into
-// ONE `note` event instead of one row per entry; in-flight and blocked tasks
-// import their full history, one row per entry. The import never writes to
-// its source (same decision), so if the detail behind a collapsed summary
-// turns out to be wanted later, it can be backfilled — nothing here deletes
-// or mutates the source `history` array.
+// of the volume of an established backlog and the least useful part of it to
+// have spread across thousands of rows nobody will query one at a time. So a
+// task whose *current* `items.state` is terminal (`merged`, `research_done`,
+// `wont_do`, `cancelled`) gets its history folded into ONE `note` event
+// instead of one row per entry; in-flight and blocked tasks import their
+// full history, one row per entry.
+//
+// **The fold is about ROWS, never about TEXT.** Every entry's prose is
+// retained on the summary event — as readable lines in `body`, and
+// structured per entry in `payload.entries` — so a terminal task's history
+// is complete in the database at one row instead of many. This matters
+// beyond tidiness: a caller may be importing *because* the source it reads
+// is about to be retired, in which case anything this step dropped would be
+// gone for good rather than merely absent. `verifyHistoryRetention`
+// (import-verify.ts) reads the entries back out and names any that are
+// missing, so the claim is checked rather than asserted.
 //
 // The import never writes to its source — every function here only reads
 // `SourceTask.history` and writes to `events`.
@@ -27,10 +34,15 @@ import type { SourceHistoryEntry, SourceTask } from "./import-items";
 export type { SourceHistoryEntry } from "./import-items";
 
 /**
- * `items.state` values that collapse history to one summary row (DECISIONS.md
+ * `items.state` values whose history folds to one summary row (DECISIONS.md
  * §13c). Exported (not just module-private) so import-verify.ts (#13) can
- * compute the SAME expected event count this module actually writes, rather
+ * compute the SAME expected ROW count this module actually writes, rather
  * than keeping a second copy of this list that could silently drift from it.
+ *
+ * **A row count derived from this set can only ever agree with the fold** —
+ * it is the fold's own rule restated — so it is not evidence that the fold
+ * kept anything. That evidence is `verifyHistoryRetention`, which counts
+ * source ENTRIES and reads back what actually landed.
  */
 export const TERMINAL_STATES = new Set(["merged", "research_done", "wont_do", "cancelled"]);
 
@@ -65,8 +77,17 @@ export class UnknownActorAliasError extends Error {
  * invents on its behalf.
  */
 export interface ActorAliasTarget {
-  readonly actorType: "person" | "agent";
-  readonly actorId: string;
+  /**
+   * `system` is included alongside `person`/`agent` because a source store
+   * that logs its own automated writes attributes them to no one — the row
+   * was written by the machinery, not by a party with an identity. `events`
+   * models that first-class (`ActorType.system`, `actorId` null, SCHEMA.md
+   * §3), so mapping such an entry onto a fabricated agent id would invent an
+   * actor the source never had.
+   */
+  readonly actorType: "person" | "agent" | "system";
+  /** Null only for `actorType: "system"` — every other actor type identifies a row. */
+  readonly actorId: string | null;
 }
 
 export interface ImportEventsOptions {
@@ -84,6 +105,19 @@ export interface ImportEventsOptions {
 export interface ImportEventsResult {
   imported: number;
   skippedExisting: number;
+  /**
+   * History entries that were **not materialised as their own `events` row**
+   * because they were folded into a terminal item's single summary event.
+   *
+   * Counted and returned rather than left implicit, because an uncounted
+   * fold is indistinguishable from a silent loss in every report built on
+   * top of it: `imported` and `skippedExisting` between them describe rows,
+   * and a caller summing rows can never notice that many entries produced
+   * one. Every entry counted here has its text retained — see
+   * `importCollapsedSummary` — so this is a count of entries that share a
+   * row, not of anything discarded.
+   */
+  entriesCollapsed: number;
 }
 
 function resolveActor(
@@ -152,7 +186,7 @@ export async function importEventsForTask(
   const { itemId, taskId, currentState, history } = args;
 
   if (history.length === 0) {
-    return { imported: 0, skippedExisting: 0 };
+    return { imported: 0, skippedExisting: 0, entriesCollapsed: 0 };
   }
 
   const existing = await findExistingLegacyIds(db, itemId);
@@ -205,26 +239,54 @@ async function importFullHistory(
     imported++;
   }
 
-  return { imported, skippedExisting };
+  return { imported, skippedExisting, entriesCollapsed: 0 };
 }
 
 /**
  * Terminal path (DECISIONS.md §13c): the whole history log collapses into
- * ONE `note` event rather than one row per entry. Attributed to the LAST
- * entry's mapped actor — the closing act on a finished task is the most
- * defensible single attribution when several actors touched it.
+ * ONE `note` event rather than one row per entry.
+ *
+ * ── The collapse folds ROWS. It does not discard TEXT ───────────────────
+ *
+ * This distinction is the whole point of the function and it was got wrong
+ * once, so it is stated here rather than left to be inferred. An earlier
+ * version quoted only the last entry's `note` in the body, which meant a
+ * terminal task with twenty-six entries kept one of them and lost
+ * twenty-five — and because the row count was *expected* to be one, every
+ * check downstream reported the import clean. Across an established backlog
+ * that is most of the history in the store.
+ *
+ * So every entry's text is retained, in two places, deliberately:
+ *
+ *   - **`body`** carries the whole log as readable prose, in order. This is
+ *     what a person reading the event sees, and it is where the history
+ *     actually reads as history.
+ *   - **`payload.entries`** carries the same entries structured — id, actor,
+ *     timestamp and text each in their own field. This is not redundancy for
+ *     its own sake: it is what makes retention *checkable by identity*
+ *     rather than by searching prose for a substring. `verifyHistoryRetention`
+ *     (import-verify.ts) reads these back out of Postgres and asserts that
+ *     every source entry id is present, which is a check capable of
+ *     contradicting this function — a body-only design could only ever be
+ *     grepped, and a grep that finds nothing cannot tell "dropped" from
+ *     "worded differently".
+ *
+ * The row is still ONE row. Nothing about the presentation choice changes;
+ * only the claim that the text survives it, which is now true and provable.
+ *
+ * Attributed to the LAST entry's mapped actor — the closing act on a
+ * finished task is the most defensible single attribution when several
+ * actors touched it.
  *
  * **Known limit, stated plainly:** `ts` on the written row is `now()` (the
  * import moment), not the last entry's `at` — `appendEvent` (#20)
  * deliberately leaves `ts` to Postgres's own column default and takes no
  * override, for reasons that are exactly right for a live mutation and a
- * real gap for a historical import. The entry's original `at` is not lost —
- * it is preserved verbatim in `payload.source_at` — but a reader sorting
- * `events` by `ts` will see every collapsed summary clustered at import time
- * rather than spread across the task's real history. Untested and unfixed
- * here; a follow-up either extends `appendEvent` with an optional `ts`
- * override (touches #20's module, outside this row's territory) or accepts
- * the gap.
+ * real gap for a historical import. Each entry's original `at` is not lost —
+ * it is on `payload.source_at` for the summary and on every element of
+ * `payload.entries` — but a reader sorting `events` by `ts` will see every
+ * collapsed summary clustered at import time rather than spread across the
+ * task's real history.
  *
  * Every entry still gets its actor resolved (not just the last one) —
  * collapsing the ROW COUNT must never mean skipping the refusal an unmapped
@@ -248,7 +310,7 @@ async function importCollapsedSummary(
   // unlike a synthetic key derived from the array's length or last id.
   const summaryLegacyId = history[0]!.id;
   if (existing.has(summaryLegacyId)) {
-    return { imported: 0, skippedExisting: 1 };
+    return { imported: 0, skippedExisting: 1, entriesCollapsed: history.length };
   }
 
   // Resolve every entry's actor before writing anything — an unmapped actor
@@ -261,21 +323,42 @@ async function importCollapsedSummary(
   const last = history[history.length - 1]!;
   const lastActor = resolveActor(last.actor, taskId, last.id, options.actorAliases);
 
+  // Every entry, in source order, structured — the machine-readable copy
+  // that makes retention provable by id.
+  const entries = history.map((entry) => ({
+    legacy_id: entry.id,
+    actor: entry.actor,
+    at: entry.at,
+    note: entry.note,
+  }));
+
+  // Every entry, in source order, as prose — the human-readable copy. One
+  // line per entry, timestamped and attributed, so the body reads as the
+  // history it is rather than as one quotation from it.
   const body =
     history.length === 1
       ? last.note
-      : `Imported history (${history.length} entries, collapsed on import — DECISIONS.md §13c). ` +
-        `Last: ${last.note}`;
+      : [
+          `Imported history — ${history.length} entries, kept in full and folded into this one ` +
+            "event (DECISIONS.md §13c).",
+          "",
+          ...history.map((entry) => `${entry.at} ${entry.actor}: ${entry.note}`),
+        ].join("\n");
 
   await appendEvent(db, {
     itemId,
     actor: lastActor,
     type: "note",
-    payload: { legacy_id: summaryLegacyId, source_at: last.at, entry_count: history.length },
+    payload: {
+      legacy_id: summaryLegacyId,
+      source_at: last.at,
+      entry_count: history.length,
+      entries,
+    },
     body,
   });
 
-  return { imported: 1, skippedExisting: 0 };
+  return { imported: 1, skippedExisting: 0, entriesCollapsed: history.length };
 }
 
 /**
@@ -302,6 +385,22 @@ async function importCollapsedSummary(
 export interface ImportEventsSummary {
   readonly imported: number;
   readonly skippedExisting: number;
+  /**
+   * Source history entries across all tasks — the number a reconciliation
+   * must account for. Reported so a caller can check the import against
+   * WHAT IT WAS GIVEN, rather than against a re-derivation of what the
+   * import was going to do; the latter agrees with the code by
+   * construction and so can never contradict it.
+   */
+  readonly entriesIn: number;
+  /**
+   * Entries folded into a terminal item's single summary event rather than
+   * given a row of their own. Their text is retained (see
+   * `importCollapsedSummary`); this is the count that makes the fold
+   * visible in a report instead of showing up only as a row count that
+   * happens to be smaller than the input.
+   */
+  readonly entriesCollapsed: number;
   /** Tasks in `tasks` with a `history` array whose `items` row could not be found (no matching `legacy_id`). */
   readonly tasksWithoutMatchingItem: string[];
 }
@@ -313,11 +412,17 @@ export async function importEvents(
 ): Promise<ImportEventsSummary> {
   let imported = 0;
   let skippedExisting = 0;
+  let entriesCollapsed = 0;
+  let entriesIn = 0;
   const tasksWithoutMatchingItem: string[] = [];
 
   for (const task of tasks) {
     const history = task.history ?? [];
     if (history.length === 0) continue;
+    // Counted before the item lookup, so an entry belonging to a task that
+    // failed to resolve is still part of what the reconciliation has to
+    // account for rather than quietly leaving the total.
+    entriesIn += history.length;
 
     const item = await client.item.findFirst({
       where: { customFields: { path: ["legacy_id"], equals: task.id } },
@@ -336,7 +441,8 @@ export async function importEvents(
     );
     imported += result.imported;
     skippedExisting += result.skippedExisting;
+    entriesCollapsed += result.entriesCollapsed;
   }
 
-  return { imported, skippedExisting, tasksWithoutMatchingItem };
+  return { imported, skippedExisting, entriesIn, entriesCollapsed, tasksWithoutMatchingItem };
 }

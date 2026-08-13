@@ -67,7 +67,7 @@ export interface StdioServeOptions {
  */
 export function serveMcpStdio(call: ServiceCall, options: StdioServeOptions = {}): Promise<void> {
   const input = options.input ?? process.stdin;
-  const server = createMcpServer({ call, transport: MCP_STDIO_TRANSPORT });
+  const server = createMcpServer({ call, transport: MCP_STDIO_TRANSPORT, adapter: "mcp_stdio" });
   const transport = new StdioServerTransport(input, options.output ?? process.stdout);
 
   return new Promise((resolve, reject) => {
