@@ -11,6 +11,7 @@ import {
   importItems,
   mapSourceStatus,
   readSourceTasks,
+  STATUS_REMAP,
   UnknownRepoAliasError,
   UnknownSourceStatusError,
   type SourceTask,
@@ -46,6 +47,45 @@ describe("mapSourceStatus", () => {
 
   it("rejects a status outside the source vocabulary rather than defaulting silently", () => {
     expect(() => mapSourceStatus("archived", "t1")).toThrow(UnknownSourceStatusError);
+  });
+
+  it("lets a CALLER-SUPPLIED alias resolve a status this application has never heard of", () => {
+    // The property that makes the importer generic: a source's own state
+    // machine is translated by the caller, not by a table inside the app.
+    expect(mapSourceStatus("awaiting-sign-off", "t1", { "awaiting-sign-off": "paused" })).toBe(
+      "paused",
+    );
+  });
+
+  it("lets a caller-supplied alias OVERRIDE this application's own vocabulary", () => {
+    // Deliberate precedence: the caller knows both vocabularies, the app
+    // knows only its own. Swapping the `??` operands in mapSourceStatus
+    // would flip this.
+    expect(mapSourceStatus("done", "t1", { done: "wont_do" })).toBe("wont_do");
+    expect(mapSourceStatus("done", "t1")).toBe("merged");
+  });
+
+  it("still REFUSES a status in neither the caller's map nor the app's", () => {
+    expect(() => mapSourceStatus("archived", "t1", { other: "paused" })).toThrow(
+      UnknownSourceStatusError,
+    );
+  });
+});
+
+describe("the application's own status vocabulary", () => {
+  it("stays exactly five words — it defines a surface vocabulary, not just a mapping", () => {
+    // task-shim/contract.ts's SHIM_STATUSES is asserted equal to these
+    // keys. Growing this table to cover a particular source's state machine
+    // would widen a command-line surface as a side effect, and would put
+    // one external system's private vocabulary in a public application.
+    expect(Object.keys(STATUS_REMAP)).toHaveLength(5);
+    expect(Object.keys(STATUS_REMAP).sort()).toEqual([
+      "done",
+      "in-progress",
+      "review",
+      "todo",
+      "waiting",
+    ]);
   });
 });
 

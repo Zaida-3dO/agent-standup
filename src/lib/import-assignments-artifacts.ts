@@ -17,6 +17,7 @@
 // .legacy_id` lookup #10's idempotency check uses, so it never needs its own
 // notion of which items exist.
 import type { PrismaClient } from "@prisma/client";
+import { isFindingSeverity, parseFindings, type Finding } from "./findings";
 
 /**
  * The literal values `assignments.role` can hold in the DATABASE — mirrors
@@ -111,6 +112,19 @@ export interface SourceReview {
   createdByType: "person" | "agent";
   createdById: string;
   createdAt: string;
+  /**
+   * The review's individual findings, already in this application's own
+   * vocabulary (`findings.ts`) — `{ text, severity?, where? }`, severities
+   * lowercase.
+   *
+   * A caller whose source grades findings `HIGH`/`MEDIUM` maps them on its
+   * own side, exactly as it maps statuses and verdicts; this module ships
+   * the ladder and no table translating anybody's spelling into it. An
+   * entry that cannot be represented is refused by `parseFindings` rather
+   * than repaired, because a coerced findings list looks complete and is
+   * not, and no later reader could tell.
+   */
+  findings?: unknown;
 }
 
 const ARTIFACT_KINDS = new Set([
@@ -124,7 +138,33 @@ const ARTIFACT_KINDS = new Set([
   "other",
 ]);
 
-const VERDICTS = new Set(["approved", "changes_required", "na"]);
+/**
+ * **This application's own verdict vocabulary** (SCHEMA.md §6) — the values
+ * an `artifacts.verdict` may hold, and the set a caller maps onto.
+ *
+ * Six values, not three, because a review outcome is tiered: a plain pass,
+ * a pass that records cosmetic notes, and a pass that records follow-up
+ * work are genuinely different answers, and collapsing them onto one label
+ * loses the distinction at the column that is queried for it.
+ *
+ * `approved` is retained alongside `lgtm` as an accepted synonym rather
+ * than replaced. Removing a label from a Postgres enum is a type rebuild,
+ * not an `ALTER`, so every verdict already on record keeps deciding
+ * identically — which is the point: a migration must never silently change
+ * what a stored row means.
+ *
+ * As with statuses, this application ships ITS vocabulary and no table
+ * translating anybody else's spellings into it. A caller whose source
+ * writes `lgtm-with-nits` supplies that mapping in `verdictAliases`.
+ */
+export const VERDICTS = new Set([
+  "approved",
+  "changes_required",
+  "na",
+  "lgtm",
+  "lgtm_with_nits",
+  "lgtm_with_followups",
+]);
 
 export class UnknownArtifactKindError extends Error {
   constructor(kind: string, reviewId: string) {
@@ -149,11 +189,147 @@ export function mapSourceArtifactKind(kind: string, reviewId: string): string {
   return kind;
 }
 
-export function mapSourceVerdict(verdict: string, reviewId: string): string {
-  if (!VERDICTS.has(verdict)) {
+/**
+ * Resolves a source verdict onto one of this application's own.
+ *
+ * A caller-supplied `verdictAliases` wins, then the application's own set;
+ * anything in neither is **refused**. Widening the accepted set must never
+ * become a pass-through — the whole value of this check is that it refuses
+ * a verdict nobody taught it, and a review outcome is exactly the field
+ * where guessing is most expensive: it decides whether a change was passed.
+ *
+ * An explicit alias map rather than a normalising transform (hyphen ->
+ * underscore, lowercase) even though a transform would handle the common
+ * spellings in one line. A transform quietly accepts anything shaped
+ * right — `lgtm-with-nitpicks` would normalise to a value that does not
+ * exist and fail deep inside an insert, and `changes-required` and
+ * `changes_required` would stop being distinguishable from a typo. The map
+ * says exactly which foreign spellings are recognised and refuses the rest,
+ * which is the same posture `repoAliases` and `actorAliases` already take
+ * for the same reason.
+ */
+export function mapSourceVerdict(
+  verdict: string,
+  reviewId: string,
+  verdictAliases: Record<string, string> = {},
+): string {
+  // An alias's TARGET is validated too, not trusted. A caller-supplied map
+  // is input, and an entry pointing at something this application does not
+  // store is the same data problem as an unmapped verdict — caught here
+  // rather than deep inside an insert. (The payload schema also constrains
+  // it; this is the check for every other caller of this function.)
+  const mapped = verdictAliases[verdict] ?? verdict;
+  if (!VERDICTS.has(mapped)) {
     throw new UnknownVerdictError(verdict, reviewId);
   }
-  return verdict;
+  return mapped;
+}
+
+export class UnknownSeverityError extends Error {
+  constructor(severity: string, reviewId: string, index: number) {
+    super(
+      `unrecognised finding severity ${JSON.stringify(severity)} on review ` +
+        `${JSON.stringify(reviewId)}, findings[${index}]. Map it onto one of this application's ` +
+        "levels in severityAliases, or correct the source — it is not downgraded or dropped.",
+    );
+    this.name = "UnknownSeverityError";
+  }
+}
+
+/**
+ * Translates a review's findings out of the caller's severity spelling into
+ * this application's ladder, leaving everything else untouched.
+ *
+ * The same shape as every other vocabulary in this importer: the
+ * application ships its levels, the caller declares how theirs map onto
+ * them. That keeps a judgement call — and a coercion between vocabularies
+ * is always a judgement call — **visible and reviewable in the payload**
+ * rather than buried in a normalising transform the next reader has to
+ * reverse-engineer.
+ *
+ * Deliberately NOT a case-folding or punctuation-stripping transform. A
+ * transform would silently accept `low-medium` by mangling it into
+ * something, and the whole question of what a hedge between two levels
+ * should become is one only whoever wrote it can answer. Unmapped is
+ * refused, never downgraded and never dropped.
+ *
+ * An absent severity stays absent — it is not a spelling to translate, and
+ * "ungraded" is a different claim from any level.
+ */
+export function applySeverityAliases(
+  findings: unknown,
+  reviewId: string,
+  severityAliases: Record<string, string> = {},
+): unknown {
+  if (!Array.isArray(findings)) return findings;
+  return findings.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return entry;
+    const record = entry as Record<string, unknown>;
+    const raw = record.severity;
+    if (raw === undefined || raw === null) return entry;
+    if (typeof raw !== "string") return entry; // left for parseFindings to refuse
+    const mapped = severityAliases[raw] ?? raw;
+    if (!isFindingSeverity(mapped)) {
+      throw new UnknownSeverityError(raw, reviewId, index);
+    }
+    return { ...record, severity: mapped };
+  });
+}
+
+export class VerdictNotStorableError extends Error {
+  constructor(missing: readonly string[], available: readonly string[]) {
+    super(
+      `the database's Verdict type cannot store ${missing.length} verdict(s) this import would ` +
+        `write: ${missing.join(", ")}. It accepts: ${available.join(", ")}. Apply the ` +
+        "migration that adds them, or map them onto a value it does accept in verdictAliases.",
+    );
+    this.name = "VerdictNotStorableError";
+  }
+}
+
+interface EnumLabelRow {
+  label: string;
+}
+
+/**
+ * Refuses, up front, any verdict the database's own `Verdict` type cannot
+ * hold.
+ *
+ * This exists because the application's accepted set and the database's
+ * enum labels are versioned separately: a build that knows about tiered
+ * verdicts can be pointed at a database whose migration adding them has not
+ * been applied yet. Without this the mismatch surfaces partway through a
+ * bulk insert as `invalid input value for enum "Verdict"` — naming no task,
+ * no artifact and no remedy, after some of the import has already run.
+ *
+ * Checked against `pg_enum` rather than against a constant, because the
+ * question is not "what does this build believe" but "what will this
+ * database actually accept", and only the database can answer that. Every
+ * offender is reported at once, so one run tells the operator the whole
+ * story instead of one failure at a time.
+ */
+export async function assertVerdictsStorable(
+  client: Pick<PrismaClient, "$queryRawUnsafe">,
+  verdicts: readonly string[],
+): Promise<void> {
+  const wanted = [...new Set(verdicts)].sort();
+  if (wanted.length === 0) return;
+
+  const rows = await client.$queryRawUnsafe<EnumLabelRow[]>(
+    `SELECT e.enumlabel AS label
+       FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+      WHERE t.typname = 'Verdict'`,
+  );
+  const available = rows.map((row) => row.label);
+  // No rows means the type is not there at all — a database this importer
+  // was never migrated against. Leave that to the insert's own error
+  // rather than reporting every verdict as individually unstorable.
+  if (available.length === 0) return;
+
+  const missing = wanted.filter((verdict) => !available.includes(verdict));
+  if (missing.length > 0) {
+    throw new VerdictNotStorableError(missing, available.sort());
+  }
 }
 
 /** A `task.json` entry as this importer reads it — the fields #10's `SourceTask` doesn't need. */
@@ -170,6 +346,20 @@ export interface ImportAssignmentsArtifactsResult {
   claimsConflicted: number;
   reviewsImported: number;
   reviewsSkippedExisting: number;
+  /** Findings across every artifact in the source — what a reconciliation must account for. */
+  findingsIn: number;
+  /** Findings actually written, summed over the artifact rows this run inserted. */
+  findingsWritten: number;
+  /** Findings on artifacts skipped as already present. Not lost — already on the existing row. */
+  findingsOnSkippedArtifacts: number;
+  /**
+   * Findings the source recorded WITHOUT a severity, counted rather than
+   * defaulted. A review that never graded a finding did not grade it, and
+   * inventing a level would put a number nobody chose into the one field
+   * the column exists to preserve — "ungraded" is a different claim from
+   * "graded low" (`findings.ts`).
+   */
+  findingsWithoutSeverity: number;
 }
 
 /** The minimal client surface this module needs — narrowed the same way import-items.ts narrows its own. */
@@ -346,9 +536,27 @@ interface ArtifactIdRow {
 export async function importArtifacts(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
-): Promise<Pick<ImportAssignmentsArtifactsResult, "reviewsImported" | "reviewsSkippedExisting">> {
+  options: {
+    readonly verdictAliases?: Record<string, string>;
+    readonly severityAliases?: Record<string, string>;
+  } = {},
+): Promise<
+  Pick<
+    ImportAssignmentsArtifactsResult,
+    | "reviewsImported"
+    | "reviewsSkippedExisting"
+    | "findingsIn"
+    | "findingsWritten"
+    | "findingsOnSkippedArtifacts"
+    | "findingsWithoutSeverity"
+  >
+> {
   let reviewsImported = 0;
   let reviewsSkippedExisting = 0;
+  let findingsIn = 0;
+  let findingsWritten = 0;
+  let findingsOnSkippedArtifacts = 0;
+  let findingsWithoutSeverity = 0;
 
   for (const task of tasks) {
     const reviews = task.reviews ?? [];
@@ -361,7 +569,22 @@ export async function importArtifacts(
 
     for (const review of reviews) {
       const kind = mapSourceArtifactKind(review.kind, review.id);
-      const verdict = review.verdict != null ? mapSourceVerdict(review.verdict, review.id) : null;
+      // Validated BEFORE the existence check, so a malformed findings list
+      // is refused whether or not the artifact happens to be present
+      // already — a re-run must not start silently accepting data a first
+      // run would have rejected.
+      const findings: Finding[] =
+        review.findings === undefined || review.findings === null
+          ? []
+          : parseFindings(
+              applySeverityAliases(review.findings, review.id, options.severityAliases),
+            );
+      findingsIn += findings.length;
+      findingsWithoutSeverity += findings.filter((f) => f.severity === undefined).length;
+      const verdict =
+        review.verdict != null
+          ? mapSourceVerdict(review.verdict, review.id, options.verdictAliases)
+          : null;
       const reviewRound = review.reviewRound ?? 1;
 
       const existing = await client.$queryRawUnsafe<ArtifactIdRow[]>(
@@ -376,17 +599,22 @@ export async function importArtifacts(
       );
       if (existing.length > 0) {
         reviewsSkippedExisting++;
+        findingsOnSkippedArtifacts += findings.length;
         continue;
       }
 
+      // `findings` is stored as NULL rather than `[]` when the review had
+      // none, so "this review recorded no findings" and "this row predates
+      // findings being stored at all" stay distinguishable — the same
+      // absent-is-not-zero reasoning the severity field itself follows.
       await client.$executeRawUnsafe(
         `INSERT INTO "Artifact" (
            "id", "itemId", "kind", "verdict", "reviewRound", "commitSha",
-           "body", "ref", "createdByType", "createdById", "createdAt"
+           "body", "ref", "createdByType", "createdById", "createdAt", "findings"
          )
          VALUES (
            gen_random_uuid(), $1, $2::"ArtifactKind", $3::"Verdict", $4, $5,
-           $6, $7, $8::"HolderType", $9, $10::timestamptz
+           $6, $7, $8::"HolderType", $9, $10::timestamptz, $11::jsonb
          )`,
         itemId,
         kind,
@@ -398,12 +626,21 @@ export async function importArtifacts(
         review.createdByType,
         review.createdById,
         review.createdAt,
+        findings.length > 0 ? JSON.stringify(findings) : null,
       );
       reviewsImported++;
+      findingsWritten += findings.length;
     }
   }
 
-  return { reviewsImported, reviewsSkippedExisting };
+  return {
+    reviewsImported,
+    reviewsSkippedExisting,
+    findingsIn,
+    findingsWritten,
+    findingsOnSkippedArtifacts,
+    findingsWithoutSeverity,
+  };
 }
 
 /**
@@ -416,8 +653,12 @@ export async function importArtifacts(
 export async function importAssignmentsAndArtifacts(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
+  options: {
+    readonly verdictAliases?: Record<string, string>;
+    readonly severityAliases?: Record<string, string>;
+  } = {},
 ): Promise<ImportAssignmentsArtifactsResult> {
   const assignments = await importAssignments(client, tasks);
-  const artifacts = await importArtifacts(client, tasks);
+  const artifacts = await importArtifacts(client, tasks, options);
   return { ...assignments, ...artifacts };
 }

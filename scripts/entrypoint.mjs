@@ -58,6 +58,34 @@ function defaultSpawnServer(command, args, { env, log }) {
  * Runs the full boot sequence. Returns the process exit code the caller
  * should use — 0 only if the server itself later exits cleanly.
  */
+/**
+ * The startup line warning that the backfill window is open, or `null` when
+ * it is closed.
+ *
+ * **This is a second statement of the rule in `src/lib/backfill/enabled.ts`,
+ * and that is deliberate but not free.** This file is plain JavaScript run
+ * by Node before anything is built, so it cannot import the TypeScript
+ * module; and the announcement has to happen here, at the moment the
+ * container starts, or it is not a startup warning. What stops the two
+ * copies drifting is a mechanism rather than a comment:
+ * `tests/backfill-enabled.test.ts` runs both against the same table of
+ * inputs — unset, empty, whitespace, `1`, `yes`, `false`, `TRUE`, `true` —
+ * and fails if they ever disagree on any of them.
+ *
+ * Fail closed: only the exact string `true` opens it.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string | null}
+ */
+export function backfillWarning(env) {
+  if (env.ENABLE_BACKFILL !== "true") return null;
+  return (
+    "WARNING: backfill is ENABLED (ENABLE_BACKFILL=true). " +
+    "The bulk-import surface is reachable and bypasses the state machine. " +
+    "Unset ENABLE_BACKFILL and restart as soon as the import is finished."
+  );
+}
+
 export async function main({
   env = process.env,
   argv = process.argv.slice(2),
@@ -119,6 +147,12 @@ export async function main({
     );
   }
   const schemaPath = isProduction ? undefined : env.PRISMA_SCHEMA_PATH;
+
+  // Announced before anything else can scroll it away. Silence when the
+  // window is closed is what gives this line its meaning.
+  const backfill = backfillWarning(env);
+  if (backfill) log.warn(backfill);
+
   const migration = await runMigrations({ env, log, schemaPath });
   if (!migration.ok) {
     return migration.exitCode || 1;

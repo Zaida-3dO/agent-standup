@@ -18,6 +18,7 @@ import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
 import { ADMIN_COMMANDS } from "./commands-admin";
 import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
 import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
+import { BACKFILL_COMMANDS } from "./commands-backfill";
 
 /** What building an input produced. */
 export type InputResult =
@@ -221,6 +222,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   ...ADMIN_COMMANDS,
   ...OWNERSHIP_COMMANDS,
   ...CONFIG_COMMANDS, // row #83 — `standup config`
+  ...BACKFILL_COMMANDS, // the one-time bulk load (docs/plans/BACKFILL.md)
 ]);
 
 /**

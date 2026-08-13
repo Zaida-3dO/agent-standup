@@ -73,6 +73,7 @@ describe("the four write operations are registered as MCP tools", () => {
       return operation;
     });
     const server = createMcpServer({
+      adapter: "mcp_http",
       call: async () => ({}),
       transport: "mcp-test",
       operations,
@@ -92,6 +93,7 @@ describe("the four write operations are registered as MCP tools", () => {
     const transitionOp = getOperation("transition_item")!;
     const completeOp = getOperation("complete_item")!;
     const server = createMcpServer({
+      adapter: "mcp_http",
       call: async () => ({}),
       transport: "mcp-test",
       operations: [transitionOp, completeOp],
@@ -168,6 +170,7 @@ describe("withRehearsalUnwrapping, as a bare function", () => {
 describe("withRehearsalUnwrapping, driven through a real MCP client", () => {
   async function connect(call: ServiceCall) {
     const server = createMcpServer({
+      adapter: "mcp_http",
       call: withRehearsalUnwrapping(call),
       transport: "mcp-test",
       operations: [getOperation("transition_item")!],

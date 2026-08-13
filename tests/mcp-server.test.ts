@@ -23,6 +23,7 @@ import {
   listOperations,
   type TransactionHandle,
 } from "@/lib/service";
+import { exposedOperations, isWaived } from "@/lib/adapters/waivers";
 import { defaultSnapshot } from "@/lib/settings";
 import { callTool, createMcpServer, type ServiceCall } from "@/lib/mcp";
 
@@ -47,6 +48,7 @@ async function connect(
   options: { transport?: string; operations?: ReturnType<typeof listOperations> } = {},
 ): Promise<Client> {
   const server = createMcpServer({
+    adapter: "mcp_http",
     call,
     transport: options.transport ?? "mcp-test",
     ...(options.operations ? { operations: options.operations } : {}),
@@ -64,10 +66,17 @@ describe("tools are derived from the operation registry", () => {
     client = await connect(realRuntimeCall());
   });
 
-  it("exposes exactly one tool per registered operation", async () => {
+  it("exposes exactly one tool per registered operation this adapter has not waived", async () => {
+    // Not simply OPERATION_NAMES: an adapter may deliberately not expose an
+    // operation, and §22 requires that gap to carry a written waiver
+    // (`@/lib/adapters/waivers`). The assertion is still exact — one tool
+    // per exposed operation, no more and no fewer — so an accidental gap
+    // still fails; only a *declared* one is subtracted.
     const { tools } = await client.listTools();
+    const expected = OPERATION_NAMES.filter((name) => !isWaived("mcp_http", name));
     expect(tools.length).toBeGreaterThan(0);
-    expect(tools.map((tool) => tool.name).sort()).toEqual([...OPERATION_NAMES].sort());
+    expect(expected.length).toBeLessThan(OPERATION_NAMES.length);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...expected].sort());
   });
 
   it("takes each tool's description from the operation's own summary", async () => {
@@ -75,7 +84,7 @@ describe("tools are derived from the operation registry", () => {
     // Not a re-derivation of the tool list: the expectation comes from the
     // service layer's operations, which is a different object than the
     // adapter built its tools from at the call site above.
-    for (const operation of listOperations()) {
+    for (const operation of exposedOperations("mcp_http", listOperations())) {
       const tool = tools.find((candidate) => candidate.name === operation.name);
       expect(tool).toBeDefined();
       expect(tool?.description).toBe(operation.summary);
@@ -96,12 +105,14 @@ describe("tools are derived from the operation registry", () => {
 
   it("annotates read operations read-only and write operations not", async () => {
     const { tools } = await client.listTools();
-    for (const operation of listOperations()) {
+    for (const operation of exposedOperations("mcp_http", listOperations())) {
       const tool = tools.find((candidate) => candidate.name === operation.name);
       expect(tool?.annotations?.readOnlyHint).toBe(operation.kind === "read");
     }
     // Both arms have to be represented or the assertion above is one-sided.
-    const kinds = new Set(listOperations().map((operation) => operation.kind));
+    const kinds = new Set(
+      exposedOperations("mcp_http", listOperations()).map((operation) => operation.kind),
+    );
     expect([...kinds].sort()).toEqual(["read", "write"]);
   });
 
@@ -258,7 +269,7 @@ describe("the core reaches no rule of its own", () => {
       },
     });
     const client = await connect(realRuntimeCall(), {
-      operations: [...listOperations(), orphan],
+      operations: [...exposedOperations("mcp_http", listOperations()), orphan],
     });
 
     const { tools } = await client.listTools();

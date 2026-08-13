@@ -63,6 +63,11 @@ import { updateAccount } from "./operations/update-account";
 import { getCrewName } from "./operations/get-crew-name";
 import { listPeople } from "./operations/list-people";
 import { hookDecision } from "./operations/hook-decision";
+// Backfill — the one-time bulk load (docs/plans/BACKFILL.md). Registered
+// like any other operation so it is reachable and countable; whether it
+// answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
+// decided by `../adapters/waivers.ts`.
+import { backfill } from "./operations/backfill";
 
 /**
  * Every service operation, by name.
@@ -109,6 +114,7 @@ export const OPERATION_REGISTRY = {
   [getCrewName.name]: getCrewName,
   [listPeople.name]: listPeople,
   [hookDecision.name]: hookDecision,
+  [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;

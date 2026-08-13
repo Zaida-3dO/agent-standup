@@ -35,7 +35,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:check-drift": "node scripts/check-migration-drift.mjs",
-    "db:seed": "node prisma/seed.mjs"
+    "db:seed": "node prisma/seed.mjs",
+    "backfill": "node scripts/backfill.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

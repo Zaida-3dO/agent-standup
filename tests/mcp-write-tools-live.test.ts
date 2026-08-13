@@ -79,6 +79,7 @@ describeIfDb("MCP write tools against Postgres", () => {
     }) as AnyOperation[];
 
     const server = createMcpServer({
+      adapter: "mcp_http",
       call: withRehearsalUnwrapping((name, input, options) => runtime.call(name, input, options)),
       transport: "mcp-test",
       operations,

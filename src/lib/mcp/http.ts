@@ -83,7 +83,7 @@ export function createStatelessTransport(): WebStandardStreamableHTTPServerTrans
  * request's state; there is no session to end.
  */
 export async function handleMcpRequest(request: Request, call: ServiceCall): Promise<Response> {
-  const server = createMcpServer({ call, transport: MCP_HTTP_TRANSPORT });
+  const server = createMcpServer({ call, transport: MCP_HTTP_TRANSPORT, adapter: "mcp_http" });
   const transport = createStatelessTransport();
   try {
     await server.connect(transport);

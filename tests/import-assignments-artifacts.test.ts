@@ -5,13 +5,17 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
+import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
 import {
+  applySeverityAliases,
+  UnknownSeverityError,
   importAssignments,
   importArtifacts,
   importAssignmentsAndArtifacts,
   mapSourceRole,
   mapSourceArtifactKind,
   mapSourceVerdict,
+  VERDICTS,
   UnknownSourceRoleError,
   UnknownArtifactKindError,
   UnknownVerdictError,
@@ -72,6 +76,74 @@ describe("mapSourceArtifactKind", () => {
   });
 });
 
+describe("findings on an imported artifact", () => {
+  it("refuses a malformed findings list rather than repairing it", () => {
+    // parseFindings refuses per entry with the index named. A coercing
+    // importer that dropped two bad entries out of fifty would produce a
+    // list that looks complete and is not.
+    expect(() => parseFindings([{ text: "" }])).toThrow(InvalidFindingError);
+    expect(() => parseFindings([{ text: "ok", severity: "HIGH" }])).toThrow(InvalidFindingError);
+    expect(() => parseFindings("not an array")).toThrow(InvalidFindingError);
+  });
+
+  it("keeps an ungraded finding ungraded — absent severity is not defaulted", () => {
+    // "Ungraded" is a different claim from "graded low". Defaulting here
+    // would put a level nobody chose into the field the column exists for.
+    const [finding] = parseFindings([{ text: "noticed a thing" }]);
+    expect(finding).toEqual({ text: "noticed a thing" });
+    expect("severity" in finding!).toBe(false);
+  });
+
+  it("accepts the whole severity ladder, lowercase", () => {
+    for (const severity of FINDING_SEVERITIES) {
+      expect(parseFindings([{ text: "t", severity }])[0]!.severity).toBe(severity);
+    }
+  });
+});
+
+describe("applySeverityAliases", () => {
+  it("translates a caller's spelling onto this application's ladder", () => {
+    const out = applySeverityAliases([{ text: "t", severity: "HIGH" }], "r1", {
+      HIGH: "high",
+    }) as { severity: string }[];
+    expect(out[0]!.severity).toBe("high");
+  });
+
+  it("REFUSES an unmapped severity rather than downgrading or dropping it", () => {
+    // The whole reason the map exists. A case-folding or punctuation-
+    // stripping transform would silently mangle a hedge like `low-medium`
+    // into a level nobody chose; this refuses and says where.
+    expect(() => applySeverityAliases([{ text: "t", severity: "low-medium" }], "r1")).toThrow(
+      UnknownSeverityError,
+    );
+    expect(() => applySeverityAliases([{ text: "t", severity: "low-medium" }], "r1")).toThrow(
+      /findings\[0\]/,
+    );
+    expect(() => applySeverityAliases([{ text: "t", severity: "HIGH" }], "r1")).toThrow(
+      UnknownSeverityError,
+    );
+  });
+
+  it("accepts a level already in this application's own spelling without an alias", () => {
+    const out = applySeverityAliases([{ text: "t", severity: "high" }], "r1") as {
+      severity: string;
+    }[];
+    expect(out[0]!.severity).toBe("high");
+  });
+
+  it("leaves an ungraded finding ungraded — absence is not a spelling to translate", () => {
+    const out = applySeverityAliases([{ text: "t" }], "r1", { HIGH: "high" }) as object[];
+    expect(out[0]).toEqual({ text: "t" });
+    expect("severity" in out[0]!).toBe(false);
+  });
+
+  it("does not invent an alias target outside the ladder", () => {
+    expect(() =>
+      applySeverityAliases([{ text: "t", severity: "x" }], "r1", { x: "urgent" }),
+    ).toThrow(UnknownSeverityError);
+  });
+});
+
 describe("mapSourceVerdict", () => {
   it("accepts every verdict in the closed set", () => {
     expect(mapSourceVerdict("approved", "r1")).toBe("approved");
@@ -79,8 +151,45 @@ describe("mapSourceVerdict", () => {
     expect(mapSourceVerdict("na", "r1")).toBe("na");
   });
 
-  it("rejects a verdict outside the closed set", () => {
+  it("accepts the tiered verdicts", () => {
+    // A review outcome is tiered: a plain pass, a pass with cosmetic notes,
+    // and a pass with follow-up work are different answers.
+    expect(mapSourceVerdict("lgtm", "r1")).toBe("lgtm");
+    expect(mapSourceVerdict("lgtm_with_nits", "r1")).toBe("lgtm_with_nits");
+    expect(mapSourceVerdict("lgtm_with_followups", "r1")).toBe("lgtm_with_followups");
+  });
+
+  it("keeps `approved` working as a synonym rather than dropping it", () => {
+    // Removing an enum label in Postgres is a type rebuild, not an ALTER —
+    // so every verdict already on record has to keep deciding identically.
+    expect(mapSourceVerdict("approved", "r1")).toBe("approved");
+    expect(VERDICTS.has("approved")).toBe(true);
+  });
+
+  it("maps a caller's own spelling through verdictAliases", () => {
+    // The hyphenated spelling is a CALLER's, not this application's. It is
+    // translated by a map the caller supplies, exactly like a repo or an
+    // actor label — never by a table of somebody else's vocabulary here.
+    expect(mapSourceVerdict("lgtm-with-nits", "r1", { "lgtm-with-nits": "lgtm_with_nits" })).toBe(
+      "lgtm_with_nits",
+    );
+  });
+
+  it("still REJECTS a verdict outside the set — widening is not a pass-through", () => {
+    // The value of this check is precisely that it refuses what nobody
+    // taught it. A version that simply returned the verdict unchecked would
+    // pass the happy-path cases above and protect nothing.
     expect(() => mapSourceVerdict("pending", "r1")).toThrow(UnknownVerdictError);
+    expect(() => mapSourceVerdict("lgtm-with-nits", "r1")).toThrow(UnknownVerdictError);
+    expect(() => mapSourceVerdict("LGTM", "r1")).toThrow(UnknownVerdictError);
+  });
+
+  it("REJECTS an alias whose target is not one of this application's verdicts", () => {
+    // A hyphen-to-underscore transform would happily accept this and fail
+    // deep inside an insert instead.
+    expect(() => mapSourceVerdict("odd", "r1", { odd: "not_a_verdict" })).toThrow(
+      UnknownVerdictError,
+    );
   });
 });
 
@@ -422,7 +531,14 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
     };
 
     const result = await importArtifacts(prisma, [task]);
-    expect(result).toEqual({ reviewsImported: 1, reviewsSkippedExisting: 0 });
+    expect(result).toEqual({
+      reviewsImported: 1,
+      reviewsSkippedExisting: 0,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
+    });
 
     const row = await prisma.artifact.findFirstOrThrow({ where: { itemId } });
     expect(row.kind).toBe("code_review");
@@ -472,10 +588,24 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
     };
 
     const first = await importArtifacts(prisma, [task]);
-    expect(first).toEqual({ reviewsImported: 1, reviewsSkippedExisting: 0 });
+    expect(first).toEqual({
+      reviewsImported: 1,
+      reviewsSkippedExisting: 0,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
+    });
 
     const second = await importArtifacts(prisma, [task]);
-    expect(second).toEqual({ reviewsImported: 0, reviewsSkippedExisting: 1 });
+    expect(second).toEqual({
+      reviewsImported: 0,
+      reviewsSkippedExisting: 1,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
+    });
 
     expect(await prisma.artifact.count({ where: { itemId } })).toBe(1);
   });
@@ -497,6 +627,10 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
       claimsConflicted: 0,
       reviewsImported: 1,
       reviewsSkippedExisting: 0,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
     });
 
     const second = await importAssignmentsAndArtifacts(prisma, [task]);
@@ -506,6 +640,10 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
       claimsConflicted: 0,
       reviewsImported: 0,
       reviewsSkippedExisting: 1,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
     });
 
     expect(await prisma.assignment.count({ where: { itemId } })).toBe(1);
