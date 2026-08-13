@@ -206,35 +206,54 @@ Real example: three PRs bumped a framework major. Two were green but bumped only
 its companion lint config — passing checks while quietly mismatched underneath. The third did the
 full migration and failed, on a formatting nit. Merging on green would have picked a worse change.
 
-### Your PR must be mergeable into `main` as it is *now*, not as it was when you branched
+### You do NOT have to be up to date with `main` to merge — stop chasing it
 
-Required checks on `main` are **strict**: a branch has to be up to date with `main` before it can
-merge. Passing checks is not enough — a green PR that is `BEHIND` still cannot go in.
+**Changed 2026-08-13 — a deliberate policy decision by the repository owner. If you have read an
+older copy of this file, or were briefed before that date, this section is the one that changed.**
 
-**Several agents usually work in parallel here, so `main` moves while you work.** Assume it will. Your
-job is not finished when your change works; it is finished when your change works **on top of current
-`main`**.
+Branch protection on `main` is **no longer strict**. A PR merges when its **required checks pass** and
+**git can merge it cleanly** — being `BEHIND` `main` does not block it, and `main` moving while you
+work does not invalidate your green run.
 
-So, before you say you're done:
+**What this means for you:**
 
-```bash
-git fetch origin
-git rebase origin/main          # force-pushing your own feature branch is fine — only main is protected
-```
+- **Do not rebase onto `main` just to be current.** It is not required and it is not wanted. It burns
+  a full CI cycle, including the ~9-minute mutation gate, for no gain.
+- **Only bring `main` in if you actually need to** — a genuine textual conflict blocking the merge, or
+  a fix on `main` your work truly depends on.
+- **If you do have to resolve a conflict: resolve it once, push, and hand back.** Do not re-pull
+  `main` repeatedly to stay level with it. One builder previously merged `main` **eight times** to
+  land a single PR; that is exactly the waste this change removes.
+- **Rebase, not merge**, if you do need to integrate — `main` requires linear history, so a merge
+  commit still cannot land. When you do:
+  - **Expect conflicts in shared files.** `package.json`, `package-lock.json` and config files are the
+    usual casualties. Take `main`'s version of anything you didn't deliberately change, then re-apply
+    only your own additions on top. **Never revert someone else's landed change to resolve a
+    conflict** — if `main` upgraded a dependency, keep the upgrade.
+  - **For a lockfile, regenerate rather than hand-merge.** `npm install` after the rebase.
+  - **Re-run the full verification after rebasing, not just before.** You are now on code you have
+    never tested against.
 
-- **Rebase, don't merge.** `main` requires linear history, so a merge commit can't land.
-- **Expect conflicts in shared files.** `package.json`, `package-lock.json` and config files are the
-  usual casualties, because dependency and tooling changes touch them constantly. Take `main`'s
-  version of anything you didn't deliberately change, then re-apply only your own additions on top.
-  **Never revert someone else's landed change to resolve a conflict** — if `main` upgraded a
-  dependency, keep the upgrade.
-- **For a lockfile, regenerate rather than hand-merge.** `npm install` after the rebase. A
-  hand-resolved lockfile is unreliable.
-- **Re-run the full verification after rebasing, not just before.** You are now on code you have never
-  tested against. A rebase that quietly breaks the build is worse than being behind, because it looks
-  finished.
-- **If `main` moves again while you're waiting on review, rebase again.** Being current is a state you
-  hold, not a step you complete.
+**The tradeoff you should understand, because it will occasionally land on you.** Requiring
+up-to-date branches did catch a real class of bug: two PRs that are each green, each correct, and
+cleanly mergeable, but that **do not work together** — one deletes a symbol the other's test imports,
+or adds a guard that invalidates the other's fixtures. Git stays silent, because the changes are in
+different files.
+
+That class is now caught **after** merging, by `main`'s own CI, instead of before. **This is
+deliberate.** Neither PR is wrong; a semantic conflict between two correct changes is a normal
+integration event. The accepted posture is:
+
+> `main` goes red → we notice → we put up a small follow-up PR that fixes it. That is cheap and easy.
+> Paying a constant tax on **every** open PR to prevent it was not.
+
+So: **if `main` is red and it wasn't you, don't panic and don't hunt for a culprit.** Read the first
+lines of the failing CI step — this class is almost always diagnosable straight from there — and open
+a fix PR. If your own PR goes red right after someone else merged, it is very likely this, and **it is
+not your fault**.
+
+**Required checks still gate everything.** `Build & test`, `Actionlint (required)` and
+`Docker build (required)` must pass. Nothing about "green is not the same as right" has relaxed.
 
 ### Don't pull the ground out from under a running crew
 
