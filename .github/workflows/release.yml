@@ -54,15 +54,29 @@ jobs:
   # tag. `package.json`'s own checked-in "version" is not used for what gets
   # published; see the script's header for why that is the safer default.
   #
-  # ⚠️ Requires an `NPM_TOKEN` repository secret (an npm automation/publish
-  # token for this package) that does not exist yet as of this PR — this job
-  # will fail at the `npm publish` step until one is added under
-  # Settings → Secrets and variables → Actions. Nothing here invents or
-  # hardcodes a credential; `secrets.NPM_TOKEN` is a reference only.
+  # ⚠️ DORMANT until an `NPM_TOKEN` repository secret exists.
+  #
+  # This job is gated on `vars.ENABLE_NPM_PUBLISH == 'true'` rather than
+  # deleted, because everything in it is known-good: the v0.3.0 run built the
+  # binary and assembled a correct 6-file tarball, then failed at the final
+  # step with ENEEDAUTH because `secrets.NPM_TOKEN` resolved to an empty
+  # string. The machinery works; only the credential is absent. Deleting it
+  # would mean rebuilding all of this later, so it stays here, skipped.
+  #
+  # A skipped job is deliberately visible in the checks UI — you can see the
+  # publish did not happen, which a deleted job could not tell you.
+  #
+  # To turn it on (see issue: "Publish the standup binary to npm"):
+  #   1. Create an npm *Automation* token (that type bypasses 2FA, which CI
+  #      requires) for the `agent-standup` package.
+  #   2. `gh secret set NPM_TOKEN --repo Zaida-3dO/agent-standup`
+  #   3. `gh variable set ENABLE_NPM_PUBLISH --body true --repo Zaida-3dO/agent-standup`
+  # Note the npm name `agent-standup` is currently unregistered, so the first
+  # successful publish claims it permanently.
   publish-npm:
     name: Publish npm package (standup binary)
     needs: build-and-push
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' && vars.ENABLE_NPM_PUBLISH == 'true'
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
