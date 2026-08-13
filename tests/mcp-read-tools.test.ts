@@ -59,7 +59,7 @@ describeIfDb("MCP read tools against Postgres", () => {
     });
 
     const call: ServiceCall = (name, input, options) => runtime.call(name, input, options);
-    const server = createMcpServer({ call, transport: "mcp-test" });
+    const server = createMcpServer({ adapter: "mcp_http", call, transport: "mcp-test" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({ name: "read-tools-test-client", version: "0.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

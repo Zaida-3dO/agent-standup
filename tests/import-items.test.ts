@@ -10,7 +10,9 @@ import { createRepo } from "@/lib/repos";
 import {
   importItems,
   mapSourceStatus,
+  PIPELINE_STATUS_REMAP,
   readSourceTasks,
+  STATUS_REMAP,
   UnknownRepoAliasError,
   UnknownSourceStatusError,
   type SourceTask,
@@ -46,6 +48,37 @@ describe("mapSourceStatus", () => {
 
   it("rejects a status outside the source vocabulary rather than defaulting silently", () => {
     expect(() => mapSourceStatus("archived", "t1")).toThrow(UnknownSourceStatusError);
+  });
+
+  it("resolves the second, pipeline-shaped vocabulary too", () => {
+    expect(mapSourceStatus("awaiting-merge-auth", "t1")).toBe("paused");
+    expect(mapSourceStatus("cancelled", "t1")).toBe("cancelled");
+    expect(mapSourceStatus("plan-review", "t1")).toBe("plan_review");
+  });
+
+  it("collapses every review-pipeline status onto one item state", () => {
+    // Four source statuses, one column value — the collapse the gap list
+    // names, and the reason the source status is preserved verbatim in
+    // custom_fields. Changing any of these to a different state would make
+    // an imported item claim a review stage the source never recorded.
+    for (const status of ["code-review", "review-approved", "visual-review", "ready-for-merge"]) {
+      expect(mapSourceStatus(status, "t1")).toBe("in_review");
+    }
+  });
+});
+
+describe("the two status vocabularies", () => {
+  it("share no key, which is what lets one lookup consult both without shadowing", () => {
+    const overlap = Object.keys(PIPELINE_STATUS_REMAP).filter((key) => key in STATUS_REMAP);
+    expect(overlap).toEqual([]);
+  });
+
+  it("leaves STATUS_REMAP exactly five words wide — it defines a surface vocabulary, not just a mapping", () => {
+    // task-shim/contract.ts's SHIM_STATUSES is asserted equal to these
+    // keys. Folding the pipeline vocabulary into this table would widen a
+    // command-line surface as a side effect of teaching the importer to
+    // read a second kind of store.
+    expect(Object.keys(STATUS_REMAP)).toHaveLength(5);
   });
 });
 

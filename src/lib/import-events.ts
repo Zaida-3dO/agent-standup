@@ -65,8 +65,17 @@ export class UnknownActorAliasError extends Error {
  * invents on its behalf.
  */
 export interface ActorAliasTarget {
-  readonly actorType: "person" | "agent";
-  readonly actorId: string;
+  /**
+   * `system` is included alongside `person`/`agent` because a source store
+   * that logs its own automated writes attributes them to no one — the row
+   * was written by the machinery, not by a party with an identity. `events`
+   * models that first-class (`ActorType.system`, `actorId` null, SCHEMA.md
+   * §3), so mapping such an entry onto a fabricated agent id would invent an
+   * actor the source never had.
+   */
+  readonly actorType: "person" | "agent" | "system";
+  /** Null only for `actorType: "system"` — every other actor type identifies a row. */
+  readonly actorId: string | null;
 }
 
 export interface ImportEventsOptions {

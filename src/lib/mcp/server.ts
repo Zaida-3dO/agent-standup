@@ -30,6 +30,8 @@
 // this module has no way to construct one even if a handler wanted to.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { listOperations, type AnyOperation } from "@/lib/service";
+import { exposedOperations } from "@/lib/adapters/waivers";
+import type { AdapterName } from "@/lib/adapters/registry";
 import { toolRejection, toolSuccess, type ToolResult } from "./result";
 import { advertisedSchema, toolsFromOperations } from "./tools";
 
@@ -64,7 +66,15 @@ export interface McpServerOptions {
    * exactly the shape that makes a core stop being transport-agnostic.
    */
   readonly transport: string;
-  /** The operations to expose. Defaults to every registered one. */
+  /**
+   * Which registered adapter this server is, so its waivers apply
+   * (`@/lib/adapters/waivers`). Supplied by the wiring for the same reason
+   * `transport` is — it is the other thing that genuinely differs between
+   * the two bindings, and a waiver that each adapter had to remember to
+   * honour would be a waiver in name only.
+   */
+  readonly adapter: AdapterName;
+  /** The operations to expose. Defaults to every registered one this adapter has not waived. */
   readonly operations?: readonly AnyOperation[];
   /** Reported on `initialize`. */
   readonly serverInfo?: { readonly name: string; readonly version: string };
@@ -90,7 +100,8 @@ export const MCP_SERVER_INFO = { name: "agent-standup", version: "0.1.0" } as co
 export function createMcpServer({
   call,
   transport,
-  operations = listOperations(),
+  adapter,
+  operations = exposedOperations(adapter, listOperations()),
   serverInfo = MCP_SERVER_INFO,
 }: McpServerOptions): McpServer {
   // No explicit `capabilities` argument: registering the first tool makes

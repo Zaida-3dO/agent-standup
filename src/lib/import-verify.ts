@@ -256,6 +256,34 @@ const EXPECTED_STATUS_REMAP: Record<string, ItemState> = {
   review: "in_review",
   waiting: "paused",
   done: "merged",
+
+  // The pipeline-shaped source vocabulary (`PIPELINE_STATUS_REMAP` in
+  // import-items.ts), restated here by hand for the same reason as the five
+  // above: this table must be able to DISAGREE with the importer's own, or
+  // it cannot catch the importer being wrong. Every entry was written from
+  // the source store's documented state machine, not copied from it.
+  //
+  // Both vocabularies live in ONE table here even though the importer keeps
+  // two, because this side only ever performs a lookup — it has no
+  // equivalent of the compatibility surface whose vocabulary is defined as
+  // "exactly the keys of the first table", which is the reason the importer
+  // has to keep them apart.
+  backlog: "someday",
+  "not-started": "on_deck",
+  planning: "planning",
+  "plan-review": "plan_review",
+  "plan-approved": "on_deck",
+  parked: "paused",
+  staged: "on_deck",
+  executing: "executing",
+  "code-review": "in_review",
+  "review-approved": "in_review",
+  "visual-review": "in_review",
+  "visual-approved": "in_review",
+  "ready-for-merge": "in_review",
+  "awaiting-merge-auth": "paused",
+  merged: "merged",
+  cancelled: "cancelled",
 };
 
 /**
@@ -355,6 +383,45 @@ export async function spotCheckTask(
     actual: customFields?.legacy_id,
     matches: customFields?.legacy_id === task.id,
   });
+
+  // The optional typed columns, checked only when the source supplied one —
+  // a source with no notion of priority leaves the column's own default in
+  // place, and comparing against a default the source never expressed would
+  // report a mismatch on a correct import. Each is a straight literal
+  // comparison against the source value, so nothing here calls back into
+  // the importer's own code (same independence property as state's table).
+  if (task.priority !== undefined) {
+    fields.push({
+      field: "priority",
+      expected: task.priority,
+      actual: item.priority,
+      matches: item.priority === task.priority,
+    });
+  }
+  if (task.branch !== undefined) {
+    fields.push({
+      field: "branch",
+      expected: task.branch,
+      actual: item.branch,
+      matches: item.branch === task.branch,
+    });
+  }
+  if (task.needsVisualReview !== undefined) {
+    fields.push({
+      field: "needsVisualReview",
+      expected: task.needsVisualReview,
+      actual: item.needsVisualReview,
+      matches: item.needsVisualReview === task.needsVisualReview,
+    });
+  }
+  if (task.sourceRef !== undefined) {
+    fields.push({
+      field: "sourceRef",
+      expected: task.sourceRef,
+      actual: item.sourceRef,
+      matches: item.sourceRef === task.sourceRef,
+    });
+  }
 
   if (task.repo && options.repoAliases) {
     const expectedRepo = options.repoAliases[task.repo] ?? null;

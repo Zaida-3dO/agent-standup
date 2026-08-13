@@ -14,7 +14,7 @@
 // function here only reads the directory tree and writes to `items`.
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ItemState, PrismaClient } from "@prisma/client";
+import type { ItemState, PrismaClient, Priority } from "@prisma/client";
 import { ensureArea } from "./areas";
 
 /** One task directory's `task.json`, exactly as the source store writes it. */
@@ -43,6 +43,38 @@ export interface SourceTask {
    * other's column. See `import-events.ts` for `SourceHistoryEntry`.
    */
   history?: SourceHistoryEntry[];
+  /**
+   * `items.priority`, when the source records one. Optional because a
+   * backlog that has no notion of priority is a perfectly ordinary source;
+   * omitted leaves the column's own default (`P2`) in place rather than
+   * inventing a value.
+   */
+  priority?: Priority;
+  /** `items.branch` — the deliverable's integration branch (SCHEMA.md §1). Omitted leaves it null. */
+  branch?: string;
+  /** `items.needs_visual_review` — the merge gate's visual flag (SCHEMA.md §1). Omitted leaves it false. */
+  needsVisualReview?: boolean;
+  /**
+   * `items.source_ref` — `path@content_hash` (SCHEMA.md §1), the version of
+   * the source file this item was read from. A **relative** path: an
+   * absolute one would record the importing machine's directory layout in
+   * every row.
+   */
+  sourceRef?: string;
+  /**
+   * Extra source fields to preserve verbatim in `items.custom_fields`
+   * alongside `legacy_id` — the "arbitrary key/value bag, opaque to the
+   * core" escape hatch SCHEMA.md §1 defines, whose stated purpose is exactly
+   * this: keeping a source field that has no typed column of its own rather
+   * than dropping it. `legacy_id` always wins over a same-named key here,
+   * because idempotency keys on it (see `importItems`).
+   *
+   * SCHEMA.md's second rule on the bag applies to whatever a caller puts
+   * here: **if a key recurs, promote it to a column.** This is for the
+   * genuinely source-specific, not a parking space for fields that deserve
+   * a schema.
+   */
+  customFields?: Record<string, unknown>;
 }
 
 /**
@@ -85,6 +117,52 @@ export const STATUS_REMAP: Record<string, ItemState> = {
   done: "merged",
 };
 
+/**
+ * A SECOND source vocabulary, for a store that models the whole build
+ * pipeline as task status rather than as a separate axis: planning, review
+ * and merge-authorisation are each their own status there.
+ *
+ * **Kept as its own table, not merged into `STATUS_REMAP`**, and that
+ * separation is load-bearing: `STATUS_REMAP`'s key set is the compatibility
+ * surface's whole vocabulary (`SHIM_STATUSES`, task-shim/contract.ts, which
+ * a test asserts is exactly those keys and exactly five words wide).
+ * Widening `STATUS_REMAP` would silently widen that surface too — a
+ * command-line vocabulary growing eleven words because an importer learned
+ * to read a second kind of store is precisely the coupling the shim's
+ * contract test exists to catch.
+ *
+ * This vocabulary collapses onto `items.state` more than the five-value one
+ * does: several of its statuses describe *where in the review pipeline* a
+ * finished-but-unmerged deliverable sits, and `items.state` has one value
+ * for all of them (`in_review`). Nothing is lost by that collapse on its
+ * own — an importer reading this vocabulary is expected to preserve the
+ * source status verbatim in `custom_fields` (see `SourceTask.customFields`),
+ * so the finer distinction stays recoverable from the row — but the column
+ * alone cannot tell the difference, which is worth knowing before querying
+ * on it.
+ *
+ * The two tables share no key, so `mapSourceStatus` can consult both in
+ * order without either shadowing the other.
+ */
+export const PIPELINE_STATUS_REMAP: Record<string, ItemState> = {
+  backlog: "someday",
+  "not-started": "on_deck",
+  planning: "planning",
+  "plan-review": "plan_review",
+  "plan-approved": "on_deck",
+  parked: "paused",
+  staged: "on_deck",
+  executing: "executing",
+  "code-review": "in_review",
+  "review-approved": "in_review",
+  "visual-review": "in_review",
+  "visual-approved": "in_review",
+  "ready-for-merge": "in_review",
+  "awaiting-merge-auth": "paused",
+  merged: "merged",
+  cancelled: "cancelled",
+};
+
 export class UnknownSourceStatusError extends Error {
   constructor(status: string, taskId: string) {
     super(`unrecognised source status ${JSON.stringify(status)} on task ${JSON.stringify(taskId)}`);
@@ -92,8 +170,14 @@ export class UnknownSourceStatusError extends Error {
   }
 }
 
+/**
+ * Resolves a source status against both vocabularies, in order. A status
+ * present in neither is refused — the whole point of a remap table is that
+ * an unrecognised value is a data problem to raise, not a default to fall
+ * back on.
+ */
 export function mapSourceStatus(status: string, taskId: string): ItemState {
-  const mapped = STATUS_REMAP[status];
+  const mapped = STATUS_REMAP[status] ?? PIPELINE_STATUS_REMAP[status];
   if (!mapped) {
     throw new UnknownSourceStatusError(status, taskId);
   }
@@ -231,7 +315,17 @@ export async function importItems(
         area: area.id,
         repo: repoId,
         mergeAuthority: "needs_approval",
-        customFields: { legacy_id: task.id },
+        ...(task.priority !== undefined ? { priority: task.priority } : {}),
+        ...(task.branch !== undefined ? { branch: task.branch } : {}),
+        ...(task.needsVisualReview !== undefined
+          ? { needsVisualReview: task.needsVisualReview }
+          : {}),
+        ...(task.sourceRef !== undefined ? { sourceRef: task.sourceRef } : {}),
+        // `legacy_id` is spread LAST so a source-supplied `customFields`
+        // carrying its own `legacy_id` cannot displace the one idempotency
+        // keys on — a displaced key would make the second run of an import
+        // re-insert every row it had already written.
+        customFields: { ...(task.customFields ?? {}), legacy_id: task.id },
       },
     });
     imported++;
