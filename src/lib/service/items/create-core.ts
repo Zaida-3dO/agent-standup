@@ -19,7 +19,7 @@
 import { z } from "zod";
 import { GuardRejectedError, NotFoundError } from "../errors";
 import type { ServiceContext } from "../context";
-import { ensureAreaRaw } from "./ensure-area-raw";
+import { resolveAreasRaw, setItemAreas } from "./item-areas";
 import { callerEventActor } from "./event-attribution";
 import { appendEvent } from "@/lib/events";
 import { normalizeEmDash } from "@/lib/text-normalize";
@@ -55,8 +55,22 @@ export const commonCreateShape = {
    */
   headline: z.string().trim().min(1).max(HEADLINE_MAX_CHARS).optional(),
   body: z.string(),
-  /** Raw area label — resolved through `ensureArea` (auto-create, normalised; SCHEMA.md §23.1). */
-  area: z.string().trim().min(1, "area is required"),
+  /**
+   * The area this item belongs to — a raw label, resolved through
+   * `ensureAreaRaw` (auto-create, normalised; SCHEMA.md §23.1).
+   *
+   * `area` and `areas` are the same field in two spellings. One area is the
+   * overwhelmingly common case, so making every caller wrap a single label
+   * in a list would be friction with no benefit; an item that genuinely
+   * spans several says so with `areas`. **Exactly one of the two is
+   * required.** Supplying both is refused rather than resolved by
+   * precedence, so a caller that sets them to different values finds out
+   * instead of silently getting whichever the implementation happened to
+   * prefer.
+   */
+  area: z.string().trim().min(1).optional(),
+  /** Every area this item belongs to, **primary first** — see `area`. */
+  areas: z.array(z.string().trim().min(1)).min(1).optional(),
   /** An existing `repos.id`. Repos are deliberate-create only (SCHEMA.md §23.1) — never auto-created here. */
   repo: z.string().min(1).optional(),
   priority: z.enum(["P0", "P1", "P2", "P3"]).default("P2"),
@@ -101,6 +115,26 @@ export const originPersonCheck = (value: {
 export const originPersonMessage = {
   message: "originPersonId is required when originType is person",
   path: ["originPersonId"],
+};
+
+/**
+ * The other cross-field rule every create shares: exactly one of `area` and
+ * `areas` (see `commonCreateShape.area`).
+ *
+ * A check rather than a `z.union` of two object shapes, for the same reason
+ * `originPersonCheck` is one: each operation adds its own parent field and
+ * applies `.strict()` itself, and a union would have to be rebuilt per
+ * operation rather than extended. `!==` over the two `undefined` tests is
+ * exclusive-or written plainly — it refuses neither-supplied and
+ * both-supplied with the one expression.
+ */
+export const areaSpellingCheck = (value: { area?: string; areas?: string[] }): boolean =>
+  (value.area === undefined) !== (value.areas === undefined);
+
+/** The message and field path `areaSpellingCheck` fails with. */
+export const areaSpellingMessage = {
+  message: "exactly one of area or areas is required",
+  path: ["areas"],
 };
 
 /** The parsed common fields, as every create operation's handler receives them. */
@@ -178,10 +212,18 @@ export async function insertItem(
   // `ensureArea` (areas.ts) takes a Prisma client's `.area` delegate,
   // which `TransactionHandle` deliberately does not expose (context.ts —
   // an operation cannot open a second transaction through it). Resolve
-  // the area with the same normalise-and-upsert semantics against this
+  // the areas with the same normalise-and-upsert semantics against this
   // transaction's own raw handle instead, so an area minted here and the
   // item that names it commit or roll back together.
-  const resolvedArea = await ensureAreaRaw(ctx, input.area);
+  //
+  // Resolved before the insert so the whole call fails without writing an
+  // item when an area is unusable (a label that normalises to empty).
+  // `input.areas ?? [input.area]` is safe against neither being supplied
+  // because `areaSpellingCheck` has already refused that case — and if it
+  // somehow reached here, `resolveAreasRaw` refuses an empty list rather
+  // than inventing an area.
+  const resolvedAreas = await resolveAreasRaw(ctx, input.areas ?? (input.area ? [input.area] : []));
+  const resolvedArea = resolvedAreas[0]!;
 
   // Also carries `needsVisualReview` (MILESTONES.md #126): the same
   // lookup that already exists to validate `repo` is the natural place to
@@ -259,6 +301,19 @@ export async function insertItem(
   if (!row) {
     throw new NotFoundError("Item insert returned no row.", { fields: [] });
   }
+
+  // The full area set, written by the one function that owns both
+  // representations. `Item.area` above already holds the primary; this
+  // records every area including that one, so the join table is the
+  // complete set rather than "the extras" — a reader never has to union
+  // the two to get the answer.
+  //
+  // `row.areas` is patched rather than re-selected: the `ITEM_COLUMNS`
+  // subquery ran as part of the INSERT ... RETURNING above, before these
+  // rows existed, so the value it returned is the pre-write fallback. The
+  // set just written is what this call created, by definition.
+  await setItemAreas(ctx, row.id, resolvedAreas);
+  row.areas = resolvedAreas;
 
   // "Every mutating call appends a row" (SCHEMA.md §3). A create has no
   // prior value to diff, so it is recorded as a field-change from null —

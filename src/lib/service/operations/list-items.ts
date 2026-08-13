@@ -38,6 +38,7 @@ import {
   type RawItemSummaryRow,
 } from "../items/row";
 import { TERMINAL_STATES } from "../board/columns";
+import { areaFilterCondition } from "../items/area-filter";
 
 const inputSchema = z
   .object({
@@ -58,6 +59,10 @@ const inputSchema = z
       ])
       .optional(),
     priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+    /**
+     * An area id. Matches an item carrying this area **anywhere in its area
+     * set**, not only as its primary one (SCHEMA.md §23.1).
+     */
     area: z.string().min(1).optional(),
     repo: z.string().min(1).optional(),
     parentId: z.string().min(1).nullable().optional(),
@@ -117,7 +122,9 @@ export const listItems = defineOperation({
       paramIndex++;
     }
     if (input.area !== undefined) {
-      conditions.push(`"area" = $${paramIndex}`);
+      // Matches ANY of the item's areas, not only its primary one — see
+      // `areaFilterCondition` (../items/area-filter.ts) for why.
+      conditions.push(areaFilterCondition(paramIndex));
       values.push(input.area);
       paramIndex++;
     }

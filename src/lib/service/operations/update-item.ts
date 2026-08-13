@@ -7,7 +7,7 @@ import { z } from "zod";
 import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { ensureAreaRaw } from "../items/ensure-area-raw";
+import { resolveAreasRaw, setItemAreas } from "../items/item-areas";
 import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
@@ -37,7 +37,22 @@ const inputSchema = z
     headline: z.string().trim().min(1).max(HEADLINE_MAX_CHARS).nullable().optional(),
     body: z.string().optional(),
     priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+    /**
+     * Sets the item's area set to exactly this one area (SCHEMA.md §23.1) —
+     * so editing `area` on a multi-area item **narrows it to one**, which is
+     * the only reading under which `area` keeps meaning the same thing on a
+     * read and on a write.
+     */
     area: z.string().trim().min(1).optional(),
+    /**
+     * Sets the item's whole area set to exactly this list, **primary
+     * first**. A whole-set write rather than an add/remove pair: the set
+     * arrives whole everywhere it is written (see `setItemAreas`), and a
+     * caller that has to compose two operations to move an item between
+     * areas can leave it briefly in neither. Supplying both `area` and
+     * `areas` is refused.
+     */
+    areas: z.array(z.string().trim().min(1)).min(1).optional(),
     repo: z.string().min(1).nullable().optional(),
     branch: z.string().nullable().optional(),
     needsVisualReview: z.boolean().optional(),
@@ -45,7 +60,15 @@ const inputSchema = z
     mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
     customFields: z.record(z.string(), z.unknown()).optional(),
   })
-  .strict();
+  .strict()
+  // Both spellings at once is refused rather than resolved by precedence,
+  // exactly as on the create paths. Unlike there, NEITHER is fine here: an
+  // update patches only what it names, so an edit that says nothing about
+  // areas leaves the set alone.
+  .refine((value) => value.area === undefined || value.areas === undefined, {
+    message: "pass area or areas, not both",
+    path: ["areas"],
+  });
 
 export type UpdateItemInput = z.infer<typeof inputSchema>;
 
@@ -105,8 +128,23 @@ export const updateItem = defineOperation({
       throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
     }
 
-    if (edits.area !== undefined) {
-      edits.area = await ensureAreaRaw(ctx, edits.area);
+    // Both spellings collapse to one resolved set here, so everything below
+    // deals with a single concept. `area: "x"` is the one-element set —
+    // narrowing a multi-area item to exactly that area (see the schema).
+    //
+    // `edits.area` is then set to the set's PRIMARY entry so the existing
+    // column-diff loop below carries it: that is what makes an area change
+    // still emit its `field_change` event and still be seen by the
+    // notification rules, neither of which knows about the join table.
+    // `areas` itself is deleted from `edits` because the loop is driven by
+    // `EDITABLE_FIELDS`, which maps one key to one column — a join table has
+    // no column for it to set.
+    const rawAreas = edits.areas ?? (edits.area !== undefined ? [edits.area] : undefined);
+    let resolvedAreas: string[] | undefined;
+    if (rawAreas !== undefined) {
+      resolvedAreas = await resolveAreasRaw(ctx, rawAreas);
+      edits.area = resolvedAreas[0];
+      delete edits.areas;
     }
     if (edits.repo) {
       const repoRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
@@ -167,8 +205,43 @@ export const updateItem = defineOperation({
       paramIndex++;
     }
 
+    // The area SET can change while the PRIMARY area does not — adding a
+    // second area to an item, or reordering all but the first. The column
+    // diff above sees nothing in that case, so it has to be asked
+    // separately, or `{ areas: ["web", "infra"] }` on a `web` item would be
+    // silently discarded as a no-op by the early return below.
+    const areasChanged =
+      resolvedAreas !== undefined &&
+      JSON.stringify(resolvedAreas) !== JSON.stringify(current.areas ?? [current.area]);
+
+    if (areasChanged) {
+      await setItemAreas(ctx, id, resolvedAreas!);
+    }
+
     if (setClauses.length === 0) {
-      return toItemRecord(current);
+      if (!areasChanged) {
+        return toItemRecord(current);
+      }
+      // The primary area is unchanged but the set is not, so there is no
+      // column to UPDATE — re-read the row to pick up the `areas` the write
+      // above just made true, rather than returning the pre-write snapshot.
+      const reread = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
+        `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,
+        id,
+      );
+      const rereadRow = reread[0];
+      if (!rereadRow) {
+        throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
+      }
+      await recordFieldChanges(ctx.db, {
+        itemId: id,
+        actor: callerEventActor(ctx.caller),
+        assignmentId: await liveAssignmentId(ctx.db, id, ctx.caller),
+        before: { areas: current.areas ?? [current.area] },
+        after: { areas: resolvedAreas },
+        fields: ["areas"],
+      });
+      return toItemRecord(rereadRow);
     }
 
     setClauses.push(`"updatedAt" = CURRENT_TIMESTAMP`);
@@ -209,13 +282,24 @@ export const updateItem = defineOperation({
       before[change.field] = change.from;
       after[change.field] = change.to;
     }
+    // `areas` rides alongside the column changes, and `area` still travels
+    // on its own. Both are recorded because they answer different questions —
+    // `area` is what the notification whitelist and every single-area
+    // consumer reads, `areas` is the whole set — and a ledger carrying only
+    // one of them would leave the other's history unreconstructable.
+    const fields = changes.map((change) => change.field);
+    if (areasChanged) {
+      before.areas = current.areas ?? [current.area];
+      after.areas = resolvedAreas;
+      fields.push("areas");
+    }
     await recordFieldChanges(ctx.db, {
       itemId: id,
       actor: callerEventActor(ctx.caller),
       assignmentId: await liveAssignmentId(ctx.db, id, ctx.caller),
       before,
       after,
-      fields: changes.map((change) => change.field),
+      fields,
     });
 
     const record = toItemRecord(updated);

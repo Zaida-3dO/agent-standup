@@ -38,7 +38,10 @@ import { InternalError } from "../errors";
 export async function resolveInboxProject(
   ctx: ServiceContext,
   origin: {
-    readonly area: string;
+    /** The filed task's `area` spelling — see `areas` for how the two combine. */
+    readonly area?: string;
+    /** The filed task's `areas` spelling. The inbox inherits the PRIMARY area only — see below. */
+    readonly areas?: readonly string[];
     readonly originType: "person" | "source" | "auto";
     readonly originPersonId?: string;
   },
@@ -60,7 +63,21 @@ export async function resolveInboxProject(
   // constant to reach for — a hardcoded "inbox" area would mint a second
   // piece of vocabulary nobody asked for and make the inbox's own filtering
   // useless.
-  const area = await ensureAreaRaw(ctx, origin.area);
+  //
+  // The task's PRIMARY area only, when the task named several. The inbox is
+  // a container for work that had nowhere else to go, not work that is
+  // itself cross-area; giving it every area of the first task to arrive
+  // would file the container under areas no later task in it shares, and
+  // that first task's set would silently decide the inbox's own filtering
+  // forever after.
+  const primaryArea = origin.areas?.[0] ?? origin.area;
+  if (primaryArea === undefined) {
+    throw new InternalError(
+      new Error("resolveInboxProject called with neither area nor areas."),
+      "The operation failed unexpectedly.",
+    );
+  }
+  const area = await ensureAreaRaw(ctx, primaryArea);
 
   const id = crypto.randomUUID();
   const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
