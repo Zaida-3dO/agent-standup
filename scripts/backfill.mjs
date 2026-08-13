@@ -23,7 +23,7 @@
  * running server — absent during normal operation. This script is not a
  * served surface: it is somebody at a shell with the database URL already
  * in their hand, which is strictly more access than the gate protects. It
- * is the door used during the cutover window itself.
+ * is the door used during the backfill window itself.
  *
  * ── Why this file is JavaScript and bundles its own logic ───────────────
  *

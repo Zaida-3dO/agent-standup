@@ -3,10 +3,10 @@
 //
 // One call takes a whole payload of already-shaped tasks and lands them as
 // items, events, assignments and artifacts. It exists because the ordinary
-// write path cannot express history: an item that finished last March
+// write path cannot express history: an item that finished months ago
 // cannot be created and then walked through eleven transitions to reach the
-// state it is already in, and doing so would stamp every event with today's
-// timestamp and today's actor.
+// state it is already in, and doing so would stamp every event with the
+// moment of the import and the identity of whoever ran it.
 //
 // ── It bypasses the state machine. Here is what keeps that from being a
 //    hole that bypasses every guard ────────────────────────────────────

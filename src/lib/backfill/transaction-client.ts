@@ -10,8 +10,9 @@
 // client surface the importers actually call, implemented as raw SQL
 // against one transaction handle. The alternative — reimplementing the
 // inserts inside the operation — would put a second copy of every write in
-// the codebase and make the importers no longer the single writer to their
-// own tables. A narrow, honest adapter is the cheaper of the two.
+// the codebase and cost the property that each importer is the single
+// writer to its own table. A narrow, honest adapter is the cheaper of the
+// two.
 //
 // **It implements only the call shapes the importers use**, not Prisma's
 // query language. `findFirst` understands one `where` clause (the

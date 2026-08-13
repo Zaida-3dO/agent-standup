@@ -5,8 +5,8 @@ spreadsheet, another tracker — backfill is how that history arrives here: item
 who worked them, and the artifacts produced against them, in one call.
 
 **You write a converter; this application defines the shape.** The contract below is the whole
-interface. Anything that can produce this JSON can load into this application, and nothing about the
-application knows or cares what your existing store looks like.
+interface. Anything that can produce this JSON can load into this application, and the application needs to
+know nothing about the shape the data was read from.
 
 ---
 
@@ -177,12 +177,12 @@ When it is open the process says so, loudly, at startup, and `GET /api/health` r
 `backfillEnabled: true`. Nothing is logged when it is closed, so that line means something.
 
 > **Operational rule: run a backfill window when nothing else is running.** While the window is open
-> the surface genuinely is exposed and it writes history directly. Treat it like the cutover it is —
-> open it, run the load, verify, close it. The intended lifetime of a window is minutes, not days.
+> the surface genuinely is exposed and it writes history directly. Treat it as the deliberate, bounded
+> operation it is — open it, run the load, verify, close it. The intended lifetime of a window is minutes, not days.
 
 ### Three doors
 
-**A shell, against a database you name** — the door used during a cutover, and the only one that
+**A shell, against a database you name** — the door used when going live, and the only one that
 verifies afterwards:
 
 ```bash

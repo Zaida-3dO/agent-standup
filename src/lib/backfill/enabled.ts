@@ -20,15 +20,15 @@
 // unset, empty, whitespace, `1`, `yes`, `on`, `false`, a typo, a value with
 // a stray space — is DISABLED.
 //
-// The failure mode being avoided is specific and has a precedent worth
-// stating: a gate written as `value !== "false"` or as a truthiness test on
-// a raw string is *open* for every value its author did not think of, and
-// in JavaScript every non-empty string is truthy — including the string
-// `"false"`. A predecessor gate in a different system was written to allow
-// anything it could not positively evaluate, and it would have silently
-// stopped gating anything at all the moment its inputs moved. The rule here
-// is the opposite, on purpose: nothing is enabled unless it was positively
-// and exactly asked for.
+// The failure mode being avoided is specific. A gate written as
+// `value !== "false"`, or as a truthiness test on a raw string, is *open*
+// for every value its author did not think of — and in JavaScript every
+// non-empty string is truthy, including the string `"false"`. A gate that
+// allows whatever it cannot positively evaluate stops gating anything at
+// all the moment its inputs move, and it does so silently, because a gate
+// failing open produces no signal. The rule here is the opposite, on
+// purpose: nothing is enabled unless it was positively and exactly asked
+// for.
 //
 // Case is NOT folded, deliberately. `TRUE` and `True` are refused along
 // with everything else. Accepting case variants means deciding which ones,
