@@ -185,6 +185,10 @@ function payloadFixture(overrides: Partial<BackfillPayload> = {}): BackfillPaylo
         reviewRound: 1,
         commitSha: "abc1234",
         body: '{"verdict":"lgtm"}',
+        findings: [
+          { text: "a graded finding", severity: "high", where: "src/a.ts:1" },
+          { text: "an ungraded finding" },
+        ],
         ref: `${id}/reviews/r01-code-worker-a.json`,
         createdByType: "agent" as const,
         createdById: "worker-a",
@@ -565,6 +569,87 @@ describeDb("runBackfill (real database)", () => {
       `SELECT "verdict"::text AS verdict FROM "Artifact"`,
     );
     expect(rows.every((row) => row.verdict === "changes_required")).toBe(true);
+  }, 120_000);
+
+  it("stores each review's findings WITH their severity, and keeps ungraded ones ungraded", async () => {
+    // The storage for findings existed before any writer did, so the
+    // findings were being dropped as silently as the history prose was.
+    // Removing `findings` from the INSERT fails this outright.
+    const payload = payloadFixture();
+    const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+
+    expect(report.counts.findingsIn).toBe(4); // two artifacts, two findings each
+    expect(report.counts.findingsWritten).toBe(4);
+    expect(report.counts.findingsWithoutSeverity).toBe(2);
+
+    const rows = await prisma.$queryRawUnsafe<{ findings: unknown }[]>(
+      `SELECT "findings" FROM "Artifact" WHERE "findings" IS NOT NULL`,
+    );
+    expect(rows).toHaveLength(2);
+    const first = rows[0]!.findings as { text: string; severity?: string; where?: string }[];
+    expect(first).toHaveLength(2);
+    expect(first[0]).toEqual({
+      text: "a graded finding",
+      severity: "high",
+      where: "src/a.ts:1",
+    });
+    // The ungraded one keeps NO severity key — not null, not a default.
+    expect(first[1]).toEqual({ text: "an ungraded finding" });
+    expect("severity" in first[1]!).toBe(false);
+  }, 120_000);
+
+  it("reconciles findings: every one accounted for, and read back from the database", async () => {
+    const payload = payloadFixture();
+    const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+
+    const accounted = report.counts.findingsWritten + report.counts.findingsOnSkippedArtifacts;
+    expect(accounted).toBe(report.counts.findingsIn);
+
+    const retention = report.verification.findingsRetention;
+    expect(retention.findingsInDb).toBe(report.counts.findingsIn);
+    expect(retention.gradedInDb).toBe(2);
+    expect(retention.ungradedInDb).toBe(2);
+    expect(retention.matches).toBe(true);
+
+    const text = formatRunReport(report);
+    expect(text).toContain("Findings reconciliation");
+    expect(text).toContain("(sums)");
+    expect(text).toContain("findings retention: COMPLETE");
+  }, 120_000);
+
+  it("REFUSES a malformed finding rather than importing the artifact without it", async () => {
+    // Refusing beats repairing: a coerced list looks complete and is not.
+    const base = payloadFixture();
+    await expect(
+      runBackfill(
+        prisma,
+        {
+          ...base,
+          tasks: base.tasks.map((task) => ({
+            ...task,
+            reviews: (task.reviews ?? []).map((review) => ({
+              ...review,
+              findings: [{ text: "ok" }, { text: "" }],
+            })),
+          })),
+        } as typeof base,
+        RUN_OPTIONS,
+      ),
+    ).rejects.toThrow(/findings\[1\]/);
+  }, 120_000);
+
+  it("counts findings on an artifact skipped as already present, so the accounting still sums", async () => {
+    const payload = payloadFixture();
+    await runBackfill(prisma, payload, RUN_OPTIONS);
+    const second = await runBackfill(prisma, payload, RUN_OPTIONS);
+
+    expect(second.counts.findingsWritten).toBe(0);
+    expect(second.counts.findingsOnSkippedArtifacts).toBe(4);
+    expect(second.counts.findingsWritten + second.counts.findingsOnSkippedArtifacts).toBe(
+      second.counts.findingsIn,
+    );
+    // And the database still holds them exactly once.
+    expect(second.verification.findingsRetention.findingsInDb).toBe(4);
   }, 120_000);
 
   it("reconciles history: every source entry is accounted for and none is lost", async () => {

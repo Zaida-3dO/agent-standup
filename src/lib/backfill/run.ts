@@ -53,6 +53,14 @@ export interface BackfillCounts {
   readonly claimsConflicted: number;
   readonly artifactsImported: number;
   readonly artifactsSkipped: number;
+  /** Findings the payload contained — the figure a findings reconciliation must account for. */
+  readonly findingsIn: number;
+  /** Findings written, summed over the artifact rows this run inserted. */
+  readonly findingsWritten: number;
+  /** Findings on artifacts skipped as already present — already stored on the existing row. */
+  readonly findingsOnSkippedArtifacts: number;
+  /** Findings the source recorded ungraded. Counted and preserved as ungraded, never defaulted. */
+  readonly findingsWithoutSeverity: number;
   /** Tasks whose history could not be attached because no item row matched — always empty in a clean run. */
   readonly tasksWithoutMatchingItem: readonly string[];
 }
@@ -146,6 +154,10 @@ export async function backfillTasks(
     claimsConflicted: assignmentsArtifacts.claimsConflicted,
     artifactsImported: assignmentsArtifacts.reviewsImported,
     artifactsSkipped: assignmentsArtifacts.reviewsSkippedExisting,
+    findingsIn: assignmentsArtifacts.findingsIn,
+    findingsWritten: assignmentsArtifacts.findingsWritten,
+    findingsOnSkippedArtifacts: assignmentsArtifacts.findingsOnSkippedArtifacts,
+    findingsWithoutSeverity: assignmentsArtifacts.findingsWithoutSeverity,
     tasksWithoutMatchingItem: events.tasksWithoutMatchingItem,
   };
 }

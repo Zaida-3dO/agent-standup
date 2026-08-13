@@ -549,6 +549,10 @@ describeIfDb("import verification — against a real Postgres", () => {
       claimsConflicted: 0,
       reviewsImported: 1,
       reviewsSkippedExisting: 0,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
     });
 
     // Snapshot every table's row count and verification report after the
@@ -578,6 +582,10 @@ describeIfDb("import verification — against a real Postgres", () => {
       claimsConflicted: 0,
       reviewsImported: 0,
       reviewsSkippedExisting: 1,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
     });
 
     // The convergence proof: table row counts are BYTE-IDENTICAL to after

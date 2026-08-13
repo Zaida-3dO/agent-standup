@@ -23,6 +23,7 @@
 // named for what it means in *this* schema, never for the source it may
 // have been read out of.
 import { z } from "zod";
+import { FINDING_SEVERITIES } from "@/lib/findings";
 
 /** The only payload version this build accepts. */
 export const BACKFILL_CONTRACT_VERSION = 1;
@@ -131,6 +132,30 @@ const artifactSchema = z
     createdByType: z.enum(["person", "agent"]),
     createdById: z.string().min(1),
     createdAt: timestamp,
+    /**
+     * The review's individual findings, in **this application's own**
+     * vocabulary: `text` required, `severity` one of the ladder below and
+     * OPTIONAL, `where` free-form.
+     *
+     * `severity` is deliberately not defaulted. A review that never graded
+     * a finding did not grade it, and inventing a level puts a number
+     * nobody chose into the one field this is stored to preserve —
+     * "ungraded" is a different claim from "graded low". If your source
+     * grades findings `HIGH`/`MEDIUM`, map them on your side; this
+     * application ships the ladder and no table translating anybody's
+     * spelling into it.
+     */
+    findings: z
+      .array(
+        z
+          .object({
+            text: z.string().trim().min(1),
+            severity: z.enum(FINDING_SEVERITIES).optional(),
+            where: z.string().optional(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 

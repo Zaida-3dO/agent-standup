@@ -5,6 +5,7 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
+import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
 import {
   importAssignments,
   importArtifacts,
@@ -70,6 +71,31 @@ describe("mapSourceArtifactKind", () => {
 
   it("rejects a kind outside the closed set", () => {
     expect(() => mapSourceArtifactKind("design_doc", "r1")).toThrow(UnknownArtifactKindError);
+  });
+});
+
+describe("findings on an imported artifact", () => {
+  it("refuses a malformed findings list rather than repairing it", () => {
+    // parseFindings refuses per entry with the index named. A coercing
+    // importer that dropped two bad entries out of fifty would produce a
+    // list that looks complete and is not.
+    expect(() => parseFindings([{ text: "" }])).toThrow(InvalidFindingError);
+    expect(() => parseFindings([{ text: "ok", severity: "HIGH" }])).toThrow(InvalidFindingError);
+    expect(() => parseFindings("not an array")).toThrow(InvalidFindingError);
+  });
+
+  it("keeps an ungraded finding ungraded — absent severity is not defaulted", () => {
+    // "Ungraded" is a different claim from "graded low". Defaulting here
+    // would put a level nobody chose into the field the column exists for.
+    const [finding] = parseFindings([{ text: "noticed a thing" }]);
+    expect(finding).toEqual({ text: "noticed a thing" });
+    expect("severity" in finding!).toBe(false);
+  });
+
+  it("accepts the whole severity ladder, lowercase", () => {
+    for (const severity of FINDING_SEVERITIES) {
+      expect(parseFindings([{ text: "t", severity }])[0]!.severity).toBe(severity);
+    }
   });
 });
 
@@ -460,7 +486,14 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
     };
 
     const result = await importArtifacts(prisma, [task]);
-    expect(result).toEqual({ reviewsImported: 1, reviewsSkippedExisting: 0 });
+    expect(result).toEqual({
+      reviewsImported: 1,
+      reviewsSkippedExisting: 0,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
+    });
 
     const row = await prisma.artifact.findFirstOrThrow({ where: { itemId } });
     expect(row.kind).toBe("code_review");
@@ -510,10 +543,24 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
     };
 
     const first = await importArtifacts(prisma, [task]);
-    expect(first).toEqual({ reviewsImported: 1, reviewsSkippedExisting: 0 });
+    expect(first).toEqual({
+      reviewsImported: 1,
+      reviewsSkippedExisting: 0,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
+    });
 
     const second = await importArtifacts(prisma, [task]);
-    expect(second).toEqual({ reviewsImported: 0, reviewsSkippedExisting: 1 });
+    expect(second).toEqual({
+      reviewsImported: 0,
+      reviewsSkippedExisting: 1,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
+    });
 
     expect(await prisma.artifact.count({ where: { itemId } })).toBe(1);
   });
@@ -535,6 +582,10 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
       claimsConflicted: 0,
       reviewsImported: 1,
       reviewsSkippedExisting: 0,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
     });
 
     const second = await importAssignmentsAndArtifacts(prisma, [task]);
@@ -544,6 +595,10 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
       claimsConflicted: 0,
       reviewsImported: 0,
       reviewsSkippedExisting: 1,
+      findingsIn: 0,
+      findingsWritten: 0,
+      findingsOnSkippedArtifacts: 0,
+      findingsWithoutSeverity: 0,
     });
 
     expect(await prisma.assignment.count({ where: { itemId } })).toBe(1);

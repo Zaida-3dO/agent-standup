@@ -68,7 +68,11 @@ know nothing about the shape the data was read from.
           "ref": "example-one/reviews/r01.json",
           "createdByType": "agent",
           "createdById": "worker-a",
-          "createdAt": "1970-01-02T00:00:00Z"
+          "createdAt": "1970-01-02T00:00:00Z",
+          "findings": [
+            { "severity": "high", "text": "unbounded loop", "where": "src/a.ts:12" },
+            { "text": "an ungraded note" }
+          ]
         }
       ]
     }
@@ -121,6 +125,36 @@ collapse is lossy in the column and reversible in the row:** put your original s
 A status with no alias falls back to a small default vocabulary this application uses for its own
 command-line surface (`todo`, `in-progress`, `review`, `waiting`, `done`). **A status in neither is
 refused**, never defaulted — guessing files somebody's work under a state they never chose.
+
+### `findings` — a review's individual findings, each with its own severity
+
+A review outcome is one verdict but many findings, and a severity per finding is the point:
+flattening them into prose loses the grading, which is the part that cannot be reconstructed
+afterwards.
+
+```jsonc
+"findings": [
+  { "severity": "high", "text": "unbounded loop", "where": "src/a.ts:12" },
+  { "text": "an ungraded note" }
+]
+```
+
+`text` is required and non-empty. `where` is free-form and never parsed. `severity` is **optional**
+and one of `info` · `low` · `medium` · `high` · `critical`, lowest to highest.
+
+**`severity` is never defaulted.** A review that did not grade a finding did not grade it, and
+inventing a level puts a number nobody chose into the field this is stored to preserve — *ungraded*
+is a different claim from *graded low*. Omit the key; do not send `null`.
+
+If your source grades findings `HIGH`/`MEDIUM`, map them on your side. As with statuses and
+verdicts, this application ships the ladder and no table translating anybody's spelling into it.
+
+**A malformed findings list is refused, not repaired** — per entry, with the offending index named.
+A parser that quietly dropped two bad entries out of fifty would produce a list that looks complete
+and is not, and no later reader could tell the difference.
+
+`followUpItemId` is not part of version 1: nothing in a review artifact links to a follow-up item,
+so the column is left null rather than guessed at.
 
 ### `verdict` — you supply the spelling, this application supplies the values
 
@@ -213,6 +247,8 @@ Everything below is a real gap, named:
 | **Event timestamps** | Every imported event's `ts` is the **import moment**, not the historical one. The original is preserved in `payload.source_at` (and on every element of `payload.entries`), but sorting `events` by `ts` clusters an import at one instant. This is the largest remaining gap. |
 | **One event per finished task** | A terminal task's entries share a single `events` row instead of getting one each, so an entry is not individually addressable as a row. **No text is lost** — see `history` above — and the count is reported as `folded into a terminal task's single event`. Purely a shape difference, but it is a real one and it is why an event count is smaller than an entry count. |
 | **`drive_mode`** | Fixed at `autonomous`; no contract slot. Set it afterwards if an imported item should be supervised. |
+| **`artifacts.follow_up_item_id`** | Left null. A review artifact carries no link to a follow-up item, so there is nothing to populate it from. |
+| **A finding's grading, if your source has none** | Preserved as ungraded rather than defaulted, and the count is reported. Nothing is lost; there is simply no severity to store. |
 | **`parent_id` · `difficulty` · `estimated_cost` · `notify` · `completed_at`** | Not in version 1. Everything imports as a flat, unparented `task`. |
 | **A second, third, … repo on one task** | `items.repo` holds one. Put the full list in `customFields`. |
 | **A pipeline status finer than `items.state`** | Four review-stage statuses collapse onto `in_review`. Preserve yours in `customFields`. |
@@ -333,6 +369,11 @@ writes:
   nothing else: it reports any imported row absent from your payload as unexpected. That is right
   for the intended single load into an empty database and will report a false failure if you split
   one import across several payloads.
+- **A findings reconciliation, also summing**, on the same principle: findings in the payload
+  against findings written plus findings already on an artifact this run skipped. Findings are then
+  counted back out of the database, graded and ungraded separately — an import that stored every
+  finding but flattened its grading would satisfy a total and still have lost the thing worth
+  keeping.
 - **A spot check**, field by field, on a sample spread across the whole payload rather than the
   first N — and **idempotency** (`--twice`), where the second run must insert zero rows.
 

@@ -80,7 +80,11 @@ async function loadRunner(outDir) {
  * whatever else reconciled.
  */
 function verificationPassed(report) {
-  return report.verification.items.matches && report.verification.historyRetention.matches;
+  return (
+    report.verification.items.matches &&
+    report.verification.historyRetention.matches &&
+    report.verification.findingsRetention.matches
+  );
 }
 
 async function main() {

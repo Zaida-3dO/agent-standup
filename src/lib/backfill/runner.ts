@@ -28,12 +28,14 @@ import {
   spotCheckItems,
   verifyAssignmentArtifactRowCounts,
   verifyEventRowCounts,
+  verifyFindingsRetention,
   verifyHistoryRetention,
   verifyItemRowCounts,
 } from "../import-verify";
 import type {
   AssignmentArtifactCountReport,
   EventRowCountReport,
+  FindingsRetentionReport,
   HistoryRetentionReport,
   RowCountReport,
   SpotCheckReport,
@@ -323,6 +325,8 @@ export interface BackfillVerification {
   readonly spotCheck: SpotCheckReport;
   /** Read back from the database — the one check here capable of contradicting the importer. */
   readonly historyRetention: HistoryRetentionReport;
+  /** Read back from the database — findings and, separately, their grading. */
+  readonly findingsRetention: FindingsRetentionReport;
 }
 
 export interface BackfillRunReport {
@@ -393,6 +397,7 @@ export async function runBackfill(
       events: await verifyEventRowCounts(client, tasks),
       assignmentsArtifacts: await verifyAssignmentArtifactRowCounts(client, tasks),
       historyRetention: await verifyHistoryRetention(client, tasks),
+      findingsRetention: await verifyFindingsRetention(client, tasks, counts.findingsIn),
       spotCheck: await spotCheckItems(client, tasks, {
         repoAliases: repos.repoAliases,
         statusAliases: payload.statusAliases,
@@ -512,6 +517,31 @@ export function formatRunReport(report: BackfillRunReport): string {
     lines.push(`  tasks whose history could not attach: ${counts.tasksWithoutMatchingItem.length}`);
   }
 
+  const findings = verification.findingsRetention;
+  lines.push("");
+  lines.push("Findings reconciliation");
+  lines.push(`  findings in payload                          : ${counts.findingsIn}`);
+  lines.push(`  written with the artifacts this run inserted : ${counts.findingsWritten}`);
+  lines.push(
+    `  already on an artifact skipped as present    : ${counts.findingsOnSkippedArtifacts}`,
+  );
+  lines.push(
+    `  ---- accounted for                           : ${counts.findingsWritten + counts.findingsOnSkippedArtifacts}` +
+      `${
+        counts.findingsWritten + counts.findingsOnSkippedArtifacts === counts.findingsIn
+          ? "  (sums)"
+          : "  *** DOES NOT SUM ***"
+      }`,
+  );
+  lines.push(
+    `  ungraded in the source, kept ungraded        : ${counts.findingsWithoutSeverity}` +
+      "  (never defaulted to a severity)",
+  );
+  lines.push(
+    `  findings read back from the database         : ${findings.findingsInDb}` +
+      `  (${findings.gradedInDb} graded, ${findings.ungradedInDb} ungraded)`,
+  );
+
   lines.push("");
   lines.push("Verification");
   lines.push(
@@ -537,6 +567,10 @@ export function formatRunReport(report: BackfillRunReport): string {
   lines.push(
     `  history retention : ${verification.historyRetention.matches ? "COMPLETE" : "INCOMPLETE"} ` +
       `(${verification.historyRetention.entriesRetained} of ${verification.historyRetention.entriesIn} entries found)`,
+  );
+  lines.push(
+    `  findings retention: ${findings.matches ? "COMPLETE" : "INCOMPLETE"} ` +
+      `(${findings.findingsInDb} of ${findings.findingsIn} findings in the database)`,
   );
   for (const result of verification.spotCheck.results) {
     if (result.matches) continue;

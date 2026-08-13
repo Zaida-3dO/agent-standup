@@ -17,6 +17,7 @@
 // .legacy_id` lookup #10's idempotency check uses, so it never needs its own
 // notion of which items exist.
 import type { PrismaClient } from "@prisma/client";
+import { parseFindings, type Finding } from "./findings";
 
 /**
  * The literal values `assignments.role` can hold in the DATABASE — mirrors
@@ -111,6 +112,19 @@ export interface SourceReview {
   createdByType: "person" | "agent";
   createdById: string;
   createdAt: string;
+  /**
+   * The review's individual findings, already in this application's own
+   * vocabulary (`findings.ts`) — `{ text, severity?, where? }`, severities
+   * lowercase.
+   *
+   * A caller whose source grades findings `HIGH`/`MEDIUM` maps them on its
+   * own side, exactly as it maps statuses and verdicts; this module ships
+   * the ladder and no table translating anybody's spelling into it. An
+   * entry that cannot be represented is refused by `parseFindings` rather
+   * than repaired, because a coerced findings list looks complete and is
+   * not, and no later reader could tell.
+   */
+  findings?: unknown;
 }
 
 const ARTIFACT_KINDS = new Set([
@@ -281,6 +295,20 @@ export interface ImportAssignmentsArtifactsResult {
   claimsConflicted: number;
   reviewsImported: number;
   reviewsSkippedExisting: number;
+  /** Findings across every artifact in the source — what a reconciliation must account for. */
+  findingsIn: number;
+  /** Findings actually written, summed over the artifact rows this run inserted. */
+  findingsWritten: number;
+  /** Findings on artifacts skipped as already present. Not lost — already on the existing row. */
+  findingsOnSkippedArtifacts: number;
+  /**
+   * Findings the source recorded WITHOUT a severity, counted rather than
+   * defaulted. A review that never graded a finding did not grade it, and
+   * inventing a level would put a number nobody chose into the one field
+   * the column exists to preserve — "ungraded" is a different claim from
+   * "graded low" (`findings.ts`).
+   */
+  findingsWithoutSeverity: number;
 }
 
 /** The minimal client surface this module needs — narrowed the same way import-items.ts narrows its own. */
@@ -458,9 +486,23 @@ export async function importArtifacts(
   client: ImportClient,
   tasks: SourceTaskAssignmentsArtifacts[],
   options: { readonly verdictAliases?: Record<string, string> } = {},
-): Promise<Pick<ImportAssignmentsArtifactsResult, "reviewsImported" | "reviewsSkippedExisting">> {
+): Promise<
+  Pick<
+    ImportAssignmentsArtifactsResult,
+    | "reviewsImported"
+    | "reviewsSkippedExisting"
+    | "findingsIn"
+    | "findingsWritten"
+    | "findingsOnSkippedArtifacts"
+    | "findingsWithoutSeverity"
+  >
+> {
   let reviewsImported = 0;
   let reviewsSkippedExisting = 0;
+  let findingsIn = 0;
+  let findingsWritten = 0;
+  let findingsOnSkippedArtifacts = 0;
+  let findingsWithoutSeverity = 0;
 
   for (const task of tasks) {
     const reviews = task.reviews ?? [];
@@ -473,6 +515,16 @@ export async function importArtifacts(
 
     for (const review of reviews) {
       const kind = mapSourceArtifactKind(review.kind, review.id);
+      // Validated BEFORE the existence check, so a malformed findings list
+      // is refused whether or not the artifact happens to be present
+      // already — a re-run must not start silently accepting data a first
+      // run would have rejected.
+      const findings: Finding[] =
+        review.findings === undefined || review.findings === null
+          ? []
+          : parseFindings(review.findings);
+      findingsIn += findings.length;
+      findingsWithoutSeverity += findings.filter((f) => f.severity === undefined).length;
       const verdict =
         review.verdict != null
           ? mapSourceVerdict(review.verdict, review.id, options.verdictAliases)
@@ -491,17 +543,22 @@ export async function importArtifacts(
       );
       if (existing.length > 0) {
         reviewsSkippedExisting++;
+        findingsOnSkippedArtifacts += findings.length;
         continue;
       }
 
+      // `findings` is stored as NULL rather than `[]` when the review had
+      // none, so "this review recorded no findings" and "this row predates
+      // findings being stored at all" stay distinguishable — the same
+      // absent-is-not-zero reasoning the severity field itself follows.
       await client.$executeRawUnsafe(
         `INSERT INTO "Artifact" (
            "id", "itemId", "kind", "verdict", "reviewRound", "commitSha",
-           "body", "ref", "createdByType", "createdById", "createdAt"
+           "body", "ref", "createdByType", "createdById", "createdAt", "findings"
          )
          VALUES (
            gen_random_uuid(), $1, $2::"ArtifactKind", $3::"Verdict", $4, $5,
-           $6, $7, $8::"HolderType", $9, $10::timestamptz
+           $6, $7, $8::"HolderType", $9, $10::timestamptz, $11::jsonb
          )`,
         itemId,
         kind,
@@ -513,12 +570,21 @@ export async function importArtifacts(
         review.createdByType,
         review.createdById,
         review.createdAt,
+        findings.length > 0 ? JSON.stringify(findings) : null,
       );
       reviewsImported++;
+      findingsWritten += findings.length;
     }
   }
 
-  return { reviewsImported, reviewsSkippedExisting };
+  return {
+    reviewsImported,
+    reviewsSkippedExisting,
+    findingsIn,
+    findingsWritten,
+    findingsOnSkippedArtifacts,
+    findingsWithoutSeverity,
+  };
 }
 
 /**

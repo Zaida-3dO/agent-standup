@@ -678,3 +678,82 @@ export async function verifyHistoryRetention(
     matches: entriesMissing === 0 && tasksWithoutMatchingItem.length === 0,
   };
 }
+
+// ---------------------------------------------------------------------------
+// 5. Findings retention — read back, not re-derived
+// ---------------------------------------------------------------------------
+
+export interface FindingsRetentionReport {
+  /** Findings the source list contained across every artifact. */
+  readonly findingsIn: number;
+  /** Findings actually stored, counted by reading `Artifact.findings` back out of Postgres. */
+  readonly findingsInDb: number;
+  /** Stored findings carrying a severity — the field the whole column exists to preserve. */
+  readonly gradedInDb: number;
+  /** Stored findings the source left ungraded. Preserved as ungraded, never defaulted to a level. */
+  readonly ungradedInDb: number;
+  readonly matches: boolean;
+}
+
+interface FindingsCountRow {
+  total: string;
+  graded: string;
+}
+
+/**
+ * Counts the findings that actually landed, by reading them back.
+ *
+ * Same discipline as `verifyHistoryRetention`, and for the same reason: a
+ * count derived from what the importer meant to write cannot notice the
+ * importer not writing it. This asks Postgres how many findings are in
+ * `Artifact.findings` across the items this payload accounts for, and
+ * compares that with what the payload contained.
+ *
+ * `gradedInDb` is counted separately because the severity is the part that
+ * cannot be reconstructed afterwards — an import that stored every finding
+ * but flattened its grading would satisfy a total and still have lost the
+ * thing worth keeping.
+ */
+export async function verifyFindingsRetention(
+  client: VerifyClient,
+  tasks: readonly SourceTaskAssignmentsArtifacts[],
+  expectedFindings: number,
+): Promise<FindingsRetentionReport> {
+  let findingsInDb = 0;
+  let gradedInDb = 0;
+
+  for (const task of tasks) {
+    if ((task.reviews ?? []).length === 0) continue;
+    const item = await client.item.findFirst({
+      where: { customFields: { path: ["legacy_id"], equals: task.id } },
+      select: { id: true },
+    });
+    if (!item) continue;
+
+    const rows = await client.$queryRawUnsafe<FindingsCountRow[]>(
+      `SELECT
+         COALESCE(SUM(jsonb_array_length(a."findings")), 0)::text AS total,
+         COALESCE(SUM((
+           SELECT count(*) FROM jsonb_array_elements(a."findings") f
+            WHERE f ? 'severity'
+         )), 0)::text AS graded
+       FROM "Artifact" a
+       WHERE a."itemId" = $1 AND jsonb_typeof(a."findings") = 'array'`,
+      item.id,
+    );
+    findingsInDb += Number(rows[0]?.total ?? "0");
+    gradedInDb += Number(rows[0]?.graded ?? "0");
+  }
+
+  return {
+    findingsIn: expectedFindings,
+    findingsInDb,
+    gradedInDb,
+    ungradedInDb: findingsInDb - gradedInDb,
+    // Deliberately `>=` rather than `===`: a re-run against a database that
+    // already holds these artifacts skips them, so the payload's findings
+    // are on the existing rows and the database legitimately holds at least
+    // as many as this payload described. Fewer is the failure.
+    matches: findingsInDb >= expectedFindings,
+  };
+}
