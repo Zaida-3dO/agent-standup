@@ -43,6 +43,14 @@ jobs:
               - '.dockerignore'
               - 'docker-compose.yml'
               - 'docker-compose.prod.yml'
+              # A `package.json` lifecycle script (`prepare`, `postinstall`, ...)
+              # or a dependency bump can break `npm ci` inside the image even
+              # though it never touches Dockerfile itself — see
+              # `tests/ci-docker-paths-filter.test.ts` for the regression this
+              # covers and why it needs its own assertion, not just this
+              # comment, to stay true.
+              - 'package.json'
+              - 'package-lock.json'
             source:
               - 'src/**/*.ts'
               - 'src/**/*.tsx'
