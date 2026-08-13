@@ -397,7 +397,17 @@ export async function runBackfill(
       events: await verifyEventRowCounts(client, tasks),
       assignmentsArtifacts: await verifyAssignmentArtifactRowCounts(client, tasks),
       historyRetention: await verifyHistoryRetention(client, tasks),
-      findingsRetention: await verifyFindingsRetention(client, tasks, counts.findingsIn),
+      // Expected in the database is the payload's findings MINUS those on
+      // an artifact skipped as already present: a skipped artifact collides
+      // on the identity tuple with one that is already stored, so it is its
+      // twin's findings that are on the row. Passing the raw payload total
+      // would report a correct import as incomplete by exactly the number
+      // of duplicate artifacts the source happens to contain.
+      findingsRetention: await verifyFindingsRetention(
+        client,
+        tasks,
+        counts.findingsIn - counts.findingsOnSkippedArtifacts,
+      ),
       spotCheck: await spotCheckItems(client, tasks, {
         repoAliases: repos.repoAliases,
         statusAliases: payload.statusAliases,
