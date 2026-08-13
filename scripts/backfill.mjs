@@ -71,6 +71,18 @@ async function loadRunner(outDir) {
   return import(pathToFileURL(outfile).href);
 }
 
+/**
+ * Whether a run may be reported as successful.
+ *
+ * History retention is part of the exit code, not merely part of the
+ * printed report: an operator running a one-shot load reads the exit code
+ * before they read the text, and a run that lost history has failed
+ * whatever else reconciled.
+ */
+function verificationPassed(report) {
+  return report.verification.items.matches && report.verification.historyRetention.matches;
+}
+
 async function main() {
   await mkdir(cacheRoot, { recursive: true });
   const outDir = await mkdtemp(path.join(cacheRoot, "standup-backfill-"));
@@ -88,12 +100,12 @@ async function main() {
     if (options.twice) {
       const check = await runner.runBackfillTwice(prisma, payload, options);
       console.log(runner.formatIdempotencyCheck(check));
-      return check.idempotent && check.first.verification.items.matches ? 0 : 1;
+      return check.idempotent && verificationPassed(check.first) ? 0 : 1;
     }
 
     const report = await runner.runBackfill(prisma, payload, options);
     console.log(runner.formatRunReport(report));
-    return report.verification.items.matches ? 0 : 1;
+    return verificationPassed(report) ? 0 : 1;
   } finally {
     if (prisma) await prisma.$disconnect();
     await rm(outDir, { recursive: true, force: true });

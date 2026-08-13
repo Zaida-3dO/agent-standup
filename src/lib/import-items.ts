@@ -14,7 +14,7 @@
 // function here only reads the directory tree and writes to `items`.
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ItemState, PrismaClient, Priority } from "@prisma/client";
+import type { ItemState, MergeAuthority, OriginType, PrismaClient, Priority } from "@prisma/client";
 import { ensureArea } from "./areas";
 
 /** One task directory's `task.json`, exactly as the source store writes it. */
@@ -61,6 +61,35 @@ export interface SourceTask {
    * every row.
    */
   sourceRef?: string;
+  /**
+   * `items.created_at` — when the source says the work was created, not
+   * when it was imported. Optional; omitted leaves the column's own
+   * `now()` default.
+   *
+   * Worth a slot rather than a note in the escape hatch, because a
+   * timestamp is the field an imported backlog is most often READ by:
+   * without it every row in a decade-old backlog is stamped within the same
+   * second of the import and the ordering that made the history meaningful
+   * is gone from the column that sorts it.
+   */
+  createdAt?: string;
+  /** `items.updated_at`. Optional; omitted stamps the import moment. */
+  updatedAt?: string;
+  /**
+   * `items.origin_type` — who or what created the work. Optional; omitted
+   * defaults to `source`, which is what an import without an opinion is.
+   * `person` additionally requires `originPersonId`, per SCHEMA.md §1.
+   */
+  originType?: OriginType;
+  /** `items.origin_person` — required when `originType` is `person`, ignored otherwise. */
+  originPersonId?: string;
+  /**
+   * `items.merge_authority`. Optional; omitted defaults to
+   * `needs_approval`. A slot rather than a constant because an
+   * installation that pre-authorises its merges would otherwise have every
+   * imported row contradict its own standing policy on arrival.
+   */
+  mergeAuthority?: MergeAuthority;
   /**
    * Extra source fields to preserve verbatim in `items.custom_fields`
    * alongside `legacy_id` — the "arbitrary key/value bag, opaque to the
@@ -117,52 +146,6 @@ export const STATUS_REMAP: Record<string, ItemState> = {
   done: "merged",
 };
 
-/**
- * A SECOND source vocabulary, for a store that models the whole build
- * pipeline as task status rather than as a separate axis: planning, review
- * and merge-authorisation are each their own status there.
- *
- * **Kept as its own table, not merged into `STATUS_REMAP`**, and that
- * separation is load-bearing: `STATUS_REMAP`'s key set is the compatibility
- * surface's whole vocabulary (`SHIM_STATUSES`, task-shim/contract.ts, which
- * a test asserts is exactly those keys and exactly five words wide).
- * Widening `STATUS_REMAP` would silently widen that surface too — a
- * command-line vocabulary growing eleven words because an importer learned
- * to read a second kind of store is precisely the coupling the shim's
- * contract test exists to catch.
- *
- * This vocabulary collapses onto `items.state` more than the five-value one
- * does: several of its statuses describe *where in the review pipeline* a
- * finished-but-unmerged deliverable sits, and `items.state` has one value
- * for all of them (`in_review`). Nothing is lost by that collapse on its
- * own — an importer reading this vocabulary is expected to preserve the
- * source status verbatim in `custom_fields` (see `SourceTask.customFields`),
- * so the finer distinction stays recoverable from the row — but the column
- * alone cannot tell the difference, which is worth knowing before querying
- * on it.
- *
- * The two tables share no key, so `mapSourceStatus` can consult both in
- * order without either shadowing the other.
- */
-export const PIPELINE_STATUS_REMAP: Record<string, ItemState> = {
-  backlog: "someday",
-  "not-started": "on_deck",
-  planning: "planning",
-  "plan-review": "plan_review",
-  "plan-approved": "on_deck",
-  parked: "paused",
-  staged: "on_deck",
-  executing: "executing",
-  "code-review": "in_review",
-  "review-approved": "in_review",
-  "visual-review": "in_review",
-  "visual-approved": "in_review",
-  "ready-for-merge": "in_review",
-  "awaiting-merge-auth": "paused",
-  merged: "merged",
-  cancelled: "cancelled",
-};
-
 export class UnknownSourceStatusError extends Error {
   constructor(status: string, taskId: string) {
     super(`unrecognised source status ${JSON.stringify(status)} on task ${JSON.stringify(taskId)}`);
@@ -171,13 +154,26 @@ export class UnknownSourceStatusError extends Error {
 }
 
 /**
- * Resolves a source status against both vocabularies, in order. A status
- * present in neither is refused — the whole point of a remap table is that
- * an unrecognised value is a data problem to raise, not a default to fall
- * back on.
+ * Resolves a source status onto an `items.state`.
+ *
+ * **A caller-supplied `statusAliases` wins over this application's own
+ * table**, and that ordering is the whole design. Every source has its own
+ * state machine; this application ships ITS states and nobody else's, and
+ * the translation between the two belongs to whoever knows both — the
+ * caller. That is exactly how `repoAliases` and `actorAliases` already
+ * work, and there is no reason status should be the one vocabulary an
+ * outside caller has to edit application source to extend.
+ *
+ * A status in neither map is refused. An unrecognised status is a mapping
+ * gap to fix, not a default to fall back on: guessing files somebody's work
+ * under a state they never chose, silently.
  */
-export function mapSourceStatus(status: string, taskId: string): ItemState {
-  const mapped = STATUS_REMAP[status] ?? PIPELINE_STATUS_REMAP[status];
+export function mapSourceStatus(
+  status: string,
+  taskId: string,
+  statusAliases: Record<string, ItemState> = {},
+): ItemState {
+  const mapped = statusAliases[status] ?? STATUS_REMAP[status];
   if (!mapped) {
     throw new UnknownSourceStatusError(status, taskId);
   }
@@ -239,6 +235,14 @@ export interface ImportItemsOptions {
    * to invent one.
    */
   repoAliases: Record<string, string>;
+  /**
+   * Maps a source status label onto an `items.state`, consulted BEFORE this
+   * application's own `STATUS_REMAP`. Caller-owned for the same reason
+   * `repoAliases` is: a source's status vocabulary is the source's, and
+   * baking one into the application makes every other source a source-code
+   * change. See `mapSourceStatus`.
+   */
+  statusAliases?: Record<string, ItemState>;
 }
 
 export interface ImportItemsResult {
@@ -291,7 +295,7 @@ export async function importItems(
       continue;
     }
 
-    const state = mapSourceStatus(task.status, task.id);
+    const state = mapSourceStatus(task.status, task.id, options.statusAliases);
 
     let repoId: string | null = null;
     if (task.repo) {
@@ -311,10 +315,13 @@ export async function importItems(
         title: task.title,
         body: task.body,
         state,
-        originType: "source",
+        originType: task.originType ?? "source",
+        ...(task.originPersonId !== undefined ? { originPersonId: task.originPersonId } : {}),
         area: area.id,
         repo: repoId,
-        mergeAuthority: "needs_approval",
+        mergeAuthority: task.mergeAuthority ?? "needs_approval",
+        ...(task.createdAt !== undefined ? { createdAt: new Date(task.createdAt) } : {}),
+        ...(task.updatedAt !== undefined ? { updatedAt: new Date(task.updatedAt) } : {}),
         ...(task.priority !== undefined ? { priority: task.priority } : {}),
         ...(task.branch !== undefined ? { branch: task.branch } : {}),
         ...(task.needsVisualReview !== undefined

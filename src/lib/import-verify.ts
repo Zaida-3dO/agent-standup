@@ -256,34 +256,6 @@ const EXPECTED_STATUS_REMAP: Record<string, ItemState> = {
   review: "in_review",
   waiting: "paused",
   done: "merged",
-
-  // The pipeline-shaped source vocabulary (`PIPELINE_STATUS_REMAP` in
-  // import-items.ts), restated here by hand for the same reason as the five
-  // above: this table must be able to DISAGREE with the importer's own, or
-  // it cannot catch the importer being wrong. Every entry was written from
-  // the source store's documented state machine, not copied from it.
-  //
-  // Both vocabularies live in ONE table here even though the importer keeps
-  // two, because this side only ever performs a lookup — it has no
-  // equivalent of the compatibility surface whose vocabulary is defined as
-  // "exactly the keys of the first table", which is the reason the importer
-  // has to keep them apart.
-  backlog: "someday",
-  "not-started": "on_deck",
-  planning: "planning",
-  "plan-review": "plan_review",
-  "plan-approved": "on_deck",
-  parked: "paused",
-  staged: "on_deck",
-  executing: "executing",
-  "code-review": "in_review",
-  "review-approved": "in_review",
-  "visual-review": "in_review",
-  "visual-approved": "in_review",
-  "ready-for-merge": "in_review",
-  "awaiting-merge-auth": "paused",
-  merged: "merged",
-  cancelled: "cancelled",
 };
 
 /**
@@ -324,7 +296,10 @@ const EXPECTED_STATUS_REMAP: Record<string, ItemState> = {
 export async function spotCheckTask(
   client: VerifyClient,
   task: SourceTask,
-  options: { repoAliases?: Record<string, string> } = {},
+  options: {
+    repoAliases?: Record<string, string>;
+    statusAliases?: Record<string, ItemState>;
+  } = {},
 ): Promise<SpotCheckResult> {
   const item = await client.item.findFirst({
     where: { customFields: { path: ["legacy_id"], equals: task.id } },
@@ -353,7 +328,13 @@ export async function spotCheckTask(
   // doc comment. A status with no entry here (importer gained a status this
   // table was never updated for) reports a labelled, visible mismatch
   // rather than silently skipping the state field.
-  const expectedState = EXPECTED_STATUS_REMAP[task.status];
+  // A caller-supplied alias wins, exactly as it does in the importer. That
+  // is NOT the tautology this table exists to avoid: `statusAliases` is
+  // input data, so reading it on both sides is the same thing as comparing
+  // against `task.title`. What must never be shared is the APPLICATION's
+  // own mapping — that is the table above, restated by hand, so a
+  // regression in the importer's copy cannot corrupt both sides at once.
+  const expectedState = options.statusAliases?.[task.status] ?? EXPECTED_STATUS_REMAP[task.status];
   fields.push({
     field: "state",
     expected: expectedState ?? `<unrecognised source status ${JSON.stringify(task.status)}>`,
@@ -450,12 +431,21 @@ export async function spotCheckTask(
 export async function spotCheckItems(
   client: VerifyClient,
   tasks: readonly SourceTask[],
-  options: { repoAliases?: Record<string, string>; sampleSize?: number } = {},
+  options: {
+    repoAliases?: Record<string, string>;
+    statusAliases?: Record<string, ItemState>;
+    sampleSize?: number;
+  } = {},
 ): Promise<SpotCheckReport> {
   const sample = sampleTasks(tasks, options.sampleSize ?? 20);
   const results: SpotCheckResult[] = [];
   for (const task of sample) {
-    results.push(await spotCheckTask(client, task, { repoAliases: options.repoAliases }));
+    results.push(
+      await spotCheckTask(client, task, {
+        repoAliases: options.repoAliases,
+        statusAliases: options.statusAliases,
+      }),
+    );
   }
   return {
     sampled: results.length,
@@ -539,5 +529,152 @@ export async function verifyAssignmentArtifactRowCounts(
     // this row exists to catch — MORE rows landing than the source
     // described, i.e. duplication on re-run.
     matches: actualClaims <= expectedClaims && actualReviews <= expectedReviews,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4. History retention — the check that can contradict the importer
+// ---------------------------------------------------------------------------
+
+export interface HistoryRetentionReport {
+  /** Source history entries across every task handed in — what a reconciliation has to account for. */
+  readonly entriesIn: number;
+  /** Entries whose id was found in the database, either as their own event or inside a summary. */
+  readonly entriesRetained: number;
+  /** Entries materialised as their own `events` row. */
+  readonly entriesAsOwnRow: number;
+  /** Entries folded into a terminal item's single summary event, text kept. */
+  readonly entriesFolded: number;
+  /**
+   * Source entry ids with no trace in the database at all. **Every one of
+   * these is history that did not survive the import.** Empty is the only
+   * acceptable result; the list is CAPPED, so a catastrophic run reports a
+   * usable sample rather than a million ids — read `entriesMissing` for the
+   * true figure and never `missing.length`, which the cap floors.
+   */
+  readonly missing: string[];
+  /** The true number of lost entries, uncapped. `missing` is a sample of these. */
+  readonly entriesMissing: number;
+  /** Source task ids whose `items` row could not be found — reported separately from a lost entry. */
+  readonly tasksWithoutMatchingItem: string[];
+  /** True iff every source entry was found and every task resolved. */
+  readonly matches: boolean;
+}
+
+const MISSING_SAMPLE_CAP = 50;
+
+interface RetentionRow {
+  legacyId: string | null;
+  entryIds: string[] | null;
+}
+
+/**
+ * Reads every imported history entry back out of Postgres and checks that
+ * **no source entry disappeared**.
+ *
+ * ── Why this exists alongside `verifyEventRowCounts` ────────────────────
+ *
+ * `verifyEventRowCounts` computes its expectation as
+ * `TERMINAL_STATES.has(state) ? 1 : history.length` — the fold's own rule,
+ * restated. That makes it a fine check of "did the right NUMBER OF ROWS
+ * land", and structurally incapable of noticing that a fold threw away the
+ * entries it folded: it would compute one, find one, and report a match on
+ * a task whose twenty-six entries had been reduced to a single quotation.
+ * **A verification that derives its expected value from the same assumption
+ * the code makes can never contradict the code.** That is not a
+ * hypothetical — it is what an earlier version of this importer did, and
+ * the row-count check reported it clean.
+ *
+ * So this function does not ask the importer what it meant to do. It counts
+ * what the CALLER supplied, then reads back what is actually in the
+ * database, and compares the two by identity:
+ *
+ *   - an entry imported one-for-one is found as an event's `payload.legacy_id`;
+ *   - an entry folded into a summary is found in that event's
+ *     `payload.entries[].legacy_id`.
+ *
+ * Anything in neither is named in `missing`. The only way to make this
+ * report clean is to actually keep the data.
+ */
+export async function verifyHistoryRetention(
+  client: VerifyClient,
+  tasks: readonly SourceTask[],
+): Promise<HistoryRetentionReport> {
+  let entriesIn = 0;
+  let entriesAsOwnRow = 0;
+  let entriesFolded = 0;
+  let entriesMissing = 0;
+  const missing: string[] = [];
+  const tasksWithoutMatchingItem: string[] = [];
+
+  for (const task of tasks) {
+    const history = task.history ?? [];
+    if (history.length === 0) continue;
+    entriesIn += history.length;
+
+    const item = await client.item.findFirst({
+      where: { customFields: { path: ["legacy_id"], equals: task.id } },
+      select: { id: true },
+    });
+    if (!item) {
+      tasksWithoutMatchingItem.push(task.id);
+      for (const entry of history) {
+        entriesMissing++;
+        if (missing.length < MISSING_SAMPLE_CAP) missing.push(entry.id);
+      }
+      continue;
+    }
+
+    // One query per item returns both shapes at once: the row's own
+    // `legacy_id`, and the ids of any entries folded into it. `jsonb_path_query_array`
+    // is used rather than a lateral join so a row with no `entries` key
+    // comes back as NULL instead of vanishing from the result set.
+    const rows = await client.$queryRawUnsafe<RetentionRow[]>(
+      `SELECT "payload"->>'legacy_id' AS "legacyId",
+              CASE
+                WHEN jsonb_typeof("payload"->'entries') = 'array'
+                THEN ARRAY(SELECT jsonb_array_elements("payload"->'entries')->>'legacy_id')
+                ELSE NULL
+              END AS "entryIds"
+       FROM "Event"
+       WHERE "itemId" = $1 AND "type" = 'note' AND "payload" ? 'legacy_id'`,
+      item.id,
+    );
+
+    const found = new Set<string>();
+    for (const row of rows) {
+      const folded = row.entryIds ?? [];
+      if (folded.length > 0) {
+        for (const id of folded) found.add(id);
+        entriesFolded += folded.length;
+      } else if (row.legacyId !== null) {
+        found.add(row.legacyId);
+        entriesAsOwnRow++;
+      }
+      // A summary row's own `legacy_id` is the first folded entry's id, so
+      // adding it unconditionally would double-count; it is already in
+      // `folded` above.
+      if (folded.length === 0 && row.legacyId !== null) found.add(row.legacyId);
+    }
+
+    for (const entry of history) {
+      if (found.has(entry.id)) continue;
+      entriesMissing++;
+      if (missing.length < MISSING_SAMPLE_CAP) missing.push(entry.id);
+    }
+  }
+
+  return {
+    entriesIn,
+    entriesRetained: entriesIn - entriesMissing,
+    entriesAsOwnRow,
+    entriesFolded,
+    missing,
+    entriesMissing,
+    tasksWithoutMatchingItem,
+    // Keyed on the true count, not on the capped sample: a run that lost
+    // more entries than the cap must not report clean because the list
+    // stopped growing.
+    matches: entriesMissing === 0 && tasksWithoutMatchingItem.length === 0,
   };
 }

@@ -35,6 +35,7 @@ function payload(overrides: Record<string, unknown> = {}) {
       },
     ],
     actorAliases: { system: { actorType: "system", actorId: null } },
+    statusAliases: { executing: "executing" },
     ...overrides,
   };
 }

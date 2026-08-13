@@ -27,6 +27,34 @@ import { z } from "zod";
 /** The only payload version this build accepts. */
 export const BACKFILL_CONTRACT_VERSION = 1;
 
+/**
+ * **This application's own item states** (SCHEMA.md §1.1) — the target
+ * vocabulary a caller maps onto, and the only status words this repository
+ * knows.
+ *
+ * Written out here so the contract can validate a caller's mapping against
+ * it. There is deliberately no table anywhere in this application
+ * translating any *particular* source's status words into these: a source's
+ * state machine belongs to the source, and hardcoding one would make every
+ * other source a source-code change (and would put one external system's
+ * private vocabulary into a public repository). The caller supplies
+ * `statusAliases`; the application supplies these.
+ */
+export const ITEM_STATES = [
+  "someday",
+  "on_deck",
+  "planning",
+  "plan_review",
+  "executing",
+  "in_review",
+  "paused",
+  "blocked",
+  "merged",
+  "research_done",
+  "wont_do",
+  "cancelled",
+] as const;
+
 const timestamp = z
   .string()
   .min(1)
@@ -105,6 +133,16 @@ const taskSchema = z
     priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
     branch: z.string().min(1).optional(),
     needsVisualReview: z.boolean().optional(),
+    /** When the source says the work was created. Omitted stamps the import moment. */
+    createdAt: timestamp.optional(),
+    /** When the source last changed it. Omitted stamps the import moment. */
+    updatedAt: timestamp.optional(),
+    /** Who or what created it. Omitted defaults to `source`. */
+    originType: z.enum(["person", "source", "auto"]).optional(),
+    /** An existing `people.id`. Required when `originType` is `person`. */
+    originPersonId: z.string().min(1).optional(),
+    /** Omitted defaults to `needs_approval`. */
+    mergeAuthority: z.enum(["pre_approved", "needs_approval", "agent_judgement"]).optional(),
     /** `path@content_hash`. Relative — an absolute path records the converting machine's layout. */
     sourceRef: z.string().min(1).optional(),
     /** Anything with no typed column, preserved verbatim. `legacy_id` here is always overridden. */
@@ -114,7 +152,11 @@ const taskSchema = z
     /** Named `reviews` because that is what the artifacts importer calls its input; any artifact kind is accepted. */
     reviews: z.array(artifactSchema).optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.originType !== "person" || value.originPersonId !== undefined, {
+    message: "originPersonId is required when originType is person",
+    path: ["originPersonId"],
+  });
 
 const actorAliasSchema = z
   .object({
@@ -152,6 +194,18 @@ export const backfillPayloadSchema = z
     repoAliases: z.record(z.string(), z.string().min(1)).optional(),
     /** Converter actor label -> who the event is attributed to. A label with no entry is refused. */
     actorAliases: z.record(z.string(), actorAliasSchema).optional(),
+    /**
+     * Converter status label -> one of **this application's** item states
+     * (`ITEM_STATES`).
+     *
+     * The third of the three alias maps, and the one that makes the
+     * contract genuinely portable. A caller's status vocabulary is the
+     * caller's — this application ships its twelve states and no table
+     * translating anybody's words into them. A status with no entry here
+     * falls back to the application's own small default vocabulary and, if
+     * it is not there either, is refused rather than guessed at.
+     */
+    statusAliases: z.record(z.string(), z.enum(ITEM_STATES)).optional(),
     tasks: z.array(taskSchema),
   })
   .strict();

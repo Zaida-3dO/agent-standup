@@ -20,6 +20,7 @@ import {
   resolveRunnerOptions,
   runBackfill,
   runBackfillTwice,
+  DanglingRepoAliasError,
   UnknownRunnerFlagError,
 } from "@/lib/backfill/runner";
 import {
@@ -147,7 +148,7 @@ function payloadFixture(overrides: Partial<BackfillPayload> = {}): BackfillPaylo
     branch: `task/${id}`,
     needsVisualReview: true,
     repo: "repo-one",
-    sourceRef: `${id}/status.json@0123456789abcdef`,
+    sourceRef: `${id}/source.json@0123456789abcdef`,
     customFields: { source_status: status },
     history: [
       { id: `${id}:h:1`, actor: "system", at: "1970-01-01T00:00:00Z", note: "minted" },
@@ -194,6 +195,9 @@ function payloadFixture(overrides: Partial<BackfillPayload> = {}): BackfillPaylo
   return parsePayload({
     version: 1,
     defaultArea: "imported",
+    // The caller supplies its own status vocabulary — the application ships
+    // its states and no table translating anybody's words into them.
+    statusAliases: { executing: "executing", merged: "merged" },
     tasks: [task(TASK_A, "executing"), task(TASK_B, "merged")],
     ...overrides,
   });
@@ -325,7 +329,7 @@ describeDb("runBackfill (real database)", () => {
     expect(item?.priority).toBe("P1");
     expect(item?.branch).toBe(`task/${TASK_B}`);
     expect(item?.needsVisualReview).toBe(true);
-    expect(item?.sourceRef).toBe(`${TASK_B}/status.json@0123456789abcdef`);
+    expect(item?.sourceRef).toBe(`${TASK_B}/source.json@0123456789abcdef`);
     expect(item?.state).toBe("merged");
     // The escape hatch carries what has no column, and `legacy_id` survives.
     expect((item?.customFields as Record<string, unknown>).source_status).toBe("merged");
@@ -390,6 +394,130 @@ describeDb("runBackfill (real database)", () => {
     expect(report.counts.itemsImported).toBe(2);
   }, 120_000);
 
+  it("REFUSES an alias whose target repo does not exist, naming label, target and remedy", async () => {
+    // The defect this closes: an aliased label was assumed to point at an
+    // existing repo and never checked, so the run died later on a bare
+    // `Item_repo_fkey` violation naming neither the task, the label, nor
+    // the target. Deleting the findUnique check restores that.
+    const payload = payloadFixture({ repoAliases: { "repo-one": "no-such-repo" } });
+
+    await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(DanglingRepoAliasError);
+    await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(/repo-one/);
+    await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(/no-such-repo/);
+    // Actionable, not just named: it says what to do about it.
+    await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(/standup repo create/);
+  }, 120_000);
+
+  it("does NOT mint an alias target even under --create-missing-repos", async () => {
+    // The flag means "mint the labels my payload uses". An alias asserts an
+    // existing repo; minting its target would invent the row the caller
+    // said was already there and hide a typo instead of reporting it.
+    const payload = payloadFixture({ repoAliases: { "repo-one": "typo-target" } });
+    await expect(
+      runBackfill(prisma, payload, { ...RUN_OPTIONS, createMissingRepos: true }),
+    ).rejects.toThrow(DanglingRepoAliasError);
+
+    const repo = await prisma.repo.findUnique({ where: { id: "typo-target" } });
+    expect(repo).toBeNull();
+  }, 120_000);
+
+  it("reports EVERY dangling alias target in one run, not the first one it hits", async () => {
+    const payload = payloadFixture({
+      repoAliases: { "repo-one": "missing-a", "repo-two": "missing-b" },
+      tasks: [
+        ...payloadFixture().tasks.map((task) => ({ ...task, repo: "repo-one" })),
+        { ...payloadFixture().tasks[0]!, id: "T-19700103-three", repo: "repo-two" },
+      ],
+    });
+    await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(/missing-a/);
+    await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(/missing-b/);
+  }, 120_000);
+
+  it("lands caller-supplied timestamps, origin and merge authority in their real columns", async () => {
+    // Without these slots every imported row is stamped at the import
+    // moment, which destroys the ordering an imported backlog is read by.
+    const base = payloadFixture();
+    const payload = parsePayload({
+      ...base,
+      tasks: [
+        {
+          ...base.tasks[0]!,
+          createdAt: "1999-03-04T05:06:07Z",
+          updatedAt: "2001-09-10T11:12:13Z",
+          originType: "auto",
+          mergeAuthority: "pre_approved",
+        },
+        base.tasks[1]!,
+      ],
+    });
+
+    await runBackfill(prisma, payload, RUN_OPTIONS);
+    const item = await prisma.item.findFirst({
+      where: { customFields: { path: ["legacy_id"], equals: TASK_A } },
+    });
+    expect(item?.createdAt.toISOString()).toBe("1999-03-04T05:06:07.000Z");
+    expect(item?.updatedAt.toISOString()).toBe("2001-09-10T11:12:13.000Z");
+    expect(item?.originType).toBe("auto");
+    expect(item?.mergeAuthority).toBe("pre_approved");
+
+    // The task that supplied none of them keeps the documented defaults.
+    const other = await prisma.item.findFirst({
+      where: { customFields: { path: ["legacy_id"], equals: TASK_B } },
+    });
+    expect(other?.originType).toBe("source");
+    expect(other?.mergeAuthority).toBe("needs_approval");
+  }, 120_000);
+
+  it("resolves a status through a CALLER-SUPPLIED alias the application has never heard of", async () => {
+    // The portability property: a caller's state machine is translated by
+    // the payload, not by a table inside the application.
+    const base = payloadFixture();
+    const payload = parsePayload({
+      ...base,
+      statusAliases: { ...base.statusAliases, "awaiting-sign-off": "paused" },
+      tasks: [{ ...base.tasks[0]!, status: "awaiting-sign-off" }, base.tasks[1]!],
+    });
+
+    const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+    expect(report.verification.spotCheck.allMatch).toBe(true);
+
+    const item = await prisma.item.findFirst({
+      where: { customFields: { path: ["legacy_id"], equals: TASK_A } },
+    });
+    expect(item?.state).toBe("paused");
+  }, 120_000);
+
+  it("REFUSES a status in neither the payload's aliases nor the application's own vocabulary", async () => {
+    const base = payloadFixture();
+    const payload = parsePayload({
+      ...base,
+      tasks: [{ ...base.tasks[0]!, status: "invented-status" }, base.tasks[1]!],
+    });
+    await expect(runBackfill(prisma, payload, RUN_OPTIONS)).rejects.toThrow(/invented-status/);
+  }, 120_000);
+
+  it("reconciles history: every source entry is accounted for and none is lost", async () => {
+    const payload = payloadFixture();
+    const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+
+    const entriesIn = payload.tasks.reduce((n, t) => n + (t.history?.length ?? 0), 0);
+    expect(report.counts.historyEntriesIn).toBe(entriesIn);
+    // The accounting must SUM: one-for-one imports plus folded entries.
+    const own = report.counts.historyEntriesIn - report.counts.historyEntriesCollapsed;
+    expect(own + report.counts.historyEntriesCollapsed).toBe(entriesIn);
+    // TASK_B is terminal, so its two entries fold into one event.
+    expect(report.counts.historyEntriesCollapsed).toBe(2);
+    // And nothing was lost, read back from the database.
+    expect(report.verification.historyRetention.entriesMissing).toBe(0);
+    expect(report.verification.historyRetention.entriesRetained).toBe(entriesIn);
+    expect(report.verification.historyRetention.matches).toBe(true);
+
+    const text = formatRunReport(report);
+    expect(text).toContain("History reconciliation");
+    expect(text).toContain("(sums)");
+    expect(text).toContain("history retention : COMPLETE");
+  }, 120_000);
+
   it("REFUSES an actor with no alias when derivation is off", async () => {
     await expect(
       runBackfill(prisma, payloadFixture(), { ...RUN_OPTIONS, deriveActors: false }),
@@ -412,7 +540,7 @@ describeDb("runBackfill (real database)", () => {
           customFields: { legacy_id: "a-different-id", extra: 1 },
         },
       ],
-      { repoAliases: {} },
+      { repoAliases: {}, statusAliases: { executing: "executing" } },
     );
 
     const item = await prisma.item.findFirst({

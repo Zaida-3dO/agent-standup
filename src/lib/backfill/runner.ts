@@ -28,11 +28,13 @@ import {
   spotCheckItems,
   verifyAssignmentArtifactRowCounts,
   verifyEventRowCounts,
+  verifyHistoryRetention,
   verifyItemRowCounts,
 } from "../import-verify";
 import type {
   AssignmentArtifactCountReport,
   EventRowCountReport,
+  HistoryRetentionReport,
   RowCountReport,
   SpotCheckReport,
 } from "../import-verify";
@@ -188,6 +190,51 @@ export interface RepoResolution {
  * the flag IS the deliberation — and without it an unmapped label stays
  * unmapped and the task that names it is refused.
  */
+export class DanglingRepoAliasError extends Error {
+  constructor(dangling: readonly { label: string; target: string }[]) {
+    const list = dangling
+      .map(({ label, target }) => `${JSON.stringify(label)} -> ${JSON.stringify(target)}`)
+      .join(", ");
+    super(
+      `repoAliases points at ${dangling.length} repo id(s) that do not exist: ${list}. ` +
+        "An alias translates a source's spelling onto a repo that is already in `repos`; it does " +
+        "not create one. " +
+        "Either create them first (`standup repo create --id <target> ...`), correct the alias " +
+        "targets, or drop the alias entries and re-run with --create-missing-repos so the " +
+        "source labels are minted directly.",
+    );
+    this.name = "DanglingRepoAliasError";
+  }
+}
+
+/**
+ * Resolves each repo label onto a `repos.id`.
+ *
+ * Two distinct cases, and conflating them was a real defect: a label the
+ * payload maps through `repoAliases`, and a label it does not.
+ *
+ * **A mapped label still has to point at something.** An alias is a
+ * translation onto a repo that is already in `repos`, never a request to
+ * create one, so its
+ * target is checked here rather than assumed. Skipping that check does not
+ * make the problem go away — it defers it to the foreign key on the first
+ * item insert, which fails with a bare `Item_repo_fkey` violation naming
+ * neither the task, the label, nor the target, and aborts the whole run.
+ * Every other refusal in this importer names the offending value; this one
+ * now does too.
+ *
+ * **An unmapped label** is minted only when the caller asked
+ * (`createMissingRepos`) — repos are deliberate-create only (repos.ts),
+ * because a wrong repo aims the merge gate at the wrong repository, so the
+ * flag IS the deliberation. Without it the label stays unmapped and the
+ * task naming it is refused by `importItems`.
+ *
+ * `createMissingRepos` deliberately does NOT mint an alias's target. The
+ * flag says "mint the labels my payload uses"; an alias says "my label
+ * `web-app` means the repo you already have as `web`". Minting `web` on the strength
+ * of that would invent the very row the caller was asserting already
+ * existed, and would hide a typo'd target rather than report it.
+ */
 export async function resolveRepoAliases(
   client: Pick<PrismaClient, "repo">,
   labels: readonly string[],
@@ -196,9 +243,15 @@ export async function resolveRepoAliases(
   const repoAliases: Record<string, string> = { ...options.repoAliases };
   const created: string[] = [];
   const unmapped: string[] = [];
+  const dangling: { label: string; target: string }[] = [];
 
   for (const label of labels) {
-    if (repoAliases[label]) continue;
+    const aliasTarget = repoAliases[label];
+    if (aliasTarget) {
+      const existing = await client.repo.findUnique({ where: { id: aliasTarget } });
+      if (!existing) dangling.push({ label, target: aliasTarget });
+      continue;
+    }
     if (!options.createMissingRepos) {
       unmapped.push(label);
       continue;
@@ -218,6 +271,10 @@ export async function resolveRepoAliases(
     }
     repoAliases[label] = id;
   }
+
+  // Raised after the whole sweep, so one run reports EVERY dangling target
+  // rather than making the operator fix them one failed import at a time.
+  if (dangling.length > 0) throw new DanglingRepoAliasError(dangling);
 
   return { repoAliases, created, unmapped };
 }
@@ -264,6 +321,8 @@ export interface BackfillVerification {
   readonly events: EventRowCountReport;
   readonly assignmentsArtifacts: AssignmentArtifactCountReport;
   readonly spotCheck: SpotCheckReport;
+  /** Read back from the database — the one check here capable of contradicting the importer. */
+  readonly historyRetention: HistoryRetentionReport;
 }
 
 export interface BackfillRunReport {
@@ -333,8 +392,10 @@ export async function runBackfill(
       items: await verifyItemRowCounts(client, tasks),
       events: await verifyEventRowCounts(client, tasks),
       assignmentsArtifacts: await verifyAssignmentArtifactRowCounts(client, tasks),
+      historyRetention: await verifyHistoryRetention(client, tasks),
       spotCheck: await spotCheckItems(client, tasks, {
         repoAliases: repos.repoAliases,
+        statusAliases: payload.statusAliases,
         sampleSize: options.sampleSize,
       }),
     },
@@ -409,6 +470,44 @@ export function formatRunReport(report: BackfillRunReport): string {
   if (report.repos.unmapped.length > 0) {
     lines.push(`  repo labels with no mapping: ${report.repos.unmapped.join(", ")}`);
   }
+
+  // The history reconciliation, stated as an accounting that must SUM.
+  //
+  // A row count on its own cannot see a loss upstream of itself: it
+  // compares what the importer wrote against what the importer intended to
+  // write. So this starts from the entries the PAYLOAD contained and
+  // accounts for every one of them, with each difference carrying a named
+  // reason and a count.
+  const own = counts.historyEntriesIn - counts.historyEntriesCollapsed;
+  const retention = verification.historyRetention;
+  lines.push("");
+  lines.push("History reconciliation");
+  lines.push(`  source entries in payload                    : ${counts.historyEntriesIn}`);
+  lines.push(`  imported as their own event                  : ${own}`);
+  lines.push(
+    `  folded into a terminal task's single event   : ${counts.historyEntriesCollapsed}` +
+      "  (text retained in the event body and payload)",
+  );
+  lines.push(
+    `  ---- accounted for                           : ${own + counts.historyEntriesCollapsed}` +
+      `${own + counts.historyEntriesCollapsed === counts.historyEntriesIn ? "  (sums)" : "  *** DOES NOT SUM ***"}`,
+  );
+  lines.push(
+    `  events written                               : ${counts.eventsImported + counts.eventsSkipped}` +
+      `  (${counts.eventsImported} new, ${counts.eventsSkipped} already present)`,
+  );
+  lines.push(
+    `  entries whose text is NOT in the database    : ${retention.entriesMissing}` +
+      `${retention.matches ? "  (verified by reading every entry back)" : "  *** HISTORY LOST ***"}`,
+  );
+  for (const id of retention.missing.slice(0, 10)) {
+    lines.push(`    missing: ${id}`);
+  }
+  if (retention.tasksWithoutMatchingItem.length > 0) {
+    lines.push(
+      `  tasks whose history could not attach         : ${retention.tasksWithoutMatchingItem.length}`,
+    );
+  }
   if (counts.tasksWithoutMatchingItem.length > 0) {
     lines.push(`  tasks whose history could not attach: ${counts.tasksWithoutMatchingItem.length}`);
   }
@@ -434,6 +533,10 @@ export function formatRunReport(report: BackfillRunReport): string {
   lines.push(
     `  spot check        : ${verification.spotCheck.allMatch ? "ALL MATCH" : "MISMATCH"} ` +
       `(${verification.spotCheck.sampled} tasks sampled)`,
+  );
+  lines.push(
+    `  history retention : ${verification.historyRetention.matches ? "COMPLETE" : "INCOMPLETE"} ` +
+      `(${verification.historyRetention.entriesRetained} of ${verification.historyRetention.entriesIn} entries found)`,
   );
   for (const result of verification.spotCheck.results) {
     if (result.matches) continue;

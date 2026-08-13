@@ -10,7 +10,6 @@ import { createRepo } from "@/lib/repos";
 import {
   importItems,
   mapSourceStatus,
-  PIPELINE_STATUS_REMAP,
   readSourceTasks,
   STATUS_REMAP,
   UnknownRepoAliasError,
@@ -50,35 +49,43 @@ describe("mapSourceStatus", () => {
     expect(() => mapSourceStatus("archived", "t1")).toThrow(UnknownSourceStatusError);
   });
 
-  it("resolves the second, pipeline-shaped vocabulary too", () => {
-    expect(mapSourceStatus("awaiting-merge-auth", "t1")).toBe("paused");
-    expect(mapSourceStatus("cancelled", "t1")).toBe("cancelled");
-    expect(mapSourceStatus("plan-review", "t1")).toBe("plan_review");
+  it("lets a CALLER-SUPPLIED alias resolve a status this application has never heard of", () => {
+    // The property that makes the importer generic: a source's own state
+    // machine is translated by the caller, not by a table inside the app.
+    expect(mapSourceStatus("awaiting-sign-off", "t1", { "awaiting-sign-off": "paused" })).toBe(
+      "paused",
+    );
   });
 
-  it("collapses every review-pipeline status onto one item state", () => {
-    // Four source statuses, one column value — the collapse the gap list
-    // names, and the reason the source status is preserved verbatim in
-    // custom_fields. Changing any of these to a different state would make
-    // an imported item claim a review stage the source never recorded.
-    for (const status of ["code-review", "review-approved", "visual-review", "ready-for-merge"]) {
-      expect(mapSourceStatus(status, "t1")).toBe("in_review");
-    }
+  it("lets a caller-supplied alias OVERRIDE this application's own vocabulary", () => {
+    // Deliberate precedence: the caller knows both vocabularies, the app
+    // knows only its own. Swapping the `??` operands in mapSourceStatus
+    // would flip this.
+    expect(mapSourceStatus("done", "t1", { done: "wont_do" })).toBe("wont_do");
+    expect(mapSourceStatus("done", "t1")).toBe("merged");
+  });
+
+  it("still REFUSES a status in neither the caller's map nor the app's", () => {
+    expect(() => mapSourceStatus("archived", "t1", { other: "paused" })).toThrow(
+      UnknownSourceStatusError,
+    );
   });
 });
 
-describe("the two status vocabularies", () => {
-  it("share no key, which is what lets one lookup consult both without shadowing", () => {
-    const overlap = Object.keys(PIPELINE_STATUS_REMAP).filter((key) => key in STATUS_REMAP);
-    expect(overlap).toEqual([]);
-  });
-
-  it("leaves STATUS_REMAP exactly five words wide — it defines a surface vocabulary, not just a mapping", () => {
+describe("the application's own status vocabulary", () => {
+  it("stays exactly five words — it defines a surface vocabulary, not just a mapping", () => {
     // task-shim/contract.ts's SHIM_STATUSES is asserted equal to these
-    // keys. Folding the pipeline vocabulary into this table would widen a
-    // command-line surface as a side effect of teaching the importer to
-    // read a second kind of store.
+    // keys. Growing this table to cover a particular source's state machine
+    // would widen a command-line surface as a side effect, and would put
+    // one external system's private vocabulary in a public application.
     expect(Object.keys(STATUS_REMAP)).toHaveLength(5);
+    expect(Object.keys(STATUS_REMAP).sort()).toEqual([
+      "done",
+      "in-progress",
+      "review",
+      "todo",
+      "waiting",
+    ]);
   });
 });
 

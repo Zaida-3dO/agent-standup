@@ -19,6 +19,7 @@ import {
   verifyAssignmentArtifactRowCounts,
   verifyEventRowCounts,
   verifyItemRowCounts,
+  verifyHistoryRetention,
 } from "@/lib/import-verify";
 import {
   createScratchDatabase,
@@ -629,5 +630,64 @@ describeIfDb("import verification — against a real Postgres", () => {
     expect(await prisma.event.count()).toBe(eventCount);
     expect(await prisma.assignment.count()).toBe(assignmentCount);
     expect(await prisma.artifact.count()).toBe(artifactCount);
+  });
+  // -- History retention: the check that can contradict the importer --------
+
+  it("verifyHistoryRetention finds every source entry after a clean import", async () => {
+    const { tasks } = await runFullImport();
+    const report = await verifyHistoryRetention(prisma, tasks);
+
+    const entriesIn = tasks.reduce((total, task) => total + (task.history?.length ?? 0), 0);
+    expect(report.entriesIn).toBe(entriesIn);
+    expect(report.entriesRetained).toBe(entriesIn);
+    expect(report.entriesMissing).toBe(0);
+    expect(report.missing).toEqual([]);
+    expect(report.matches).toBe(true);
+  });
+
+  it("verifyHistoryRetention DETECTS a collapsed summary that dropped its entries — the check can fail", async () => {
+    // This is the point of the whole function, and the reason a row count
+    // is not enough. `verifyEventRowCounts` derives its expectation from
+    // the fold's own rule, so it computes one row for a terminal task,
+    // finds one row, and reports MATCH no matter how much that row threw
+    // away. Here the retained entries are stripped out of the payload to
+    // simulate exactly the regression that shipped once — and this check
+    // must go red where the row count stays green.
+    const { tasks } = await runFullImport();
+
+    // Strip the retained entries from every collapsed summary, leaving the
+    // row and its own legacy_id intact — precisely what a body-only,
+    // last-entry-quoting implementation would have written.
+    await prisma.$executeRawUnsafe(
+      `UPDATE "Event" SET "payload" = "payload" - 'entries' WHERE "payload" ? 'entries'`,
+    );
+
+    const rowCounts = await verifyEventRowCounts(prisma, tasks);
+    const retention = await verifyHistoryRetention(prisma, tasks);
+
+    // The row count is blind to it, by construction.
+    expect(rowCounts.matches).toBe(true);
+    // The retention check is not.
+    expect(retention.matches).toBe(false);
+    expect(retention.entriesMissing).toBeGreaterThan(0);
+    expect(retention.missing.length).toBeGreaterThan(0);
+    expect(retention.entriesRetained).toBeLessThan(retention.entriesIn);
+  });
+
+  it("verifyHistoryRetention reports a task whose item never landed, rather than counting it retained", async () => {
+    const { tasks } = await runFullImport();
+    const orphan: SourceTask = {
+      id: "never-imported",
+      title: "Orphan",
+      body: "",
+      status: "done",
+      area: "web",
+      history: [{ id: "o1", actor: "user-a", at: "2026-01-01T00:00:00Z", note: "nowhere" }],
+    };
+
+    const report = await verifyHistoryRetention(prisma, [...tasks, orphan]);
+    expect(report.tasksWithoutMatchingItem).toEqual(["never-imported"]);
+    expect(report.missing).toContain("o1");
+    expect(report.matches).toBe(false);
   });
 });

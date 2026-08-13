@@ -29,6 +29,20 @@ export interface BackfillCounts {
   readonly itemsSkipped: number;
   readonly eventsImported: number;
   readonly eventsSkipped: number;
+  /**
+   * Source history entries the payload contained. The figure a
+   * reconciliation must account for — reported so a caller compares the
+   * import against ITS INPUT rather than against a re-derivation of what
+   * the import intended, which agrees with the code by construction.
+   */
+  readonly historyEntriesIn: number;
+  /**
+   * Entries folded into a terminal item's single summary event rather than
+   * given a row of their own. Their text is retained; this count is what
+   * makes the fold visible instead of showing up only as an events total
+   * smaller than the input.
+   */
+  readonly historyEntriesCollapsed: number;
   readonly claimsImported: number;
   readonly claimsSkipped: number;
   /** Claims a uniqueness rule refused — a genuine conflict in the source history, surfaced not swallowed. */
@@ -62,6 +76,11 @@ export function toSourceTask(
     ...(task.branch !== undefined ? { branch: task.branch } : {}),
     ...(task.needsVisualReview !== undefined ? { needsVisualReview: task.needsVisualReview } : {}),
     ...(task.sourceRef !== undefined ? { sourceRef: task.sourceRef } : {}),
+    ...(task.createdAt !== undefined ? { createdAt: task.createdAt } : {}),
+    ...(task.updatedAt !== undefined ? { updatedAt: task.updatedAt } : {}),
+    ...(task.originType !== undefined ? { originType: task.originType } : {}),
+    ...(task.originPersonId !== undefined ? { originPersonId: task.originPersonId } : {}),
+    ...(task.mergeAuthority !== undefined ? { mergeAuthority: task.mergeAuthority } : {}),
     ...(task.customFields !== undefined ? { customFields: task.customFields } : {}),
     ...(task.history !== undefined ? { history: task.history } : {}),
     ...(task.claims !== undefined ? { claims: task.claims as SourceClaim[] } : {}),
@@ -86,7 +105,10 @@ export async function backfillTasks(
 ): Promise<BackfillCounts> {
   const tasks = payload.tasks.map((task) => toSourceTask(task, payload.defaultArea));
 
-  const items = await importItems(client, tasks, { repoAliases: payload.repoAliases ?? {} });
+  const items = await importItems(client, tasks, {
+    repoAliases: payload.repoAliases ?? {},
+    statusAliases: payload.statusAliases ?? {},
+  });
 
   const actorAliases = (payload.actorAliases ?? {}) as Record<string, ActorAliasTarget>;
   const events = await importEvents(client, tasks, { actorAliases });
@@ -99,6 +121,8 @@ export async function backfillTasks(
     itemsSkipped: items.skippedExisting,
     eventsImported: events.imported,
     eventsSkipped: events.skippedExisting,
+    historyEntriesIn: events.entriesIn,
+    historyEntriesCollapsed: events.entriesCollapsed,
     claimsImported: assignmentsArtifacts.claimsImported,
     claimsSkipped: assignmentsArtifacts.claimsSkippedExisting,
     claimsConflicted: assignmentsArtifacts.claimsConflicted,

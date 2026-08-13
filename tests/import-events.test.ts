@@ -87,7 +87,7 @@ describeIfDb("import-events — against a real Postgres", () => {
       { itemId, taskId, currentState: state, history: task.history! },
       { actorAliases },
     );
-    expect(result).toEqual({ imported: 3, skippedExisting: 0 });
+    expect(result).toEqual({ imported: 3, skippedExisting: 0, entriesCollapsed: 0 });
 
     const rows = await prisma.event.findMany({ where: { itemId }, orderBy: { id: "asc" } });
     expect(rows).toHaveLength(3);
@@ -126,7 +126,7 @@ describeIfDb("import-events — against a real Postgres", () => {
     // The load-bearing assertion for DECISIONS.md §13c: three history
     // entries on a finished task collapse to exactly one events row, not
     // three. Changing TERMINAL_STATES to omit "merged" would flip this to 3.
-    expect(result).toEqual({ imported: 1, skippedExisting: 0 });
+    expect(result).toEqual({ imported: 1, skippedExisting: 0, entriesCollapsed: 3 });
 
     const rows = await prisma.event.findMany({ where: { itemId } });
     expect(rows).toHaveLength(1);
@@ -134,6 +134,92 @@ describeIfDb("import-events — against a real Postgres", () => {
     // user-a here by coincidence) — proven properly by the mixed-actor
     // ordering below in a separate case, but this pins body content too.
     expect(rows[0]?.body).toContain("merged");
+  });
+
+  it("KEEPS EVERY ENTRY'S TEXT when it collapses — the fold is about rows, not about prose", async () => {
+    // The regression this exists to prevent, stated concretely: an earlier
+    // version quoted only the LAST entry, so a finished task kept one line
+    // of its history and lost the rest — and because the expected row count
+    // was one, every downstream check reported the import clean. Reverting
+    // the body construction to `Last: ${last.note}` fails this outright.
+    //
+    // It matters beyond tidiness because a caller may be importing
+    // precisely because the source it reads is about to be retired.
+    const taskId = nextId("done-prose");
+    const task: SourceTask = {
+      id: taskId,
+      title: "Finished thing 3",
+      body: "Body.",
+      status: "done",
+      area: "web",
+      history: [
+        { id: "h1", actor: "user-a", at: "2026-01-01T00:00:00Z", note: "the first thing" },
+        { id: "h2", actor: "agent-alpha", at: "2026-01-02T00:00:00Z", note: "the middle thing" },
+        { id: "h3", actor: "user-a", at: "2026-01-03T00:00:00Z", note: "the last thing" },
+      ],
+    };
+    const { itemId, state } = await importOneTask(task);
+
+    await importEventsForTask(
+      prisma,
+      { itemId, taskId, currentState: state, history: task.history! },
+      { actorAliases },
+    );
+
+    const rows = await prisma.event.findMany({ where: { itemId } });
+    expect(rows).toHaveLength(1);
+
+    // Readable copy: every entry's prose is in the body, not just the last.
+    for (const entry of task.history!) {
+      expect(rows[0]?.body).toContain(entry.note);
+    }
+
+    // Structured copy: every entry is addressable by its own source id,
+    // which is what makes retention checkable by identity rather than by
+    // searching prose.
+    const payload = rows[0]?.payload as { entry_count: number; entries: unknown[] };
+    expect(payload.entry_count).toBe(3);
+    expect(payload.entries).toHaveLength(3);
+    expect(payload.entries).toEqual([
+      { legacy_id: "h1", actor: "user-a", at: "2026-01-01T00:00:00Z", note: "the first thing" },
+      {
+        legacy_id: "h2",
+        actor: "agent-alpha",
+        at: "2026-01-02T00:00:00Z",
+        note: "the middle thing",
+      },
+      { legacy_id: "h3", actor: "user-a", at: "2026-01-03T00:00:00Z", note: "the last thing" },
+    ]);
+  });
+
+  it("counts the entries it folded, so the fold is never invisible in a report", async () => {
+    // `imported`/`skippedExisting` describe ROWS; a caller summing rows can
+    // never notice that twenty-six entries produced one. Dropping
+    // `entriesCollapsed` back to 0 would make this loss unreportable again.
+    const taskId = nextId("done-counted");
+    const history = Array.from({ length: 7 }, (_, i) => ({
+      id: `h${i + 1}`,
+      actor: "user-a",
+      at: `2026-01-0${i + 1}T00:00:00Z`,
+      note: `entry ${i + 1}`,
+    }));
+    const task: SourceTask = {
+      id: taskId,
+      title: "Finished thing 4",
+      body: "Body.",
+      status: "done",
+      area: "web",
+      history,
+    };
+    const { itemId, state } = await importOneTask(task);
+
+    const result = await importEventsForTask(
+      prisma,
+      { itemId, taskId, currentState: state, history },
+      { actorAliases },
+    );
+    expect(result.imported).toBe(1);
+    expect(result.entriesCollapsed).toBe(7);
   });
 
   it("attributes a collapsed summary to the LAST entry's actor, even when the first entry's actor differs", async () => {
@@ -237,7 +323,7 @@ describeIfDb("import-events — against a real Postgres", () => {
       { itemId, taskId, currentState: state, history: task.history! },
       { actorAliases },
     );
-    expect(first).toEqual({ imported: 2, skippedExisting: 0 });
+    expect(first).toEqual({ imported: 2, skippedExisting: 0, entriesCollapsed: 0 });
 
     // Second run against the SAME already-populated database.
     const second = await importEventsForTask(
@@ -245,7 +331,7 @@ describeIfDb("import-events — against a real Postgres", () => {
       { itemId, taskId, currentState: state, history: task.history! },
       { actorAliases },
     );
-    expect(second).toEqual({ imported: 0, skippedExisting: 2 });
+    expect(second).toEqual({ imported: 0, skippedExisting: 2, entriesCollapsed: 0 });
 
     const rows = await prisma.event.findMany({ where: { itemId } });
     expect(rows).toHaveLength(2);
@@ -271,14 +357,14 @@ describeIfDb("import-events — against a real Postgres", () => {
       { itemId, taskId, currentState: state, history: task.history! },
       { actorAliases },
     );
-    expect(first).toEqual({ imported: 1, skippedExisting: 0 });
+    expect(first).toEqual({ imported: 1, skippedExisting: 0, entriesCollapsed: 2 });
 
     const second = await importEventsForTask(
       prisma,
       { itemId, taskId, currentState: state, history: task.history! },
       { actorAliases },
     );
-    expect(second).toEqual({ imported: 0, skippedExisting: 1 });
+    expect(second).toEqual({ imported: 0, skippedExisting: 1, entriesCollapsed: 2 });
 
     const rows = await prisma.event.findMany({ where: { itemId } });
     expect(rows).toHaveLength(1);
@@ -313,7 +399,7 @@ describeIfDb("import-events — against a real Postgres", () => {
       { itemId, taskId, currentState: "executing", history: task.history! },
       { actorAliases },
     );
-    expect(first).toEqual({ imported: 3, skippedExisting: 0 });
+    expect(first).toEqual({ imported: 3, skippedExisting: 0, entriesCollapsed: 0 });
 
     // Re-run with the SAME history, now reporting a terminal state — the
     // load-bearing assertion: total row count must stay 3, not become 4
@@ -323,7 +409,7 @@ describeIfDb("import-events — against a real Postgres", () => {
       { itemId, taskId, currentState: "merged", history: task.history! },
       { actorAliases },
     );
-    expect(second).toEqual({ imported: 0, skippedExisting: 1 });
+    expect(second).toEqual({ imported: 0, skippedExisting: 1, entriesCollapsed: 3 });
 
     const rows = await prisma.event.findMany({ where: { itemId } });
     expect(rows).toHaveLength(3);
@@ -368,7 +454,7 @@ describeIfDb("import-events — against a real Postgres", () => {
       { itemId, taskId, currentState: state, history: task.history! },
       { actorAliases },
     );
-    expect(result).toEqual({ imported: 0, skippedExisting: 0 });
+    expect(result).toEqual({ imported: 0, skippedExisting: 0, entriesCollapsed: 0 });
   });
 
   describe("importEvents — the batch entry point", () => {

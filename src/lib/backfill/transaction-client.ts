@@ -50,6 +50,9 @@ const COLUMN_CASTS: Record<string, string> = {
   needsVisualReview: "::boolean",
   sourceRef: "",
   customFields: "::jsonb",
+  originPersonId: "",
+  createdAt: "::timestamptz",
+  updatedAt: "::timestamptz",
 };
 
 /**
@@ -129,15 +132,18 @@ export function transactionBackedClient(db: TransactionHandle): BackfillClient {
       column === "customFields" ? JSON.stringify(value) : value,
     );
 
-    // `updatedAt` is supplied explicitly. Prisma's `@updatedAt` is applied
-    // by the *client*, not by a column default, so a raw insert that leaves
-    // it out violates the column's NOT NULL — which is what a real
-    // insert through this shim did until a test caught it. `createdAt`
-    // needs no such help: it has a real `DEFAULT now()` in the migration.
-    await db.$executeRawUnsafe(
-      `INSERT INTO "Item" (${columns}, "updatedAt") VALUES (${placeholders}, now())`,
-      ...values,
-    );
+    // `updatedAt` is defaulted here when the caller did not supply one.
+    // Prisma's `@updatedAt` is applied by the *client*, not by a column
+    // default, so a raw insert that leaves it out violates the column's NOT
+    // NULL — which is what a real insert through this shim did until a test
+    // caught it. `createdAt` needs no such help: it has a real
+    // `DEFAULT now()` in the migration, so omitting it is already correct.
+    const suppliesUpdatedAt = entries.some(([column]) => column === "updatedAt");
+    const sql = suppliesUpdatedAt
+      ? `INSERT INTO "Item" (${columns}) VALUES (${placeholders})`
+      : `INSERT INTO "Item" (${columns}, "updatedAt") VALUES (${placeholders}, now())`;
+
+    await db.$executeRawUnsafe(sql, ...values);
     return args.data;
   };
 
