@@ -14,6 +14,7 @@
 // second axis it was never asked to compare on.
 import type { TransactionHandle } from "../context";
 import { currentTipCommitSha } from "./artifact-tip";
+import { APPROVING_VERDICTS } from "../../verdicts";
 
 interface ReviewRoundRow {
   reviewRound: number;
@@ -37,11 +38,90 @@ export async function currentReviewRound(db: TransactionHandle, itemId: string):
   return rows[0]?.reviewRound ?? 1;
 }
 
-interface ArtifactRow {
+export interface ArtifactRow {
   id: string;
   verdict: string | null;
   reviewRound: number;
   commitSha: string | null;
+  followUpItemId: string | null;
+  createdByType: string;
+}
+
+/**
+ * Every **approving** artifact of `kind` at `round` for the item, newest
+ * first.
+ *
+ * "Approving" is the tiered set (`../../verdicts.ts`), not the single label
+ * `'approved'`: `lgtm`, `lgtm_with_nits` and `lgtm_with_followups` are all
+ * approvals (SCHEMA.md §6a). `approved` stays in the set, so every decision
+ * this module made before the tiering landed it makes identically after.
+ *
+ * Ordered, where the previous shape was a bare `LIMIT 1` with no `ORDER BY`.
+ * Two approving artifacts can exist at the same round and tip — a first
+ * review deferring findings, then a follow-up review finding it clean — and
+ * "whichever Postgres happened to return" is not an answer a merge decision
+ * can rest on. Newest-first means the most recent word on the change is the
+ * one that counts, which is the only reading under which re-reviewing
+ * something can ever change its outcome.
+ */
+async function approvingArtifactsAtRound(
+  db: TransactionHandle,
+  itemId: string,
+  kind: string,
+  round: number,
+): Promise<ArtifactRow[]> {
+  return db.$queryRawUnsafe<ArtifactRow[]>(
+    // `$2::"ArtifactKind"` / `$4::"Verdict"[]` — Postgres infers an enum type
+    // for a literal but not for a bind parameter; see artifact-tip.ts's
+    // identical comment.
+    `SELECT "id", "verdict", "reviewRound", "commitSha", "followUpItemId", "createdByType"
+       FROM "Artifact"
+      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
+        AND "reviewRound" = $3 AND "verdict" = ANY($4::"Verdict"[])
+      ORDER BY "createdAt" DESC, "id" DESC`,
+    itemId,
+    kind,
+    round,
+    APPROVING_VERDICTS,
+  );
+}
+
+/**
+ * The approving artifact of `kind` the merge gate is actually relying on:
+ * newest, at the item's current review round, and naming the current tip
+ * commit — or `null` if no artifact satisfies all three.
+ *
+ * Exported as a **row** rather than only as a boolean because more than one
+ * question is asked of that artifact: whether it exists at all
+ * (`hasApprovingArtifactAtCurrentRoundAndTip`), whether a person recorded it
+ * (`merge.requires_authorisation`), and — new with the tiered vocabulary —
+ * which tier its verdict is and whether it links a follow-up
+ * (`merge.requires_linked_followup`). Handing each of those its own query
+ * would let them silently disagree about *which* artifact they were talking
+ * about; resolving the artifact once and asking it three things cannot.
+ */
+export async function approvingArtifactAtCurrentRoundAndTip(
+  db: TransactionHandle,
+  itemId: string,
+  kind: string,
+): Promise<ArtifactRow | null> {
+  const round = await currentReviewRound(db, itemId);
+  const rows = await approvingArtifactsAtRound(db, itemId, kind, round);
+  if (rows.length === 0) {
+    return null;
+  }
+  const tip = await currentTipCommitSha(db, itemId);
+  // Same reading `artifact-tip.ts`'s `latestApprovalAtTip` documents and for
+  // the same reason: with no `commit` artifact for the item at all, tip is
+  // `null` and an approval with `commitSha: null` matches — nothing exists
+  // for it to be stale against. Once a real tip exists, a `null` `commitSha`
+  // on the approval is correctly refused as unverifiable against it.
+  //
+  // Walks the list rather than checking only `rows[0]`: "the newest
+  // approval" and "the newest approval that is at the tip" are different
+  // questions, and collapsing them would answer the wrong one whenever a
+  // newer approval sits at the same round but an older commit.
+  return rows.find((row) => row.commitSha === tip) ?? null;
 }
 
 /**
@@ -77,18 +157,7 @@ export async function hasApprovingArtifactAtCurrentRound(
   kind: string,
 ): Promise<boolean> {
   const round = await currentReviewRound(db, itemId);
-  const rows = await db.$queryRawUnsafe<ArtifactRow[]>(
-    // `$2::"ArtifactKind"` — Postgres infers an enum type for a literal but
-    // not for a bind parameter; see artifact-tip.ts's identical comment.
-    `SELECT "id", "verdict", "reviewRound", "commitSha"
-       FROM "Artifact"
-      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
-        AND "verdict" = 'approved' AND "reviewRound" = $3
-      LIMIT 1`,
-    itemId,
-    kind,
-    round,
-  );
+  const rows = await approvingArtifactsAtRound(db, itemId, kind, round);
   return rows.length > 0;
 }
 
@@ -110,26 +179,5 @@ export async function hasApprovingArtifactAtCurrentRoundAndTip(
   itemId: string,
   kind: string,
 ): Promise<boolean> {
-  const round = await currentReviewRound(db, itemId);
-  const rows = await db.$queryRawUnsafe<ArtifactRow[]>(
-    `SELECT "id", "verdict", "reviewRound", "commitSha"
-       FROM "Artifact"
-      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
-        AND "verdict" = 'approved' AND "reviewRound" = $3
-      LIMIT 1`,
-    itemId,
-    kind,
-    round,
-  );
-  const approval = rows[0];
-  if (!approval) {
-    return false;
-  }
-  const tip = await currentTipCommitSha(db, itemId);
-  // Same reading `artifact-tip.ts`'s `latestApprovalAtTip` documents: with
-  // no `commit` artifact for the item at all, tip is `null`, and an
-  // approval with `commitSha: null` matches — nothing exists for it to be
-  // stale against. Once a real tip exists, a `null` `commitSha` on the
-  // approval is correctly refused as unverifiable against it.
-  return approval.commitSha === tip;
+  return (await approvingArtifactAtCurrentRoundAndTip(db, itemId, kind)) !== null;
 }

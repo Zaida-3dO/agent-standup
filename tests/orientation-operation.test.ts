@@ -259,6 +259,153 @@ describeIfDb("orientation against Postgres", () => {
     expect(result.openLoops.notDone).toEqual([{ text: "leftover work", reason: "descoped" }]);
   });
 
+  // ── Open loops as events (SCHEMA.md §3a) ───────────────────────────────
+  //
+  // The gap this closes: `Summary` is 1:1 with an item and written only at
+  // completion, so before this an `executing` item could not carry an open
+  // loop at all — and that is the state in which a session is most likely to
+  // have one. The three sources are unioned into `openLoops`, never merged
+  // into one list: they are different kinds of thing and call for different
+  // responses.
+  async function appendLoopEvent(
+    itemId: string,
+    type: "open_loop" | "open_loop_closed",
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Event" ("itemId", "actorType", "actorId", "type", "payload")
+       VALUES ($1, 'agent'::"ActorType", 'crew-member', $2::"EventType", $3::jsonb)`,
+      itemId,
+      type,
+      JSON.stringify(payload),
+    );
+  }
+
+  function loopsOf(result: unknown): readonly { loopId: string; text: string }[] {
+    return (result as { openLoops: { loops: readonly { loopId: string; text: string }[] } })
+      .openLoops.loops;
+  }
+
+  it("open loops: an EXECUTING item with no Summary still reports its open loop", async () => {
+    // The whole point of the change. Under the previous shape this item had
+    // nowhere to put a loop, and orientation could only ever answer `[]`.
+    const item = await makeItem({ title: "Mid-flight, carrying a loose end" });
+    await prisma.$executeRawUnsafe(
+      `UPDATE "Item" SET "state" = 'executing'::"ItemState" WHERE "id" = $1`,
+      item.id,
+    );
+    await appendLoopEvent(item.id, "open_loop", {
+      loopId: "loop-cold-boot",
+      text: "never checked what happens on a cold boot",
+    });
+
+    const result = await runtime.call("orientation", { itemId: item.id });
+    expect(loopsOf(result)).toEqual([
+      expect.objectContaining({
+        loopId: "loop-cold-boot",
+        text: "never checked what happens on a cold boot",
+      }),
+    ]);
+    // And the Summary-derived list is untouched — union, not replace.
+    expect((result as { openLoops: { notDone: readonly unknown[] } }).openLoops.notDone).toEqual(
+      [],
+    );
+  });
+
+  it("open loops: a closed loop is not reported", async () => {
+    // The rejection half. Single-character mutation this catches: dropping
+    // the closed-set filter in deriveOpenLoops.
+    const item = await makeItem({ title: "Loop opened and closed" });
+    await appendLoopEvent(item.id, "open_loop", { loopId: "loop-a", text: "the retry path" });
+    await appendLoopEvent(item.id, "open_loop_closed", { loopId: "loop-a" });
+
+    const result = await runtime.call("orientation", { itemId: item.id });
+    expect(loopsOf(result)).toEqual([]);
+  });
+
+  it("open loops: closes only the loop named, leaving the others open", async () => {
+    const item = await makeItem({ title: "Three loops, one closed" });
+    await appendLoopEvent(item.id, "open_loop", { loopId: "loop-a", text: "a" });
+    await appendLoopEvent(item.id, "open_loop", { loopId: "loop-b", text: "b" });
+    await appendLoopEvent(item.id, "open_loop", { loopId: "loop-c", text: "c" });
+    await appendLoopEvent(item.id, "open_loop_closed", { loopId: "loop-b" });
+
+    const result = await runtime.call("orientation", { itemId: item.id });
+    expect(loopsOf(result).map((l) => l.loopId)).toEqual(["loop-a", "loop-c"]);
+  });
+
+  it("open loops: reports a loop opened BEFORE the latest checkpoint", async () => {
+    // Deliberately not scoped to `since`/the checkpoint cursor the way
+    // `whatChanged` is. A loop that has survived several sessions is exactly
+    // the one a resuming session most needs to be told about, and a
+    // cursor-scoped read would hide it. Single-character mutation this
+    // catches: reusing `whatChanged`'s bounded read for this query.
+    const item = await makeItem({ title: "Old loop, newer checkpoint" });
+    await appendLoopEvent(item.id, "open_loop", {
+      loopId: "loop-old",
+      text: "still unresolved from two sessions ago",
+    });
+    await appendCheckpoint(item.id, "picked this up fresh");
+
+    const result = await runtime.call("orientation", { itemId: item.id });
+    expect(loopsOf(result).map((l) => l.loopId)).toEqual(["loop-old"]);
+  });
+
+  it("open loops: an item with no loop events reports an empty list, not an error", async () => {
+    const item = await makeItem({ title: "No loops at all" });
+    const result = await runtime.call("orientation", { itemId: item.id });
+    expect(loopsOf(result)).toEqual([]);
+  });
+
+  it("open loops: another item's loops are not reported against this one", async () => {
+    // The query is item-scoped. Single-character mutation this catches:
+    // dropping the `"itemId" = $1` predicate from the loop query — every
+    // item in the database would then report every loop.
+    const mine = await makeItem({ title: "Mine" });
+    const theirs = await makeItem({ title: "Theirs" });
+    await appendLoopEvent(theirs.id, "open_loop", { loopId: "loop-theirs", text: "not mine" });
+
+    const result = await runtime.call("orientation", { itemId: mine.id });
+    expect(loopsOf(result)).toEqual([]);
+  });
+
+  it("open loops: a checkpoint carrying a loop-shaped payload is not read as a loop", async () => {
+    // The type filter is what distinguishes a loop from any other event that
+    // happens to have a `loopId` in its payload.
+    const item = await makeItem({ title: "Checkpoint that looks like a loop" });
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Event" ("itemId", "actorType", "actorId", "type", "payload")
+       VALUES ($1, 'agent'::"ActorType", 'crew-member', 'checkpoint'::"EventType", $2::jsonb)`,
+      item.id,
+      JSON.stringify({ loopId: "loop-fake", text: "not actually a loop" }),
+    );
+
+    const result = await runtime.call("orientation", { itemId: item.id });
+    expect(loopsOf(result)).toEqual([]);
+  });
+
+  it("open loops: reports notDone AND loops together for a completed item that has both", async () => {
+    // "Union, do not replace", asserted rather than assumed: the Summary
+    // path and the event path both survive on the same item.
+    const item = await makeItem({ title: "Has a summary and a live loop" });
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Summary" ("itemId", "shipped", "notDone", "userFacing", "watchFor", "finalState")
+       VALUES ($1, '["done thing"]'::jsonb, $2::jsonb, false, '[]'::jsonb, '{}'::jsonb)`,
+      item.id,
+      JSON.stringify([{ text: "leftover work", reason: "descoped" }]),
+    );
+    await appendLoopEvent(item.id, "open_loop", { loopId: "loop-live", text: "still open" });
+
+    const result = (await runtime.call("orientation", { itemId: item.id })) as {
+      openLoops: {
+        notDone: readonly { text: string }[];
+        loops: readonly { loopId: string }[];
+      };
+    };
+    expect(result.openLoops.notDone).toEqual([{ text: "leftover work", reason: "descoped" }]);
+    expect(result.openLoops.loops.map((l) => l.loopId)).toEqual(["loop-live"]);
+  });
+
   it("crew: reports the live assignment on the item, and omits a released one", async () => {
     const item = await makeItem({ title: "Has crew" });
     await claim({

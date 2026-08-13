@@ -110,14 +110,17 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
         item: { id: string; state: string };
         checkpoint: unknown;
         whatChanged: unknown[];
-        openLoops: { notDone: unknown[]; children: unknown[] };
+        openLoops: { notDone: unknown[]; children: unknown[]; loops: unknown[] };
         crew: unknown[];
       };
       expect(payload.item.id).toBe(created.item.id);
       expect(payload.item.state).toBe("on_deck");
       expect(payload.checkpoint).toBeNull();
-      expect(Array.isArray(payload.whatChanged)).toBe(true);
-      expect(payload.openLoops).toEqual({ notDone: [], children: [] });
+      // All three sources of "still outstanding", asserted exhaustively so a
+      // fourth one added later has to come through this test rather than
+      // appearing silently in the transport payload. `loops` is the one an
+      // item can carry while it is still in flight (SCHEMA.md §3a).
+      expect(payload.openLoops).toEqual({ notDone: [], children: [], loops: [] });
       expect(payload.crew).toEqual([]);
     });
 

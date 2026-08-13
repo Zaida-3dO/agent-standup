@@ -117,6 +117,10 @@ model Item {
   artifacts   Artifact[]
   summary     Summary?
   runs        Run[]
+  // Reviews that deferred their findings into THIS item — the back-reference
+  // of `Artifact.followUpItemId`. Named for the direction it reads in:
+  // "which reviews are relying on this item existing".
+  followUpFor Artifact[] @relation("ArtifactFollowUp")
 
   @@index([state])
   @@index([parentId])
@@ -231,6 +235,18 @@ enum EventType {
   // A settings write — set, cleared or patched (SCHEMA.md §17.2, §17.8).
   // `itemId` is null: this is a system-level event, not scoped to an item.
   setting_change
+  // An open loop opened, and the same loop closed (SCHEMA.md §3a). A loop is
+  // an event pair, not an item and not a row of its own: it has no state
+  // machine, no assignee, no review and no merge, so modelling it as an item
+  // would put it on the board and into every count that ranges over items.
+  // The pairing is by `payload.loopId`; a loop is OPEN exactly when its
+  // `open_loop` has no matching `open_loop_closed` — see src/lib/open-loops.ts.
+  //
+  // This is what lets an `executing` item carry an open loop at all. The
+  // other source, `Summary.notDone`, is 1:1 with an item and only written at
+  // completion, so before this an in-flight item had nowhere to put one.
+  open_loop
+  open_loop_closed
 }
 
 model Event {
@@ -297,10 +313,35 @@ enum ArtifactKind {
   other
 }
 
+// Review verdicts, tiered (SCHEMA.md §6a). The tier is what decides how much
+// re-review the next round costs, so it is a stored fact, not something a
+// reader infers from prose in `body`:
+//
+//   `lgtm`                 clean; merge.
+//   `lgtm_with_nits`       shippable, cosmetic findings left. Merges only
+//                          once the nits are addressed — which the
+//                          tip-currency check enforces for free: an
+//                          addressing commit moves the tip, so the approval
+//                          names a commit that is not the tip, and a light
+//                          re-review at the new tip is required
+//                          (see guards/merge.ts).
+//   `lgtm_with_followups`  the findings are real but not blocking THIS
+//                          change; merges immediately, **only** if a
+//                          follow-up item is linked (`followUpItemId`).
+//   `changes_required`     blocking; full fresh review.
+//
+// `approved` and `na` predate the tiering. Neither can be removed — dropping
+// a label from a Postgres enum is not an `ALTER`-shaped change, it is a type
+// rebuild — so `approved` is retained as an accepted synonym of `lgtm` and
+// `na` keeps its own meaning ("this artifact kind has no verdict to give").
+// `src/lib/verdicts.ts` is the single place that says which of these approve.
 enum Verdict {
   approved
   changes_required
   na
+  lgtm
+  lgtm_with_nits
+  lgtm_with_followups
 }
 
 model Artifact {
@@ -314,11 +355,46 @@ model Artifact {
   body           String?      @db.Text
   ref            String?
   browserSession String?
+  // The review's individual findings, each with a severity (SCHEMA.md §6a).
+  // A review's findings are a LIST of typed things, not one thing — a
+  // severity per finding is the whole point, and flattening them into `body`
+  // loses it. `Json?` rather than a satellite table because a finding has no
+  // structural reason to be a row (schema.prisma's own header rule): it is
+  // never edited independently, never referenced by a guard, and never
+  // cardinality-constrained — it is a value belonging to exactly one
+  // artifact, read back whole.
+  //
+  // The severity vocabulary and the shape of an entry are validated in code
+  // (`src/lib/findings.ts`), not by the column: Postgres cannot apply an
+  // enum type to a value nested inside jsonb, so a check constraint here
+  // would be a hand-written re-implementation of the same list in SQL, free
+  // to drift from the one the application validates against.
+  findings       Json?
+  // The follow-up item this review's findings were deferred into — required
+  // by the merge gate when `verdict` is `lgtm_with_followups`, and null for
+  // every other verdict (guards/merge.ts `merge.requires_linked_followup`).
+  //
+  // A real foreign key, deliberately, rather than an id in `customFields`:
+  // the whole reason `lgtm_with_followups` merges without another round is
+  // that the deferred work is genuinely recorded somewhere, and a bare
+  // string can name an item that never existed. It is also NOT modelled as a
+  // child of the reviewed item — a child in an actionable state would trip
+  // `hierarchy.no_finish_with_actionable_child` and block the very merge
+  // this verdict exists to permit.
+  followUpItemId String?
+  followUpItem   Item?        @relation("ArtifactFollowUp", fields: [followUpItemId], references: [id])
   createdByType  HolderType
   createdById    String
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
 
   @@index([itemId, kind, reviewRound])
+  @@index([followUpItemId])
+  // Storage-side only — nothing in the application queries findings yet. It
+  // is here rather than in a later migration because it is the difference
+  // between "severity is recorded" and "severity can be asked about", and
+  // adding it afterwards means an index build over a table that by then
+  // holds every review the installation has ever produced.
+  @@index([findings(ops: JsonbPathOps)], type: Gin)
 }
 
 model Person {

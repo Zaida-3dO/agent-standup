@@ -29,6 +29,7 @@ import {
   mergeRequiresApprovingCodeReviewGuard,
   mergeRequiresAuthorisationGuard,
   mergeRequiresCommitGuard,
+  mergeRequiresLinkedFollowUpGuard,
   mergeRequiresVisualReviewGuard,
 } from "./merge";
 import { planApprovalGuard } from "./plan-approval";
@@ -47,6 +48,7 @@ export const ALL_GUARDS = [
   mergeRequiresApprovingCodeReviewGuard,
   mergeRequiresVisualReviewGuard,
   mergeRequiresAuthorisationGuard,
+  mergeRequiresLinkedFollowUpGuard,
   summaryRequiredGuard,
   deferralFollowUpGuard,
 ] as const;
@@ -70,9 +72,11 @@ export {
   mergeRequiresApprovingCodeReviewGuard,
   mergeRequiresAuthorisationGuard,
   mergeRequiresCommitGuard,
+  mergeRequiresLinkedFollowUpGuard,
   mergeRequiresVisualReviewGuard,
 } from "./merge";
 export {
+  approvingArtifactAtCurrentRoundAndTip,
   currentReviewRound,
   hasApprovingArtifactAtCurrentRound,
   hasApprovingArtifactAtCurrentRoundAndTip,

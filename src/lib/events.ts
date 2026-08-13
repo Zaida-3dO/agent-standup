@@ -9,63 +9,46 @@
 // in; there is no second boundary here to accidentally open. See
 // `docs/plans/SCHEMA.md` §3 and `src/lib/service/context.ts`.
 import type { TransactionHandle } from "./service/context";
+import { insertEventRow, type EventFields } from "./events-insert";
 
-/** The event types this module knows how to append. Mirrors `EventType` in schema.prisma. */
-export type EventType =
-  | "field_change"
-  | "state_change"
-  | "claim"
-  | "release"
-  | "takeover"
-  | "review_requested"
-  | "review"
-  | "merge"
-  | "dispatch"
-  | "dispatch_claimed"
-  | "checkpoint"
-  | "nudge"
-  | "escalation"
-  | "note"
-  | "setting_change";
-
-export type ActorType = "person" | "agent" | "system";
-
-/** Who is credited with an event — the same shape `Caller` carries through the service layer. */
-export interface EventActor {
-  readonly actorType: ActorType;
-  /** Required unless `actorType` is `system` — null for `system`. */
-  readonly actorId?: string | null;
-  readonly sessionId?: string | null;
-}
-
-export interface AppendEventInput {
-  /** Null for a system-level event not scoped to one item. */
-  readonly itemId?: string | null;
-  readonly actor: EventActor;
-  readonly assignmentId?: string | null;
-  readonly type: EventType;
-  /** Type-specific payload — a discriminated union keyed on `type`, per SCHEMA.md §3. */
-  readonly payload: Record<string, unknown>;
-  /** Prose for checkpoint/note/nudge/escalation. Never validated or indexed. */
-  readonly body?: string | null;
-}
-
-export interface AppendedEvent {
-  readonly id: bigint;
-  readonly txId: bigint;
-  readonly ts: Date;
-}
+export type { ActorType, AppendedEvent, EventActor, EventType } from "./events-insert";
+import type { ActorType, AppendedEvent, EventActor, EventType } from "./events-insert";
 
 /**
- * Appends one row to `events`.
+ * What a normal caller may say about an event. Structurally identical to
+ * `EventFields` — and **deliberately has no `ts`**. That absence is the
+ * primary boundary, not a comment about one: a caller writing
+ * `appendEvent(db, { …, ts })` does not compile, because an object literal
+ * with an unknown property fails assignment to this type.
  *
- * `ts` and `txId` are both left to Postgres's own column defaults
- * (`CURRENT_TIMESTAMP` and `txid_current()`) rather than computed here and
- * passed in — the row is timestamped and tagged with its writing
- * transaction at the instant Postgres actually executes the `INSERT`,
- * inside whatever transaction the caller's `db` handle is bound to. There
- * is no window in which this function could compute a value outside that
- * transaction and hand it to a query running inside it.
+ * The run-time refusal in `appendEvent` covers the remaining hole, which is
+ * real: a value that is not an object literal (built up dynamically, spread
+ * from an untyped source, or cast) can carry a `ts` past the type system
+ * without a diagnostic, and an import script written in a hurry is exactly
+ * the caller that would do it.
+ */
+export type AppendEventInput = EventFields;
+
+/**
+ * Appends one row to `events`, timestamped `now()`.
+ *
+ * `ts` and `txId` are both left to Postgres's own column defaults rather
+ * than computed here and passed in — the row is timestamped and tagged with
+ * its writing transaction at the instant Postgres actually executes the
+ * `INSERT`, inside whatever transaction the caller's `db` handle is bound
+ * to. There is no window in which this function could compute a value
+ * outside that transaction and hand it to a query running inside it.
+ *
+ * **`ts` is not overridable here, and that is a security property rather
+ * than an omission.** Every "what has happened since I last looked" read in
+ * this system slices the ledger by time and by id, so a row that claims to
+ * have happened earlier than it did is a row a reader has already scrolled
+ * past — writable history is unnoticeable history. There IS a path that sets
+ * a timestamp, because a one-time import from an external file-based store
+ * has to preserve the chronology it arrives with, and an import that stamped
+ * `now()` on every row would flatten years of sequence into one instant. It
+ * is a separate function in a separate module that the rest of `src/` cannot
+ * import (`events-backfill.ts`, and eslint.config.mjs's zone for it).
  *
  * Because this takes a `TransactionHandle` — the same handle
  * `ServiceContext.db` narrows a Prisma transaction down to (see
@@ -78,28 +61,14 @@ export async function appendEvent(
   db: TransactionHandle,
   input: AppendEventInput,
 ): Promise<AppendedEvent> {
-  const rows = await db.$queryRawUnsafe<{ id: bigint; txId: bigint; ts: Date }[]>(
-    `INSERT INTO "Event" ("itemId", "actorType", "actorId", "sessionId", "assignmentId", "type", "payload", "body")
-     VALUES ($1, $2::"ActorType", $3, $4, $5, $6::"EventType", $7::jsonb, $8)
-     RETURNING "id", "txId", "ts"`,
-    input.itemId ?? null,
-    input.actor.actorType,
-    input.actor.actorId ?? null,
-    input.actor.sessionId ?? null,
-    input.assignmentId ?? null,
-    input.type,
-    JSON.stringify(input.payload),
-    input.body ?? null,
-  );
-  const row = rows[0];
-  if (!row) {
-    // Unreachable in practice — `INSERT ... RETURNING` always returns the
-    // row it just inserted, or the statement itself throws. Guarded rather
-    // than asserted with `!`, so a driver that ever changed this contract
-    // fails loudly here instead of on the first `.id` access downstream.
-    throw new Error("appendEvent: INSERT ... RETURNING produced no row.");
+  if (Object.prototype.hasOwnProperty.call(input, "ts")) {
+    throw new Error(
+      "appendEvent: `ts` cannot be set on the normal append path — events are timestamped by " +
+        "Postgres at the moment they are written. Backfilling historical events is a separate, " +
+        "deliberately narrow path (appendBackfillEvent).",
+    );
   }
-  return { id: row.id, txId: row.txId, ts: row.ts };
+  return insertEventRow(db, input, null);
 }
 
 /**

@@ -29,7 +29,12 @@
 // own doc for the exact scenario this closes.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
-import { currentReviewRound, hasApprovingArtifactAtCurrentRoundAndTip } from "./merge-review-round";
+import {
+  approvingArtifactAtCurrentRoundAndTip,
+  currentReviewRound,
+  hasApprovingArtifactAtCurrentRoundAndTip,
+} from "./merge-review-round";
+import { APPROVING_VERDICTS, requiresLinkedFollowUp } from "../../verdicts";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement"]);
 
@@ -239,6 +244,119 @@ export const mergeRequiresAuthorisationGuard: Guard = {
   },
 };
 
+/**
+ * The states in which a follow-up item is **not** a real commitment to do the
+ * work: it is finished one way or another, or explicitly abandoned. Linking
+ * one of these would satisfy the letter of `lgtm_with_followups` while
+ * defeating the whole point — the deferred findings would be attached to
+ * something nobody is ever going to pick up.
+ *
+ * `merged` and `research_done` are included alongside `wont_do` and
+ * `cancelled` for the same reason even though they are successes: work that
+ * has already shipped cannot absorb findings raised after it shipped.
+ */
+const CLOSED_ITEM_STATES: ReadonlySet<string> = new Set([
+  "merged",
+  "research_done",
+  "wont_do",
+  "cancelled",
+]);
+
+interface FollowUpItemRow {
+  id: string;
+  state: string;
+}
+
+/**
+ * Requires a linked follow-up item when — and only when — the approval this
+ * merge is resting on carries the `lgtm_with_followups` verdict (SCHEMA.md
+ * §6a).
+ *
+ * **What the verdict buys, and what it has to cost.** `lgtm_with_followups`
+ * exists so that a finding which is real but not blocking *this* change does
+ * not cost a whole extra review round: the change merges as it stands, and
+ * the finding is done separately. That bargain is only honest if
+ * "separately" is a thing that exists. Left to whoever remembers, this
+ * becomes the verdict everyone reaches for to skip a round — it is strictly
+ * cheaper than every alternative and nothing checks the other half — and the
+ * follow-ups quietly never happen. The system would then have a verdict whose
+ * observable effect is "merge without finishing the review", which is exactly
+ * what tiering was meant to prevent.
+ *
+ * **Enforced at the merge, not at the write.** Recording the verdict is a
+ * reviewer stating an opinion, and blocking that would mean a reviewer cannot
+ * say what they found until someone has filed the follow-up. Spending it is
+ * the irreversible step, so that is where the follow-up has to be real. This
+ * also keeps the rule enforceable against history: an imported artifact can
+ * carry the verdict without a link, and it simply cannot be used to merge
+ * until one is attached.
+ *
+ * **Three distinct rejections, not one.** Missing link, dangling link, and
+ * link-to-something-already-closed are different mistakes with different
+ * fixes, and a guard that answered all three with one message would make the
+ * caller guess which.
+ */
+export const mergeRequiresLinkedFollowUpGuard: Guard = {
+  id: "merge.requires_linked_followup",
+  description:
+    "Entering merged on an lgtm_with_followups approval requires that approval to link a live follow-up item.",
+  appliesTo: (_from, to) => to === "merged",
+  async check(input: GuardInput) {
+    // Deliberately the SAME artifact `merge.requires_approving_code_review`
+    // accepts — resolved by the shared helper rather than re-queried here —
+    // so this guard can never be reasoning about a different artifact from
+    // the one the merge is actually resting on. If no approval qualifies,
+    // this guard has nothing to say: that item is already refused by
+    // `merge.requires_approving_code_review`, and a second rejection naming
+    // the same cause would only obscure it.
+    const approval = await approvingArtifactAtCurrentRoundAndTip(
+      input.db,
+      input.item.id,
+      "code_review",
+    );
+    if (!approval || !requiresLinkedFollowUp(approval.verdict)) {
+      return guardOk;
+    }
+
+    if (!approval.followUpItemId) {
+      return guardRejected(
+        "The approving code_review is lgtm_with_followups, which merges without a further " +
+          "review round only because its findings are recorded as separate work — but no " +
+          "follow-up item is linked to it. Create the follow-up and link it, or re-review at " +
+          "a verdict that matches what was actually found.",
+        { fields: ["state"] },
+      );
+    }
+
+    const rows = await input.db.$queryRawUnsafe<FollowUpItemRow[]>(
+      `SELECT "id", "state" FROM "Item" WHERE "id" = $1`,
+      approval.followUpItemId,
+    );
+    const followUp = rows[0];
+    if (!followUp) {
+      // Reachable despite the foreign key: `Artifact.followUpItemId` is
+      // `ON DELETE SET NULL`, so a deleted item nulls the link rather than
+      // leaving it dangling — but a row read in one transaction can still
+      // race a delete in another, and a guard that assumed the FK made this
+      // impossible would throw on `undefined` instead of refusing.
+      return guardRejected(
+        `The approving code_review links follow-up item ${approval.followUpItemId}, which no ` +
+          "longer exists. Link a follow-up item that does.",
+        { fields: ["state"] },
+      );
+    }
+    if (CLOSED_ITEM_STATES.has(followUp.state)) {
+      return guardRejected(
+        `The approving code_review links follow-up item ${followUp.id}, which is already ` +
+          `${followUp.state} — a closed item cannot carry findings raised after it closed. ` +
+          "Link a follow-up that is still open.",
+        { fields: ["state"] },
+      );
+    }
+    return guardOk;
+  },
+};
+
 interface ApprovingArtifactRow {
   createdByType: string;
   commitSha: string | null;
@@ -282,13 +400,21 @@ async function hasPersonApprovedCodeReviewAtCurrentRoundAndTip(
 ): Promise<boolean> {
   const round = await currentReviewRound(db, itemId);
   const rows = await db.$queryRawUnsafe<ApprovingArtifactRow[]>(
+    // `"verdict" = ANY(...)` rather than `= 'approved'`: review is tiered
+    // (SCHEMA.md §6a) and all three `lgtm` tiers are approvals. A person who
+    // signs off with `lgtm_with_nits` has authorised the merge just as much
+    // as one who signs off with `lgtm` — reading only the single legacy
+    // label would make a human sign-off invisible to this clause purely
+    // because of which tier they chose.
     `SELECT "createdByType", "commitSha"
        FROM "Artifact"
-      WHERE "itemId" = $1 AND "kind" = 'code_review' AND "verdict" = 'approved'
+      WHERE "itemId" = $1 AND "kind" = 'code_review' AND "verdict" = ANY($3::"Verdict"[])
         AND "createdByType" = 'person' AND "reviewRound" = $2
+      ORDER BY "createdAt" DESC, "id" DESC
       LIMIT 1`,
     itemId,
     round,
+    APPROVING_VERDICTS,
   );
   const approval = rows[0];
   if (!approval) {
@@ -298,10 +424,11 @@ async function hasPersonApprovedCodeReviewAtCurrentRoundAndTip(
   return approval.commitSha === tip;
 }
 
-/** All four merge guards, for the registration module to install in one call. */
+/** All five merge guards, for the registration module to install in one call. */
 export const MERGE_GUARDS: readonly Guard[] = [
   mergeRequiresCommitGuard,
   mergeRequiresApprovingCodeReviewGuard,
   mergeRequiresVisualReviewGuard,
   mergeRequiresAuthorisationGuard,
+  mergeRequiresLinkedFollowUpGuard,
 ];
