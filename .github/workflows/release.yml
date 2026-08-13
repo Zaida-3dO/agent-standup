@@ -5,6 +5,38 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Deliberately no `concurrency` block here.
+#
+# `cancel-in-progress` is out regardless — this workflow pushes an image and
+# publishes an npm package, and cancelling mid-publish risks a half-published
+# release (partial image layers pushed, or an npm publish interrupted after
+# the registry accepted it but before the job reports success).
+#
+# A non-cancelling *queue* was considered instead, but GitHub's concurrency
+# groups don't queue arbitrarily deep: only one run is ever "in progress" per
+# group, and if a second run is already pending when a third arrives, the
+# second is silently CANCELLED to make room for the third — cancellation
+# happens to a queue slot even with cancel-in-progress: false, it just
+# happens before that run starts instead of mid-publish. For a release
+# pipeline that would mean an intermediate tag (e.g. v1.2.1, pushed shortly
+# after v1.2.0 and shortly before v1.2.2) never gets released at all, with no
+# louder signal than a "cancelled" run in the Actions history — worse than
+# leaving concurrency alone, where every tagged push publishes.
+#
+# Tag pushes are also not the problem this change exists for: they are rare,
+# deliberate, one-at-a-time events, not the "pushed a PR branch three times
+# in five minutes" pattern that makes CI's mutation-testing job worth
+# cancelling. There is no evidence of wasted runs here to fix.
+#
+# What this does NOT cover: two releases publishing concurrently can still
+# race on which one's `latest` Docker tag write lands last, independent of
+# trigger order (docker/metadata-action's `type=raw,value=latest` is
+# unconditional — see the comment below). That's a pre-existing ordering risk
+# this change neither introduces nor fixes, and no concurrency shape
+# available here (cancel, or GitHub's shallow queue) fixes it without the
+# silent-drop downside above — it would need an explicit release-sequencing
+# mechanism, which is out of scope for a concurrency block.
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest

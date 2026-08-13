@@ -14,6 +14,34 @@ on:
   merge_group:
     types: [checks_requested]
 
+# Cancels a superseded run of the SAME pull request — the expensive step here
+# is mutation-testing (22-57 min), so a PR pushed several times in quick
+# succession used to burn a full mutation run per push even though only the
+# last one's result would ever matter.
+#
+# Scoped so ONLY pull_request runs can ever share a group and be cancelled:
+#   - pull_request events group by PR number (`pr-<number>`): pushing again to
+#     the same PR shares a group with, and cancels, that PR's own prior run.
+#   - every other event (merge_group, push to main) groups by `github.run_id`,
+#     which is unique per run, so it can never collide with anything else in
+#     the group — never queued behind another run, never cancelled by one.
+#     This is deliberately stronger than grouping by ref: GitHub's own
+#     concurrency semantics cancel not only what cancel-in-progress targets,
+#     but ALSO silently cancel any already-pending run sharing the group when
+#     a newer one joins it. A merge_group run sharing a group with anything
+#     would risk recreating the exact "queue waits forever for a status that
+#     never posts" failure this workflow's merge_group trigger exists to
+#     prevent (docs/merge-queue-runbook.md); a `main` push sharing a group
+#     with another `main` push would risk one merge's verification being
+#     silently skipped. Per-run-id groups make both impossible, not just
+#     unlikely.
+#   - cancel-in-progress is separately gated on event_name == 'pull_request'
+#     too, as a second, independent guard — even if the group key above were
+#     ever loosened, a non-PR run still could not be cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changed paths
