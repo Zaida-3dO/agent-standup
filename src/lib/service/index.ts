@@ -183,6 +183,17 @@ export {
   type HookDecisionOperationOutput,
 } from "./operations/hook-decision";
 
+// Telemetry ingest (MILESTONES.md #50). The record shape and the caps live
+// in `@/lib/telemetry/contract` rather than here or in the operation: the
+// hook's spool (#88) imports the same module, so there is one definition
+// both halves speak and no way for them to disagree.
+export {
+  recordToolCalls,
+  MAX_BATCH_SIZE,
+  type RecordToolCallsInput,
+  type RecordToolCallsOutput,
+} from "./operations/record-tool-calls";
+
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
 // (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,
