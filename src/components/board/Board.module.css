@@ -1,18 +1,37 @@
+/* The board paints its own surface rather than inheriting one. Every
+   colour in this file is chosen for a dark background, so the board sets
+   the background those colours assume instead of depending on a page-level
+   one it does not control — otherwise its light text washes out against
+   whatever is behind it. Scoped to the board's own container rather than
+   reaching up to a global stylesheet, which is not this row's to change. */
 .board {
   padding: 1.25rem;
+  min-height: 100%;
+  background: #0e0e11;
   color: #f4f4f5;
 }
 
+/* Same surface as `.board` — the loading and error states are the board
+   before it has anything to show, so they should not flash a different
+   colour of page underneath. */
 .centered {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 12rem;
+  padding: 1.25rem;
+  background: #0e0e11;
   color: #a1a1aa;
 }
 
 /* The needs-you badge — the whole point of row #37's third piece, so it
-   sits above the columns rather than inside one. */
+   sits above the columns rather than inside one.
+
+   The background is deliberately opaque rather than a translucent red. A
+   translucent fill composites against whatever is behind it, so the pale
+   text on top only stays legible if the page behind is dark — and the
+   badge would silently turn pale-on-pale anywhere it is not. An opaque
+   colour is legible wherever it is rendered. */
 .needsYou {
   display: flex;
   align-items: center;
@@ -21,7 +40,7 @@
   padding: 0.5rem 0.85rem;
   border: 1px solid #7f1d1d;
   border-radius: 0.5rem;
-  background: rgba(127, 29, 29, 0.22);
+  background: #2a1215;
   color: #fecaca;
   font-size: 0.9rem;
 }
