@@ -19,7 +19,13 @@ export async function POST(
   const { id, loopId } = await params;
   let body: Record<string, unknown>;
   try {
-    const parsed = (await request.json().catch(() => ({}))) as unknown;
+    // The parse is allowed to throw, exactly as the sibling routes let it —
+    // `.catch(() => ({}))` here would make the surrounding handler
+    // unreachable and accept a malformed body as an empty one. Everything
+    // this endpoint needs is in the path, so swallowing would even be
+    // defensible; it is not worth one endpoint disagreeing with every other
+    // about what a broken request means.
+    const parsed = (await request.json()) as unknown;
     body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
     return invalidJsonResponse();

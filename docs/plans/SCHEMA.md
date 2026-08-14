@@ -346,6 +346,17 @@ merge two genuinely different loops that happened to be phrased identically. The
 not repeat the text: the opening event carries it, and a second copy is a second thing that can
 disagree.
 
+**A `loop_id` may be used once per item, ever — not once at a time.** Reuse is refused at the write
+even for an id whose loop was closed, and the reason is the fold below rather than tidiness: it
+collects every close into a set over the whole stream and filters every open against it, with no
+pairing and no ordering, so **one close suppresses every open of that id, past and future**. An id
+reused after its loop closed would therefore write a row, return success, and produce a loop that
+`orientation` never reports and that nothing can close — invisible and unclosable, which is strictly
+worse than the duplicate it looks like. Supporting reuse would mean pairing opens to closes in
+sequence, and that is the one thing the fold cannot do (see order-independence below). Ids are
+cheap: `loop_add` mints one when the caller does not supply it, so the cost of this rule is nothing
+and the cost of the alternative is a class of loop nobody can see or clean up.
+
 **Whether a loop is open is derived, never stored** (§13a — store facts, derive volatiles). It is
 every `open_loop` whose `loop_id` has no `open_loop_closed`, folded at read time. So closing a loop
 appends a fact rather than marking anything: there is no row to update, and the ledger stays

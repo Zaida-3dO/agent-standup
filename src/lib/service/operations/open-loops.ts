@@ -81,6 +81,26 @@ async function requireItem(ctx: ServiceContext, itemId: string): Promise<void> {
   }
 }
 
+/**
+ * Whether `loopId` appears in any loop event for the item — open or closed.
+ *
+ * Deliberately reads the raw payloads rather than asking `deriveOpenLoops`.
+ * The fold answers "which loops are open", and a closed loop is invisible to
+ * it by design — which is exactly the question this must not ask, because a
+ * closed id is precisely the one that must not be reused.
+ *
+ * Malformed payloads are skipped, matching the fold's tolerance: a row the
+ * fold cannot read is a row that can never make a loop visible, so it is not
+ * a collision with anything.
+ */
+function usesLoopId(events: readonly LoopEventLike[], loopId: string): boolean {
+  return events.some((event) => {
+    const payload = event.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    return (payload as Record<string, unknown>).loopId === loopId;
+  });
+}
+
 /** Every loop event for an item, oldest first — the same slice `orientation` folds. */
 async function loopEvents(ctx: ServiceContext, itemId: string): Promise<LoopEventLike[]> {
   return ctx.db.$queryRawUnsafe<LoopEventLike[]>(
@@ -131,23 +151,39 @@ export const loopAdd = defineOperation({
 
     const loopId = input.loopId ?? crypto.randomUUID();
 
-    // Re-opening a loop that is already open is refused rather than appended.
-    // The fold keeps the FIRST occurrence of a loopId, so a second open is not
-    // merely redundant — it is silently discarded, and a caller who believed
-    // it had recorded new text would be wrong with no way to notice. This is
-    // only reachable when the caller supplied its own `loopId`; a generated
-    // one cannot collide.
-    if (input.loopId) {
-      const alreadyOpen = deriveOpenLoops(await loopEvents(ctx, input.itemId)).some(
-        (loop) => loop.loopId === loopId,
+    // A loopId may be used **once per item**, ever — not once at a time.
+    //
+    // The narrower "is this id open right now" reading is the one that looks
+    // right, and it is wrong, because of how the fold decides what is open.
+    // `deriveOpenLoops` collects every close into a set over the whole stream
+    // and filters every open against it (`open-loops.ts`), with no pairing
+    // and no ordering. So one close suppresses *every* open of that id, past
+    // and future: re-opening a closed id writes a row, returns success, and
+    // produces a loop that orientation never reports and `loop_close` refuses
+    // to close, because it is not open. A permanently invisible, unclosable
+    // loop — strictly worse than the already-open case, which at least stays
+    // visible.
+    //
+    // That global-set behaviour is not a defect to route around. It is what
+    // makes the fold order-independent, which SCHEMA.md §3 requires: event
+    // ids are handed out before commit, so a close genuinely can be read
+    // before its own open, and a sequence-pairing fold would report a closed
+    // loop as open in exactly that case. Reuse is the cheaper thing to give
+    // up — ids are free, and `loop_add` mints one when the caller does not
+    // care.
+    //
+    // Checked against every loop event for the id rather than the open ones,
+    // and applied whether or not the caller supplied the id: a generated UUID
+    // cannot collide, so the extra query costs nothing in the ordinary case
+    // and the guard cannot be bypassed by omitting the field.
+    const events = await loopEvents(ctx, input.itemId);
+    if (usesLoopId(events, loopId)) {
+      throw new InvalidInputError(
+        `Loop ${loopId} has already been used on this item — a loopId cannot be reused, ` +
+          "even after the loop it named was closed. Use a different loopId, or omit it " +
+          "and one will be generated.",
+        { fields: ["loopId"] },
       );
-      if (alreadyOpen) {
-        throw new InvalidInputError(
-          `Loop ${loopId} is already open on this item — close it before opening it again, ` +
-            "or use a different loopId.",
-          { fields: ["loopId"] },
-        );
-      }
     }
 
     const actor = await resolveActor(ctx, input);

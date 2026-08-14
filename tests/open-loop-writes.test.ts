@@ -218,6 +218,47 @@ describeIfDb("loop_add and loop_close (#100), against Postgres", () => {
       expect(rows[0]?.assignmentId).toBeNull();
     });
 
+    it("does not credit a released assignment", async () => {
+      const itemId = await seedItem();
+      const assignmentId = await claimFor(itemId, "session-1");
+      await prisma.assignment.update({
+        where: { id: assignmentId },
+        data: { releasedAt: new Date() },
+      });
+
+      await runtime.call("loop_add", { itemId, text: "x", sessionId: "session-1" });
+
+      const rows = await prisma.event.findMany({ where: { itemId, type: "open_loop" } });
+      // Dropping `AND "releasedAt" IS NULL` from `resolveActor`'s lookup makes
+      // this the failing test. A finished session's identity must not be
+      // attached to work recorded after it let go — and the session-id clause
+      // alone does not catch it, because the session id still matches.
+      expect(rows[0]?.assignmentId).toBeNull();
+      // The session is still recorded: it is who called, which is true
+      // regardless of what they hold.
+      expect(rows[0]?.sessionId).toBe("session-1");
+      // And the holder is NOT inherited from the dead claim.
+      expect(rows[0]?.actorType).toBe("system");
+      expect(rows[0]?.actorId).toBeNull();
+    });
+
+    it("does not credit a released assignment on the close either", async () => {
+      const itemId = await seedItem();
+      const assignmentId = await claimFor(itemId, "session-1");
+      const added = (await runtime.call("loop_add", { itemId, text: "x" })) as { loopId: string };
+      await prisma.assignment.update({
+        where: { id: assignmentId },
+        data: { releasedAt: new Date() },
+      });
+
+      await runtime.call("loop_close", { itemId, loopId: added.loopId, sessionId: "session-1" });
+
+      const rows = await prisma.event.findMany({ where: { itemId, type: "open_loop_closed" } });
+      // Both write paths share `resolveActor`, but sharing is not a test —
+      // a change to one call site would otherwise be caught only for the open.
+      expect(rows[0]?.assignmentId).toBeNull();
+    });
+
     it("refuses empty text", async () => {
       const itemId = await seedItem();
       const error = await callFails("loop_add", { itemId, text: "   " });
@@ -236,9 +277,10 @@ describeIfDb("loop_add and loop_close (#100), against Postgres", () => {
       await runtime.call("loop_add", { itemId, loopId: "dup", text: "first" });
 
       const error = await callFails("loop_add", { itemId, loopId: "dup", text: "second" });
-      // The fold keeps the FIRST occurrence, so a second open is not
-      // redundant — it is silently discarded, and a caller who believed it had
-      // recorded new text would be wrong with no way to notice.
+      // The fold keeps the FIRST occurrence (pinned by its own test below),
+      // so a second open is not redundant — it is silently discarded, and a
+      // caller who believed it had recorded new text would be wrong with no
+      // way to notice.
       expect(error.code).toBe("invalid_input");
       expect(error.fields).toEqual(["loopId"]);
 
@@ -247,15 +289,76 @@ describeIfDb("loop_add and loop_close (#100), against Postgres", () => {
       expect(loops[0]?.text).toBe("first");
     });
 
-    it("allows re-opening a loopId that was closed", async () => {
+    it("refuses re-using a loopId whose loop was closed", async () => {
       const itemId = await seedItem();
       await runtime.call("loop_add", { itemId, loopId: "reuse", text: "first" });
       await runtime.call("loop_close", { itemId, loopId: "reuse" });
 
-      // Refusing this would make the duplicate check a permanent ban on an id
-      // rather than a guard against two live loops sharing one.
-      await runtime.call("loop_add", { itemId, loopId: "reuse", text: "second" });
+      const error = await callFails("loop_add", { itemId, loopId: "reuse", text: "second" });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["loopId"]);
+
+      // Nothing was written. Allowing this would append a row and return
+      // success while producing a loop that can never be seen or closed:
+      // `deriveOpenLoops` filters every open against a set of ALL closes, so
+      // the earlier close suppresses this open too.
+      const rows = await prisma.event.findMany({ where: { itemId, type: "open_loop" } });
+      expect(rows).toHaveLength(1);
+    });
+
+    it("would produce an invisible, unclosable loop if reuse were allowed", async () => {
+      // The failure the refusal above exists to prevent, demonstrated against
+      // the real fold rather than argued in a comment — so that anyone
+      // tempted to relax the rule can see what it costs. Written at the
+      // ledger level because the operation now refuses to produce this state.
+      const itemId = await seedItem();
+      await runtime.call("loop_add", { itemId, loopId: "ghost", text: "first" });
+      await runtime.call("loop_close", { itemId, loopId: "ghost" });
+
+      // A second open of the same id, as a relaxed `loop_add` would write it.
+      await prisma.event.create({
+        data: {
+          itemId,
+          actorType: "system",
+          type: "open_loop" as never,
+          payload: { loopId: "ghost", text: "second" },
+        },
+      });
+
+      const rows = await prisma.event.findMany({ where: { itemId, type: "open_loop" } });
+      expect(rows).toHaveLength(2);
+      // Two opens in the ledger, and the read path reports nothing.
       expect(await openLoops(itemId)).toHaveLength(0);
+      // And it cannot be cleaned up: `loop_close` refuses, because by the
+      // only definition of open that exists, it is not open.
+      const error = await callFails("loop_close", { itemId, loopId: "ghost" });
+      expect(error.code).toBe("not_found");
+    });
+
+    it("allows a fresh loopId after an earlier loop on the item was closed", async () => {
+      const itemId = await seedItem();
+      await runtime.call("loop_add", { itemId, loopId: "first-id", text: "first" });
+      await runtime.call("loop_close", { itemId, loopId: "first-id" });
+
+      // The rule is one id used once, not one loop per item — a check that
+      // rejected any open after any close would also pass the tests above.
+      await runtime.call("loop_add", { itemId, loopId: "second-id", text: "second" });
+      const loops = await openLoops(itemId);
+      expect(loops).toHaveLength(1);
+      expect(loops[0]?.loopId).toBe("second-id");
+    });
+
+    it("refuses a reused loopId even when the caller omits it on the first open", async () => {
+      const itemId = await seedItem();
+      const added = (await runtime.call("loop_add", { itemId, text: "first" })) as {
+        loopId: string;
+      };
+
+      // The generated id is a real id: passing it back must collide like any
+      // other. Narrowing the guard to caller-supplied ids only would let this
+      // through.
+      const error = await callFails("loop_add", { itemId, loopId: added.loopId, text: "second" });
+      expect(error.code).toBe("invalid_input");
     });
 
     it("keeps loops on different items independent", async () => {
@@ -371,6 +474,51 @@ describeIfDb("loop_add and loop_close (#100), against Postgres", () => {
       const error = await callFails("loop_close", { itemId: "no-such-item", loopId: "x" });
       expect(error.code).toBe("not_found");
       expect(error.fields).toEqual(["itemId"]);
+    });
+  });
+
+  describe("the fold premises this operation depends on", () => {
+    it("keeps the FIRST open of a loopId, which is what makes a duplicate open a silent loss", async () => {
+      // `loop_add`'s duplicate refusal rests entirely on this. If the fold
+      // kept the LAST occurrence instead, a second open would quietly WIN
+      // rather than be discarded — still wrong, but a different wrong, and
+      // the refusal's stated reason would then be false. Pinned here, in
+      // the file that depends on it, so the coupling is visible from this
+      // side rather than only in the fold's own tests.
+      const itemId = await seedItem();
+      await runtime.call("loop_add", { itemId, loopId: "first-wins", text: "first" });
+      await prisma.event.create({
+        data: {
+          itemId,
+          actorType: "system",
+          type: "open_loop" as never,
+          payload: { loopId: "first-wins", text: "second" },
+        },
+      });
+
+      const loops = await openLoops(itemId);
+      expect(loops).toHaveLength(1);
+      expect(loops[0]?.text).toBe("first");
+    });
+
+    it("suppresses an open that appears after a close of the same id", async () => {
+      // The exact behaviour the reuse refusal exists for, at the fold level:
+      // the close set is global, so position in the stream does not save a
+      // later open. If this ever changed to sequence-pairing, the reuse rule
+      // could be relaxed — and this test is where that would first show up.
+      const itemId = await seedItem();
+      await runtime.call("loop_add", { itemId, loopId: "later", text: "first" });
+      await runtime.call("loop_close", { itemId, loopId: "later" });
+      await prisma.event.create({
+        data: {
+          itemId,
+          actorType: "system",
+          type: "open_loop" as never,
+          payload: { loopId: "later", text: "second" },
+        },
+      });
+
+      expect(await openLoops(itemId)).toHaveLength(0);
     });
   });
 
