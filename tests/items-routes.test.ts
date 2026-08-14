@@ -145,8 +145,13 @@ describeIfDb("items HTTP routes against Postgres", () => {
     const patched = (await patchResponse.json()) as { item: { priority: string } };
     expect(patched.item.priority).toBe("P0");
 
+    // `?full=true` — `priority` is not in the slim default shape
+    // (MILESTONES.md #107), and reading it back is what this test is for.
+    // This also exercises the route's own threading of the opt-in: without
+    // it the parameter would be dropped in the adapter and the assertion
+    // would fail on `undefined`.
     const reread = await itemRoute
-      .GET(new Request(`http://localhost/api/items/${created.item.id}`), {
+      .GET(new Request(`http://localhost/api/items/${created.item.id}?full=true`), {
         params: Promise.resolve({ id: created.item.id }),
       })
       .then((r) => r.json() as Promise<{ item: { priority: string } }>);
@@ -179,8 +184,10 @@ describeIfDb("items HTTP routes against Postgres", () => {
       }),
     );
 
+    // Same as above: `area` is only in the full record, so this asserts the
+    // filter and the collection route's `?full=` threading together.
     const response = await collectionRoute.GET(
-      new Request("http://localhost/api/items?area=route-filter-target"),
+      new Request("http://localhost/api/items?area=route-filter-target&full=true"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { items: { title: string; area: string }[] };

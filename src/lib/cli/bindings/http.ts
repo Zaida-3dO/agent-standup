@@ -96,7 +96,17 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
   },
   get_item: {
     method: "GET",
-    request: (input) => ({ path: `/api/items/${encodeURIComponent(String(input.id ?? ""))}` }),
+    // `id` goes in the path; every other input — `full` (MILESTONES.md
+    // #107) — goes in the query string. Without this the two
+    // bindings would disagree about what `--full` does: `direct` would
+    // return the whole record and `http` the slim shape, from one command
+    // line. Row #85's one-interface test compares exactly that.
+    request: (input) => {
+      const { id, ...rest } = input;
+      return {
+        path: `/api/items/${encodeURIComponent(String(id ?? ""))}${queryString(rest)}`,
+      };
+    },
     unwrap: (body) => property(body, "item"),
   },
   update_item: {

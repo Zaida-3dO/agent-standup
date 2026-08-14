@@ -118,13 +118,23 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     noun: "item",
     verb: "get",
     operation: "get_item",
-    summary: "Show one item.",
-    buildInput: (rest) => {
+    summary:
+      "Show one item — id, title, state, headline and the latest checkpoint's headline; --full for the whole record.",
+    /**
+     * `--full` is the command line's spelling of the `full` opt-in
+     * (MILESTONES.md #107) — a bare switch, for the same reason `--all` is
+     * on `item list`: `--full true` is not a thing anyone types. It goes
+     * through `booleanFlag` rather than `flagsToInput`, which refuses a
+     * valueless flag outright.
+     */
+    buildInput: (rest, flags) => {
       const id = rest[0];
       if (id === undefined) {
         return { ok: false, envelope: malformed("`standup item get` needs an item id.", ["id"]) };
       }
-      return { ok: true, input: { id } };
+      const full = booleanFlag(flags, "full");
+      if (!full.ok) return full;
+      return { ok: true, input: { id, full: full.value } };
     },
   },
   {
@@ -132,7 +142,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "list",
     operation: "list_items",
     summary:
-      "List items, filtered by state, priority, area, repo or parent. Finished work is excluded by default; --all includes it.",
+      "List items, filtered by state, priority, area, repo or parent. Returns id, title, state and headline; --full for whole records. Finished work is excluded by default; --all includes it.",
     /**
      * `--all` is the command line's spelling of `includeTerminal`
      * (MILESTONES.md #103) — a bare flag, because that is what a switch
@@ -146,11 +156,20 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     buildInput: (_rest, flags) => {
       const all = booleanFlag(flags, "all");
       if (!all.ok) return all;
-      const built = flagsToInput(flags, ["all"]);
+      // `--full` is the same shape of switch, and declared consumed for the
+      // same reason: `flagsToInput` refuses a valueless flag, and letting it
+      // through would send `full` to the operation twice under two spellings.
+      const full = booleanFlag(flags, "full");
+      if (!full.ok) return full;
+      const built = flagsToInput(flags, ["all", "full"]);
       if (!built.ok) return built;
       return {
         ok: true,
-        input: { ...(built.input as Record<string, unknown>), includeTerminal: all.value },
+        input: {
+          ...(built.input as Record<string, unknown>),
+          includeTerminal: all.value,
+          full: full.value,
+        },
       };
     },
   },

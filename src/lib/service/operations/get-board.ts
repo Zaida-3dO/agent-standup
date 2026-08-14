@@ -70,6 +70,14 @@
 //     `completed` under a filter that removed the executing child and
 //     vanish from a board it belongs on.
 //
+// **Each card carries only what it draws (#107).** The board selected all
+// thirty item columns on every call, so `body` and `customFields` — which no
+// card renders — were the overwhelming majority of a board response. The
+// default projection is now the eleven fields a card actually uses plus the
+// item's headline; `full: true` asks for whole records. See
+// `BoardItemSummaryRecord` for why the board's slim shape is wider than the
+// one `get_item` and `list_items` return.
+//
 // **All five dimensions filter server-side, in this one WHERE clause** —
 // not fetched-whole-then-filtered in a client. #36 already established the
 // pattern (priority/area/repo/kind as SQL conditions on the same query that
@@ -87,7 +95,15 @@ import { z } from "zod";
 import { InternalError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  itemColumnsFor,
+  toBoardItemSummaryRecord,
+  toItemRecord,
+  type BoardItemSummaryRecord,
+  type ItemRecord,
+  type RawBoardItemSummaryRow,
+  type RawItemRow,
+} from "../items/row";
 import {
   TERMINAL_STATES,
   columnForProject,
@@ -157,6 +173,13 @@ const inputSchema = z
      * exactly one of them.
      */
     includeTerminal: z.boolean().default(false),
+    /**
+     * Return whole `items` rows rather than the slim board shape. Off by
+     * default — see `BoardItemSummaryRecord`. The board has no `limit` and
+     * no `cursor` at all (MILESTONES.md #109 owns that), so until it does,
+     * the projection is the only thing bounding this response.
+     */
+    full: z.boolean().default(false),
   })
   .strict();
 
@@ -168,7 +191,8 @@ function escapeLikePattern(value: string): string {
 }
 
 export interface BoardEntry {
-  readonly item: ItemRecord;
+  /** The slim board shape by default; the whole record when `full` was passed. */
+  readonly item: BoardItemSummaryRecord | ItemRecord;
   /** The item's own state, mapped straight through for a task/subtask. Always present on a project too — see `columns.ts`'s `columnForProject` header for why it must not be read as the project's column. */
   readonly column: BoardColumn;
 }
@@ -179,7 +203,7 @@ export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "Items grouped by derived column, filterable by priority, area, repo, kind, state, assignee and search. Finished work is excluded by default — pass includeTerminal to get the completed column.",
+    "Items grouped by derived column, filterable by priority, area, repo, kind, state, assignee and search. Each card carries only what it renders, including its headline — pass full for whole records. Finished work is excluded by default — pass includeTerminal to get the completed column.",
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
     const conditions: string[] = [];
@@ -248,11 +272,13 @@ export const getBoard = defineOperation({
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
-      `SELECT ${ITEM_COLUMNS} FROM "Item" ${where} ORDER BY "createdAt" DESC, "id" DESC`,
+    const rows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
+      `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" ${where} ORDER BY "createdAt" DESC, "id" DESC`,
       ...values,
     );
-    const items = rows.map(toItemRecord);
+    const items: (BoardItemSummaryRecord | ItemRecord)[] = input.full
+      ? (rows as RawItemRow[]).map(toItemRecord)
+      : (rows as RawBoardItemSummaryRow[]).map(toBoardItemSummaryRecord);
 
     // Projects need their *whole* subtree's states, regardless of whether
     // the filters above kept those descendants in `items` — a filtered-out

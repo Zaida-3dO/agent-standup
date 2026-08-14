@@ -47,6 +47,11 @@ export async function GET(request: Request) {
   if (parentId !== null) input.parentId = parentId === "" ? null : parentId;
   const includeTerminal = url.searchParams.get("includeTerminal");
   if (includeTerminal !== null) input.includeTerminal = parseBooleanParam(includeTerminal);
+  // The opt-in out of the slim default (MILESTONES.md #107). Threaded here
+  // because an opt-in that exists in the service layer but not in the
+  // adapter is not an opt-in for anyone actually calling the product.
+  const full = url.searchParams.get("full");
+  if (full !== null) input.full = parseBooleanParam(full);
   const limit = url.searchParams.get("limit");
   if (limit !== null) input.limit = Number(limit);
   const cursor = url.searchParams.get("cursor");

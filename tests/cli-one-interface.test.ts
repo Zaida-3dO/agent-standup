@@ -32,7 +32,10 @@ const items = new Map<string, Record<string, unknown>>();
 const createInput = z
   .object({ title: z.string().min(1), priority: z.string().optional() })
   .strict();
-const getInput = z.object({ id: z.string().min(1) }).strict();
+// `full` mirrors the real `get_item` schema (MILESTONES.md #107), which
+// `item get` now always sends for the same reason as `includeTerminal`
+// below — it is a switch with an off position.
+const getInput = z.object({ id: z.string().min(1), full: z.boolean().optional() }).strict();
 // `includeTerminal` mirrors the real `list_items` schema (MILESTONES.md
 // #103), which `item list` now always sends because `--all` is a switch
 // with an off position. It has to be here for the `.strict()` reason this
@@ -40,7 +43,11 @@ const getInput = z.object({ id: z.string().min(1) }).strict();
 // the service with the *same* input, and a field one of them sends that
 // the stub rejects would prove nothing about agreement.
 const listInput = z
-  .object({ state: z.string().optional(), includeTerminal: z.boolean().optional() })
+  .object({
+    state: z.string().optional(),
+    includeTerminal: z.boolean().optional(),
+    full: z.boolean().optional(),
+  })
   .strict();
 
 function invalid(issues: z.ZodIssue[]): InvalidInputError {

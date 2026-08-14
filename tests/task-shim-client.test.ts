@@ -58,10 +58,14 @@ describe("createTask", () => {
 });
 
 describe("getTask", () => {
-  it("gets /api/items/<id> with no body, percent-encoding the id", async () => {
+  it("gets /api/items/<id> with no body, percent-encoding the id, asking for the full record", async () => {
     const { seen, fetch } = capture(json({ item: { id: "a/b", area: "web", state: "executing" } }));
     await getTask({ baseUrl, fetch }, "a/b");
-    expect(seen[0]?.url).toBe("https://example.test/api/items/a%2Fb");
+    // `?full=true` is not optional for this caller: `ShimTask` carries
+    // `body`, `area` and `repo`, none of which the slim default returns
+    // (MILESTONES.md #107), and `toShimTask` would fill them with empty
+    // strings rather than fail — a silent wrong answer, not a loud one.
+    expect(seen[0]?.url).toBe("https://example.test/api/items/a%2Fb?full=true");
     expect(seen[0]?.init.method).toBe("GET");
     expect(seen[0]?.init.body).toBeUndefined();
   });
@@ -90,10 +94,11 @@ describe("listTasks", () => {
     expect(url.searchParams.get("area")).toBe("infra");
   });
 
-  it("sends no query string at all when no filters are given", async () => {
+  it("sends only the projection opt-in when no filters are given", async () => {
     const { seen, fetch } = capture(json({ items: [], nextCursor: null }));
     await listTasks({ baseUrl, fetch }, {});
-    expect(seen[0]?.url).toBe("https://example.test/api/items");
+    // Same reason as `getTask` above — the shim needs the whole record.
+    expect(seen[0]?.url).toBe("https://example.test/api/items?full=true");
   });
 
   it("asks for finished work when includeTerminal is set", async () => {
@@ -108,11 +113,18 @@ describe("listTasks", () => {
 
   it("omits includeTerminal entirely when it is false, rather than sending false", async () => {
     // The server's default is already `false`, so sending it says nothing
-    // the omission does not — and this keeps the no-filters case above from
-    // silently acquiring a query string.
+    // the omission does not.
+    //
+    // `full=true` is still there, and its presence is what makes this
+    // assertion meaningful rather than weaker: the two parameters are
+    // treated differently on purpose. `full` goes on every call because
+    // `ShimTask` needs fields the slim default does not carry (#107), while
+    // `includeTerminal` is only ever sent when asked for. If the code
+    // stopped distinguishing them, this URL would gain an
+    // `includeTerminal=false` and go red.
     const { seen, fetch } = capture(json({ items: [], nextCursor: null }));
     await listTasks({ baseUrl, fetch }, { includeTerminal: false });
-    expect(seen[0]?.url).toBe("https://example.test/api/items");
+    expect(seen[0]?.url).toBe("https://example.test/api/items?full=true");
   });
 
   it("projects every returned item, translating each one's status independently", async () => {

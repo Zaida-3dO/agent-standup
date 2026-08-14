@@ -40,6 +40,21 @@ describe("the request the http binding builds", () => {
     expect(seen[0]?.init.body).toBeUndefined();
   });
 
+  it("carries `full` into the query string of a single-item read", async () => {
+    // The one place `get_item`'s opt-in could be silently lost
+    // (MILESTONES.md #107): `id` goes in the path, and a binding that
+    // therefore sent *only* the path would leave `--full` doing nothing over
+    // HTTP while it worked over the direct binding — one command line, two
+    // different answers.
+    const { seen, fetch } = capture(json({ item: { id: "item-1" } }));
+    const binding = createHttpBinding({ baseUrl: "https://example.test", fetch });
+    await binding.invoke("get_item", { id: "item-1", full: true });
+
+    const url = new URL(seen[0]?.url as string);
+    expect(url.pathname).toBe("/api/items/item-1");
+    expect(url.searchParams.get("full")).toBe("true");
+  });
+
   it("percent-encodes an id so a slash in one cannot reach a different route", async () => {
     const { seen, fetch } = capture(json({ item: null }));
     const binding = createHttpBinding({ baseUrl: "https://example.test", fetch });

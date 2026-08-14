@@ -103,7 +103,13 @@ export async function getTask(
   options: ShimClientOptions,
   id: string,
 ): Promise<ShimResult<ShimTask>> {
-  const result = await request(options, "GET", `/api/items/${encodeURIComponent(id)}`);
+  // `?full=true` — the shim's own `ShimTask` carries `body`, `area` and
+  // `repo`, none of which are in the slim default shape (MILESTONES.md
+  // #107). `toShimTask` degrades a missing field to an empty string rather
+  // than failing, so without this the shim would keep working while
+  // silently reporting every task as having an empty brief and no area,
+  // which is the worst of the available failure modes.
+  const result = await request(options, "GET", `/api/items/${encodeURIComponent(id)}?full=true`);
   return toShimResult(result, "item");
 }
 
@@ -141,6 +147,14 @@ export async function listTasks(
   // `false`, so an unconditional `includeTerminal=false` would add a
   // parameter to every request to say what omitting it already says.
   if (filters.includeTerminal === true) params.set("includeTerminal", "true");
+  // `full` is unconditional, unlike `includeTerminal` above, and the
+  // difference is not an inconsistency: `ShimTask` needs body/area/repo on
+  // *every* call, none of which the slim default (#107) carries, and the
+  // mapper fills a missing field with an empty string rather than
+  // complaining. So omitting it would not fall back to a server default
+  // that happens to suit — it would quietly report every task as having an
+  // empty brief and no area.
+  params.set("full", "true");
   const query = params.toString();
 
   const result = await request(options, "GET", `/api/items${query.length > 0 ? `?${query}` : ""}`);

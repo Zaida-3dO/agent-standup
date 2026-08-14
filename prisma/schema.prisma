@@ -81,6 +81,12 @@ model Item {
   children          Item[]         @relation("Tree")
   kind              ItemKind
   title             String
+  // The one-line BLUF: what this work *is*, maintained as it moves. Distinct
+  // from `body` (the brief, which can run to kilobytes) and from `Summary`
+  // (end-of-life, and only exists once the item completes). Nullable because
+  // an item minted before the field existed genuinely has none, which is a
+  // different fact from someone having written an empty one.
+  headline          String?
   body              String         @db.Text
   state             ItemState
   priority          Priority       @default(P2)

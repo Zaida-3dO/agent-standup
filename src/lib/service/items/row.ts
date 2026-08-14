@@ -7,12 +7,31 @@
 // database client cannot bypass the transaction"), so every read here maps
 // columns by hand rather than trusting a generated client's typing.
 
+/**
+ * The longest a headline may be — MILESTONES.md #107.
+ *
+ * A cap rather than a convention, because a headline is the one field the
+ * slim read *always* returns: the whole point of that read is that its size
+ * is knowable in advance, and an uncapped headline would put an unbounded
+ * string straight back into the response that exists to be bounded. 200
+ * characters is comfortably a sentence and comfortably not a brief, so the
+ * refusal only ever fires on something that was going to be a paragraph.
+ *
+ * Enforced in the operations' input schemas rather than as a database
+ * constraint: a validator refuses with `invalid_input` and the offending
+ * field path, which is a usable answer, where a column-length violation
+ * surfaces as a driver error nobody can act on.
+ */
+export const HEADLINE_MAX_CHARS = 200;
+
 /** One `items` row, as every item operation reads and returns it. */
 export interface ItemRecord {
   readonly id: string;
   readonly parentId: string | null;
   readonly kind: "project" | "task" | "subtask";
   readonly title: string;
+  /** The one-line BLUF — see `ItemSummaryRecord`. Null on an item nobody has written one for. */
+  readonly headline: string | null;
   readonly body: string;
   readonly state: string;
   readonly priority: "P0" | "P1" | "P2" | "P3";
@@ -47,6 +66,7 @@ export interface RawItemRow {
   parentId: string | null;
   kind: string;
   title: string;
+  headline: string | null;
   body: string;
   state: string;
   priority: string;
@@ -96,6 +116,7 @@ export function toItemRecord(row: RawItemRow): ItemRecord {
     parentId: row.parentId,
     kind: row.kind as ItemRecord["kind"],
     title: row.title,
+    headline: row.headline,
     body: row.body,
     state: row.state,
     priority: row.priority as ItemRecord["priority"],
@@ -128,11 +149,148 @@ export function toItemRecord(row: RawItemRow): ItemRecord {
   };
 }
 
+/**
+ * The slim shape every item read returns unless the caller asks for more —
+ * MILESTONES.md #107.
+ *
+ * **Why the default is this and not the whole row.** `ITEM_COLUMNS` below is
+ * one hardcoded thirty-column `SELECT` shared by `get_item`, `list_items`
+ * and `get_board`, and `toItemRecord` maps every column unconditionally, so
+ * `body` and `customFields` came back on every call from every surface.
+ * Measured on a live store: one `get_item` at 145,317 characters, of which
+ * `customFields` was 94,038 and `body` 49,538 — the handful of scalars the
+ * caller actually wanted were 0.2% of what it paid for.
+ *
+ * **Neither a filter nor a page size reaches that.** `limit` bounds row
+ * *count*; nothing bounds row *size*, so `limit: 1` on the largest item
+ * still overflows a context window, and `get_item` is `WHERE id = $1` with
+ * no filter to default at all. The only control that works is choosing
+ * which columns come back.
+ *
+ * **`headline` is why the slim shape is useful rather than merely small.**
+ * `{id, title, state}` alone answers "which item" but not "what is it" —
+ * that answer lived only in a body running to kilobytes. A one-line BLUF,
+ * written at mint and maintained as the work moves, is what makes the cheap
+ * read the *sufficient* read for the question a session actually asks. A
+ * projection nobody knows the shape of would only move the discoverability
+ * problem; a named field with a stated meaning does not.
+ *
+ * The shape follows in-tree precedent rather than inventing one:
+ * `orientation` already selects `id, title, state` for its child lists and
+ * reserves the full record for the one focal item.
+ */
+export interface ItemSummaryRecord {
+  readonly id: string;
+  readonly title: string;
+  readonly state: string;
+  /** Null when nobody has written one — deliberately not defaulted to the title, so a caller can tell. */
+  readonly headline: string | null;
+}
+
+/** The raw shape `$queryRawUnsafe` returns for one summary row. */
+export interface RawItemSummaryRow {
+  id: string;
+  title: string;
+  state: string;
+  headline: string | null;
+}
+
+/**
+ * The board's slim entry — `ItemSummaryRecord` plus the seven fields a card
+ * renders and the board cannot derive without.
+ *
+ * **Why this is wider than `ItemSummaryRecord` rather than reusing it.**
+ * `get_board` is not a list of ids; it is a rendering, and it has two
+ * non-negotiable extra needs. `kind` is structural — a project's column is
+ * computed from its subtree rather than read off its own state
+ * (DECISIONS.md §13c), so dropping `kind` would silently put every project
+ * in the wrong column. The remaining six are what a card shows: priority,
+ * area and repo as the card's metadata line, and the blocked/paused fields
+ * as the one-line reason a Waiting card gives for being there.
+ *
+ * **What it still leaves behind is the entire point.** `body` and
+ * `customFields` were 99% of the measured payload and no card renders
+ * either. Slimming the board to what it draws is what turns a board read
+ * from a page-sized response into a card-sized one, and adding a seventh
+ * field a card genuinely renders would not undo that; adding `body` would.
+ */
+export interface BoardItemSummaryRecord extends ItemSummaryRecord {
+  readonly kind: "project" | "task" | "subtask";
+  readonly priority: "P0" | "P1" | "P2" | "P3";
+  readonly area: string;
+  readonly repo: string | null;
+  readonly blockedReason: string | null;
+  readonly blockedOnType: "person" | "external_process" | "time" | null;
+  readonly blockedOnPersonId: string | null;
+  readonly pauseReason: string | null;
+}
+
+/** The raw shape `$queryRawUnsafe` returns for one board summary row. */
+export interface RawBoardItemSummaryRow extends RawItemSummaryRow {
+  kind: string;
+  priority: string;
+  area: string;
+  repo: string | null;
+  blockedReason: string | null;
+  blockedOnType: string | null;
+  blockedOnPersonId: string | null;
+  pauseReason: string | null;
+}
+
+/** Maps one raw board summary row to `BoardItemSummaryRecord`. */
+export function toBoardItemSummaryRecord(row: RawBoardItemSummaryRow): BoardItemSummaryRecord {
+  return {
+    ...toItemSummaryRecord(row),
+    kind: row.kind as BoardItemSummaryRecord["kind"],
+    priority: row.priority as BoardItemSummaryRecord["priority"],
+    area: row.area,
+    repo: row.repo,
+    blockedReason: row.blockedReason,
+    blockedOnType: row.blockedOnType as BoardItemSummaryRecord["blockedOnType"],
+    blockedOnPersonId: row.blockedOnPersonId,
+    pauseReason: row.pauseReason,
+  };
+}
+
+/** Maps one raw summary row to `ItemSummaryRecord` — the slim counterpart of `toItemRecord`. */
+export function toItemSummaryRecord(row: RawItemSummaryRow): ItemSummaryRecord {
+  return {
+    id: row.id,
+    title: row.title,
+    state: row.state,
+    headline: row.headline,
+  };
+}
+
+/**
+ * The four columns the slim read selects.
+ *
+ * A separate constant rather than a subset computed from `ITEM_COLUMNS`:
+ * that string is pre-joined and carries its own quoting, so deriving from it
+ * would mean parsing it. Two short lists that a test compares are cheaper
+ * to keep honest than one list that has to be taken apart.
+ */
+export const ITEM_SUMMARY_COLUMNS = ["id", "title", "state", "headline"].join(", ");
+
+/** The columns the board's slim read selects — `ITEM_SUMMARY_COLUMNS` plus what a card draws. */
+export const BOARD_ITEM_SUMMARY_COLUMNS = [
+  ITEM_SUMMARY_COLUMNS,
+  "kind",
+  "priority",
+  "area",
+  "repo",
+  '"blockedReason"',
+  '"blockedOnType"',
+  '"blockedOnPersonId"',
+  '"pauseReason"',
+].join(", ");
+
 export const ITEM_COLUMNS = [
   "id",
   '"parentId"',
   "kind",
   "title",
+  "headline",
   "body",
   "state",
   "priority",
@@ -160,3 +318,20 @@ export const ITEM_COLUMNS = [
   '"updatedAt"',
   '"completedAt"',
 ].join(", ");
+
+/**
+ * Which column list a read should select, given the caller's `full` flag.
+ *
+ * A named function rather than a ternary at each call site, and it exists
+ * for a reason worth stating: `toItemSummaryRecord` strips the heavy fields
+ * out of the response object regardless of what the query fetched, so a read
+ * that selected all thirty columns and then mapped four would return a
+ * byte-identical response while doing the exact work this row exists to
+ * stop. That defect is invisible to any assertion about the response — the
+ * only way to catch it is to test the column choice itself, which means it
+ * has to be a thing that can be called.
+ */
+export function itemColumnsFor(full: boolean, variant: "item" | "board" = "item"): string {
+  if (full) return ITEM_COLUMNS;
+  return variant === "board" ? BOARD_ITEM_SUMMARY_COLUMNS : ITEM_SUMMARY_COLUMNS;
+}

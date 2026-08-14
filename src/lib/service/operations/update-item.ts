@@ -8,7 +8,13 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "../items/ensure-area-raw";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  HEADLINE_MAX_CHARS,
+  ITEM_COLUMNS,
+  toItemRecord,
+  type ItemRecord,
+  type RawItemRow,
+} from "../items/row";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { recordFieldChanges } from "@/lib/events";
 import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
@@ -17,6 +23,15 @@ const inputSchema = z
   .object({
     id: z.string().min(1),
     title: z.string().trim().min(1).optional(),
+    /**
+     * The one-line BLUF (MILESTONES.md #107). Editable because the row's
+     * whole claim is that it is "maintained as it moves" — a headline
+     * written at mint and never updated describes the work as it was
+     * *proposed*, which is the least useful moment to freeze it at.
+     * Nullable so it can be cleared back to "nobody has written one",
+     * which is a state the read distinguishes.
+     */
+    headline: z.string().trim().min(1).max(HEADLINE_MAX_CHARS).nullable().optional(),
     body: z.string().optional(),
     priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
     area: z.string().trim().min(1).optional(),
@@ -55,6 +70,7 @@ const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | 
 /** Every editable field, and how to read its current value off a raw row — for the field-change diff. */
 const EDITABLE_FIELDS = [
   "title",
+  "headline",
   "body",
   "priority",
   "area",

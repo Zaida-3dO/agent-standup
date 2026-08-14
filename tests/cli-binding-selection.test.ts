@@ -262,7 +262,10 @@ describe("the binding interface has exactly one method commands use", () => {
     expect(seen).toEqual(["get_item"]);
     expect(outcome.envelope).toEqual({
       ok: true,
-      data: { operation: "get_item", input: { id: "abc" } },
+      // `full: false` is `item get`'s `--full` switch (MILESTONES.md #107),
+      // absent here; it rides through untouched exactly like every other
+      // built input, which is the property this asserts.
+      data: { operation: "get_item", input: { id: "abc", full: false } },
     });
   });
 });

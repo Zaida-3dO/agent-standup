@@ -278,6 +278,14 @@
   text-decoration: underline;
 }
 
+/* The BLUF line (#107) — sits under the title, quieter than it but louder
+   than the waiting reason, because it is what the card is *for*. */
+.cardHeadline {
+  color: #c4c4cc;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .cardReason {
   color: #a1a1aa;
   font-size: 0.76rem;

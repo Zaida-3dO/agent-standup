@@ -37,6 +37,10 @@ function itemRecord(overrides: Partial<ItemRecord> = {}): ItemRecord {
     parentId: null,
     kind: "task",
     title: "Title",
+    // The BLUF (MILESTONES.md #107). No notification rule may ask about it,
+    // so null is the honest default here rather than a value implying it is
+    // part of what a rule sees.
+    headline: null,
     body: "",
     state: "executing",
     priority: "P2",

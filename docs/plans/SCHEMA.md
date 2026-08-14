@@ -17,6 +17,7 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 | `parent_id` | `text` null → `items.id` | Null = a project (a root). Otherwise the item this sits under. Unbounded depth; guarded by the `items.max_depth` setting (§17.2). |
 | `kind` | enum | `project` (depth 0) · `task` (depth 1) · `subtask` (**depth ≥ 2** — nesting is unbounded, so everything deeper is still a subtask). Derived from depth, stored for cheap querying. **Recompute the whole subtree on reparent**, not just the moved row: promoting a subtask to a root changes its children's kind too. |
 | `title` | `text` | One line. |
+| `headline` | `text` null | **The BLUF** — what this work *is*, in one line, written when the item is minted and maintained as it moves. Distinct from `title` (what it is *called*), from `body` (the brief, which runs to kilobytes) and from `summaries` (end-of-life, §5, and only exists once the item completes). It is the field that makes the slim read below *sufficient* rather than merely small: `{id, title, state}` answers "which item" and never "what is it". Capped at 200 characters in the service layer's input validation, because the one field a bounded read always returns cannot itself be unbounded. Null means nobody has written one — deliberately not defaulted to the title, so a caller falling back can tell the two apart. |
 | `body` | `text` | The brief — the durable instruction for whoever picks this up next. |
 | `state` | enum | See §1.1. The only thing transitions move. |
 | `priority` | enum | `P0`–`P3`. |
@@ -46,6 +47,26 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 
 **No `review_round` column** — it's `max(artifacts.review_round)` for the item. Artifacts are the truth;
 a second copy here would drift.
+
+**Reads return `{id, title, state, headline}` by default; the whole row is opt-in.** `get_item`,
+`list_items` and `get_board` all share one column list, and every field on it — including a `body`
+that can run to tens of thousands of characters and a `custom_fields` bag with no bound at all — came
+back on every call from every surface. A measured single-item read was 145,317 characters, of which
+`custom_fields` was 94,038 and `body` 49,538: the scalars the caller wanted were 0.2% of what it was
+sent.
+
+Neither a filter nor a page size reaches that. `limit` bounds row *count* and nothing bounds row
+*size*, so a page of one still overflows on the largest item, and `get_item` is `WHERE id = $1` with
+no filter to default. **The only control is which columns come back**, so that is the control: a slim
+default, with `full` restoring the whole record on every surface — service, HTTP (`?full=true`), MCP
+(`full: true`) and the command line (`--full`). `get_item`'s slim response also carries
+`checkpoint_headline`, the latest checkpoint's own one-line BLUF, because "what is this" and "where
+is it up to" are one question and latest-checkpoint is already an indexed single-row read (§4).
+
+**The board's slim shape is wider, and bounded.** A card cannot be drawn from four fields: `kind` is
+structural (a project's column derives from its subtree, §1.1), and `priority`, `area`, `repo`,
+`blocked_reason`, `blocked_on_type`, `blocked_on_person` and `pause_reason` are what a card renders.
+It still leaves `body` and `custom_fields` behind, which is where the whole saving was.
 
 **Indexes:** `(state)`, `(parent_id)`, `(area)`, `(repo)`, `(state, priority)`, `(source_ref)`.
 `(repo)` is there because listing filters on it exactly as it filters on `area`.

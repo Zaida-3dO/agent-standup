@@ -19,10 +19,24 @@
 // The exclusion therefore applies only when the caller has not named a
 // state itself — the default is answering "which state?" for a caller who
 // did not, never overriding one who did.
+//
+// **The slim shape is the default** (MILESTONES.md #107). `limit` bounds row
+// *count*; nothing bounded row *size*, so a page of five `executing` items
+// could still overflow a caller's context on `body` and `customFields`
+// alone. `full: true` asks for the whole record back. See
+// `../items/row.ts`'s `ItemSummaryRecord` header for the measurements.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  itemColumnsFor,
+  toItemRecord,
+  toItemSummaryRecord,
+  type ItemRecord,
+  type ItemSummaryRecord,
+  type RawItemRow,
+  type RawItemSummaryRow,
+} from "../items/row";
 import { TERMINAL_STATES } from "../board/columns";
 
 const inputSchema = z
@@ -54,6 +68,12 @@ const inputSchema = z
      * is already the caller asking for exactly one of them.
      */
     includeTerminal: z.boolean().default(false),
+    /**
+     * Return whole `items` rows rather than the slim default. Off by
+     * default — see `ItemSummaryRecord`. This is the parameter that bounds
+     * response *size*; `limit` only ever bounded row count.
+     */
+    full: z.boolean().default(false),
     limit: z.number().int().min(1).max(200).default(50),
     cursor: z.string().min(1).optional(),
   })
@@ -62,7 +82,7 @@ const inputSchema = z
 export type ListItemsInput = z.infer<typeof inputSchema>;
 
 export interface ListItemsOutput {
-  readonly items: readonly ItemRecord[];
+  readonly items: readonly (ItemRecord | ItemSummaryRecord)[];
   /** The `id` of the last row in this page, to pass back as `cursor`. Absent when this page is the last. */
   readonly nextCursor: string | null;
 }
@@ -71,7 +91,7 @@ export const listItems = defineOperation({
   name: "list_items",
   kind: "read",
   summary:
-    "Lists items, filtered by state, priority, area, repo or parent, newest first. Finished work (merged, research_done, wont_do, cancelled) is excluded by default — pass includeTerminal to get it, or filter on that state directly.",
+    "Lists items, filtered by state, priority, area, repo or parent, newest first. Returns id, title, state and headline only — pass full for the whole record. Finished work (merged, research_done, wont_do, cancelled) is excluded by default — pass includeTerminal to get it, or filter on that state directly.",
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ListItemsInput): Promise<ListItemsOutput> {
     const conditions: string[] = [];
@@ -136,8 +156,14 @@ export const listItems = defineOperation({
     // Fetch one extra row to know whether a further page exists without a
     // separate COUNT query.
     values.push(input.limit + 1);
-    const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
-      `SELECT ${ITEM_COLUMNS} FROM "Item" ${where}
+    // The ordering key stays `("createdAt", "id")` in both shapes — the
+    // cursor's meaning must not depend on which projection the caller asked
+    // for, or two pages fetched with different `full` values would not
+    // compose. `createdAt` is ordered on without being selected, which
+    // Postgres permits and which is the point: the slim shape does not
+    // return a column it only needs to sort by.
+    const rows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawItemSummaryRow)[]>(
+      `SELECT ${itemColumnsFor(input.full)} FROM "Item" ${where}
        ORDER BY "createdAt" DESC, "id" DESC
        LIMIT $${paramIndex}`,
       ...values,
@@ -145,7 +171,9 @@ export const listItems = defineOperation({
 
     const hasMore = rows.length > input.limit;
     const page = hasMore ? rows.slice(0, input.limit) : rows;
-    const items = page.map(toItemRecord);
+    const items = input.full
+      ? (page as RawItemRow[]).map(toItemRecord)
+      : (page as RawItemSummaryRow[]).map(toItemSummaryRecord);
 
     return {
       items,

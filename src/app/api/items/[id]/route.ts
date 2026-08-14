@@ -3,11 +3,16 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "../respond";
+import { parseBooleanParam } from "../../_shared/query";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const input: Record<string, unknown> = { id };
+  // `?full=true` opts out of the slim default (MILESTONES.md #107).
+  const full = new URL(request.url).searchParams.get("full");
+  if (full !== null) input.full = parseBooleanParam(full);
   try {
-    const item = await service.call("get_item", { id }, { caller: { transport: "http" } });
+    const item = await service.call("get_item", input, { caller: { transport: "http" } });
     return NextResponse.json({ item });
   } catch (error) {
     return serviceErrorResponse(error);
