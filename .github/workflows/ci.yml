@@ -296,8 +296,16 @@ jobs:
       - name: Pass — no source files changed
         if: needs.changes.outputs.source == 'false'
         run: echo "No src/**/*.ts(x) files changed, skipping mutation testing"
-      - name: Fail — mutation testing failed or was skipped after a source change
-        if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result != 'success'
+      # While the mutation job is paused (row #106) it reports `skipped`, not
+      # `success`, so this step must not treat a skip as a failure or every
+      # source-touching pull request fails a required check it cannot satisfy.
+      # `cancelled` is deliberately still a failure: that is a real run that
+      # did not finish, not a deliberate pause.
+      - name: Pass — mutation testing is paused
+        if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result == 'skipped'
+        run: echo "Mutation testing is paused (see MILESTONES.md #106) — nothing to enforce."
+      - name: Fail — mutation testing failed after a source change
+        if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result != 'success' && needs.mutation-testing.result != 'skipped'
         run: exit 1
 
   docker-build:
