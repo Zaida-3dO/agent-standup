@@ -27,9 +27,18 @@ bottom is explicit about which is which.
 | `allow_auto_merge`                                                  | `false`                                                            |
 | `allow_update_branch`                                               | `false`                                                            |
 
-The three required contexts above are exactly the three jobs in `ci.yml` that end in `-gate` or are
-named `Build & test` — every other job (`changes`, `actionlint`, `mutation-testing*`, `docker-build`) is
-either a helper or, in mutation testing's case, not a required check at all.
+All three required contexts above are gate jobs in `ci.yml`: they do no work themselves, they read the
+results of the jobs that do and report a single pass/fail under a stable name. `Build & test` gates
+`static-checks` and `db-tests`; `Actionlint (required)` gates `actionlint`; `Docker build (required)`
+gates `docker-build`.
+
+That indirection is what lets the work be reorganised — split, renamed, added to — without touching
+branch protection, which matches on the context NAME. `Build & test` is the name to keep stable, and
+it belongs to the gate rather than to any one job doing the verifying.
+
+Every other job (`changes`, `actionlint`, `static-checks`, `db-tests`, `mutation-testing*`,
+`docker-build`) is either a helper, a worker behind one of those gates, or — in mutation testing's
+case — not a required check at all.
 
 ---
 
