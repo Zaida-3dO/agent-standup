@@ -80,7 +80,8 @@ describeIfDb("sweep / takeover operations — against Postgres", () => {
 
   /**
    * A runtime whose settings snapshot has the liveness thresholds turned
-   * right down, so a row seeded a few seconds in the past is already dead.
+   * right down, so a row whose `lastActive` is a few seconds behind the clock
+   * is already dead.
    * The alternative — seeding `lastActive` half an hour back — works too, but
    * this proves the operations read the thresholds from the snapshot rather
    * than from a constant, which a fixture with a huge time offset cannot

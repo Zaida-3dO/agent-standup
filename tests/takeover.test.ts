@@ -655,7 +655,7 @@ describeIfDb("takeoverAssignment — against a real database", () => {
     it("every successful takeover carries the note that the displaced session is NOT stopped", async () => {
       // The honest half. Nothing in this repository yet refuses a displaced
       // session's tool calls, and a caller that assumed otherwise would leave
-      // a live agent working on an item it no longer owns. The note is
+      // a live agent working on an item somebody else now owns. The note is
       // returned rather than documented, so it reaches a reader who read no
       // documentation at all.
       const itemId = await seedItem();

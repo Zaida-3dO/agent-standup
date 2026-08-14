@@ -54,9 +54,10 @@
 // refused only once something reads this state and refuses on it — that
 // enforcement lives in the tool-call hook, which is a separate piece of work
 // and does not exist yet. Until it does, a displaced-but-alive session keeps
-// running and keeps making calls; what changes today is that its assignment is
-// no longer live, so it cannot win a claim and the record says who displaced
-// it and why. `supersededBy` + `liveness = 'superseded'` is precisely the
+// running and keeps making calls; what a takeover achieves on its own is that
+// the assignment stops being live, so that session cannot win a claim and the
+// record says who displaced it and why. `supersededBy` + `liveness =
+// 'superseded'` is precisely the
 // state that hook will read, which is why it is written in full now rather
 // than left for the hook to invent.
 import { ConflictError, GuardRejectedError, NotFoundError } from "./service/errors";
@@ -214,8 +215,9 @@ export function assertTakeoverAllowed(args: {
  *
  * Runs entirely inside the caller's transaction. The row is read, judged and
  * updated in one boundary, so a holder that heartbeats between the judgement
- * and the write cannot end up superseded on the strength of a staleness that
- * no longer holds — the read takes the row's lock the update needs anyway.
+ * and the write cannot end up superseded on the strength of a staleness the
+ * heartbeat has already answered — the read takes the row's lock the update
+ * needs anyway.
  */
 export async function takeoverAssignment(
   db: TransactionHandle,
@@ -268,7 +270,7 @@ export async function takeoverAssignment(
     // absorbed: the caller's next step is to claim, and telling it the claim
     // is already available is more useful than pretending a takeover happened.
     throw new ConflictError(
-      `Session ${input.fromSessionId} no longer holds ${input.itemId} — the assignment was ` +
+      `Session ${input.fromSessionId} does not hold ${input.itemId}: its assignment was ` +
         `released at ${holder.releasedAt.toISOString()}. Claim it directly.`,
       {
         fields: ["itemId", "fromSessionId"],
