@@ -464,6 +464,67 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(events).toHaveLength(0);
     });
   });
+
+  // The operation deliberately accepts artifacts on items a transition would
+  // refuse: recording a fact is not passing a gate, and the record of what
+  // happened has to stay writable after the thing it describes is over. A
+  // review that lands moments after a merge, a screenshot attached to a
+  // cancelled item, a test run filed against a project — all are true, and
+  // refusing them would lose information without protecting anything.
+  //
+  // That reasoning was written down but never asserted, which leaves it as an
+  // intention rather than a property: a later change adding a state check
+  // here would break nothing and read as tightening. These pin it, so the
+  // permissiveness has to be removed on purpose if it is ever removed.
+  describe("what it deliberately does not refuse", () => {
+    it("records an artifact against an item in a terminal state", async () => {
+      const itemId = await createTask("merged");
+
+      const artifact = await record({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        createdByType: "person",
+        createdById: "user-a",
+      });
+
+      // Adding `if (isTerminalState(item.state)) throw ...` to the handler is
+      // the change that makes this fail.
+      expect(artifact.itemId).toBe(itemId);
+      const rows = await prisma.artifact.findMany({ where: { itemId } });
+      expect(rows).toHaveLength(1);
+    });
+
+    it("records an artifact against a project, which has no state of its own", async () => {
+      // A parentless item is a project: its state derives from its children,
+      // so there is no state here for a state check to consult at all.
+      const projectId = await createTask("on_deck", { kind: "project" });
+
+      const artifact = await record({
+        itemId: projectId,
+        kind: "test_run",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+
+      expect(artifact.itemId).toBe(projectId);
+      const rows = await prisma.artifact.findMany({ where: { itemId: projectId } });
+      expect(rows).toHaveLength(1);
+    });
+
+    it("still refuses an item that does not exist, terminal or not", async () => {
+      // The complement, and the reason the two above are not simply "this
+      // operation validates nothing". Existence is checked; state is not.
+      const error = await recordFails({
+        itemId: "no-such-item",
+        kind: "test_run",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("not_found");
+      expect(error.fields).toEqual(["itemId"]);
+    });
+  });
 });
 
 describeIfDb("request_review (#98), against Postgres", () => {
