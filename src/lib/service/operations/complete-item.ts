@@ -30,6 +30,8 @@ import {
 // header for why: it needs to be covered by the guard-registration
 // canonicalisation sweep, which only scans `guards/`.
 import { findSimilarityIssues } from "../guards/summaries";
+import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
+import { appendEvent } from "@/lib/events";
 
 /** The four states a `complete` call may land on (SCHEMA.md §1.1's "Completed" column). */
 const COMPLETED_STATES = ["merged", "research_done", "wont_do", "cancelled"] as const;
@@ -269,14 +271,17 @@ export const completeItem = defineOperation({
     // `state-change` event `transition_item` writes for an ordinary move;
     // `complete` is a transition too, and the event ledger should not be
     // able to tell the two apart by omission.
-    await ctx.db.$executeRawUnsafe(
-      `INSERT INTO "Event" ("itemId", "actorType", "actorId", "type", "payload")
-       VALUES ($1, $2::"ActorType", $3, 'state_change'::"EventType", $4::jsonb)`,
-      input.id,
-      ctx.caller.actor ? "agent" : "system",
-      ctx.caller.actor ?? null,
-      JSON.stringify({ from: applied.from, to: applied.to }),
-    );
+    // Through `appendEvent` (#102), for the reason `transition_item` gives —
+    // and with the same shape, which is the point of the comment above: the
+    // ledger should not be able to tell a completion from an ordinary
+    // transition by which columns happen to be populated.
+    await appendEvent(ctx.db, {
+      itemId: input.id,
+      actor: callerEventActor(ctx.caller),
+      assignmentId: await liveAssignmentId(ctx.db, input.id, ctx.caller),
+      type: "state_change",
+      payload: { from: applied.from, to: applied.to },
+    });
 
     const item = await loadItemRecord(ctx, input.id);
     return { item };

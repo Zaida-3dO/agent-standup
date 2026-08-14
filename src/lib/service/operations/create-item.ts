@@ -13,6 +13,8 @@ import { GuardRejectedError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "../items/ensure-area-raw";
+import { callerEventActor } from "../items/event-attribution";
+import { appendEvent } from "@/lib/events";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
 
 const inputSchema = z
@@ -169,14 +171,20 @@ export const createItem = defineOperation({
     // the same event type an ordinary edit uses, which is what keeps
     // "when did this item come to exist" answerable from the one ledger
     // rather than a special case only creates get.
-    await ctx.db.$executeRawUnsafe(
-      `INSERT INTO "Event" ("itemId", "actorType", "actorId", "type", "payload")
-       VALUES ($1, $2::"ActorType", $3, 'field_change'::"EventType", $4::jsonb)`,
-      row.id,
-      ctx.caller.actor ? "agent" : "system",
-      ctx.caller.actor ?? null,
-      JSON.stringify({ field: "state", from: null, to: "on_deck" }),
-    );
+    //
+    // Through `appendEvent` rather than an inline INSERT (#102): that is the
+    // module's stated invariant, and it is what gets `sessionId` onto the
+    // row. A five-column insert had nowhere to put it.
+    //
+    // No assignment lookup here, unlike the other three: the item is being
+    // created by this very call, so nobody can be holding a claim on it yet.
+    // Querying for one would be asking a question whose answer is known.
+    await appendEvent(ctx.db, {
+      itemId: row.id,
+      actor: callerEventActor(ctx.caller),
+      type: "field_change",
+      payload: { field: "state", from: null, to: "on_deck" },
+    });
 
     return toItemRecord(row);
   },
