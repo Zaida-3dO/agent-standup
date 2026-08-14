@@ -132,8 +132,9 @@ describeIfDb("the unrecognised-override surface against Postgres", () => {
       await runtime.call("remove_unrecognised_setting", { key: RETIRED_KEY }, caller);
 
       const events = await prisma.$queryRawUnsafe<{ payload: Record<string, unknown> }[]>(
-        `SELECT "payload" FROM "events" WHERE "type" = 'setting_change'
-           AND "payload"->>'key' = $1 ORDER BY "id" DESC LIMIT 1`,
+        `SELECT "payload" FROM "Event"
+           WHERE "type" = 'setting_change'::"EventType" AND "payload"->>'key' = $1
+           ORDER BY "id" DESC LIMIT 1`,
         RETIRED_KEY,
       );
       expect(events).toHaveLength(1);
