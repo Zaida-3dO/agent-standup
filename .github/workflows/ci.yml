@@ -118,6 +118,32 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      # ┌─ THE FAIL-CLOSED GATE PATTERN — copied by every `… (required)` job ─┐
+      #
+      # All three required gates carry these same three steps, differing only
+      # in the `changes` output they read. It is deliberately duplicated rather
+      # than factored into a composite action: a composite cannot read the
+      # `needs` context, so every output would have to be threaded through
+      # `with:` — more indirection than the three lines it would save.
+      #
+      # If you add a fourth gate, copy all three steps, and keep this shape:
+      #
+      #   1. Fail  — output is neither 'true' nor 'false'  -> MUST `exit 1`
+      #   2. Pass  — output == 'false'                     -> echo only
+      #   3. Fail  — output == 'true' && dep != 'success'  -> MUST `exit 1`
+      #
+      # Step 1 is the one that matters and the one that has been got wrong: a
+      # job that errors publishes no outputs, an absent output reads as the
+      # empty string, and a gate whose branches only cover 'true'/'false'
+      # matches nothing, runs no step, and reports SUCCESS having checked
+      # nothing (#73). A step that only echoes exits 0 — so the `exit 1` is
+      # the whole point of the branch, not decoration.
+      #
+      # Enforced by `tests/ci-gate-scope-fail-closed.test.ts`, which discovers
+      # every `(required)` job from this file: a fourth gate added without
+      # these steps fails that suite rather than going unnoticed.
+      #
+      # └────────────────────────────────────────────────────────────────────┘
       - name: Fail — the changes job did not report a usable scope
         if: needs.changes.outputs.workflows != 'true' && needs.changes.outputs.workflows != 'false'
         run: |

@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { extractJobBlock } from "./ci-mutation-gate.test.js";
+import { extractJobBlock, extractStepBlock } from "./ci-mutation-gate.test.js";
 
 function repoRoot(): string {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
@@ -91,10 +91,17 @@ describe("every required gate fails closed when the changes job reports no usabl
         // A branch that runs but does not fail leaves the job green, which is
         // the very outcome this is meant to stop. The `exit 1` has to be in
         // the same run block as the diagnostic echoes.
-        const unknownScopeStep = new RegExp(
-          `if:\\s*needs\\.changes\\.outputs\\.${output} != 'true'[^\\n]*\\n(?:.|\\n)*?exit 1`,
-        );
-        expect(block).toMatch(unknownScopeStep);
+        //
+        // Scoped to the fail-closed step alone. The previous version of this
+        // assertion was a lazy regex running from the `if:` to the next
+        // `exit 1` anywhere below it; because every gate carries a later
+        // `Fail — <job> failed` step ending in `exit 1`, deleting *this*
+        // step's `exit 1` still matched, and the test passed on the exact
+        // regression it names (#129). `extractStepBlock` stops at the next
+        // `- name:`, so the only `exit 1` it can see is this step's own.
+        const failClosedStep = extractStepBlock(block, `needs.changes.outputs.${output} != 'true'`);
+        expect(failClosedStep).not.toBe("");
+        expect(failClosedStep).toContain("exit 1");
       });
 
       it("still passes cleanly when the scope is a genuine 'false'", () => {

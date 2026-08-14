@@ -54,6 +54,57 @@ export function extractJobBlock(yamlText: string, jobKey: string): string {
   return block.join("\n");
 }
 
+/**
+ * The text of the single step within `jobBlock` whose `if:` condition contains
+ * `conditionNeedle`, from its `- name:` line to the next step at the same
+ * indentation. Returns `""` when no such step exists.
+ *
+ * Why this is structural rather than a regex: the assertion it serves is "this
+ * step's own `run:` block exits non-zero", and a regex spanning from an `if:`
+ * to the next `exit 1` does not express that. A lazy `(?:.|\n)*?exit 1` will
+ * happily cross into a *later* step and match that step's `exit 1` — which is
+ * exactly how the previous version of this assertion came to be defeatable by
+ * deleting the very line it was written to require (#129). Walking to the step
+ * boundary makes the scope a property of the parser rather than a hope about
+ * the input.
+ */
+export function extractStepBlock(jobBlock: string, conditionNeedle: string): string {
+  const lines = jobBlock.split("\n");
+  // Step starts are `- name:` entries; collect their indices so a step can be
+  // bounded by the next one rather than by whatever text happens to follow.
+  const stepStarts = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => /^\s*-\s+name:/.test(line))
+    .map(({ index }) => index);
+
+  for (let i = 0; i < stepStarts.length; i += 1) {
+    const start = stepStarts[i] ?? 0;
+    const end = stepStarts[i + 1] ?? lines.length;
+    const stepLines = lines.slice(start, end);
+    const step = stepLines.join("\n");
+    // Only an `if:` match counts. Matching anywhere in the step would let a
+    // diagnostic `echo` quoting the condition stand in for the condition.
+    // Folded scalars (`if: >-` continued on following lines) are joined back
+    // into one line first — the mutation gate's failing step is written that
+    // way, and a single-line regex silently finds nothing there.
+    const ifIndex = stepLines.findIndex((line) => /^\s*if:/.test(line));
+    if (ifIndex === -1) continue;
+    const ifLine = stepLines[ifIndex] ?? "";
+    let condition = ifLine.replace(/^\s*if:\s*/, "");
+    if (/^[>|][-+]?$/.test(condition.trim())) {
+      const foldedIndent = leadingSpaces(ifLine);
+      condition = "";
+      for (const line of stepLines.slice(ifIndex + 1)) {
+        if (line.trim() === "") break;
+        if (leadingSpaces(line) <= foldedIndent) break;
+        condition += ` ${line.trim()}`;
+      }
+    }
+    if (condition.replace(/\s+/g, " ").includes(conditionNeedle)) return step;
+  }
+  return "";
+}
+
 const WORKFLOW = readFileSync(path.join(repoRoot(), ".github/workflows/ci.yml"), "utf8");
 const GATE = extractJobBlock(WORKFLOW, "mutation-testing-gate");
 
@@ -105,7 +156,13 @@ describe("the gate distinguishes a paused job from a failing one", () => {
     // forgave a real failure because some other run had been paused would
     // be worse than no gate at all.
     expect(GATE).toMatch(/needs\.mutation-testing\.result\s*!=\s*'success'/);
-    expect(GATE).toContain("exit 1");
+
+    // Scoped to the failing step itself. A bare `GATE.toContain("exit 1")`
+    // passes on any `exit 1` anywhere in the job, including one belonging to a
+    // different step — so it survived deleting this step's own `exit 1` (#129).
+    const failingStep = extractStepBlock(GATE, "needs.mutation-testing.result != 'success'");
+    expect(failingStep).not.toBe("");
+    expect(failingStep).toContain("exit 1");
   });
 
   it("passes without qualification when no source files changed", () => {
@@ -136,5 +193,67 @@ describe("extractJobBlock", () => {
     const changes = extractJobBlock(WORKFLOW, "changes");
     expect(changes).not.toBe("");
     expect(changes).not.toContain("mutation-testing-gate:");
+  });
+});
+
+describe("extractStepBlock", () => {
+  // This helper is now what makes the fail-closed assertions non-defeatable,
+  // so it carries its own tests: an extractor that silently over-reached would
+  // reintroduce #129 while every assertion above still read as scoped.
+  const TWO_STEPS = [
+    "    steps:",
+    "      - name: Fail — no usable scope",
+    "        if: needs.changes.outputs.docker != 'true'",
+    "        run: |",
+    '          echo "::error::unusable"',
+    "      - name: Fail — docker-build failed",
+    "        if: needs.docker-build.result != 'success'",
+    "        run: exit 1",
+  ].join("\n");
+
+  it("does not reach past the end of its step", () => {
+    // The regression itself. The first step has no `exit 1`; the second does.
+    // A scan that crossed the boundary would return text containing it.
+    const step = extractStepBlock(TWO_STEPS, "needs.changes.outputs.docker != 'true'");
+    expect(step).not.toBe("");
+    expect(step).toContain("::error::unusable");
+    expect(step).not.toContain("exit 1");
+  });
+
+  it("returns the step's own body when it does exit non-zero", () => {
+    const step = extractStepBlock(TWO_STEPS, "needs.docker-build.result != 'success'");
+    expect(step).toContain("exit 1");
+    expect(step).not.toContain("::error::unusable");
+  });
+
+  it("returns an empty string when no step carries the condition", () => {
+    expect(extractStepBlock(TWO_STEPS, "needs.changes.outputs.nonesuch == 'true'")).toBe("");
+  });
+
+  it("reads a folded `if: >-` condition spanning several lines", () => {
+    // The mutation gate's failing step is written this way. A single-line
+    // regex finds nothing there and the assertion using it would fail on
+    // correct YAML — which is how this helper's first draft behaved.
+    const folded = [
+      "      - name: Fail — mutation testing ran and did not pass",
+      "        if: >-",
+      "          needs.changes.outputs.source == 'true' &&",
+      "          needs.mutation-testing.result != 'success'",
+      "        run: exit 1",
+    ].join("\n");
+    expect(extractStepBlock(folded, "needs.mutation-testing.result != 'success'")).toContain(
+      "exit 1",
+    );
+  });
+
+  it("matches on the step's `if:` rather than anywhere in the step", () => {
+    // A diagnostic echo that quotes a condition must not stand in for the
+    // condition — otherwise a step could claim a branch it does not guard.
+    const echoOnly = [
+      "      - name: Diagnose",
+      "        if: always()",
+      "        run: echo \"needs.changes.outputs.docker != 'true'\"",
+    ].join("\n");
+    expect(extractStepBlock(echoOnly, "needs.changes.outputs.docker != 'true'")).toBe("");
   });
 });
