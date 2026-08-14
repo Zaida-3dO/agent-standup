@@ -194,12 +194,12 @@ describe("parseStoredRules — stored snake_case buckets into the evaluator's ca
     expect(result.recipients).toEqual(["user-a"]);
   });
 
-  it("DROPS a rule whose buckets did not survive parsing, rather than letting it match everything", () => {
-    // The one place where failing closed is not automatic. `ruleMatches`
-    // treats a missing bucket as vacuously true, so a rule that parsed into
-    // no conditions fires on EVERY mutation — the opposite of the silent
-    // never-fires failure, and worse. Asserted directly because it is the
-    // only asymmetric case in this module.
+  it("DROPS a rule whose buckets did not survive parsing", () => {
+    // `ruleMatches` treats a missing bucket as vacuously true, so a rule that
+    // parsed into no conditions would match everything if it ever reached the
+    // evaluator. **This `continue` is what stops it reaching one** — which is
+    // why the real failure mode of a mis-cased rule is silence rather than a
+    // storm (see the case below, which measures it).
     expect(parseStoredRules([{ notify: ["user-a"] }])).toEqual([]);
     expect(parseStoredRules([{ notify: ["user-a"], when_all: [] }])).toEqual([]);
     // Camel-cased buckets are not the stored form — a rule written that way
@@ -208,6 +208,28 @@ describe("parseStoredRules — stored snake_case buckets into the evaluator's ca
     expect(
       parseStoredRules([{ notify: ["user-a"], whenAll: [{ field: "state", op: "changed" }] }]),
     ).toEqual([]);
+  });
+
+  it("fires ZERO times for a bucketless rule even if one reaches the evaluator", () => {
+    // The second, independent reason the failure is silence — and the one
+    // that is easy to get backwards, because `ruleMatches` genuinely *is*
+    // vacuously true here. `evaluateRules` is edge-triggered on
+    // `matchesAfter && !matchesBefore`, and a rule matching everything
+    // matches `before` too, so the edge never occurs.
+    //
+    // Constructed by hand rather than through `parseStoredRules`, precisely
+    // because the parser drops it: this asserts what would happen if the
+    // parser's guard were ever removed, which is what makes "silence, not a
+    // storm" a measured claim rather than a reading of the code.
+    const bucketless = [{ notify: ["user-a"] }] as unknown as Parameters<typeof evaluateRules>[0];
+    const result = evaluateRules(
+      bucketless,
+      { state: "executing", driveMode: "autonomous" },
+      { state: "blocked", driveMode: "autonomous" },
+    );
+
+    expect(result.fired).toEqual([]);
+    expect(result.recipients).toEqual([]);
   });
 
   it("drops a rule whose only conditions name unwhitelisted fields", () => {

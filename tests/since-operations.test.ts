@@ -331,8 +331,14 @@ describeIfDb("since your last visit, against Postgres", () => {
 
       await markSeen(eventId, reader);
 
-      const readerFeed = await getEvents({ personId: reader });
-      const otherFeed = await getEvents({ personId: other });
+      // Anchored just below this test's own event, per this file's
+      // convention. An unanchored `since=0` read relies on fewer rows
+      // existing than the 50-row default page holds — a margin that shrinks
+      // with every test added, and one whose loss surfaces as a confusing
+      // paging error rather than a read-state one (#122).
+      const from = String(BigInt(eventId) - 1n);
+      const readerFeed = await getEvents({ personId: reader, since: from });
+      const otherFeed = await getEvents({ personId: other, since: from });
 
       expect(readerFeed.events.find((e) => e.id === eventId)?.seen).toBe(true);
       expect(otherFeed.events.find((e) => e.id === eventId)?.seen).toBe(false);
@@ -348,7 +354,10 @@ describeIfDb("since your last visit, against Postgres", () => {
 
       await markSeen(eventId, reader);
 
-      const otherFeed = await getEvents({ personId: other });
+      const otherFeed = await getEvents({
+        personId: other,
+        since: String(BigInt(eventId) - 1n),
+      });
       const row = otherFeed.events.find((e) => e.id === eventId)!;
       expect(row.seen).toBe(false);
       expect(row.seenByAnyone).toBe(true);
@@ -362,7 +371,7 @@ describeIfDb("since your last visit, against Postgres", () => {
       const eventId = await appendNote(itemId, "note");
       await markSeen(eventId, reader);
 
-      const feed = await getEvents({});
+      const feed = await getEvents({ since: String(BigInt(eventId) - 1n) });
       expect(feed.events.find((e) => e.id === eventId)?.seen).toBe(false);
     }, 30_000);
 
@@ -449,14 +458,16 @@ describeIfDb("since your last visit, against Postgres", () => {
     it("resolves the item title so a row reads as prose", async () => {
       const itemId = await createItem("A recognisable title");
       const eventId = await appendNote(itemId, "note");
-      const feed = await getEvents({});
+      const feed = await getEvents({ since: String(BigInt(eventId) - 1n) });
       expect(feed.events.find((e) => e.id === eventId)?.itemTitle).toBe("A recognisable title");
     }, 30_000);
 
     it("stringifies the bigint id, which JSON cannot carry as a number", async () => {
       const itemId = await createItem("Bigint ids");
-      await appendNote(itemId, "note");
-      const feed = await getEvents({});
+      const eventId = await appendNote(itemId, "note");
+      // Anchored so `events[0]` is *this* test's event rather than whichever
+      // row happens to sit first in a shared, unanchored page.
+      const feed = await getEvents({ since: String(BigInt(eventId) - 1n) });
       expect(typeof feed.events[0]!.id).toBe("string");
       // And the whole response survives a JSON boundary — `JSON.stringify`
       // throws outright on a bigint, which is what the HTTP route would hit.

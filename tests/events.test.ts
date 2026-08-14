@@ -318,6 +318,42 @@ describeIfDb("the events ledger against Postgres", () => {
 
   // --- readSinceBounded: the reader-facing primitive the horizon exists for ---
 
+  /**
+   * Reads until `itemIds` are all visible, or gives up.
+   *
+   * **Why a wait is correct here rather than a papered-over race.** The
+   * horizon is `pg_snapshot_xmin`, which is **server-wide**: it is held back
+   * by the oldest transaction open anywhere on the instance, including the
+   * other DB-backed test files running in parallel against their own scratch
+   * databases. So "this test's writer has committed" does not imply "the
+   * horizon has advanced past it" — a foreign transaction can keep a legally
+   * committed row withheld for as long as it stays open.
+   *
+   * That is the documented, deliberate cost of the bound, not a bug, and it
+   * is the root cause of this file's known flake (#122): the negative
+   * assertions are stable, but the *positive* ones after a release assumed
+   * the horizon moved the instant the local transaction ended.
+   *
+   * Polling keeps the assertion honest — it still fails if the row never
+   * arrives — while not failing on an unrelated transaction's timing.
+   *
+   * The budget is ~20s against this file's 30s per-test timeout. That is
+   * deliberately generous: when the whole suite runs, several DB-backed files
+   * hold transactions open concurrently, and a horizon held back for a few
+   * seconds is normal rather than a symptom. A tighter budget turns ordinary
+   * contention into a red test, which is the failure mode being fixed.
+   */
+  async function readUntilVisible(itemIds: readonly string[], attempts = 200) {
+    let last: Awaited<ReturnType<typeof readSinceBounded>> = { events: [], horizon: 0n };
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      last = await prisma.$transaction(async (tx) => readSinceBounded(tx, { since: 0n }));
+      const seen = new Set(last.events.map((event) => event.itemId));
+      if (itemIds.every((id) => seen.has(id))) return last;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return last;
+  }
+
   describe("readSinceBounded never returns a row from a still-open transaction", () => {
     it("excludes a row written by a transaction that has not yet committed", async () => {
       const itemId = "item-in-flight";
@@ -326,8 +362,17 @@ describeIfDb("the events ledger against Postgres", () => {
       // Opens a transaction, appends an event, but does not resolve the
       // promise (does not commit) before the read below runs.
       let releaseHold: (() => void) | undefined;
+      let inserted: (() => void) | undefined;
       const held = new Promise<void>((resolve) => {
         releaseHold = resolve;
+      });
+      // Signalled by the writer once its INSERT has actually run, rather than
+      // waiting a fixed interval and hoping. A sleep here is load-dependent:
+      // on a busy server the insert may not have happened by the time the
+      // assertion reads, and the test then fails for a reason unrelated to
+      // the property it checks (#122).
+      const hasInserted = new Promise<void>((resolve) => {
+        inserted = resolve;
       });
       const inFlight = prisma.$transaction(async (tx) => {
         await appendEvent(tx, {
@@ -337,12 +382,11 @@ describeIfDb("the events ledger against Postgres", () => {
           payload: {},
           body: "in flight",
         });
+        inserted!();
         await held; // hold the transaction open until the assertion below runs
       });
 
-      // Give the in-flight transaction a moment to actually start and
-      // insert before reading.
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await hasInserted;
 
       const { events } = await prisma.$transaction(async (tx) =>
         readSinceBounded(tx, { since: 0n }),
@@ -350,16 +394,104 @@ describeIfDb("the events ledger against Postgres", () => {
       const forThisItem = events.filter((e) => e.itemId === itemId);
       // The row exists in the table (uncommitted reads aside — this proves
       // the *bound*, not raw visibility) but must not appear in a
-      // horizon-bounded read while its writer is still open. A
-      // single-character change that would make this fail: bounding by
-      // `txId <= horizon` instead of `txId < horizon`.
+      // horizon-bounded read while its writer is still open.
+      //
+      // **What this case does NOT prove**, and why the case after it exists:
+      // an uncommitted row is invisible under READ COMMITTED regardless of
+      // the horizon, so deleting the `"txId" < $2` bound entirely leaves this
+      // assertion passing. The bound's real job is the *committed-out-of-
+      // order* case below.
       expect(forThisItem.length).toBe(0);
 
       releaseHold!();
       await inFlight;
 
-      const after = await prisma.$transaction(async (tx) => readSinceBounded(tx, { since: 0n }));
+      const after = await readUntilVisible([itemId]);
       expect(after.events.filter((e) => e.itemId === itemId).length).toBe(1);
-    });
+      // 30s, matching the other DB-backed files: `readUntilVisible` may poll
+      // for several seconds when a foreign transaction is holding the
+      // server-wide horizon back, which the 5s default does not allow for.
+    }, 30_000);
+
+    it("withholds a later row that committed while an earlier writer is still open", async () => {
+      // **The case the horizon bound actually exists for**, and the one
+      // nothing covered — `WHERE "id" > $1 AND "txId" < $2` could be replaced
+      // with `$2::bigint IS NOT NULL`, deleting the guarantee outright, and
+      // the whole suite still passed (#122).
+      //
+      // The invariant from SCHEMA.md §3 is that this read "never skips a
+      // row": a caller that reads up to `id = N` and next calls with
+      // `since = N` must not have missed anything below N. That is violated
+      // only when a row with a LOWER id commits AFTER one with a higher id
+      // was already returned. So the scenario has to be:
+      //
+      //   writer A  ── inserts id=N   ───────────(still open)──────► commits
+      //   writer B  ─────── inserts id=N+1, commits ──┐
+      //   reader                                      └─ must NOT see N+1
+      //
+      // If the reader took N+1 here, it would advance `since` past N, and A's
+      // row would never be returned by any later call. Bounding by the
+      // horizon holds N+1 back until A finishes, which is exactly the cost
+      // the function's header describes as real and deliberate.
+      const earlyItem = "item-early-writer";
+      const lateItem = "item-late-writer";
+      await seedItem(prisma, earlyItem);
+      await seedItem(prisma, lateItem);
+
+      let releaseEarly: (() => void) | undefined;
+      let earlyInserted: (() => void) | undefined;
+      const earlyHeld = new Promise<void>((resolve) => {
+        releaseEarly = resolve;
+      });
+      const earlyHasInserted = new Promise<void>((resolve) => {
+        earlyInserted = resolve;
+      });
+
+      // A: inserts first (so it takes the lower id) and stays open.
+      const early = prisma.$transaction(async (tx) => {
+        await appendEvent(tx, {
+          itemId: earlyItem,
+          actor: { actorType: "system" },
+          type: "note",
+          payload: {},
+          body: "early writer, still open",
+        });
+        earlyInserted!();
+        await earlyHeld;
+      });
+
+      await earlyHasInserted;
+
+      // B: inserts second and commits immediately, while A is still open.
+      await prisma.$transaction(async (tx) => {
+        await appendEvent(tx, {
+          itemId: lateItem,
+          actor: { actorType: "system" },
+          type: "note",
+          payload: {},
+          body: "late writer, committed",
+        });
+      });
+
+      const { events } = await prisma.$transaction(async (tx) =>
+        readSinceBounded(tx, { since: 0n }),
+      );
+
+      // B's row is committed and fully visible to an ordinary SELECT — this
+      // is not a visibility effect, it is the horizon holding it back.
+      const rawlyVisible = await prisma.event.count({ where: { itemId: lateItem } });
+      expect(rawlyVisible).toBe(1);
+      expect(events.filter((e) => e.itemId === lateItem).length).toBe(0);
+      expect(events.filter((e) => e.itemId === earlyItem).length).toBe(0);
+
+      // And once A finishes, both become readable — fail-closed must not mean
+      // withheld forever, or the ledger would stall behind one long writer.
+      releaseEarly!();
+      await early;
+
+      const after = await readUntilVisible([earlyItem, lateItem]);
+      expect(after.events.filter((e) => e.itemId === earlyItem).length).toBe(1);
+      expect(after.events.filter((e) => e.itemId === lateItem).length).toBe(1);
+    }, 30_000);
   });
 });

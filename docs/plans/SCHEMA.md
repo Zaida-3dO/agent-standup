@@ -167,8 +167,13 @@ firing notifies its recipients. Three lines of evaluator.
 ["blocked","completed"]}` is an OR over one field, so `(blocked OR completed) AND (web OR infra)`
 stays one rule.
 
-**Validation: at least one bucket must be present.** A rule with neither matches everything and fires
-on every change — a footgun, not a feature.
+**Validation: at least one bucket must be present.** A rule with neither has no conditions — a
+footgun, not a feature. **The footgun is silence:** it fires **zero** times, not constantly. The
+obvious reading is the opposite, because `ruleMatches` does treat a missing bucket as vacuously
+true — but `parseStoredRules` drops such a rule before the evaluator sees it, and `evaluateRules`
+is edge-triggered (`matchesAfter && !matchesBefore`), so a rule matching everything matches the
+*before* snapshot too and the edge never occurs. A rule that looks configured and notifies nobody
+is worth rejecting at the boundary precisely because nothing downstream will ever complain.
 
 **Known limit, accepted:** two *independent* OR groups ANDed together (`A AND (B OR C) AND (D OR E)`)
 needs splitting across rules, since there's only one `when_any`. `in` covers most of that territory,
@@ -780,6 +785,23 @@ with one account and stops making sense at two.
 | `machine` | `text` → `machines.name` | Composite PK with `account_id`. |
 | `account_id` | `text` → `accounts.id` | Which accounts this machine can dispatch against. |
 
+### `registered_processes`
+
+Backs the kill guard (§4, MILESTONES.md #45): *"would this command end a process this session's crew
+does not own?"* A process registers itself here when it starts; the guard answers by looking it up.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `text` PK | |
+| `machine` | `text` | Which host the pid is meaningful on. **A pid is only unique per host**, so every lookup is keyed on `(machine, pid)` and never on the pid alone. Supplied by `STANDUP_MACHINE` (§17.1). |
+| `pid` | `int` | |
+| `executable` | `text` | The image name, normalised — lower-case, no `.exe`. Stored because the machine-wide kill (`taskkill /IM node.exe`) names an *executable* rather than a pid, and answering "would this kill something that is not yours" needs a name comparable across rows written by different sessions on different platforms. |
+| `session_id` | `text` | The session that started it. |
+| `root_session_id` | `text` | The root of that session's tree. **The ownership check compares roots, not sessions** — a builder spawned by an orchestrator is the same crew, and a crew killing its own subagent's dev server is exactly the case that must stay allowed. |
+| `description` | `text` null | Free text from the registrant — a command line, a label. Never parsed; shown in a refusal so a person reads what they would have hit. |
+| `registered_at` | `timestamptz` | |
+| `ended_at` | `timestamptz` null | Null = still live. Only live rows are considered, so a finished process cannot make a later, unrelated pid look owned. |
+
 Bands and the pace line key off **`account_id`**, and the future case — *dispatch against whichever
 account has headroom* — becomes an ordinary query rather than a redesign.
 
@@ -841,6 +863,7 @@ The command-line adapter adds two of its own, bootstrap for the same reason:
 |---|---|---|
 | `STANDUP_URL` | base URL | Where a server is, if there is one. Present → commands call the API; absent → they use `DATABASE_URL` and run the service layer in-process. |
 | `STANDUP_SESSION_ID` | text | The session a command acts as. Exported by whatever launches a session, never typed by hand. |
+| `STANDUP_MACHINE` | text | Which host this session is on — the `machine` half of every `registered_processes` lookup (§15). **A machine with the kill-guard hook installed and this unset behaves identically to one with no guard shipped at all**: nothing resolves, so nothing is owned, and the guard is silent, green and permissive. That silence is the failure mode worth knowing about; making it *visible* is tracked on MILESTONES.md #48 rather than fixed here. |
 
 **Not all of these are optional to the same degree.** Either `DATABASE_URL` or `STANDUP_URL` must
 resolve, or the process has no idea what it is talking to — in which case it says so and stops,
@@ -1148,6 +1171,15 @@ Same service, different consumers.
 | `POST /hook` | The dumb pipe. Sends event type, session, tool, command. Returns allow/deny for guarded patterns, or nudge text, or nothing. |
 | `POST /tool-calls` | Telemetry ingest (§10). One flush: `{sessionId, calls[]}` — the session on the envelope, because a flush is one session's work and it makes the assignment lookup once per request rather than once per record. Caps the big fields (truncating, marked) and refuses malformed measurements. Answers `201` with what the batch was attributed to, including `null` for a ghost session. Beside `/hook` rather than under `/items` because a ghost session has no item to nest under. |
 | `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim. |
+| `POST /kill-guard` | *"Would this command end a process my crew does not own?"* Takes the command and the asking session; answers `allow` / `deny` with the reason naming what would have been hit. The **judgement is here and only here** — the hook parses the command locally (it is the one part that cannot run anywhere else) and sends everything it cannot rule out. A command the local parser cannot decompose is sent rather than assumed harmless, and an unreachable server denies. |
+
+The other three process operations — `register_process`, `end_process` and `list_processes` — are
+how `registered_processes` (§15) gets its contents. They are **registered service operations with no
+HTTP route, no MCP tool and no command**: reachable through the service layer and the adapter
+conformance suite, but not from a session. While that holds, the registry stays empty on a real
+machine, and an empty registry means the guard owns nothing and refuses machine-wide kills rather
+than allowing them — fail-closed, but not yet useful. Giving them a surface is what makes the guard
+usable, and belongs with MILESTONES.md #48.
 
 **Human-facing:**
 

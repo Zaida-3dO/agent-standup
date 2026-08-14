@@ -80,6 +80,15 @@ export function Board() {
       // The decision itself lives in `handleDrop` (`@/lib/board/drop-handler`)
       // so this seam is directly testable — it is where the one defect in
       // this row lived, and it was the only part of it no test covered.
+      //
+      // **The `void` is deliberate, and safe only because of an invariant.**
+      // `handleDrop` folds every failure — a refusal, a non-2xx, a network
+      // error — into a `MoveResult` it applies through `update`, so its
+      // promise carries no error to handle and no unhandled rejection is
+      // reachable. That holds only while `deps.move` cannot throw: if
+      // `requestMove` ever gains a throwing path, this discard turns it into
+      // a silent one and the card is left mid-move with nothing reverting it.
+      // Attach a `.catch` here at that point.
       void handleDrop(
         {
           // **Read synchronously, never out of a `setState` updater.** A drop

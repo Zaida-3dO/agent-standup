@@ -34,6 +34,9 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
     reviewRequestsRoute = await import("@/app/api/items/[id]/review-requests/route");
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "route-area", displayName: "Route area" } });
+    // `record_artifact` refuses a `createdByType: "person"` whose id names
+    // nobody (#134), so the person these fixtures credit has to exist.
+    await prisma.person.create({ data: { id: "user-a", displayName: "User A" } });
   }, 60_000);
 
   afterAll(async () => {

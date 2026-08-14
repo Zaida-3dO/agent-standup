@@ -208,11 +208,25 @@ export function evaluateRules(
 
 /**
  * SCHEMA.md §1.1b's validation rule: "at least one bucket must be present" —
- * a rule with neither `when_all` nor `when_any` matches everything and fires
- * on every change, which is a footgun, not a feature. Checked at the
- * boundary that accepts a rule (the settings/administration write path,
- * once it exists), not inside the evaluator: the evaluator's job is to
- * decide whether a well-formed rule fired, not to reject a malformed one.
+ * a rule with neither `when_all` nor `when_any` has no conditions, which is a
+ * footgun, not a feature.
+ *
+ * **The footgun is silence, not a storm**, and this is the module where that
+ * is easiest to get backwards: `ruleMatches` genuinely does treat a missing
+ * bucket as vacuously true, so the obvious reading is that such a rule fires
+ * on every change. It fires **zero** times, for two independent reasons:
+ *
+ *   - `parseStoredRules` (`@/lib/service/notify-on-change`) drops a bucketless
+ *     rule outright, so the evaluator never receives one; and
+ *   - `evaluateRules` above is **edge-triggered** on
+ *     `matchesAfter && !matchesBefore`. A rule matching everything matches
+ *     `before` too, so the edge never occurs.
+ *
+ * Which makes it worth catching rather than less: a rule that looks configured
+ * and notifies nobody reports nothing to anybody. Checked at the boundary that
+ * accepts a rule (the settings/administration write path), not inside the
+ * evaluator: the evaluator's job is to decide whether a well-formed rule
+ * fired, not to reject a malformed one.
  */
 export function hasAtLeastOneBucket(rule: NotifyRule): boolean {
   const hasAll = (rule.whenAll?.length ?? 0) > 0;

@@ -43,6 +43,8 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
   let machineItem: typeof import("@/app/api/machines/[name]/route");
   let accountsCollection: typeof import("@/app/api/accounts/route");
   let accountItem: typeof import("@/app/api/accounts/[id]/route");
+  let peopleCollection: typeof import("@/app/api/people/route");
+  let personItem: typeof import("@/app/api/people/[id]/route");
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
@@ -58,6 +60,8 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     machineItem = await import("@/app/api/machines/[name]/route");
     accountsCollection = await import("@/app/api/accounts/route");
     accountItem = await import("@/app/api/accounts/[id]/route");
+    peopleCollection = await import("@/app/api/people/route");
+    personItem = await import("@/app/api/people/[id]/route");
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   }, 60_000);
 
@@ -451,6 +455,117 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { accounts: { id: string }[] };
       expect(payload.accounts.some((a) => a.id === "route-account-new")).toBe(true);
+    });
+  });
+
+  // ── people ──────────────────────────────────────────────────────────
+  describe("people", () => {
+    // Opens with the attack, deliberately. `PATCH /people/{id}` spreads the
+    // body and then the path id (`{ ...body, id }`), so the URL wins; writing
+    // it the other way round lets a body-supplied `id` decide which row is
+    // written, and `PATCH /people/alice` with `{"id":"bob"}` writes **bob**.
+    // That transposition survived the entire suite, and it is the same shape
+    // as the session-registration route hijack (#119).
+    it("a body id cannot override the path id — the path is the only source of truth", async () => {
+      await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-target", "PATCH", {
+          displayName: "Target",
+        }),
+        { params: Promise.resolve({ id: "route-person-target" }) },
+      );
+
+      const response = await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-target", "PATCH", {
+          id: "route-person-hijacked",
+          displayName: "Renamed via the path",
+        }),
+        { params: Promise.resolve({ id: "route-person-target" }) },
+      );
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as { person: { id: string; displayName: string } };
+
+      // The row the URL named was written…
+      expect(payload.person.id).toBe("route-person-target");
+      expect(payload.person.displayName).toBe("Renamed via the path");
+      // …and the row the *body* named was never created. Asserted against the
+      // database rather than the response, because a handler that answered
+      // with the path id while writing the body id would pass on the response
+      // alone — which is precisely the bug.
+      const hijacked = await prisma.person.findUnique({
+        where: { id: "route-person-hijacked" },
+      });
+      expect(hijacked).toBeNull();
+    });
+
+    it("PATCH on a new id with a displayName creates it — the upsert path", async () => {
+      const response = await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-new", "PATCH", {
+          displayName: "Route Person",
+        }),
+        { params: Promise.resolve({ id: "route-person-new" }) },
+      );
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        person: { id: string; displayName: string };
+      };
+      expect(payload.person).toMatchObject({
+        id: "route-person-new",
+        displayName: "Route Person",
+      });
+    });
+
+    it("PATCH on a new id missing displayName returns 400, naming the missing field", async () => {
+      const response = await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-incomplete", "PATCH", {
+          colour: "#123456",
+        }),
+        { params: Promise.resolve({ id: "route-person-incomplete" }) },
+      );
+      expect(response.status).toBe(400);
+      const payload = (await response.json()) as { error: { code: string; fields: string[] } };
+      expect(payload.error.code).toBe("invalid_input");
+      expect(payload.error.fields).toContain("displayName");
+    });
+
+    it("PATCH with malformed JSON returns 400, not a 500", async () => {
+      // The sibling entities all carry this case: a body that is not JSON is
+      // the caller's mistake, and a 500 would report it as ours.
+      const response = await personItem.PATCH(
+        new Request("http://localhost/api/people/route-person-bad-json", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: "{not json",
+        }),
+        { params: Promise.resolve({ id: "route-person-bad-json" }) },
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it("PATCH updates an existing person rather than creating a second row", async () => {
+      await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-update", "PATCH", {
+          displayName: "Before",
+        }),
+        { params: Promise.resolve({ id: "route-person-update" }) },
+      );
+      const response = await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-update", "PATCH", {
+          displayName: "After",
+        }),
+        { params: Promise.resolve({ id: "route-person-update" }) },
+      );
+      expect(response.status).toBe(200);
+
+      const rows = await prisma.person.findMany({ where: { id: "route-person-update" } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.displayName).toBe("After");
+    });
+
+    it("GET /people lists every person PATCH has created so far", async () => {
+      const response = await peopleCollection.GET();
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as { people: { id: string }[] };
+      expect(payload.people.some((p) => p.id === "route-person-new")).toBe(true);
     });
   });
 });

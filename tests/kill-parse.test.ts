@@ -154,6 +154,16 @@ describe("a kill it cannot read is unparseable, never not-a-kill", () => {
     ["kill", "bare kill"],
     ["taskkill /PID", "a flag with no value"],
     ["taskkill /IM", "a name flag with no value"],
+    // ── Shell wrappers (#122) ──────────────────────────────────────────
+    // Each of these returned `not-a-kill` and was allowed with no server
+    // round trip. The second is byte-for-byte the machine-wide kill
+    // DECISIONS.md §4 exists to stop.
+    ["bash -c 'pkill -f node'", "bash -c"],
+    ['sh -c "taskkill /F /IM node.exe"', "sh -c"],
+    ["xargs kill -9", "xargs"],
+    ["ps aux | grep node | awk '{print $2}' | xargs kill -9", "a pipeline into xargs"],
+    ['powershell -Command "Stop-Process -Name node"', "powershell -Command"],
+    ["cmd /c taskkill /F /IM node.exe", "cmd /c"],
   ])("%s is unparseable (%s)", (command) => {
     const parsed = parseKillCommand(command);
     expect(parsed.kind).toBe("unparseable");
@@ -168,6 +178,35 @@ describe("a kill it cannot read is unparseable, never not-a-kill", () => {
     // would then allow a command it had only half seen.
     const parsed = parseKillCommand("kill 4821 && pkill -f node");
     expect(parsed.kind).toBe("unparseable");
+  });
+
+  // The negative control for the wrapper cases above, and the reason this is
+  // a separate block: a fix that made every `sh`/`bash` command unparseable
+  // would satisfy all six of them and break every ordinary shell invocation.
+  // A wrapper is refused only when it is *carrying a kill*.
+  it.each([
+    ["bash -c 'npm run build'", "a wrapper running something harmless"],
+    ["sh scripts/deploy.sh", "a wrapper running a script"],
+    ['powershell -Command "Get-Process node"', "a wrapper only reading processes"],
+    ["xargs rm -f", "xargs running something that is not a kill"],
+    ["cmd /c dir", "cmd running something harmless"],
+  ])("%s is still not-a-kill (%s)", (command) => {
+    expect(parseKillCommand(command)).toEqual({ kind: "not-a-kill" });
+  });
+
+  it("a direct kill still resolves to targets rather than being refused", () => {
+    // The other direction of the same control. If the wrapper handling had
+    // been written so broadly that it swallowed direct kills, the guard would
+    // deny everything and the registry would stop being consulted at all —
+    // which looks safe and is actually the guard ceasing to do its job.
+    expect(parseKillCommand("kill 4821")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "4821" }],
+    });
+    expect(parseKillCommand("taskkill /F /IM node.exe")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "executable", value: "node" }],
+    });
   });
 });
 

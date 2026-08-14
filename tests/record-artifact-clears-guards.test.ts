@@ -50,6 +50,9 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
+    // `record_artifact` refuses a `createdByType: "person"` whose id names
+    // nobody (#134), so the person these fixtures credit has to exist.
+    await prisma.person.create({ data: { id: "user-a", displayName: "User A" } });
 
     // The real production guards, not a scratch registry — the point of this
     // file is the actual wiring.

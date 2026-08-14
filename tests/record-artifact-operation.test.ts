@@ -43,6 +43,9 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
+    // `record_artifact` refuses a `createdByType: "person"` whose id names
+    // nobody (#134), so the person these fixtures credit has to exist.
+    await prisma.person.create({ data: { id: "user-a", displayName: "User A" } });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
@@ -324,6 +327,95 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(artifact.createdById).toBe("user-a");
     });
 
+    it("refuses a person id that names nobody", async () => {
+      // **`merge.requires_authorisation` reads `created_by_type` to decide
+      // whether a *human* authorised a merge on a `needs_approval` item.** So
+      // an id naming nobody is not a cosmetic problem: it satisfies the one
+      // clause that exists to require a person, with a person who does not
+      // exist. Accepted before this check (#134).
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        createdByType: "person",
+        createdById: "nobody-at-all",
+      });
+
+      // `not_found` specifically, and naming the field — the same answer
+      // `create_item` already gives for `originPersonId`, so the two
+      // operations agree about whether a person reference must resolve.
+      expect(error.code).toBe("not_found");
+      expect(error.fields).toContain("createdById");
+    });
+
+    it("still accepts a person id that names a real person", async () => {
+      // The negative control, and the assertion that would fail if the check
+      // were written so broadly it refused everyone: a check that always threw
+      // would satisfy the case above perfectly and make the operation unusable
+      // for the very reviews the merge gate is waiting on.
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        createdByType: "person",
+        createdById: "user-a",
+      });
+
+      expect(artifact.createdByType).toBe("person");
+      expect(artifact.createdById).toBe("user-a");
+    });
+
+    it("does not check an agent id against the people table", async () => {
+      // Agent ids are not a foreign key to anything, so there is no table to
+      // resolve them against and refusing an unknown one would mean refusing
+      // every agent. This pins the check to `person` rather than to "any
+      // creator", which is the mistake that would look like extra safety and
+      // would break every agent-recorded artifact in the suite.
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        createdByType: "agent",
+        createdById: "some-agent-nobody-registered",
+      });
+
+      expect(artifact.createdByType).toBe("agent");
+      expect(artifact.createdById).toBe("some-agent-nobody-registered");
+    });
+
+    it("refuses a person resolved from an assignment when that person does not exist", async () => {
+      // The check has to sit below the assignment fallback, not beside the
+      // explicit input. A `createdById` inferred from a live assignment's
+      // holder reaches the same merge clause, so an assignment held by a
+      // person id naming nobody would otherwise walk straight past it.
+      const itemId = await createTask();
+      await prisma.assignment.create({
+        data: {
+          id: "assignment-ghost",
+          itemId,
+          holderType: "person",
+          holderId: "ghost-person",
+          sessionId: "session-ghost",
+          rootSessionId: "session-ghost",
+          machine: "laptop",
+          role: "builder",
+        },
+      });
+
+      const error = await recordFails({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        sessionId: "session-ghost",
+      });
+
+      expect(error.code).toBe("not_found");
+      expect(error.fields).toContain("createdById");
+    });
+
     it("ignores an assignment that has been released", async () => {
       const itemId = await createTask();
       await prisma.assignment.create({
@@ -537,6 +629,9 @@ describeIfDb("request_review (#98), against Postgres", () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
+    // `record_artifact` refuses a `createdByType: "person"` whose id names
+    // nobody (#134), so the person these fixtures credit has to exist.
+    await prisma.person.create({ data: { id: "user-a", displayName: "User A" } });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

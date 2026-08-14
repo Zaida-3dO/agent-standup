@@ -87,6 +87,84 @@ describe("the ownership check runs before the pattern lists", () => {
   });
 });
 
+describe("a kill wrapped in a shell does not slip past the guard", () => {
+  // #122. These returned `not-a-kill` from the parser, and `not-a-kill` is
+  // treated as final — so with the allow-list matching, they were allowed
+  // with **no server round trip at all**. `sh -c "taskkill /F /IM node.exe"`
+  // is byte-for-byte the machine-wide kill DECISIONS.md §4 exists to stop.
+  //
+  // Asserted at `decide` rather than only at the parser because that is where
+  // the damage was: the parser was arguably answering its own question
+  // correctly ("I see no kill verb"), and the bug only exists once that answer
+  // is treated as permission.
+  it.each([
+    ["bash -c 'pkill -f node'"],
+    ['sh -c "taskkill /F /IM node.exe"'],
+    ["xargs kill -9"],
+    ["ps aux | grep node | awk '{print $2}' | xargs kill -9"],
+  ])(
+    "%s reaches the guard and is denied, though the allow-list matches everything",
+    async (command) => {
+      // The server is asked and gives the unowned answer, which is the realistic
+      // shape: these commands would end processes this session does not own.
+      const askKillGuard = vi.fn<AskKillGuard>(async () => ({
+        decision: "deny" as const,
+        basis: "unowned" as const,
+        reason: "node processes belong to another crew",
+      }));
+      const verdict = await decide({
+        event: event(command),
+        cache: ALLOW_EVERYTHING,
+        askServer: never,
+        askKillGuard,
+      });
+
+      // **The round trip is the assertion that matters.** The defect was not
+      // that these were allowed by a lenient verdict — it was that the guard
+      // was never consulted at all, so no verdict existed. With `.*`
+      // allow-listed, a regression makes this `allow` via `allow-list` with
+      // zero calls: the opposite result, not a softer message.
+      expect(askKillGuard).toHaveBeenCalledTimes(1);
+      expect(verdict.decision).toBe("deny");
+      expect(verdict.source).toBe("kill-guard");
+    },
+  );
+
+  it.each([["bash -c 'pkill -f node'"], ['sh -c "taskkill /F /IM node.exe"'], ["xargs kill -9"]])(
+    "%s is denied fail-closed when the guard cannot be reached",
+    async (command) => {
+      // The other half: an unreachable guard must not become permission. This
+      // is the state the bypass effectively produced — no answer — except that
+      // it produced `allow` instead of a deny.
+      const verdict = await decide({
+        event: event(command),
+        cache: ALLOW_EVERYTHING,
+        askServer: never,
+        askKillGuard: async () => undefined,
+      });
+
+      expect(verdict.decision).toBe("deny");
+      expect(verdict.source).toBe("kill-guard-unreachable");
+    },
+  );
+
+  it("a shell command that carries no kill is still allowed without a round trip", async () => {
+    // The control. A fix that denied every `bash -c` would pass the four
+    // cases above and make the hook unusable — every wrapped build command
+    // would need a server verdict it should never have needed.
+    const askKillGuard = vi.fn<AskKillGuard>(async () => undefined);
+    const verdict = await decide({
+      event: event("bash -c 'npm run build'"),
+      cache: ALLOW_EVERYTHING,
+      askServer: never,
+      askKillGuard,
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(askKillGuard).not.toHaveBeenCalled();
+  });
+});
+
 describe("what is NOT sent to the ownership check", () => {
   it("an ordinary command never reaches it", async () => {
     const askKillGuard = vi.fn<AskKillGuard>(async () => undefined);

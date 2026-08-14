@@ -245,11 +245,15 @@ describeIfDb("update_person against Postgres", () => {
     expect(mine!.rules[0]!.whenAny).toEqual([{ field: "priority", op: "changed" }]);
   });
 
-  it("REFUSES the camelCase whenAll spelling — it would parse to no conditions and fire on everything", async () => {
+  it("REFUSES the camelCase whenAll spelling — it would parse to no conditions and fire on nothing", async () => {
     // The most valuable refusal in the file. A rule stored as `whenAll`
-    // survives the column, parses to zero conditions, and `ruleMatches`
-    // treats a missing bucket as vacuously true — so it fires on *every*
-    // mutation rather than never.
+    // survives the column and parses to zero conditions — and such a rule
+    // fires **zero** times, not constantly. `ruleMatches` does treat a missing
+    // bucket as vacuously true, which makes the opposite easy to infer, but
+    // `parseStoredRules` drops the rule before the evaluator sees it and
+    // `evaluateRules` is edge-triggered, so a rule matching everything matches
+    // the `before` snapshot too and never fires. Silence is the worse failure:
+    // the rule looks configured and notifies nobody.
     //
     // **Two independent guards reject this input**, and mutation testing
     // proved it: `.strict()` rejects the unknown key, and — because a

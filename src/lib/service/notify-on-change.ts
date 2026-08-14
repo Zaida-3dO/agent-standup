@@ -101,11 +101,20 @@ export interface PersonRules {
  * Stored rules are `snake_case` (`when_all`/`when_any`, SCHEMA.md §1.1b) and
  * `NotifyRule` is `camelCase` (`whenAll`/`whenAny`) — the same class of gap
  * as the field casing, one level up, and equally silent if missed: a rule
- * whose buckets both parse as `undefined` has no conditions, which
- * `ruleMatches` treats as vacuously true, so it would fire on *every*
- * mutation rather than never. That is the one direction where getting the
- * casing wrong is worse than failing closed, which is why this function
- * requires at least one bucket to have survived parsing.
+ * whose buckets both parse as `undefined` has no conditions.
+ *
+ * **What such a rule actually does is nothing**, which is worth stating
+ * precisely because the opposite is easy to infer. `ruleMatches` does treat a
+ * missing bucket as vacuously true — that much is real — but the consequence
+ * does not follow, for two independent reasons. This function drops the rule
+ * below (`continue`), so it never reaches the evaluator at all; and
+ * `evaluateRules` (`@/lib/notifications`) is edge-triggered on
+ * `matchesAfter && !matchesBefore`, so a vacuously-true rule matches both
+ * snapshots and the edge never occurs. Measured: it fires zero times.
+ *
+ * Silence is the worse failure, not the safer one — a rule that looks
+ * configured and notifies nobody reports nothing to anybody — which is why
+ * this function requires at least one bucket to have survived parsing.
  *
  * Anything that is not an object, whose `notify` is not an array of strings,
  * or which ends up with no usable bucket, is dropped. Dropping is deliberate
@@ -126,8 +135,10 @@ export function parseStoredRules(stored: unknown): NotifyRule[] {
 
     const whenAll = parseConditions(record.when_all);
     const whenAny = parseConditions(record.when_any);
-    // Neither bucket usable means the rule matches everything and fires on
-    // every change — `hasAtLeastOneBucket`'s footgun, SCHEMA.md §1.1b.
+    // Neither bucket usable means the rule has no conditions, so it is
+    // dropped here rather than handed on — `hasAtLeastOneBucket`'s footgun,
+    // SCHEMA.md §1.1b. **This `continue` is why such a rule fires zero times
+    // rather than constantly**; see the docstring above.
     if (whenAll.length === 0 && whenAny.length === 0) continue;
 
     rules.push({

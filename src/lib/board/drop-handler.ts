@@ -15,6 +15,21 @@
 // dependencies injected, so a test can drive a whole drop — optimistic
 // move, request issued, result applied — with no DOM and no renderer, and
 // assert the thing that actually broke: **that a request was sent at all.**
+//
+// **How far that guard reaches, precisely (#128).** The extraction moved the
+// logic somewhere testable; it did not move the *wiring*. `handleDrop`'s
+// caller in `Board.tsx` still has to supply a `read` that is synchronous, and
+// nothing in this file can check that it does — restoring the original defect
+// in the component leaves every test here passing, because the injected `read`
+// in those tests is synchronous by construction. So the seam's tests prove
+// this module is correct given a well-behaved host, and say nothing about
+// whether the host behaves.
+//
+// That remaining layer is covered by `tests/board-react-wiring.test.ts`, the
+// one file in the suite that mounts real React under jsdom and asserts a
+// transition request actually reaches the network. Both layers are load-
+// bearing: this one because it is where the logic can be exercised
+// exhaustively, that one because it is where the defect actually lived.
 import type { BoardColumnId } from "./types";
 import { dropped, moveRefused, moveSettled, type DragState } from "./drag-state";
 import type { MoveResult } from "./move";
