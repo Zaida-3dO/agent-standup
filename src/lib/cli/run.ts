@@ -33,6 +33,10 @@ import type { Binding } from "./binding";
 import { doctorReport } from "./doctor";
 import { runInitCommand } from "./init";
 import { runMcpStdio } from "./mcp";
+import { HOOK_VERBS, isHookVerb, runHookCommand, type SpoolStore } from "./hook-command";
+import type { RunHookOptions } from "@/lib/hook/run";
+import type { SendBatch } from "@/lib/hook/flush";
+import type { RenderedResponse } from "@/lib/hook/response";
 
 /** What one run produced: the envelope, the exit code, and how to render it. */
 export interface RunOutcome {
@@ -40,6 +44,16 @@ export interface RunOutcome {
   readonly exitCode: ExitCode;
   /** Which binding ran, when one did. Absent for a command refused before dispatch. */
   readonly binding?: string;
+  /**
+   * The verbatim response for an agent tool, set only by `standup hook run`
+   * (MILESTONES.md #88). Present *instead of* a meaningful envelope: a hook
+   * reader parses a specific JSON shape on stdout and a specific exit code
+   * (`@/lib/hook/response`), and neither survives being wrapped in
+   * `{ok, data}`. `render` writes this through untouched when it is set,
+   * which is what keeps `--json` from being able to change what a guard
+   * says.
+   */
+  readonly hookResponse?: RenderedResponse;
 }
 
 /**
@@ -88,6 +102,92 @@ export interface RunCliOptions {
    */
   readonly loadService?: () => Promise<CallableService>;
   readonly fetch?: FetchLike;
+  /**
+   * Everything `standup hook` needs from outside this process's control —
+   * the payload on stdin, the spool file, and how to send a batch
+   * (MILESTONES.md #88). A parameter for the same reason `loadService` is
+   * one: it keeps the filesystem out of this module's import graph, and it
+   * is what lets a full disk and an unreachable server be tested as values.
+   */
+  readonly hook?: HookCommandEdges;
+}
+
+/** The process edges `standup hook` needs. Supplied by the entry point. */
+export interface HookCommandEdges {
+  readonly spool: SpoolStore;
+  /** Epoch milliseconds. */
+  readonly now: number;
+  /** Everything the agent tool wrote to stdin. Only `hook run` reads it. */
+  readonly stdin?: string;
+  readonly hook?: Omit<RunHookOptions, "stdin" | "now">;
+  readonly send?: SendBatch;
+  readonly batchSize?: number;
+  readonly maxRecords?: number;
+}
+
+/**
+ * `standup hook <verb>`.
+ *
+ * An unrecognised verb — and a missing one — is refused as malformed rather
+ * than defaulting to `run`. Defaulting would mean a typo (`standup hook
+ * flsuh`) silently executing the decision path against an empty stdin,
+ * which renders a **deny**: a mistyped maintenance command would answer as
+ * though it were a guard refusing a tool call.
+ *
+ * Reaching this command with no edges is likewise refused rather than
+ * treated as an empty spool. The binary always supplies them, so their
+ * absence means the command line was driven by something that built it
+ * wrong, and reporting a successful flush of zero records would hide that.
+ */
+async function runCliHook(rest: readonly string[], options: RunCliOptions): Promise<RunOutcome> {
+  const verb = rest[0];
+  if (!isHookVerb(verb)) {
+    return refuse(
+      malformed(
+        `standup hook needs one of: ${HOOK_VERBS.join(", ")}${verb === undefined ? "" : ` (got "${verb}")`}`,
+        ["verb"],
+      ),
+    );
+  }
+
+  const edges = options.hook;
+  if (edges === undefined) {
+    return refuse(malformed("standup hook is not available on this entry point", ["hook"]));
+  }
+
+  const outcome = await runHookCommand({
+    verb,
+    spool: edges.spool,
+    now: edges.now,
+    ...(edges.stdin === undefined ? {} : { stdin: edges.stdin }),
+    ...(edges.hook === undefined ? {} : { hook: edges.hook }),
+    ...(edges.send === undefined ? {} : { send: edges.send }),
+    ...(edges.batchSize === undefined ? {} : { batchSize: edges.batchSize }),
+    ...(edges.maxRecords === undefined ? {} : { maxRecords: edges.maxRecords }),
+  });
+
+  if (outcome.kind === "hook-response") {
+    // The envelope here is a placeholder that `render` never writes, because
+    // `hookResponse` takes precedence. It is still an honest `ok`: the hook
+    // ran and answered, and the answer is the response.
+    //
+    // **The exit code is the hook's own, passed through unchanged.** It is
+    // not mapped onto the command line's `EXIT` table, and the fact that
+    // `HOOK_EXIT.DENY` and `EXIT.MALFORMED` are both `2` is a coincidence
+    // this deliberately does not rely on: the meaning of the code here is
+    // "a hook denied", set by `@/lib/hook/response` for the reason its own
+    // header gives (agent tools read `2` as "block and feed stderr back to
+    // the model"). Mapping it through the envelope table would make a
+    // guard's refusal depend on two unrelated enumerations continuing to
+    // agree by accident.
+    return {
+      envelope: ok({ transport: "hook" }),
+      exitCode: outcome.response.exitCode as ExitCode,
+      hookResponse: outcome.response,
+    };
+  }
+
+  return { envelope: outcome.envelope, exitCode: outcome.exitCode };
 }
 
 /**
@@ -155,6 +255,18 @@ export async function runCli(
   // built for the noun/verb commands below.
   if (words[0] === "mcp") {
     return runMcpStdio({ env: options.env, file: options.file });
+  }
+
+  // `hook` is the third command that does not resolve a noun/verb binding
+  // (MILESTONES.md #88). Two of its three verbs answer in the ordinary
+  // envelope, but `hook run` answers an agent tool in that tool's own JSON
+  // shape and exit code — so it cannot be a `COMMANDS` entry, where every
+  // result becomes an envelope. `runCliHook` below handles the split; the
+  // process edges it needs (stdin, the spool file, the network) arrive as
+  // `options.hook`, the same way `loadService` and `fetch` do, so this
+  // module still touches none of them.
+  if (words[0] === "hook") {
+    return await runCliHook(words.slice(1), options);
   }
 
   if (!resolution.ok) {

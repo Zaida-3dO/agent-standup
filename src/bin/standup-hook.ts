@@ -20,6 +20,8 @@ import { runHook } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";
 import { createKillGuardAsk } from "@/lib/hook/ask-kill-guard";
 import { HOOK_EXIT } from "@/lib/hook/response";
+import { spoolEvent } from "@/lib/cli/hook-command";
+import { fileSpool, spoolPath } from "@/lib/cli/spool-file";
 // The version this script declares it speaks (SCHEMA.md §21). It lives in
 // its own module rather than here because this file's body runs on import —
 // it reads stdin to the end — so a constant exported from it could not be
@@ -65,6 +67,11 @@ function writeCacheFile(file: string, text: string): void {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, text, "utf-8");
 }
+
+// The spool's location and its file-backed implementation live in
+// `@/lib/cli/spool-file`, shared with the `standup` binary — the two
+// processes must resolve the same path or a flush would read a different
+// file from the one this script writes.
 
 async function main(): Promise<number> {
   const env = process.env;
@@ -112,17 +119,39 @@ async function main(): Promise<number> {
         });
 
   const file = cachePath(env);
+  const stdin = await readStdin();
+  const now = Date.now();
   const rendered = await runHook({
-    stdin: await readStdin(),
+    stdin,
     cacheText: readCacheFile(file),
     writeCache: (text) => writeCacheFile(file, text),
     askServer,
     ...(askKillGuard === undefined ? {} : { askKillGuard }),
-    now: Date.now(),
+    // Hoisted above this call rather than read here, so the verdict and the
+    // spooled record share one timestamp. Reading the clock twice would put
+    // the record a few milliseconds after the decision it describes — small,
+    // and exactly the kind of skew that makes two logs impossible to line up
+    // when someone is trying to work out what a hook did.
+    now,
   });
 
+  // The verdict is written before the record is spooled, and the record is
+  // spooled before the process exits — MILESTONES.md #88. The order is the
+  // one `@/lib/cli/hook-command` states: deciding first keeps the
+  // filesystem off the front of the fastest and most common path, and a
+  // hook killed between the two loses a measurement rather than delaying a
+  // decision.
+  //
+  // `spoolEvent` swallows every failure it can have, so nothing about
+  // telemetry can turn into a denied tool call. That is deliberate and is
+  // the reason there is no `try` around this line: adding one here would
+  // suggest it can throw, and the next person to read it would wonder what
+  // happens to the verdict when it does.
   if (rendered.stdout !== "") process.stdout.write(rendered.stdout);
   if (rendered.stderr !== "") process.stderr.write(rendered.stderr);
+
+  spoolEvent(stdin, fileSpool(spoolPath(env)), now);
+
   return rendered.exitCode;
 }
 
