@@ -92,12 +92,40 @@ jobs:
       - uses: actions/checkout@v6
       - uses: raven-actions/actionlint@v2
 
+  # Every `*-gate` job below decides its verdict from `needs.changes.outputs.*`,
+  # which is a string produced by another job. That string is only `'true'` or
+  # `'false'` when the `changes` job actually ran to completion: if it errors
+  # outright — an internal fault, a network failure during its own checkout —
+  # the output is the **empty string** instead, because a job that did not
+  # finish published no outputs.
+  #
+  # An empty scope must fail, not pass. A gate whose steps all test equality
+  # against `'true'` or `'false'` runs no step at all on an empty value and
+  # then reports success by default, having verified nothing. That is strictly
+  # worse than having no gate: the required check is green and the thing it
+  # exists to enforce was never evaluated, which is invisible precisely when
+  # it matters.
+  #
+  # So each gate carries an explicit third branch that fails on any value
+  # other than the two it knows how to interpret. This is the same posture
+  # `scripts/check-db-import-allowlist.mjs` already takes when it finds zero
+  # files to inspect — a check that is not running against anything is worse
+  # than one that is not running at all — generalised to the jobs that had
+  # been left out of it.
   actionlint-gate:
     name: Actionlint (required)
     needs: [changes, actionlint]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Fail — the changes job did not report a usable scope
+        if: needs.changes.outputs.workflows != 'true' && needs.changes.outputs.workflows != 'false'
+        run: |
+          echo "::error::The 'changes' job did not produce a usable 'workflows' output."
+          echo "Got: '${{ needs.changes.outputs.workflows }}' (expected 'true' or 'false')."
+          echo "That means this gate cannot tell whether actionlint needed to run, so it"
+          echo "fails rather than passing on an unverified scope. Check the 'changes' job."
+          exit 1
       - name: Pass — workflows not changed
         if: needs.changes.outputs.workflows == 'false'
         run: echo "No workflow files changed, skipping actionlint"
@@ -347,6 +375,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Fail — the changes job did not report a usable scope
+        if: needs.changes.outputs.source != 'true' && needs.changes.outputs.source != 'false'
+        run: |
+          echo "::error::The 'changes' job did not produce a usable 'source' output."
+          echo "Got: '${{ needs.changes.outputs.source }}' (expected 'true' or 'false')."
+          echo "That means this gate cannot tell whether mutation testing needed to run, so"
+          echo "it fails rather than passing on an unverified scope. Check the 'changes' job."
+          exit 1
       - name: Pass — no source files changed
         if: needs.changes.outputs.source == 'false'
         run: echo "No src/**/*.ts(x) files changed, skipping mutation testing"
@@ -404,6 +440,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Fail — the changes job did not report a usable scope
+        if: needs.changes.outputs.docker != 'true' && needs.changes.outputs.docker != 'false'
+        run: |
+          echo "::error::The 'changes' job did not produce a usable 'docker' output."
+          echo "Got: '${{ needs.changes.outputs.docker }}' (expected 'true' or 'false')."
+          echo "That means this gate cannot tell whether the Docker build needed to run, so"
+          echo "it fails rather than passing on an unverified scope. Check the 'changes' job."
+          exit 1
       - name: Pass — Docker files not changed
         if: needs.changes.outputs.docker == 'false'
         run: echo "No Docker-relevant files changed, skipping docker-build"
