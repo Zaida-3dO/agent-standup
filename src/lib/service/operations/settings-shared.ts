@@ -53,6 +53,38 @@ export function renderAllSettings(overrideRows: readonly RawSettingRow[]): Rende
   return SETTING_KEYS.map((key) => renderOne(key, byKey.has(key) ? byKey.get(key) : undefined));
 }
 
+/**
+ * A stored override for a key this build does not declare — SCHEMA.md §17.3:
+ * "The row is **inert**… It is listed under 'Unrecognised' on `/settings`
+ * with a remove action."
+ *
+ * Carried separately from `RenderedSetting` rather than folded into it,
+ * because the two are genuinely different things: a rendered setting has a
+ * label, help, category and schema, and an unrecognised row has none of
+ * those by definition — the registry entry that would supply them is exactly
+ * what is missing. Giving it placeholder ones would make an undeclared key
+ * look declared.
+ */
+export interface UnrecognisedSetting {
+  readonly key: string;
+  readonly storedValue: unknown;
+}
+
+/**
+ * The stored rows whose keys the registry does not declare.
+ *
+ * Mirrors `resolveSettings`'s own partition (SCHEMA.md §17.3) rather than
+ * inventing a second one: a row is unrecognised when `isSettingKey` says so,
+ * and that is the only test either place applies.
+ */
+export function renderUnrecognisedSettings(
+  overrideRows: readonly RawSettingRow[],
+): UnrecognisedSetting[] {
+  return overrideRows
+    .filter((row) => !isSettingKey(row.key))
+    .map((row) => ({ key: row.key, storedValue: row.value }));
+}
+
 /** Renders one declared key, given the stored value if a row exists (`undefined` = no row). */
 export function renderOne(key: SettingKey, storedValue: unknown): RenderedSetting {
   const definition = SETTINGS_REGISTRY[key];
