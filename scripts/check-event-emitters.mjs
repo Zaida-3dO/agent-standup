@@ -143,14 +143,6 @@ export const KNOWN_UNEMITTED = [
     why: "the merge transition owns this emitter — MILESTONES.md #98",
   },
   {
-    type: "open_loop",
-    why: "open-loop writes (`loop_add`) own this emitter — MILESTONES.md #100",
-  },
-  {
-    type: "open_loop_closed",
-    why: "open-loop writes (`loop_close`) own this emitter — MILESTONES.md #100",
-  },
-  {
     type: "dispatch",
     why: "the dispatch operation owns this emitter — MILESTONES.md #43",
   },
