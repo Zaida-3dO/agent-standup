@@ -30,9 +30,8 @@ import {
   judgeHolder,
   takeoverAssignment,
 } from "@/lib/takeover";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -265,11 +264,7 @@ describeIfDb("takeoverAssignment — against a real database", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const migrated = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!migrated.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
