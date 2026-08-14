@@ -142,8 +142,8 @@ jobs:
         with:
           # The tag a dispatch just created is newer than the ref this workflow
           # started from, so check it out explicitly — otherwise a dispatch
-          # would build whatever the branch tip was, which is the same commit
-          # today but silently drifts if anything lands mid-run.
+          # builds whatever the branch tip happens to be when this job starts,
+          # which is a different commit from the tag if anything lands mid-run.
           ref: ${{ needs.tag.outputs.tag }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v4
