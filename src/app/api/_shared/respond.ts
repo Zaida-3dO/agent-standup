@@ -10,6 +10,7 @@
 // they cannot disagree about what one code means — only about which routes
 // happen to import which copy.
 import { NextResponse } from "next/server";
+import { log } from "@/lib/log";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
@@ -22,11 +23,28 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   internal: 500,
 };
 
-/** Renders any thrown value as the JSON error envelope this adapter uses, with the mapped status. */
+/**
+ * Renders any thrown value as the JSON error envelope this adapter uses, with
+ * the mapped status.
+ *
+ * **An `internal` is logged here, with its cause.** `InternalError` keeps the
+ * original on `.cause` "for exactly that reader" — the operator reading the
+ * logs — but nothing used to write it anywhere, so a 500 reached the client as
+ * `{"code":"internal"}` and left an empty server log behind it. The redaction
+ * boundary is unchanged: the client still learns nothing it did not before.
+ *
+ * Only `internal` is logged, and deliberately. Every other code is a refusal
+ * the caller caused and the response already explains — a 404 or a rejected
+ * guard is the system working, and logging those at error level would bury the
+ * one code that means something is actually wrong.
+ */
 export function serviceErrorResponse(error: unknown): NextResponse {
   const serviceError = toServiceError(error);
   const status = STATUS_BY_CODE[serviceError.code];
   const rejection = serviceError.toRejection();
+  if (serviceError.code === "internal") {
+    log.error("Request failed unexpectedly.", { transport: "http", err: serviceError });
+  }
   return NextResponse.json({ error: { message: serviceError.message, ...rejection } }, { status });
 }
 

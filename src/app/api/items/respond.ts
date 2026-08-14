@@ -8,6 +8,7 @@
 // become 400, because the mapping is keyed on `ServiceError.code`, not on
 // which route caught it.
 import { NextResponse } from "next/server";
+import { log } from "@/lib/log";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
@@ -20,10 +21,22 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   internal: 500,
 };
 
-/** Renders any thrown value as the JSON error envelope this adapter uses, with the mapped status. */
+/**
+ * Renders any thrown value as the JSON error envelope this adapter uses, with
+ * the mapped status.
+ *
+ * Logs an `internal` with its cause, for the same reason and on the same terms
+ * as the `_shared` copy this mirrors — see the comment there. The two stay in
+ * step on what one code means; they must also stay in step on this, or which
+ * routes happen to import which copy would decide whether a 500 is
+ * investigable.
+ */
 export function serviceErrorResponse(error: unknown): NextResponse {
   const serviceError = toServiceError(error);
   const status = STATUS_BY_CODE[serviceError.code];
   const rejection = serviceError.toRejection();
+  if (serviceError.code === "internal") {
+    log.error("Request failed unexpectedly.", { transport: "http", err: serviceError });
+  }
   return NextResponse.json({ error: { message: serviceError.message, ...rejection } }, { status });
 }
