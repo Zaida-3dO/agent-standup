@@ -9,6 +9,7 @@
 // edge whitelist here for a guard to consult.
 import { GuardRejectedError } from "../errors";
 import type { TransactionHandle } from "../context";
+import { log } from "@/lib/log";
 import type { SettingsSnapshot } from "@/lib/settings";
 
 /**
@@ -47,6 +48,17 @@ export interface GuardInput {
   readonly fields: Readonly<Record<string, unknown>>;
   readonly db: TransactionHandle;
   readonly settings: SettingsSnapshot;
+  /**
+   * The call this evaluation belongs to, so a refusal logged here can be
+   * matched to the request that provoked it.
+   *
+   * Optional because a guard's decision must not depend on it: a rule that
+   * behaved differently with and without a request id would be a rule the
+   * conformance suite could not compare across adapters. It is carried for
+   * the log line and read by nothing else — `runGuards` is the only code
+   * in the repository that touches it.
+   */
+  readonly requestId?: string;
 }
 
 /** A guard's verdict. Rejection carries everything `GuardRejectedError` needs. */
@@ -152,6 +164,32 @@ export const guardRegistry = new GuardRegistry();
  * nothing left ambiguous about which rule fired. Ordering guards so the
  * cheapest or most informative check runs first is a registration-time
  * concern, not this function's.
+ *
+ * ── Why the refusal is logged *here* ────────────────────────────────────
+ *
+ * This is where the rule fires and where its reasoning still exists. By the
+ * time a refusal reaches an adapter it is a `code`, a `guard` id and a
+ * message; the item it was about, the pair it was moving between and the
+ * `details` the guard computed are gone, and the API responder deliberately
+ * logs only `internal` anyway — so a `guard_rejected` reaches no log at all
+ * today. An operator asking "why did that transition keep failing" has to
+ * reproduce it to find out.
+ *
+ * **At `info`, and that is the whole point of the level.** A guard refusing
+ * is the system working, not a fault: PLAN.md's guards are required-field
+ * checks, and a required field being absent is an ordinary answer. Logging
+ * it at `warn` or `error` would put thousands of correct refusals in the
+ * same stream as the failures that need a human, which is how the failures
+ * stop being read. At `info` it is on by default (that is the default
+ * threshold) and it is where an operator following a stuck item will
+ * actually look.
+ *
+ * `details` is included because it *is* the reasoning — which field was
+ * missing, which artifact was looked for. It is already the client-facing
+ * extras field (`ServiceErrorOptions.details`: "Never contains
+ * credentials"), so logging it discloses nothing the caller was not about
+ * to be told; there is no separate operator-only channel being opened
+ * here. The `fields` a guard names are logged for the same reason.
  */
 export async function runGuards(
   guards: readonly Guard[],
@@ -160,6 +198,16 @@ export async function runGuards(
   for (const guard of guards) {
     const result = await guard.check(input);
     if (!result.ok) {
+      log.info("Guard refused a transition.", {
+        ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+        guard: guard.id,
+        itemId: input.item.id,
+        from: input.from,
+        to: input.to,
+        reason: result.message,
+        ...(result.fields === undefined ? {} : { fields: [...result.fields] }),
+        ...(result.details === undefined ? {} : { details: result.details }),
+      });
       return new GuardRejectedError(guard.id, result.message, {
         fields: result.fields,
         details: result.details,

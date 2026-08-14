@@ -9,6 +9,7 @@ import { runCli, type RunCliOptions, type RunOutcome } from "./run";
 import { render, type Streams } from "./render";
 import { booleanFlag, parseArgs } from "./args";
 import { EXIT, exitCodeFor, type ExitCode } from "./envelope";
+import { log } from "@/lib/log";
 
 export interface MainOptions extends RunCliOptions {
   readonly streams: Streams;
@@ -54,6 +55,22 @@ export async function main(
     // taking the underlying one (`service/errors.ts`), and the same rule
     // §20 states for the command line. A person debugging this has the
     // stack; a person reading a terminal must not be shown a credential.
+    //
+    // The message is withheld from the terminal and written to the log,
+    // which is the same split every other boundary in this application
+    // makes. This one matters most: a throw reaching here escaped both
+    // bindings' normalisation, so it is the least expected failure the
+    // command line has, and the rendered envelope below reduces it to a
+    // class name. Without this line the only record of what actually
+    // happened would be a stack nobody kept.
+    //
+    // `log.fatal`, the one use of the top level: the process is ending
+    // because of this, and it is the only place in the command line where
+    // that is true.
+    log.fatal("The command failed outside the binding boundary.", {
+      transport: "cli",
+      err: cause,
+    });
     const envelope = {
       ok: false as const,
       error: {

@@ -29,9 +29,10 @@
 // imports no database client; the service caller arrives as a parameter, so
 // this module has no way to construct one even if a handler wanted to.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { listOperations, type AnyOperation } from "@/lib/service";
+import { listOperations, toServiceError, type AnyOperation } from "@/lib/service";
 import { exposedOperations } from "@/lib/adapters/waivers";
 import type { AdapterName } from "@/lib/adapters/registry";
+import { log, newRequestId } from "@/lib/log";
 import { toolRejection, toolSuccess, type ToolResult } from "./result";
 import { advertisedSchema, toolsFromOperations } from "./tools";
 
@@ -48,7 +49,9 @@ import { advertisedSchema, toolsFromOperations } from "./tools";
 export type ServiceCall = (
   name: string,
   input: unknown,
-  options?: { caller?: { transport?: string; sessionId?: string; actor?: string } },
+  options?: {
+    caller?: { transport?: string; sessionId?: string; actor?: string; requestId?: string };
+  },
 ) => Promise<unknown>;
 
 export interface McpServerOptions {
@@ -138,6 +141,23 @@ export function createMcpServer({
  * lines with no rule in them. Every refusal, including an unregistered
  * operation name, is produced by the service and rendered unedited; nothing
  * here decides whether a call is allowed.
+ *
+ * ── Why this logs at all ────────────────────────────────────────────────
+ *
+ * A failure through MCP used to reach no log anywhere. `toolRejection`
+ * renders an `internal` as `{"code":"internal"}` with the fixed message and
+ * drops the `cause` — correctly, because a `cause` routinely carries a
+ * query or a connection string and an agent must not be shown one — so the
+ * operator-facing half of the failure had nowhere to go. That is #97's
+ * motivating failure in MCP's shape, and this is the same fix the HTTP
+ * responder already carries.
+ *
+ * The request id is minted **here**, not left to the runtime, because the
+ * adapter is where the call begins: minting it here is what lets the line
+ * below and the runtime's own lines carry the same id, and what would let a
+ * future transport echo it to a client. Nothing about it crosses into the
+ * rendered result — `toolRejection` is unchanged, and the caller learns
+ * exactly what it learned before.
  */
 export async function callTool(
   call: ServiceCall,
@@ -145,9 +165,27 @@ export async function callTool(
   name: string,
   args: unknown,
 ): Promise<ToolResult> {
+  const requestId = newRequestId();
   try {
-    return toolSuccess(await call(name, args, { caller: { transport } }));
+    return toolSuccess(await call(name, args, { caller: { transport, requestId } }));
   } catch (error) {
-    return toolRejection(error);
+    const serviceError = toServiceError(error);
+    if (serviceError.code === "internal") {
+      log.error("MCP tool call failed unexpectedly.", {
+        requestId,
+        transport,
+        tool: name,
+        err: serviceError,
+      });
+    } else {
+      log.debug("MCP tool call refused.", {
+        requestId,
+        transport,
+        tool: name,
+        code: serviceError.code,
+        ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
+      });
+    }
+    return toolRejection(serviceError);
   }
 }
