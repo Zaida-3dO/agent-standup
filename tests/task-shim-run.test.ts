@@ -415,6 +415,53 @@ describe("list", () => {
     expect(params.has("area")).toBe(false);
   });
 
+  // The wire between the flag and the request, not the two ends separately.
+  // `--all` is parsed in one place and turned into a query parameter in
+  // another, and a test of either alone would pass while the flag did
+  // nothing at all — which is exactly the round-trip gap recorded against
+  // this surface.
+  it("turns a bare --all into includeTerminal on the request", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      return json({ items: [], nextCursor: null });
+    };
+    const { sinks } = streams();
+    const code = await run(["list", "--all"], { env, fetch: fetchImpl, streams: sinks });
+    expect(code).toBe(0);
+    // A valueless flag records the empty string, so a truthiness test on the
+    // flag's *value* would drop it here — presence is the whole meaning.
+    expect(new URL(seen[0]!).searchParams.get("includeTerminal")).toBe("true");
+  });
+
+  it("sends no includeTerminal when --all is absent", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      return json({ items: [], nextCursor: null });
+    };
+    const { sinks } = streams();
+    await run(["list"], { env, fetch: fetchImpl, streams: sinks });
+    // The complement. A flag that were always sent would pass the test above
+    // while meaning nothing.
+    expect(new URL(seen[0]!).searchParams.has("includeTerminal")).toBe(false);
+  });
+
+  it("still carries --all alongside other filters", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      return json({ items: [], nextCursor: null });
+    };
+    const { sinks } = streams();
+    await run(["list", "--all", "--repo", "web"], { env, fetch: fetchImpl, streams: sinks });
+    const params = new URL(seen[0]!).searchParams;
+    // `--all` sits directly before a valued flag here, which is the parse
+    // that would break if a bare flag swallowed the next token.
+    expect(params.get("includeTerminal")).toBe("true");
+    expect(params.get("repo")).toBe("web");
+  });
+
   it("surfaces a server refusal by its message and exits 1, rather than printing an empty task list", async () => {
     const fetchImpl = async () =>
       json(

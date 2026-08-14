@@ -96,6 +96,25 @@ describe("listTasks", () => {
     expect(seen[0]?.url).toBe("https://example.test/api/items");
   });
 
+  it("asks for finished work when includeTerminal is set", async () => {
+    // The endpoint excludes terminal states by default, so a client that
+    // cannot send this parameter can only ever see live work. Dropping the
+    // `includeTerminal` line from `client.ts` makes this fail.
+    const { seen, fetch } = capture(json({ items: [], nextCursor: null }));
+    await listTasks({ baseUrl, fetch }, { includeTerminal: true });
+    const url = new URL(seen[0]?.url as string);
+    expect(url.searchParams.get("includeTerminal")).toBe("true");
+  });
+
+  it("omits includeTerminal entirely when it is false, rather than sending false", async () => {
+    // The server's default is already `false`, so sending it says nothing
+    // the omission does not — and this keeps the no-filters case above from
+    // silently acquiring a query string.
+    const { seen, fetch } = capture(json({ items: [], nextCursor: null }));
+    await listTasks({ baseUrl, fetch }, { includeTerminal: false });
+    expect(seen[0]?.url).toBe("https://example.test/api/items");
+  });
+
   it("projects every returned item, translating each one's status independently", async () => {
     const { fetch } = capture(
       json({
