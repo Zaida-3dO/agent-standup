@@ -57,6 +57,7 @@ function boardWithOneCard(): BoardData {
         item: {
           id: "item-a",
           title: "A card",
+          headline: null,
           kind: "task",
           state: "on_deck",
           priority: "P1",

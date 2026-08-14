@@ -118,6 +118,33 @@ describeIfDb("events HTTP routes against Postgres", () => {
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   }
 
+  /**
+   * Polls `GET /api/events` until `eventId` appears in the slice, or gives up.
+   *
+   * The slice is bounded by the transaction-visibility horizon, which is
+   * `pg_snapshot_xmin` and therefore **server-wide**: a transaction open in
+   * another test file, against its own scratch database, still holds it back.
+   * So a row this test just committed is not necessarily readable on the very
+   * next call — that delay is the documented cost of the bound, not a fault.
+   *
+   * Reading once turns ordinary contention into a red test. Polling keeps the
+   * assertion honest, because it still fails if the row never arrives.
+   */
+  async function getEventsUntilVisible(
+    query: string,
+    eventId: string,
+    attempts = 200,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    let last = await getEvents(query);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const events = (last.body.events ?? []) as { id: string }[];
+      if (events.some((event) => event.id === eventId)) return last;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      last = await getEvents(query);
+    }
+    return last;
+  }
+
   async function postSeen(
     eventId: string,
     body?: unknown,
@@ -136,7 +163,10 @@ describeIfDb("events HTTP routes against Postgres", () => {
 
       // Anchored to our own event — see `appendNote` on why a read from the
       // start of a shared ledger is not a reliable way to get this row.
-      const { status, body } = await getEvents(`?since=${BigInt(eventId) - 1n}`);
+      const { status, body } = await getEventsUntilVisible(
+        `?since=${BigInt(eventId) - 1n}`,
+        eventId,
+      );
       expect(status).toBe(200);
       expect((body.events as { id: string }[]).some((e) => e.id === eventId)).toBe(true);
       expect(Array.isArray(body.events)).toBe(true);
@@ -150,7 +180,10 @@ describeIfDb("events HTTP routes against Postgres", () => {
       const eventId = await appendNote(itemId, "note");
       await postSeen(eventId, { personId: person });
 
-      const { body } = await getEvents(`?personId=${person}`);
+      const { body } = await getEventsUntilVisible(
+        `?personId=${person}&since=${BigInt(eventId) - 1n}`,
+        eventId,
+      );
       const events = body.events as { id: string; seen: boolean }[];
       expect(events.find((e) => e.id === eventId)?.seen).toBe(true);
     }, 30_000);
