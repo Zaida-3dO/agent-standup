@@ -120,6 +120,13 @@ export interface ListTaskFilters {
   readonly state?: string;
   readonly repo?: string;
   readonly area?: string;
+  /**
+   * Ask for finished work too. The list endpoint excludes terminal states by
+   * default, so without a way to say otherwise `task list` could show only
+   * live work and offer no way to see the rest — a default the caller could
+   * observe but not override.
+   */
+  readonly includeTerminal?: boolean;
 }
 
 export async function listTasks(
@@ -130,6 +137,10 @@ export async function listTasks(
   if (filters.state !== undefined) params.set("state", filters.state);
   if (filters.repo !== undefined) params.set("repo", filters.repo);
   if (filters.area !== undefined) params.set("area", filters.area);
+  // Sent only when asked for. The endpoint's own default is the same
+  // `false`, so an unconditional `includeTerminal=false` would add a
+  // parameter to every request to say what omitting it already says.
+  if (filters.includeTerminal === true) params.set("includeTerminal", "true");
   const query = params.toString();
 
   const result = await request(options, "GET", `/api/items${query.length > 0 ? `?${query}` : ""}`);

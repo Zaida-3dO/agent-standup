@@ -250,6 +250,89 @@ describe("check-external-refs — waivers", () => {
     expect(scan(text).map((v) => v.line)).toEqual([3]);
   });
 
+  // A `-next-line` waiver is anchored by position, and position is not
+  // stable under formatting: Prettier inserts a blank line after a
+  // standalone HTML comment in markdown, which moves the covered line down
+  // by one the first time a file is formatted. Two defences, tested
+  // separately because either alone leaves the other's hole open.
+  describe("a next-line waiver survives formatting, and cannot drift silently", () => {
+    it("still covers its line when a blank line is inserted between them", () => {
+      // Exactly what Prettier produces. Without blank-line skipping the
+      // waiver covers the blank line, the violation below it goes unwaived,
+      // and a reviewed-and-waived line starts failing the check.
+      const text = [
+        "<!-- external-ref-ok-next-line: describes this repository's own drift check -->",
+        "",
+        "replaying the migration history no longer reproduces the schema",
+      ].join("\n");
+
+      expect(scan(text)).toEqual([]);
+    });
+
+    it("skips several blank lines, not just one", () => {
+      const text = [
+        "<!-- external-ref-ok-next-line: describes this repository's own drift check -->",
+        "",
+        "   ",
+        "replaying the migration history no longer reproduces the schema",
+      ].join("\n");
+
+      expect(scan(text)).toEqual([]);
+    });
+
+    it("reports a next-line waiver that covers no match at all", () => {
+      // The other half, and the one that closes the silent case. A waiver
+      // whose target holds nothing to excuse has either shifted off the line
+      // it was written for or outlived the text it excused — and left in
+      // place it would silently absorb whatever lands in that position
+      // later. Removing the `waiver-covering-nothing` push makes this fail.
+      const text = [
+        "<!-- external-ref-ok-next-line: this once covered a real match -->",
+        "a perfectly ordinary sentence about this repository",
+      ].join("\n");
+
+      const violations = scan(text);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        line: 1,
+        patternId: "waiver-covering-nothing",
+        kind: "stale-waiver",
+      });
+    });
+
+    it("reports a next-line waiver with nothing after it but blank lines", () => {
+      const text = ["<!-- external-ref-ok-next-line: nothing follows this at all -->", "", ""].join(
+        "\n",
+      );
+
+      expect(scan(text).map((v) => v.patternId)).toEqual(["waiver-covering-nothing"]);
+    });
+
+    it("does not report a waiver covering a match that only straddles the next break", () => {
+      // The case that makes a naive "does this line match" test wrong. This
+      // corpus is hard-wrapped, so a phrase lands astride a break routinely;
+      // the covered line read alone contains no match, yet the waiver is
+      // doing real work. Calling it stale would force it to be deleted or
+      // moved somewhere it does nothing.
+      const text = [
+        "<!-- external-ref-ok-next-line: this wrapped line is about this repo -->",
+        "cannot drift the way the",
+        "old per-client scripts could",
+      ].join("\n");
+
+      expect(scan(text)).toEqual([]);
+    });
+
+    it("a same-line waiver is unaffected by any of this", () => {
+      // The recommended form: anchored to the text it excuses rather than to
+      // a position, so no formatter can separate the two. It has no target
+      // line to lose and is never reported as covering nothing.
+      expect(
+        scan("the old commit is still there <!-- external-ref-ok: this repo's own git history -->"),
+      ).toEqual([]);
+    });
+  });
+
   it("works in a line comment as well as an HTML comment", () => {
     expect(scan("// external-ref-ok: this is about this repository's history")).toEqual([]);
   });

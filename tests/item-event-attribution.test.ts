@@ -42,19 +42,44 @@ const describeIfDb = testDatabaseUrl ? describe : describe.skip;
  * database, so it runs everywhere.
  *
  * The tests below prove that the four operations they name attribute their
- * events. They cannot prove it of a fifth operation nobody has written yet: a new inline
- * `INSERT INTO "Event"` would write a row with a null session and every one
- * of those tests would still pass, because none of them looks at an operation
- * it does not name. That is exactly how the four in this row got there.
+ * events. They cannot prove it of a fifth operation nobody has written yet:
+ * a new inline `INSERT INTO "Event"` would write a row with a null session
+ * and every one of those tests would still pass, because none of them looks
+ * at an operation it does not name. That is exactly how the four in this row
+ * got there.
  *
  * ESLint's `no-restricted-paths` zone already stops anything importing
  * `events-insert.ts` directly, but it cannot see a hand-rolled SQL string —
  * which is the form all four of these actually took.
+ *
+ * **Scope, stated precisely, because the qualifier is the whole claim.** This
+ * asserts the invariant over every `.ts`/`.tsx` file under `src` — the API
+ * routes and the CLI binaries included, not the service layer alone. An
+ * unqualified "the only file containing the statement" is only true of what
+ * is actually scanned, so widening the scan is what makes the sentence
+ * honest rather than merely confident.
  */
 describe("the events ledger has exactly one writer", () => {
-  const SERVICE_DIR = path.resolve(import.meta.dirname, "../src/lib");
-  /** The one module allowed to contain the statement, plus the import path it is split into. */
-  const WRITERS = new Set(["events-insert.ts"]);
+  // The whole of `src`, not just `src/lib`. Scoping this to the service
+  // directory made the check blind to `src/app` and `src/bin` — a fifth
+  // writer appearing in an API route or a CLI binary passed green, and so
+  // did every other check in the repository, because none of them can see a
+  // hand-rolled SQL string either. A check that inspects only the directory
+  // where the problem has already been fixed certifies nothing about the
+  // places it could next appear.
+  const SOURCE_DIR = path.resolve(import.meta.dirname, "../src");
+  /**
+   * The one module allowed to contain the statement, as a path relative to
+   * `SOURCE_DIR`.
+   *
+   * A path rather than a bare file name, because widening the scan to all of
+   * `src` brought in many duplicated basenames (`route.ts`, `index.ts`,
+   * `http.ts` and a dozen more appear repeatedly). Matching on basename
+   * would mean any file that happened to be named `events-insert.ts`
+   * anywhere under `src` was exempt — an allowlist that grows itself is not
+   * an allowlist.
+   */
+  const WRITERS = new Set([path.join("lib", "events-insert.ts")]);
 
   function sourceFiles(dir: string): string[] {
     const found: string[] = [];
@@ -62,21 +87,45 @@ describe("the events ledger has exactly one writer", () => {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         found.push(...sourceFiles(full));
-      } else if (entry.name.endsWith(".ts")) {
+      } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
         found.push(full);
       }
     }
     return found;
   }
 
-  it('has no INSERT INTO "Event" outside events-insert.ts', () => {
-    const offenders = sourceFiles(SERVICE_DIR)
-      .filter((file) => !WRITERS.has(path.basename(file)))
-      .filter((file) => readFileSync(file, "utf8").includes('INSERT INTO "Event"'))
-      .map((file) => path.relative(SERVICE_DIR, file));
+  const scanned = sourceFiles(SOURCE_DIR).map((file) => path.relative(SOURCE_DIR, file));
 
-    // Seeding a single `INSERT INTO "Event"` into any operation file makes
-    // this fail — the one-character-scale change that proves it can.
+  it("scans the API routes and the CLI binaries, not only the service layer", () => {
+    // Guards the guard. The assertion below is an `toEqual([])` over a
+    // filtered list, which passes just as happily over a list that was empty
+    // because nothing was scanned. This is what makes the difference
+    // between the two visible — and it is the exact gap that let a seeded
+    // violation in `src/app` pass.
+    expect(scanned.some((file) => file.startsWith(`app${path.sep}`))).toBe(true);
+    expect(scanned.some((file) => file.startsWith(`bin${path.sep}`))).toBe(true);
+    expect(scanned.some((file) => file.startsWith(`lib${path.sep}`))).toBe(true);
+  });
+
+  it("names a writer that actually exists", () => {
+    // An allowlist entry that matches no file exempts nothing and is dead
+    // weight that reads as protection — the same failure mode as a stale
+    // waiver in the external-refs check.
+    for (const writer of WRITERS) {
+      expect(scanned).toContain(writer);
+    }
+  });
+
+  it('has no INSERT INTO "Event" outside events-insert.ts', () => {
+    const offenders = scanned
+      .filter((file) => !WRITERS.has(file))
+      .filter((file) =>
+        readFileSync(path.join(SOURCE_DIR, file), "utf8").includes('INSERT INTO "Event"'),
+      );
+
+    // Seeding a single `INSERT INTO "Event"` into any file under `src` makes
+    // this fail — including an API route or a CLI binary, which is the
+    // change that proves the widened scope is doing work.
     expect(offenders).toEqual([]);
   });
 });

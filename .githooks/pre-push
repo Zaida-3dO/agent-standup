@@ -16,13 +16,71 @@
 #
 # Bypass in an emergency: git push --no-verify
 
+# ── Is there any content to check? ──────────────────────────────────────
+#
+# Git feeds a pre-push hook one line per ref being pushed, on stdin:
+#
+#     <local ref> <local sha> <remote ref> <remote sha>
+#
+# A DELETION is signalled by an all-zero local sha — there is no local
+# commit, because the point of the push is to remove the remote ref. A
+# branch deletion carries no content, so there is nothing to format and
+# nothing to lint, and running the checks anyway means a housekeeping push
+# is gated on the state of a working tree that has no bearing on it.
+#
+# If every ref being pushed is a deletion, the checks are skipped. A push
+# that mixes a deletion with a real update still runs them, because that
+# push does carry content.
+#
+# Reading stdin is safe when it is empty (git supplies nothing on some
+# paths): the loop simply does not execute, `has_content` stays 0, and the
+# checks are skipped — which is the right answer for a push with no refs.
+has_content=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_sha" in
+    # All zeros, of any length: git has used 40 hex digits for SHA-1 and
+    # will use 64 for SHA-256, so this matches the shape rather than a
+    # fixed width.
+    *[!0]*) has_content=1 ;;
+    "") ;;
+    *) ;;
+  esac
+done
+
+if [ "$has_content" -eq 0 ]; then
+  echo "pre-push: nothing to check (no commits being pushed — a deletion carries no content)."
+  exit 0
+fi
+
 echo "pre-push: running format:check and lint (see CLAUDE.md for what this checks and how to skip it)"
+
+# ── "Could not run" is not "failed" ─────────────────────────────────────
+#
+# If the checks cannot run at all — no `node_modules`, so no prettier and no
+# eslint — then reporting "fix the above" points at a code defect that does
+# not exist and sends the reader looking for it. A gate that cannot run must
+# say so rather than fail as though it had a verdict.
+#
+# npm exits 127 when the command it is asked to run is not found, which is
+# the signal this distinguishes on. It is treated as a warning and does NOT
+# block: a checkout with no dependencies installed is a housekeeping
+# checkout, not a broken one, and CI still runs the full list on every PR
+# regardless — so the cost of letting it through is a slower feedback loop,
+# never a missed check.
+TOOL_MISSING=127
 
 npm run format:check
 format_status=$?
 
 npm run lint
 lint_status=$?
+
+if [ "$format_status" -eq "$TOOL_MISSING" ] || [ "$lint_status" -eq "$TOOL_MISSING" ]; then
+  echo ""
+  echo "pre-push: could not run — prettier and/or eslint are not installed in this checkout."
+  echo "pre-push: run 'npm ci' if you want these checks locally. Not blocking; CI runs them on every PR."
+  exit 0
+fi
 
 if [ "$format_status" -ne 0 ] || [ "$lint_status" -ne 0 ]; then
   echo ""

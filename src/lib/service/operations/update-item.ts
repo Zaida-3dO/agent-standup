@@ -178,8 +178,8 @@ export const updateItem = defineOperation({
     // input and the loaded row. That matters: `changes` already holds the
     // *stored* form of each value (`mergeAuthority` is spelled one way in
     // the API and another in the Postgres enum), and it already dropped
-    // every field whose new value equals its stored value. Passing the raw input
-    // instead would re-diff the two encodings against each other and
+    // every field whose new value equals its stored value. Passing the raw
+    // input instead would re-diff the two encodings against each other and
     // resurrect the phantom `mergeAuthority` field_change on a no-op that
     // this function's own loop above exists to prevent. `recordFieldChanges`
     // compares with the same `JSON.stringify` equality, so every entry here

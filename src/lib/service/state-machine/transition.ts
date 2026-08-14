@@ -7,6 +7,7 @@
 // caller of that future operation shares: fetching the item, refusing to run
 // guards against a project, running whichever guards `appliesTo` the pair,
 // and either reporting the outcome (rehearsal) or writing it (real).
+import { isTerminalState } from "../board/columns";
 import { ForbiddenError, NotFoundError } from "../errors";
 import { guardRegistry, runGuards, type GuardableItem, type GuardRegistry } from "./guard";
 import { isItemState, type ItemStateValue } from "./states";
@@ -258,7 +259,6 @@ export async function applyTransition(
   // so clearing only fires on a genuine exit.
   const clearingBlocked = from === "blocked" && to !== "blocked";
   const clearingPaused = from === "paused" && to !== "paused";
-  const completedStates = new Set(["merged", "research_done", "wont_do", "cancelled"]);
 
   // Fields supplied alongside entry to `blocked`/`paused` are what row #16's
   // guards just validated are present — they still have to land in the
@@ -306,7 +306,11 @@ export async function applyTransition(
     to,
     clearingBlocked,
     clearingPaused,
-    completedStates.has(to),
+    // Which states set `completedAt` is the same question the board asks to
+    // fill its completed column, so it is answered in one place. Spelling
+    // the four out here again is what `columns.ts` argues against at length
+    // — and this was the copy that argument was already too late for.
+    isTerminalState(to),
     request.itemId,
     enteringBlocked,
     blockedReason,

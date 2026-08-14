@@ -61,6 +61,16 @@ function seedAgentName(name: string): void {
   agentNames.set(name, { name, held: null });
 }
 
+/**
+ * An `AppendedEvent`, and **exactly** an `AppendedEvent`: `id`, `txId`, `ts`.
+ *
+ * The real operations return whatever `insertEventRow` gets back from
+ * `INSERT ... RETURNING "id", "txId", "ts"`, which is those three columns and
+ * nothing else — `body` is written to the row and never read back out. A fake
+ * that returned more than the real thing does would manufacture a difference
+ * between the bindings that no caller can observe, and then require the
+ * comparison to be weakened to tolerate it.
+ */
 function fakeEvent(extra: Record<string, unknown> = {}) {
   eventCounter += 1;
   return { id: BigInt(eventCounter), txId: BigInt(eventCounter), ts: new Date(0), ...extra };
@@ -113,13 +123,13 @@ const sharedService = {
             fields: ["itemId", "sessionId"],
           });
         }
-        return fakeEvent({ body: body.body ?? null });
+        return fakeEvent();
       }
       case "note": {
         if (!items.has(body.itemId as string)) {
           throw new NotFoundError(`No such item: ${body.itemId}.`, { fields: ["itemId"] });
         }
-        return fakeEvent({ body: body.body ?? null });
+        return fakeEvent();
       }
       case "orientation": {
         if (!items.has(body.itemId as string)) {
@@ -292,23 +302,38 @@ describe("session release / session heartbeat — both bindings", () => {
 });
 
 /**
- * `checkpoint`/`note` both return an `AppendedEvent` on `direct` — the raw
- * operation output, `id`/`txId` as `bigint`, plus `body`/`itemId`/etc. Over
- * `http`, the real route (`_shared/respond.ts`'s `serializeAppendedEvent`,
- * #29's territory, unchanged by this row) sends back only `{ id, txId, ts }`
- * — `bigint` cannot cross a JSON boundary at all, and that helper's own
- * signature narrows to exactly those three fields, dropping `body` and
- * everything else. That is a genuine, pre-existing asymmetry between what
- * the two bindings return for these two operations, not a bug introduced
- * here, so this compares the two on the fields `http` actually carries —
- * `id`/`txId` normalised to a string, `ts` normalised to its ISO string —
- * rather than asserting an equality neither binding is capable of meeting.
+ * `checkpoint`/`note` return an `AppendedEvent` — `{ id, txId, ts }` and
+ * nothing else — over **both** bindings. The two differ only in encoding:
+ * `direct` hands back the raw operation output with `id`/`txId` as `bigint`
+ * and `ts` as a `Date`, while `http` carries the same three fields as
+ * strings, because a `bigint` cannot cross a JSON boundary at all and a
+ * `bigint` serialised as a JSON number would lose precision on the way back
+ * (`serializeAppendedEvent`, `src/app/api/_shared/respond.ts`).
+ *
+ * So this normalises the encoding and then compares the **whole** envelope,
+ * with no field excluded. An earlier reading of this helper held that `http`
+ * additionally dropped `body`, making the two bindings genuinely divergent —
+ * that is not so: `insertEventRow` runs `INSERT ... RETURNING "id", "txId",
+ * "ts"`, so `body` is written and never returned, on either side. The
+ * appearance of a divergence came from this file's own fake returning a
+ * `body` the real operations do not.
+ *
+ * The distinction matters because the two readings call for opposite fixes.
+ * A real divergence would mean changing the adapter to carry `body`; the
+ * actual situation calls for the fake to stop inventing one, so the
+ * comparison can be an equality rather than a subset.
  */
 function normaliseEventShape(outcome: RunOutcome): unknown {
   if (!outcome.envelope.ok) return outcome.envelope;
-  const data = outcome.envelope.data as { id: unknown; txId: unknown; ts: unknown };
+  const data = outcome.envelope.data as Record<string, unknown>;
   const ts = data.ts instanceof Date ? data.ts.toISOString() : data.ts;
-  return { ...outcome.envelope, data: { id: String(data.id), txId: String(data.txId), ts } };
+  // Spreads `data` rather than picking three fields out of it, so a field
+  // appearing on one binding and not the other now fails this comparison
+  // instead of being quietly excluded from it.
+  return {
+    ...outcome.envelope,
+    data: { ...data, id: String(data.id), txId: String(data.txId), ts },
+  };
 }
 
 describe("session checkpoint — both bindings", () => {

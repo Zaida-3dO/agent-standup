@@ -17,9 +17,21 @@
 //   call is the highest-volume path in the system (DECISIONS.md §4's whole
 //   point is keeping it a "dumb pipe"), so it reads settings only, the same
 //   posture `service_info` already uses for a DB-free read.
-// - `Stop` events (MILESTONES.md #42, #47) carry no tool/command and are
-//   accepted here as `allow` by construction — nothing to match against, and
-//   "unsure" does not apply to an event with no command to be unsure about.
+// - **Any event with no command is allowed by construction** — nothing to
+//   match against, and "unsure" does not apply to an event with no command
+//   to be unsure about. This is deliberately broader than "a `Stop` event
+//   is allowed", and the width is the point rather than an oversight:
+//   `PostToolUse` fires for non-Bash tools too, and those carry no command
+//   either, so keying the carve-out on `eventType === "Stop"` would leave
+//   every command-less `PostToolUse` falling through to the "matches
+//   neither list" path and reading as a false `deny`. What is being allowed
+//   is precisely "there is nothing here to classify", which is a statement
+//   about the payload and not about which event produced it.
+//
+//   It is still a widening of an allow path in a gate whose default is to
+//   deny when unsure, so it is pinned by test rather than left to this
+//   comment: see `tests/hook-decision-operation.test.ts`. The boundary can
+//   move, but not silently.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";

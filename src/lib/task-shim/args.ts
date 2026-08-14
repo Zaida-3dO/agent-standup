@@ -5,9 +5,13 @@
 // surface is deleted (MILESTONES.md #40), untangling a shared dependency
 // rather than removing one file.
 //
-// Only `--flag value` is supported — no `--flag=value`, no bare booleans.
-// The five commands below never take a boolean flag, so there is nothing for
-// that second form to do.
+// Only `--flag value` is supported — no `--flag=value`.
+//
+// A bare flag is representable, and one command uses it: a flag with no value
+// after it (end of argv, or another `--flag` next) records the empty string,
+// so presence is `flags.name !== undefined` rather than a truthiness test on
+// its value. `task list --all` is the case that matters — a valueless flag
+// whose whole meaning is that it was typed.
 
 export interface ShimParsed {
   readonly command: string | undefined;

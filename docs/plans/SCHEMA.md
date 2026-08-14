@@ -1125,7 +1125,7 @@ Same service, different consumers.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /board?priority=&area=&repo=&kind=&state=&assignee=&search=` | Items grouped by derived column. Filters compose (AND); `state` excludes projects (§1: their stored state is a creation leftover, never a fact about them); `assignee` matches a live assignment's holder; `search` is a case-insensitive substring match over title/body. |
+| `GET /board?priority=&area=&repo=&kind=&state=&assignee=&search=&includeTerminal=` | Items grouped by derived column. Filters compose (AND); `state` excludes projects (§1: their stored state is a creation leftover, never a fact about them); `assignee` matches a live assignment's holder; `search` is a case-insensitive substring match over title/body. **Finished work is excluded by default** — `includeTerminal` asks for it, and filtering on a terminal `state` directly still returns it. |
 | `GET /events?since=` | Since-your-last-visit. A **slice**, never the whole ledger. |
 | `POST /events/{id}/seen` | Mark read. Optionally carries facet scores. |
 | `GET /items/{id}` | Read one item for the UI. |

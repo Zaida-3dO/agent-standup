@@ -51,10 +51,17 @@ export async function runList(
     return printError(streams, `unknown status "${status}". Known statuses: ${STATUS_LIST}.`);
   }
 
+  // `--all` is a presence flag: the parser gives a valueless flag an empty
+  // string, so testing for `!== undefined` is what makes a bare `--all` count.
+  // Without it, `task list` with no `--status` shows live work only and has
+  // no way to ask for the rest.
+  const includeTerminal = flags.all !== undefined;
+
   const result = await listTasks(client, {
     ...(status !== undefined && status !== "" ? { state: stateForStatus(status) } : {}),
     ...(flags.repo !== undefined && flags.repo !== "" ? { repo: flags.repo } : {}),
     ...(flags.area !== undefined && flags.area !== "" ? { area: flags.area } : {}),
+    ...(includeTerminal ? { includeTerminal: true } : {}),
   });
 
   if (!result.ok) return printError(streams, result.message);
