@@ -16,21 +16,19 @@
 // refusal, revert — is testable as a sequence of calls without a DOM. What
 // is left in this component is the part that genuinely needs React: holding
 // the state and making the request.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useProfile } from "@/lib/profile/ProfileProvider";
 import { fetchBoard, boardErrorMessageFrom, type BoardLoadState } from "@/lib/board/state";
 import { emptyBoard } from "@/lib/board/view";
 import type { BoardColumnId } from "@/lib/board/types";
 import { requestMove } from "@/lib/board/move";
+import { handleDrop } from "@/lib/board/drop-handler";
 import {
   boardReplaced,
   dragEnded,
   dragStarted,
   draggedOver,
-  dropped,
   initialDragState,
-  moveRefused,
-  moveSettled,
   refusalDismissed,
   type DragState,
 } from "@/lib/board/drag-state";
@@ -42,12 +40,29 @@ export function Board() {
   const [errorMessage, setErrorMessage] = useState("");
   const [drag, setDrag] = useState<DragState>(() => initialDragState(emptyBoard()));
 
+  // **The ref is the authoritative copy; `drag` is what renders.**
+  //
+  // Both are written together, and only ever through `applyDrag` below, so
+  // they cannot diverge. The ref exists because an event handler has to be
+  // able to *read* the newest state synchronously — see `onDrop`'s comment
+  // for the defect that costs. It is never read or written during render,
+  // which is what `react-hooks/refs` is protecting and is a rule worth
+  // keeping: a ref read during render would not re-render when it changed.
+  const stateRef = useRef(drag);
+
+  /** The single write path — advances the ref synchronously and schedules the render. */
+  const applyDrag = useCallback((fn: (current: DragState) => DragState) => {
+    const next = fn(stateRef.current);
+    stateRef.current = next;
+    setDrag(next);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetchBoard()
       .then((board) => {
         if (cancelled) return;
-        setDrag((current) => boardReplaced(current, board));
+        applyDrag((current) => boardReplaced(current, board));
         setStatus("loaded");
       })
       .catch((err: unknown) => {
@@ -58,30 +73,40 @@ export function Board() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyDrag]);
 
-  const onDrop = useCallback((column: BoardColumnId) => {
-    // The optimistic move is applied here, synchronously, before any
-    // request goes out — that is what "the move showing immediately"
-    // means. `dropped` also hands back the request to make, or `null` when
-    // the drop was not a move at all.
-    let request: ReturnType<typeof dropped>["request"] = null;
-    setDrag((current) => {
-      const outcome = dropped(current, column);
-      request = outcome.request;
-      return outcome.state;
-    });
-    if (request === null) return;
-
-    const { itemId, column: target, sequence } = request;
-    void requestMove(itemId, target).then((result) => {
-      setDrag((current) =>
-        result.ok
-          ? moveSettled(current, sequence, result.entry)
-          : moveRefused(current, sequence, result.message),
+  const onDrop = useCallback(
+    (column: BoardColumnId) => {
+      // The decision itself lives in `handleDrop` (`@/lib/board/drop-handler`)
+      // so this seam is directly testable — it is where the one defect in
+      // this row lived, and it was the only part of it no test covered.
+      void handleDrop(
+        {
+          // **Read synchronously, never out of a `setState` updater.** A drop
+          // has to do two things from one decision: apply the optimistic
+          // move, and issue the request that decision produced. React
+          // evaluates an updater eagerly only when no update is already
+          // pending on the fiber, and on this component there always is one
+          // (the mount-time board load alone leaves a lane, and every
+          // `onDragEnter` adds another) — so reading the request out of an
+          // updater yields nothing on essentially every drop, and the card
+          // moves with no request ever sent. That is the exact "shows a move
+          // that then quietly disappears" failure this row exists to
+          // prevent, reached from the other side.
+          read: () => stateRef.current,
+          // Both go through the one write path, which advances the ref
+          // synchronously as well as scheduling the render — so two drops in
+          // the same tick each see the previous one's sequence number
+          // instead of both minting the same one.
+          write: (next) => applyDrag(() => next),
+          update: applyDrag,
+          move: requestMove,
+        },
+        column,
       );
-    });
-  }, []);
+    },
+    [applyDrag],
+  );
 
   const loadState: BoardLoadState =
     status === "error"
@@ -95,14 +120,14 @@ export function Board() {
       loadState={loadState}
       personId={activeProfile?.id ?? null}
       drag={{
-        onCardDragStart: (itemId) => setDrag((current) => dragStarted(current, itemId)),
-        onCardDragEnd: () => setDrag((current) => dragEnded(current)),
-        onDragEnter: (column) => setDrag((current) => draggedOver(current, column)),
+        onCardDragStart: (itemId) => applyDrag((current) => dragStarted(current, itemId)),
+        onCardDragEnd: () => applyDrag((current) => dragEnded(current)),
+        onDragEnter: (column) => applyDrag((current) => draggedOver(current, column)),
         onDrop,
         overColumn: drag.overColumn,
         pendingItemId: drag.pendingItemId,
         refusal: drag.refusal,
-        onDismissRefusal: () => setDrag((current) => refusalDismissed(current)),
+        onDismissRefusal: () => applyDrag((current) => refusalDismissed(current)),
       }}
     />
   );
