@@ -105,11 +105,11 @@ export function needsYou(entry: BoardEntry, personId: string | null): boolean {
  * How many cards on the whole board need this person — the badge's number.
  *
  * Counted across **every** column, not just Waiting. `needsYou` already
- * requires `state === "blocked"`, and the server puts every blocked task in
- * Waiting, so in practice the two are the same set today. Scanning the
- * whole board anyway means the badge cannot silently under-count if an item
- * is ever blocked from somewhere else, and it costs one pass over data
- * already in memory.
+ * requires `state === "blocked"`, and the server groups every blocked task
+ * into Waiting, so the two are the same set for as long as that grouping
+ * holds. Scanning the whole board anyway means the badge cannot silently
+ * under-count if an item is ever blocked from somewhere else, and it costs
+ * one pass over data already in memory.
  */
 export function needsYouCount(board: Board, personId: string | null): number {
   let count = 0;
