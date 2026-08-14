@@ -134,6 +134,11 @@ export type { HeartbeatOperationInput } from "./operations/heartbeat";
 export type { CheckpointOperationInput } from "./operations/checkpoint";
 export type { NoteOperationInput } from "./operations/note";
 export type {
+  RecordArtifactInput,
+  RecordedArtifact,
+  RequestReviewInput,
+} from "./operations/record-artifact";
+export type {
   OrientationInput,
   OrientationOutput,
   OrientationCheckpoint,
