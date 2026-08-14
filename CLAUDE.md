@@ -9,6 +9,47 @@ endpoints), `DECISIONS.md` (why), `MILESTONES.md` (the work, as PR-sized pieces 
 
 ---
 
+## What a session can do end to end
+
+An item minted through the product walks the full state machine on service calls alone —
+`plan_review → executing → in_review → merged` — because the artifacts each transition guard reads
+are writable through the service.
+
+Two decisions in `record_artifact` are load-bearing and worth knowing before changing it.
+`reviewRound` defaults to the item's current round, which is what lets the merge gate — it takes
+`max(reviewRound)` across every kind — read a commit at the round its own review is on.
+`createdByType` is resolved from an explicit creator or a live assignment and is **never guessed**,
+because it decides whether a human authorised a merge on a `needs_approval` item.
+
+`request_review` is a separate operation from recording a review, not an oversight: the two are
+opposite ends of the same exchange, made by different parties at different times, and the event
+points at no artifact row precisely because there is nothing yet to point at.
+
+MCP tools are derived from the operation registry (`src/lib/mcp/tools.ts` over
+`src/lib/service/registry.ts`), so registering an operation is the whole of that adapter's work.
+Resist adding a second list of tools — there is nowhere to forget an operation.
+
+### The hook
+
+A single script (`src/bin/standup-hook.ts`) serves both `PostToolUse` and `Stop`, classifying against
+cached pattern lists locally and asking the server only on an ask-list match. **It denies whenever it
+cannot get a confident answer** — an unreachable server, an unparseable payload, an unrecognised
+decision and an unknown session identifier all deny. The matcher is imported from
+`src/lib/service/hook-decision.ts` rather than reimplemented, so the script and the server cannot
+disagree about whether a pattern matched.
+
+The cache rules follow from that posture. A *stale* cache is used rather than discarded, and a cache
+stamped in the future counts as stale so clock skew cannot mint a rule set that never expires. An
+*unavailable* cache asks the server instead of matching against empty lists — empty lists would
+refuse every tool call on a machine whose install is merely incomplete. Session enforcement
+(`src/lib/hook/enforcement.ts`) is checked before the pattern lists, so no allow-list entry can
+relax it.
+
+The hook is built but deliberately absent from `package.json`'s `bin`: it is a path a tool is
+configured to execute, not a command a person runs.
+
+---
+
 ## ⚠️ This repository is PUBLIC
 
 Anything committed here is world-readable **the moment it is pushed, and permanently** — deleting it
