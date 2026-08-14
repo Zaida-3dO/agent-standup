@@ -81,6 +81,9 @@ import { registerProcess } from "./operations/register-process";
 import { endProcess } from "./operations/end-process";
 import { listProcesses } from "./operations/list-processes";
 import { killGuard } from "./operations/kill-guard";
+// Telemetry (MILESTONES.md #50): the hook's tool-call ingest, and the
+// foundation every later M7 row reads.
+import { recordToolCalls } from "./operations/record-tool-calls";
 // Backfill — the one-time bulk load (docs/plans/BACKFILL.md). Registered
 // like any other operation so it is reachable and countable; whether it
 // answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
@@ -145,6 +148,7 @@ export const OPERATION_REGISTRY = {
   [endProcess.name]: endProcess,
   [listProcesses.name]: listProcesses,
   [killGuard.name]: killGuard,
+  [recordToolCalls.name]: recordToolCalls,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;
 

@@ -183,6 +183,16 @@ export {
   type HookDecisionOperationOutput,
 } from "./operations/hook-decision";
 
+// Telemetry ingest (MILESTONES.md #50). The caps themselves live in
+// `@/lib/telemetry/caps` rather than here — they are a property of the
+// table, not of the operation, and #51-#54 read them too.
+export {
+  recordToolCalls,
+  MAX_BATCH_SIZE,
+  type RecordToolCallsInput,
+  type RecordToolCallsOutput,
+} from "./operations/record-tool-calls";
+
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
 // (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,
