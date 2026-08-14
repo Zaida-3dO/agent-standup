@@ -281,6 +281,43 @@ describeIfDb("the slim read against Postgres", () => {
       };
       expect(latest.checkpointHeadline).toBe("Routes are in too.");
     });
+
+    it("prefers a checkpoint's stored headline over the line its prose would derive", async () => {
+      // The precedence case, reached through `get_item` rather than through
+      // `checkpointHeadline` directly.
+      //
+      // Worth its own test because this is the one path neither half of the
+      // work covered alone: a checkpoint may carry a stored headline, and
+      // the slim read reaches it through a *different* entry point
+      // (`latestCheckpointHeadline`, which makes the query) than the one
+      // whose precedence is unit-tested (`checkpointHeadline`, which takes a
+      // row). A version of the query that selected only `body` would satisfy
+      // every other assertion in this file — all of which write checkpoints
+      // with no stored headline — and silently answer with the derivation
+      // wherever a writer had actually supplied a line.
+      const created = await makeHeavyItem({ title: "Stored over derived" });
+      await registerSessions(prisma, ["session-slim-2"]);
+      await runtime.call("claim", {
+        itemId: created.id,
+        sessionId: "session-slim-2",
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-b",
+        machine: "laptop",
+      });
+      await runtime.call("checkpoint", {
+        itemId: created.id,
+        sessionId: "session-slim-2",
+        body: "An opening line that is not the headline.",
+        headline: "What the writer meant",
+      });
+
+      const read = (await runtime.call("get_item", { id: created.id })) as unknown as {
+        checkpointHeadline: string | null;
+      };
+      expect(read.checkpointHeadline).toBe("What the writer meant");
+      expect(read.checkpointHeadline).not.toBe("An opening line that is not the headline.");
+    });
   });
 
   describe("list_items", () => {
