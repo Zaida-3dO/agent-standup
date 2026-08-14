@@ -28,7 +28,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
   let itemCounter = 0;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     artifactsRoute = await import("@/app/api/items/[id]/artifacts/route");
     reviewRequestsRoute = await import("@/app/api/items/[id]/review-requests/route");
