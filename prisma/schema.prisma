@@ -410,6 +410,7 @@ model Person {
   blockedItems   Item[]          @relation("BlockedOn")
   seen           EventSeen[]
   authorizations Authorization[]
+  sessions       Session[]
 }
 
 model Authorization {
@@ -695,4 +696,70 @@ model RegisteredProcess {
   @@index([machine, executable])
   @@index([rootSessionId])
   @@map("registered_processes")
+// How a session registered — the capability signal (SCHEMA.md §21).
+//
+// **Five values, not two.** Registering over the command line proves the
+// command line is installed and the database is reachable; registering over
+// MCP or HTTP proves a *server* is reachable. Those are different
+// capabilities, and the version rule turns on the binding, so the two
+// command-line bindings and the two MCP transports are recorded apart rather
+// than collapsed. They are the same names the conformance drivers use, so a
+// registration and a driver name are the same vocabulary.
+enum SessionTransport {
+  cli_direct
+  cli_http
+  mcp_stdio
+  mcp_http
+  http
+}
+
+// Which hook a session gets. Derived from `SessionTransport` unless the
+// registration explicitly overrode it — the two command-line transports map
+// to `cli`, everything reached over a server maps to `http`.
+enum HookVariant {
+  cli
+  http
+}
+
+// The session registry (SCHEMA.md §21).
+//
+// **Nothing references this table by foreign key**, and that is the design
+// rather than an omission. A session that never registered still writes tool
+// calls — that is what makes it a ghost — so a constraint from `ToolCall` or
+// `Assignment` to here would either reject those rows or force a phantom
+// registration to exist for every one of them. This is a registry, not a
+// constraint.
+model Session {
+  id       String           @id
+  machine  String
+  transport SessionTransport
+  // Null until a registration reports one. Distinct from `cli`/`http`: a
+  // session that registered without naming a variant is not the same fact as
+  // one that named `cli`, because only the second is a claim about what is
+  // installed.
+  hookVariant HookVariant?
+  // Whether `hookVariant` came from the transport or from an explicit
+  // override in the payload. Recorded because §21 says an override "is
+  // honoured and recorded as an override" — without this column an override
+  // and a derivation are indistinguishable afterwards, and the question
+  // "why is this session on the cli hook when it registered over HTTP?" has
+  // no answer.
+  hookVariantOverridden Boolean @default(false)
+  // What the session reported. Null = never reported one, which §21 treats
+  // the same as never having registered for the purpose of claiming: a
+  // registration that names no version makes no claim about what the session
+  // can enforce.
+  hookVersion Int?
+  // What kind of agent tool it is, as it describes itself. Free text on
+  // purpose — the server cannot know the set of tools that will ever exist,
+  // and an enum here would refuse a registration for naming a tool this
+  // build had not heard of.
+  client   String?
+  personId String?
+  person   Person? @relation(fields: [personId], references: [id])
+
+  registeredAt DateTime @default(now()) @db.Timestamptz(3)
+  lastSeenAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([lastSeenAt])
 }

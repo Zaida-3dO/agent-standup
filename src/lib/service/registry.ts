@@ -81,6 +81,10 @@ import { registerProcess } from "./operations/register-process";
 import { endProcess } from "./operations/end-process";
 import { listProcesses } from "./operations/list-processes";
 import { killGuard } from "./operations/kill-guard";
+// The registration handshake (MILESTONES.md #43, SCHEMA.md §21). Registered
+// like any other operation, so every adapter reaches it through the same
+// door and stamps its own transport on the way in.
+import { registerSession } from "./operations/register-session";
 // Backfill — the one-time bulk load (docs/plans/BACKFILL.md). Registered
 // like any other operation so it is reachable and countable; whether it
 // answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
@@ -145,6 +149,7 @@ export const OPERATION_REGISTRY = {
   [endProcess.name]: endProcess,
   [listProcesses.name]: listProcesses,
   [killGuard.name]: killGuard,
+  [registerSession.name]: registerSession,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;
 

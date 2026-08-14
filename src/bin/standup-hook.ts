@@ -20,6 +20,11 @@ import { runHook } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";
 import { createKillGuardAsk } from "@/lib/hook/ask-kill-guard";
 import { HOOK_EXIT } from "@/lib/hook/response";
+// The version this script declares it speaks (SCHEMA.md §21). It lives in
+// its own module rather than here because this file's body runs on import —
+// it reads stdin to the end — so a constant exported from it could not be
+// read by the assertion that checks it against the server's.
+import { HOOK_PROTOCOL_VERSION } from "@/lib/hook/protocol";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -63,6 +68,19 @@ function writeCacheFile(file: string, text: string): void {
 
 async function main(): Promise<number> {
   const env = process.env;
+
+  // `--protocol-version` is the one thing this script answers without
+  // reading stdin. An installer (row #48) needs the number to put in a
+  // registration, and the alternative — parsing it out of the built bundle,
+  // or hard-coding it in the installer — is a second place the version
+  // lives and therefore a second place it can be stale. It exits zero
+  // because printing a version is not a hook verdict and must not read as
+  // a deny.
+  if (process.argv.includes("--protocol-version")) {
+    process.stdout.write(`${HOOK_PROTOCOL_VERSION}\n`);
+    return HOOK_EXIT.ALLOW;
+  }
+
   const baseUrl = env.STANDUP_URL?.trim();
 
   // With no server configured there is nothing to ask. That is not a deny of
