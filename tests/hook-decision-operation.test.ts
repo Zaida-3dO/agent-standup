@@ -88,6 +88,83 @@ describe("hook_decision operation", () => {
     expect(result.matchedList).toBeNull();
   });
 
+  // The command-less allow is broader than "a Stop event is allowed": it
+  // fires for ANY event type carrying no command, and does not look at
+  // `tool` at all. That width is deliberate — `PostToolUse` fires for
+  // non-Bash tools, which have no command either, and keying on
+  // `eventType === "Stop"` would leave those falling through to the
+  // matches-neither path and reading as a false deny.
+  //
+  // It is still a widening of an allow path in a gate whose default is to
+  // deny when unsure, so these pin exactly how wide it is. Narrowing the
+  // condition to `eventType === "Stop"` fails the first two; removing the
+  // carve-out altogether fails all of them.
+  describe("the command-less carve-out, at its actual width", () => {
+    const commandless = async (input: Record<string, unknown>) => {
+      const runtime = runtimeWithSnapshot(defaultSnapshot());
+      return (await runtime.call("hook_decision", input)) as {
+        decision: string;
+        matchedList: unknown;
+        matchedPattern: unknown;
+      };
+    };
+
+    it("allows a PostToolUse with no command — a non-Bash tool has none to classify", async () => {
+      const result = await commandless({
+        eventType: "PostToolUse",
+        sessionId: "s1",
+        tool: "Read",
+      });
+      expect(result.decision).toBe("allow");
+      expect(result.matchedList).toBeNull();
+    });
+
+    it("allows a PreToolUse with no command, for the same reason", async () => {
+      const result = await commandless({
+        eventType: "PreToolUse",
+        sessionId: "s1",
+        tool: "Read",
+      });
+      expect(result.decision).toBe("allow");
+    });
+
+    it("treats an empty-string command as no command, not as a command matching nothing", async () => {
+      // The boundary between the two readings. An empty string is a present
+      // field, so a check written as `command === undefined` alone would
+      // send it down the matching path and deny it.
+      const result = await commandless({
+        eventType: "PreToolUse",
+        sessionId: "s1",
+        tool: "Bash",
+        command: "",
+      });
+      expect(result.decision).toBe("allow");
+    });
+
+    it("does not extend to a present command, whatever the tool", async () => {
+      // The complement, and the one that stops the carve-out swallowing the
+      // gate. A real command with nothing configured still denies.
+      const result = await commandless({
+        eventType: "PreToolUse",
+        sessionId: "s1",
+        tool: "Read",
+        command: "rm -rf /",
+      });
+      expect(result.decision).toBe("deny");
+    });
+
+    it("does not extend to a Stop event that does carry a command", async () => {
+      // `Stop` is not itself the licence — the absence of a command is. A
+      // carve-out written on the event type would allow this.
+      const result = await commandless({
+        eventType: "Stop",
+        sessionId: "s1",
+        command: "rm -rf /",
+      });
+      expect(result.decision).toBe("deny");
+    });
+  });
+
   it("rejects a missing sessionId before the handler runs, as invalid_input", async () => {
     const runtime = runtimeWithSnapshot(defaultSnapshot());
     const error = await runtime
