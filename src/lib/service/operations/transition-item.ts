@@ -19,6 +19,7 @@ import {
 import { RehearsalRollback } from "./rehearsal-rollback";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
+import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
 
 const inputSchema = z
   .object({
@@ -64,6 +65,14 @@ export interface AppliedTransitionOutcome {
 export interface TransitionItemResult {
   readonly item: ItemRecord;
   readonly outcome: AppliedTransitionOutcome;
+  /**
+   * Who the notification rules say to tell about this move — MILESTONES.md
+   * #101. Absent when notifications are off (`notify.doc` unset), which is
+   * distinguishable from "on, and nobody matched" (an outcome with an empty
+   * `recipients`). Delivery is not this operation's job: SCHEMA.md §1.1b
+   * hands over a doc path and never knows what the chat app is.
+   */
+  readonly notifications?: NotificationOutcome;
 }
 
 async function loadItemRecord(ctx: ServiceContext, id: string): Promise<ItemRecord> {
@@ -95,6 +104,13 @@ export const transitionItem = defineOperation({
       throw new RehearsalRollback(outcome);
     }
 
+    // The before snapshot has to be read *before* the transition writes, and
+    // is only needed when notifications are on — SCHEMA.md §17.2's "null
+    // means notifications off", so an installation that has not configured
+    // the capability pays nothing for this.
+    const notifyDoc = ctx.settings.values["notify.doc"];
+    const before = notifyDoc === null ? null : await loadItemRecord(ctx, input.id);
+
     const applied = await applyTransition(ctx, {
       itemId: input.id,
       to: input.to,
@@ -119,6 +135,21 @@ export const transitionItem = defineOperation({
     });
 
     const item = await loadItemRecord(ctx, input.id);
+
+    // The notification evaluator's caller — MILESTONES.md #101. `assignee`
+    // is passed as null on both sides because a transition does not touch
+    // assignments, so it cannot be what changed; `snapshotOf` documents why
+    // that is the right value rather than a missing one.
+    const notifications =
+      before === null
+        ? undefined
+        : await evaluateNotifications(
+            ctx.db,
+            notifyDoc,
+            snapshotOf(before, null),
+            snapshotOf(item, null),
+          );
+
     const outcome: AppliedTransitionOutcome = {
       itemId: applied.itemId,
       from: applied.from,
@@ -126,6 +157,6 @@ export const transitionItem = defineOperation({
       allowed: true,
       rehearsed: false,
     };
-    return { item, outcome };
+    return { item, outcome, ...(notifications ? { notifications } : {}) };
   },
 });
