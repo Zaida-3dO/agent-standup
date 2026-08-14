@@ -143,6 +143,11 @@ jobs:
         run: npx tsc --noEmit
       - name: Check the database-client import allowlist
         run: npm run check:db-imports
+      # Reads the schema text and the source tree only — no client, no
+      # database, which is why it belongs in this job beside the other
+      # structural check it resembles rather than with the database tests.
+      - name: Check every declared event type has an emitter
+        run: npm run check:event-emitters
       - name: Lint
         run: npm run lint
       - name: Format check
