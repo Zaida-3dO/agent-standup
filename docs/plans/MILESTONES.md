@@ -177,6 +177,9 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **100** | **Open-loop writes.** `loop_add` / `loop_close` over the `open_loop` / `open_loop_closed` events, with their routes, tools and verbs. The payload validators, the pairing logic and #28's read path all exist; only the write is missing, so `orientation` can display a loop nobody can record. Also add the `SCHEMA.md` section both modules cite as `§3a`, which does not exist | 20, 28 | |
 | **101** | **Wire the notification evaluator.** #25 built `evaluateRules` and named the service layer as its caller "once #27 lands transitions"; #27 landed without it, so nothing evaluates a rule and `people.notify_rules` is never read. Thread the before/after field snapshot from transition and update into it — the evaluator's own header documents the field-name casing the caller has to handle | 25, 27 | |
 | **102** | **Route the four raw event writes through the one writer.** `create_item`, `update_item`, `transition_item` and `complete_item` insert into `events` directly rather than through `appendEvent`, contradicting that module's stated invariant. Their column list omits `session_id`, `assignment_id` and `body`, so every state change and field change lands with a null session — making "who moved this" unanswerable in #28's `whatChanged` for exactly the mutations most worth attributing. Also gives `recordFieldChanges` its first caller | 20 | |
+| **103** | **Terminal items out of the default read.** `get_board` and `list_items` return finished work on every call — it is the majority of the payload and the share only grows, because nothing prunes terminal state. Exclude terminal states by default, with an explicit opt-in (`--all` / `includeTerminal`) for the cases that want them, and apply the same default to the board's completed column. A filter and a default, not new machinery | 26, 36 | |
+| **104** | **An event type cannot be added without an emitter.** A gating script, with the self-test every gate here ships: enumerate the event-type enum, enumerate what the service layer actually emits, and fail on a value nothing writes. `SCHEMA.md` §3 already states the rule — *add an event type only when the code that emits it exists* — and #98–#102 are what it costs when nothing checks it: a capability declared, validated, guarded and displayed, with no writer. Per-row status cannot show a gap between rows; this can | 20 | |
+| **105** | **Search over items** — `search` as a service call and its routes/tools/verb, indexing title and body and returning ranked matches. Answers "there is a task about this somewhere", which is otherwise unanswerable without pulling every item; the need is sharpest for a session reading a corpus it did not create. **Title and body first, deliberately** — checkpoints, events and artifacts are a substantially larger corpus and a substantially larger piece of work, and are worth attempting only once the cheap index is shown to be insufficient | 26 | |
 | **94** | **Adapter conformance harness.** Drivers behind a map typed from the adapter registry; cases authored once per operation, run against every driver; four assertions — identical outcomes by `code`, `guard` and fields · accept-and-reject per operation · **every registered guard covered by an observed rejection** · adapter completeness with bounded waivers — plus a negative control per assertion and a non-empty-guard-registry assertion | 26, 27, 29, 81, 82, 85 | |
 
 **Milestone done when:** an agent can be handed an item and work it to merged using only MCP, **and
@@ -206,6 +209,25 @@ every adapter passes the conformance harness.**
 > this group broke — *add an event type only when the code that emits it exists*. `open_loop` and
 > `open_loop_closed` were added with a read path, no spec section and no milestone row, which is
 > precisely why #100 exists to finish them. The rule is right; it needs a check, not a restatement.
+> **#104 is that check**, and it is the row that stops this group having a sequel.
+
+> **#103–#105 come from using the product, not from auditing it.** They were written down during the
+> first sessions to work through the agent surface, and they share a shape worth naming: none is a
+> missing capability. The operations exist and return correct results. What is missing is the product
+> telling a caller what it wants and returning an amount it can actually receive.
+>
+> **#103 is the cheapest row in this file and fixes the most common read.** A default filter. The
+> reasoning generalises past the one endpoint: *the default should answer the question people actually
+> ask*, and nobody opens a tracker to see what is finished. It is also not merely wasteful — a read
+> whose response cannot fit in the caller's context is not a slow read, it is a failed one, and it is
+> the first call a new session makes.
+>
+> **The same failure has a documentation half that is not a row here**, because it is not code: the
+> tool descriptions are one-liners, and the schema is not visible through the agent surface at all. So
+> a required field is discovered by being refused, and a response size is discovered by exceeding a
+> limit. Putting required fields, conditional requirements and response-shape warnings into the
+> descriptions an agent already reads before calling would remove most of both — it is editing strings,
+> and it compounds across every session that ever starts here.
 
 ---
 
