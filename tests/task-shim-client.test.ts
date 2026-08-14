@@ -113,11 +113,18 @@ describe("listTasks", () => {
 
   it("omits includeTerminal entirely when it is false, rather than sending false", async () => {
     // The server's default is already `false`, so sending it says nothing
-    // the omission does not — and this keeps the no-filters case above from
-    // silently acquiring a query string.
+    // the omission does not.
+    //
+    // `full=true` is still there, and its presence is what makes this
+    // assertion meaningful rather than weaker: the two parameters are
+    // treated differently on purpose. `full` goes on every call because
+    // `ShimTask` needs fields the slim default does not carry (#107), while
+    // `includeTerminal` is only ever sent when asked for. If the code
+    // stopped distinguishing them, this URL would gain an
+    // `includeTerminal=false` and go red.
     const { seen, fetch } = capture(json({ items: [], nextCursor: null }));
     await listTasks({ baseUrl, fetch }, { includeTerminal: false });
-    expect(seen[0]?.url).toBe("https://example.test/api/items");
+    expect(seen[0]?.url).toBe("https://example.test/api/items?full=true");
   });
 
   it("projects every returned item, translating each one's status independently", async () => {
