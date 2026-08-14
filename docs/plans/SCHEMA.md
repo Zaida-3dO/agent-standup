@@ -271,6 +271,7 @@ dumped whole.
 | `session_id` | `text` null | |
 | `assignment_id` | `uuid` null → `assignments.id` | Set on `checkpoint` and other per-agent events. |
 | `body` | `text` null | Prose for `checkpoint`, `note`, `nudge`, `escalation`. **A column, not payload** — slice reads on the hottest path would otherwise drag text nobody asked for, and it's cheap to exclude here. |
+| `headline` | `text` null | **The one-line BLUF beside `body`** — what changed, in one line. Set on a `checkpoint`, whose prose is free text with no structure, so *"where is this up to?"* would otherwise mean reading every checkpoint on the item in full: the most-asked question of in-flight work, and the most expensive to answer. A column, not a payload key, for the same reason `body` is one, and the sharper case of it — the whole point of a headline is being readable *without* the prose, which a key on the same jsonb document cannot be. Optional: a checkpoint that records only prose is still a checkpoint, and making the cheapest durable-progress signal in the system more expensive to write is the wrong direction. Capped at 200 characters in the service layer, because a one-line BLUF that may be a paragraph is not one. Reads fall back to the prose's first line when it is null, so a checkpoint written without one is still answerable. |
 | `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. That rule is enforced by `npm run check:event-emitters`, which fails on a declared value nothing writes; a value legitimately reserved ahead of its writer goes in that script's `KNOWN_UNEMITTED` with the milestone row that closes it. The check counts *write sites*, not reachable ones — a read path naming a type does not satisfy it, and neither does a writer nothing calls. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; its payload is below, its posture is §17.8, and it is written by §19's `PATCH /settings`. |
 | `payload` | `jsonb` | Type-specific. **A discriminated union keyed on `type`** — see below. |
 
@@ -295,7 +296,7 @@ turn `GET /events?since=` into a twelve-way union, killing the query the ledger 
 | `merge` | `{commit_sha, authority_used}` |
 | `dispatch` | `{machine, account_id, estimated_cost}` — prompt in `body` |
 | `dispatch-claimed` | `{dispatch_event_id, session_id}` |
-| `checkpoint` | *(none — prose is in `body`, agent is in `assignment_id`)* |
+| `checkpoint` | *(none — prose is in `body`, one-line BLUF is in `headline`, agent is in `assignment_id`)* |
 | `nudge` | `{kind}` — text in `body` |
 | `escalation` | `{to_person}` — reason in `body` |
 | `note` | *(none — text in `body`)* |
@@ -394,6 +395,12 @@ for. (`comments` failed the same test later and was cut too — §7.)
 
 - **Per agent, not just per item** — `assignment_id` carries that, so a stalled builder still has its own
   resume point.
+- **A headline, beside the prose.** `events.headline` (§3) carries the one line that answers "where is
+  this up to" without reading the checkpoint. This is what the board card and the item detail show
+  without expanding, and what a slim item read carries so the question costs one indexed row rather
+  than the whole history. A checkpoint written without one falls back to the first non-empty line of
+  its prose — which is where a writer of a BLUF-shaped checkpoint already puts it — so the read is
+  useful over checkpoints recorded before the field was askable, not just over new ones.
 - **Latest is `WHERE type='checkpoint' AND assignment_id=A ORDER BY ts DESC LIMIT 1`**, indexed. No
   `is_latest` flag: that would mean writing the *previous* row on every insert — a second write, a race,
   and guaranteed drift, to save an index lookup.

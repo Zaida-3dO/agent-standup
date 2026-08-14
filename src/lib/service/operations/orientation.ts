@@ -12,6 +12,7 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import { checkpointHeadline } from "../items/checkpoint-headline";
 import { readSinceBounded, type EventRow } from "../../events";
 import { liveAssignments, type Assignment } from "../../claims";
 import { deriveOpenLoops, type LoopEventLike, type OpenLoop } from "../../open-loops";
@@ -37,6 +38,19 @@ export interface OrientationCheckpoint {
   readonly ts: string;
   readonly assignmentId: string | null;
   readonly body: string | null;
+  /**
+   * The checkpoint's one-line BLUF (MILESTONES.md #108) — what changed, in
+   * one line, beside the prose in `body`.
+   *
+   * The stored value when the checkpoint carries one, otherwise a line
+   * derived from the prose. Null only when there is neither: a checkpoint
+   * with no headline and no readable prose, which nothing in the product
+   * can write but which a corpus can hold. See `checkpointHeadline` for why
+   * a fallback rather than null — a read that returns nothing for every
+   * checkpoint written before the field existed is useless on precisely the
+   * corpus that already exists.
+   */
+  readonly headline: string | null;
 }
 
 /** One entry from `Summary.notDone` (SCHEMA.md §5a), as stored — never re-validated here. */
@@ -124,6 +138,7 @@ interface RawCheckpointRow {
   ts: Date;
   assignmentId: string | null;
   body: string | null;
+  headline: string | null;
 }
 
 interface RawSummaryRow {
@@ -187,7 +202,7 @@ export const orientation = defineOperation({
     // assignment that has held it — the resume point any fresh session on
     // this item wants, not just one prior holder's.
     const checkpointRows = await ctx.db.$queryRawUnsafe<RawCheckpointRow[]>(
-      `SELECT "id", "ts", "assignmentId", "body" FROM "Event"
+      `SELECT "id", "ts", "assignmentId", "body", "headline" FROM "Event"
        WHERE "itemId" = $1 AND "type" = 'checkpoint'::"EventType"
        ORDER BY "id" DESC LIMIT 1`,
       input.itemId,
@@ -199,6 +214,7 @@ export const orientation = defineOperation({
           ts: checkpointRow.ts.toISOString(),
           assignmentId: checkpointRow.assignmentId,
           body: checkpointRow.body,
+          headline: checkpointHeadline(checkpointRow),
         }
       : null;
 
