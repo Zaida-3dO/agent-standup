@@ -173,7 +173,13 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       });
       // Refused rather than repaired: a coerced findings list looks complete
       // and is not.
+      //
+      // `invalid_input`, NOT `internal`. `InvalidFindingError` is not a
+      // ServiceError, so left to propagate it is wrapped as a server fault —
+      // a 500 for what is plainly a caller mistake. This assertion is the
+      // one that catches that translation being dropped.
       expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["findings"]);
     });
   });
 

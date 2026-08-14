@@ -99,6 +99,36 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       .catch((error: unknown) => error)) as ServiceError;
   }
 
+  /**
+   * A summary good enough for `summaries.required_and_valid`.
+   *
+   * `merged` is a completing state, so it is reached through `complete_item`
+   * and carries a summary — the summary guard is a separate requirement from
+   * the artifact evidence this file is about, and it applies whether or not
+   * the artifacts are in place. Supplying a valid one keeps the rejections
+   * below attributable to the guard each assertion names: without it every
+   * merge attempt would fail on `summaries.required_and_valid` first, and
+   * this file would prove nothing about artifacts at all.
+   */
+  function validSummary() {
+    return {
+      shipped: ["Delivered the thing."],
+      not_done: [],
+      user_facing: false,
+      how_verified: "Ran it locally and watched it work end to end.",
+      watch_for: [],
+    };
+  }
+
+  async function mergeFails(id: string): Promise<ServiceError> {
+    return (await runtime
+      .call("complete_item", { id, to: "merged", summary: validSummary() })
+      .then(() => {
+        throw new Error("expected the merge to be refused, but it was allowed");
+      })
+      .catch((error: unknown) => error)) as ServiceError;
+  }
+
   it("clears artifact.review_requested — entering in_review", async () => {
     const id = await freshItem("executing");
 
@@ -193,7 +223,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
   it("clears the merge cluster — commit plus an approving code review at round and tip", async () => {
     const id = await freshItem("in_review");
 
-    const noCommit = await transitionFails(id, "merged");
+    const noCommit = await mergeFails(id);
     expect(noCommit.guard).toBe("merge.requires_commit");
 
     await runtime.call("record_artifact", {
@@ -204,7 +234,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdById: "agent-a",
     });
 
-    const noReview = await transitionFails(id, "merged");
+    const noReview = await mergeFails(id);
     expect(noReview.guard).toBe("merge.requires_approving_code_review");
 
     // An AGENT's approval satisfies the code-review clause but not the
@@ -219,7 +249,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "agent",
       createdById: "agent-a",
     });
-    const agentOnly = await transitionFails(id, "merged");
+    const agentOnly = await mergeFails(id);
     expect(agentOnly.guard).toBe("merge.requires_authorisation");
 
     await runtime.call("record_artifact", {
@@ -231,9 +261,11 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdById: "user-a",
     });
 
-    const result = (await runtime.call("transition_item", { id, to: "merged" })) as {
-      item: { state: string };
-    };
+    const result = (await runtime.call("complete_item", {
+      id,
+      to: "merged",
+      summary: validSummary(),
+    })) as { item: { state: string } };
     expect(result.item.state).toBe("merged");
   });
 
@@ -264,7 +296,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdById: "agent-a",
     });
 
-    const refused = await transitionFails(id, "merged");
+    const refused = await mergeFails(id);
     expect(refused.guard).toBe("merge.requires_approving_code_review");
   });
 
@@ -301,9 +333,11 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "agent",
       createdById: "reviewer-agent",
     });
-    const merged = (await runtime.call("transition_item", { id, to: "merged" })) as {
-      item: { state: string };
-    };
+    const merged = (await runtime.call("complete_item", {
+      id,
+      to: "merged",
+      summary: validSummary(),
+    })) as { item: { state: string } };
 
     expect(merged.item.state).toBe("merged");
   });

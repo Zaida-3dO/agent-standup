@@ -29,7 +29,7 @@ import { InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
-import { parseFindings } from "@/lib/findings";
+import { InvalidFindingError, parseFindings } from "@/lib/findings";
 import { currentReviewRound } from "../guards/merge-review-round";
 
 /**
@@ -252,19 +252,33 @@ export const recordArtifact = defineOperation({
     // Validated here rather than by the column: Postgres cannot apply an enum
     // type to a value nested inside jsonb (schema.prisma's own note on
     // `findings`), so the severity vocabulary is only ever enforced in code.
-    // `parseFindings` throws `InvalidFindingError`; it is left to propagate
-    // rather than rewrapped, so the same input is refused identically however
-    // it arrived.
     // `parseFindings` refuses anything that is not an array, so "no findings
     // at all" is checked here rather than handed to it — omitting the field
     // is not the same claim as sending an empty list, and only the latter is
     // a findings list. An empty list is stored as NULL, matching the import
     // path: `findings: []` and `findings: null` are the same fact, and two
     // spellings of it in the column would make every later reader handle both.
-    const findings =
-      input.findings === undefined || input.findings === null
-        ? null
-        : parseFindings(input.findings);
+    //
+    // `InvalidFindingError` is translated rather than left to propagate.
+    // It is not a `ServiceError`, so the runtime would wrap it as `internal`
+    // — reporting a caller's bad severity value as a server fault, with a
+    // 500 and a message that says nothing about what to fix. The severity
+    // ladder is validated in code because Postgres cannot apply an enum type
+    // inside jsonb (schema.prisma's note on `findings`), so this is the only
+    // place that translation can happen. Its message already names the index
+    // and the allowed values, so it is carried through as-is.
+    let findings;
+    try {
+      findings =
+        input.findings === undefined || input.findings === null
+          ? null
+          : parseFindings(input.findings);
+    } catch (error) {
+      if (error instanceof InvalidFindingError) {
+        throw new InvalidInputError(error.message, { fields: ["findings"], cause: error });
+      }
+      throw error;
+    }
 
     const { createdByType, createdById, assignmentId } = await resolveCreator(ctx, input);
     const reviewRound = await resolveReviewRound(ctx, input);
