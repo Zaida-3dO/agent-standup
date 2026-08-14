@@ -30,6 +30,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -131,6 +132,11 @@ describeIfDb("checkpoint headlines against Postgres", () => {
   async function itemWithSession(): Promise<{ itemId: string; sessionId: string }> {
     seq += 1;
     const sessionId = `session-ckpt-${seq}`;
+    // A claim is refused from a session that has not registered a hook
+    // protocol version (SCHEMA.md §21). That rule is not what this file is
+    // about, so it is satisfied the way a real session satisfies it rather
+    // than switched off — see the helper's own header.
+    await registerSessions(prisma, [sessionId]);
     const item = (await runtime.call("create_item", {
       title: `Checkpointed ${seq}`,
       body: "x",
@@ -356,6 +362,7 @@ describeIfDb("a checkpoint headline over HTTP", () => {
       )
       .then((r) => r.json())) as { item: { id: string } };
 
+    await registerSessions(prisma, ["session-route-1"]);
     const claimed = await claimRoute.POST(
       post("http://localhost/api/claims", {
         itemId: created.item.id,
