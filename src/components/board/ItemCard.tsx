@@ -4,6 +4,7 @@
 // test can call it as a function and inspect the element tree it returns
 // (`tests/helpers/react-element.ts`); see `TopBar.tsx`'s header for the
 // full reasoning.
+import Link from "next/link";
 import type { BoardEntry } from "@/lib/board/types";
 import { waitingTone } from "@/lib/board/view";
 import styles from "./Board.module.css";
@@ -42,7 +43,13 @@ export function ItemCard({ entry, needsYou }: ItemCardProps) {
           </span>
         )}
       </div>
-      <span className={styles.cardTitle}>{entry.item.title}</span>
+      {/* The title is the way into the detail view (#72). A real <Link>
+          rather than a click handler on the card: it is a navigation, so it
+          should be middle-clickable, openable in a new tab, and reachable
+          by keyboard — all of which a div with an onClick silently is not. */}
+      <Link className={styles.cardTitle} href={`/items/${entry.item.id}`}>
+        {entry.item.title}
+      </Link>
       {reason && <span className={styles.cardReason}>{reason}</span>}
       <div className={styles.cardMeta}>
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>

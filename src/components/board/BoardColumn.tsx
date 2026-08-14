@@ -31,6 +31,14 @@ export function BoardColumn({ column, entries, personId, split }: BoardColumnPro
         <p className={styles.split}>
           <span className={styles.splitAmber}>{split.amber} paused</span>
           <span className={styles.splitRed}>{split.red} blocked</span>
+          {/* `waitingSplit` counts a third bucket — a project in Waiting,
+              or a state that should not be in this column — and rendering
+              only the first two let a card exist in the header count while
+              appearing in neither tallied number, which is the exact
+              "silently goes missing from the count" failure `waitingSplit`
+              says it exists to prevent. Shown only when non-zero: a
+              permanent "0 other" would be noise on the common board. */}
+          {split.other > 0 && <span className={styles.splitOther}>{split.other} other</span>}
         </p>
       )}
       {entries.length === 0 ? (
