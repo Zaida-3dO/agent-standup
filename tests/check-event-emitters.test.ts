@@ -142,15 +142,24 @@ describe("check-event-emitters — it fails on a seeded violation", () => {
     expect(analyse(dir).unemitted).toEqual(["read_only_loop"]);
   });
 
-  it("reports the real repository's open-loop types as unemitted but waived", () => {
+  it("tells a read from a write in the real repository, not just in a fixture", () => {
     // The live instance of the defect above, asserted against this tree.
-    // `open_loop` and `open_loop_closed` appear in `orientation.ts` inside a
-    // `WHERE ... IN (...)` and nothing writes either. They are waived rather
-    // than failing — but the waiver is what makes them visible, and the
-    // assertion here is that they genuinely have no emitter.
+    //
+    // The subject here has to be a type that is *read* somewhere and written
+    // nowhere, and it must be chosen so that ordinary progress does not
+    // falsify it: `open_loop` and `open_loop_closed` were the original
+    // subjects and stopped being valid the moment their writers landed,
+    // which broke this test on a tree where nothing was wrong. Anything
+    // still on `KNOWN_UNEMITTED` is by definition a type whose writer has
+    // not been built, so the waiver list is the honest source for it — and
+    // when the last waiver goes, this test should be deleted rather than
+    // repointed, because the property will have nothing left to observe.
     const result = analyse(repoRoot);
-    expect(result.emitters.has("open_loop")).toBe(false);
-    expect(result.emitters.has("open_loop_closed")).toBe(false);
+    const stillUnwritten = KNOWN_UNEMITTED.map((waiver) => waiver.type);
+    expect(stillUnwritten.length).toBeGreaterThan(0);
+    for (const type of stillUnwritten) {
+      expect(result.emitters.has(type)).toBe(false);
+    }
     // And `checkpoint`, which appears in the very same file in the very same
     // shape, IS emitted — so the distinction is doing real work here, not
     // just in a fixture.
