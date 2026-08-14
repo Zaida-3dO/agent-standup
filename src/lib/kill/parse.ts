@@ -72,6 +72,35 @@ export type KillCommandParse =
 const KILL_VERBS = ["kill", "taskkill", "pkill", "killall", "stop-process"] as const;
 
 /**
+ * Verbs that run *another* command rather than being one.
+ *
+ * A shell wrapper does not kill anything itself, so its verb is not a kill
+ * verb and the statement read as `not-a-kill` — which the guard treats as
+ * final. `sh -c "taskkill /F /IM node.exe"` was therefore allowed with no
+ * server round trip: byte for byte the machine-wide kill DECISIONS.md §4
+ * exists to stop (#122).
+ *
+ * The module's own principle (see the header) is that a kill-shaped command
+ * it cannot decompose must be `unparseable`, not `not-a-kill`. A wrapper
+ * whose arguments contain a kill verb is exactly that: this build does not
+ * reliably know what the inner command targets — quoting, `$()`, a script
+ * path, and `xargs` reading its arguments from stdin all defeat it — so it
+ * refuses rather than guessing, and the guard's fail-closed path takes over.
+ */
+const WRAPPER_VERBS = ["sh", "bash", "zsh", "dash", "ksh", "powershell", "pwsh", "cmd", "xargs"];
+
+/** Whether `token` names a wrapper verb, ignoring any path prefix and `.exe`. */
+function wrapperVerb(token: string): string | null {
+  const bare = token
+    .toLowerCase()
+    .replace(/\.exe$/, "")
+    .split(/[/\\]/)
+    .pop();
+  if (bare === undefined) return null;
+  return WRAPPER_VERBS.includes(bare) ? bare : null;
+}
+
+/**
  * Splits a command into whitespace-separated words, honouring quotes.
  *
  * Quotes matter: `taskkill /FI "IMAGENAME eq node.exe"` is three words, not
@@ -232,6 +261,29 @@ function parseStatement(statement: string): KillCommandParse {
 
   const verbToken = tokens[index];
   if (verbToken === undefined) return { kind: "not-a-kill" };
+
+  // A wrapper running something that looks like a kill. Refused rather than
+  // decomposed — see `WRAPPER_VERBS`. `xargs` is included with no kill verb
+  // required in its arguments, because `… | xargs kill -9` puts `kill` in a
+  // *separate* statement (`splitStatements` splits on `|`) and bare
+  // `xargs kill` is still a kill this build cannot resolve to targets.
+  const wrapper = wrapperVerb(verbToken);
+  if (wrapper !== null) {
+    const rest = tokens.slice(index + 1);
+    const carriesKill = rest.some(
+      (token) => killVerb(token) !== null || tokenise(token).some((w) => killVerb(w) !== null),
+    );
+    if (carriesKill) {
+      return {
+        kind: "unparseable",
+        reason:
+          `\`${wrapper}\` is running a command that contains a kill verb, and this build ` +
+          "does not decompose commands inside a wrapper. Run the kill directly so its " +
+          "targets can be read, rather than through a shell.",
+      };
+    }
+  }
+
   const verb = killVerb(verbToken);
   if (verb === null) return { kind: "not-a-kill" };
 
