@@ -58,10 +58,10 @@ export default async function setup(): Promise<() => Promise<void>> {
   const templateName = `agent_standup_test_template_${randomBytes(3).toString("hex")}`;
   const admin = adminUrl(databaseUrl);
 
-  execSql(
-    admin,
-    `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE); CREATE DATABASE "${templateName}";`,
-  );
+  // One statement per invocation: `prisma db execute` wraps multi-statement
+  // input in a transaction, and neither of these may run inside one.
+  execSql(admin, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`);
+  execSql(admin, `CREATE DATABASE "${templateName}";`);
 
   const templateUrl = withDatabaseName(databaseUrl, templateName);
   const applied = await runMigrations({ env: { ...process.env, DATABASE_URL: templateUrl } });

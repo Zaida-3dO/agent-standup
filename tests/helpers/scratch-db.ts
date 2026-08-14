@@ -64,10 +64,12 @@ const TEMPLATE_ENV_VAR = "TEST_TEMPLATE_DATABASE";
 /** Drops (if present) and recreates `name` on the same server as `databaseUrl`, returning its URL. */
 export function createScratchDatabase(databaseUrl: string, name: string): string {
   const admin = adminUrl(databaseUrl);
-  // Both statements in ONE `prisma db execute` invocation. Each invocation is
-  // an `npx` + Prisma-CLI cold start (~2-3s) that dwarfs the SQL itself, so
-  // the spawn count — not the query cost — is what this helper optimises for.
-  run(admin, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE); CREATE DATABASE "${name}";`);
+  // One statement per invocation, deliberately. `prisma db execute` wraps
+  // multi-statement input in a transaction, and neither DROP DATABASE nor
+  // CREATE DATABASE may run inside one ("cannot run inside a transaction
+  // block") — so batching them to save a process spawn does not work.
+  run(admin, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`);
+  run(admin, `CREATE DATABASE "${name}";`);
   return withDatabaseName(databaseUrl, name);
 }
 
@@ -100,13 +102,15 @@ export function createMigratedScratchDatabase(
     return { url: createScratchDatabase(databaseUrl, name), migrated: false };
   }
 
-  // `CREATE DATABASE ... TEMPLATE` refuses to run while any other session is
-  // connected to the template, so the global setup disconnects before workers
-  // start. Nothing reconnects to it for the rest of the run.
-  run(
-    adminUrl(databaseUrl),
-    `DROP DATABASE IF EXISTS "${name}" WITH (FORCE); CREATE DATABASE "${name}" TEMPLATE "${template}";`,
-  );
+  // Separate invocations: `prisma db execute` wraps multi-statement input in a
+  // transaction, which neither statement may run inside.
+  //
+  // `CREATE DATABASE ... TEMPLATE` also refuses to run while any other session
+  // is connected to the template, so the global setup disconnects before
+  // workers start. Nothing reconnects to it for the rest of the run.
+  const admin = adminUrl(databaseUrl);
+  run(admin, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`);
+  run(admin, `CREATE DATABASE "${name}" TEMPLATE "${template}";`);
   return { url: withDatabaseName(databaseUrl, name), migrated: true };
 }
 
