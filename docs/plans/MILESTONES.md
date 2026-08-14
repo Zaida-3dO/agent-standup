@@ -373,6 +373,15 @@ the client is the handful of checks that cannot run anywhere else.
 > The general shape is worth naming, because it is the same one #98–#102 came from: **a composition
 > gap between two rows that are each individually complete.** Neither row's own tests can see it,
 > because neither row is wrong.
+>
+> **What #43 closed, and what it did not.** #43 adds the registration itself — the `sessions` table,
+> the transport as the capability signal, the per-variant version comparison, and the claim refusal
+> that makes an unguarded session unable to hold work. The hook's `enforcement` seam
+> (`src/lib/hook/enforcement.ts`) now has a server-side source of truth behind two of its four
+> statuses. **The `/hook` response still carries neither rule lists nor session enforcement**, so
+> `writeCache` is still never called in production and an ask-list match is still read as a deny by
+> the hook. That is a change to `hook_decision`'s output shape, which belongs to the rows that put
+> judgement on the `ask` outcome (#44–#47) rather than to the row that added the registration.
 
 ---
 

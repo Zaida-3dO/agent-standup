@@ -84,6 +84,10 @@ import { killGuard } from "./operations/kill-guard";
 // Telemetry (MILESTONES.md #50): the hook's tool-call ingest, and the
 // foundation every later M7 row reads.
 import { recordToolCalls } from "./operations/record-tool-calls";
+// The registration handshake (MILESTONES.md #43, SCHEMA.md §21). Registered
+// like any other operation, so every adapter reaches it through the same
+// door and stamps its own transport on the way in.
+import { registerSession } from "./operations/register-session";
 // Backfill — the one-time bulk load (docs/plans/BACKFILL.md). Registered
 // like any other operation so it is reachable and countable; whether it
 // answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
@@ -149,6 +153,7 @@ export const OPERATION_REGISTRY = {
   [listProcesses.name]: listProcesses,
   [killGuard.name]: killGuard,
   [recordToolCalls.name]: recordToolCalls,
+  [registerSession.name]: registerSession,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;
 

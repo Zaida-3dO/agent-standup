@@ -14,6 +14,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 import type { BoardOutput } from "@/lib/service/operations/get-board";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -32,6 +33,15 @@ describeIfDb("get_board against Postgres", () => {
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
     });
+    // §21 (MILESTONES.md #43): claiming needs a registered session. These
+    // cases are about board filtering, not registration, so their sessions
+    // are registered up front.
+    await registerSessions(prisma, [
+      "session-alpha",
+      "session-beta",
+      "session-gamma",
+      "session-delta",
+    ]);
   }, 60_000);
 
   afterAll(async () => {

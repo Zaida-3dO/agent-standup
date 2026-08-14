@@ -53,16 +53,21 @@ function withoutRequestId(caller: Record<string, unknown>): Record<string, unkno
 }
 
 describe("what the direct binding stamps onto a call", () => {
-  it("stamps the transport as cli, so a command cannot claim another one", async () => {
+  it("stamps the transport as cli-direct, so a command cannot claim another one", async () => {
     // SCHEMA.md §21: the registration transport is "stamped by the adapter,
     // not supplied by the caller", because it is a *capability signal* —
     // registering over the command line proves the command line is
     // installed. A binding that omitted it would make that signal absent
     // rather than wrong, which is harder to notice.
+    //
+    // `cli-direct` rather than `cli`: SCHEMA.md §21's five values name the
+    // *binding*, and the two command-line bindings are different capability
+    // claims — this one is the app itself, package and database in one
+    // install, where the other proves only that a server was reachable.
     const { calls, service } = recordingService();
     const binding = createDirectBinding({ service });
     await binding.invoke("get_item", { id: "x" });
-    expect(callerOf(calls).transport).toBe("cli");
+    expect(callerOf(calls).transport).toBe("cli-direct");
   });
 
   it("passes the session and actor through when they were resolved", async () => {
@@ -74,7 +79,7 @@ describe("what the direct binding stamps onto a call", () => {
     // dropped before comparing rather than pinned to a value no test can
     // know. What is being asserted is the identity fields, exactly.
     expect(withoutRequestId(callerOf(calls))).toEqual({
-      transport: "cli",
+      transport: "cli-direct",
       sessionId: "s-1",
       actor: "user-a",
     });
@@ -100,7 +105,7 @@ describe("what the direct binding stamps onto a call", () => {
     await binding.invoke("get_item", { id: "x" });
 
     const caller = callerOf(calls);
-    expect(withoutRequestId(caller)).toEqual({ transport: "cli", actor: "user-a" });
+    expect(withoutRequestId(caller)).toEqual({ transport: "cli-direct", actor: "user-a" });
     expect("sessionId" in caller).toBe(false);
   });
 
@@ -110,7 +115,7 @@ describe("what the direct binding stamps onto a call", () => {
     await binding.invoke("get_item", { id: "x" });
 
     const caller = callerOf(calls);
-    expect(withoutRequestId(caller)).toEqual({ transport: "cli", sessionId: "s-1" });
+    expect(withoutRequestId(caller)).toEqual({ transport: "cli-direct", sessionId: "s-1" });
     expect("actor" in caller).toBe(false);
   });
 

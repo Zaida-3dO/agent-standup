@@ -43,14 +43,22 @@ export interface DirectBindingOptions {
 /**
  * Builds the in-process binding.
  *
- * `transport: "cli"` is stamped here, not taken from the caller: SCHEMA.md
- * §21 makes the registration transport a *capability signal* — "stamped by
- * the adapter, not supplied by the caller" — so a command cannot claim to
- * have arrived over a transport it did not.
+ * `transport: "cli-direct"` is stamped here, not taken from the caller:
+ * SCHEMA.md §21 makes the registration transport a *capability signal* —
+ * "stamped by the adapter, not supplied by the caller" — so a command cannot
+ * claim to have arrived over a transport it did not.
+ *
+ * **`cli-direct`, not `cli`**, because §21's five values name the *binding*
+ * rather than the command line, and the two bindings are different
+ * capability claims. This one is the strongest of the five: in `direct` mode
+ * the command line *is* the app, so the hook, the rules and the migrations
+ * are one installed package and the hook cannot be a different version from
+ * the rules. `cli-http` proves only that a server was reachable, which is
+ * the same thing plain `http` proves.
  */
 export function createDirectBinding({ service, sessionId, actor }: DirectBindingOptions): Binding {
   const caller = {
-    transport: "cli",
+    transport: "cli-direct",
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(actor === undefined ? {} : { actor }),
   };

@@ -15,6 +15,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -40,6 +41,20 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
     notesRoute = await import("@/app/api/items/[id]/notes/route");
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "route-area", displayName: "Route area" } });
+    // §21 (MILESTONES.md #43): claiming needs a registered session. These
+    // cases are about the routes' status codes, not registration, so their
+    // sessions are registered up front.
+    await registerSessions(prisma, [
+      "route-s1",
+      "release-s1",
+      "beat-s1",
+      "cp-s1",
+      "custom-1",
+      "orch-1",
+      "orch-2",
+      "no-claim",
+      "never-claimed",
+    ]);
   }, 60_000);
 
   afterAll(async () => {

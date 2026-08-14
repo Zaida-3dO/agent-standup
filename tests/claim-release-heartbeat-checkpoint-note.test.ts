@@ -14,6 +14,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -33,6 +34,12 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
       resolveSnapshot: async () => defaultSnapshot(),
     });
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
+    // §21 (MILESTONES.md #43): a session that has not registered a hook
+    // protocol version may not claim. These cases are about claim/release
+    // semantics rather than about registration, so their sessions are
+    // registered up front — the refusal itself is proved in
+    // tests/session-registration.test.ts.
+    await registerSessions(prisma, ["s1", "s2", "ghost", "unrelated-session"]);
   }, 60_000);
 
   afterAll(async () => {
