@@ -21,6 +21,7 @@ import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
 import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
 import { BACKFILL_HTTP_ROUTES } from "./http-routes-backfill";
 import { ARTIFACT_HTTP_ROUTES } from "./http-routes-artifacts"; // row #98 — artifact writes
+import { LOOP_HTTP_ROUTES } from "./http-routes-loops"; // row #100 - open-loop writes
 
 /** How one operation is expressed as an HTTP request. */
 export interface RouteSpec {
@@ -178,6 +179,7 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
   ...OWNERSHIP_HTTP_ROUTES,
   ...BACKFILL_HTTP_ROUTES,
   ...ARTIFACT_HTTP_ROUTES, // row #98 — artifact writes
+  ...LOOP_HTTP_ROUTES, // row #100 - open-loop writes
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */
