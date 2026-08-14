@@ -162,6 +162,67 @@ describeIfDb("sweep / takeover operations — against Postgres", () => {
       expect(row.releasedAt).not.toBeNull();
     });
 
+    it("credits the release to the caller's agent when the caller identifies itself", async () => {
+      // **The operation's own choice of actor, which nothing asserted.**
+      //
+      // `liveness.test.ts` covers `sweepLiveness` propagating an actor it is
+      // *handed* — it calls the function directly with a literal
+      // `{ actorType: "agent", actorId: "sweeper-1" }` and never imports this
+      // operation at all. So it proves propagation and says nothing about the
+      // ternary in `operations/sweep.ts` that *decides* the actor. Hard-coding
+      // that ternary either way survived the entire 3874-test suite.
+      //
+      // That is the same shape as the React-scheduling gap (#128): a guard one
+      // layer below the code it is supposed to protect. This drives the real
+      // path — `runtime.call("sweep", …)` with a caller — so the choice itself
+      // is what is under test.
+      const itemId = await seedItem();
+      const assignmentId = await seedAssignment(itemId, {
+        lastActive: new Date(Date.now() - 60_000),
+      });
+
+      await runtimeWithThresholds({
+        "liveness.stale_after_seconds": 1,
+        "liveness.dead_after_seconds": 2,
+      }).call("sweep", {}, { caller: { sessionId: "session-sweeper", actor: "agent-sweeper" } });
+
+      const release = await prisma.event.findFirstOrThrow({
+        where: { itemId, type: "release" },
+        orderBy: { id: "desc" },
+      });
+      expect(release.assignmentId).toBe(assignmentId);
+      expect(release.actorType).toBe("agent");
+      expect(release.actorId).toBe("agent-sweeper");
+    });
+
+    it("credits the release to `system` when no caller identifies itself", async () => {
+      // The other half, and the half that carries the meaning: a scheduled
+      // invocation has no agent behind it, and attributing an automatic
+      // release to one would put a name on a decision no session made.
+      //
+      // Both directions are needed. A mutant hard-coding `system` passes the
+      // case above only if that case is absent; a mutant hard-coding an agent
+      // passes this one only if this one is absent. Together they pin the
+      // ternary rather than either of its branches.
+      const itemId = await seedItem();
+      const assignmentId = await seedAssignment(itemId, {
+        lastActive: new Date(Date.now() - 60_000),
+      });
+
+      await runtimeWithThresholds({
+        "liveness.stale_after_seconds": 1,
+        "liveness.dead_after_seconds": 2,
+      }).call("sweep", {});
+
+      const release = await prisma.event.findFirstOrThrow({
+        where: { itemId, type: "release" },
+        orderBy: { id: "desc" },
+      });
+      expect(release.assignmentId).toBe(assignmentId);
+      expect(release.actorType).toBe("system");
+      expect(release.actorId).toBeNull();
+    });
+
     it("does NOT release a claim inside the thresholds", async () => {
       // The negative control. A sweep that released everything would pass the
       // case above and be catastrophic; this is what separates the two.

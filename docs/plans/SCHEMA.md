@@ -167,8 +167,13 @@ firing notifies its recipients. Three lines of evaluator.
 ["blocked","completed"]}` is an OR over one field, so `(blocked OR completed) AND (web OR infra)`
 stays one rule.
 
-**Validation: at least one bucket must be present.** A rule with neither matches everything and fires
-on every change — a footgun, not a feature.
+**Validation: at least one bucket must be present.** A rule with neither has no conditions — a
+footgun, not a feature. **The footgun is silence:** it fires **zero** times, not constantly. The
+obvious reading is the opposite, because `ruleMatches` does treat a missing bucket as vacuously
+true — but `parseStoredRules` drops such a rule before the evaluator sees it, and `evaluateRules`
+is edge-triggered (`matchesAfter && !matchesBefore`), so a rule matching everything matches the
+*before* snapshot too and the edge never occurs. A rule that looks configured and notifies nobody
+is worth rejecting at the boundary precisely because nothing downstream will ever complain.
 
 **Known limit, accepted:** two *independent* OR groups ANDed together (`A AND (B OR C) AND (D OR E)`)
 needs splitting across rules, since there's only one `when_any`. `in` covers most of that territory,
