@@ -72,19 +72,20 @@ describe("DB-backed test files use the shared migrated template", () => {
     ).toEqual([]);
   });
 
-  it("every file listed as migrating itself still exists and still does so", () => {
-    // Keeps the waiver list honest: a stale entry would silently exempt a file
-    // that no longer needs exempting, or name a file that no longer exists.
+  it("every waived file exists and creates its own unmigrated database", () => {
+    // Keeps the waiver list honest: each entry must name a real file that
+    // genuinely needs the exemption, so the list stays a precise statement of
+    // which files opt out and why.
     const present = new Set(testFiles());
 
     for (const name of MAY_MIGRATE_THEMSELVES) {
-      expect(present.has(name), `${name} is waived but no longer exists`).toBe(true);
+      expect(present.has(name), `${name} is waived but absent from the suite`).toBe(true);
 
       const source = readFileSync(path.join(TESTS_DIR, name), "utf8");
-      const stillCreatesEmpty = source.includes("createScratchDatabase(");
+      const createsEmpty = source.includes("createScratchDatabase(");
       expect(
-        stillCreatesEmpty,
-        `${name} is waived as needing an unmigrated database but no longer creates one — remove it from MAY_MIGRATE_THEMSELVES`,
+        createsEmpty,
+        `${name} is waived as needing an unmigrated database but does not create one — drop it from MAY_MIGRATE_THEMSELVES`,
       ).toBe(true);
     }
   });
