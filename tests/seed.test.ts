@@ -13,11 +13,10 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../prisma/seed.mjs";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -28,14 +27,7 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const migration = await runMigrations({
-      env: { ...process.env, DATABASE_URL: scratchUrl },
-      log: { info: () => {}, warn: () => {}, error: console.error },
-    });
-    if (!migration.ok) {
-      throw new Error("failed to apply migrations to the seed test's scratch database");
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   });
 
@@ -78,14 +70,7 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
     // separate scratch database from the test above, so this test proves
     // idempotency on its own rather than depending on run order.
     const secondDbName = scratchDatabaseName("seed-twice");
-    const secondUrl = createScratchDatabase(testDatabaseUrl!, secondDbName);
-    const migration = await runMigrations({
-      env: { ...process.env, DATABASE_URL: secondUrl },
-      log: { info: () => {}, warn: () => {}, error: console.error },
-    });
-    if (!migration.ok) {
-      throw new Error("failed to apply migrations to the second scratch database");
-    }
+    const secondUrl = createMigratedScratchDatabase(testDatabaseUrl!, secondDbName).url;
     const client = new PrismaClient({ datasourceUrl: secondUrl });
 
     try {
