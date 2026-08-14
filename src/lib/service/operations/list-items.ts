@@ -1,10 +1,29 @@
 // `list_items` — SCHEMA.md §19 (the board reads items grouped by column;
 // this is the underlying filtered list every such view, and every adapter's
 // "list" verb, reads from).
+//
+// **Finished work is excluded by default** (MILESTONES.md #103). The
+// terminal states — `merged`, `research_done`, `wont_do`, `cancelled` — are
+// the majority of any store that has been used for a while, and the share
+// only grows, because nothing prunes them. A default that returns them
+// makes the most common read in the product both the most expensive and,
+// past a certain size, a *failed* read rather than a slow one: a response
+// that does not fit the caller's context is not a list, and this is the
+// first call a new session makes. `includeTerminal: true` asks for them
+// back, for the callers — an audit, a "what shipped this week" — that
+// genuinely want them.
+//
+// **An explicit `state` filter always wins over the default.** Asking for
+// `state: "merged"` and receiving nothing would be a worse bug than the one
+// this fixes, and a silently-empty result is the hardest kind to notice.
+// The exclusion therefore applies only when the caller has not named a
+// state itself — the default is answering "which state?" for a caller who
+// did not, never overriding one who did.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import { TERMINAL_STATES } from "../board/columns";
 
 const inputSchema = z
   .object({
@@ -28,6 +47,13 @@ const inputSchema = z
     area: z.string().min(1).optional(),
     repo: z.string().min(1).optional(),
     parentId: z.string().min(1).nullable().optional(),
+    /**
+     * Include finished work — `merged`, `research_done`, `wont_do`,
+     * `cancelled`. Off by default; see the module header. Has no effect
+     * when `state` names a terminal state explicitly, because that filter
+     * is already the caller asking for exactly one of them.
+     */
+    includeTerminal: z.boolean().default(false),
     limit: z.number().int().min(1).max(200).default(50),
     cursor: z.string().min(1).optional(),
   })
@@ -44,7 +70,8 @@ export interface ListItemsOutput {
 export const listItems = defineOperation({
   name: "list_items",
   kind: "read",
-  summary: "Lists items, filtered by state, priority, area, repo or parent, newest first.",
+  summary:
+    "Lists items, filtered by state, priority, area, repo or parent, newest first. Finished work (merged, research_done, wont_do, cancelled) is excluded by default — pass includeTerminal to get it, or filter on that state directly.",
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ListItemsInput): Promise<ListItemsOutput> {
     const conditions: string[] = [];
@@ -54,6 +81,14 @@ export const listItems = defineOperation({
     if (input.state !== undefined) {
       conditions.push(`"state" = $${paramIndex}::"ItemState"`);
       values.push(input.state);
+      paramIndex++;
+    } else if (!input.includeTerminal) {
+      // Only when the caller named no state of their own — see the module
+      // header. `!= ALL(...)` rather than `NOT IN (...)` so the four values
+      // travel as one bound array parameter instead of four placeholders
+      // whose count has to be kept in step with the list's length.
+      conditions.push(`"state" != ALL($${paramIndex}::"ItemState"[])`);
+      values.push(TERMINAL_STATES);
       paramIndex++;
     }
     if (input.priority !== undefined) {

@@ -44,6 +44,32 @@
 // substring match (`ILIKE`), `%`/`_`/`\` escaped so a literal percent sign
 // in the search text doesn't act as a wildcard.
 //
+// **`includeTerminal` — finished work is off by default (#103).** The
+// completed column is the majority of a store that has been used for a
+// while and its share only grows, because nothing prunes terminal state; a
+// board read that ships all of it is expensive on every call and, past a
+// certain size, fails outright rather than merely being slow. So the
+// default board is *the work*, and `includeTerminal: true` asks for the
+// completed column back.
+//
+// Two consequences specific to this operation, both deliberate:
+//
+//   - **A project is dropped when its derived column is `completed`** —
+//     not by its stored `state`, which is a leftover creation default and
+//     means nothing (DECISIONS.md §13c). Filtering projects by raw state
+//     in SQL would keep every finished project on the board, which is
+//     exactly the payload #103 exists to remove, so the exclusion has to
+//     happen after derivation. It is the same "a project has no honest raw
+//     state" reasoning the `state` filter above acts on, reaching the
+//     opposite mechanism because this filter *can* be answered from the
+//     subtree the board already computes.
+//   - **The subtree walk stays unfiltered.** It was already unfiltered on
+//     purpose (see below), and this filter does not change that: a
+//     project's column must not depend on which filter was applied, or a
+//     project with one merged child and one executing child would derive
+//     `completed` under a filter that removed the executing child and
+//     vanish from a board it belongs on.
+//
 // **All five dimensions filter server-side, in this one WHERE clause** —
 // not fetched-whole-then-filtered in a client. #36 already established the
 // pattern (priority/area/repo/kind as SQL conditions on the same query that
@@ -62,7 +88,12 @@ import { InternalError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
-import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
+import {
+  TERMINAL_STATES,
+  columnForProject,
+  columnForState,
+  type BoardColumn,
+} from "../board/columns";
 import { isItemState } from "../state-machine/states";
 
 /**
@@ -119,6 +150,13 @@ const inputSchema = z
     assignee: z.string().min(1).optional(),
     /** Free-text, case-insensitive substring match over `title` and `body`. */
     search: z.string().min(1).optional(),
+    /**
+     * Include the completed column — finished work. Off by default; see
+     * the module header. Has no effect when `state` names a terminal state
+     * explicitly, because that filter is already the caller asking for
+     * exactly one of them.
+     */
+    includeTerminal: z.boolean().default(false),
   })
   .strict();
 
@@ -141,7 +179,7 @@ export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "Items grouped by derived column, filterable by priority, area, repo, kind, state, assignee and search.",
+    "Items grouped by derived column, filterable by priority, area, repo, kind, state, assignee and search. Finished work is excluded by default — pass includeTerminal to get the completed column.",
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
     const conditions: string[] = [];
@@ -178,6 +216,21 @@ export const getBoard = defineOperation({
       // than let an on_deck filter silently sweep in every untouched
       // project alongside genuinely on-deck tasks.
       conditions.push(`"kind" != 'project'::"ItemKind"`);
+    } else if (!input.includeTerminal) {
+      // Only when the caller named no state of their own — an explicit
+      // `state: "merged"` is a caller asking for terminal work, and
+      // answering it with nothing would be a worse bug than the payload
+      // this default trims.
+      //
+      // Scoped to non-projects: a project's stored `state` is a leftover
+      // creation default, so excluding on it would drop live projects and
+      // keep finished ones — precisely backwards. Projects are filtered
+      // after their column is derived, below.
+      conditions.push(
+        `("kind" = 'project'::"ItemKind" OR "state" != ALL($${paramIndex}::"ItemState"[]))`,
+      );
+      values.push(TERMINAL_STATES);
+      paramIndex++;
     }
     if (input.assignee !== undefined) {
       conditions.push(
@@ -236,6 +289,14 @@ export const getBoard = defineOperation({
       completed: [],
     };
 
+    // A project's column is the only one that cannot be excluded in SQL —
+    // see the module header. Dropping it here, after derivation, is what
+    // keeps `includeTerminal: false` from leaving every finished project
+    // sitting in the completed column it exists to empty. `state` supplied
+    // by the caller already excludes projects outright above, so this
+    // branch cannot double-apply to a state-filtered read.
+    const dropCompletedProjects = !input.includeTerminal && input.state === undefined;
+
     for (const item of items) {
       const column =
         item.kind === "project"
@@ -245,6 +306,7 @@ export const getBoard = defineOperation({
               ),
             )
           : columnForState(requireItemState(item.state, item.id));
+      if (dropCompletedProjects && item.kind === "project" && column === "completed") continue;
       board[column].push({ item, column });
     }
 

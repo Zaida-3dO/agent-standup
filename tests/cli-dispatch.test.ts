@@ -132,9 +132,12 @@ describe("aliases resolve to the same operation, so nothing downstream sees them
     const binding = recorder();
     await runCommand(["ls", "--state", "open"], binding);
     await runCommand(["item", "list", "--state", "open"], binding);
+    // `includeTerminal` is `item list`'s `--all` switch, absent here and so
+    // sent as `false` (MILESTONES.md #103) — the point of this assertion is
+    // that both spellings produce the *identical* input, whatever it is.
     expect(binding.calls).toEqual([
-      { operation: "list_items", input: { state: "open" } },
-      { operation: "list_items", input: { state: "open" } },
+      { operation: "list_items", input: { state: "open", includeTerminal: false } },
+      { operation: "list_items", input: { state: "open", includeTerminal: false } },
     ]);
   });
 });
@@ -155,7 +158,7 @@ describe("input building", () => {
     // `--json`, `--as` and friends are the adapter's, not the operation's.
     // A schema declared `.strict()` would refuse the whole call if they
     // leaked through.
-    expect(binding.calls[0]?.input).toEqual({ state: "open" });
+    expect(binding.calls[0]?.input).toEqual({ state: "open", includeTerminal: false });
   });
 
   it("refuses a bare value-taking flag rather than sending `true` as a value", async () => {

@@ -33,7 +33,15 @@ const createInput = z
   .object({ title: z.string().min(1), priority: z.string().optional() })
   .strict();
 const getInput = z.object({ id: z.string().min(1) }).strict();
-const listInput = z.object({ state: z.string().optional() }).strict();
+// `includeTerminal` mirrors the real `list_items` schema (MILESTONES.md
+// #103), which `item list` now always sends because `--all` is a switch
+// with an off position. It has to be here for the `.strict()` reason this
+// stub is strict at all: the point of the file is that both bindings reach
+// the service with the *same* input, and a field one of them sends that
+// the stub rejects would prove nothing about agreement.
+const listInput = z
+  .object({ state: z.string().optional(), includeTerminal: z.boolean().optional() })
+  .strict();
 
 function invalid(issues: z.ZodIssue[]): InvalidInputError {
   const fields = [...new Set(issues.map((issue) => issue.path.map(String).join(".")))].filter(

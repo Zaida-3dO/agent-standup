@@ -1024,7 +1024,7 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 | Tool | Description as the agent reads it |
 |---|---|
 | `get_item` | Fetch one item plus a summary of its children. |
-| `list_items` | Filter by state, area, parent, assignee, repo, priority. |
+| `list_items` | Filter by state, area, parent, assignee, repo, priority. **Finished work is excluded by default** — `includeTerminal` asks for it, and filtering on a terminal state directly still returns it. |
 | `my_work` | What you hold right this moment, and in what role. |
 | `orientation` | **Catch me up.** Latest checkpoint, current state, events since that checkpoint, open loops, crew and worktree state. What a fresh session reads instead of being resumed. |
 | `create_item` | Create a project, task or subtask. `parent_id` optional. |
