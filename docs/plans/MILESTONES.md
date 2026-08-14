@@ -68,6 +68,16 @@ reaches `main` without passing checks.
 > unreadable. That it sits in M1 rather than alongside telemetry is deliberate: every milestone after
 > this one is easier to debug with it and harder without, so it earns its place early, and unlike
 > facet history it has no backfill problem — only the failures that happen before it lands are lost.
+>
+> **Partially landed** (`src/lib/log.ts`): the transport, the five levels with `LOG_LEVEL`, and the
+> `cause` chain — wired into the API error responder, which is what took the motivating failure above
+> from a bisect against a local checkout to a single request. The row stays open for the rest of its
+> wiring: **request context** (an id minted at the boundary and threaded, so concurrent failures are
+> tellable apart — the only part with real design in it), **the rules engine's refusals** (logged
+> where the rule fires and its reasoning exists, not at the responder, which deliberately logs only
+> `internal`), **the CLI and MCP adapters** (a failure through either is currently as silent as HTTP
+> was), and **the levels below `error`**, of which `backfillStartupWarning` is the one already
+> returning a formatted line with no caller to write it.
 
 ---
 
