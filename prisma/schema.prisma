@@ -651,3 +651,48 @@ enum CapabilityCheckResult {
   missing
   unverified
 }
+
+// The process registry (MILESTONES.md #45, DECISIONS.md §4). One row per
+// process an agent started and declared, so the kill guard can answer
+// "is that yours?" rather than "does that command look dangerous?".
+//
+// **Why a table and not an event.** The guard reads it on a hot path and
+// asks a set-membership question about *live* rows; an event ledger would
+// have to be folded to answer that, on every kill, forever. It is also
+// editable in exactly one way (a process ends), which is the structural
+// reason SCHEMA.md's second rule asks for before a satellite table exists.
+//
+// **Rows are kept, not deleted, when a process ends** — `endedAt` is set
+// instead. A registry that forgot its dead processes could not tell "that
+// PID was never yours" from "that PID was yours and has since exited", and
+// those want different answers: the first is a refusal, the second is a
+// no-op the caller should be told about rather than blocked over.
+model RegisteredProcess {
+  id           String    @id @default(uuid())
+  // Which machine the pid is meaningful on. A pid is only unique per host,
+  // so every lookup is keyed on the pair and never on the pid alone.
+  machine      String
+  pid          Int
+  // The image name, normalised (lower-case, no `.exe`). Stored because the
+  // machine-wide kill names an executable rather than a pid, and answering
+  // "would this kill something that is not yours" needs the name to be
+  // comparable across rows written by different sessions on different
+  // platforms.
+  executable   String
+  // The session that started it, and the root of that session's tree. The
+  // ownership check compares ROOTS, not sessions: a builder spawned by an
+  // orchestrator is the same crew, and a crew killing its own subagent's
+  // dev server is exactly the case that must stay allowed.
+  sessionId    String
+  rootSessionId String   @map("root_session_id")
+  // Free text from the registrant — the command line, a label. Never
+  // parsed; shown in a refusal so a person reads what they would have hit.
+  description  String?
+  registeredAt DateTime  @default(now()) @db.Timestamptz(3)
+  endedAt      DateTime? @db.Timestamptz(3)
+
+  @@index([machine, pid])
+  @@index([machine, executable])
+  @@index([rootSessionId])
+  @@map("registered_processes")
+}

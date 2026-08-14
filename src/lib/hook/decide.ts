@@ -16,6 +16,16 @@
 //      nothing to be unsure *about*, so it is allowed by construction —
 //      the same reading `hook_decision` already applies server-side
 //      (`src/lib/service/operations/hook-decision.ts`).
+//   2b. **The kill guard** (MILESTONES.md #45). An ownership question, not
+//      a pattern question: would this command end a process this session's
+//      crew did not start? It runs BEFORE the pattern lists for the same
+//      structural reason enforcement does — `hook.allow_patterns` is
+//      documented as winning, so a kill expressed as a pattern could be
+//      relaxed by an allow-list entry someone added for an unrelated
+//      reason, and the blast radius §4 describes would be back. It is also
+//      deliberately not on the *ask*-list: an ask-list match resolves to a
+//      deny in this build, which refuses a crew killing its own dev server
+//      — the ordinary case.
 //   3. **The cached lists**, matched by `decideHook` — the *same function*
 //      the server calls, imported rather than reimplemented. DECISIONS.md
 //      §4's "one script has nothing to agree with" applies to the matcher
@@ -48,6 +58,7 @@ import { decideHook, type HookDecision } from "@/lib/service/hook-decision";
 import type { HookEvent } from "./payload";
 import type { CacheState, HookRules } from "./rules-cache";
 import { enforcementRefusal, type SessionEnforcement } from "./enforcement";
+import { parseKillCommand } from "@/lib/kill/parse";
 
 /**
  * What the hook concluded, and why.
@@ -74,7 +85,11 @@ export interface HookVerdict {
     | "unmatched"
     | "server"
     | "server-unreachable"
-    | "no-rules";
+    | "no-rules"
+    /** The ownership check refused, or could not read the command (#45). */
+    | "kill-guard"
+    /** The ownership check was needed and could not be reached (#45). */
+    | "kill-guard-unreachable";
   /** The pattern that matched, when one did. */
   readonly matchedPattern?: string;
 }
@@ -91,6 +106,31 @@ export interface ServerVerdict {
 
 export type AskServer = (event: HookEvent) => Promise<ServerVerdict | undefined>;
 
+/**
+ * The kill guard's answer, as this build understands it (MILESTONES.md #45).
+ *
+ * `basis` is carried through rather than collapsed into the decision
+ * because `not-a-kill` is the one value that means *nothing was guarded* —
+ * the hook must go on to classify the command normally, and a plain
+ * `allow` here would short-circuit the pattern lists for every command on
+ * the machine. That is the single most consequential distinction in this
+ * type, so it is a field rather than an inference from the reason text.
+ */
+export interface KillGuardVerdict {
+  readonly decision: "allow" | "deny";
+  readonly basis: "not-a-kill" | "owned" | "unowned" | "unparseable";
+  readonly reason?: string;
+}
+
+/**
+ * Asks the server whether this command's kill targets belong to the caller.
+ *
+ * `undefined` for **any** failure, on the same collapsing rule as
+ * `askServer`. Unlike `askServer`, an unreachable kill guard does not deny
+ * unconditionally — see `decide` for what it does instead, and why.
+ */
+export type AskKillGuard = (event: HookEvent) => Promise<KillGuardVerdict | undefined>;
+
 export interface DecideOptions {
   readonly event: HookEvent;
   readonly cache: CacheState;
@@ -104,6 +144,15 @@ export interface DecideOptions {
   readonly askServer: AskServer;
   /** Enforcement known before the call, e.g. read from a local file. */
   readonly enforcement?: SessionEnforcement;
+  /**
+   * Asks the ownership check (MILESTONES.md #45).
+   *
+   * Optional so that a build wired before #45's route exists behaves
+   * exactly as it did — absent means the guard is not installed, which is
+   * different from installed-and-unreachable and must not read as a
+   * refusal of every kill on the machine.
+   */
+  readonly askKillGuard?: AskKillGuard;
 }
 
 const ALLOW = (source: HookVerdict["source"], reason: string): HookVerdict => ({
@@ -126,6 +175,7 @@ export async function decide({
   cache,
   askServer,
   enforcement,
+  askKillGuard,
 }: DecideOptions): Promise<HookVerdict> {
   // 1. Is this session allowed to be acting at all?
   const refusal = enforcementRefusal(enforcement);
@@ -137,6 +187,15 @@ export async function decide({
   if (event.command === undefined || event.command.length === 0) {
     return ALLOW("no-command", "this event carries no command to classify");
   }
+
+  // 2b. The ownership check. Only consulted for a command that could end a
+  //     process — decided locally, by the same parser the server uses, so
+  //     the overwhelming majority of tool calls cost nothing here. That
+  //     local read is a *pre-filter and never a verdict*: it can only send
+  //     a command to the server or not, and the server's registry is the
+  //     only thing that decides ownership.
+  const killVerdict = await consultKillGuard(event, askKillGuard);
+  if (killVerdict !== null) return killVerdict;
 
   // 3. No usable rules at all — the local half cannot answer, so the server
   //    must. Note this is NOT the same as empty rule lists, which are a
@@ -175,6 +234,81 @@ export async function decide({
 
   // 4. An ask-list match. The server is the authority.
   return await askOrDeny(event, askServer, "the server could not be reached for a verdict");
+}
+
+/**
+ * The ownership check, or `null` when it has nothing to say and the ordinary
+ * classification should continue (MILESTONES.md #45).
+ *
+ * ── Why the local parse is a filter and not a decision ─────────────────
+ *
+ * `parseKillCommand` runs here to answer one question — *could this end a
+ * process?* — and its answer is used for exactly one thing: whether to
+ * spend a round trip. It never allows and never denies on its own. Two
+ * properties follow, and both matter:
+ *
+ *   - **A command it reads as not-a-kill costs nothing.** That is what
+ *     keeps the guard affordable on a path that runs on every tool call,
+ *     and it is the same trade DECISIONS.md §4 makes for the allow-list.
+ *   - **A command it reads as a kill is never resolved locally**, not even
+ *     the obvious refusals. The registry is server-side and is the only
+ *     thing that knows whose a pid is; a local shortcut would be the second
+ *     implementation of one safety rule that §4 explicitly rejects.
+ *
+ * ── When the guard is installed and cannot be reached ──────────────────
+ *
+ * Deny — but only for a command the local parse already identified as a
+ * kill. This is the fail-closed rule applied at the narrowest scope that
+ * still honours it: a server outage refuses kills, and leaves every other
+ * command to be classified exactly as it would have been. The alternative,
+ * denying everything while the server is down, is a rule this hook already
+ * declines to make elsewhere and would turn one outage into a full stop.
+ */
+async function consultKillGuard(
+  event: HookEvent,
+  askKillGuard: AskKillGuard | undefined,
+): Promise<HookVerdict | null> {
+  if (askKillGuard === undefined) return null;
+  if (event.command === undefined) return null;
+
+  const local = parseKillCommand(event.command);
+  if (local.kind === "not-a-kill") return null;
+
+  let answer: KillGuardVerdict | undefined;
+  try {
+    answer = await askKillGuard(event);
+  } catch {
+    answer = undefined;
+  }
+
+  if (answer === undefined) {
+    return {
+      decision: "deny",
+      reason:
+        "this command would end one or more processes, and the ownership check could not be " +
+        "reached to confirm they are this session's own. The hook denies when it cannot get an answer.",
+      source: "kill-guard-unreachable",
+    };
+  }
+
+  // The server read the command as ending nothing. It is the authority on
+  // that too — its parser is the same one — so classification continues
+  // rather than this returning an allow that would skip the pattern lists.
+  if (answer.basis === "not-a-kill") return null;
+
+  if (answer.decision === "deny") {
+    return {
+      decision: "deny",
+      reason: answer.reason ?? "this command would end a process this session's crew does not own",
+      source: "kill-guard",
+    };
+  }
+
+  // Owned. That settles the *ownership* question and nothing else, so the
+  // command still goes to the pattern lists: a kill being yours does not
+  // make it allow-listed, and short-circuiting here would let the registry
+  // be used to bypass every other rule by registering a process first.
+  return null;
 }
 
 async function askOrDeny(
