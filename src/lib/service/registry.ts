@@ -76,6 +76,10 @@ import { getAccount } from "./operations/get-account";
 import { updateAccount } from "./operations/update-account";
 import { getCrewName } from "./operations/get-crew-name";
 import { listPeople } from "./operations/list-people";
+// The `people` write path (MILESTONES.md #116). `list_people` read a table
+// nothing could populate until this row; see the operation's header for the
+// three capabilities that were dead as a result.
+import { updatePerson } from "./operations/update-person";
 import { hookDecision } from "./operations/hook-decision";
 // The process registry and the ownership check it exists to feed
 // (MILESTONES.md #45). `kill_guard` is the consumer; the other three are
@@ -151,6 +155,7 @@ export const OPERATION_REGISTRY = {
   [updateAccount.name]: updateAccount,
   [getCrewName.name]: getCrewName,
   [listPeople.name]: listPeople,
+  [updatePerson.name]: updatePerson,
   [hookDecision.name]: hookDecision,
   [registerProcess.name]: registerProcess,
   [endProcess.name]: endProcess,
