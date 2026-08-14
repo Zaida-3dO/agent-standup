@@ -31,6 +31,10 @@ import { getItem } from "./operations/get-item";
 import { updateItem } from "./operations/update-item";
 import { listItems } from "./operations/list-items";
 import { getBoard } from "./operations/get-board";
+// Since your last visit (MILESTONES.md #38): the ledger slice, and the
+// per-profile read state that decides what in it is new to you.
+import { getEvents } from "./operations/get-events";
+import { markEventSeen } from "./operations/mark-event-seen";
 import { getSettings } from "./operations/get-settings";
 import { getSetting } from "./operations/get-setting";
 import { patchSettings } from "./operations/patch-settings";
@@ -87,6 +91,8 @@ export const OPERATION_REGISTRY = {
   [updateItem.name]: updateItem,
   [listItems.name]: listItems,
   [getBoard.name]: getBoard,
+  [getEvents.name]: getEvents,
+  [markEventSeen.name]: markEventSeen,
   [getSettings.name]: getSettings,
   [getSetting.name]: getSetting,
   [patchSettings.name]: patchSettings,
