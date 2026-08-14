@@ -67,6 +67,13 @@ import { updateAccount } from "./operations/update-account";
 import { getCrewName } from "./operations/get-crew-name";
 import { listPeople } from "./operations/list-people";
 import { hookDecision } from "./operations/hook-decision";
+// The process registry and the ownership check it exists to feed
+// (MILESTONES.md #45). `kill_guard` is the consumer; the other three are
+// how the registry gets its contents and how a refusal is explained.
+import { registerProcess } from "./operations/register-process";
+import { endProcess } from "./operations/end-process";
+import { listProcesses } from "./operations/list-processes";
+import { killGuard } from "./operations/kill-guard";
 // Backfill — the one-time bulk load (docs/plans/BACKFILL.md). Registered
 // like any other operation so it is reachable and countable; whether it
 // answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
@@ -120,6 +127,10 @@ export const OPERATION_REGISTRY = {
   [getCrewName.name]: getCrewName,
   [listPeople.name]: listPeople,
   [hookDecision.name]: hookDecision,
+  [registerProcess.name]: registerProcess,
+  [endProcess.name]: endProcess,
+  [listProcesses.name]: listProcesses,
+  [killGuard.name]: killGuard,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;
 

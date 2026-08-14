@@ -18,6 +18,7 @@
 
 import { runHook } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";
+import { createKillGuardAsk } from "@/lib/hook/ask-kill-guard";
 import { HOOK_EXIT } from "@/lib/hook/response";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -74,12 +75,31 @@ async function main(): Promise<number> {
       ? async () => undefined
       : createHttpAsk({ baseUrl, fetch: globalThis.fetch as never });
 
+  // The ownership check (MILESTONES.md #45). It needs a machine name, and
+  // there is no honest default for one: a process id is only meaningful per
+  // host, so guessing the host would make the guard compare the caller's
+  // pids against another machine's registrations. With no machine resolved
+  // the guard is simply not installed, which `decide` treats as "no
+  // ownership check configured" rather than as a refusal of every kill.
+  const machine = env.STANDUP_MACHINE?.trim();
+  const rootSessionId = env.STANDUP_ROOT_SESSION_ID?.trim();
+  const askKillGuard =
+    baseUrl === undefined || baseUrl === "" || machine === undefined || machine === ""
+      ? undefined
+      : createKillGuardAsk({
+          baseUrl,
+          fetch: globalThis.fetch as never,
+          machine,
+          ...(rootSessionId === undefined || rootSessionId === "" ? {} : { rootSessionId }),
+        });
+
   const file = cachePath(env);
   const rendered = await runHook({
     stdin: await readStdin(),
     cacheText: readCacheFile(file),
     writeCache: (text) => writeCacheFile(file, text),
     askServer,
+    ...(askKillGuard === undefined ? {} : { askKillGuard }),
     now: Date.now(),
   });
 

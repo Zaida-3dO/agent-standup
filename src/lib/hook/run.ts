@@ -16,7 +16,7 @@
 
 import { parseHookPayload } from "./payload";
 import { readCache, serialiseCache, type CacheState, type HookRules } from "./rules-cache";
-import { decide, type AskServer, type HookVerdict } from "./decide";
+import { decide, type AskKillGuard, type AskServer, type HookVerdict } from "./decide";
 import { renderResponse, type RenderedResponse } from "./response";
 import type { SessionEnforcement } from "./enforcement";
 
@@ -34,6 +34,12 @@ export interface RunHookOptions {
   readonly ttlMs?: number;
   /** Enforcement known locally, before any server call. */
   readonly enforcement?: SessionEnforcement;
+  /**
+   * Asks the ownership check (MILESTONES.md #45). Absent means the guard is
+   * not installed — see `decide` for why that is not the same as
+   * unreachable.
+   */
+  readonly askKillGuard?: AskKillGuard;
 }
 
 /**
@@ -86,6 +92,7 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
     cache,
     askServer,
     ...(options.enforcement === undefined ? {} : { enforcement: options.enforcement }),
+    ...(options.askKillGuard === undefined ? {} : { askKillGuard: options.askKillGuard }),
   });
 
   if (refreshed !== undefined && options.writeCache !== undefined) {
