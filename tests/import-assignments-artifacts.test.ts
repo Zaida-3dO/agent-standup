@@ -4,7 +4,6 @@
 // setup. Skips without TEST_DATABASE_URL.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
 import {
   applySeverityAliases,
@@ -25,7 +24,7 @@ import {
   type SourceTaskAssignmentsArtifacts,
 } from "@/lib/import-assignments-artifacts";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -206,11 +205,7 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 30_000);
