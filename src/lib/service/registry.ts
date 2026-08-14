@@ -38,6 +38,10 @@ import { putSetting } from "./operations/put-setting";
 import { deleteSetting } from "./operations/delete-setting";
 import { claim } from "./operations/claim";
 import { release } from "./operations/release";
+// Reclamation (MILESTONES.md #99): the liveness ladder's trigger, and the
+// takeover that displaces a holder the ladder is not going to release.
+import { sweep } from "./operations/sweep";
+import { takeover } from "./operations/takeover";
 import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
@@ -90,6 +94,8 @@ export const OPERATION_REGISTRY = {
   [deleteSetting.name]: deleteSetting,
   [claim.name]: claim,
   [release.name]: release,
+  [sweep.name]: sweep,
+  [takeover.name]: takeover,
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
   [note.name]: note,

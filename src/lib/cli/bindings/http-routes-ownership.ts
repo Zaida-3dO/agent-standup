@@ -45,6 +45,22 @@ export const OWNERSHIP_HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object
     request: (input) => ({ path: "/api/claims/heartbeat", body: input }),
     unwrap: (body) => property(body, "assignment"),
   },
+  // Reclamation (MILESTONES.md #99). Both return their operation's result
+  // object whole rather than under a key — `takeover`'s result is not just an
+  // assignment (it carries how alive the holder was judged, whether the
+  // warning had to be forced, and what has NOT been enforced), and `sweep`'s
+  // is a report with four lists in it. Unwrapping either to one field would
+  // discard the part the caller most needs to read.
+  takeover: {
+    method: "POST",
+    request: (input) => ({ path: "/api/claims/takeover", body: input }),
+    unwrap: (body) => body,
+  },
+  sweep: {
+    method: "POST",
+    request: (input) => ({ path: "/api/sweep", body: input }),
+    unwrap: (body) => body,
+  },
   checkpoint: {
     method: "POST",
     request: (input) => ({ path: "/api/checkpoints", body: input }),
