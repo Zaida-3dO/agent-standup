@@ -36,6 +36,7 @@ import { getSetting } from "./operations/get-setting";
 import { patchSettings } from "./operations/patch-settings";
 import { putSetting } from "./operations/put-setting";
 import { deleteSetting } from "./operations/delete-setting";
+import { removeUnrecognisedSetting } from "./operations/remove-unrecognised-setting";
 import { claim } from "./operations/claim";
 import { release } from "./operations/release";
 // Reclamation (MILESTONES.md #99): the liveness ladder's trigger, and the
@@ -93,6 +94,7 @@ export const OPERATION_REGISTRY = {
   [patchSettings.name]: patchSettings,
   [putSetting.name]: putSetting,
   [deleteSetting.name]: deleteSetting,
+  [removeUnrecognisedSetting.name]: removeUnrecognisedSetting,
   [claim.name]: claim,
   [release.name]: release,
   [sweep.name]: sweep,
