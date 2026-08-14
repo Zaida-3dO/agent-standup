@@ -20,7 +20,8 @@ import { runHook } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";
 import { createKillGuardAsk } from "@/lib/hook/ask-kill-guard";
 import { HOOK_EXIT } from "@/lib/hook/response";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { spoolEvent, type SpoolStore } from "@/lib/cli/hook-command";
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import path from "node:path";
 
 /** Reads stdin to the end. Empty string if there is nothing on it. */
@@ -61,6 +62,54 @@ function writeCacheFile(file: string, text: string): void {
   writeFileSync(file, text, "utf-8");
 }
 
+/**
+ * Where the telemetry spool lives — MILESTONES.md #88.
+ *
+ * Beside the rules cache, and resolved the same way, because they are the
+ * same kind of thing: per-user local state that an installation may want to
+ * relocate and that costs nothing but a re-fetch to lose. `STANDUP_SPOOL`
+ * overrides it for the same reason `STANDUP_HOOK_CACHE` overrides that one.
+ */
+function spoolPath(env: NodeJS.ProcessEnv): string {
+  const configured = env.STANDUP_SPOOL;
+  if (configured !== undefined && configured.trim() !== "") return configured.trim();
+  const home = env.HOME ?? env.USERPROFILE ?? ".";
+  return path.join(home, ".standup", "telemetry.jsonl");
+}
+
+/**
+ * The spool as the command reaches it.
+ *
+ * `append` is `appendFileSync` and nothing else — the whole performance
+ * argument in `@/lib/hook/spool` is that the write path on the critical
+ * path of every tool call is one append with no read, no parse and no
+ * rewrite, and this is where that has to actually be true.
+ *
+ * None of these swallow their own failures; `spoolEvent` does, once, at the
+ * point where the consequence is decided. Catching here as well would mean
+ * two places deciding that a failed measurement is not a failed hook, and
+ * the second one to be edited would be the one that got it wrong.
+ */
+function fileSpool(file: string): SpoolStore {
+  return {
+    append: (line) => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      appendFileSync(file, line, "utf-8");
+    },
+    read: () => {
+      try {
+        return readFileSync(file, "utf-8");
+      } catch {
+        return undefined;
+      }
+    },
+    replace: (text) => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text, "utf-8");
+    },
+  };
+}
+
 async function main(): Promise<number> {
   const env = process.env;
   const baseUrl = env.STANDUP_URL?.trim();
@@ -94,17 +143,39 @@ async function main(): Promise<number> {
         });
 
   const file = cachePath(env);
+  const stdin = await readStdin();
+  const now = Date.now();
   const rendered = await runHook({
-    stdin: await readStdin(),
+    stdin,
     cacheText: readCacheFile(file),
     writeCache: (text) => writeCacheFile(file, text),
     askServer,
     ...(askKillGuard === undefined ? {} : { askKillGuard }),
-    now: Date.now(),
+    // Hoisted above this call rather than read here, so the verdict and the
+    // spooled record share one timestamp. Reading the clock twice would put
+    // the record a few milliseconds after the decision it describes — small,
+    // and exactly the kind of skew that makes two logs impossible to line up
+    // when someone is trying to work out what a hook did.
+    now,
   });
 
+  // The verdict is written before the record is spooled, and the record is
+  // spooled before the process exits — MILESTONES.md #88. The order is the
+  // one `@/lib/cli/hook-command` states: deciding first keeps the
+  // filesystem off the front of the fastest and most common path, and a
+  // hook killed between the two loses a measurement rather than delaying a
+  // decision.
+  //
+  // `spoolEvent` swallows every failure it can have, so nothing about
+  // telemetry can turn into a denied tool call. That is deliberate and is
+  // the reason there is no `try` around this line: adding one here would
+  // suggest it can throw, and the next person to read it would wonder what
+  // happens to the verdict when it does.
   if (rendered.stdout !== "") process.stdout.write(rendered.stdout);
   if (rendered.stderr !== "") process.stderr.write(rendered.stderr);
+
+  spoolEvent(stdin, fileSpool(spoolPath(env)), now);
+
   return rendered.exitCode;
 }
 

@@ -26,6 +26,23 @@ export interface Streams {
  * rendered to and in what shape, never what happened.
  */
 export function render(outcome: RunOutcome, streams: Streams, json: boolean): void {
+  // `standup hook run` answers an agent tool, not a person, and its response
+  // is written exactly as `@/lib/hook/response` rendered it — on both
+  // streams, in the shape a hook reader parses (MILESTONES.md #88).
+  //
+  // **`--json` is deliberately ignored here.** Everywhere else that flag
+  // chooses a shape and can never change what happened; for a guard's
+  // refusal it *would* change what happened, because a hook reader given
+  // an envelope instead of its own shape reads no denial at all and lets the
+  // command run. A rendering flag must not be able to turn a deny into an
+  // allow, so this branch precedes the flag rather than being one of its
+  // cases.
+  if (outcome.hookResponse !== undefined) {
+    if (outcome.hookResponse.stdout !== "") streams.out(outcome.hookResponse.stdout);
+    if (outcome.hookResponse.stderr !== "") streams.err(outcome.hookResponse.stderr);
+    return;
+  }
+
   if (json) {
     streams.out(`${JSON.stringify(outcome.envelope)}\n`);
     return;
