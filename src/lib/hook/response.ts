@@ -24,6 +24,7 @@
 
 import type { HookVerdict } from "./decide";
 import type { StopCatch } from "./stop-catch";
+import type { Nudge } from "./nudge";
 
 /** The two exit codes this hook uses. */
 export const HOOK_EXIT = {
@@ -131,5 +132,43 @@ export function renderWithStopCatch(
     stderr: `${response.stderr}${advisory}`,
     // Deliberately the response's own code — see the note above.
     exitCode: response.exitCode,
+  };
+}
+
+/**
+ * Renders a verdict together with any nudges — MILESTONES.md #46.
+ *
+ * ── Where nudge text goes, and why it is stderr ────────────────────────
+ *
+ * **stderr**, on both the allow and the deny path. Not stdout, because
+ * stdout on the allow path must stay empty: it is parsed as JSON by tools
+ * that read it, and a bare sentence printed there is a parse failure on
+ * every nudged call. stderr is already the channel this hook uses for the
+ * text a person or a model reads (see the module header), and it is
+ * surfaced by tools that ignore stdout entirely.
+ *
+ * ── The exit code is the verdict's, always ─────────────────────────────
+ *
+ * A nudge on an allowed call exits **zero**. That single line is the whole
+ * of "a nudge is advisory": whatever text is emitted, the tool call is not
+ * refused, not retried, and not interrupted. There is deliberately no
+ * argument, setting or nudge field that can raise it — the exit code is
+ * read from the rendered verdict and nowhere else.
+ */
+export function renderWithNudges(
+  verdict: HookVerdict,
+  eventName: string,
+  nudges: readonly Nudge[],
+): RenderedResponse {
+  const base = renderResponse(verdict, eventName);
+  if (nudges.length === 0) return base;
+
+  const advisory = nudges.map((nudge) => `[standup:${nudge.kind}] ${nudge.text}`).join("\n");
+
+  return {
+    stdout: base.stdout,
+    stderr: base.stderr === "" ? `${advisory}\n` : `${base.stderr}${advisory}\n`,
+    // Deliberately `base.exitCode`, never a value derived from `nudges`.
+    exitCode: base.exitCode,
   };
 }

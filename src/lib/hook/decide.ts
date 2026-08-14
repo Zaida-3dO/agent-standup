@@ -60,6 +60,7 @@ import type { CacheState, HookRules } from "./rules-cache";
 import { enforcementRefusal, type SessionEnforcement } from "./enforcement";
 import { parseKillCommand } from "@/lib/kill/parse";
 import type { StopContext } from "./stop-catch";
+import { evaluateNudges, isWriteShaped, type Nudge, type NudgeContext } from "./nudge";
 
 /**
  * What the hook concluded, and why.
@@ -109,6 +110,12 @@ export interface ServerVerdict {
    * nothing in it can change a verdict.
    */
   readonly stop?: StopContext;
+  /**
+   * Nudge context the server volunteered (MILESTONES.md #46). Advisory only:
+   * nothing here can change `decision`, and `decide` never reads it while
+   * choosing one.
+   */
+  readonly nudge?: NudgeContext;
 }
 
 export type AskServer = (event: HookEvent) => Promise<ServerVerdict | undefined>;
@@ -138,6 +145,21 @@ export interface KillGuardVerdict {
  */
 export type AskKillGuard = (event: HookEvent) => Promise<KillGuardVerdict | undefined>;
 
+/**
+ * A verdict and anything the session should be told alongside it
+ * (MILESTONES.md #46).
+ *
+ * The two travel together and are computed apart. `verdict` is produced by
+ * `decide`, which cannot see the nudge context at all; `nudges` are produced
+ * by `evaluateNudges`, which cannot see the verdict. Composing them here —
+ * rather than letting `decide` return nudges — is what makes "a nudge never
+ * blocks" a property of the code's shape instead of a rule to remember.
+ */
+export interface DecidedEvent {
+  readonly verdict: HookVerdict;
+  readonly nudges: readonly Nudge[];
+}
+
 export interface DecideOptions {
   readonly event: HookEvent;
   readonly cache: CacheState;
@@ -160,6 +182,8 @@ export interface DecideOptions {
    * refusal of every kill on the machine.
    */
   readonly askKillGuard?: AskKillGuard;
+  /** Nudge context known before the call. Advisory — see `DecidedEvent`. */
+  readonly nudge?: NudgeContext;
 }
 
 const ALLOW = (source: HookVerdict["source"], reason: string): HookVerdict => ({
@@ -316,6 +340,61 @@ async function consultKillGuard(
   // make it allow-listed, and short-circuiting here would let the registry
   // be used to bypass every other rule by registering a process first.
   return null;
+}
+
+/**
+ * Decides one event **and** works out what to tell the session about it.
+ *
+ * This is the entry point the hook script uses; `decide` remains exported
+ * and unchanged for callers that want only a verdict.
+ *
+ * ── The one invariant worth stating outright ───────────────────────────
+ *
+ * `verdict` here is the *same value* `decide` returned, passed through
+ * untouched. Nudges are computed from a separate input and appended beside
+ * it. There is no branch in which a nudge is consulted before a verdict is
+ * chosen, and no branch in which the presence of a nudge alters one — so a
+ * denied call stays denied with its own reason, and an allowed call stays
+ * allowed no matter how much advice rides along with it.
+ *
+ * **Nudges are still computed for a denied call.** They are not suppressed,
+ * because the reason a call was denied is frequently the reason the advice
+ * matters — a session in the wind-down band that just had a command refused
+ * still needs to hear that it should be pausing rather than retrying. The
+ * deny is rendered as the refusal; the nudge rides alongside as advice.
+ */
+export async function decideWithNudges(options: DecideOptions): Promise<DecidedEvent> {
+  let volunteered: NudgeContext | undefined;
+  const askServer: AskServer = async (asked) => {
+    const answer = await options.askServer(asked);
+    if (answer?.nudge !== undefined) volunteered = answer.nudge;
+    return answer;
+  };
+
+  const verdict = await decide({ ...options, askServer });
+
+  // Anything the server volunteered on this round trip wins over what was
+  // known locally, because it is strictly newer — but only field by field,
+  // so a response that mentions only the budget band does not erase a
+  // locally-known escalation.
+  const merged: NudgeContext = { ...options.nudge, ...volunteered };
+
+  const nudges = evaluateNudges({
+    ...merged,
+    // The event knows which tool ran; the context does not, and nothing
+    // upstream should have to restate it.
+    //
+    // A `writeShaped` already on the context still wins — but note where
+    // one can come from: `readNudgeContext` does not parse the field, so
+    // this override is reachable only from context supplied locally by the
+    // caller, never from a server response. That is deliberate for now:
+    // write-shapedness is a fact about the tool the hook just observed, and
+    // the hook is better placed to know it than a server being told about
+    // it second-hand.
+    writeShaped: merged.writeShaped ?? isWriteShaped(options.event.tool),
+  });
+
+  return { verdict, nudges };
 }
 
 async function askOrDeny(
