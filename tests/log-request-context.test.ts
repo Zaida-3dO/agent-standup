@@ -258,9 +258,7 @@ describe("ServiceRuntime logging", () => {
     const op = thrower("scratch_secret", "boom");
     const { runtime, cleanup } = testRuntime({ [op.name]: op });
     try {
-      await expect(
-        runtime.call(op.name, { password: "hunter2-do-not-log-me" }),
-      ).rejects.toThrow();
+      await expect(runtime.call(op.name, { password: "hunter2-do-not-log-me" })).rejects.toThrow();
       expect(JSON.stringify(logs.stderr())).not.toContain("hunter2-do-not-log-me");
     } finally {
       cleanup();

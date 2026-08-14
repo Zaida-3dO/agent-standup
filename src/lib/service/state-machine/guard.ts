@@ -170,10 +170,11 @@ export const guardRegistry = new GuardRegistry();
  * This is where the rule fires and where its reasoning still exists. By the
  * time a refusal reaches an adapter it is a `code`, a `guard` id and a
  * message; the item it was about, the pair it was moving between and the
- * `details` the guard computed are gone, and the API responder deliberately
- * logs only `internal` anyway — so a `guard_rejected` reaches no log at all
- * today. An operator asking "why did that transition keep failing" has to
- * reproduce it to find out.
+ * `details` the guard computed are gone. The API responder logs only
+ * `internal`, deliberately, so no layer above this one is in a position to
+ * write a refusal down with anything in it worth reading — an operator
+ * asking "why does that transition keep failing" would have to reproduce it
+ * to find out.
  *
  * **At `info`, and that is the whole point of the level.** A guard refusing
  * is the system working, not a fault: PLAN.md's guards are required-field
