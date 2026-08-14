@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.2.0). Leave blank to auto-increment the minor version from the latest tag."
+        required: false
+        default: ""
 
 # Deliberately no `concurrency` block here.
 #
@@ -38,11 +43,108 @@ on:
 # mechanism, which is out of scope for a concurrency block.
 
 jobs:
+  # The single source of the version this run releases, for both trigger paths.
+  #
+  # A `push: tags` run already has its tag — this job just echoes
+  # `github.ref_name` so downstream jobs have one input to read either way.
+  #
+  # A `workflow_dispatch` run has no tag until this job makes one. It takes the
+  # `version` input if given, otherwise bumps the minor of the latest v-tag
+  # (v0.5.0 -> v0.6.0), then pushes it. Pushing the tag is what lets the rest of
+  # the workflow behave identically to a tagged push: `docker/metadata-action`'s
+  # `type=semver` reads a real tag, and the Release object below names one that
+  # exists in the repository rather than a ref that only lived inside a run.
+  #
+  # A manual dispatch used to build an image and stop there — `github-release`
+  # and `publish-npm` were gated on `github.ref_type == 'tag'`, so a dispatch
+  # silently skipped both and produced no release at all. That gate is now
+  # unnecessary: every path through this workflow has a tag by the time those
+  # jobs run.
+  #
+  # Pushing a tag from here does NOT start a second run of this workflow, even
+  # though `push: tags` above matches it: GitHub does not trigger workflows from
+  # events made with the automatic `GITHUB_TOKEN`, specifically to stop
+  # recursion. That is load-bearing — this run goes on to release the tag
+  # itself, so a triggered second run would be a duplicate release racing this
+  # one. If the push is ever switched to a PAT or an App token, that suppression
+  # is lost and this workflow needs a guard against releasing the same tag twice.
+  tag:
+    name: Determine the version tag
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The auto-increment reads existing tags, which a shallow clone omits.
+          fetch-depth: 0
+      - name: Resolve the tag for this run
+        id: tag
+        # Inputs arrive through the environment rather than being interpolated
+        # into the script — the same rule the jobs below already follow for
+        # `github.*` values, and the reason actionlint accepts this form.
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "Triggered by a tag push — releasing $REF_NAME."
+            echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "$VERSION_INPUT" ]; then
+            next="$VERSION_INPUT"
+            # Fail early and loudly on a typo. Left unchecked, a malformed tag
+            # reaches `type=semver` (which silently emits no version tag for it)
+            # and `gh release create`, publishing an image and a Release under a
+            # name nothing else in the toolchain can parse.
+            if ! printf '%s' "$next" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::Version '$next' is not of the form v<major>.<minor>.<patch>, e.g. v1.2.0."
+              exit 1
+            fi
+          else
+            latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)"
+            if [ -z "$latest" ]; then
+              next="v0.1.0"
+            else
+              major="$(printf '%s' "$latest" | cut -d. -f1 | tr -d 'v')"
+              minor="$(printf '%s' "$latest" | cut -d. -f2)"
+              next="v${major}.$((minor + 1)).0"
+            fi
+            echo "No version given — auto-incrementing the minor version from ${latest:-no existing tag} to $next."
+          fi
+
+          # Refuse rather than move an existing tag: the image, the Release and
+          # (once enabled) the npm package for that version already exist, and
+          # repointing the tag would leave them describing different commits.
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::Tag $next already exists. Pass a different version."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$next"
+          git push origin "$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+
   build-and-push:
+    needs: tag
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The tag a dispatch just created is newer than the ref this workflow
+          # started from, so check it out explicitly — otherwise a dispatch
+          # would build whatever the branch tip was, which is the same commit
+          # today but silently drifts if anything lands mid-run.
+          ref: ${{ needs.tag.outputs.tag }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v4
         with:
@@ -53,8 +155,12 @@ jobs:
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
+          # `type=semver` parses the *triggering* ref, which on a manual
+          # dispatch is the branch, not the tag this run created — so the tag
+          # is handed over explicitly. On a tag push this is the same value the
+          # action would have inferred anyway.
           tags: |
-            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},value=${{ needs.tag.outputs.tag }}
             type=sha
             # Unconditional on purpose. This workflow only runs on a v* tag or a
             # manual dispatch, so every run is a release and should move `latest`.
@@ -78,12 +184,11 @@ jobs:
   #
   # `needs: build-and-push` is the same reasoning as the npm job below: a
   # Release announces an image that can be pulled, so it must not exist until
-  # the image for this tag actually does. `if: github.ref_type == 'tag'`
-  # because a manual `workflow_dispatch` run has no tag to release.
+  # the image for this tag actually does. It also needs the `tag` job, both for
+  # its output and because `build-and-push` already depends on it.
   github-release:
     name: Publish the GitHub Release
-    needs: build-and-push
-    if: github.ref_type == 'tag'
+    needs: [tag, build-and-push]
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
@@ -99,7 +204,7 @@ jobs:
         # actionlint accepts for a github.* value inside `run:`.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.tag.outputs.tag }}
         # Idempotent on purpose: re-running this workflow for a tag that was
         # already released should be a no-op, not a red run.
         run: |
@@ -119,8 +224,8 @@ jobs:
   # pushed, so a failed image build can never leave a published npm package
   # naming a version whose image doesn't exist.
   #
-  # `github.ref_name` is the one tag this whole workflow runs from. There is
-  # nothing else to keep in sync: `scripts/version-from-tag.mjs` turns it
+  # The `tag` job's output is the one tag this whole workflow runs from. There
+  # is nothing else to keep in sync: `scripts/version-from-tag.mjs` turns it
   # into the npm version to publish, mirroring the same `v<semver>` reading
   # `docker/metadata-action`'s `type=semver,pattern={{version}}` (above)
   # already takes of it — both artefacts are versioned from one parse of one
@@ -148,12 +253,16 @@ jobs:
   # the first successful publish of an unclaimed name claims it permanently.
   publish-npm:
     name: Publish npm package (standup binary)
-    needs: build-and-push
-    if: github.ref_type == 'tag' && vars.ENABLE_NPM_PUBLISH == 'true'
+    needs: [tag, build-and-push]
+    if: vars.ENABLE_NPM_PUBLISH == 'true'
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Same reason as build-and-push: publish the tag's source, not the
+          # branch tip the dispatch happened to start from.
+          ref: ${{ needs.tag.outputs.tag }}
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -166,7 +275,7 @@ jobs:
         # inside `run:` (the direct-interpolation form is a template
         # injection risk actionlint flags for exactly this reason).
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.tag.outputs.tag }}
         run: |
           VERSION="$(node scripts/version-from-tag.mjs "$RELEASE_TAG")"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
