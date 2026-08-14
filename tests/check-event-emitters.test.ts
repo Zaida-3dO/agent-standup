@@ -50,6 +50,43 @@ function runCli(cwd: string) {
 const tempDirs: string[] = [];
 
 /**
+ * Run the real checker binary *inside* a seeded tree.
+ *
+ * The script resolves its root from its own location, so pointing it at a
+ * fixture means copying it in and running the copy. Exercising the CLI rather
+ * than only `analyse` is what proves the exit code moves: an analyser that
+ * found a fault while the binary exited 0 would gate nothing.
+ */
+function runCliIn(dir: string) {
+  const seededScript = path.join(dir, "scripts", "check-event-emitters.mjs");
+  mkdirSync(path.dirname(seededScript), { recursive: true });
+  writeFileSync(
+    seededScript,
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write(require("fs").readFileSync(${JSON.stringify(scriptPath)}, "utf8"))`,
+      ],
+      { encoding: "utf8" },
+    ),
+    "utf8",
+  );
+
+  try {
+    const stdout = execFileSync(process.execPath, [seededScript], { cwd: dir, encoding: "utf8" });
+    return { status: 0, stdout, stderr: "" };
+  } catch (error) {
+    const failure = error as { status?: number; stdout?: string; stderr?: string };
+    return {
+      status: failure.status ?? -1,
+      stdout: failure.stdout ?? "",
+      stderr: failure.stderr ?? "",
+    };
+  }
+}
+
+/**
  * Build a miniature repository: a `prisma/schema.prisma` declaring an
  * `EventType` enum, and a `src/` tree of emitter files. The script resolves
  * its root from its own location, so a seeded tree is exercised through
@@ -187,6 +224,70 @@ describe("check-event-emitters — it fails on a seeded violation", () => {
     expect(seeded.emitters.has("note")).toBe(true);
   });
 
+  it("reports a waiver whose type has since gained an emitter", () => {
+    // **The assertion the test above was missing (#124).** It asserted
+    // `staleWaivers` is `[]` on a clean repo and never exercised a tree where
+    // the mechanism fires — so deleting the mechanism outright left all 28
+    // tests passing, and a stale waiver went undetected with exit 0. A test
+    // titled for a behaviour it never drives cannot fail on that behaviour.
+    //
+    // `analyse` reads the live KNOWN_UNEMITTED, so the seeded tree declares a
+    // genuinely-waived type and then emits it. That is exactly the state a
+    // waiver is supposed to catch: the promise it recorded has been kept, and
+    // the entry should now be removed.
+    const waived = KNOWN_UNEMITTED[0]?.type;
+    expect(waived).toBeDefined();
+
+    const dir = seedTree([waived as string], {
+      "src/lib/service/operations/writer.ts": `
+          await appendEvent(ctx.db, { itemId, type: "${waived}", payload: {} });
+        `,
+    });
+
+    const result = analyse(dir);
+    expect(result.staleWaivers.map((w: { type: string }) => w.type)).toEqual([waived]);
+    // The site is what makes the failure actionable — "remove this entry"
+    // is only useful next to the line that made it stale.
+    const sites = result.staleWaivers[0]?.sites ?? [];
+    expect(sites).toHaveLength(1);
+    expect(sites[0]?.file).toBe("src/lib/service/operations/writer.ts");
+  });
+
+  it("exits non-zero on a stale waiver, and names it", () => {
+    // The mechanism above reaching the exit code. `analyse` finding a stale
+    // waiver while the binary exited 0 would gate nothing — the same gap as
+    // the seeded-violation CLI test below, which is why both exist.
+    const waived = KNOWN_UNEMITTED[0]?.type as string;
+    const dir = seedTree([waived], {
+      "src/lib/service/operations/writer.ts": `
+        await appendEvent(ctx.db, { itemId, type: "${waived}", payload: {} });
+      `,
+    });
+    const result = runCliIn(dir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stale-waiver");
+    expect(result.stderr).toContain(waived);
+  });
+
+  it("reports a waiver for a type the enum does not declare", () => {
+    // The `unknownWaivers` half, which survived the same way: gutting it left
+    // 28/28 passing. A waiver naming a type that does not exist waives
+    // nothing, and its most likely cause is a typo in the entry — which
+    // silently leaves the real type unwaived and unchecked.
+    const dir = seedTree(["note"], {
+      "src/lib/service/operations/note.ts": `
+          await appendEvent(ctx.db, { itemId, type: "note", payload: {} });
+        `,
+    });
+
+    const result = analyse(dir);
+    // Every live waiver names a type this tiny schema does not declare, so
+    // all of them are unknown here — the mechanism firing, on real entries.
+    expect(result.unknownWaivers.length).toBe(KNOWN_UNEMITTED.length);
+    expect(result.unknownWaivers).toContain(KNOWN_UNEMITTED[0]?.type);
+  });
+
   it("exits non-zero and says which type has no writer", () => {
     // The CLI path, through a real process. Seeded by pointing the checker at
     // a tree whose schema declares a value nothing writes — the exit code is
@@ -279,12 +380,79 @@ describe("check-event-emitters — what counts as a write", () => {
     );
   });
 
+  it("still counts an emit on a line that earlier contains a URL", () => {
+    // #124's LOW: `isInComment` searched for `//` in the raw line, so the
+    // `//` in a URL read as a comment opener and silently skipped the emit
+    // after it. String literals are blanked first now. This errs toward false
+    // *failure*, which is the safe direction — but it is confusing to debug.
+    expect(
+      propertyTypes(`const url = "http://x"; await appendEvent(db, { type: "merge" })`),
+    ).toEqual(["merge"]);
+  });
+
   it("does NOT count a bound-parameter cast, which names no value", () => {
     expect(sqlTypes(`VALUES ($1, $2::"ActorType", $6::"EventType", $7::jsonb)`)).toEqual([]);
   });
 
+  // ── The three read shapes that used to pass as writes (#124) ──────────
+  //
+  // The header claimed "there is no shape that makes an unemitted type look
+  // emitted". Each of these is one: a plain `type:` property in a position
+  // that reads a type rather than writing one. The last was demonstrated on a
+  // real helper appended to `src/lib/open-loops.ts` and took the gate to
+  // "12 emitted, exit 0" on a type nothing writes.
+
+  it("does NOT count a `where:` clause, which reads events rather than writing one", () => {
+    expect(propertyTypes(`db.event.findMany({ where: { type: "open_loop" } })`)).toEqual([]);
+  });
+
+  it("does NOT count an interface field declaring the type", () => {
+    expect(propertyTypes(`interface L { type: "open_loop"; loopId: string }`)).toEqual([]);
+  });
+
+  it("does NOT count a read model returning the type", () => {
+    // The exact helper from the issue.
+    expect(
+      propertyTypes(`
+        export function toLoopView(e: { loopId: string }) {
+          return { type: "open_loop", loopId: e.loopId, open: true };
+        }
+      `),
+    ).toEqual([]);
+  });
+
+  it("DOES count the same property inside an emit call, so the narrowing is not blanket", () => {
+    // The negative control for the three above. A check that simply stopped
+    // counting properties would satisfy all of them and gate nothing — this
+    // is the assertion that fails if the narrowing goes too far.
+    expect(propertyTypes(`await appendEvent(ctx.db, { itemId, type: "open_loop" })`)).toEqual([
+      "open_loop",
+    ]);
+    expect(propertyTypes(`await recordFieldChanges(db, { type: "field_change" })`)).toEqual([
+      "field_change",
+    ]);
+  });
+
+  it("counts an emit whose property sits inside a nested object", () => {
+    // `payload: { … }` puts real emit sites more than one brace deep, so the
+    // walk has to cross nested literals rather than stopping at the first one.
+    expect(
+      propertyTypes(`
+        await appendEvent(db, {
+          itemId,
+          actor: { actorType, actorId, sessionId: null },
+          type: "claim",
+          payload: { role: "owner" },
+        });
+      `),
+    ).toEqual(["claim"]);
+  });
+
   it("records where each write was found, so a failure is actionable", () => {
-    const found = properties(`\n\nconst e = { type: "claim" };\n`);
+    // The fixture is an `appendEvent` call rather than a bare object literal,
+    // because a bare literal is no longer a write (#124) — it is the read-model
+    // shape that made an unemitted type look emitted.
+    const found = properties(`\n\nappendEvent(db, { type: "claim" });\n`);
     expect(found).toHaveLength(1);
     expect(found[0]?.line).toBe(3);
     expect(found[0]?.kind).toBe("property");

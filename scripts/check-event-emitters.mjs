@@ -67,9 +67,18 @@
  *
  * The one asymmetry worth stating plainly: **every failure mode above makes
  * this check stricter, never laxer.** An unrecognised write shape produces a
- * false failure, which someone fixes; there is no shape that makes an
- * unemitted type look emitted. That is the correct direction for a gate whose
- * whole purpose is catching an absence.
+ * false failure, which someone fixes. That is the correct direction for a gate
+ * whose whole purpose is catching an absence.
+ *
+ * That claim used to end "…there is no shape that makes an unemitted type look
+ * emitted", and **it was false** (#124). A `type:` property was counted
+ * wherever it appeared, so a read path naming a type made it look written:
+ * `where: { type: "x" }`, an `interface` field, or a read model returning
+ * `{ type: "x" }` all did it — the last was demonstrated on a real helper and
+ * took the gate green on a type nothing writes. `findPropertyWrites` now
+ * requires the property to be an argument of an `EMIT_CALLERS` call, which is
+ * what makes the asymmetry true rather than asserted. Anything the walk cannot
+ * resolve reports as unemitted, which fails loudly.
  *
  * ── The import path is deliberately not an emitter ──────────────────────
  *
@@ -188,11 +197,40 @@ export function parseEventTypes(schemaText) {
 }
 
 /**
- * Finds every `type: "<value>"` object property in a source text.
+ * The functions whose argument object *is* an event write. A `type:` property
+ * counts as an emitter only inside a call to one of these.
  *
- * The property syntax is the whole discriminator. A bare occurrence of the
- * string — in a union type, a `WHERE` clause, a comment — is a mention, and
- * mentions are what this check exists not to count.
+ * Kept as a list rather than inferred: "which function writes an event" is a
+ * fact about this codebase, and stating it is what lets the check tell an emit
+ * from a read. A new writer must be added here, and until it is, its type
+ * reports as unemitted — the safe direction, because it fails loudly.
+ */
+export const EMIT_CALLERS = ["appendEvent", "recordFieldChanges"];
+
+/**
+ * Finds every `type: "<value>"` object property that sits inside a call to one
+ * of `EMIT_CALLERS`.
+ *
+ * **The call context is load-bearing, and this is the second version (#124).**
+ * The first matched any `type:` property anywhere, on the reasoning that the
+ * property syntax was itself the discriminator — a bare occurrence in a union
+ * type or a `WHERE` clause is a mention, and mentions are what this check
+ * exists not to count. That reasoning was wrong in one direction, and the
+ * header claimed "there is no shape that makes an unemitted type look
+ * emitted" on the strength of it. There is; several:
+ *
+ *     db.event.findMany({ where: { type: "x" } })   // a read
+ *     interface L { type: "x"; loopId: string }     // a declaration
+ *     return { type: "x", open: true }              // a read model
+ *
+ * Each is a plain `type:` property and each made an unwritten type report as
+ * emitted. Demonstrated on a real read-model helper appended to
+ * `src/lib/open-loops.ts`: the gate went green on a type nothing writes.
+ *
+ * Requiring the property to be an argument of an emit call closes all three at
+ * once, because none of them is one. It is still syntactic and still fooled by
+ * construction — `appendEvent(buildArgs())` hides the type from it — but that
+ * direction reports the type as *unemitted*, which fails loudly.
  */
 export function findPropertyWrites(text) {
   const found = [];
@@ -204,9 +242,50 @@ export function findPropertyWrites(text) {
     // would let a header explaining that a type has no writer stand in for
     // the writer.
     if (isInComment(text, index)) continue;
+    if (!isInsideEmitCall(text, index)) continue;
     found.push({ type: match[2], line: lineOf(text, index), kind: "property" });
   }
   return found;
+}
+
+/**
+ * Is `index` inside the argument list of a call to one of `EMIT_CALLERS`?
+ *
+ * Walks backwards counting bracket depth, ignoring brackets inside strings, to
+ * find the `(` that opens the call this position sits in — then checks the
+ * identifier immediately before it. Nested object and array literals are
+ * crossed transparently, because an emit's `type:` is normally one level
+ * inside the argument object, and a `payload: { ... }` may be deeper still.
+ *
+ * Walking the text rather than parsing it keeps this script dependency-free,
+ * which is the same tradeoff the rest of the file makes. The failure mode is
+ * "cannot find the opening paren", which returns false and reports the type as
+ * unemitted — loud, not silent.
+ */
+function isInsideEmitCall(text, index) {
+  let depth = 0;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const char = text[i];
+    if (char === ")" || char === "}" || char === "]") {
+      depth += 1;
+      continue;
+    }
+    if (char === "(" || char === "{" || char === "[") {
+      if (depth > 0) {
+        depth -= 1;
+        continue;
+      }
+      // An unmatched opener at depth 0 — the bracket enclosing `index`. Only
+      // a `(` can be a call; an enclosing `{` means walk further out, because
+      // the `type:` is inside an object literal that may itself be an
+      // argument.
+      if (char !== "(") continue;
+      const before = text.slice(Math.max(0, i - 80), i);
+      const callee = /([A-Za-z_$][\w$]*)\s*$/.exec(before);
+      return callee !== null && EMIT_CALLERS.includes(callee[1]);
+    }
+  }
+  return false;
 }
 
 /**
@@ -214,15 +293,24 @@ export function findPropertyWrites(text) {
  *
  * Line comments are decided by looking for `//` earlier on the same line;
  * block comments by counting whether the nearest delimiter behind is an
- * opener. Both are approximations — a `//` inside a string literal earlier on
- * the line reads as a comment start — and both err toward *not* counting a
+ * opener. Both remain approximations, and both err toward *not* counting a
  * site, which makes an emitter look absent rather than present. That is the
  * safe direction for this gate: it over-reports a missing writer, never
  * under-reports one.
+ *
+ * String literals are blanked before the `//` search (#124). Without that,
+ * `const url = "http://x"; await appendEvent(db, { type: "merge" })` reads as
+ * commented-out and the emit is skipped — a false failure rather than a false
+ * pass, but a confusing one to debug, and the fix is one substitution.
  */
 function isInComment(text, index) {
   const lineStart = text.lastIndexOf("\n", index - 1) + 1;
-  const beforeOnLine = text.slice(lineStart, index);
+  // Replace each string literal's contents with an equal number of spaces, so
+  // offsets are preserved while a `//` inside one can no longer be read as a
+  // comment opener.
+  const beforeOnLine = text
+    .slice(lineStart, index)
+    .replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, (literal) => " ".repeat(literal.length));
   if (beforeOnLine.includes("//")) return true;
   if (/^\s*\*/.test(beforeOnLine)) return true;
 
