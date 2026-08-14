@@ -126,6 +126,10 @@ export type { DeleteSettingInput } from "./operations/delete-setting";
 export type { RenderedSetting } from "./operations/settings-shared";
 export type { ClaimOperationInput } from "./operations/claim";
 export type { ReleaseOperationInput } from "./operations/release";
+// Reclamation (MILESTONES.md #99). `sweep` gives the liveness ladder a
+// caller; `takeover` displaces a holder the ladder is not going to release.
+export type { SweepOperationInput, SweepOperationOutput } from "./operations/sweep";
+export type { TakeoverOperationInput } from "./operations/takeover";
 export type { HeartbeatOperationInput } from "./operations/heartbeat";
 export type { CheckpointOperationInput } from "./operations/checkpoint";
 export type { NoteOperationInput } from "./operations/note";
