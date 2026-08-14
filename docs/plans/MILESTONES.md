@@ -186,7 +186,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **90** | **Retiring the environment variables.** A startup check, derived from the registry's `formerEnv` entries, that fails in development and logs loudly in production when a retired name is still set; plus `.env.example`, the production compose environment block, and the README's configuration and database-requirement sections | 77 | `done` |
 | **92** | **Administration API and command line** for installation-owned entities — repositories, areas, machines (including `source_globs`), accounts (including `vendor`, validated against the registered adapter list, and `budget_windows`) | 79, 91 | `done` |
 | **98** | **Artifact writes.** One `record_artifact` service call and its routes/tools/verb — `{itemId, kind, verdict?, reviewRound?, commitSha?, body?, ref?}` — plus an emitter for the `review_requested` event. **The importer is the only writer of the artifacts table**, so #17's three guards refuse every item minted through the product: `→ in_review` wants a `review_requested` event, `plan_review → executing` wants an approved plan artifact, `→ merged` wants a commit artifact and an approving code review at round+tip. One operation clears all three | 17, 20, 26 | |
-| **99** | **Run the liveness ladder.** #24 built `sweepLiveness` and nothing calls it. Give it a trigger — a `standup sweep` verb and a scheduled or hook-driven invocation — so a dead session's claims are actually reclaimed. Until then a crashed session's claim is permanent: the claim insert is `ON CONFLICT DO NOTHING`, so every later claim on that item is refused as already-held with no path to release it. **Also forced takeover** — displacing a holder the ladder is not going to release. A dead holder is taken over cleanly; a possibly-alive one requires an explicit `force` **and** a written `reason`, both recorded against the displaced assignment (`superseded_by`, `liveness = superseded`, `released_at`) and in a `takeover` event. That recorded state is what an enforcement hook reads; **the hook itself is #42 and does not exist, so a displaced live session is not yet prevented from continuing** | 24 | |
+| **99** | **Run the liveness ladder.** #24 built `sweepLiveness` and nothing calls it. Give it a trigger — a `standup sweep` verb and a scheduled or hook-driven invocation — so a dead session's claims are actually reclaimed. Until then a crashed session's claim is permanent: the claim insert is `ON CONFLICT DO NOTHING`, so every later claim on that item is refused as already-held with no path to release it. **Also forced takeover** — displacing a holder the ladder is not going to release. A dead holder is taken over cleanly; a possibly-alive one requires an explicit `force` **and** a written `reason`, both recorded against the displaced assignment (`superseded_by`, `liveness = superseded`, `released_at`) and in a `takeover` event. That recorded state is what an enforcement hook reads; **the hook itself is #42 and does not exist, so a displaced live session is not yet prevented from continuing** | 24 | `done` |
 | **100** | **Open-loop writes.** `loop_add` / `loop_close` over the `open_loop` / `open_loop_closed` events, with their routes, tools and verbs. The payload validators, the pairing logic and #28's read path all exist; only the write is missing, so `orientation` can display a loop nobody can record. Also add the `SCHEMA.md` section both modules cite as `§3a`, which does not exist | 20, 28 | |
 | **101** | **Wire the notification evaluator.** #25 built `evaluateRules` and named the service layer as its caller "once #27 lands transitions"; #27 landed without it, so nothing evaluates a rule and `people.notify_rules` is never read. Thread the before/after field snapshot from transition and update into it — the evaluator's own header documents the field-name casing the caller has to handle | 25, 27 | |
 | **102** | **Route the four raw event writes through the one writer.** `create_item`, `update_item`, `transition_item` and `complete_item` insert into `events` directly rather than through `appendEvent`, contradicting that module's stated invariant. Their column list omits `session_id`, `assignment_id` and `body`, so every state change and field change lands with a null session — making "who moved this" unanswerable in #28's `whatChanged` for exactly the mutations most worth attributing. Also gives `recordFieldChanges` its first caller | 20 | |
@@ -252,7 +252,7 @@ every adapter passes the conformance harness.**
 |---|---|---|---|
 | **35** | Profile picker — choose a user profile, remembered in the browser, switchable from the top bar | 9, 26 | `done` |
 | **36** | Board API: items grouped into columns, filters | 26 | `done` |
-| **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | |
+| **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | `done` |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
 | **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | `done` |
 | **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim. **Performed on a day when nothing is executing** — duplicate, verify against the duplicate, then switch; never a wholesale swap with items in flight (`DECISIONS.md` §11, §13h) | 13, 37, 39 | |
@@ -274,7 +274,7 @@ environment.**
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **41** | The hook decision as a service call, and its route: allow-list silent, ask-list answered, **denies when unsure**. The route is one caller; `standup hook` is another | 14 | `done` |
-| **42** | The hook script: one file, fires after each tool call and at stop, cached rules | 41 | |
+| **42** | The hook script: one file, fires after each tool call and at stop, cached rules | 41 | `done` |
 | **43** | Session registration handshake: the `sessions` table (additive migration), the registration transport recorded as the capability signal in five values matching the adapter names, `standup session register` and its route, a transport-specific reply naming the matching hook variant, and per-variant protocol version comparison — advisory when stale, refusing a claim when incompatible or absent. Plus a CI assertion that the shipped hook's declared version equals the build constant, so nobody has to remember to bump the right one | 42, 79 | |
 | **44** | Merge gate: the judgement server-side, only command parsing local | 18, 42 | |
 | **45** | Process registry, and the kill guard as an **ownership check** | 42 | |
@@ -287,6 +287,13 @@ environment.**
 
 **Milestone done when:** one hook script covers every guarded event, and the only judgement left on
 the client is the handful of checks that cannot run anywhere else.
+
+> **#99 is marked done with one thing outstanding, recorded so it is not lost.** The verb, the route
+> and the MCP tool all ship, and a dead session's claims can be reclaimed. **Nothing schedules it** —
+> the argument, made in `sweep.ts`'s own header, is that a schedule belongs to the deployment rather
+> than to a per-replica timer. Until something invokes it periodically, a crashed session's claim is
+> *reclaimable* but not *automatically reclaimed*. Also open from the same review: the sweep's actor
+> attribution has no test at all — two mutants hard-coding it survived the whole suite.
 
 > **⚠️ The ask path is inert until #43, and every row below #42 builds on it.** Found in review of
 > #42, and recorded here so five downstream rows do not each rediscover it. Two individually correct
