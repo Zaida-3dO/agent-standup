@@ -59,6 +59,7 @@ import type { HookEvent } from "./payload";
 import type { CacheState, HookRules } from "./rules-cache";
 import { enforcementRefusal, type SessionEnforcement } from "./enforcement";
 import { parseKillCommand } from "@/lib/kill/parse";
+import type { StopContext } from "./stop-catch";
 
 /**
  * What the hook concluded, and why.
@@ -102,6 +103,12 @@ export interface ServerVerdict {
   readonly rules?: HookRules;
   /** Session enforcement the server volunteered. */
   readonly enforcement?: SessionEnforcement;
+  /**
+   * What the server knows about this session's crew, for the stop-hook
+   * catch (MILESTONES.md #47). Advisory only — `decide` never reads it, and
+   * nothing in it can change a verdict.
+   */
+  readonly stop?: StopContext;
 }
 
 export type AskServer = (event: HookEvent) => Promise<ServerVerdict | undefined>;
