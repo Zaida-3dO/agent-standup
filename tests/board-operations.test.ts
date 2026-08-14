@@ -566,6 +566,118 @@ describeIfDb("get_board against Postgres", () => {
         ].map((entry) => entry.item.id);
         expect(allIds).toEqual([match.id]);
       });
+
+      // `escapeLikePattern` is the boundary between caller-supplied text and
+      // an `ILIKE ... ESCAPE '\'` pattern, and no test above reaches it: none
+      // of their search terms contains a `%`, `_` or `\`, so the escaping
+      // never runs and removing it changes no outcome. That showed up as
+      // surviving mutants on both the regex and the replacement.
+      //
+      // Each case below pairs an item containing the literal character with
+      // a decoy that matches only if the character is treated as a wildcard.
+      // Asserting the decoy is excluded is what makes these fail when the
+      // escaping is gone — asserting only that the literal item is found
+      // would pass either way, since a wildcard match is a superset.
+      describe("search treats LIKE wildcards in the term as literal characters", () => {
+        it("matches a literal % without letting it stand for any run of characters", async () => {
+          const match = await createItem({
+            area: "board-search-literal-percent",
+            title: "Cut latency by 100% this quarter",
+            body: "x",
+          });
+          const decoy = await createItem({
+            area: "board-search-literal-percent",
+            // Contains "100" and "quarter" but no "%", so `100% this quarter`
+            // read as a pattern (`100`, anything, ` this quarter`) matches it.
+            title: "Cut latency by 100 in this quarter",
+            body: "x",
+          });
+
+          const board = (await runtime.call("get_board", {
+            area: "board-search-literal-percent",
+            search: "100% this quarter",
+          })) as BoardOutput;
+          const allIds = [
+            ...board.backlog,
+            ...board.in_progress,
+            ...board.waiting,
+            ...board.completed,
+          ].map((entry) => entry.item.id);
+
+          expect(allIds).toEqual([match.id]);
+          expect(allIds).not.toContain(decoy.id);
+        });
+
+        it("matches a literal _ without letting it stand for a single character", async () => {
+          const match = await createItem({
+            area: "board-search-literal-underscore",
+            title: "rename foo_bar everywhere",
+            body: "x",
+          });
+          const decoy = await createItem({
+            area: "board-search-literal-underscore",
+            // `foo_bar` as a pattern matches `fooXbar` — one character where
+            // the underscore is.
+            title: "rename fooXbar everywhere",
+            body: "x",
+          });
+
+          const board = (await runtime.call("get_board", {
+            area: "board-search-literal-underscore",
+            search: "foo_bar",
+          })) as BoardOutput;
+          const allIds = [
+            ...board.backlog,
+            ...board.in_progress,
+            ...board.waiting,
+            ...board.completed,
+          ].map((entry) => entry.item.id);
+
+          expect(allIds).toEqual([match.id]);
+          expect(allIds).not.toContain(decoy.id);
+        });
+
+        it("matches a literal backslash before an ordinary character", async () => {
+          // The case the other two cannot cover, and the one that pins `\`'s
+          // presence in the escaping character class.
+          //
+          // The backslash has to be followed by an ORDINARY character to
+          // distinguish anything. A term like `C:\%` is escaped identically
+          // whether or not the class contains `\`, because the lone
+          // backslash still escapes the `%` that follows it — the two
+          // patterns differ in text and agree in meaning, so a test built on
+          // one cannot fail. With `src\lib` they genuinely diverge: escaping
+          // the backslash gives `src\\lib`, which matches a literal
+          // backslash, while leaving it gives `src\lib`, where the backslash
+          // escapes the `l` and matches `srclib` — text with no backslash in
+          // it at all. So the decoy below is matched by exactly the broken
+          // version, and the real title by exactly the correct one.
+          const match = await createItem({
+            area: "board-search-literal-backslash",
+            title: "see src\\lib here",
+            body: "x",
+          });
+          const decoy = await createItem({
+            area: "board-search-literal-backslash",
+            title: "see srclib here",
+            body: "x",
+          });
+
+          const board = (await runtime.call("get_board", {
+            area: "board-search-literal-backslash",
+            search: "src\\lib",
+          })) as BoardOutput;
+          const allIds = [
+            ...board.backlog,
+            ...board.in_progress,
+            ...board.waiting,
+            ...board.completed,
+          ].map((entry) => entry.item.id);
+
+          expect(allIds).toEqual([match.id]);
+          expect(allIds).not.toContain(decoy.id);
+        });
+      });
     });
 
     describe("composition — two or more filters narrow together", () => {
