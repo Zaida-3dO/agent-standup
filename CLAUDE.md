@@ -9,6 +9,56 @@ endpoints), `DECISIONS.md` (why), `MILESTONES.md` (the work, as PR-sized pieces 
 
 ---
 
+## What a session can do end to end
+
+An item minted through the product walks the full state machine on service calls alone —
+`plan_review → executing → in_review → merged` — because the artifacts each transition guard reads
+are writable through the service.
+
+- **`record_artifact`** writes an `Artifact` row: `{itemId, kind, verdict?, reviewRound?, commitSha?,
+  body?, ref?}` plus `browserSession`, `findings`, `followUpItemId`, `createdByType`, `createdById`
+  and `sessionId`. `reviewRound` defaults to the item's current round, so a commit recorded on an
+  item at round 2 is read by the merge gate — which takes `max(reviewRound)` across every kind — at
+  the round its own review is on. `createdByType` is resolved from an explicit creator or a live
+  assignment and is never guessed, because it decides whether a human authorised a merge on a
+  `needs_approval` item. Two writes are refused outright: a `commit` artifact with no `commitSha`,
+  and a verdict on an artifact that is not a review (`na` stays allowed).
+- **`request_review`** emits the `review_requested` event. It is a separate operation from recording
+  one: the two are opposite ends of the same exchange, made by different parties at different times,
+  and the event points at no artifact row precisely because there is nothing yet to point at.
+
+| Adapter | Surface |
+|---|---|
+| HTTP | `POST /items/{id}/artifacts`, `POST /items/{id}/review-requests` |
+| MCP | `record_artifact`, `request_review` — derived, not listed |
+| CLI | `standup item artifact <id>`, `standup item request-review <id>` |
+
+MCP tools are derived from the operation registry (`src/lib/mcp/tools.ts` over
+`src/lib/service/registry.ts`), so registering an operation is the whole of that adapter's work and
+there is no second list to forget an operation in.
+
+### The hook
+
+A single script (`src/bin/standup-hook.ts`, built alongside the CLI) is wired to both `PostToolUse`
+and `Stop`, branching on the event type read from stdin. It classifies against cached pattern lists
+locally, asks the server only on an ask-list match, and denies whenever it cannot get a confident
+answer — an unreachable server, an unparseable payload, an unrecognised decision and an unknown
+session identifier all deny. The matcher is imported from `src/lib/service/hook-decision.ts` rather
+than reimplemented, so the script and the server cannot disagree about whether a pattern matched.
+
+A stale cache is used rather than discarded; a cache stamped in the future counts as stale, so clock
+skew cannot mint a rule set that never expires. An *unavailable* cache asks the server instead of
+matching against empty lists, since empty lists would refuse every tool call on a machine whose
+install is merely incomplete. Session enforcement (`src/lib/hook/enforcement.ts`) is checked before
+the pattern lists, so no allow-list entry can relax it.
+
+The hook is built but deliberately absent from `package.json`'s `bin`: it is a path a tool is
+configured to execute, not a command a person runs. Coverage lives in `tests/hook-route.test.ts`,
+`tests/hook-built-script.test.ts` (which runs the built script as a real process and asserts its
+exit codes) and `tests/hook-route-thin-shell.test.ts`.
+
+---
+
 ## ⚠️ This repository is PUBLIC
 
 Anything committed here is world-readable **the moment it is pushed, and permanently** — deleting it
