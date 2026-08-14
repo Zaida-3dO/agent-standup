@@ -5,6 +5,11 @@
 // `src/app/api/board/route.ts`: opens no transaction, resolves no settings
 // snapshot itself, imports no database client. This is the read the
 // front-end profile picker (MILESTONES.md #35) calls on load.
+//
+// No `POST` — creation happens through `PATCH /people/{id}`, the same way
+// it does for `machines` and `accounts`. See `update-person.ts`'s header
+// (MILESTONES.md #116) for why `people` is one upsert rather than a
+// separate deliberate creation verb like `repos`.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "../items/respond";
