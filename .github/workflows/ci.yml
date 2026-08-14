@@ -178,11 +178,33 @@ jobs:
   mutation-testing:
     name: Mutation testing (changed files)
     needs: [changes, build-and-test]
+    # PAUSED. `false &&` disables this job without deleting it; drop those
+    # two characters to switch it back on, and the gate below follows
+    # automatically because it reads this job's result.
+    #
+    # Why: this is the slowest job in the pipeline by a wide margin (22-57
+    # min) and it runs on any source change, which is most pull requests.
+    # During a period of heavy parallel work that cost is paid on every
+    # branch at once, and the pipeline's latency is what decides how fast
+    # work merges.
+    #
+    # What is given up while it is off, stated plainly because it is the
+    # whole reason the job exists: nothing checks whether a test would
+    # actually fail if the behaviour it names regressed. A test that
+    # asserts nothing passes the ordinary suite, reads as coverage in a
+    # diff, and survived both a green run and a human review here before —
+    # that is what this was built to catch. The exposure is largest during
+    # exactly the kind of push that motivated pausing it, because that is
+    # when the most tests are written with the least attention per line.
+    #
+    # Re-enable when the parallel push settles, and see the milestone row
+    # that tracks turning it back on.
+    #
     # Scoped to source changes and gated on the ordinary suite already
     # being green — running mutation testing against a build that doesn't
     # even pass its own tests wastes the slowest job in the pipeline
     # telling us something the fast one already said.
-    if: needs.changes.outputs.source == 'true' && needs.build-and-test.result == 'success'
+    if: false && needs.changes.outputs.source == 'true' && needs.build-and-test.result == 'success'
     runs-on: ubuntu-latest
     services:
       postgres:
