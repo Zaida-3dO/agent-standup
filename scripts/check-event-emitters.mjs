@@ -139,16 +139,8 @@ const SCANNED_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
  */
 export const KNOWN_UNEMITTED = [
   {
-    type: "review_requested",
-    why: "artifact writes (`record_artifact`) own this emitter — MILESTONES.md #98",
-  },
-  {
-    type: "review",
-    why: "artifact writes (`record_artifact`) own this emitter — MILESTONES.md #98",
-  },
-  {
     type: "merge",
-    why: "artifact writes (`record_artifact`) own this emitter — MILESTONES.md #98",
+    why: "the merge transition owns this emitter — MILESTONES.md #98",
   },
   {
     type: "open_loop",
