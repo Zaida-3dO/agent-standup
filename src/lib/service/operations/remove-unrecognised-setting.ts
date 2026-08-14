@@ -12,10 +12,10 @@
 // declares, and it would silently turn its `not_found` refusal — a real
 // guard against a typo becoming an inert row — into a success.
 //
-// So the refusals are swapped rather than removed: this operation refuses a
+// So the refusals are mirrored rather than removed: this operation refuses a
 // key the registry *does* declare, and points at `delete_setting` for it.
 // Between them, every key is deletable by exactly one operation, and neither
-// can be used to do the other's job by accident.
+// stands in for the other by accident.
 import { z } from "zod";
 import { InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
@@ -48,7 +48,7 @@ export const removeUnrecognisedSetting = defineOperation({
       // the delete anyway would skip `delete_setting`'s rendering of the key
       // back at its default, which is the answer that caller's surface then
       // shows — so it would succeed and leave the page displaying a value
-      // the database no longer holds.
+      // that is absent from the database.
       throw new InvalidInputError(
         `${input.key} is a setting this build declares — clear it with delete_setting.`,
         { fields: ["key"] },

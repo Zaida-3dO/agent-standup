@@ -30,18 +30,40 @@ export function Settings() {
   const [confirmations, setConfirmations] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const load = useCallback(async () => {
-    try {
-      const response = await fetchSettings();
-      setLoadState({ status: "loaded", response });
-    } catch (err: unknown) {
-      setLoadState({ status: "error", message: settingsErrorMessageFrom(err) });
-    }
-  }, []);
+  /**
+   * Re-reads the page. Promise-chained rather than `await`ed, so every
+   * `setState` sits inside an asynchronous callback — the shape
+   * `ProfileProvider` already uses, and what `react-hooks/set-state-in-effect`
+   * is asking for: a `setState` reachable synchronously from an effect body
+   * causes a cascading render.
+   */
+  const load = useCallback(
+    () =>
+      fetchSettings()
+        .then((response) => {
+          setLoadState({ status: "loaded", response });
+        })
+        .catch((err: unknown) => {
+          setLoadState({ status: "error", message: settingsErrorMessageFrom(err) });
+        }),
+    [],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    fetchSettings()
+      .then((response) => {
+        if (cancelled) return;
+        setLoadState({ status: "loaded", response });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadState({ status: "error", message: settingsErrorMessageFrom(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const setError = useCallback((key: string, message: string | null) => {
     setErrors((current) => {

@@ -46,9 +46,7 @@ export function settingsErrorMessageFrom(err: unknown): string {
   return err instanceof Error ? err.message : "Could not load settings.";
 }
 
-export type WriteOutcome =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly message: string };
+export type WriteOutcome = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
 /**
  * Reads the service's error envelope out of a failed response.

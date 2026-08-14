@@ -73,7 +73,11 @@ export function AppShellView({
   // there is a way to set the installation up; everything else still gates.
   // The rule lives in `allowsWithoutProfile`, which requires *both* the
   // empty-list state and an allowed path.
-  if (!activeProfile && pathname !== undefined && allowsWithoutProfile({ people, activeProfile }, pathname)) {
+  if (
+    !activeProfile &&
+    pathname !== undefined &&
+    allowsWithoutProfile({ people, activeProfile }, pathname)
+  ) {
     return <main>{children}</main>;
   }
 

@@ -9,11 +9,7 @@
 // those would be let through by one specific plausible relaxation of the
 // comparison, and each is asserted to be refused.
 import { describe, expect, it } from "vitest";
-import {
-  confirmWrite,
-  guardReason,
-  requiresConfirmation,
-} from "@/lib/settings-page/confirmation";
+import { confirmWrite, guardReason, requiresConfirmation } from "@/lib/settings-page/confirmation";
 import { SETTINGS_REGISTRY, SETTING_KEYS, getDefinition } from "@/lib/settings";
 
 /** A key the registry marks `sensitive` but not `irreversible`. */
@@ -139,9 +135,8 @@ describe("a gated key is refused unless its key is typed exactly", () => {
   });
 
   it("refuses every guarded key in the registry when nothing is typed", () => {
-    // Not just the two fixtures: whatever the registry currently flags is
-    // covered, so a key that gains a flag is gated without this test being
-    // edited.
+    // Not just the two fixtures: every key the registry flags is covered,
+    // so a key that gains a flag is gated without this test being edited.
     const guarded = SETTING_KEYS.filter((key) => requiresConfirmation(key));
     expect(guarded.length).toBeGreaterThan(0);
     for (const key of guarded) {

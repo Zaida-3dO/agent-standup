@@ -4,9 +4,9 @@
 // surfaces are generated, not maintained."
 //
 // **The whole point is that there is no per-key table here.** A hand-written
-// form that happens to match today's twenty keys is the failure mode this
-// module exists to prevent: it stays green, and it silently omits the
-// twenty-first the moment somebody adds one. Everything below is a function
+// form listing the keys that existed when it was written is the failure mode
+// this module exists to prevent: it stays green, and it silently omits the
+// next key the moment somebody adds one. Everything below is a function
 // of the Zod schema the registry already declares, so a new key gets a
 // widget without this file being edited — and `settingsPageModel` renders
 // `SETTING_KEYS` in full, so a key it could not classify appears as a JSON

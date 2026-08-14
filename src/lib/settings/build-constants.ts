@@ -137,7 +137,7 @@ const BOOTSTRAP_VARIABLES: readonly { name: string; meaning: string }[] = Object
  * an operator the opposite of what they need to know.
  */
 export function renderBootstrapVariables(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): RenderedBootstrapVariable[] {
   return BOOTSTRAP_VARIABLES.map((variable) => ({
     name: variable.name,

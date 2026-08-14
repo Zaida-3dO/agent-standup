@@ -54,7 +54,9 @@ export function isFirstRun({ people, activeProfile }: FirstRunInput): boolean {
 const FIRST_RUN_PATHS: readonly string[] = Object.freeze(["/settings", "/admin"]);
 
 export function isFirstRunPath(pathname: string): boolean {
-  return FIRST_RUN_PATHS.some((allowed) => pathname === allowed || pathname.startsWith(`${allowed}/`));
+  return FIRST_RUN_PATHS.some(
+    (allowed) => pathname === allowed || pathname.startsWith(`${allowed}/`),
+  );
 }
 
 /**

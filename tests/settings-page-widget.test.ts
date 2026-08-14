@@ -4,9 +4,9 @@
 //
 // The test that matters most is the last describe block: **every key in the
 // registry gets a widget, derived, with no per-key table anywhere.** That is
-// the property the row is actually about — a hand-written form matching
-// today's keys would pass every other test in this file and silently omit
-// the twenty-first key the moment somebody adds one.
+// the property the row is actually about — a hand-written form listing the
+// keys it was written against would pass every other test in this file and
+// silently omit the next key the moment somebody adds one.
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { inputToValue, valueToInput, widgetFor } from "@/lib/settings-page/widget";

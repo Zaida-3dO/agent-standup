@@ -5,7 +5,8 @@
 // switch on `field.widget.kind`, which `widgetFor` derived from the key's own
 // Zod schema — so a new registry key renders here without this component
 // being touched, which is the property row #86 is actually about. A `switch`
-// on the key would compile, pass today, and quietly omit the next key added.
+// on the key would compile, satisfy every test written against the keys it
+// listed, and quietly omit the next key added.
 //
 // Hook-free and prop-driven, like `BoardView` and `AppShellView`: this repo's
 // harness has no DOM (`vitest.config.ts`: `environment: "node"`), so a
@@ -18,7 +19,7 @@ import styles from "./Settings.module.css";
 
 export interface SettingFieldProps {
   readonly field: SettingsField;
-  /** What is currently typed into this field's editor — `undefined` means "untouched, show the stored value". */
+  /** What is typed into this field's editor — `undefined` means "untouched, show the stored value". */
   readonly draft?: string;
   /** What is typed into this field's confirmation box, for a guarded key. */
   readonly confirmText?: string;
@@ -155,8 +156,12 @@ export function SettingField({
 
       {field.invalidOverride && (
         <div className={styles.invalidOverride}>
-          <p>The stored value does not satisfy this setting&rsquo;s schema, so the default is in use.</p>
-          <p className={styles.storedValue}>Stored: {JSON.stringify(field.invalidOverride.storedValue)}</p>
+          <p>
+            The stored value does not satisfy this setting&rsquo;s schema, so the default is in use.
+          </p>
+          <p className={styles.storedValue}>
+            Stored: {JSON.stringify(field.invalidOverride.storedValue)}
+          </p>
           {field.invalidOverride.errors.map((message) => (
             <p key={message}>{message}</p>
           ))}
