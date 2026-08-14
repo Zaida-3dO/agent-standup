@@ -83,7 +83,13 @@ function numericFlag(
   const raw = stringFlag(flags, name);
   if (!raw.ok) return raw;
   if (raw.value === undefined) return { ok: true };
-  const parsed = Number(raw.value);
+  // Trimmed and checked for emptiness before `Number`, because `Number("")`
+  // and `Number("  ")` are both `0` — an integer, and one this schema
+  // accepts. Without this, `--hook-version ""` would register a session as
+  // speaking protocol version zero rather than being told the flag was
+  // empty, which is a silently wrong registration instead of a refusal.
+  const text = raw.value.trim();
+  const parsed = text === "" ? Number.NaN : Number(text);
   if (!Number.isInteger(parsed)) {
     return { ok: false, envelope: malformed(`--${name} must be a whole number.`, [name]) };
   }

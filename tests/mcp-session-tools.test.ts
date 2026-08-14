@@ -31,6 +31,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 
 /**
  * How many times the concurrent-claim race runs. `tests/claims.test.ts`
@@ -70,6 +71,10 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
       resolveSnapshot: async () => defaultSnapshot(),
     });
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
+    // §21 (MILESTONES.md #43): claiming needs a registered session. These
+    // cases are about the MCP tools' wiring, not registration, so their
+    // sessions are registered up front.
+    await registerSessions(prisma, ["s1", "s2", "ghost", "fresh-session", "stale-session"]);
   }, 60_000);
 
   afterAll(async () => {
@@ -181,6 +186,10 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
         // exactly how the two requests interleave — the race this test
         // would then be at the mercy of is the wrong one.
         const rootSessionId = `race-root-${round}`;
+        // Both racers must be registered, or the race would be decided by
+        // §21's claim check rather than by the partial unique index this
+        // test exists to exercise.
+        await registerSessions(prisma, [`race-a-${round}`, `race-b-${round}`]);
         const [first, second] = await Promise.all([
           callTool(
             "claim",

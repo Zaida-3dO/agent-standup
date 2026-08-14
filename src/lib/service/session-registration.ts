@@ -58,8 +58,22 @@ interface SessionRow {
  * between `current` and `min_supported`: a fix must not disable every
  * session the moment it deploys. The nudge goes back on the handshake and on
  * the next hook call; the claim proceeds.
+ *
+ * ── The setting, and why it defaults to enforcing ──────────────────────
+ *
+ * `hook.require_registration_to_claim` turns this off. It defaults to
+ * **on**, because a rule that ships off is a rule nobody has run: the
+ * refusals below would never have fired against a real installation, and the
+ * first time anyone found out whether they worked would be the day someone
+ * turned it on. It exists because an installation whose sessions cannot yet
+ * register should be *degraded* rather than stopped — the escape hatch is for
+ * the deployment that discovers its clients are older than its server, and
+ * it is marked `sensitive` because turning it off lets work be held under
+ * rules the holder cannot enforce, which is the one thing this rule prevents.
  */
 export async function assertSessionMayClaim(ctx: ServiceContext, sessionId: string): Promise<void> {
+  if (ctx.settings.values["hook.require_registration_to_claim"] !== true) return;
+
   const rows = await ctx.db.$queryRawUnsafe<SessionRow[]>(
     `SELECT "hookVariant"::text AS "hookVariant", "hookVersion", "transport"::text AS "transport"
        FROM "Session" WHERE "id" = $1`,

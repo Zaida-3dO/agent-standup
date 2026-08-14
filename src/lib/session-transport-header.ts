@@ -18,13 +18,18 @@
 //     over HTTP at all — is ignored, and the request registers as plain
 //     `http`. A caller cannot use this header to register as `mcp-stdio` or
 //     `cli-direct` and so cannot claim proximity it does not have.
-//   - **What it can claim is strictly weaker than what it would otherwise
-//     get.** Both `cli-http` and `http` map to the same hook variant
-//     (`http`, `variantForTransport`), so a caller that lies here changes
-//     which label its own registration row carries and changes nothing about
-//     what it is permitted to do. That is what makes an unauthenticated
-//     header acceptable at all: the honest and the dishonest answers have
-//     the same consequence.
+//   - **What it can claim changes only what the caller is told about
+//     itself.** `cli-http` maps to the `cli` hook variant where plain `http`
+//     maps to `http`, so a caller that lies here is told to install the
+//     command-line hook. That is a different *answer*, not a different
+//     permission: the reply describes what to install, and a caller that
+//     asks to be told about the wrong hook has misconfigured only itself.
+//     Nothing downstream reads the transport to decide what a session may
+//     do — the claim check reads the *version*, and lying about the
+//     transport cannot make an unregistered session claimable or an
+//     incompatible one compatible. The registration payload already carries
+//     an explicit `hookVariant` override that any caller may set for the
+//     same effect, so the header grants nothing the documented API does not.
 //
 // A header rather than a body field because it is *who is calling*, not part
 // of the operation's input — the same reason the session and actor travel as
