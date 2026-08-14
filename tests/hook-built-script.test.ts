@@ -22,7 +22,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { buildCli, HOOK_ENTRY_POINT } from "../scripts/build-cli.mjs";
+import { HOOK_ENTRY_POINT } from "../scripts/build-cli.mjs";
 import { serialiseCache } from "@/lib/hook/rules-cache";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -30,10 +30,11 @@ const builtHook = "dist/bin/standup-hook.js";
 
 let cacheDir: string;
 
-beforeAll(async () => {
-  await buildCli();
+// `dist/` is built once for the whole run by `tests/helpers/global-setup.ts`,
+// which is the only writer — see the note there for why a per-file build races.
+beforeAll(() => {
   cacheDir = mkdtempSync(path.join(tmpdir(), "standup-hook-"));
-}, 60_000);
+});
 
 /** Runs the built hook with `stdin`, returning its exit code and both streams. */
 function runHookProcess(
