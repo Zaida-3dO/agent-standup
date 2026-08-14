@@ -29,6 +29,7 @@ import type { HookEvent } from "./payload";
 import { readRulesFromResponse } from "./rules-cache";
 import { readSessionStatus } from "./enforcement";
 import { readStopContext } from "./stop-catch";
+import { readNudgeContext } from "./nudge";
 
 /** The subset of `fetch` this adapter uses. Injected so tests need no network. */
 export type FetchLike = (
@@ -111,9 +112,11 @@ export function createHttpAsk({
     const reason = property(body, "reason");
     const rules = readRulesFromResponse(body);
     const enforcement = readSessionStatus(property(body, "enforcement"));
-    // Advisory, and read after the decision: a malformed stop block is
-    // dropped by `readStopContext` and can never affect the verdict above.
+    // Both advisory, and read after the decision: a malformed block in
+    // either is dropped by its own reader and can never affect the verdict
+    // above.
     const stop = readStopContext(property(body, "stop"));
+    const nudge = readNudgeContext(property(body, "nudge"));
 
     return {
       decision: decision === "allow" ? "allow" : "deny",
@@ -128,6 +131,7 @@ export function createHttpAsk({
       ...(rules === undefined ? {} : { rules }),
       ...(enforcement === undefined ? {} : { enforcement }),
       ...(stop === undefined ? {} : { stop }),
+      ...(nudge === undefined ? {} : { nudge }),
     };
   };
 }

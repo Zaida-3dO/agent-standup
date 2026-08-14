@@ -16,10 +16,16 @@
 
 import { parseHookPayload } from "./payload";
 import { readCache, serialiseCache, type CacheState, type HookRules } from "./rules-cache";
-import { decide, type AskKillGuard, type AskServer, type HookVerdict } from "./decide";
-import { renderResponse, renderWithStopCatch, type RenderedResponse } from "./response";
+import { decideWithNudges, type AskKillGuard, type AskServer, type HookVerdict } from "./decide";
+import {
+  renderResponse,
+  renderWithNudges,
+  renderWithStopCatch,
+  type RenderedResponse,
+} from "./response";
 import type { SessionEnforcement } from "./enforcement";
 import { evaluateStopCatch, type StopContext } from "./stop-catch";
+import type { NudgeContext } from "./nudge";
 
 export interface RunHookOptions {
   /** Everything the agent tool wrote to the hook's stdin. */
@@ -46,6 +52,11 @@ export interface RunHookOptions {
    * (MILESTONES.md #47). Advisory: nothing here can refuse the stop.
    */
   readonly stop?: StopContext;
+  /**
+   * Nudge context known locally, before any server call (MILESTONES.md #46).
+   * Advisory throughout: nothing supplied here can change a verdict.
+   */
+  readonly nudge?: NudgeContext;
 }
 
 /**
@@ -100,12 +111,13 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
     return answer;
   };
 
-  const verdict = await decide({
+  const { verdict, nudges } = await decideWithNudges({
     event,
     cache,
     askServer,
     ...(options.enforcement === undefined ? {} : { enforcement: options.enforcement }),
     ...(options.askKillGuard === undefined ? {} : { askKillGuard: options.askKillGuard }),
+    ...(options.nudge === undefined ? {} : { nudge: options.nudge }),
   });
 
   if (refreshed !== undefined && options.writeCache !== undefined) {
@@ -124,7 +136,16 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
   // that reports only the crew count does not erase a locally-known wait.
   const stopCatch = evaluateStopCatch(event, mergeStopContext(options.stop, volunteeredStop));
 
-  return renderWithStopCatch(renderResponse(verdict, event.eventType), stopCatch);
+  // Two advisory decorators over one verdict (MILESTONES.md #46 and #47).
+  //
+  // **Order is the only real decision here, and it is about reading, not
+  // correctness.** The two cannot fight: both append to stderr, both leave
+  // stdout untouched, and both carry the exit code through from what they
+  // wrap — so neither can block, and neither can undo the other. What the
+  // order settles is which line the agent reads last, and on a `Stop` the
+  // catch is the most actionable thing the hook has to say. So nudges are
+  // rendered first and the catch wraps them, landing at the end.
+  return renderWithStopCatch(renderWithNudges(verdict, event.eventType, nudges), stopCatch);
 }
 
 /**
