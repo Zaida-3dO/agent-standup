@@ -15,11 +15,26 @@ import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "../items/ensure-area-raw";
 import { callerEventActor } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  HEADLINE_MAX_CHARS,
+  ITEM_COLUMNS,
+  toItemRecord,
+  type ItemRecord,
+  type RawItemRow,
+} from "../items/row";
 
 const inputSchema = z
   .object({
     title: z.string().trim().min(1, "title is required"),
+    /**
+     * The one-line BLUF — what this work *is* (MILESTONES.md #107).
+     * Optional, because an item minted by an importer or a source sweep has
+     * nobody to write one, and refusing those mints to enforce a field the
+     * caller cannot supply would be worse than the field being absent.
+     * Trimmed and capped, so the slim read's whole value proposition — that
+     * it is small — cannot be undone by writing a brief into it.
+     */
+    headline: z.string().trim().min(1).max(HEADLINE_MAX_CHARS).optional(),
     body: z.string(),
     /** Null/omitted = a root project. */
     parentId: z.string().min(1).optional(),
@@ -134,14 +149,14 @@ export const createItem = defineOperation({
     const id = crypto.randomUUID();
     const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
       `INSERT INTO "Item" (
-         "id", "parentId", "kind", "title", "body", "state", "priority",
+         "id", "parentId", "kind", "title", "headline", "body", "state", "priority",
          "originType", "originPersonId", "area", "repo", "needsVisualReview",
          "driveMode", "mergeAuthority", "difficulty", "customFields",
          "updatedAt"
        ) VALUES (
-         $1, $2, $3::"ItemKind", $4, $5, 'on_deck'::"ItemState", $6::"Priority",
-         $7::"OriginType", $8, $9, $10, $11,
-         $12::"DriveMode", $13::"MergeAuthority", $14::jsonb, $15::jsonb,
+         $1, $2, $3::"ItemKind", $4, $5, $6, 'on_deck'::"ItemState", $7::"Priority",
+         $8::"OriginType", $9, $10, $11, $12,
+         $13::"DriveMode", $14::"MergeAuthority", $15::jsonb, $16::jsonb,
          CURRENT_TIMESTAMP
        )
        RETURNING ${ITEM_COLUMNS}`,
@@ -149,6 +164,7 @@ export const createItem = defineOperation({
       input.parentId ?? null,
       kind,
       input.title,
+      input.headline ?? null,
       input.body,
       input.priority,
       input.originType,

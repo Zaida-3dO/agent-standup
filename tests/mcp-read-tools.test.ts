@@ -96,7 +96,11 @@ describeIfDb("MCP read tools against Postgres", () => {
     it("returns the item created via the service layer, reached by its MCP tool name", async () => {
       const created = await makeItem({ title: "Readable over MCP", priority: "P1" });
 
-      const result = await call("get_item", { id: created.id });
+      // `full: true` over the wire — MILESTONES.md #107 requires the opt-in
+      // to reach every surface, and MCP is the one it exists for. If the
+      // parameter were absent from the advertised schema or dropped between
+      // the tool and the operation, `priority` would come back undefined.
+      const result = await call("get_item", { id: created.id, full: true });
 
       // Single-character mutation this catches: a handler that called
       // `list_items` instead of `get_item` (or dropped `id` from the
@@ -121,7 +125,8 @@ describeIfDb("MCP read tools against Postgres", () => {
       const kept = await makeItem({ area: "mcp-list-area-a" });
       await makeItem({ area: "mcp-list-area-b" });
 
-      const result = await call("list_items", { area: "mcp-list-area-a" });
+      // `full: true` for the same reason — `area` is not in the slim shape.
+      const result = await call("list_items", { area: "mcp-list-area-a", full: true });
       const items = result.items as { id: string; area: string }[];
 
       expect(items.map((i) => i.id)).toEqual([kept.id]);

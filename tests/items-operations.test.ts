@@ -265,7 +265,11 @@ describeIfDb("item service operations against Postgres", () => {
         originType: "auto",
         priority: "P1",
       })) as { id: string };
-      const read = await runtime.call("get_item", { id: created.id });
+      // `full: true` — `create_item` returns the whole record, and the slim
+      // default (MILESTONES.md #107) is by construction not equal to it.
+      // What this asserts is unchanged: a create and a get of the same row
+      // agree field for field.
+      const read = await runtime.call("get_item", { id: created.id, full: true });
       expect(read).toEqual(created);
     });
 
@@ -460,7 +464,10 @@ describeIfDb("item service operations against Postgres", () => {
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("not_found");
 
-      const reread = (await runtime.call("get_item", { id: created.id })) as { priority: string };
+      const reread = (await runtime.call("get_item", {
+        id: created.id,
+        full: true,
+      })) as { priority: string };
       // Priority must still be P2 — a per-statement boundary would have
       // committed the priority change before failing on the repo lookup.
       expect(reread.priority).toBe("P2");
@@ -516,8 +523,13 @@ describeIfDb("item service operations against Postgres", () => {
         originType: "auto",
       });
 
+      // `full: true` because the second assertion reads `area`, which is
+      // not in the slim default shape (#107). The filter under test is
+      // unaffected by the projection — that is the point of asserting both
+      // the id list and the field.
       const result = (await runtime.call("list_items", {
         area: "filter-area-a",
+        full: true,
       })) as { items: readonly { id: string; area: string }[] };
 
       expect(result.items.map((i) => i.id)).toEqual([inArea.id]);

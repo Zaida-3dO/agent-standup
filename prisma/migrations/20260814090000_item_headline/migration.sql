@@ -1,0 +1,13 @@
+-- The one-line BLUF an item carries from the moment it is minted.
+--
+-- Additive: one new nullable column on "Item". No existing column,
+-- constraint or row is altered, so there is nothing to back-fill and
+-- nothing to lose.
+--
+-- Nullable rather than NOT NULL DEFAULT '': every row that already exists
+-- was written before this field was askable, so it has no headline — and
+-- "nobody has written one yet" is a different fact from "someone wrote an
+-- empty one". A read that falls back to the title wants to distinguish
+-- them, and an empty-string default would erase the distinction on every
+-- historical row at once, permanently.
+ALTER TABLE "Item" ADD COLUMN "headline" TEXT;

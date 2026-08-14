@@ -58,10 +58,14 @@ describe("createTask", () => {
 });
 
 describe("getTask", () => {
-  it("gets /api/items/<id> with no body, percent-encoding the id", async () => {
+  it("gets /api/items/<id> with no body, percent-encoding the id, asking for the full record", async () => {
     const { seen, fetch } = capture(json({ item: { id: "a/b", area: "web", state: "executing" } }));
     await getTask({ baseUrl, fetch }, "a/b");
-    expect(seen[0]?.url).toBe("https://example.test/api/items/a%2Fb");
+    // `?full=true` is not optional for this caller: `ShimTask` carries
+    // `body`, `area` and `repo`, none of which the slim default returns
+    // (MILESTONES.md #107), and `toShimTask` would fill them with empty
+    // strings rather than fail — a silent wrong answer, not a loud one.
+    expect(seen[0]?.url).toBe("https://example.test/api/items/a%2Fb?full=true");
     expect(seen[0]?.init.method).toBe("GET");
     expect(seen[0]?.init.body).toBeUndefined();
   });
@@ -90,10 +94,11 @@ describe("listTasks", () => {
     expect(url.searchParams.get("area")).toBe("infra");
   });
 
-  it("sends no query string at all when no filters are given", async () => {
+  it("sends only the projection opt-in when no filters are given", async () => {
     const { seen, fetch } = capture(json({ items: [], nextCursor: null }));
     await listTasks({ baseUrl, fetch }, {});
-    expect(seen[0]?.url).toBe("https://example.test/api/items");
+    // Same reason as `getTask` above — the shim needs the whole record.
+    expect(seen[0]?.url).toBe("https://example.test/api/items?full=true");
   });
 
   it("asks for finished work when includeTerminal is set", async () => {

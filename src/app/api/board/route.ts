@@ -32,6 +32,11 @@ export async function GET(request: Request) {
   if (search !== null) input.search = search;
   const includeTerminal = url.searchParams.get("includeTerminal");
   if (includeTerminal !== null) input.includeTerminal = parseBooleanParam(includeTerminal);
+  // The opt-in out of the slim card shape (MILESTONES.md #107). The board UI
+  // does not pass it — every field a card renders is in the default shape —
+  // but a caller wanting whole records has one way in rather than none.
+  const full = url.searchParams.get("full");
+  if (full !== null) input.full = parseBooleanParam(full);
 
   try {
     const board = await service.call("get_board", input, { caller: { transport: "http" } });

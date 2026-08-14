@@ -91,6 +91,14 @@ export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: I
       <Link className={styles.cardTitle} href={`/items/${entry.item.id}`}>
         {entry.item.title}
       </Link>
+      {/* The BLUF (#107) — what this work is, without opening it. Absent on
+          an item nobody has written one for, in which case the card shows
+          nothing rather than an empty line, exactly like `reason` below.
+          Deliberately outside the link: it describes the work rather than
+          naming it, so folding it into the navigation target would make the
+          link text a paragraph for anyone reading the page by keyboard or
+          with a screen reader. */}
+      {entry.item.headline && <span className={styles.cardHeadline}>{entry.item.headline}</span>}
       {reason && <span className={styles.cardReason}>{reason}</span>}
       <div className={styles.cardMeta}>
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>

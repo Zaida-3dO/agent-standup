@@ -39,6 +39,12 @@ export type ItemState =
 export interface BoardItem {
   readonly id: string;
   readonly title: string;
+  /**
+   * The one-line BLUF (MILESTONES.md #107) — what this work *is*, shown on
+   * the card without expanding. Null on an item nobody has written one for,
+   * which the card renders as nothing rather than as an empty line.
+   */
+  readonly headline: string | null;
   readonly kind: "project" | "task" | "subtask";
   /**
    * The item's own stored state. Present on a project too, where it is a

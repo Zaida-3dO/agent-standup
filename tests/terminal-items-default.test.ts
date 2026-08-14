@@ -76,16 +76,23 @@ describe("`standup item list --all`", () => {
   const list = COMMANDS.find((c) => c.noun === "item" && c.verb === "list");
   if (!list) throw new Error("no `item list` command");
 
+  // `full: false` rides along on both — `item list` also carries #107's
+  // projection switch, and the assertions here are exact rather than
+  // partial on purpose: a leaked `all` key is precisely what the second
+  // test exists to catch, and a partial match would not see it.
   it("sets includeTerminal false when --all is absent", () => {
     expect(list.buildInput([], { area: "web" })).toEqual({
       ok: true,
-      input: { area: "web", includeTerminal: false },
+      input: { area: "web", includeTerminal: false, full: false },
     });
   });
 
   it("sets includeTerminal true for a bare --all, and does not leak `all` through as its own field", () => {
     const built = list.buildInput([], { all: true, area: "web" });
-    expect(built).toEqual({ ok: true, input: { area: "web", includeTerminal: true } });
+    expect(built).toEqual({
+      ok: true,
+      input: { area: "web", includeTerminal: true, full: false },
+    });
   });
 
   it("refuses `--all value` rather than silently accepting it", () => {
