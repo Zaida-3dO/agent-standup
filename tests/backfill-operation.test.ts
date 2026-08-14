@@ -6,13 +6,12 @@
 // invented — this repository is public (CLAUDE.md).
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { backfill } from "@/lib/service/operations/backfill";
 import { BACKFILL_ENV_VAR } from "@/lib/backfill/enabled";
 import { transactionBackedClient, UnsupportedQueryError } from "@/lib/backfill/transaction-client";
 import type { ServiceContext, TransactionHandle } from "@/lib/service/context";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -139,9 +138,7 @@ describeDb("backfill through the service operation (real database)", () => {
   let ctx: ServiceContext;
 
   beforeAll(async () => {
-    const url = createScratchDatabase(testDatabaseUrl!, databaseName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: url } });
-    if (!result.ok) throw new Error("migrations failed against the scratch database");
+    const url = createMigratedScratchDatabase(testDatabaseUrl!, databaseName).url;
     prisma = new PrismaClient({ datasources: { db: { url } } });
     ctx = {
       db: prisma,

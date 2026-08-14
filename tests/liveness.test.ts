@@ -20,7 +20,6 @@
 // by construction, not by chance).
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { BLOCKED_PAUSED_GUARDS, GuardRegistry } from "@/lib/service";
 import type { TransactionHandle } from "@/lib/service";
 import { resolveSettings } from "@/lib/settings";
@@ -31,7 +30,7 @@ import {
   type CapabilityFsCheck,
 } from "@/lib/liveness";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -111,11 +110,7 @@ describeIfDb("sweepLiveness — against a real database", () => {
   let guards: GuardRegistry;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
