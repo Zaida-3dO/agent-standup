@@ -185,7 +185,7 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **84** | MCP over **stdio**, wiring the same transport-agnostic server core as the HTTP transport | 30, 79 | `done` |
 | **90** | **Retiring the environment variables.** A startup check, derived from the registry's `formerEnv` entries, that fails in development and logs loudly in production when a retired name is still set; plus `.env.example`, the production compose environment block, and the README's configuration and database-requirement sections | 77 | `done` |
 | **92** | **Administration API and command line** for installation-owned entities — repositories, areas, machines (including `source_globs`), accounts (including `vendor`, validated against the registered adapter list, and `budget_windows`) | 79, 91 | `done` |
-| **98** | **Artifact writes.** One `record_artifact` service call and its routes/tools/verb — `{itemId, kind, verdict?, reviewRound?, commitSha?, body?, ref?}` — plus an emitter for the `review_requested` event. **The importer is the only writer of the artifacts table**, so #17's three guards refuse every item minted through the product: `→ in_review` wants a `review_requested` event, `plan_review → executing` wants an approved plan artifact, `→ merged` wants a commit artifact and an approving code review at round+tip. One operation clears all three | 17, 20, 26 | |
+| **98** | **Artifact writes.** One `record_artifact` service call and its routes/tools/verb — `{itemId, kind, verdict?, reviewRound?, commitSha?, body?, ref?}` — plus an emitter for the `review_requested` event. **The importer is the only writer of the artifacts table**, so #17's three guards refuse every item minted through the product: `→ in_review` wants a `review_requested` event, `plan_review → executing` wants an approved plan artifact, `→ merged` wants a commit artifact and an approving code review at round+tip. One operation clears all three | 17, 20, 26 | `done` |
 | **99** | **Run the liveness ladder.** #24 built `sweepLiveness` and nothing calls it. Give it a trigger — a `standup sweep` verb and a scheduled or hook-driven invocation — so a dead session's claims are actually reclaimed. Until then a crashed session's claim is permanent: the claim insert is `ON CONFLICT DO NOTHING`, so every later claim on that item is refused as already-held with no path to release it. **Also forced takeover** — displacing a holder the ladder is not going to release. A dead holder is taken over cleanly; a possibly-alive one requires an explicit `force` **and** a written `reason`, both recorded against the displaced assignment (`superseded_by`, `liveness = superseded`, `released_at`) and in a `takeover` event. That recorded state is what an enforcement hook reads; **the hook itself is #42 and does not exist, so a displaced live session is not yet prevented from continuing** | 24 | `done` |
 | **100** | **Open-loop writes.** `loop_add` / `loop_close` over the `open_loop` / `open_loop_closed` events, with their routes, tools and verbs. The payload validators, the pairing logic and #28's read path all exist; only the write is missing, so `orientation` can display a loop nobody can record. Also add the `SCHEMA.md` section both modules cite as `§3a`, which does not exist | 20, 28 | |
 | **101** | **Wire the notification evaluator.** #25 built `evaluateRules` and named the service layer as its caller "once #27 lands transitions"; #27 landed without it, so nothing evaluates a rule and `people.notify_rules` is never read. Thread the before/after field snapshot from transition and update into it — the evaluator's own header documents the field-name casing the caller has to handle | 25, 27 | |
@@ -194,6 +194,13 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **104** | **An event type cannot be added without an emitter.** A gating script, with the self-test every gate here ships: enumerate the event-type enum, enumerate what the service layer actually emits, and fail on a value nothing writes. `SCHEMA.md` §3 already states the rule — *add an event type only when the code that emits it exists* — and #98–#102 are what it costs when nothing checks it: a capability declared, validated, guarded and displayed, with no writer. Per-row status cannot show a gap between rows; this can | 20 | |
 | **105** | **Search over items** — `search` as a service call and its routes/tools/verb, indexing title and body and returning ranked matches. Answers "there is a task about this somewhere", which is otherwise unanswerable without pulling every item; the need is sharpest for a session reading a corpus it did not create. **Title and body first, deliberately** — checkpoints, events and artifacts are a substantially larger corpus and a substantially larger piece of work, and are worth attempting only once the cheap index is shown to be insufficient | 26 | |
 | **94** | **Adapter conformance harness.** Drivers behind a map typed from the adapter registry; cases authored once per operation, run against every driver; four assertions — identical outcomes by `code`, `guard` and fields · accept-and-reject per operation · **every registered guard covered by an observed rejection** · adapter completeness with bounded waivers — plus a negative control per assertion and a non-empty-guard-registry assertion | 26, 27, 29, 81, 82, 85 | |
+| **107** | **P0 — The slim read is the default, and a headline is what it returns.** Two halves of one change. **The field:** `items.headline`, a short BLUF written when the item is minted and maintained as it moves — what this work *is*, in one line, distinct from `body` (the brief) and from `Summary` (which is end-of-life and exists only once the item completes). No field answers "what is this?" without reading a 15KB brief. **The read:** every item read returns `{id, title, state, headline}` and the latest checkpoint's own headline by default; the full record is opt-in. `ITEM_COLUMNS` (`items/row.ts`) is one hardcoded 30-column `SELECT` shared by `get_board`, `list_items` and `get_item`, and `toItemRecord` maps every field unconditionally — so `body` and `customFields` come back on every call from every surface. Measured: one `get_item` at 145,317 chars of which `customFields` was 94,038 and `body` 49,538, the eight scalars actually wanted 0.2%. **Pagination cannot fix this and #103 does not touch it** — those items were `executing`, not terminal, and `limit` bounds row count while nothing bounds row size, so `limit: 1` on the largest item still overflows. Precedent is in-tree: `orientation` already selects `id, title, state` for child lists and reserves the full record for the one focal item | 26, 36, 103 | |
+| **108** | **P0 — Checkpoint headlines.** `events.headline` for `type = 'checkpoint'` — the one-line BLUF of what changed, beside the prose already in `body`. A checkpoint is `events WHERE type='checkpoint'` (`SCHEMA.md` §3) and its prose is free text, so "where is this up to?" cannot be answered without reading every checkpoint in full. Latest-checkpoint is already an indexed single-row read, so #107's default shape can carry it for the cost of a join. Also what the board card and the item detail view show without expanding | 20, 107 | |
+| **109** | **P1 — Every read is bounded, and a test proves it.** `get_board` has no `limit` and no `cursor` at all — after #103 it still returns ~542,000 characters on the current corpus. Give every list-shaped read a default bound and a cursor, make the board's default filters the ones a caller actually wants (open work, minimal fields) and, as the row that stops this recurring, **a test that asserts every registered read operation returns a tenable payload against a realistic corpus** — the assertion being about response size, not about row count, since row count was never the thing that overflowed. `list_items` already has `limit`/`cursor`; the pattern exists in the codebase and did not reach the others | 26, 107 | |
+| **110** | **P1 — Stop shipping every MCP payload twice.** `toolSuccess` (`mcp/result.ts`) returns each success as both a 2-space-indented `text` rendering *and* `structuredContent`, because clients are split on which they read. That doubles every response on the wire and the indentation inflates it further — the measured 1.9M-character board read may be the `text` half of a substantially larger payload. Emit compact JSON, or make the dual emission conditional on size. Independent of #107–#109 and the cheapest of the four | 30 | |
+| **111** | **P1 — Tool documentation on demand, and defaults that carry.** Two answers to the same problem, chosen so neither inflates the context it is trying to protect. **On demand:** the advertised `inputSchema` is already complete and correct — verified over a live `tools/list` — so what is missing is not the schema but the rules JSON Schema *cannot express*: `create_item`'s `originType: "person"` → `originPersonId` refinement, and `complete_item`'s entire conditional matrix (`shipped` 1–5, `how_verified` required only when `user_facing` is false), both enforced in runtime validators and invisible to a client. A `describe_tool` call returning the full contract for one named tool keeps that out of every turn's context, which is what a fatter description would cost (`PLAN.md`: every description sits in the agent's context on every turn). **Defaults that carry:** a session declares once at `POST /sessions/{id}/register` — autonomous or person-driven, and which person — and subsequent calls inherit it rather than restating it. `driveMode` already exists as a column and the handshake already exists as a route, so this is threading a resolved default, not new machinery. Also reword the summary guard's "and the branch it forces", which means a conditional branch and has been read as a git branch | 30, 43 | |
+| **113** | **P1 — A round trip that is not ASCII.** A test that POSTs a UTF-8 body containing an em dash through the HTTP boundary and asserts the stored value equals the input, plus a companion asserting that an undecodable byte produces U+FFFD — documenting that invalid input is silently substituted rather than refused. The server is **not** at fault here and the two field reports that assumed it was are wrong: valid UTF-8 round-trips intact, and the reported corruption came from `curl` on a Windows console encoding U+2014 as CP1252 `0x97`. But there is exactly one non-ASCII literal in the whole test tree and it never crosses HTTP, so nothing would have told anyone that. Four live items carry stored U+FFFD in their titles and want repairing — and because `search` is `ILIKE` over title and body, such a title can never match a phrase spanning the dash, which fails as an empty result rather than an error | 26 | |
+| **115** | **P2 — A read that will not fit should say so.** Nothing anywhere measures or caps a response. The house style is already settled in the opposite direction from truncation — `summaries/validate.ts` refuses an over-cap summary rather than trimming it, *"it will not be truncated for you"* — so the idiomatic answer is a refusal naming the offending call and the narrower one that would work, not a silent partial result. Wanted even after #107 and #109, because those change the defaults and this catches whatever still exceeds them | 107, 109 | |
 
 **Milestone done when:** an agent can be handed an item and work it to merged using only MCP, **and
 every adapter passes the conformance harness.**
@@ -229,18 +236,54 @@ every adapter passes the conformance harness.**
 > missing capability. The operations exist and return correct results. What is missing is the product
 > telling a caller what it wants and returning an amount it can actually receive.
 >
+> **#107–#115 come from the first week of dogfooding, and they are ranked P0–P2 in the row text.**
+> They were filed as field notes while the store migration settled, then checked against the code
+> before being written down here — which changed several of them and reversed two. The ranking is
+> Ope's, on the same scale the tracker uses for items.
+>
+> **#107 is the one that matters, and it is not #103 in a different hat.** #103 removed finished work
+> from a list; #107 removes the *bulk of a row* from every read, which is the failure that survived it.
+> The distinction is worth stating because it was missed once already: `get_item` has no state filter
+> to default (it is `WHERE id = $1`), and the `list_items` call that overflowed had already asked for
+> five `executing` items. No filter and no page size reaches either. The control that does is choosing
+> which columns come back — and the honest version of that is a default so slim it is useful on its
+> own, which is why the row carries a `headline` field rather than only a projection parameter. A
+> projection nobody knows the shape of is a second discoverability problem.
+>
+> **#105 as written answers about two of the six things asked for.** It indexes title and body,
+> lexically. Checkpoints, repository and person are explicitly deferred in its own row text, and
+> semantic matching is not in it at all. Two facts worth carrying into whoever picks it up: `list_items`
+> has **no `search` parameter of any kind**, leaving `get_board` as the only way to search — the one
+> read with no bound — and nothing indexes the columns it matches, so a leading-wildcard `ILIKE` is a
+> sequential scan of every body in the table. The deferral is defensible; the pairing is not.
+>
 > **#103 is the cheapest row in this file and fixes the most common read.** A default filter. The
 > reasoning generalises past the one endpoint: *the default should answer the question people actually
 > ask*, and nobody opens a tracker to see what is finished. It is also not merely wasteful — a read
 > whose response cannot fit in the caller's context is not a slow read, it is a failed one, and it is
 > the first call a new session makes.
 >
-> **The same failure has a documentation half that is not a row here**, because it is not code: the
-> tool descriptions are one-liners, and the schema is not visible through the agent surface at all. So
-> a required field is discovered by being refused, and a response size is discovered by exceeding a
-> limit. Putting required fields, conditional requirements and response-shape warnings into the
-> descriptions an agent already reads before calling would remove most of both — it is editing strings,
-> and it compounds across every session that ever starts here.
+> **The same failure has a documentation half**, and half of what was written here was wrong. It is
+> now a row — **#111** — because the fix turned out to be code rather than strings.
+>
+> **Correction, from measuring it rather than assuming.** This paragraph used to say "the schema is
+> not visible through the agent surface at all". That is false, and it was repeated in three field
+> reports before anyone checked. A live `tools/list` over the MCP transport advertises every
+> operation's real schema — `get_crew_name` returns `{"required":["sessionId"],"additionalProperties":false}`,
+> `create_item` advertises its `originType` enum and `priority`'s `P0`–`P3` — and `advertisedSchema`
+> (`mcp/tools.ts`) exists precisely to keep that true through a `ZodCatch` wrapper, guarded by its own
+> test. Every "undocumented" field in those reports was in the `required` array the whole time.
+>
+> **What is genuinely invisible is narrower and more interesting**: the rules JSON Schema cannot
+> express. `create_item`'s `originType: "person"` → `originPersonId` is a `.refine()`; `complete_item`'s
+> cardinality and conditionals live in a runtime validator. No amount of schema advertising reaches
+> either, which is why #111 adds a call that returns one tool's full contract on demand instead of
+> fattening every description — `PLAN.md` is right that descriptions are charged to every turn.
+>
+> **The general lesson is about the diagnosis, not the defect.** Three independent sessions agreed on
+> a cause, and agreement made it look settled; it took one round trip to disprove. A field report is
+> evidence about what using the product felt like, which is exactly what it is good for — it is not
+> evidence about why, and this file should not have promoted one to a stated cause without a check.
 
 ---
 
@@ -284,9 +327,23 @@ environment.**
 | **49** | `/setup-agent-standup` — registers the scheduled task, then **proves it works** with a live call | 48 | |
 | **88** | `standup hook` — the hook payload on stdin, the local telemetry spool and its batched flush | 42, 79 | |
 | **89** | Publish the package with the `standup` binary on the same version tag that publishes the image | 79 | `done` |
+| **112** | **P1 — Post-merge cleanup as a hook, not a briefing line.** Remove the worktree, delete the local branch, release any Playwright pool slot, kill relay PIDs. This is recorded three times as a standing instruction in the First Mate (`standing-authorizations.md`, twice, once as "an acceptance condition on every crew brief, not an afterthought") and was never mechanised: all three Stop hooks searched for cleanup vocabulary return zero matches, and the cost is measured — **948 MB across five leftover worktrees on one machine**. Something written down three times and never done is not a documentation problem. Rides #46's advisory channel as a fifth nudge kind; the equivalent gap one layer down is that the file-based nudge state has no GC path either (61 orphaned tick files, oldest three weeks) | 42, 46 | |
+| **114** | **P2 — Keep the work moving.** A nudge computed from item state: an item whose coding is finished with no reviewer, an available row nobody is building, a claim held by a session that has gone quiet. #46's four kinds — delegate, staging, escalation, wind-down — are all *hygiene* guards; none is a *flow* guard, and this is the class that catches the failure everyone sees. The specification is already written, in `ORCHESTRATION-DIRECTIVE.md`: *"An unblocked row should never sit idle. If the dependency graph says a row is available and nothing is building it, that is a failure of orchestration, not a neutral state"* — which is checkable server-side from item state alone. **Rate-limit it server-side**: `events.type = 'nudge'` is already in the enum with a `{kind}` payload, so last-nudged-at per session and kind is a query rather than a state file. The prior art is honest about why that matters — neither live First Mate nudge hook throttles at all, and the only real cooldown is in an archived one | 46, 104 | |
 
 **Milestone done when:** one hook script covers every guarded event, and the only judgement left on
 the client is the handful of checks that cannot run anywhere else.
+
+> **#112 and #114 are both #46's channel carrying something new, which is why they sit here rather
+> than beside the read rows they were filed with.** #46's four kinds are hygiene — do not do this
+> yourself, do not stage that, you are near a budget edge. Neither of these is: one fires *after* a
+> merge on work that is finished, the other fires on an item nobody is touching. Both are advice about
+> the shape of the work rather than about the call being made, which is a genuinely different question
+> arriving on the same event, and worth naming before someone folds them into #46 as two more kinds.
+>
+> **#112 is the one with history.** It has been written down as a standing instruction three times and
+> mechanised zero times, and the leftover worktrees are measurable on disk. That is the argument for
+> the row: an instruction that survives three restatements without being followed is not waiting for a
+> fourth restatement.
 
 > **#99 is marked done with one thing outstanding, recorded so it is not lost.** The verb, the route
 > and the MCP tool all ship, and a dead session's claims can be reclaimed. **Nothing schedules it** —
