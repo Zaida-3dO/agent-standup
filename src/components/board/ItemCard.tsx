@@ -7,12 +7,24 @@
 import Link from "next/link";
 import type { BoardEntry } from "@/lib/board/types";
 import { waitingTone } from "@/lib/board/view";
+import { isDraggable } from "@/lib/board/drag";
 import styles from "./Board.module.css";
 
 export interface ItemCardProps {
   readonly entry: BoardEntry;
   /** True when this card is on the active profile's needs-you list — see `needsYou`. */
   readonly needsYou: boolean;
+  /**
+   * Called when a drag of this card starts (#73). Absent on a board with no
+   * drag wired up, which is why the handlers below are only attached when it
+   * is given — a card that is `draggable` but tells nobody it moved would
+   * drag to nowhere.
+   */
+  readonly onDragStart?: (itemId: string) => void;
+  /** Called when the drag ends, whether or not it landed on a column. */
+  readonly onDragEnd?: () => void;
+  /** True while this card's move is in flight — see `Board.module.css`'s `.cardPending`. */
+  readonly pending?: boolean;
 }
 
 /**
@@ -26,13 +38,42 @@ function waitingReason(entry: BoardEntry): string | null {
   return null;
 }
 
-export function ItemCard({ entry, needsYou }: ItemCardProps) {
+export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: ItemCardProps) {
   const tone = waitingTone(entry);
   const reason = waitingReason(entry);
   const toneClass = tone === "amber" ? styles.toneAmber : tone === "red" ? styles.toneRed : "";
+  // A project is never draggable: its column derives from its children and
+  // it has no state of its own to transition (DECISIONS.md §13c). Offering
+  // the gesture and refusing every time would teach the wrong model.
+  const draggable = onDragStart !== undefined && isDraggable(entry);
 
   return (
-    <li className={`${styles.card} ${toneClass}`.trim()} data-tone={tone ?? undefined}>
+    <li
+      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""}`
+        .replace(/\s+/g, " ")
+        .trim()}
+      data-tone={tone ?? undefined}
+      data-draggable={draggable}
+      data-pending={pending ? true : undefined}
+      draggable={draggable}
+      onDragStart={
+        draggable
+          ? (event) => {
+              // **Claim the drag payload explicitly.** A card's title is a
+              // link into the item's detail view, and an anchor is natively
+              // draggable — so a drag begun on the title would otherwise be
+              // the browser's own link-drag, carrying the URL, and dropping
+              // it on a column would do nothing at all. Setting the data
+              // and the effect here overrides that default, so a drag
+              // started anywhere on the card is the same card drag.
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", entry.item.id);
+              onDragStart(entry.item.id);
+            }
+          : undefined
+      }
+      onDragEnd={draggable ? onDragEnd : undefined}
+    >
       <div className={styles.cardHead}>
         <span className={styles.priority} data-priority={entry.item.priority}>
           {entry.item.priority}
