@@ -35,6 +35,9 @@ import { getBoard } from "./operations/get-board";
 // per-profile read state that decides what in it is new to you.
 import { getEvents } from "./operations/get-events";
 import { markEventSeen } from "./operations/mark-event-seen";
+// The detail read behind the item view (MILESTONES.md #72) — one item's
+// subtask tree, artifacts, history and summary in a single consistent read.
+import { getItemDetail } from "./operations/get-item-detail";
 import { getSettings } from "./operations/get-settings";
 import { getSetting } from "./operations/get-setting";
 import { patchSettings } from "./operations/patch-settings";
@@ -110,6 +113,7 @@ export const OPERATION_REGISTRY = {
   [getBoard.name]: getBoard,
   [getEvents.name]: getEvents,
   [markEventSeen.name]: markEventSeen,
+  [getItemDetail.name]: getItemDetail,
   [getSettings.name]: getSettings,
   [getSetting.name]: getSetting,
   [patchSettings.name]: patchSettings,

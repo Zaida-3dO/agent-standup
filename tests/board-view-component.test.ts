@@ -244,6 +244,38 @@ describe("BoardColumn", () => {
     expect(textOf(without)).not.toContain("paused");
   });
 
+  it("tallies the `other` bucket too, so the three add up to the header count", () => {
+    // `waitingSplit` counts a third bucket — a project in Waiting, whose
+    // own state cannot answer its tone. Rendering only amber and red let a
+    // card exist in the header count and appear in neither tallied number,
+    // which is the "silently goes missing from the count" failure
+    // `waitingSplit` says it exists to prevent.
+    const element = BoardColumn({
+      column: "waiting",
+      entries: [
+        entry("waiting", { id: "p", kind: "project" }),
+        entry("waiting", { id: "a", state: "paused" }),
+        entry("waiting", { id: "b", state: "blocked" }),
+      ],
+      personId: null,
+      split: { amber: 1, red: 1, other: 1 },
+    });
+    const text = textOf(element);
+    expect(text).toMatch(/1\s+other/);
+    // The header count and the three tallies agree.
+    expect(text).toMatch(/\b3\b/);
+  });
+
+  it("hides the `other` tally at zero rather than showing a permanent '0 other'", () => {
+    const element = BoardColumn({
+      column: "waiting",
+      entries: [],
+      personId: null,
+      split: { amber: 1, red: 1, other: 0 },
+    });
+    expect(textOf(element)).not.toContain("other");
+  });
+
   it("flags exactly the cards blocked on the active person", () => {
     const element = BoardColumn({
       column: "waiting",
@@ -296,6 +328,17 @@ describe("ItemCard", () => {
     const text = textOf(card);
     expect(text).toContain("Ship the board");
     expect(text).toContain("P0");
+  });
+
+  it("links the title to that item's detail view (#72)", () => {
+    // A real link rather than a click handler, so it is middle-clickable,
+    // openable in a new tab and reachable by keyboard.
+    const card = ItemCard({ entry: entry("backlog", { id: "item-42" }), needsYou: false });
+    const links = [...walk(card)].filter(
+      (el) => (el.props as { href?: unknown }).href !== undefined,
+    );
+    expect(links).toHaveLength(1);
+    expect((links[0]!.props as { href: string }).href).toBe("/items/item-42");
   });
 
   it("shows the needs-you flag only when the card needs you", () => {

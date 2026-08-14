@@ -113,7 +113,8 @@
 }
 
 .splitAmber::before,
-.splitRed::before {
+.splitRed::before,
+.splitOther::before {
   content: "";
   display: inline-block;
   width: 0.55rem;
@@ -129,6 +130,14 @@
 
 .splitRed::before {
   background: #ef4444;
+}
+
+/* Neither amber nor red — a card in Waiting whose tone its own state
+   cannot answer (a project), shown so the two tallies plus this one always
+   add up to the header's count. Grey because it is genuinely "no tone",
+   not a third severity. */
+.splitOther::before {
+  background: #71717a;
 }
 
 .empty {
@@ -197,9 +206,22 @@
   font-weight: 700;
 }
 
+/* The title is a link into the detail view (#72). It inherits the card's
+   colour rather than taking the browser's default link blue, which would
+   make every card title read as the only interactive thing on a card that
+   is entirely interactive. The underline appears on hover/focus so the
+   affordance is still discoverable, and the focus ring is left to the
+   browser rather than removed. */
 .cardTitle {
   font-size: 0.88rem;
   line-height: 1.35;
+  color: inherit;
+  text-decoration: none;
+}
+
+.cardTitle:hover,
+.cardTitle:focus-visible {
+  text-decoration: underline;
 }
 
 .cardReason {
