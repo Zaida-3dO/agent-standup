@@ -36,6 +36,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -84,8 +85,19 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
     return id;
   }
 
-  /** Claims `itemId` for `sessionId`, so the ingest has an assignment to find. */
+  /**
+   * Claims `itemId` for `sessionId`, registering the session first.
+   *
+   * The registration is not incidental setup that could be dropped: a claim
+   * from an unregistered session is refused outright (SCHEMA.md §21), and
+   * every case here that needs an assignment needs a claim to get one.
+   * Seeding it through the shared helper rather than switching the rule off
+   * keeps these cases on the same path a running installation takes — a
+   * regression that only appears with the rule *on* would be invisible to a
+   * suite that turned it off.
+   */
   async function claim(itemId: string, sessionId: string) {
+    await registerSessions(prisma, [sessionId]);
     return runtime.call("claim", {
       itemId,
       role: "builder",
