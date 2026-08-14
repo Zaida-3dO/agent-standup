@@ -162,10 +162,40 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **84** | MCP over **stdio**, wiring the same transport-agnostic server core as the HTTP transport | 30, 79 | `done` |
 | **90** | **Retiring the environment variables.** A startup check, derived from the registry's `formerEnv` entries, that fails in development and logs loudly in production when a retired name is still set; plus `.env.example`, the production compose environment block, and the README's configuration and database-requirement sections | 77 | `done` |
 | **92** | **Administration API and command line** for installation-owned entities — repositories, areas, machines (including `source_globs`), accounts (including `vendor`, validated against the registered adapter list, and `budget_windows`) | 79, 91 | `done` |
+| **98** | **Artifact writes.** One `record_artifact` service call and its routes/tools/verb — `{itemId, kind, verdict?, reviewRound?, commitSha?, body?, ref?}` — plus an emitter for the `review_requested` event. **The importer is the only writer of the artifacts table**, so #17's three guards refuse every item minted through the product: `→ in_review` wants a `review_requested` event, `plan_review → executing` wants an approved plan artifact, `→ merged` wants a commit artifact and an approving code review at round+tip. One operation clears all three | 17, 20, 26 | |
+| **99** | **Run the liveness ladder.** #24 built `sweepLiveness` and nothing calls it. Give it a trigger — a `standup sweep` verb and a scheduled or hook-driven invocation — so a dead session's claims are actually reclaimed. Until then a crashed session's claim is permanent: the claim insert is `ON CONFLICT DO NOTHING`, so every later claim on that item is refused as already-held with no path to release it | 24 | |
+| **100** | **Open-loop writes.** `loop_add` / `loop_close` over the `open_loop` / `open_loop_closed` events, with their routes, tools and verbs. The payload validators, the pairing logic and #28's read path all exist; only the write is missing, so `orientation` can display a loop nobody can record. Also add the `SCHEMA.md` section both modules cite as `§3a`, which does not exist | 20, 28 | |
+| **101** | **Wire the notification evaluator.** #25 built `evaluateRules` and named the service layer as its caller "once #27 lands transitions"; #27 landed without it, so nothing evaluates a rule and `people.notify_rules` is never read. Thread the before/after field snapshot from transition and update into it — the evaluator's own header documents the field-name casing the caller has to handle | 25, 27 | |
+| **102** | **Route the four raw event writes through the one writer.** `create_item`, `update_item`, `transition_item` and `complete_item` insert into `events` directly rather than through `appendEvent`, contradicting that module's stated invariant. Their column list omits `session_id`, `assignment_id` and `body`, so every state change and field change lands with a null session — making "who moved this" unanswerable in #28's `whatChanged` for exactly the mutations most worth attributing. Also gives `recordFieldChanges` its first caller | 20 | |
 | **94** | **Adapter conformance harness.** Drivers behind a map typed from the adapter registry; cases authored once per operation, run against every driver; four assertions — identical outcomes by `code`, `guard` and fields · accept-and-reject per operation · **every registered guard covered by an observed rejection** · adapter completeness with bounded waivers — plus a negative control per assertion and a non-empty-guard-registry assertion | 26, 27, 29, 81, 82, 85 | |
 
 **Milestone done when:** an agent can be handed an item and work it to merged using only MCP, **and
 every adapter passes the conformance harness.**
+
+> **#98–#102 are one finding, not five.** They came out of a single audit that asked one question of
+> the whole codebase: *what can be read but not written?* Each answer has the same shape — a
+> capability declared in the schema, validated, guarded and displayed, with nothing anywhere that
+> produces it. Every one of them sits under a row already marked `done`, and correctly so: each of
+> those rows delivered exactly what it promised. The gap is between rows, which is the one place a
+> per-row status cannot show it.
+>
+> **#98 is the one that blocks the milestone.** The done-when above says an agent can work an item to
+> merged using only MCP. It cannot: three of the transitions on that path require an artifact, and no
+> surface creates one. An item minted through the product reaches `executing` and stops — it can be
+> cancelled or marked research-done, never merged. Everything else in this group degrades the product;
+> this one prevents its core loop from closing, so it should land first.
+>
+> **Why it stayed hidden is worth recording.** The importer *can* write artifacts, so items loaded
+> from an external store carry them and merge normally. Only freshly-minted items hit the wall — which
+> means rehearsing against imported data (#40) exercises the path that works and misses the one that
+> does not. A guard whose demand is unsatisfiable is also indistinguishable, at the point of use, from
+> one you have simply not satisfied yet: the refusal reads as the system working. It was noticed by
+> tracing every writer of a table, not by using the product.
+>
+> **The general lesson, for whoever adds the next enum value:** `SCHEMA.md` §3 already states the rule
+> this group broke — *add an event type only when the code that emits it exists*. `open_loop` and
+> `open_loop_closed` were added with a read path, no spec section and no milestone row, which is
+> precisely why #100 exists to finish them. The rule is right; it needs a check, not a restatement.
 
 ---
 
