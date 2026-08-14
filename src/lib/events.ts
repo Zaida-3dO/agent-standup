@@ -177,6 +177,17 @@ export interface EventRow {
  * started, which is exactly why `horizon` is returned alongside the rows —
  * a caller (or a monitor) can watch how far behind `horizon` sits relative
  * to `now()` and tell a healthy short delay apart from a stuck one.
+ *
+ * **What pins the `"txId" < $2` bound**, which is easy to cover only in
+ * appearance: the case that exercises it is `events.test.ts`'s "withholds a
+ * later row that committed while an earlier writer is still open". The bound
+ * is load-bearing only when a row commits *out of id order* — an uncommitted
+ * row is invisible under READ COMMITTED regardless of it — so a test that
+ * merely holds a transaction open passes whether or not the bound is there.
+ *
+ * Note that `<=` rather than `<` is an equivalent mutation here, not a gap:
+ * `pg_snapshot_xmin` is the oldest *still-active* txid, so no committed row's
+ * `txId` can equal it, and no test can distinguish the two.
  */
 export async function readSinceBounded(
   db: TransactionHandle,

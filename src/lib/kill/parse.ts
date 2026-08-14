@@ -2,7 +2,8 @@
 //
 // This module answers exactly one question: **what would this command
 // kill?** It does not decide whether killing it is allowed — that is
-// `../service/guards/process-ownership.ts`, server-side, where the registry
+// `./ownership.ts`, reached through the `kill_guard` operation
+// (`../service/operations/kill-guard.ts`), server-side, where the registry
 // lives. Keeping the two apart is the same split the merge gate uses
 // (#44: "the judgement server-side, only command parsing local"): parsing a
 // command string is the one part that genuinely cannot run anywhere but

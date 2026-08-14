@@ -450,8 +450,8 @@ describe("check-event-emitters — what counts as a write", () => {
 
   it("records where each write was found, so a failure is actionable", () => {
     // The fixture is an `appendEvent` call rather than a bare object literal,
-    // because a bare literal is no longer a write (#124) — it is the read-model
-    // shape that made an unemitted type look emitted.
+    // because a bare literal is not a write — it is the read-model shape that
+    // makes an unemitted type look emitted (#124).
     const found = properties(`\n\nappendEvent(db, { type: "claim" });\n`);
     expect(found).toHaveLength(1);
     expect(found[0]?.line).toBe(3);

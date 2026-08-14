@@ -280,6 +280,22 @@ describeIfDb("takeoverAssignment — against a real database", () => {
     await prisma.item.deleteMany({});
   });
 
+  /**
+   * A `TransactionHandle` backed by a bare `PrismaClient`.
+   *
+   * **⚠️ This is NOT a transaction, and a concurrency test written against it
+   * would prove nothing while appearing to pass (#122).** Each call runs in
+   * its own implicit transaction, so `SELECT … FOR UPDATE` acquires its lock
+   * and releases it at statement end rather than holding it to commit. Two
+   * "concurrent" callers using this handle therefore never contend, and a race
+   * the lock exists to prevent would go undetected.
+   *
+   * Production is unaffected: `prismaTransactionRunner` wraps every operation
+   * in one real transaction, which is what makes `FOR UPDATE` meaningful
+   * there. This handle is fine for the sequential behaviour asserted below —
+   * it just cannot be used to test locking. Use `prisma.$transaction` and hold
+   * it open if you need that.
+   */
   function dbHandle(): TransactionHandle {
     return {
       $queryRawUnsafe: (query: string, ...values: unknown[]) =>

@@ -306,8 +306,8 @@ function isInsideEmitCall(text, index) {
 function isInComment(text, index) {
   const lineStart = text.lastIndexOf("\n", index - 1) + 1;
   // Replace each string literal's contents with an equal number of spaces, so
-  // offsets are preserved while a `//` inside one can no longer be read as a
-  // comment opener.
+  // offsets are preserved while a `//` inside one is not read as a comment
+  // opener.
   const beforeOnLine = text
     .slice(lineStart, index)
     .replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, (literal) => " ".repeat(literal.length));
