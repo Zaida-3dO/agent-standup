@@ -77,6 +77,14 @@
   min-height: 8rem;
 }
 
+/* The column a dragged card is being held over. A visible target matters
+   more here than usual: the drop decides which state the item moves to, so
+   "which column am I about to drop on" is a question with a consequence. */
+.columnDropTarget {
+  border-color: #3b82f6;
+  background: #16192a;
+}
+
 .columnHead {
   display: flex;
   align-items: center;
@@ -155,6 +163,52 @@
   border-left: 3px solid transparent;
   border-radius: 0.45rem;
   background: #1c1c21;
+}
+
+/* A card whose move is in flight. Deliberately subtle — the move has
+   already been shown as done, and a heavy "saving" treatment would undercut
+   that by implying it might not be. It only needs to be enough that a
+   revert a moment later is legible as an answer to something. */
+.cardPending {
+  opacity: 0.65;
+}
+
+/* A card that can be picked up says so on hover; a project cannot be
+   dragged at all, so it keeps the default cursor. */
+.card[draggable="true"] {
+  cursor: grab;
+}
+
+/* A refused move, explained. Opaque rather than translucent for the same
+   reason `.needsYou` is — pale text over a composited fill is only legible
+   if whatever is behind it happens to be dark. */
+.refusal {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid #7f1d1d;
+  border-radius: 0.5rem;
+  background: #2a1215;
+  color: #fecaca;
+  font-size: 0.9rem;
+}
+
+.refusalText {
+  flex: 1;
+  min-width: 0;
+}
+
+.refusalDismiss {
+  flex: none;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid #7f1d1d;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: #fecaca;
+  font-size: 0.8rem;
+  cursor: pointer;
 }
 
 /* Amber for paused, red for blocked — SCHEMA.md §1.1. */

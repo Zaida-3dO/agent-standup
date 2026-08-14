@@ -6,12 +6,24 @@
 // full reasoning.
 import type { BoardEntry } from "@/lib/board/types";
 import { waitingTone } from "@/lib/board/view";
+import { isDraggable } from "@/lib/board/drag";
 import styles from "./Board.module.css";
 
 export interface ItemCardProps {
   readonly entry: BoardEntry;
   /** True when this card is on the active profile's needs-you list — see `needsYou`. */
   readonly needsYou: boolean;
+  /**
+   * Called when a drag of this card starts (#73). Absent on a board with no
+   * drag wired up, which is why the handlers below are only attached when it
+   * is given — a card that is `draggable` but tells nobody it moved would
+   * drag to nowhere.
+   */
+  readonly onDragStart?: (itemId: string) => void;
+  /** Called when the drag ends, whether or not it landed on a column. */
+  readonly onDragEnd?: () => void;
+  /** True while this card's move is in flight — see `Board.module.css`'s `.cardPending`. */
+  readonly pending?: boolean;
 }
 
 /**
@@ -25,13 +37,27 @@ function waitingReason(entry: BoardEntry): string | null {
   return null;
 }
 
-export function ItemCard({ entry, needsYou }: ItemCardProps) {
+export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: ItemCardProps) {
   const tone = waitingTone(entry);
   const reason = waitingReason(entry);
   const toneClass = tone === "amber" ? styles.toneAmber : tone === "red" ? styles.toneRed : "";
+  // A project is never draggable: its column derives from its children and
+  // it has no state of its own to transition (DECISIONS.md §13c). Offering
+  // the gesture and refusing every time would teach the wrong model.
+  const draggable = onDragStart !== undefined && isDraggable(entry);
 
   return (
-    <li className={`${styles.card} ${toneClass}`.trim()} data-tone={tone ?? undefined}>
+    <li
+      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""}`
+        .replace(/\s+/g, " ")
+        .trim()}
+      data-tone={tone ?? undefined}
+      data-draggable={draggable}
+      data-pending={pending ? true : undefined}
+      draggable={draggable}
+      onDragStart={draggable ? () => onDragStart(entry.item.id) : undefined}
+      onDragEnd={draggable ? onDragEnd : undefined}
+    >
       <div className={styles.cardHead}>
         <span className={styles.priority} data-priority={entry.item.priority}>
           {entry.item.priority}
