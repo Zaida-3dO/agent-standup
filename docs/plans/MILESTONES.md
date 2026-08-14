@@ -43,7 +43,6 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 | **5** | First published image — trigger a release, pull it, verify it runs | 3 | `done` |
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | `done` |
 | **95** | **Mutation testing**, wired into CI and scoped to changed files, with a threshold that blocks the pull request below it. Reads the mutation report's own kill attribution rather than a process exit code, so a mutant only counts as killed when a named test caused it — the same shape a whole-suite collection failure would otherwise misreport as a perfect score. Every run also checks a dedicated no-op fixture and refuses to trust its own numbers if that fixture is ever reported killed | 3 | `done` |
-| **106** | **Switch mutation testing back on.** The job is paused in `ci.yml` behind a `false &&`, not deleted — re-enabling is removing two characters, and the required gate follows automatically because it reads that job's result. Paused deliberately during a period of heavy parallel work, because at 22–57 minutes it is by a wide margin the slowest job in the pipeline and it runs on any source change. **Restore it once that push settles.** Whatever survived while it was off is found on the first run after, so budget for a batch of failures rather than a green run — and prefer one sweep to fix them together over discovering them one pull request at a time. If it stays off, it needs a scheduled run and somewhere the last result is visible: a check nobody runs and nobody misses is off, whatever the configuration says | 95 | |
 | **97** | **Application logging.** One JSON object per line on stderr, the conventional five levels (`debug` `info` `warn` `error` `fatal`) with a `LOG_LEVEL` threshold defaulting to `info`. Carries the operator-facing detail the error taxonomy deliberately withholds from clients — above all the `cause` an `InternalError` preserves — plus the request context needed to follow a single request through the layers it touched. Wired at the boundaries a failure actually crosses: the API error responder, the rules engine's refusals, and the adapters | 3 | `done` |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
@@ -298,7 +297,7 @@ every adapter passes the conformance harness.**
 | **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | `done` |
 | **38** | Since your last visit — per person, and a "seen" action | 20, 35 | `done` |
 | **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | `done` |
-| **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim. **Performed on a day when nothing is executing** — duplicate, verify against the duplicate, then switch; never a wholesale swap with items in flight (`DECISIONS.md` §11, §13h) | 13, 37, 39 | |
+| **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim. **Performed on a day when nothing is executing** — duplicate, verify against the duplicate, then switch; never a wholesale swap with items in flight (`DECISIONS.md` §11, §13h) | 13, 37, 39 | `done` |
 | **86** | `/settings` — categories, widgets, per-field help and validation all rendered from the registry; value-source badges; reset-to-default; the `sensitive` section with typed confirmation; unrecognised and invalid override sections; the read-only build-constants and bootstrap panels; first-run entry when no profiles exist | 35, 78 | `done` |
 | **87** | Budget-window editor — per-window cards, the three boundary kinds in plain words, the band chart, drawn validation errors, the time scrubber, and presets. Plots an account's position **once usage readings exist**; before that the chart is the boundaries alone | 86 | |
 | **93** | Administration UI — one page pattern per entity kind, over the API from #92, linked from `/settings` | 35, 92 | `done` |
@@ -530,3 +529,32 @@ back designed properly with replies).
 > not "did tests run", but "would this test actually fail if the behaviour it names regressed". A
 > future gate earns its place the same way — by demonstrating a failure mode review provably misses,
 > not by asserting one in the abstract.
+
+---
+
+## M11 — Rounding up
+
+*Feature: the deliberate temporaries are retired, and nothing is left switched off by accident.*
+
+Work that exists because something was paused, deferred or worked around while the rest was being
+built. Each row here is a promise made earlier in the file, and the milestone exists so those
+promises have somewhere to live other than a comment nobody re-reads. A row belongs here when the
+question is *"is this still switched off?"* rather than *"has this been built?"*.
+
+| PR | Delivers | Needs | Status |
+|---|---|---|---|
+| **106** | **Switch mutation testing back on.** The job is paused in `ci.yml` behind a `false &&`, not deleted — re-enabling is removing two characters, and the required gate follows automatically because it reads that job's result. Paused deliberately during a period of heavy parallel work, because at 22–57 minutes it is by a wide margin the slowest job in the pipeline and it runs on any source change. **Restore it once that push settles.** Whatever survived while it was off is found on the first run after, so budget for a batch of failures rather than a green run — and prefer one sweep to fix them together over discovering them one pull request at a time. If it stays off, it needs a scheduled run and somewhere the last result is visible: a check nobody runs and nobody misses is off, whatever the configuration says | 95 | |
+
+**Milestone done when:** nothing in the tree is disabled, waived or stubbed without a row here saying
+so — and this table is empty.
+
+> **Why this is its own milestone and not part of M1.** #106 sat under *Infrastructure* because that
+> is where mutation testing was built. But the row is not infrastructure work: nothing is missing, and
+> the code it describes already exists and already ran. What it tracks is a **deliberate temporary** —
+> a gate switched off during a period of heavy parallel work, on the explicit understanding that it
+> goes back on. Filed under M1 it reads as unbuilt; filed here it reads as what it is, which is a debt
+> with a due date.
+>
+> That distinction matters more than it sounds, because a paused gate is invisible in exactly the way
+> a missing one is not. A milestone that never gets a row is obvious; a check that passes in four
+> seconds without doing anything looks the same as a check that passed.
