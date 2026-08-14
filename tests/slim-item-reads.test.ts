@@ -40,6 +40,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -243,6 +244,11 @@ describeIfDb("the slim read against Postgres", () => {
       };
       expect(before.checkpointHeadline).toBeNull();
 
+      // A claim is refused from a session that has not registered a hook
+      // protocol version (SCHEMA.md §21). That rule is not what this test is
+      // about, so it is satisfied the way a real session satisfies it rather
+      // than switched off — see the helper's own header.
+      await registerSessions(prisma, ["session-slim-1"]);
       const claimed = (await runtime.call("claim", {
         itemId: created.id,
         sessionId: "session-slim-1",

@@ -18,6 +18,10 @@ function item(overrides: Partial<BoardItem> = {}): BoardItem {
   return {
     id: "item-1",
     title: "An item",
+    // The BLUF (MILESTONES.md #107). Null in the default fixture so a case
+    // that cares about it has to say so, rather than every card silently
+    // carrying one.
+    headline: null,
     kind: "task",
     state: "executing",
     priority: "P2",
