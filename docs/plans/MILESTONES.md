@@ -43,6 +43,7 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 | **5** | First published image — trigger a release, pull it, verify it runs | 3 | `done` |
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | `done` |
 | **95** | **Mutation testing**, wired into CI and scoped to changed files, with a threshold that blocks the pull request below it. Reads the mutation report's own kill attribution rather than a process exit code, so a mutant only counts as killed when a named test caused it — the same shape a whole-suite collection failure would otherwise misreport as a perfect score. Every run also checks a dedicated no-op fixture and refuses to trust its own numbers if that fixture is ever reported killed | 3 | `done` |
+| **97** | **Application logging.** One JSON object per line on stderr, the conventional five levels (`debug` `info` `warn` `error` `fatal`) with a `LOG_LEVEL` threshold defaulting to `info`. Carries the operator-facing detail the error taxonomy deliberately withholds from clients — above all the `cause` an `InternalError` preserves — plus the request context needed to follow a single request through the layers it touched. Wired at the boundaries a failure actually crosses: the API error responder, the rules engine's refusals, and the adapters | 3 | |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
 reaches `main` without passing checks.
@@ -55,6 +56,18 @@ reaches `main` without passing checks.
 > release workflow ships inside it rather than in #5 so that one infrastructure change lands whole;
 > #5 is then just proving the pipeline end to end. The only work with no prerequisites at all is
 > **#55**, the unattended-launch spike.
+>
+> **#97 is not `events`, and it is not M7.** All three write a record of something happening, which
+> makes them easy to conflate, and they answer different questions. `events` is domain history — what
+> happened to an item, durable, queryable, and part of the product. M7 is measurement — what a run
+> cost, structured for aggregation. Logging is for the operator reading a failure: the flow of control
+> through a request, at a level of detail nobody wants persisted in a table, thrown away on the
+> retention the log shipper decides. Its motivating failure is concrete — a 500 reaching a client as
+> `{"code":"internal"}` with an empty server log, because the taxonomy correctly refuses to leak the
+> `cause` to the client and nothing was writing it anywhere else. The detail existed and was
+> unreadable. That it sits in M1 rather than alongside telemetry is deliberate: every milestone after
+> this one is easier to debug with it and harder without, so it earns its place early, and unlike
+> facet history it has no backfill problem — only the failures that happen before it lands are lost.
 
 ---
 
@@ -273,6 +286,21 @@ since M7.
 | **74** | Project view and progress view | 72 | |
 | **75** | Filters and search: area, repo, state, who's on it, priority | 36 | `done` |
 | **76** | **Mobile** — P3. A different flow, not a squeezed desktop: a list with a status picker instead of drag, filters in a sheet, thumb-sized sliders, and you can still mint work | 68, 73, 75 | |
+| **96** | **Retiring a reference row** — P3, optional. Surfaces the `archived_at` the schema already carries: `PATCH /repos/{id}`, `/areas/{id}`, `/people/{id}` sets it, archived rows drop out of pickers and default `GET` lists but still resolve everywhere they are already referenced. Plus the inverse — `DELETE` with an explicit hard-delete flag, allowed **only** when a reference count across every referring table is zero, refused with the counts otherwise | 91, 92 | |
+
+---
+
+> **#96 is two operations because "delete" means two different things, and conflating them is what
+> breaks the board.** Archiving is the common case and the safe one: the row stays, every item and
+> attribution row still resolves, it just stops being offered for new work. Hard delete exists only
+> for the genuine mistake — a repository created with a typo, an area auto-created from a
+> misspelling — where archiving leaves permanent clutter in a table meant to be small and readable.
+> The guard is what makes it safe: zero referring rows, counted at the moment of the request across
+> every table holding the foreign key, or the request is refused and reports what still points at it.
+> That check is not advisory. Deleting a row something references either corrupts history or trips a
+> foreign-key error at a random later read, and `archived_at` exists in the schema (§`repos`,
+> `areas`, `people`) precisely so the destructive path is never the one taken by default. See
+> `SCHEMA.md` — *"Archive, never delete — attribution and history point at these rows."*
 
 ---
 

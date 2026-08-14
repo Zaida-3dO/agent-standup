@@ -2,6 +2,7 @@
   "name": "agent-standup",
   "version": "0.1.0",
   "private": false,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "standup": "dist/bin/standup.js"

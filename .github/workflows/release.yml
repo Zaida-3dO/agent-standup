@@ -39,6 +39,47 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # A tag is not a release. The README's version badges read the Releases API,
+  # and `docker compose pull` users have nowhere to read what changed between
+  # two image tags — both want a Release object, which nothing here was
+  # creating, so tags accumulated and the Releases page stayed empty.
+  #
+  # `needs: build-and-push` is the same reasoning as the npm job below: a
+  # Release announces an image that can be pulled, so it must not exist until
+  # the image for this tag actually does. `if: github.ref_type == 'tag'`
+  # because a manual `workflow_dispatch` run has no tag to release.
+  github-release:
+    name: Publish the GitHub Release
+    needs: build-and-push
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # `--generate-notes` diffs against the previous tag, which is not in
+          # the default shallow clone. Without the full history the notes come
+          # out empty.
+          fetch-depth: 0
+      - name: Create the Release for this tag
+        # The tag arrives through the environment rather than being
+        # interpolated into the script, matching the npm job below — the form
+        # actionlint accepts for a github.* value inside `run:`.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        # Idempotent on purpose: re-running this workflow for a tag that was
+        # already released should be a no-op, not a red run.
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists — nothing to do."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TAG" \
+            --generate-notes
+
   # MILESTONES.md #89: the npm package ships the `standup` binary on the
   # same version tag that publishes the image above, so the two artefacts of
   # a release can never drift apart. `needs: build-and-push` is deliberate —

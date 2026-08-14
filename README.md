@@ -1,3 +1,5 @@
+<p align="right"><a href="https://github.com/Zaida-3dO/agent-standup/releases/latest"><img src="https://img.shields.io/github/v/release/Zaida-3dO/agent-standup?label=latest%20version&logo=github&logoColor=white" alt="Latest version"></a> <a href="https://github.com/Zaida-3dO/agent-standup/actions/workflows/release.yml"><img src="https://img.shields.io/github/commits-since/Zaida-3dO/agent-standup/latest?label=unreleased%20commits&logo=git&logoColor=white" alt="Unreleased commits"></a> <a href="https://github.com/Zaida-3dO/agent-standup/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/Zaida-3dO/agent-standup/release.yml?label=latest%20build%20status&logo=githubactions&logoColor=white" alt="Latest build status"></a></p>
+
 # Agent Standup
 
 A task tracker for AI coding agents: a database, a rules engine every change goes

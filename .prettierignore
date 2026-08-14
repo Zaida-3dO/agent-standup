@@ -9,3 +9,6 @@ next-env.d.ts
 # scope to reformat; leave their prose untouched.
 docs/plans/
 CLAUDE.md
+
+# Licence text is reproduced verbatim — never reflowed.
+LICENSE
