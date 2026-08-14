@@ -21,6 +21,9 @@ import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
 import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
 import { BACKFILL_HTTP_ROUTES } from "./http-routes-backfill";
 import { ARTIFACT_HTTP_ROUTES } from "./http-routes-artifacts"; // row #98 — artifact writes
+import { LOOP_HTTP_ROUTES } from "./http-routes-loops"; // row #100 - open-loop writes
+import { SESSION_HTTP_ROUTES } from "./http-routes-sessions";
+import { CLI_TRANSPORT_HEADER } from "@/lib/session-transport-header";
 
 /** How one operation is expressed as an HTTP request. */
 export interface RouteSpec {
@@ -178,6 +181,8 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
   ...OWNERSHIP_HTTP_ROUTES,
   ...BACKFILL_HTTP_ROUTES,
   ...ARTIFACT_HTTP_ROUTES, // row #98 — artifact writes
+  ...LOOP_HTTP_ROUTES, // row #100 - open-loop writes
+  ...SESSION_HTTP_ROUTES, // row #43 — the registration handshake
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */
@@ -272,6 +277,17 @@ export function createHttpBinding({
       if (body !== undefined) headers["Content-Type"] = "application/json";
       if (sessionId !== undefined) headers["X-Standup-Session"] = sessionId;
       if (actor !== undefined) headers["X-Standup-Actor"] = actor;
+      // SCHEMA.md §21's five transports include `cli-http` — the command
+      // line talking to a server — and from the server's side that request
+      // is indistinguishable from any other HTTP call. This header is how
+      // the two are told apart, and it is a *fixed literal* rather than a
+      // configurable value on purpose: it says "this request came from this
+      // binding", which is a fact this module is the authority on. It is not
+      // trusted blindly on the far side either — the route accepts it only
+      // from the one narrow set of values it can distinguish, so a caller
+      // sending it by hand can at worst claim to be a command line, never
+      // claim a capability the transport does not confer.
+      headers[CLI_TRANSPORT_HEADER] = "cli-http";
 
       // This binding's id labels only the lines written *in this process*.
       // It is deliberately not sent to the server: nothing there reads it

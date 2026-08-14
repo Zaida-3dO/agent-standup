@@ -125,8 +125,8 @@ describe("the entry point defers the database client (real code splitting, not j
 });
 
 describe("npm pack — what actually ships", () => {
-  // `npm pack` runs "prepack" (a full rebuild) and "prepare" as real child
-  // processes — slower than the 5s default test timeout, not flaky.
+  // `npm pack` spawns real child processes, which is slower than the 5s
+  // default test timeout.
   const NPM_PACK_TIMEOUT_MS = 20_000;
 
   it(
@@ -136,7 +136,28 @@ describe("npm pack — what actually ships", () => {
       // Windows, which node can only spawn through a shell. execSync always
       // goes through one; the command below is a fixed literal, nothing
       // interpolated into it.
-      const output = execSync("npm pack --dry-run --json", { cwd: repoRoot, encoding: "utf8" });
+      //
+      // **`--ignore-scripts` is load-bearing, not a speed-up.** Without it
+      // `npm pack` runs `prepack`, which is `build:cli`, which opens by
+      // deleting `dist/` wholesale. `dist/` is built once for the whole run
+      // by `tests/helpers/global-setup.ts` precisely so there is a single
+      // writer, and vitest runs this file in a worker parallel with
+      // `tests/hook-built-script.test.ts`, which spawns `dist/bin/
+      // standup-hook.js` as a process. A rebuild here reopens exactly the
+      // delete-then-write window that having one writer closed: the hook
+      // binary is spawned while its chunk is missing, crashes, and exits 1
+      // where the test expects a deny's 2 — a failure in a file this one
+      // never mentions, on whichever assertion happened to land inside the
+      // window.
+      //
+      // Nothing is lost by skipping it. This test asks which *files* the
+      // package would ship, which `package.json`'s `files` list decides;
+      // `dist/` is already built and present, so the answer is the same one
+      // a rebuild would produce.
+      const output = execSync("npm pack --dry-run --json --ignore-scripts", {
+        cwd: repoRoot,
+        encoding: "utf8",
+      });
       // `npm pack` writes non-JSON progress lines (prepack/prepare script
       // output) before the JSON array — only the array itself is parsed.
       const jsonStart = output.indexOf("[");

@@ -11,6 +11,7 @@ import { ensureAreaRaw } from "../items/ensure-area-raw";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { recordFieldChanges } from "@/lib/events";
+import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
 
 const inputSchema = z
   .object({
@@ -29,6 +30,20 @@ const inputSchema = z
   .strict();
 
 export type UpdateItemInput = z.infer<typeof inputSchema>;
+
+/**
+ * What `update_item` returns — the item, plus who the notification rules say
+ * to tell about the edit (MILESTONES.md #101).
+ *
+ * A widening of `ItemRecord`, not a wrapper: every existing caller reads
+ * item fields straight off this result, and nesting them under a key would
+ * break each one for no gain. `notifications` is absent when the capability
+ * is off (`notify.doc` unset), which stays distinguishable from "on, and
+ * nobody matched" — an outcome with empty `recipients`.
+ */
+export type UpdateItemResult = ItemRecord & {
+  readonly notifications?: NotificationOutcome;
+};
 
 const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | "agent_judgement"> =
   {
@@ -56,7 +71,7 @@ export const updateItem = defineOperation({
   kind: "write",
   summary: "Edits an item's non-state fields.",
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: UpdateItemInput): Promise<ItemRecord> {
+  async handler(ctx: ServiceContext, input: UpdateItemInput): Promise<UpdateItemResult> {
     const { id, ...rawEdits } = input;
     const edits = Object.fromEntries(
       Object.entries(rawEdits).filter(([, value]) => value !== undefined),
@@ -184,6 +199,30 @@ export const updateItem = defineOperation({
       fields: changes.map((change) => change.field),
     });
 
-    return toItemRecord(updated);
+    const record = toItemRecord(updated);
+
+    // The notification evaluator's caller — MILESTONES.md #101. An edit is
+    // the only thing that changes four of the whitelisted fields a rule may
+    // watch (`area`, `repo`, `priority`, `drive_mode`, `merge_authority`),
+    // so wiring only `transition_item` would leave those rules dead.
+    //
+    // No event is written for the result, deliberately. The obvious shortcut
+    // — appending a `note` — would be recording a notification under an
+    // event type that means something else, and a `notify`/`notified` type of
+    // its own is a schema change that needs its own row (SCHEMA.md §3: add an
+    // event type only when the code that emits it exists). Returned instead,
+    // which is what `transition_item` does with the same value.
+    const notifyDoc = ctx.settings.values["notify.doc"];
+    const notifications =
+      notifyDoc === null
+        ? undefined
+        : await evaluateNotifications(
+            ctx.db,
+            notifyDoc,
+            snapshotOf(toItemRecord(current), null),
+            snapshotOf(record, null),
+          );
+
+    return notifications ? { ...record, notifications } : record;
   },
 });

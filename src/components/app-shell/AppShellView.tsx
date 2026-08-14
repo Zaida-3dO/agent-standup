@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import type { Profile } from "@/lib/profile/types";
 import { ProfilePicker } from "@/components/profile-picker/ProfilePicker";
 import { TopBar } from "@/components/top-bar/TopBar";
+import { allowsWithoutProfile } from "@/lib/settings-page/first-run";
 import styles from "./AppShell.module.css";
 
 export interface AppShellViewProps {
@@ -28,6 +29,15 @@ export interface AppShellViewProps {
   readonly choose: (profile: Profile) => void;
   readonly closePicker: () => void;
   readonly openPicker: () => void;
+  /**
+   * The path being rendered, for MILESTONES.md #86's first-run entry. Only
+   * consulted when there are no profiles at all — see
+   * `@/lib/settings-page/first-run`, which owns the rule and states why it
+   * is as narrow as it is. Optional so a caller that does not know the path
+   * gets the pre-existing behaviour (gate everything) rather than an
+   * accidental escape.
+   */
+  readonly pathname?: string;
   readonly children: ReactNode;
 }
 
@@ -39,6 +49,7 @@ export function AppShellView({
   choose,
   closePicker,
   openPicker,
+  pathname,
   children,
 }: AppShellViewProps) {
   if (error) {
@@ -55,6 +66,19 @@ export function AppShellView({
         <p>Loading profiles…</p>
       </div>
     );
+  }
+
+  // First run — no profiles exist at all, so the picker has nothing to
+  // choose and is a dead end. The configuration surfaces are let through so
+  // there is a way to set the installation up; everything else still gates.
+  // The rule lives in `allowsWithoutProfile`, which requires *both* the
+  // empty-list state and an allowed path.
+  if (
+    !activeProfile &&
+    pathname !== undefined &&
+    allowsWithoutProfile({ people, activeProfile }, pathname)
+  ) {
+    return <main>{children}</main>;
   }
 
   // No-profile-chosen-yet AND unknown/stale-profile both land here —

@@ -271,7 +271,7 @@ dumped whole.
 | `session_id` | `text` null | |
 | `assignment_id` | `uuid` null → `assignments.id` | Set on `checkpoint` and other per-agent events. |
 | `body` | `text` null | Prose for `checkpoint`, `note`, `nudge`, `escalation`. **A column, not payload** — slice reads on the hottest path would otherwise drag text nobody asked for, and it's cheap to exclude here. |
-| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; its payload is below, its posture is §17.8, and it is written by §19's `PATCH /settings`. |
+| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. That rule is enforced by `npm run check:event-emitters`, which fails on a declared value nothing writes; a value legitimately reserved ahead of its writer goes in that script's `KNOWN_UNEMITTED` with the milestone row that closes it. The check counts *write sites*, not reachable ones — a read path naming a type does not satisfy it, and neither does a writer nothing calls. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; its payload is below, its posture is §17.8, and it is written by §19's `PATCH /settings`. |
 | `payload` | `jsonb` | Type-specific. **A discriminated union keyed on `type`** — see below. |
 
 *(No `state_at` here — it's derivable from the `state-change` rows in this same table, event volume is
@@ -321,6 +321,65 @@ an independent fact.
 
 **Seen state is per person** — see `event_seen` in §8a. It cannot be a column here: one person marking something
 read must not clear it for another.
+
+---
+
+## 3a. Open loops — a pair of events, not a table
+
+The loose ends a session is carrying that are not themselves work items: *"the retry path is
+untested"*, *"we never checked what happens on a cold boot"*. A resuming session needs to be told
+about them, and there is nowhere else to put them.
+
+**A loop is two events and a line of text.** It has no state machine, no assignee, no review and no
+merge — the four things that make something an item here — so modelling it as one would put every
+loose end on the board and into every count that ranges over items. It has exactly two moments, which
+is the shape `events` already is:
+
+| Type | Payload | Meaning |
+|---|---|---|
+| `open_loop` | `{loop_id, text}` | Something was left unresolved. |
+| `open_loop_closed` | `{loop_id}` | It has been resolved. |
+
+**`loop_id` is a correlation key supplied by whoever opens the loop, never derived from the text.**
+Deriving it would make closing a loop depend on quoting its wording back exactly, and would silently
+merge two genuinely different loops that happened to be phrased identically. The closing event does
+not repeat the text: the opening event carries it, and a second copy is a second thing that can
+disagree.
+
+**A `loop_id` may be used once per item, ever — not once at a time.** Reuse is refused at the write
+even for an id whose loop was closed, and the reason is the fold below rather than tidiness: it
+collects every close into a set over the whole stream and filters every open against it, with no
+pairing and no ordering, so **one close suppresses every open of that id, past and future**. An id
+reused after its loop closed would therefore write a row, return success, and produce a loop that
+`orientation` never reports and that nothing can close — invisible and unclosable, which is strictly
+worse than the duplicate it looks like. Supporting reuse would mean pairing opens to closes in
+sequence, and that is the one thing the fold cannot do (see order-independence below). Ids are
+cheap: `loop_add` mints one when the caller does not supply it, so the cost of this rule is nothing
+and the cost of the alternative is a class of loop nobody can see or clean up.
+
+**Whether a loop is open is derived, never stored** (§13a — store facts, derive volatiles). It is
+every `open_loop` whose `loop_id` has no `open_loop_closed`, folded at read time. So closing a loop
+appends a fact rather than marking anything: there is no row to update, and the ledger stays
+append-only.
+
+That fold is **order-independent by construction** — the closes are collected first, then the opens
+filtered against them. This is not fastidiousness: `events.id` is allocated before commit (§3), so a
+read can legitimately return a close before its own open, and a single-pass fold that only cancelled a
+loop it had already seen opened would report a closed loop as open in exactly that case.
+
+**The read and write paths deliberately disagree about malformed input, and the asymmetry is the
+design.** The write path validates and refuses: a loop whose id is missing can never be closed, so
+accepting one would write a permanently-open loop into the ledger, and a close naming a loop that is
+not open is a caller mistake that would otherwise land as an inert row. The read path skips what it
+cannot parse and ignores a close for a loop it never saw opened — it reads a bounded slice, the
+opening event may simply be older than the window, and one bad row written at any point in history
+must not make *"catch me up"* permanently unusable for that item. A refusal at the write costs one
+caller a clear error; a refusal at the read costs every future session.
+
+**Why this is not `summaries.not_done`.** That field is one-to-one with an item and written only at
+completion, so an item still `executing` — the state in which it is *most* likely to be carrying a
+loose end — could not record one at all. `orientation` reports both, alongside actionable children, as
+three sources of the same question.
 
 ---
 
@@ -518,7 +577,7 @@ The highest-volume table and the foundation for everything measured. Written by 
 | `tool` | `text` | Tool name. |
 | `command` | `text` null | For shell tools. Enables repeat detection **and** duration learning. |
 | `paths` | `text[]` null | What it touched. Path spread is a progress signal. |
-| `state_at` | state enum, null | Item state at the time. **Denormalised deliberately** — it's derivable from `events`, but only via a correlated lookup *per row* on the largest table here, and slicing cost by stage is the whole reason this column exists. Null for ghost sessions, which have no item. |
+| `state_at` | state enum, null | Item state at the time. **Denormalised deliberately** — it's derivable from `events`, but only via a correlated lookup *per row* on the largest table here, and slicing cost by stage is the whole reason this column exists. Null for ghost sessions, which have no item. ⚠️ **Resolved at ingest, so it is the state at flush, not at the call.** The client spools and flushes in batches, and the server stamps whatever state the item is in when the batch arrives. The error is bounded by the flush interval and is zero for a session flushing while it still holds the item — but a consumer slicing cost by stage should read this column as "the stage this work was attributed to", not as an exact per-call reading. Making it exact means the per-row `events` lookup this column exists to avoid. |
 | `input_tokens` | `int` | |
 | `output_tokens` | `int` | Prices ~5× input — never fold into a single total. |
 | `cache_write_tokens` | `int` | 1.25× (5-min TTL) or 2× (1-hour). |
@@ -1059,6 +1118,7 @@ Same service, different consumers.
 |---|---|
 | `POST /poll` | Launcher. Sends machine, live sessions, usage snapshot, pending source hashes. Returns zero or more dispatches, each with a server-composed prompt. |
 | `POST /hook` | The dumb pipe. Sends event type, session, tool, command. Returns allow/deny for guarded patterns, or nudge text, or nothing. |
+| `POST /tool-calls` | Telemetry ingest (§10). One flush: `{sessionId, calls[]}` — the session on the envelope, because a flush is one session's work and it makes the assignment lookup once per request rather than once per record. Caps the big fields (truncating, marked) and refuses malformed measurements. Answers `201` with what the batch was attributed to, including `null` for a ghost session. Beside `/hook` rather than under `/items` because a ghost session has no item to nest under. |
 | `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim. |
 
 **Human-facing:**
@@ -1163,6 +1223,7 @@ recorded as an override.
 | `machine` | `text` | |
 | `transport` | enum | `cli-direct` · `cli-http` · `mcp-stdio` · `mcp-http` · `http`. How this session registered. Five values because the version rule turns on the binding, and they are the same names the conformance drivers use. |
 | `hook_variant` | enum null | `cli` · `http`. From `transport` unless overridden. |
+| `hook_variant_overridden` | `boolean` | Whether the variant came from the payload rather than the transport. Without it an override and a derivation are indistinguishable afterwards, and *"why is this session on the cli hook when it registered over HTTP?"* has no answer. An override naming what the transport would have chosen anyway is **not** recorded as one — it changed nothing. |
 | `hook_version` | `text` null | What the session reported. Null = never reported one. |
 | `client` | `text` null | What kind of agent tool it is, as it describes itself. |
 | `person_id` | `text` null → `people.id` | Who it acts as, where known. |
@@ -1189,6 +1250,22 @@ installed, so its presence cannot be enforced on a machine the server does not c
 enforced, in the service layer and therefore through every adapter, is that **no unguarded session
 holds work**: such a session may still read, orient and update itself, but may not take ownership of
 an item under rules it cannot enforce.
+
+**`hook.require_registration_to_claim` turns that refusal off**, and defaults to on. It is the
+escape hatch for an installation whose clients cannot yet register — degraded rather than stopped —
+and it is `sensitive` because off means work is held under rules the holder cannot enforce. It
+defaults to *on* deliberately: a rule that ships off is a rule nobody has run, and the first time
+anyone would learn whether the refusals work is the day someone turns it on.
+
+**How a `cli-http` registration is told apart from a plain `http` one.** Four of the five transports
+are self-evident to the adapter that receives them, because of where that adapter runs. The fifth is
+not: a command line talking to a server and any other HTTP caller arrive at the same route in the
+same shape. The command line's `http` binding therefore stamps a header naming itself, which the
+registration route reads from a one-entry allow-list and ignores otherwise. The header is
+unauthenticated, and what it can change is which hook variant the reply *describes* — which the
+registration payload's own `hookVariant` override already grants any caller outright. It cannot make
+an unregistered session claimable or an incompatible one compatible, because the claim check reads
+the reported version and never the transport.
 
 **One case collapses.** Where the command line runs in `direct` mode it *is* the app — the hook, the
 rules and the migrations are one installed package — so the hook cannot be a different version from

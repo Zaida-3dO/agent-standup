@@ -40,6 +40,7 @@ import { getSetting } from "./operations/get-setting";
 import { patchSettings } from "./operations/patch-settings";
 import { putSetting } from "./operations/put-setting";
 import { deleteSetting } from "./operations/delete-setting";
+import { removeUnrecognisedSetting } from "./operations/remove-unrecognised-setting";
 import { claim } from "./operations/claim";
 import { release } from "./operations/release";
 // Reclamation (MILESTONES.md #99): the liveness ladder's trigger, and the
@@ -50,6 +51,7 @@ import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
 import { recordArtifact, requestReview } from "./operations/record-artifact";
+import { loopAdd, loopClose } from "./operations/open-loops";
 import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 import { transitionItem } from "./operations/transition-item";
@@ -79,6 +81,13 @@ import { registerProcess } from "./operations/register-process";
 import { endProcess } from "./operations/end-process";
 import { listProcesses } from "./operations/list-processes";
 import { killGuard } from "./operations/kill-guard";
+// Telemetry (MILESTONES.md #50): the hook's tool-call ingest, and the
+// foundation every later M7 row reads.
+import { recordToolCalls } from "./operations/record-tool-calls";
+// The registration handshake (MILESTONES.md #43, SCHEMA.md §21). Registered
+// like any other operation, so every adapter reaches it through the same
+// door and stamps its own transport on the way in.
+import { registerSession } from "./operations/register-session";
 // Backfill — the one-time bulk load (docs/plans/BACKFILL.md). Registered
 // like any other operation so it is reachable and countable; whether it
 // answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
@@ -106,6 +115,7 @@ export const OPERATION_REGISTRY = {
   [patchSettings.name]: patchSettings,
   [putSetting.name]: putSetting,
   [deleteSetting.name]: deleteSetting,
+  [removeUnrecognisedSetting.name]: removeUnrecognisedSetting,
   [claim.name]: claim,
   [release.name]: release,
   [sweep.name]: sweep,
@@ -115,6 +125,8 @@ export const OPERATION_REGISTRY = {
   [note.name]: note,
   [recordArtifact.name]: recordArtifact,
   [requestReview.name]: requestReview,
+  [loopAdd.name]: loopAdd,
+  [loopClose.name]: loopClose,
   [orientation.name]: orientation,
   [myWork.name]: myWork,
   [transitionItem.name]: transitionItem,
@@ -140,6 +152,8 @@ export const OPERATION_REGISTRY = {
   [endProcess.name]: endProcess,
   [listProcesses.name]: listProcesses,
   [killGuard.name]: killGuard,
+  [recordToolCalls.name]: recordToolCalls,
+  [registerSession.name]: registerSession,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;
 

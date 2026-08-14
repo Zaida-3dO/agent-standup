@@ -129,7 +129,7 @@ describe("the CLI direct binding", () => {
     const record = oneRecord(logs.stderr(), "Command failed unexpectedly.");
     expect(record?.level).toBe("error");
     expect(record?.operation).toBe("create_item");
-    expect(record?.transport).toBe("cli");
+    expect(record?.transport).toBe("cli-direct");
     expect(JSON.stringify(record)).toContain("ECONNREFUSED");
     // And what a person's terminal would be shown carries none of it.
     expect(JSON.stringify(result)).not.toContain(SECRET);

@@ -15,6 +15,7 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { claimItem, type Assignment, type HolderType, type Role } from "@/lib/claims";
+import { assertSessionMayClaim } from "../session-registration";
 
 const ROLES = [
   "orchestrator",
@@ -67,6 +68,18 @@ export const claim = defineOperation({
     if (itemRows.length === 0) {
       throw new NotFoundError(`No such item: ${input.itemId}.`, { fields: ["itemId"] });
     }
+
+    // §21: no unguarded session holds work. Checked *before* the insert, not
+    // after — a claim that is going to be refused must not first win the
+    // atomic race and displace whoever would otherwise have got it, because
+    // the partial unique index makes that win visible to every other
+    // claimant for as long as the transaction is open.
+    //
+    // Checked after the item-existence read on purpose, so a claim naming a
+    // typo'd item id is told about the typo rather than about its
+    // registration: the caller can act on the first and, in that moment,
+    // cannot act on the second.
+    await assertSessionMayClaim(ctx, input.sessionId);
 
     return claimItem(ctx.db, {
       itemId: input.itemId,

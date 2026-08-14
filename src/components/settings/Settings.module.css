@@ -1,0 +1,271 @@
+/* `/settings` paints its own surface for the same reason the board does:
+   every colour here is chosen for a dark background, so the page sets the
+   background those colours assume rather than depending on a page-level one
+   it does not control. */
+.page {
+  padding: 1.25rem;
+  min-height: 100%;
+  background: #0e0e11;
+  color: #f4f4f5;
+}
+
+.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  padding: 1.25rem;
+  background: #0e0e11;
+  color: #a1a1aa;
+}
+
+.heading {
+  margin: 0 0 0.35rem;
+  font-size: 1.4rem;
+}
+
+.subheading {
+  margin: 0 0 1.5rem;
+  color: #a1a1aa;
+  font-size: 0.85rem;
+}
+
+.links {
+  display: flex;
+  gap: 0.75rem;
+  margin: 0 0 1.5rem;
+}
+
+.link {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.4rem;
+  background: #1c1c21;
+  color: #e4e4e7;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.section {
+  margin: 0 0 1.5rem;
+  padding: 1rem;
+  border: 1px solid #27272a;
+  border-radius: 0.6rem;
+  background: #16161a;
+}
+
+/* The `sensitive` section — SCHEMA.md §17.8 puts these behind their own
+   heading because they change what the system enforces, so the section is
+   visually separated rather than merely titled. */
+.guardedSection {
+  border-color: #7f1d1d;
+  background: #1b1214;
+}
+
+.sectionTitle {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+}
+
+.sectionNote {
+  margin: 0 0 1rem;
+  color: #a1a1aa;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border: 1px solid #27272a;
+  border-radius: 0.45rem;
+  background: #1c1c21;
+}
+
+.fieldHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.key {
+  color: #71717a;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+}
+
+/* Value-source badges — the three states of SCHEMA.md §17.2's table. Each
+   carries its own colour as well as its own words: a badge distinguished
+   only by text is one nobody scans. */
+.badge {
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: #27272a;
+  color: #a1a1aa;
+}
+
+.badgeOverride {
+  background: #1e3a5f;
+  color: #bfdbfe;
+}
+
+.badgeInvalid {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.help {
+  margin: 0;
+  color: #a1a1aa;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.appliesWhen {
+  color: #71717a;
+  font-size: 0.72rem;
+}
+
+.control {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 0.3rem;
+}
+
+.input,
+.textarea,
+.select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.35rem;
+  background: #0e0e11;
+  color: #f4f4f5;
+  font-size: 0.85rem;
+  min-width: 14rem;
+}
+
+.textarea {
+  min-height: 5rem;
+  font-family: ui-monospace, monospace;
+  resize: vertical;
+}
+
+.button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.35rem;
+  background: #27272a;
+  color: #e4e4e7;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.buttonDanger {
+  border-color: #7f1d1d;
+  background: #451a1a;
+  color: #fecaca;
+}
+
+/* The confirmation box for a guarded key — its own row, so the field cannot
+   be saved without it being visible. */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+  padding: 0.5rem;
+  border: 1px dashed #7f1d1d;
+  border-radius: 0.35rem;
+}
+
+.confirmPrompt {
+  margin: 0;
+  color: #fecaca;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.error {
+  margin: 0;
+  color: #fca5a5;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.invalidOverride {
+  margin: 0.3rem 0 0;
+  padding: 0.5rem;
+  border: 1px solid #7f1d1d;
+  border-radius: 0.35rem;
+  background: #2a1215;
+  color: #fecaca;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.storedValue {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* The read-only panels — build constants and bootstrap. Nothing here is
+   editable, so nothing here looks editable. */
+.readOnlyTable {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, auto) minmax(0, 1fr);
+  gap: 0.4rem 1rem;
+  font-size: 0.78rem;
+}
+
+.readOnlyName {
+  font-family: ui-monospace, monospace;
+  color: #e4e4e7;
+}
+
+.readOnlyValue {
+  font-family: ui-monospace, monospace;
+  color: #bfdbfe;
+}
+
+.readOnlyMeaning {
+  color: #a1a1aa;
+  line-height: 1.4;
+}
+
+.setYes {
+  color: #86efac;
+}
+
+.setNo {
+  color: #71717a;
+}
+
+.empty {
+  margin: 0;
+  color: #71717a;
+  font-size: 0.8rem;
+}
