@@ -324,6 +324,54 @@ read must not clear it for another.
 
 ---
 
+## 3a. Open loops — a pair of events, not a table
+
+The loose ends a session is carrying that are not themselves work items: *"the retry path is
+untested"*, *"we never checked what happens on a cold boot"*. A resuming session needs to be told
+about them, and there is nowhere else to put them.
+
+**A loop is two events and a line of text.** It has no state machine, no assignee, no review and no
+merge — the four things that make something an item here — so modelling it as one would put every
+loose end on the board and into every count that ranges over items. It has exactly two moments, which
+is the shape `events` already is:
+
+| Type | Payload | Meaning |
+|---|---|---|
+| `open_loop` | `{loop_id, text}` | Something was left unresolved. |
+| `open_loop_closed` | `{loop_id}` | It has been resolved. |
+
+**`loop_id` is a correlation key supplied by whoever opens the loop, never derived from the text.**
+Deriving it would make closing a loop depend on quoting its wording back exactly, and would silently
+merge two genuinely different loops that happened to be phrased identically. The closing event does
+not repeat the text: the opening event carries it, and a second copy is a second thing that can
+disagree.
+
+**Whether a loop is open is derived, never stored** (§13a — store facts, derive volatiles). It is
+every `open_loop` whose `loop_id` has no `open_loop_closed`, folded at read time. So closing a loop
+appends a fact rather than marking anything: there is no row to update, and the ledger stays
+append-only.
+
+That fold is **order-independent by construction** — the closes are collected first, then the opens
+filtered against them. This is not fastidiousness: `events.id` is allocated before commit (§3), so a
+read can legitimately return a close before its own open, and a single-pass fold that only cancelled a
+loop it had already seen opened would report a closed loop as open in exactly that case.
+
+**The read and write paths deliberately disagree about malformed input, and the asymmetry is the
+design.** The write path validates and refuses: a loop whose id is missing can never be closed, so
+accepting one would write a permanently-open loop into the ledger, and a close naming a loop that is
+not open is a caller mistake that would otherwise land as an inert row. The read path skips what it
+cannot parse and ignores a close for a loop it never saw opened — it reads a bounded slice, the
+opening event may simply be older than the window, and one bad row written at any point in history
+must not make *"catch me up"* permanently unusable for that item. A refusal at the write costs one
+caller a clear error; a refusal at the read costs every future session.
+
+**Why this is not `summaries.not_done`.** That field is one-to-one with an item and written only at
+completion, so an item still `executing` — the state in which it is *most* likely to be carrying a
+loose end — could not record one at all. `orientation` reports both, alongside actionable children, as
+three sources of the same question.
+
+---
+
 ## 4. Checkpoints — an event type, not a table
 
 **No `checkpoints` table.** A checkpoint is `events` with `type = 'checkpoint'` and `assignment_id` set.

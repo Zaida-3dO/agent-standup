@@ -20,6 +20,7 @@ import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
 import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
 import { BACKFILL_COMMANDS } from "./commands-backfill";
 import { ARTIFACT_COMMANDS } from "./commands-artifacts"; // row #98 — artifact writes
+import { LOOP_COMMANDS } from "./commands-loops"; // row #100 - open-loop writes
 
 /** What building an input produced. */
 export type InputResult =
@@ -256,6 +257,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   ...CONFIG_COMMANDS, // row #83 — `standup config`
   ...BACKFILL_COMMANDS, // the one-time bulk load (docs/plans/BACKFILL.md)
   ...ARTIFACT_COMMANDS, // row #98 — artifact writes
+  ...LOOP_COMMANDS, // row #100 - open-loop writes
 ]);
 
 /**

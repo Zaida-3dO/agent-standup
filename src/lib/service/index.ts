@@ -133,6 +133,7 @@ export type { TakeoverOperationInput } from "./operations/takeover";
 export type { HeartbeatOperationInput } from "./operations/heartbeat";
 export type { CheckpointOperationInput } from "./operations/checkpoint";
 export type { NoteOperationInput } from "./operations/note";
+export type { LoopAddInput, LoopAdded, LoopCloseInput } from "./operations/open-loops";
 export type {
   RecordArtifactInput,
   RecordedArtifact,
