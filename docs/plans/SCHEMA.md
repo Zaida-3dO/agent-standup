@@ -1222,6 +1222,7 @@ recorded as an override.
 | `machine` | `text` | |
 | `transport` | enum | `cli-direct` · `cli-http` · `mcp-stdio` · `mcp-http` · `http`. How this session registered. Five values because the version rule turns on the binding, and they are the same names the conformance drivers use. |
 | `hook_variant` | enum null | `cli` · `http`. From `transport` unless overridden. |
+| `hook_variant_overridden` | `boolean` | Whether the variant came from the payload rather than the transport. Without it an override and a derivation are indistinguishable afterwards, and *"why is this session on the cli hook when it registered over HTTP?"* has no answer. An override naming what the transport would have chosen anyway is **not** recorded as one — it changed nothing. |
 | `hook_version` | `text` null | What the session reported. Null = never reported one. |
 | `client` | `text` null | What kind of agent tool it is, as it describes itself. |
 | `person_id` | `text` null → `people.id` | Who it acts as, where known. |
@@ -1248,6 +1249,22 @@ installed, so its presence cannot be enforced on a machine the server does not c
 enforced, in the service layer and therefore through every adapter, is that **no unguarded session
 holds work**: such a session may still read, orient and update itself, but may not take ownership of
 an item under rules it cannot enforce.
+
+**`hook.require_registration_to_claim` turns that refusal off**, and defaults to on. It is the
+escape hatch for an installation whose clients cannot yet register — degraded rather than stopped —
+and it is `sensitive` because off means work is held under rules the holder cannot enforce. It
+defaults to *on* deliberately: a rule that ships off is a rule nobody has run, and the first time
+anyone would learn whether the refusals work is the day someone turns it on.
+
+**How a `cli-http` registration is told apart from a plain `http` one.** Four of the five transports
+are self-evident to the adapter that receives them, because of where that adapter runs. The fifth is
+not: a command line talking to a server and any other HTTP caller arrive at the same route in the
+same shape. The command line's `http` binding therefore stamps a header naming itself, which the
+registration route reads from a one-entry allow-list and ignores otherwise. The header is
+unauthenticated, and what it can change is which hook variant the reply *describes* — which the
+registration payload's own `hookVariant` override already grants any caller outright. It cannot make
+an unregistered session claimable or an incompatible one compatible, because the claim check reads
+the reported version and never the transport.
 
 **One case collapses.** Where the command line runs in `direct` mode it *is* the app — the hook, the
 rules and the migrations are one installed package — so the hook cannot be a different version from
