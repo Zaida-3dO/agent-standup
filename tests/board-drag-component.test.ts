@@ -70,6 +70,11 @@ function dragEvent() {
   return { preventDefault: vi.fn() };
 }
 
+/** A stand-in for a dragstart event, whose `dataTransfer` the card writes its payload to. */
+function dragStartEvent() {
+  return { dataTransfer: { effectAllowed: "", setData: vi.fn() } };
+}
+
 describe("ItemCard — what can be picked up", () => {
   it("is draggable when drag is wired up", () => {
     const card = ItemCard({
@@ -106,8 +111,25 @@ describe("ItemCard — what can be picked up", () => {
       needsYou: false,
       onDragStart,
     });
-    (card.props as { onDragStart: () => void }).onDragStart();
+    (card.props as { onDragStart: (e: unknown) => void }).onDragStart(dragStartEvent());
     expect(onDragStart).toHaveBeenCalledWith("item-42");
+  });
+
+  it("claims the drag payload, so a drag begun on the title link is still a card drag", () => {
+    // A card's title is a link into the detail view, and an anchor is
+    // natively draggable. Without claiming the payload here, a drag started
+    // on the title would be the browser's own link-drag carrying the URL,
+    // and dropping it on a column would do nothing at all.
+    const event = dragStartEvent();
+    const card = ItemCard({
+      entry: entry("backlog", { id: "item-42" }),
+      needsYou: false,
+      onDragStart: vi.fn(),
+    });
+    (card.props as { onDragStart: (e: unknown) => void }).onDragStart(event);
+
+    expect(event.dataTransfer.setData).toHaveBeenCalledWith("text/plain", "item-42");
+    expect(event.dataTransfer.effectAllowed).toBe("move");
   });
 
   it("marks itself pending while its move is in flight", () => {

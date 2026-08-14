@@ -55,7 +55,22 @@ export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: I
       data-draggable={draggable}
       data-pending={pending ? true : undefined}
       draggable={draggable}
-      onDragStart={draggable ? () => onDragStart(entry.item.id) : undefined}
+      onDragStart={
+        draggable
+          ? (event) => {
+              // **Claim the drag payload explicitly.** A card's title is a
+              // link into the item's detail view, and an anchor is natively
+              // draggable — so a drag begun on the title would otherwise be
+              // the browser's own link-drag, carrying the URL, and dropping
+              // it on a column would do nothing at all. Setting the data
+              // and the effect here overrides that default, so a drag
+              // started anywhere on the card is the same card drag.
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", entry.item.id);
+              onDragStart(entry.item.id);
+            }
+          : undefined
+      }
       onDragEnd={draggable ? onDragEnd : undefined}
     >
       <div className={styles.cardHead}>
