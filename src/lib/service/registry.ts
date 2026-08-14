@@ -41,6 +41,7 @@ import { release } from "./operations/release";
 import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
+import { recordArtifact, requestReview } from "./operations/record-artifact";
 import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 import { transitionItem } from "./operations/transition-item";
@@ -93,6 +94,8 @@ export const OPERATION_REGISTRY = {
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
   [note.name]: note,
+  [recordArtifact.name]: recordArtifact,
+  [requestReview.name]: requestReview,
   [orientation.name]: orientation,
   [myWork.name]: myWork,
   [transitionItem.name]: transitionItem,
