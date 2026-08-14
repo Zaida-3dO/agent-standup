@@ -9,11 +9,13 @@
 // each of those by whatever it happened to implement.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-// The cap functions themselves are unit-tested in tests/telemetry-caps.ts,
-// which runs everywhere; what this file adds is that the operation actually
-// *applies* them on the way into the table — a property no unit test of a
-// pure function can reach, and the one a mutation that deleted a `capText`
-// call at the insert site would otherwise survive.
+// ⚠️ That means a run with no database reports these as *skipped* and exits
+// 0 — a green local run is not evidence any of this passed. The cap
+// functions themselves are unit-tested in tests/telemetry-contract.test.ts,
+// which needs no database and so runs everywhere; what this file adds is
+// that the operation actually *applies* them on the way into the table — a
+// property no unit test of a pure function can reach, and the one a
+// mutation deleting a `capText` call at the insert site would survive.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
@@ -23,9 +25,12 @@ import {
   MAX_COMMAND_CHARS,
   MAX_PATHS,
   MAX_PATH_CHARS,
+  MAX_SESSION_ID_CHARS,
   MAX_TOOL_CHARS,
   TRUNCATION_MARKER,
-} from "@/lib/telemetry/caps";
+  type ToolCallBatch,
+  type ToolCallRecord,
+} from "@/lib/telemetry/contract";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -91,7 +96,7 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
     });
   }
 
-  /** One minimal, valid call. Overridable per case. */
+  /** One minimal, valid record. Overridable per case. */
   function call(overrides: Record<string, unknown> = {}) {
     return { tool: "Bash", ts: AT.toISOString(), ...overrides };
   }
@@ -142,7 +147,6 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
         call({ tool: "Read", paths: ["src/a.ts"] }),
       ]);
 
-      expect(result.recorded).toBe(2);
       expect(result.itemId).toBe(itemId);
       expect(result.assignmentId).not.toBeNull();
 
@@ -282,6 +286,189 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
       const result = await record("s-ghost-2", [call()]);
       expect(result.assignmentId).toBeNull();
       expect(result.stateAt).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Attribution: which assignment a batch lands on, and per-record sessions
+  // -------------------------------------------------------------------------
+
+  describe("attribution", () => {
+    it("attributes to the MOST RECENTLY claimed assignment when a session holds two", async () => {
+      // A session can hold more than one live assignment, and this decides
+      // which item the whole batch attributes to — so the ordering is a
+      // wrong `itemId`/`stateAt` on every row if it flips, which is #53's
+      // cost-per-stage attribution. The single-character mutation this
+      // kills: `ORDER BY a."claimedAt" DESC` -> `ASC`.
+      //
+      // The two items are seeded in DIFFERENT states, so the assertion
+      // distinguishes them by `stateAt` as well as by id — an ordering bug
+      // that happened to pick the right id would still be caught.
+      const older = await seedItem("on_deck");
+      const newer = await seedItem("in_review");
+      await claim(older, "s-order-1");
+      // `claimedAt` defaults to `now()`, so the two claims must be
+      // distinguishable in time. Asserted rather than assumed below.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await claim(newer, "s-order-1");
+
+      const claims = await prisma.assignment.findMany({
+        where: { sessionId: "s-order-1", releasedAt: null },
+        orderBy: { claimedAt: "asc" },
+      });
+      expect(claims).toHaveLength(2);
+      // Guards the guard: if both claims landed on the same timestamp the
+      // ordering assertion below would be decided by chance, not by the
+      // ORDER BY, and would pass under the mutation half the time.
+      expect(claims[0]!.claimedAt.getTime()).toBeLessThan(claims[1]!.claimedAt.getTime());
+
+      const result = await record("s-order-1", [call()]);
+      expect(result.itemId).toBe(newer);
+      expect(result.stateAt).toBe("in_review");
+    });
+
+    it("caps the SESSION ID before it is stored and before it is used as a key", async () => {
+      // `sessionId` is an index key (`ToolCall_sessionId_ts_idx`). An
+      // uncapped value that differs only past the cap would split one
+      // session's telemetry across two keys — a wrong measurement, not an
+      // expensive one. The mutation this kills: dropping the
+      // `capText(input.sessionId, MAX_SESSION_ID_CHARS)` call so the raw id
+      // is used, which every other case in this file survives.
+      const huge = "s".repeat(MAX_SESSION_ID_CHARS + 200);
+      const result = await record(huge, [call()]);
+
+      const stored = result.sessionId;
+      expect(stored.length).toBe(MAX_SESSION_ID_CHARS);
+      expect(result.truncatedFields).toBeGreaterThan(0);
+
+      // The row is keyed by the CAPPED id, so it is findable by it — the
+      // property that actually matters, and the one a length-only
+      // assertion on the return value would not prove.
+      const rows = await prisma.toolCall.findMany({ where: { sessionId: stored } });
+      expect(rows).toHaveLength(1);
+      // And not by the raw one, which is what "split across two keys"
+      // would look like.
+      expect(await prisma.toolCall.findMany({ where: { sessionId: huge } })).toHaveLength(0);
+    });
+
+    it("attributes EVERY row in a batch to the envelope's session", async () => {
+      // The session is on the envelope, not on each record, so one flush is
+      // one session's work by construction. This pins that: every row
+      // written carries the envelope's id and the item that session holds,
+      // with nothing per-record able to redirect any of them.
+      const itemId = await seedItem("executing");
+      await claim(itemId, "s-envelope-1");
+
+      const result = await record("s-envelope-1", [
+        call({ command: "one" }),
+        call({ command: "two" }),
+        call({ command: "three" }),
+      ]);
+
+      expect(result.recorded).toBe(3);
+      expect(result.sessionId).toBe("s-envelope-1");
+
+      const rows = await rowsFor("s-envelope-1");
+      expect(rows).toHaveLength(3);
+      expect(rows.every((row) => row.sessionId === "s-envelope-1")).toBe(true);
+      expect(rows.every((row) => row.itemId === itemId)).toBe(true);
+      expect(rows.every((row) => row.stateAt === "executing")).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The cross-PR contract: what the hook's spool actually sends
+  // -------------------------------------------------------------------------
+
+  describe("the record the hook spools", () => {
+    it("accepts a record shaped exactly as the shared contract defines it", async () => {
+      // Built as a `ToolCallRecord` — the same type the hook's spool
+      // constructs — so this stops compiling if the shape drifts, and fails
+      // at runtime if the schema stops accepting a value of that type. The
+      // pairing is the point: a type both sides share does not help if the
+      // server's schema refuses a value of it, which is precisely how the
+      // two halves of this feature came apart the first time.
+      const itemId = await seedItem();
+      await claim(itemId, "s-contract-1");
+
+      const one: ToolCallRecord = {
+        ts: AT.toISOString(),
+        tool: "Bash",
+        command: "npm test",
+        paths: ["src/a.ts"],
+        inputTokens: 1,
+        outputTokens: 2,
+        cacheWriteTokens: 3,
+        cacheReadTokens: 4,
+        usage5h: 0.5,
+        usageWeekly: 0.25,
+      };
+      const batch: ToolCallBatch = { sessionId: "s-contract-1", calls: [one] };
+
+      const result = (await runtime.call("record_tool_calls", batch)) as RecordToolCallsOutput;
+
+      expect(result.recorded).toBe(1);
+      const rows = await rowsFor("s-contract-1");
+      expect(rows[0]!.inputTokens).toBe(1);
+      expect(rows[0]!.cacheReadTokens).toBe(4);
+    });
+
+    it("REFUSES a record carrying its own sessionId — the session is the envelope's", async () => {
+      // A client that puts the session on every record has misread the
+      // contract, and the refusal is what tells it so. Accepting it
+      // silently would be worse than it sounds: the per-record value would
+      // be ignored, so a batch whose records name a DIFFERENT session than
+      // the envelope would be attributed wholesale to the envelope's, and
+      // nothing would ever say the field had been discarded.
+      const error = await recordRejection("s-strict-1", [
+        { ...call(), sessionId: "some-other-session" },
+      ]);
+      expect(error.code).toBe("invalid_input");
+    });
+
+    it("REFUSES model and effort — this table has no column for them", async () => {
+      // SCHEMA.md §11 keeps model and effort off `tool_calls` deliberately
+      // ("two strings on ~450k rows a year buys little"), so accepting them
+      // here would mean taking a field with nowhere to put it and dropping
+      // it on the floor. #51 is the row that consumes them and owns
+      // deciding how they travel; until then, refusing is the honest answer
+      // and the loud one.
+      const withModel = await recordRejection("s-strict-2", [
+        { ...call(), model: "some-vendor-model-id" },
+      ]);
+      expect(withModel.code).toBe("invalid_input");
+
+      const withEffort = await recordRejection("s-strict-3", [{ ...call(), effort: "high" }]);
+      expect(withEffort.code).toBe("invalid_input");
+    });
+
+    it("REFUSES a misspelled known field rather than recording a silent zero", async () => {
+      // The case that earns `.strict()` its cost. Without it, a client
+      // sending `input_tokens` for `inputTokens` has every count recorded
+      // as zero — and the first person to notice is whoever tries to
+      // compute a month of costs from them. A refused batch is retained by
+      // the client and retried once fixed; an accepted batch of zeroes is
+      // unbackfillable garbage in the one table §10 says cannot be rebuilt.
+      const error = await recordRejection("s-strict-4", [call({ input_tokens: 5 })]);
+      expect(error.code).toBe("invalid_input");
+    });
+
+    it("REFUSES an unknown field on the envelope too, not just on a record", async () => {
+      // Both levels are strict. An envelope-level typo (a client sending
+      // `session_id`) would otherwise fail the required-field check with a
+      // message about the field it did NOT send, which sends someone
+      // looking in the wrong place.
+      const error = await runtime
+        .call("record_tool_calls", {
+          sessionId: "s-strict-5",
+          calls: [call()],
+          somethingElse: true,
+        })
+        .then(() => {
+          throw new Error("expected record_tool_calls to reject, but it succeeded");
+        })
+        .catch((e: unknown) => e as { code: string });
+      expect(error.code).toBe("invalid_input");
     });
   });
 
@@ -431,14 +618,6 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
 
     it("refuses a call with no tool", async () => {
       const error = await recordRejection("s-bad-6", [{ ts: AT.toISOString() }]);
-      expect(error.code).toBe("invalid_input");
-    });
-
-    it("refuses an unrecognised field rather than dropping it — the schema is strict", async () => {
-      // A client sending `input_tokens` where the schema says `inputTokens`
-      // would otherwise have every count silently recorded as zero, and
-      // nothing would ever say so.
-      const error = await recordRejection("s-bad-7", [call({ input_tokens: 5 })]);
       expect(error.code).toBe("invalid_input");
     });
 

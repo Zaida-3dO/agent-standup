@@ -1,5 +1,13 @@
-// The caps on tool-call telemetry — MILESTONES.md #50 ("caps on the big
-// fields"), SCHEMA.md §10.
+// The shared tool-call telemetry contract — MILESTONES.md #50 (the ingest)
+// and #88 (the hook's spool), SCHEMA.md §10.
+//
+// This covers `@/lib/telemetry/contract`, the one module both halves of
+// this feature import: the record shape, the caps, and the two functions
+// that apply them. The last `describe` block is specifically about the
+// module being the *only* definition — properties like "capping twice is
+// identical to capping once" that no test of either side alone can see,
+// and that exist because the two sides were briefly separate copies and
+// disagreed on every value they could.
 //
 // These are pure functions with no database, so every case here runs
 // everywhere rather than skipping without `TEST_DATABASE_URL`. That is
@@ -20,10 +28,12 @@ import {
   MAX_PATH_CHARS,
   MAX_SESSION_ID_CHARS,
   MAX_TOOL_CHARS,
+  MAX_BATCH_SIZE,
   TRUNCATION_MARKER,
   capPaths,
   capText,
-} from "@/lib/telemetry/caps";
+  type ToolCallBatch,
+} from "@/lib/telemetry/contract";
 
 /** `n` copies of `char` — a string whose length is the only thing that matters. */
 function repeat(n: number, char = "x"): string {
@@ -161,17 +171,90 @@ describe("the cap values themselves", () => {
     expect(MAX_PATH_CHARS).toBe(256);
   });
 
-  it("caps a tool name at 128 and a session id at 128 characters", () => {
-    expect(MAX_TOOL_CHARS).toBe(128);
+  it("caps a tool name at 200 and a session id at 128 characters", () => {
+    expect(MAX_TOOL_CHARS).toBe(200);
     expect(MAX_SESSION_ID_CHARS).toBe(128);
   });
 
-  it("keeps every cap large enough to hold the truncation marker", () => {
+  it("keeps every text cap large enough to hold the truncation marker", () => {
     // A cap at or below the marker's length silently degrades to a bare
     // prefix (see `capText`), which would make truncation invisible in
-    // production. This asserts no production cap is in that range.
+    // production. This asserts no production text cap is in that range.
+    // `MAX_BATCH_SIZE` is deliberately excluded — it counts records, not
+    // characters, so the marker has nothing to do with it.
     for (const cap of [MAX_COMMAND_CHARS, MAX_PATH_CHARS, MAX_TOOL_CHARS, MAX_SESSION_ID_CHARS]) {
       expect(cap).toBeGreaterThan(TRUNCATION_MARKER.length);
     }
+  });
+
+  it("keeps the server's batch ceiling above the client's own batch size", () => {
+    // The client (MILESTONES.md #88) flushes in batches of 200. A server
+    // ceiling at or below that would refuse a full, correctly-formed flush
+    // — and the client's flush treats a refusal as keep-and-stop, so the
+    // spool would grow forever while every flush failed. The headroom is
+    // the point, not the exact number.
+    const CLIENT_BATCH_SIZE = 200;
+    expect(MAX_BATCH_SIZE).toBeGreaterThan(CLIENT_BATCH_SIZE);
+  });
+});
+
+describe("the contract both halves speak", () => {
+  // These are the assertions that exist because the ingest (#50) and the
+  // hook's spool (#88) were briefly two agreeing copies and disagreed on
+  // every field they could. They are about the *shared module being the
+  // only definition*, which is a property no test of either side alone can
+  // see.
+
+  it("puts the truncation marker INSIDE the cap, which is what makes it composable", () => {
+    // The sharpest of the four disagreements. A client that appends its
+    // marker *past* its own cap emits a string longer than the cap; the
+    // server then truncates it a second time and the value ends
+    // `…[truncated]…[truncated]`, with a shorter prefix than either side
+    // intended. Capping twice must be identical to capping once — that is
+    // the property, and it is the reason both halves import this function
+    // rather than each writing one.
+    const once = capText("z".repeat(10_000), MAX_COMMAND_CHARS);
+    const twice = capText(once, MAX_COMMAND_CHARS);
+    expect(twice).toBe(once);
+    expect(once.length).toBe(MAX_COMMAND_CHARS);
+    // Exactly one marker, not two.
+    expect(once.split(TRUNCATION_MARKER)).toHaveLength(2);
+  });
+
+  it("is idempotent for paths too — a capped list re-capped is unchanged", () => {
+    const once = capPaths(Array.from({ length: 500 }, () => "p".repeat(1_000)));
+    expect(capPaths(once)).toEqual(once);
+  });
+
+  it("puts the session on the BATCH and not on each record", () => {
+    // A compile-time assertion as much as a runtime one. The client and the
+    // server disagreed about exactly this: a record carrying its own
+    // `sessionId` posted as a bare array, against an envelope carrying it
+    // once. Constructing the batch here is what makes the shape a shared
+    // fact rather than each side's private assumption — a record that grew
+    // a `sessionId` back, or a batch that lost it, stops typechecking.
+    const batch: ToolCallBatch = {
+      sessionId: "s1",
+      calls: [
+        {
+          ts: new Date().toISOString(),
+          tool: "Bash",
+          command: "npm test",
+          paths: ["src/a.ts"],
+          inputTokens: 1,
+          outputTokens: 2,
+          cacheWriteTokens: 3,
+          cacheReadTokens: 4,
+          usage5h: 0.5,
+          usageWeekly: 0.25,
+        },
+      ],
+    };
+    expect(batch.sessionId).toBe("s1");
+    expect(batch.calls).toHaveLength(1);
+    // The body is an object, not a bare array — the difference between a
+    // batch that can carry a session (and, later, an idempotency key) and
+    // one that has nowhere to put either.
+    expect(Array.isArray(batch)).toBe(false);
   });
 });

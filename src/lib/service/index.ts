@@ -183,9 +183,10 @@ export {
   type HookDecisionOperationOutput,
 } from "./operations/hook-decision";
 
-// Telemetry ingest (MILESTONES.md #50). The caps themselves live in
-// `@/lib/telemetry/caps` rather than here — they are a property of the
-// table, not of the operation, and #51-#54 read them too.
+// Telemetry ingest (MILESTONES.md #50). The record shape and the caps live
+// in `@/lib/telemetry/contract` rather than here or in the operation: the
+// hook's spool (#88) imports the same module, so there is one definition
+// both halves speak and no way for them to disagree.
 export {
   recordToolCalls,
   MAX_BATCH_SIZE,

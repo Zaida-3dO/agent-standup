@@ -577,7 +577,7 @@ The highest-volume table and the foundation for everything measured. Written by 
 | `tool` | `text` | Tool name. |
 | `command` | `text` null | For shell tools. Enables repeat detection **and** duration learning. |
 | `paths` | `text[]` null | What it touched. Path spread is a progress signal. |
-| `state_at` | state enum, null | Item state at the time. **Denormalised deliberately** — it's derivable from `events`, but only via a correlated lookup *per row* on the largest table here, and slicing cost by stage is the whole reason this column exists. Null for ghost sessions, which have no item. |
+| `state_at` | state enum, null | Item state at the time. **Denormalised deliberately** — it's derivable from `events`, but only via a correlated lookup *per row* on the largest table here, and slicing cost by stage is the whole reason this column exists. Null for ghost sessions, which have no item. ⚠️ **Resolved at ingest, so it is the state at flush, not at the call.** The client spools and flushes in batches, and the server stamps whatever state the item is in when the batch arrives. The error is bounded by the flush interval and is zero for a session flushing while it still holds the item — but a consumer slicing cost by stage should read this column as "the stage this work was attributed to", not as an exact per-call reading. Making it exact means the per-row `events` lookup this column exists to avoid. |
 | `input_tokens` | `int` | |
 | `output_tokens` | `int` | Prices ~5× input — never fold into a single total. |
 | `cache_write_tokens` | `int` | 1.25× (5-min TTL) or 2× (1-hour). |
@@ -1118,6 +1118,7 @@ Same service, different consumers.
 |---|---|
 | `POST /poll` | Launcher. Sends machine, live sessions, usage snapshot, pending source hashes. Returns zero or more dispatches, each with a server-composed prompt. |
 | `POST /hook` | The dumb pipe. Sends event type, session, tool, command. Returns allow/deny for guarded patterns, or nudge text, or nothing. |
+| `POST /tool-calls` | Telemetry ingest (§10). One flush: `{sessionId, calls[]}` — the session on the envelope, because a flush is one session's work and it makes the assignment lookup once per request rather than once per record. Caps the big fields (truncating, marked) and refuses malformed measurements. Answers `201` with what the batch was attributed to, including `null` for a ghost session. Beside `/hook` rather than under `/items` because a ghost session has no item to nest under. |
 | `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim. |
 
 **Human-facing:**

@@ -61,8 +61,13 @@ describeIfDb("POST /api/tool-calls against Postgres", () => {
     );
 
     expect(response.status).toBe(201);
-    const body = (await response.json()) as { recorded: number; itemId: string | null };
+    const body = (await response.json()) as {
+      recorded: number;
+      sessionId: string;
+      itemId: string | null;
+    };
     expect(body.recorded).toBe(1);
+    expect(body.sessionId).toBe("route-session-1");
     // No claim was made, so this is a ghost session — recorded, not refused.
     expect(body.itemId).toBeNull();
 
@@ -93,7 +98,10 @@ describeIfDb("POST /api/tool-calls against Postgres", () => {
     // MCP and CLI adapters produce for the same input (§22's "identical
     // rejections").
     const response = await route.POST(
-      post({ sessionId: "route-session-2", calls: [{ tool: "Bash", ts: "x", inputTokens: -1 }] }),
+      post({
+        sessionId: "route-session-2",
+        calls: [{ tool: "Bash", ts: "2026-01-02T03:04:05.000Z", inputTokens: -1 }],
+      }),
     );
     expect(response.status).toBe(400);
     const body = (await response.json()) as {
