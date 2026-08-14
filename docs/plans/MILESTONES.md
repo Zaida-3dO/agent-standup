@@ -43,7 +43,6 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 | **5** | First published image — trigger a release, pull it, verify it runs | 3 | `done` |
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | `done` |
 | **95** | **Mutation testing**, wired into CI and scoped to changed files, with a threshold that blocks the pull request below it. Reads the mutation report's own kill attribution rather than a process exit code, so a mutant only counts as killed when a named test caused it — the same shape a whole-suite collection failure would otherwise misreport as a perfect score. Every run also checks a dedicated no-op fixture and refuses to trust its own numbers if that fixture is ever reported killed | 3 | `done` |
-| **106** | **Switch mutation testing back on.** The job is paused in `ci.yml` behind a `false &&`, not deleted — re-enabling is removing two characters, and the required gate follows automatically because it reads that job's result. Paused deliberately during a period of heavy parallel work, because at 22–57 minutes it is by a wide margin the slowest job in the pipeline and it runs on any source change. **Restore it once that push settles.** Whatever survived while it was off is found on the first run after, so budget for a batch of failures rather than a green run — and prefer one sweep to fix them together over discovering them one pull request at a time. If it stays off, it needs a scheduled run and somewhere the last result is visible: a check nobody runs and nobody misses is off, whatever the configuration says | 95 | |
 | **97** | **Application logging.** One JSON object per line on stderr, the conventional five levels (`debug` `info` `warn` `error` `fatal`) with a `LOG_LEVEL` threshold defaulting to `info`. Carries the operator-facing detail the error taxonomy deliberately withholds from clients — above all the `cause` an `InternalError` preserves — plus the request context needed to follow a single request through the layers it touched. Wired at the boundaries a failure actually crosses: the API error responder, the rules engine's refusals, and the adapters | 3 | `done` |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
@@ -187,11 +186,11 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **92** | **Administration API and command line** for installation-owned entities — repositories, areas, machines (including `source_globs`), accounts (including `vendor`, validated against the registered adapter list, and `budget_windows`) | 79, 91 | `done` |
 | **98** | **Artifact writes.** One `record_artifact` service call and its routes/tools/verb — `{itemId, kind, verdict?, reviewRound?, commitSha?, body?, ref?}` — plus an emitter for the `review_requested` event. **The importer is the only writer of the artifacts table**, so #17's three guards refuse every item minted through the product: `→ in_review` wants a `review_requested` event, `plan_review → executing` wants an approved plan artifact, `→ merged` wants a commit artifact and an approving code review at round+tip. One operation clears all three | 17, 20, 26 | `done` |
 | **99** | **Run the liveness ladder.** #24 built `sweepLiveness` and nothing calls it. Give it a trigger — a `standup sweep` verb and a scheduled or hook-driven invocation — so a dead session's claims are actually reclaimed. Until then a crashed session's claim is permanent: the claim insert is `ON CONFLICT DO NOTHING`, so every later claim on that item is refused as already-held with no path to release it. **Also forced takeover** — displacing a holder the ladder is not going to release. A dead holder is taken over cleanly; a possibly-alive one requires an explicit `force` **and** a written `reason`, both recorded against the displaced assignment (`superseded_by`, `liveness = superseded`, `released_at`) and in a `takeover` event. That recorded state is what an enforcement hook reads; **the hook itself is #42 and does not exist, so a displaced live session is not yet prevented from continuing** | 24 | `done` |
-| **100** | **Open-loop writes.** `loop_add` / `loop_close` over the `open_loop` / `open_loop_closed` events, with their routes, tools and verbs. The payload validators, the pairing logic and #28's read path all exist; only the write is missing, so `orientation` can display a loop nobody can record. Also add the `SCHEMA.md` section both modules cite as `§3a`, which does not exist | 20, 28 | |
-| **101** | **Wire the notification evaluator.** #25 built `evaluateRules` and named the service layer as its caller "once #27 lands transitions"; #27 landed without it, so nothing evaluates a rule and `people.notify_rules` is never read. Thread the before/after field snapshot from transition and update into it — the evaluator's own header documents the field-name casing the caller has to handle | 25, 27 | |
-| **102** | **Route the four raw event writes through the one writer.** `create_item`, `update_item`, `transition_item` and `complete_item` insert into `events` directly rather than through `appendEvent`, contradicting that module's stated invariant. Their column list omits `session_id`, `assignment_id` and `body`, so every state change and field change lands with a null session — making "who moved this" unanswerable in #28's `whatChanged` for exactly the mutations most worth attributing. Also gives `recordFieldChanges` its first caller | 20 | |
+| **100** | **Open-loop writes.** `loop_add` / `loop_close` over the `open_loop` / `open_loop_closed` events, with their routes, tools and verbs. The payload validators, the pairing logic and #28's read path all exist; only the write is missing, so `orientation` can display a loop nobody can record. Also add the `SCHEMA.md` section both modules cite as `§3a`, which does not exist | 20, 28 | `done` |
+| **101** | **Wire the notification evaluator.** #25 built `evaluateRules` and named the service layer as its caller "once #27 lands transitions"; #27 landed without it, so nothing evaluates a rule and `people.notify_rules` is never read. Thread the before/after field snapshot from transition and update into it — the evaluator's own header documents the field-name casing the caller has to handle | 25, 27 | `done` |
+| **102** | **Route the four raw event writes through the one writer.** `create_item`, `update_item`, `transition_item` and `complete_item` insert into `events` directly rather than through `appendEvent`, contradicting that module's stated invariant. Their column list omits `session_id`, `assignment_id` and `body`, so every state change and field change lands with a null session — making "who moved this" unanswerable in #28's `whatChanged` for exactly the mutations most worth attributing. Also gives `recordFieldChanges` its first caller | 20 | `done` |
 | **103** | **Terminal items out of the default read.** `get_board` and `list_items` return finished work on every call — it is the majority of the payload and the share only grows, because nothing prunes terminal state. Exclude terminal states by default, with an explicit opt-in (`--all` / `includeTerminal`) for the cases that want them, and apply the same default to the board's completed column. A filter and a default, not new machinery | 26, 36 | `done` |
-| **104** | **An event type cannot be added without an emitter.** A gating script, with the self-test every gate here ships: enumerate the event-type enum, enumerate what the service layer actually emits, and fail on a value nothing writes. `SCHEMA.md` §3 already states the rule — *add an event type only when the code that emits it exists* — and #98–#102 are what it costs when nothing checks it: a capability declared, validated, guarded and displayed, with no writer. Per-row status cannot show a gap between rows; this can | 20 | |
+| **104** | **An event type cannot be added without an emitter.** A gating script, with the self-test every gate here ships: enumerate the event-type enum, enumerate what the service layer actually emits, and fail on a value nothing writes. `SCHEMA.md` §3 already states the rule — *add an event type only when the code that emits it exists* — and #98–#102 are what it costs when nothing checks it: a capability declared, validated, guarded and displayed, with no writer. Per-row status cannot show a gap between rows; this can | 20 | `done` |
 | **105** | **Search over items** — `search` as a service call and its routes/tools/verb, indexing title and body and returning ranked matches. Answers "there is a task about this somewhere", which is otherwise unanswerable without pulling every item; the need is sharpest for a session reading a corpus it did not create. **Title and body first, deliberately** — checkpoints, events and artifacts are a substantially larger corpus and a substantially larger piece of work, and are worth attempting only once the cheap index is shown to be insufficient | 26 | |
 | **94** | **Adapter conformance harness.** Drivers behind a map typed from the adapter registry; cases authored once per operation, run against every driver; four assertions — identical outcomes by `code`, `guard` and fields · accept-and-reject per operation · **every registered guard covered by an observed rejection** · adapter completeness with bounded waivers — plus a negative control per assertion and a non-empty-guard-registry assertion | 26, 27, 29, 81, 82, 85 | |
 | **107** | **P0 — The slim read is the default, and a headline is what it returns.** Two halves of one change. **The field:** `items.headline`, a short BLUF written when the item is minted and maintained as it moves — what this work *is*, in one line, distinct from `body` (the brief) and from `Summary` (which is end-of-life and exists only once the item completes). No field answers "what is this?" without reading a 15KB brief. **The read:** every item read returns `{id, title, state, headline}` and the latest checkpoint's own headline by default; the full record is opt-in. `ITEM_COLUMNS` (`items/row.ts`) is one hardcoded 30-column `SELECT` shared by `get_board`, `list_items` and `get_item`, and `toItemRecord` maps every field unconditionally — so `body` and `customFields` come back on every call from every surface. Measured: one `get_item` at 145,317 chars of which `customFields` was 94,038 and `body` 49,538, the eight scalars actually wanted 0.2%. **Pagination cannot fix this and #103 does not touch it** — those items were `executing`, not terminal, and `limit` bounds row count while nothing bounds row size, so `limit: 1` on the largest item still overflows. Precedent is in-tree: `orientation` already selects `id, title, state` for child lists and reserves the full record for the one focal item | 26, 36, 103 | `done` |
@@ -296,12 +295,12 @@ every adapter passes the conformance harness.**
 | **35** | Profile picker — choose a user profile, remembered in the browser, switchable from the top bar | 9, 26 | `done` |
 | **36** | Board API: items grouped into columns, filters | 26 | `done` |
 | **37** | Board UI: the four columns, amber/red split in Waiting, needs-you badge | 35, 36 | `done` |
-| **38** | Since your last visit — per person, and a "seen" action | 20, 35 | |
+| **38** | Since your last visit — per person, and a "seen" action | 20, 35 | `done` |
 | **39** | Compatibility shim — a command-line surface routed at the API unchanged, kept for one release | 26, 27 | `done` |
-| **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim. **Performed on a day when nothing is executing** — duplicate, verify against the duplicate, then switch; never a wholesale swap with items in flight (`DECISIONS.md` §11, §13h) | 13, 37, 39 | |
-| **86** | `/settings` — categories, widgets, per-field help and validation all rendered from the registry; value-source badges; reset-to-default; the `sensitive` section with typed confirmation; unrecognised and invalid override sections; the read-only build-constants and bootstrap panels; first-run entry when no profiles exist | 35, 78 | |
+| **40** | Go live: rehearse against imported data, switch the source of truth over, retire the shim. **Performed on a day when nothing is executing** — duplicate, verify against the duplicate, then switch; never a wholesale swap with items in flight (`DECISIONS.md` §11, §13h) | 13, 37, 39 | `done` |
+| **86** | `/settings` — categories, widgets, per-field help and validation all rendered from the registry; value-source badges; reset-to-default; the `sensitive` section with typed confirmation; unrecognised and invalid override sections; the read-only build-constants and bootstrap panels; first-run entry when no profiles exist | 35, 78 | `done` |
 | **87** | Budget-window editor — per-window cards, the three boundary kinds in plain words, the band chart, drawn validation errors, the time scrubber, and presets. Plots an account's position **once usage readings exist**; before that the chart is the boundaries alone | 86 | |
-| **93** | Administration UI — one page pattern per entity kind, over the API from #92, linked from `/settings` | 35, 92 | |
+| **93** | Administration UI — one page pattern per entity kind, over the API from #92, linked from `/settings` | 35, 92 | `done` |
 
 **Milestone done when:** the board is the live view, every orchestrator reads and writes through
 the API rather than against anything it imported from, **and the system is configurable end to end —
@@ -318,14 +317,14 @@ environment.**
 |---|---|---|---|
 | **41** | The hook decision as a service call, and its route: allow-list silent, ask-list answered, **denies when unsure**. The route is one caller; `standup hook` is another | 14 | `done` |
 | **42** | The hook script: one file, fires after each tool call and at stop, cached rules | 41 | `done` |
-| **43** | Session registration handshake: the `sessions` table (additive migration), the registration transport recorded as the capability signal in five values matching the adapter names, `standup session register` and its route, a transport-specific reply naming the matching hook variant, and per-variant protocol version comparison — advisory when stale, refusing a claim when incompatible or absent. Plus a CI assertion that the shipped hook's declared version equals the build constant, so nobody has to remember to bump the right one | 42, 79 | |
+| **43** | Session registration handshake: the `sessions` table (additive migration), the registration transport recorded as the capability signal in five values matching the adapter names, `standup session register` and its route, a transport-specific reply naming the matching hook variant, and per-variant protocol version comparison — advisory when stale, refusing a claim when incompatible or absent. Plus a CI assertion that the shipped hook's declared version equals the build constant, so nobody has to remember to bump the right one | 42, 79 | `done` |
 | **44** | Merge gate: the judgement server-side, only command parsing local | 18, 42 | |
-| **45** | Process registry, and the kill guard as an **ownership check** | 42 | |
-| **46** | Nudges: delegate mode, staging, escalation, wind-down | 25, 42 | |
-| **47** | Stop-hook catch: live crew and nothing scheduled to wake you | 42 | |
+| **45** | Process registry, and the kill guard as an **ownership check** | 42 | `done` |
+| **46** | Nudges: delegate mode, staging, escalation, wind-down | 25, 42 | `done` |
+| **47** | Stop-hook catch: live crew and nothing scheduled to wake you | 42 | `done` |
 | **48** | Plugin package — MCP config, hook config, and the command line in one install. **Consumes the published package rather than carrying a copy of the binary** | 30, 42, 89 | |
 | **49** | `/setup-agent-standup` — registers the scheduled task, then **proves it works** with a live call | 48 | |
-| **88** | `standup hook` — the hook payload on stdin, the local telemetry spool and its batched flush | 42, 79 | |
+| **88** | `standup hook` — the hook payload on stdin, the local telemetry spool and its batched flush | 42, 79 | `done` |
 | **89** | Publish the package with the `standup` binary on the same version tag that publishes the image | 79 | `done` |
 | **112** | **P1 — Post-merge cleanup as a hook, not a briefing line.** Remove the worktree, delete the local branch, release any Playwright pool slot, kill relay PIDs. This is recorded three times as a standing instruction in the First Mate (`standing-authorizations.md`, twice, once as "an acceptance condition on every crew brief, not an afterthought") and was never mechanised: all three Stop hooks searched for cleanup vocabulary return zero matches, and the cost is measured — **948 MB across five leftover worktrees on one machine**. Something written down three times and never done is not a documentation problem. Rides #46's advisory channel as a fifth nudge kind; the equivalent gap one layer down is that the file-based nudge state has no GC path either (61 orphaned tick files, oldest three weeks) | 42, 46 | |
 | **114** | **P2 — Keep the work moving.** A nudge computed from item state: an item whose coding is finished with no reviewer, an available row nobody is building, a claim held by a session that has gone quiet. #46's four kinds — delegate, staging, escalation, wind-down — are all *hygiene* guards; none is a *flow* guard, and this is the class that catches the failure everyone sees. The specification is already written, in `ORCHESTRATION-DIRECTIVE.md`: *"An unblocked row should never sit idle. If the dependency graph says a row is available and nothing is building it, that is a failure of orchestration, not a neutral state"* — which is checkable server-side from item state alone. **Rate-limit it server-side**: `events.type = 'nudge'` is already in the enum with a `{kind}` payload, so last-nudged-at per session and kind is a query rather than a state file. The prior art is honest about why that matters — neither live First Mate nudge hook throttles at all, and the only real cooldown is in an archived one | 46, 104 | |
@@ -365,7 +364,7 @@ the client is the handful of checks that cannot run anywhere else.
 > file round-trips on every tool call forever.
 >
 > **It fails closed, which is why this is a note rather than a defect.** Nothing is unsafe; the
-> capability is simply absent. #43 is the row that adds the registration and response fields that make
+> capability is simply absent. #43 is the row that adds the registration and the server-side source of truth that make
 > it real, which is why it should land before #44, #45, #46 and #88 — those are precisely the rows
 > whose behaviour is supposed to live on the ask list, and each would otherwise be built against a
 > path that cannot fire.
@@ -391,7 +390,7 @@ the client is the handful of checks that cannot run anywhere else.
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **50** | Tool-call ingest from the hook, with the item's state at the time, caps on the big fields | 42 | |
+| **50** | Tool-call ingest from the hook, with the item's state at the time, caps on the big fields | 42 | `done` |
 | **51** | Runs: a new run whenever the model or effort changes; the hook reports the model per call | 50 | |
 | **52** | Price table and cost, always recomputable from the token counts | 51 | |
 | **53** | Aggregation: cost per item, per session, **per stage** | 52 | |
@@ -451,8 +450,8 @@ since M7.
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **72** | Item detail: subtask tree, artifacts, history, summary | 37 | |
-| **73** | Drag between columns, with the move showing immediately | 37 | |
+| **72** | Item detail: subtask tree, artifacts, history, summary | 37 | `done` |
+| **73** | Drag between columns, with the move showing immediately | 37 | `done` |
 | **74** | Project view and progress view | 72 | |
 | **75** | Filters and search: area, repo, state, who's on it, priority | 36 | `done` |
 | **76** | **Mobile** — P3. A different flow, not a squeezed desktop: a list with a status picker instead of drag, filters in a sheet, thumb-sized sliders, and you can still mint work | 68, 73, 75 | |
@@ -530,3 +529,32 @@ back designed properly with replies).
 > not "did tests run", but "would this test actually fail if the behaviour it names regressed". A
 > future gate earns its place the same way — by demonstrating a failure mode review provably misses,
 > not by asserting one in the abstract.
+
+---
+
+## M11 — Rounding up
+
+*Feature: the deliberate temporaries are retired, and nothing is left switched off by accident.*
+
+Work that exists because something was paused, deferred or worked around while the rest was being
+built. Each row here is a promise made earlier in the file, and the milestone exists so those
+promises have somewhere to live other than a comment nobody re-reads. A row belongs here when the
+question is *"is this still switched off?"* rather than *"has this been built?"*.
+
+| PR | Delivers | Needs | Status |
+|---|---|---|---|
+| **106** | **Switch mutation testing back on.** The job is paused in `ci.yml` behind a `false &&`, not deleted — re-enabling is removing two characters, and the required gate follows automatically because it reads that job's result. Paused deliberately during a period of heavy parallel work, because at 22–57 minutes it is by a wide margin the slowest job in the pipeline and it runs on any source change. **Restore it once that push settles.** Whatever survived while it was off is found on the first run after, so budget for a batch of failures rather than a green run — and prefer one sweep to fix them together over discovering them one pull request at a time. If it stays off, it needs a scheduled run and somewhere the last result is visible: a check nobody runs and nobody misses is off, whatever the configuration says | 95 | |
+
+**Milestone done when:** nothing in the tree is disabled, waived or stubbed without a row here saying
+so — and this table is empty.
+
+> **Why this is its own milestone and not part of M1.** #106 sat under *Infrastructure* because that
+> is where mutation testing was built. But the row is not infrastructure work: nothing is missing, and
+> the code it describes already exists and already ran. What it tracks is a **deliberate temporary** —
+> a gate switched off during a period of heavy parallel work, on the explicit understanding that it
+> goes back on. Filed under M1 it reads as unbuilt; filed here it reads as what it is, which is a debt
+> with a due date.
+>
+> That distinction matters more than it sounds, because a paused gate is invisible in exactly the way
+> a missing one is not. A milestone that never gets a row is obvious; a check that passes in four
+> seconds without doing anything looks the same as a check that passed.
