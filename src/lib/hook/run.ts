@@ -17,8 +17,9 @@
 import { parseHookPayload } from "./payload";
 import { readCache, serialiseCache, type CacheState, type HookRules } from "./rules-cache";
 import { decide, type AskKillGuard, type AskServer, type HookVerdict } from "./decide";
-import { renderResponse, type RenderedResponse } from "./response";
+import { renderResponse, renderWithStopCatch, type RenderedResponse } from "./response";
 import type { SessionEnforcement } from "./enforcement";
+import { evaluateStopCatch, type StopContext } from "./stop-catch";
 
 export interface RunHookOptions {
   /** Everything the agent tool wrote to the hook's stdin. */
@@ -40,6 +41,11 @@ export interface RunHookOptions {
    * unreachable.
    */
   readonly askKillGuard?: AskKillGuard;
+  /**
+   * What is known about this session's crew when it tries to stop
+   * (MILESTONES.md #47). Advisory: nothing here can refuse the stop.
+   */
+  readonly stop?: StopContext;
 }
 
 /**
@@ -81,9 +87,16 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
   // common path is free; buying freshness with an extra request on every
   // stale call would spend exactly what the cache was built to save.
   let refreshed: HookRules | undefined;
+  let volunteeredStop: StopContext | undefined;
   const askServer: AskServer = async (asked) => {
     const answer = await options.askServer(asked);
     if (answer?.rules !== undefined) refreshed = answer.rules;
+    // Advisory, and read alongside the rules for the same reason: whatever
+    // the server volunteers on a round trip this event was making anyway is
+    // free. It never triggers a request of its own — a `Stop` carries no
+    // command, so it makes no server call at all, and the catch has to work
+    // from what the caller already knows.
+    if (answer?.stop !== undefined) volunteeredStop = answer.stop;
     return answer;
   };
 
@@ -105,5 +118,33 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
     }
   }
 
-  return renderResponse(verdict, event.eventType);
+  // The stop-hook catch (MILESTONES.md #47). Evaluated after the verdict and
+  // composed beside it — never inside it — so that no branch here can turn
+  // the catch into a refusal of the stop. Field-by-field merge, so a server
+  // that reports only the crew count does not erase a locally-known wait.
+  const stopCatch = evaluateStopCatch(event, mergeStopContext(options.stop, volunteeredStop));
+
+  return renderWithStopCatch(renderResponse(verdict, event.eventType), stopCatch);
+}
+
+/**
+ * Combines what was known locally with whatever the server volunteered.
+ *
+ * **The server wins field by field**, because it is strictly newer: it
+ * answered on the round trip this event was already making, whereas the
+ * local value was read before the call went out. Field by field rather than
+ * wholesale so a response mentioning only the crew count does not erase a
+ * locally-known backgrounded wait.
+ *
+ * Exported for the test that pins that precedence. Asserting it through a
+ * hand-rolled spread in the test would prove only that object spread works;
+ * the property worth protecting is which side *this* function prefers.
+ */
+export function mergeStopContext(
+  local: StopContext | undefined,
+  volunteered: StopContext | undefined,
+): StopContext | undefined {
+  if (local === undefined) return volunteered;
+  if (volunteered === undefined) return local;
+  return { ...local, ...volunteered };
 }

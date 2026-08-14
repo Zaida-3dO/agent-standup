@@ -23,6 +23,7 @@
 // session after every Read, Grep and Glob the agent performs.
 
 import type { HookVerdict } from "./decide";
+import type { StopCatch } from "./stop-catch";
 
 /** The two exit codes this hook uses. */
 export const HOOK_EXIT = {
@@ -96,5 +97,39 @@ export function renderResponse(verdict: HookVerdict, eventName: string): Rendere
     stdout: `${JSON.stringify(output)}\n`,
     stderr: `${verdict.reason}\n`,
     exitCode: HOOK_EXIT.DENY,
+  };
+}
+
+/**
+ * Attaches the stop-hook catch to an already-rendered response —
+ * MILESTONES.md #47.
+ *
+ * ── The exit code is never touched ─────────────────────────────────────
+ *
+ * DECISIONS.md §6: "**Nudge, not block**: a refused stop can trap an agent
+ * in a loop." So the catch is written to **stderr** and the exit code is
+ * carried through from the response it decorates, unchanged. A `Stop` event
+ * is allowed by construction (it has no command to classify), so in practice
+ * that code is zero — and this function contains no expression that could
+ * make it anything else, which is what keeps the advisory property true by
+ * construction rather than by convention.
+ *
+ * stdout is left exactly as it was for the same reason `renderResponse`
+ * writes nothing there on an allow: it is parsed as JSON by the tools that
+ * read it, and prose printed into it is a parse failure.
+ */
+export function renderWithStopCatch(
+  response: RenderedResponse,
+  stopCatch: StopCatch | null,
+): RenderedResponse {
+  if (stopCatch === null) return response;
+
+  const advisory = `[standup:${stopCatch.kind}] ${stopCatch.text}\n`;
+
+  return {
+    stdout: response.stdout,
+    stderr: `${response.stderr}${advisory}`,
+    // Deliberately the response's own code — see the note above.
+    exitCode: response.exitCode,
   };
 }
