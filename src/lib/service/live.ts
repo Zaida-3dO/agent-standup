@@ -70,6 +70,12 @@ export const SETTINGS_WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "put_setting",
   "delete_setting",
   "patch_settings",
+  // Removing a stored override whose key this build does not declare is a
+  // settings change like any other: it bumps the revision, so the held
+  // snapshot is stale the moment it commits. This entry was added because
+  // the test below demanded it rather than because anyone remembered to —
+  // which is the whole reason that test derives the list from the source.
+  "remove_unrecognised_setting",
 ]);
 
 /**
