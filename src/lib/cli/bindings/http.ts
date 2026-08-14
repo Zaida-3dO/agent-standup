@@ -302,12 +302,12 @@ export function createHttpBinding({
         // is a fixed sentence plus the error's *class*, which names the
         // failure mode without carrying an address.
         //
-        // **The log gets what the terminal must not.** The withheld
-        // detail — the host, the port, whatever the connect error actually
-        // said — is exactly what a person diagnosing this needs, and until
-        // now it was discarded rather than merely hidden. `describeError`
-        // (`lib/log.ts`) renders the cause and its own chain onto stderr,
-        // which is a stream a person reads, not one a pipeline parses.
+        // **The log gets what the terminal must not.** The detail withheld
+        // above — the host, the port, whatever the connect error actually
+        // said — is exactly what a person diagnosing this needs, so it is
+        // kept rather than dropped: `describeError` (`lib/log.ts`) renders
+        // the cause and its own chain onto stderr, which is a stream a
+        // person reads, not one a pipeline parses.
         log.error("Could not reach the server.", {
           requestId,
           transport: "cli",

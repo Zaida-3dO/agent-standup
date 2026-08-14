@@ -180,9 +180,10 @@ describe("the CLI direct binding", () => {
 
 describe("the CLI http binding", () => {
   test("logs the connect failure whose text the terminal is never shown", async () => {
-    // The withheld detail — the host, the port, what the connect error
-    // actually said — is exactly what a person diagnosing this needs, and
-    // until now it was discarded rather than merely hidden.
+    // The detail withheld from the terminal — the host, the port, what the
+    // connect error actually said — is exactly what a person diagnosing
+    // this needs, so it is hidden from the caller and kept for the log
+    // rather than dropped on the floor.
     const binding = createHttpBinding({
       baseUrl: "http://example.invalid",
       fetch: async () => {
