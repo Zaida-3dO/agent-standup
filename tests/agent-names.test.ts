@@ -19,7 +19,6 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { ConflictError, NotFoundError, isServiceError } from "@/lib/service";
 import {
   assignName,
@@ -30,7 +29,7 @@ import {
   type AgentNameRow,
 } from "@/lib/agent-names";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -51,11 +50,7 @@ describeIfDb("agent-names — against a real database", () => {
   let seedCounter = 0;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   }, 60_000);
 

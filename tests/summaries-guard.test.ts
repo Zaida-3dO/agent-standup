@@ -10,7 +10,6 @@
 // `tests/state-machine-transition.test.ts`.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { GuardRegistry, applyTransition, rehearseTransition } from "@/lib/service/state-machine";
 import { summaryRequiredGuard } from "@/lib/service/summaries";
 import {
@@ -24,7 +23,7 @@ import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceContext } from "@/lib/service/context";
 import { z } from "zod";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -39,11 +38,7 @@ describeIfDb("the summaries guard, against Postgres", () => {
   let runtime: ServiceRuntime;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
