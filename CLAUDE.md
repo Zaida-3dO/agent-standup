@@ -143,9 +143,17 @@ the history"). Waive one line at a time, with a reason, in a comment the languag
 ```
 
 A waiver's own line is never scanned, so `external-ref-ok` covers the line it sits on and
-`external-ref-ok-next-line` covers **that line and the one after**. A waiver covers the *whole* line,
-so attach it precisely — on a long wrapped line it can silence more than you meant, and the run
-summary reports how many matches the tree's waivers are silencing so that creep stays visible.
+`external-ref-ok-next-line` covers **that line and the next one with content** — blank lines between
+are skipped, because Prettier inserts one after a standalone HTML comment in markdown, and a waiver
+whose target shifts by a line silently excuses whatever lands in that position instead. A waiver covers the *whole* line, so attach it precisely — on a long wrapped line it
+can silence more than you meant, and the run summary reports how many matches the tree's waivers are
+silencing so that creep stays visible.
+
+**A `-next-line` waiver that covers no match fails the check.** Covering nothing means it has either
+drifted off the line it was written for or outlived the text it excused, and both are worth
+surfacing rather than leaving in place to absorb an unrelated line later. **Prefer the same-line
+form** where the language allows it: it is anchored to the text it excuses rather than to a
+position, so no formatter can separate the two.
 
 **The reason is mandatory and must read as a phrase**, not padding — a waiver that says nothing fails
 the check itself, so silencing it always costs an explanation that lands in the diff beside the text

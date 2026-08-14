@@ -124,7 +124,7 @@ describeIfDb("completedAt follows the shared terminal-state list", () => {
       const completedAt = await moveTo(itemId, to);
 
       if (isTerminalState(to)) {
-        // Replacing `isTerminalState(to)` in transition.ts with a hardcoded
+        // Swapping `isTerminalState(to)` in transition.ts for a hardcoded
         // set that omits any one state makes this fail for that state.
         expect(completedAt, `expected ${to} to stamp completedAt`).not.toBeNull();
       } else {

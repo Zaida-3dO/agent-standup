@@ -83,6 +83,39 @@
  * you meant. The run summary prints how many matches the waivers in a tree
  * are silencing, so that creep is visible rather than quiet.
  *
+ * ── Why a `-next-line` waiver cannot be trusted to stay put ──────────────
+ *
+ * A `-next-line` waiver is anchored by POSITION, and position is not stable
+ * under formatting. In markdown, Prettier inserts a blank line after a
+ * standalone HTML comment — so the line a waiver was written to cover moves
+ * down by one the first time the file is formatted. Two things follow, and
+ * the second is the dangerous one:
+ *
+ *   1. The intended line is no longer covered, so the check fires on
+ *      something already reviewed and waived. Noisy, but visible.
+ *   2. The waiver now covers whatever line landed in that position instead,
+ *      silently excusing a violation nobody chose to excuse — while the
+ *      waiver and its reason sit right there in the diff looking correct.
+ *
+ * That second case breaks the guarantee the whole mechanism exists for:
+ * silencing this check should always cost a written explanation. Two
+ * defences, because either alone leaves a hole:
+ *
+ *   - **A blank line does not break the link.** A `-next-line` waiver covers
+ *     the next line with content, skipping blank lines between. Prettier's
+ *     insertion is exactly a blank line, so the waiver keeps covering the
+ *     text it was attached to and case 1 stops happening.
+ *   - **A waiver that covers nothing is itself a failure.** If the line a
+ *     `-next-line` waiver points at holds no match, the waiver is either
+ *     shifted or stale — and both are worth surfacing loudly rather than
+ *     leaving in place to catch an unrelated line later. This is what stops
+ *     case 2: a shifted waiver cannot sit quietly, because covering nothing
+ *     is reported.
+ *
+ * Prefer the same-line form (`external-ref-ok`) where the language allows
+ * it. It is anchored to the text it excuses rather than to a position, so
+ * no formatter can separate the two.
+ *
  * The reason is mandatory and has to read as a phrase — several real words,
  * not twelve characters of padding. A waiver that says nothing fails the
  * check itself, so silencing it always costs an explanation sitting in the
@@ -430,6 +463,13 @@ function waiversIn(lines) {
   const waivedNextLines = new Set();
   /** Waivers that fail to give a reason — themselves a failure. */
   const malformed = [];
+  /**
+   * Each `-next-line` waiver and the line it ended up covering, so a waiver
+   * covering no match can be reported once the file has been scanned. Kept
+   * as a list here rather than judged inline because whether the covered
+   * line holds a match is not known until the patterns have run over it.
+   */
+  const nextLineWaivers = [];
 
   let inFence = false;
 
@@ -445,7 +485,34 @@ function waiversIn(lines) {
 
     const lineNumber = index + 1;
     waiverLines.add(lineNumber);
-    if (found[1]) waivedNextLines.add(lineNumber + 1);
+    if (found[1]) {
+      // The next line WITH CONTENT, not simply the next line. Prettier puts
+      // a blank line after a standalone HTML comment in markdown, which
+      // would otherwise move the covered line off the text it was attached
+      // to the first time the file is formatted.
+      let target = lineNumber + 1;
+      while (target <= lines.length && (lines[target - 1] ?? "").trim() === "") target += 1;
+      if (target <= lines.length) {
+        waivedNextLines.add(target);
+        nextLineWaivers.push({
+          line: lineNumber,
+          column: (found.index ?? 0) + 1,
+          match: found[0].trim(),
+          text: line,
+          covers: target,
+        });
+      } else {
+        // A `-next-line` waiver with nothing after it but blank lines covers
+        // nothing at all and never can — reported on its own line.
+        nextLineWaivers.push({
+          line: lineNumber,
+          column: (found.index ?? 0) + 1,
+          match: found[0].trim(),
+          text: line,
+          covers: null,
+        });
+      }
+    }
 
     const reason = cleanReason(found[2] ?? "");
     if (!isRealReason(reason)) {
@@ -458,20 +525,72 @@ function waiversIn(lines) {
     }
   });
 
-  return { waiverLines, waivedNextLines, malformed };
+  return { waiverLines, waivedNextLines, malformed, nextLineWaivers };
 }
 
 /**
  * Find every violation in one file's text.
  *
  * Returns objects of `{ line, column, patternId, match, text, kind }` where
- * `kind` is `"external-ref"` for a matched shape and `"empty-waiver"` for a
- * waiver that silences the check without saying why.
+ * `kind` is `"external-ref"` for a matched shape, `"empty-waiver"` for a
+ * waiver that silences the check without saying why, and `"stale-waiver"`
+ * for a `-next-line` waiver that covers no match at all.
  */
 export function findViolations(text) {
   const lines = text.split(/\r?\n/);
   const violations = [];
-  const { waiverLines, waivedNextLines, malformed } = waiversIn(lines);
+  const { waiverLines, waivedNextLines, malformed, nextLineWaivers } = waiversIn(lines);
+
+  /**
+   * Whether a line holds at least one of the shapes this check matches —
+   * **including one that only exists across the following line break.**
+   *
+   * The straddle case is not an edge case here. This corpus is hard-wrapped,
+   * so a phrase like "the old system" lands astride a break roughly as often
+   * as not, and the second pass below exists entirely to catch those. A
+   * waiver attached to the line where such a phrase *begins* is covering a
+   * real match even though that line, read alone, contains none — so judging
+   * it on the line's own text would call a working waiver stale and force it
+   * to be deleted or moved somewhere it does nothing.
+   *
+   * Joining with the next line mirrors how the second pass flattens the
+   * text: trimmed, single space for the newline. Rebuilds each regex with
+   * `i` — the same case-insensitivity the scan applies — rather than reusing
+   * the pattern objects, so this cannot disagree with the scan about whether
+   * something matches, and a fresh regex per test keeps `lastIndex` out of
+   * it entirely.
+   */
+  const hasMatch = (lineNumber) => {
+    const own = (lines[lineNumber - 1] ?? "").trim();
+    const next = (lines[lineNumber] ?? "").trim();
+    // A blank line is a paragraph boundary, and the second pass treats it as
+    // one — so a phrase cannot form across it and neither can a waiver's
+    // coverage.
+    const withNext = next === "" ? own : `${own} ${next}`;
+    return PATTERNS.some((pattern) => new RegExp(pattern.regex.source, "i").test(withNext));
+  };
+
+  // A `-next-line` waiver that covers no match excuses nothing, and is
+  // reported rather than left in place.
+  //
+  // It is either shifted — the line it was written for moved, and it is now
+  // aimed at unrelated text it would silence the moment that text acquired a
+  // match — or stale, left behind after the violation it excused was
+  // reworded away. Both are worth failing on: the whole point of the waiver
+  // mechanism is that silencing this check costs a written explanation, and
+  // a waiver that has drifted off its target still *looks* like one while
+  // guaranteeing nothing.
+  for (const waiver of nextLineWaivers) {
+    if (waiver.covers !== null && hasMatch(waiver.covers)) continue;
+    violations.push({
+      line: waiver.line,
+      column: waiver.column,
+      patternId: "waiver-covering-nothing",
+      match: waiver.match,
+      text: waiver.text,
+      kind: "stale-waiver",
+    });
+  }
 
   for (const found of malformed) {
     violations.push({
@@ -628,9 +747,22 @@ function trackedFiles() {
   return result.stdout.split("\0").filter(Boolean);
 }
 
+/** What to say about a violation that came from a waiver rather than a pattern. */
+const WAIVER_ADVICE = {
+  "waiver-without-a-reason": "a waiver has to say why the match is really about this repository",
+  "waiver-covering-nothing":
+    "this -next-line waiver covers no match — it has either shifted off the line it was " +
+    "written for or the text it excused is gone. Delete it, or move it onto the line it " +
+    "means; prefer the same-line `external-ref-ok` form, which no formatter can separate " +
+    "from the text it excuses",
+};
+
 function describe(violation, path) {
   const pattern = PATTERNS.find((p) => p.id === violation.patternId);
-  const why = pattern?.why ?? "a waiver has to say why the match is really about this repository";
+  const why =
+    pattern?.why ??
+    WAIVER_ADVICE[violation.patternId] ??
+    "a waiver has to say why the match is really about this repository";
   return [
     `${path}:${violation.line}:${violation.column}  [${violation.patternId}]  matched: ${JSON.stringify(violation.match)}`,
     `    ${violation.text.trim()}`,

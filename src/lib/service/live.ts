@@ -85,7 +85,7 @@ export const SETTINGS_WRITE_OPERATIONS: ReadonlySet<string> = new Set([
  * and nothing was discharging it, so a setting written through any adapter
  * could stay invisible to that same process for the whole revalidation
  * interval. Every caller that writes a setting and then depends on it
- * taking effect could read the old value, and a test faster than the
+ * taking effect could read a superseded value, and a test faster than the
  * interval would fail intermittently long before anyone recognised the
  * cause.
  *
