@@ -16,43 +16,19 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
-import { columnForSubtree, type ItemDetailOutput } from "@/lib/service/operations/get-item-detail";
+import type { ItemDetailOutput } from "@/lib/service/operations/get-item-detail";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
-// `columnForSubtree` is pure, so it is provable without a database — and it
-// is the rule that decides where a project sits, which is the one thing on
-// this screen a client cannot recompute. Kept outside the DB block so it
-// runs everywhere.
-describe("columnForSubtree", () => {
-  it("is in_progress if ANYTHING is moving, whatever else is there", () => {
-    expect(columnForSubtree(["merged", "blocked", "executing"])).toBe("in_progress");
-    expect(columnForSubtree(["planning"])).toBe("in_progress");
-  });
-
-  it("is waiting when something is parked and nothing is moving", () => {
-    expect(columnForSubtree(["merged", "paused"])).toBe("waiting");
-    expect(columnForSubtree(["blocked", "on_deck"])).toBe("waiting");
-  });
-
-  it("is backlog when the only unfinished work is unstarted", () => {
-    expect(columnForSubtree(["merged", "on_deck"])).toBe("backlog");
-    expect(columnForSubtree(["someday"])).toBe("backlog");
-  });
-
-  it("is completed only when every child is finished", () => {
-    expect(columnForSubtree(["merged", "wont_do", "cancelled", "research_done"])).toBe("completed");
-  });
-
-  it("is backlog, not completed, for a project with no children at all", () => {
-    // An empty project is work that exists and has not started. Reporting
-    // it as completed would mark unstarted work done, which is the more
-    // dangerous direction of this ambiguity.
-    expect(columnForSubtree([])).toBe("backlog");
-  });
-});
-
+// The rule deciding where a **project** sits is `columnForProject`
+// (`service/board/columns.ts`), which this operation calls rather than
+// reimplementing — its own header exists to keep that mapping in one place,
+// and the detail view must not disagree with the board about the same
+// project. It is exercised directly in `tests/board-columns.test.ts`; the
+// assertion that matters here is that this operation actually applies it,
+// which the "derives a project's from its children" case below makes
+// against a real database.
 describeIfDb("get_item_detail against Postgres", () => {
   const dbName = scratchDatabaseName("item_detail");
   let scratchUrl: string;
@@ -188,6 +164,43 @@ describeIfDb("get_item_detail against Postgres", () => {
       expect(titles.indexOf("first")).toBeLessThan(titles.indexOf("first-child"));
       expect(titles.indexOf("first-child")).toBeLessThan(titles.indexOf("second"));
       expect(detail.subtasks.map((s) => s.id)).toEqual([first.id, firstChild.id, second.id]);
+    });
+
+    it("orders siblings created in the SAME millisecond deterministically", async () => {
+      // The CTE appends the item's id to each path step precisely so
+      // same-millisecond siblings have a total order. Without a controlled
+      // `createdAt` no test can build that case — every item gets its own
+      // timestamp — so the tiebreaker is stripped-out-and-still-green
+      // unless the collision is forced, as it is here.
+      //
+      // The assertion is *stability*, not a particular order: which sibling
+      // sorts first is arbitrary and not worth pinning. What matters is
+      // that two identical reads agree, because a tree that reorders itself
+      // between refreshes is the failure the tiebreaker prevents.
+      const project = await createItem({ area: "detail-tie" });
+      const ids: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const child = await createItem({
+          area: "detail-tie",
+          parentId: project.id,
+          title: `sibling ${i}`,
+        });
+        ids.push(child.id);
+      }
+      // One instant for all of them, so `createdAt` alone cannot order them.
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "createdAt" = TIMESTAMPTZ '2026-01-01 00:00:00.000+00' WHERE "id" = ANY($1::text[])`,
+        ids,
+      );
+
+      const first = (await detailOf(project.id)).subtasks.map((s) => s.id);
+      const second = (await detailOf(project.id)).subtasks.map((s) => s.id);
+
+      expect(first).toHaveLength(6);
+      expect(first).toEqual(second);
+      // And it is a real ordering, not the arbitrary one the plan happened
+      // to produce: appending the id makes it sort by id under the tie.
+      expect(first).toEqual([...ids].sort());
     });
 
     it("gives a task its column and gives a nested project NONE", async () => {

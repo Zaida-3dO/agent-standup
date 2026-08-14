@@ -177,6 +177,32 @@ describe("latestVerdict", () => {
     ).toBe("lgtm");
   });
 
+  it("takes the LAST verdict recorded within the same round, not the first", () => {
+    // Reachable, not theoretical: a code review and a visual review can be
+    // recorded at the same round and disagree. The server orders artifacts
+    // by round then creation time, so the last one in a round is the newest
+    // opinion — and `>=` rather than `>` is what makes that hold. With `>`
+    // the first artifact of the round would win and a later rejection
+    // would be reported as the earlier pass.
+    expect(
+      latestVerdict([
+        artifact({ id: "code", reviewRound: 2, verdict: "lgtm" }),
+        artifact({ id: "visual", reviewRound: 2, verdict: "changes_required" }),
+      ]),
+    ).toBe("changes_required");
+  });
+
+  it("takes the last same-round verdict in the other direction too", () => {
+    // The mirror of the case above, so the assertion cannot be satisfied by
+    // a rule that simply prefers a rejection over a pass.
+    expect(
+      latestVerdict([
+        artifact({ id: "code", reviewRound: 2, verdict: "changes_required" }),
+        artifact({ id: "visual", reviewRound: 2, verdict: "lgtm" }),
+      ]),
+    ).toBe("lgtm");
+  });
+
   it("ignores artifacts with no verdict — a plan or a screenshot is not a review", () => {
     expect(
       latestVerdict([

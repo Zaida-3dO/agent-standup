@@ -34,7 +34,11 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
-import { columnForState, type BoardColumn } from "../board/columns";
+// `columnForProject` rather than a local copy of the same rule: its own
+// header says the mapping lives in one place so `get_board` and every other
+// reader cannot drift apart on it, and a project's column on the detail
+// view has to be the column the board shows for that same project.
+import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
 import type { ItemStateValue } from "../state-machine/states";
 
 const inputSchema = z
@@ -178,36 +182,6 @@ interface RawSummaryRow {
   createdAt: Date;
 }
 
-/**
- * The column a **project** sits in, from the states of its descendants —
- * the same rule `get_board`'s `columnForProject` applies, reached here from
- * the subtree this operation has already walked rather than by walking it a
- * second time.
- *
- * The rule, in priority order: anything actively moving puts the project in
- * `in_progress`; else anything waiting puts it in `waiting`; else anything
- * unstarted puts it in `backlog`; else every descendant is finished and so
- * is the project. A project with no descendants at all has nothing to
- * derive from and falls back to `backlog` — it is work that exists and has
- * not started, which is what an empty project is.
- */
-export function columnForSubtree(states: readonly string[]): BoardColumn {
-  let sawWaiting = false;
-  let sawBacklog = false;
-  let sawAny = false;
-  for (const state of states) {
-    const column = columnForState(state as ItemStateValue);
-    if (column === undefined) continue;
-    sawAny = true;
-    if (column === "in_progress") return "in_progress";
-    if (column === "waiting") sawWaiting = true;
-    if (column === "backlog") sawBacklog = true;
-  }
-  if (sawWaiting) return "waiting";
-  if (sawBacklog) return "backlog";
-  return sawAny ? "completed" : "backlog";
-}
-
 export const getItemDetail = defineOperation({
   name: "get_item_detail",
   kind: "read",
@@ -276,9 +250,16 @@ export const getItemDetail = defineOperation({
 
     // The root's own column: derived from the subtree for a project,
     // read directly for anything with a state of its own.
+    // Nested projects are excluded from the descendant states, for the same
+    // reason their own `column` is null above: a project's stored state is a
+    // creation leftover, so feeding it into the derivation would let a
+    // sub-project's stale `on_deck` drag the parent into `backlog`. Only
+    // items with a real state contribute.
     const column: BoardColumn =
       item.kind === "project"
-        ? columnForSubtree(subtreeRows.filter((r) => r.kind !== "project").map((r) => r.state))
+        ? columnForProject(
+            subtreeRows.filter((r) => r.kind !== "project").map((r) => r.state as ItemStateValue),
+          )
         : columnForState(item.state as ItemStateValue);
 
     const artifactRows = await ctx.db.$queryRawUnsafe<RawArtifactRow[]>(

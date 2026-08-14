@@ -2,6 +2,8 @@
 // prop-driven (see each component's header), so they're called directly as
 // functions and their returned element trees inspected — same technique as
 // `tests/board-view-component.test.ts`.
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ItemDetailView } from "@/components/item-detail/ItemDetailView";
 import { SubtaskTree } from "@/components/item-detail/SubtaskTree";
@@ -351,6 +353,25 @@ describe("ArtifactList", () => {
         side === "pass" ? "verdictPass" : "verdictBlocked",
       );
     }
+
+    // **And that those six are ALL of them.** Without this, a seventh enum
+    // value added to the schema would be classified silently — as
+    // not-yet-cleared, which is the safe direction, but *unreviewed*, which
+    // is the same class of gap as the invented verdict this test was
+    // written for. Read out of the schema so the assertion fails loudly and
+    // points at the decision that has to be made, rather than passing by
+    // omission.
+    const schema = readFileSync(
+      path.join(import.meta.dirname, "..", "prisma", "schema.prisma"),
+      "utf-8",
+    );
+    const block = /enum Verdict \{([^}]*)\}/.exec(schema);
+    expect(block, "could not find `enum Verdict` in the schema").not.toBeNull();
+    const declared = block![1]!
+      .split("\n")
+      .map((line) => line.replace(/\/\/.*$/, "").trim())
+      .filter((line) => line !== "");
+    expect(declared.slice().sort()).toEqual(Object.keys(expected).sort());
   });
 
   it("shows no verdict chip for an artifact that has none", () => {
