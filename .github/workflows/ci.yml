@@ -303,7 +303,7 @@ jobs:
       # did not finish, not a deliberate pause.
       - name: Pass — mutation testing is paused
         if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result == 'skipped'
-        run: echo "Mutation testing is paused (see MILESTONES.md #106) — nothing to enforce."
+        run: echo "Mutation testing is paused - see MILESTONES.md row 106 - nothing to enforce"
       - name: Fail — mutation testing failed after a source change
         if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result != 'success' && needs.mutation-testing.result != 'skipped'
         run: exit 1
