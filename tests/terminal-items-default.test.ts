@@ -13,14 +13,13 @@
 // without TEST_DATABASE_URL like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { TERMINAL_STATES, isTerminalState } from "@/lib/service/board/columns";
 import { parseBooleanParam } from "@/app/api/_shared/query";
 import { COMMANDS } from "@/lib/cli";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -114,11 +113,7 @@ describeIfDb("terminal items are out of the default read", () => {
   let itemsRoute: typeof import("@/app/api/items/route");
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     // The route modules reach `service/live.ts`'s process-global singleton,
     // so DATABASE_URL has to point at the scratch database before they are
     // imported — the same ordering constraint tests/board-routes.test.ts
