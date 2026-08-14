@@ -51,12 +51,63 @@ export function withDatabaseName(databaseUrl: string, name: string): string {
   return url.toString();
 }
 
+/**
+ * Name of the pre-migrated template database, created once per test run by
+ * `tests/helpers/global-setup.ts` and cloned by `createMigratedScratchDatabase`
+ * below. Read from the environment rather than recomputed here: the global
+ * setup and the test workers are separate processes, so they cannot share a
+ * module-level random token (the `runToken` above is per-process, and would
+ * differ between them).
+ */
+const TEMPLATE_ENV_VAR = "TEST_TEMPLATE_DATABASE";
+
 /** Drops (if present) and recreates `name` on the same server as `databaseUrl`, returning its URL. */
 export function createScratchDatabase(databaseUrl: string, name: string): string {
   const admin = adminUrl(databaseUrl);
-  run(admin, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`);
-  run(admin, `CREATE DATABASE "${name}";`);
+  // Both statements in ONE `prisma db execute` invocation. Each invocation is
+  // an `npx` + Prisma-CLI cold start (~2-3s) that dwarfs the SQL itself, so
+  // the spawn count — not the query cost — is what this helper optimises for.
+  run(admin, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE); CREATE DATABASE "${name}";`);
   return withDatabaseName(databaseUrl, name);
+}
+
+/**
+ * Like `createScratchDatabase`, but clones the already-migrated template
+ * database instead of returning an empty one — so the caller does NOT need to
+ * run `prisma migrate deploy` afterwards.
+ *
+ * This is the fast path, and it is what keeps the DB-backed suites' setup cost
+ * off the critical path. Preparing a database per test file costs one `npx` +
+ * Prisma-CLI cold start per subprocess spawned (~2-3s each, dwarfing the SQL),
+ * so this keeps that count at one: Postgres populates the new database by
+ * copying the template's files rather than re-executing any migration DDL.
+ *
+ * Isolation is unchanged: every caller still gets its own uniquely-named,
+ * disposable database, so files still run in parallel without colliding. The
+ * template is only ever read from, never written to.
+ *
+ * Falls back to a migrate-yourself empty database when no template exists
+ * (`TEST_TEMPLATE_DATABASE` unset) — e.g. a single test file run directly
+ * without vitest's global setup. Callers can detect this via the returned
+ * `migrated` flag.
+ */
+export function createMigratedScratchDatabase(
+  databaseUrl: string,
+  name: string,
+): { url: string; migrated: boolean } {
+  const template = process.env[TEMPLATE_ENV_VAR];
+  if (!template) {
+    return { url: createScratchDatabase(databaseUrl, name), migrated: false };
+  }
+
+  // `CREATE DATABASE ... TEMPLATE` refuses to run while any other session is
+  // connected to the template, so the global setup disconnects before workers
+  // start. Nothing reconnects to it for the rest of the run.
+  run(
+    adminUrl(databaseUrl),
+    `DROP DATABASE IF EXISTS "${name}" WITH (FORCE); CREATE DATABASE "${name}" TEMPLATE "${template}";`,
+  );
+  return { url: withDatabaseName(databaseUrl, name), migrated: true };
 }
 
 export function dropScratchDatabase(databaseUrl: string, name: string): void {
