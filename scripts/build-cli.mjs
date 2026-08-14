@@ -42,13 +42,31 @@ import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 export const ENTRY_POINT = "src/bin/standup.ts";
+
+/**
+ * The hook script (MILESTONES.md #42), built alongside the command line.
+ *
+ * A second entry point rather than a second build: the two share most of a
+ * dependency graph, and `splitting: true` already puts anything common into
+ * one chunk both load — so building them together produces a smaller
+ * artefact than building them apart, and guarantees they cannot be compiled
+ * against different versions of the code they share.
+ *
+ * **It is deliberately not added to `package.json`'s `bin`.** A hook is not
+ * a command a person runs; it is a path an agent tool is configured to
+ * execute, and row #48 is what writes that configuration. Putting it on the
+ * PATH as `standup-hook` would invite it to be run by hand, where it reads
+ * an empty stdin and — correctly, per its own fail-closed rule — denies,
+ * which looks exactly like a broken install.
+ */
+export const HOOK_ENTRY_POINT = "src/bin/standup-hook.ts";
 export const OUT_DIR = "dist";
 
 export async function buildCli() {
   await rm(OUT_DIR, { recursive: true, force: true });
 
   await build({
-    entryPoints: [ENTRY_POINT],
+    entryPoints: [ENTRY_POINT, HOOK_ENTRY_POINT],
     outdir: OUT_DIR,
     outbase: "src",
     bundle: true,
