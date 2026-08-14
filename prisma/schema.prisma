@@ -271,6 +271,12 @@ model Event {
   type         EventType
   payload      Json
   body         String?     @db.Text
+  // The one-line BLUF beside `body`'s prose — set on a checkpoint, so
+  // "where is this up to?" is answerable without reading every checkpoint
+  // in full. A column rather than a payload key for the same reason `body`
+  // is one (SCHEMA.md §3). Nullable: an event written without one has none,
+  // which is not the same as an empty one.
+  headline     String?     @db.Text
   seenBy       EventSeen[]
 
   @@index([itemId, ts])

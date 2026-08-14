@@ -247,7 +247,8 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     noun: "session",
     verb: "checkpoint",
     operation: "checkpoint",
-    summary: "Records what you tried, what you ruled out, what's next.",
+    summary:
+      "Records what you tried, what you ruled out, what's next. --headline gives it a one-line BLUF that reads pick up without the prose.",
     buildInput: buildCheckpointInput,
   },
   {

@@ -59,6 +59,18 @@ export interface EventFields {
   readonly payload: Record<string, unknown>;
   /** Prose for checkpoint/note/nudge/escalation. Never validated or indexed. */
   readonly body?: string | null;
+  /**
+   * The one-line BLUF beside `body` — MILESTONES.md #108.
+   *
+   * Optional on every event type rather than required on `checkpoint`,
+   * because this module is the one insert statement in the system and a
+   * per-type required field here would put a discriminated union into the
+   * lowest-level writer, where SCHEMA.md §3 deliberately does not have one:
+   * "typed in the service layer, not the column". The operation that writes
+   * a checkpoint is where the field is asked for and where its length is
+   * refused; the ledger just stores what it is handed.
+   */
+  readonly headline?: string | null;
 }
 
 export interface AppendedEvent {
@@ -90,8 +102,8 @@ export async function insertEventRow(
   ts: Date | null,
 ): Promise<AppendedEvent> {
   const rows = await db.$queryRawUnsafe<{ id: bigint; txId: bigint; ts: Date }[]>(
-    `INSERT INTO "Event" ("itemId", "actorType", "actorId", "sessionId", "assignmentId", "type", "payload", "body", "ts")
-     VALUES ($1, $2::"ActorType", $3, $4, $5, $6::"EventType", $7::jsonb, $8, COALESCE($9::timestamptz, CURRENT_TIMESTAMP))
+    `INSERT INTO "Event" ("itemId", "actorType", "actorId", "sessionId", "assignmentId", "type", "payload", "body", "headline", "ts")
+     VALUES ($1, $2::"ActorType", $3, $4, $5, $6::"EventType", $7::jsonb, $8, $9, COALESCE($10::timestamptz, CURRENT_TIMESTAMP))
      RETURNING "id", "txId", "ts"`,
     input.itemId ?? null,
     input.actor.actorType,
@@ -101,6 +113,7 @@ export async function insertEventRow(
     input.type,
     JSON.stringify(input.payload),
     input.body ?? null,
+    input.headline ?? null,
     ts === null ? null : ts.toISOString(),
   );
   const row = rows[0];

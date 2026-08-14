@@ -1,0 +1,21 @@
+-- The one-line BLUF beside a checkpoint's prose.
+--
+-- Additive: one new nullable column on "Event". No existing column,
+-- constraint or row is altered, so there is nothing to back-fill and
+-- nothing to lose.
+--
+-- Nullable, and not defaulted: an event written before this field was
+-- askable has no headline, which is a different fact from someone having
+-- written an empty one. A read that falls back to the prose needs to tell
+-- them apart, and a NOT NULL DEFAULT '' would erase the distinction on
+-- every historical row at once, permanently.
+--
+-- A plain column rather than a key in `payload`, matching how `body` is
+-- already stored. SCHEMA.md §3 gives the rule for that choice — lift a field
+-- out of the payload when it is queried *across* event types — and states
+-- the reasoning for `body` in the same terms: "slice reads on the hottest
+-- path would otherwise drag text nobody asked for, and it's cheap to
+-- exclude here". A headline is the sharper case of exactly that: the whole
+-- point of it is to be readable without the prose beside it, which a jsonb
+-- key on the same document cannot be.
+ALTER TABLE "Event" ADD COLUMN "headline" TEXT;

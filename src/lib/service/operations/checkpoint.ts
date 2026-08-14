@@ -10,6 +10,7 @@
 // live assignment rather than accepting a bare `itemId`.
 import { z } from "zod";
 import { ConflictError } from "../errors";
+import { CHECKPOINT_HEADLINE_MAX_CHARS } from "../items/checkpoint-headline";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
@@ -21,6 +22,23 @@ const inputSchema = z
     sessionId: z.string().min(1),
     /** The checkpoint prose — SCHEMA.md §3: "prose is in `body`, agent is in `assignment_id`". */
     body: z.string().trim().min(1, "checkpoint body is required"),
+    /**
+     * The one-line BLUF — what changed, in one line (MILESTONES.md #108).
+     *
+     * Optional, not required. A checkpoint that records only prose is still
+     * a checkpoint, and refusing one for want of a summary line would make
+     * the cheapest durable-progress signal in the system more expensive to
+     * write than it was — which is the wrong direction for a field whose
+     * whole purpose is that recording progress stays cheap. A read that
+     * wants a line and finds none falls back to the prose's first line
+     * (`checkpointHeadline`), so the absence is answerable rather than
+     * blank.
+     *
+     * Capped for the reason the item headline is: a one-line BLUF that can
+     * be a paragraph is not a BLUF, and this value is returned by reads
+     * whose entire claim is that their size is knowable in advance.
+     */
+    headline: z.string().trim().min(1).max(CHECKPOINT_HEADLINE_MAX_CHARS).optional(),
   })
   .strict();
 
@@ -29,7 +47,8 @@ export type CheckpointOperationInput = z.infer<typeof inputSchema>;
 export const checkpoint = defineOperation({
   name: "checkpoint",
   kind: "write",
-  summary: "Records what you tried, what you ruled out, what's next.",
+  summary:
+    "Records what you tried, what you ruled out, what's next. A headline gives it a one-line BLUF that reads pick up without the prose.",
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CheckpointOperationInput): Promise<AppendedEvent> {
     // A checkpoint is per AGENT, not just per item (§4) — it needs the
@@ -63,6 +82,7 @@ export const checkpoint = defineOperation({
       type: "checkpoint",
       payload: {},
       body: input.body,
+      headline: input.headline ?? null,
     });
   },
 });
