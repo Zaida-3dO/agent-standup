@@ -50,14 +50,31 @@
 // `notify_rules` is stored `snake_case` (`when_all`/`when_any`, §1.1b) and
 // read by `parseStoredRules` in `../notify-on-change.ts`, while the
 // evaluator's in-memory `NotifyRule` is `camelCase` (`whenAll`/`whenAny`).
-// Storing the camelCase spelling would parse to a rule with *no*
-// conditions, and `ruleMatches` treats a missing bucket as vacuously true —
-// so the rule would fire on **every** mutation rather than never. That is
-// the one direction where getting this wrong is worse than failing closed,
-// which is why this operation validates what it is handed in the *stored*
-// spelling and refuses anything that would not survive a round-trip
-// through the evaluator's parser, rather than storing an opaque blob and
-// letting it silently mean something else at evaluation time.
+// Storing the camelCase spelling would parse to a rule with *no* conditions,
+// and such a rule **never fires at all** — it is silently discarded, not
+// over-eager.
+//
+// Two independent mechanisms make that so, which is why the failure is
+// silence rather than a storm:
+//
+//   1. `parseStoredRules` (`../notify-on-change.ts`) drops a rule with
+//      neither bucket outright — it `continue`s, so it never becomes a
+//      `NotifyRule` and the evaluator never sees it.
+//   2. Even hand-constructing one and bypassing the parser, `evaluateRules`
+//      (`@/lib/notifications`) is **edge-triggered**: it fires on
+//      `matchesAfter && !matchesBefore`. A vacuously-true rule matches both
+//      snapshots, so the edge never occurs and it fires zero times.
+//
+// `ruleMatches` in isolation *is* vacuously true — that part is real. What
+// does not follow is the consequence, because nothing downstream ever
+// evaluates such a rule against a changed snapshot alone.
+//
+// Silence is the worse direction to fail in, not the better one: a rule that
+// never fires looks configured and does nothing, and nobody is notified that
+// nobody was notified. That is why this operation validates what it is handed
+// in the *stored* spelling and refuses anything that would not survive a
+// round-trip through the evaluator's parser, rather than storing an opaque
+// blob and letting it silently mean something else at evaluation time.
 import { z } from "zod";
 import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
@@ -98,10 +115,11 @@ const conditionSchema = z
  *
  * `.strict()` is doing real work: it is what rejects a caller who passes
  * the evaluator's `whenAll`/`whenAny` camelCase. Without it that rule would
- * store cleanly, parse to zero conditions, and fire on every single
- * mutation. The refinement below then requires at least one non-empty
- * bucket, which is the same invariant `parseStoredRules` enforces when
- * reading and `hasAtLeastOneBucket` names.
+ * store cleanly, parse to zero conditions, and then be **dropped by the
+ * reader** — configured, and silently notifying nobody (see the header). The
+ * refinement below then requires at least one non-empty bucket, which is the
+ * same invariant `parseStoredRules` enforces when reading and
+ * `hasAtLeastOneBucket` names.
  */
 const storedRuleSchema = z
   .object({

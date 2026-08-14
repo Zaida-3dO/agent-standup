@@ -172,6 +172,37 @@ async function resolveCreator(
     );
   }
 
+  // **A person reference has to name a real person.** Without this, a caller
+  // could pass `createdByType: "person"` with any string at all and satisfy
+  // `merge.requires_authorisation` — the clause whose entire purpose is that a
+  // *human* authorised a merge on a `needs_approval` item. A gate whose
+  // subject need not exist is weaker than it reads, and it reads as strong.
+  //
+  // Checked only for `person`: an agent id is not a foreign key to anything,
+  // so there is no table to check it against, and refusing an unknown agent
+  // would mean refusing every agent.
+  //
+  // The same shape `create_item` uses for `originPersonId`, deliberately —
+  // two operations disagreeing about whether a person reference must resolve
+  // is worse than either answer, and this is the answer that already exists.
+  //
+  // **Not a foreign key on `Artifact.createdById`**, which would be stronger:
+  // artifacts are also written by the importer, which replays a corpus whose
+  // people it does not necessarily carry, and a constraint would reject those
+  // rows outright. The operation-level check binds the path a caller reaches
+  // and leaves the import path alone.
+  if (createdByType === "person") {
+    const personRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT "id" FROM "Person" WHERE "id" = $1`,
+      createdById,
+    );
+    if (personRows.length === 0) {
+      throw new NotFoundError(`No such person: ${createdById}.`, {
+        fields: ["createdById"],
+      });
+    }
+  }
+
   return { createdByType, createdById, assignmentId: assignment?.id ?? null };
 }
 
