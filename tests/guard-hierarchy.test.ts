@@ -6,14 +6,13 @@
 // in-memory model cannot settle. Skips without TEST_DATABASE_URL.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { GuardRegistry, applyTransition, hierarchyGuard, rehearseTransition } from "@/lib/service";
 import type { GuardInput } from "@/lib/service";
 import { ITEM_STATES } from "@/lib/service/state-machine";
 import { defaultSnapshot } from "@/lib/settings";
 import type { TransactionHandle } from "@/lib/service";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -46,11 +45,7 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
   }, 60_000);

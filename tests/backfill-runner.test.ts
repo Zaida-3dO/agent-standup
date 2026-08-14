@@ -6,7 +6,6 @@
 // public (CLAUDE.md).
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { importItems, UnknownRepoAliasError } from "@/lib/import-items";
 import { VerdictNotStorableError } from "@/lib/import-assignments-artifacts";
 import type { BackfillPayload } from "@/lib/backfill/contract";
@@ -25,7 +24,7 @@ import {
   UnknownRunnerFlagError,
 } from "@/lib/backfill/runner";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -288,9 +287,7 @@ describeDb("runBackfill (real database)", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    const url = createScratchDatabase(testDatabaseUrl!, databaseName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: url } });
-    if (!result.ok) throw new Error("migrations failed against the scratch database");
+    const url = createMigratedScratchDatabase(testDatabaseUrl!, databaseName).url;
     prisma = new PrismaClient({ datasources: { db: { url } } });
   }, 180_000);
 

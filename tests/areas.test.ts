@@ -2,10 +2,9 @@
 // for the scratch-database setup this mirrors. Skips without TEST_DATABASE_URL.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { ensureArea, InvalidAreaNameError, listActiveAreas, normalizeAreaKey } from "@/lib/areas";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -61,11 +60,7 @@ describeIfDb("ensureArea — auto-create with normalisation", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   }, 30_000);
 

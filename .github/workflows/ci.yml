@@ -180,7 +180,9 @@ jobs:
     needs: [changes, build-and-test]
     # PAUSED. `false &&` disables this job without deleting it; drop those
     # two characters to switch it back on, and the gate below follows
-    # automatically because it reads this job's result.
+    # automatically because it reads this job's result — a paused job
+    # reports `skipped`, which that gate passes, and a running one reports
+    # `success` or `failure`, which it judges on the merits.
     #
     # Why: this is the slowest job in the pipeline by a wide margin (22-57
     # min) and it runs on any source change, which is most pull requests.
@@ -296,8 +298,36 @@ jobs:
       - name: Pass — no source files changed
         if: needs.changes.outputs.source == 'false'
         run: echo "No src/**/*.ts(x) files changed, skipping mutation testing"
-      - name: Fail — mutation testing failed or was skipped after a source change
-        if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result != 'success'
+      # `skipped` and `failure` are different facts and this gate has to tell
+      # them apart, because only one of them is a statement about the code.
+      #
+      # A `skipped` result means the job never ran — which, while the job
+      # above is paused, is what happens on every pull request that touches
+      # source. Treating that as a failure makes the pause unusable: the
+      # slow job stops running and the required gate blocks every source
+      # change anyway, so the pipeline gets the pause's loss of coverage
+      # *and* keeps a red check. That is the shape this hits in practice —
+      # a pull request whose own suite is green, whose Docker build passes,
+      # and which cannot merge because a job that was deliberately switched
+      # off did not report success.
+      #
+      # A `failure` result still fails, unconditionally and with no
+      # reference to the pause. That is the case where mutation testing ran
+      # and found surviving mutants, and it must never be softened — a gate
+      # that forgave a real failure because some *other* run had been paused
+      # would be worse than not having the gate.
+      #
+      # Re-enabling the job needs no change here: it will then report
+      # `success` or `failure`, and `skipped` stops occurring on source
+      # changes at all.
+      - name: Pass — mutation testing is paused, so it did not run
+        if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result == 'skipped'
+        run: echo "Mutation testing did not run (the job is paused). See the milestone row that tracks switching it back on."
+      - name: Fail — mutation testing ran and did not pass
+        if: >-
+          needs.changes.outputs.source == 'true' &&
+          needs.mutation-testing.result != 'success' &&
+          needs.mutation-testing.result != 'skipped'
         run: exit 1
 
   docker-build:

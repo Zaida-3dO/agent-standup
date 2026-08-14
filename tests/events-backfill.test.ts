@@ -13,12 +13,11 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { appendEvent, type AppendEventInput } from "@/lib/events";
 import { appendBackfillEvent, InvalidBackfillTimestampError } from "@/lib/events-backfill";
 import type { TransactionHandle } from "@/lib/service/context";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -35,11 +34,7 @@ describeIfDb("the backfill-only event timestamp, against Postgres", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "backfill-area", displayName: "Backfill area" } });
     await prisma.item.create({

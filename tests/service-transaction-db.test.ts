@@ -12,7 +12,6 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import {
   GuardRejectedError,
   ServiceRuntime,
@@ -22,7 +21,7 @@ import {
 } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -67,11 +66,7 @@ describeIfDb("the transaction boundary against Postgres", () => {
   let registry: Record<string, unknown>;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
 
     const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
