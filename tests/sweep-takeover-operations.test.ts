@@ -53,7 +53,7 @@ describeIfDb("sweep / takeover operations — against Postgres", () => {
   let itemCounter = 0;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
