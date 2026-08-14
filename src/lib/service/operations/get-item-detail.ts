@@ -225,17 +225,34 @@ export const getItemDetail = defineOperation({
     const item = toItemRecord(itemRow);
 
     // The subtask tree. Depth-first ordering is built into the CTE by
-    // carrying a path of creation timestamps and sorting on it — ordering
-    // by `depth` alone would interleave unrelated branches, which is
-    // exactly wrong for a tree the client indents but does not re-nest.
+    // carrying a path down each branch and sorting on it — ordering by
+    // `depth` alone would interleave unrelated branches, which is exactly
+    // wrong for a tree the client indents but does not re-nest.
+    //
+    // **The path is `text[]`, not `timestamptz[]`, and that is not
+    // incidental.** A recursive CTE requires the non-recursive term's column
+    // types to match the overall type exactly, and `"createdAt"` is
+    // `timestamptz(3)` while the `||` in the recursive term widens the array
+    // to plain `timestamptz` — Postgres refuses the whole query with 42804
+    // rather than coercing. Formatting each step to text sidesteps that, and
+    // is sortable in the same order because the format is fixed-width and
+    // big-endian.
+    //
+    // The item's `id` is appended to each step so siblings created inside
+    // the same millisecond still have a total order. Without it their
+    // relative position would be whatever the plan happened to produce, and
+    // a tree that reorders itself between two identical reads is worse than
+    // one ordered by something arbitrary but stable.
     const subtreeRows = await ctx.db.$queryRawUnsafe<RawSubtreeRow[]>(
       `WITH RECURSIVE subtree AS (
          SELECT i."id", i."parentId", i."title", i."kind", i."state", i."priority",
-                1 AS "depth", ARRAY[i."createdAt"] AS "path"
+                1 AS "depth",
+                ARRAY[to_char(i."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.MS') || i."id"] AS "path"
          FROM "Item" i WHERE i."parentId" = $1
          UNION ALL
          SELECT i."id", i."parentId", i."title", i."kind", i."state", i."priority",
-                s."depth" + 1, s."path" || i."createdAt"
+                s."depth" + 1,
+                s."path" || (to_char(i."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.MS') || i."id")
          FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
        )
        SELECT "id", "parentId", "title", "kind", "state", "priority", "depth"

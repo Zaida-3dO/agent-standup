@@ -247,14 +247,19 @@ describeIfDb("get_item_detail against Postgres", () => {
       itemId: string,
       fields: { kind: string; verdict?: string; round?: number; sha?: string },
     ): Promise<void> {
+      // `createdByType`/`createdById` are NOT NULL — an artifact always
+      // records who produced it (SCHEMA.md §6a), so a fixture cannot omit
+      // them.
       await prisma.$executeRawUnsafe(
-        `INSERT INTO "Artifact" ("id", "itemId", "kind", "verdict", "reviewRound", "commitSha")
-         VALUES (gen_random_uuid(), $1, $2::"ArtifactKind", $3::"Verdict", $4, $5)`,
+        `INSERT INTO "Artifact"
+           ("id", "itemId", "kind", "verdict", "reviewRound", "commitSha", "createdByType", "createdById")
+         VALUES (gen_random_uuid(), $1, $2::"ArtifactKind", $3::"Verdict", $4, $5, 'agent'::"HolderType", $6)`,
         itemId,
         fields.kind,
         fields.verdict ?? null,
         fields.round ?? 1,
         fields.sha ?? null,
+        "test-agent",
       );
     }
 
@@ -267,13 +272,13 @@ describeIfDb("get_item_detail against Postgres", () => {
     it("returns every artifact, ordered by review round ascending", async () => {
       const project = await createItem({ area: "detail-art" });
       const task = await createItem({ area: "detail-art", parentId: project.id });
-      await addArtifact(task.id, { kind: "code_review", verdict: "changes_requested", round: 2 });
+      await addArtifact(task.id, { kind: "code_review", verdict: "changes_required", round: 2 });
       await addArtifact(task.id, { kind: "plan", round: 1 });
       await addArtifact(task.id, { kind: "code_review", verdict: "lgtm", round: 3 });
 
       const detail = await detailOf(task.id);
       expect(detail.artifacts.map((a) => a.reviewRound)).toEqual([1, 2, 3]);
-      expect(detail.artifacts.map((a) => a.verdict)).toEqual([null, "changes_requested", "lgtm"]);
+      expect(detail.artifacts.map((a) => a.verdict)).toEqual([null, "changes_required", "lgtm"]);
     });
 
     it("does not return another item's artifacts", async () => {

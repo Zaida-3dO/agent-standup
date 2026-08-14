@@ -21,8 +21,13 @@ export interface ArtifactListProps {
  * §6a). Anything else, including an unrecognised future verdict, reads as
  * not-yet-cleared: the safe direction for a value this component has never
  * seen is "there may be work owed", never "this passed".
+ *
+ * `na` is deliberately NOT here. It means the review did not apply, which
+ * is not the same claim as the work having passed one, and colouring it
+ * green would let "nobody looked at this" read as "somebody approved it".
  */
 const PASSING_VERDICTS: ReadonlySet<string> = new Set([
+  "approved",
   "lgtm",
   "lgtm_with_nits",
   "lgtm_with_followups",

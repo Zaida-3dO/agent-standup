@@ -208,7 +208,7 @@ describe("ItemDetailView", () => {
         detail: detail({
           artifacts: [
             artifact({ id: "a", reviewRound: 1, verdict: "lgtm" }),
-            artifact({ id: "b", reviewRound: 2, verdict: "changes_requested" }),
+            artifact({ id: "b", reviewRound: 2, verdict: "changes_required" }),
           ],
         }),
       },
@@ -216,7 +216,7 @@ describe("ItemDetailView", () => {
     const flagged = elementsWithProp(element, "data-latest-verdict");
     expect(flagged).toHaveLength(1);
     expect((flagged[0]!.props as Record<string, unknown>)["data-latest-verdict"]).toBe(
-      "changes_requested",
+      "changes_required",
     );
   });
 });
@@ -293,7 +293,7 @@ describe("ArtifactList", () => {
     const element = ArtifactList({
       artifacts: [
         artifact({ id: "b", reviewRound: 2, verdict: "lgtm" }),
-        artifact({ id: "a", reviewRound: 1, verdict: "changes_requested" }),
+        artifact({ id: "a", reviewRound: 1, verdict: "changes_required" }),
       ],
     });
     const rounds = elementsWithProp(element, "data-round");
@@ -321,6 +321,36 @@ describe("ArtifactList", () => {
     expect(classOf(passing)).not.toBe(classOf(unknown));
     expect(classOf(passing)).toContain("verdictPass");
     expect(classOf(unknown)).toContain("verdictBlocked");
+  });
+
+  it("classifies EVERY verdict the schema actually defines", () => {
+    // Written out from `prisma/schema.prisma`'s `enum Verdict` rather than
+    // imported, so this is an independent statement of the vocabulary — an
+    // earlier draft of this component invented `changes_requested`, which a
+    // test reading the same source as the code would never have caught.
+    //
+    // `na` sits with the non-passing values on purpose: it means the review
+    // did not apply, which is not the claim that the work passed one.
+    const expected: Record<string, "pass" | "blocked"> = {
+      approved: "pass",
+      lgtm: "pass",
+      lgtm_with_nits: "pass",
+      lgtm_with_followups: "pass",
+      changes_required: "blocked",
+      na: "blocked",
+    };
+    for (const [verdict, side] of Object.entries(expected)) {
+      const element = ArtifactList({ artifacts: [artifact({ verdict })] });
+      const className =
+        (
+          elementsWithProp(element, "data-verdict")[0]!.props as {
+            className?: string;
+          }
+        ).className ?? "";
+      expect(className, `${verdict} should read as ${side}`).toContain(
+        side === "pass" ? "verdictPass" : "verdictBlocked",
+      );
+    }
   });
 
   it("shows no verdict chip for an artifact that has none", () => {

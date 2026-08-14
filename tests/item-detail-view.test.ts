@@ -163,15 +163,15 @@ describe("latestVerdict", () => {
     expect(
       latestVerdict([
         artifact({ id: "a", reviewRound: 1, verdict: "lgtm" }),
-        artifact({ id: "b", reviewRound: 2, verdict: "changes_requested" }),
+        artifact({ id: "b", reviewRound: 2, verdict: "changes_required" }),
       ]),
-    ).toBe("changes_requested");
+    ).toBe("changes_required");
   });
 
   it("still reports a later pass after an earlier rejection", () => {
     expect(
       latestVerdict([
-        artifact({ id: "a", reviewRound: 1, verdict: "changes_requested" }),
+        artifact({ id: "a", reviewRound: 1, verdict: "changes_required" }),
         artifact({ id: "b", reviewRound: 2, verdict: "lgtm" }),
       ]),
     ).toBe("lgtm");
