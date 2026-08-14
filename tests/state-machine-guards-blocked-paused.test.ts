@@ -36,7 +36,7 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
   let runtime: ServiceRuntime;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     await prisma.person.create({ data: { id: "user-a", displayName: "user-a" } });
@@ -49,7 +49,7 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   afterEach(async () => {

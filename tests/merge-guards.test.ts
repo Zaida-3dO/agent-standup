@@ -48,14 +48,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
   }, 60_000);
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   let runtime: ServiceRuntime;

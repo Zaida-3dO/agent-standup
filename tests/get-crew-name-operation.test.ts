@@ -38,7 +38,7 @@ describeIfDb("get_crew_name against Postgres", () => {
   let nameCounter = 0;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
@@ -48,7 +48,7 @@ describeIfDb("get_crew_name against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   /** Seeds one fresh, unheld, unretired agent name and returns it. */

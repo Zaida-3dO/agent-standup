@@ -54,7 +54,7 @@ describe("DB-backed test files use the shared migrated template", () => {
       // still the right call for a file that needs an empty database and never
       // migrates, and a bare `migrate deploy` reference may just be an
       // assertion about the command itself.
-      const createsEmpty = source.includes("createScratchDatabase(");
+      const createsEmpty = source.includes("await createScratchDatabase(");
       const migratesItself =
         source.includes("runMigrations(") || source.includes('"migrate", "deploy"');
 
@@ -82,7 +82,7 @@ describe("DB-backed test files use the shared migrated template", () => {
       expect(present.has(name), `${name} is waived but absent from the suite`).toBe(true);
 
       const source = readFileSync(path.join(TESTS_DIR, name), "utf8");
-      const createsEmpty = source.includes("createScratchDatabase(");
+      const createsEmpty = source.includes("await createScratchDatabase(");
       expect(
         createsEmpty,
         `${name} is waived as needing an unmigrated database but does not create one — drop it from MAY_MIGRATE_THEMSELVES`,

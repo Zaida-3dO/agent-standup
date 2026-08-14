@@ -38,7 +38,7 @@ describeIfDb("the summaries guard, against Postgres", () => {
   let runtime: ServiceRuntime;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
@@ -50,7 +50,7 @@ describeIfDb("the summaries guard, against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   afterEach(async () => {

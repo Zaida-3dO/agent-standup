@@ -23,7 +23,7 @@ describeIfDb("people HTTP route against Postgres", () => {
   let peopleRoute: typeof import("@/app/api/people/route");
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     peopleRoute = await import("@/app/api/people/route");
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
@@ -31,7 +31,7 @@ describeIfDb("people HTTP route against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   it("GET /people returns 200 with an empty list against a database with no people", async () => {

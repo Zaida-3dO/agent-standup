@@ -34,7 +34,7 @@ describeIfDb("the backfill-only event timestamp, against Postgres", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "backfill-area", displayName: "Backfill area" } });
     await prisma.item.create({
@@ -53,7 +53,7 @@ describeIfDb("the backfill-only event timestamp, against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   /** Runs `fn` inside one transaction, handing it the same narrowed handle an operation gets. */

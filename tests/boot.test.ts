@@ -112,12 +112,12 @@ describeIfDb("waitForDatabase / runMigrations — against a real Postgres", () =
   const dbName = scratchDatabaseName("boot");
   let scratchUrl: string;
 
-  beforeAll(() => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+  beforeAll(async () => {
+    scratchUrl = await createScratchDatabase(testDatabaseUrl!, dbName);
   });
 
-  afterAll(() => {
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+  afterAll(async () => {
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   it("resolves once a real, empty database accepts a query", async () => {

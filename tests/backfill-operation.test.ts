@@ -138,7 +138,7 @@ describeDb("backfill through the service operation (real database)", () => {
   let ctx: ServiceContext;
 
   beforeAll(async () => {
-    const url = createMigratedScratchDatabase(testDatabaseUrl!, databaseName).url;
+    const url = (await createMigratedScratchDatabase(testDatabaseUrl!, databaseName)).url;
     prisma = new PrismaClient({ datasources: { db: { url } } });
     ctx = {
       db: prisma,
@@ -150,7 +150,7 @@ describeDb("backfill through the service operation (real database)", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, databaseName);
+    await dropScratchDatabase(testDatabaseUrl!, databaseName);
   });
 
   afterEach(async () => {

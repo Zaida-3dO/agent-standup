@@ -26,7 +26,7 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
   let itemCounter = 0;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
@@ -37,7 +37,7 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   /** Seeds one fresh item per call so cases don't share claim state. */

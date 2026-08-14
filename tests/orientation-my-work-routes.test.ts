@@ -27,7 +27,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
   let myWorkRoute: typeof import("@/app/api/my-work/route");
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     collectionRoute = await import("@/app/api/items/route");
     orientationRoute = await import("@/app/api/items/[id]/orientation/route");
@@ -37,7 +37,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {

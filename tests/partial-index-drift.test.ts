@@ -39,9 +39,9 @@ const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 const isWindows = process.platform === "win32";
 
 describeIfDb("partial unique indexes and the migration drift check", () => {
-  it("prisma migrate diff reports no difference, despite SQL that schema.prisma cannot express", () => {
+  it("prisma migrate diff reports no difference, despite SQL that schema.prisma cannot express", async () => {
     const dbName = scratchDatabaseName("partial_index_drift");
-    createScratchDatabase(testDatabaseUrl!, dbName);
+    await createScratchDatabase(testDatabaseUrl!, dbName);
     const shadowUrl = new URL(testDatabaseUrl!);
     shadowUrl.pathname = `/${dbName}`;
 
@@ -75,7 +75,7 @@ describeIfDb("partial unique indexes and the migration drift check", () => {
       expect(result.status).toBe(0);
       expect(`${result.stdout}${result.stderr}`).toContain("No difference detected");
     } finally {
-      dropScratchDatabase(testDatabaseUrl!, dbName);
+      await dropScratchDatabase(testDatabaseUrl!, dbName);
     }
   }, 120_000);
 });

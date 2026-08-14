@@ -28,7 +28,7 @@ describeIfDb("orientation against Postgres", () => {
   let runtime: ServiceRuntime;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
@@ -38,7 +38,7 @@ describeIfDb("orientation against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   async function makeItem(overrides: Record<string, unknown> = {}): Promise<{ id: string }> {

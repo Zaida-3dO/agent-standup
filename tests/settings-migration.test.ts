@@ -26,7 +26,7 @@ describeIfDb("the settings migration, against a real database", () => {
   let client: PrismaClient;
 
   beforeAll(async () => {
-    const scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+    const scratchUrl = await createScratchDatabase(testDatabaseUrl!, dbName);
 
     // Replay the whole migration history, exactly as a deployment does —
     // not `db push` from the schema, which would prove the schema and not
@@ -46,7 +46,7 @@ describeIfDb("the settings migration, against a real database", () => {
 
   afterAll(async () => {
     await client?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   async function columnMeta(table: string, column: string) {

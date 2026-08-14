@@ -52,7 +52,7 @@ describeIfDb("MCP write tools against Postgres", () => {
   let client: Client;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
 
     // Same production guard set `transition-complete-operations.test.ts`
@@ -86,7 +86,7 @@ describeIfDb("MCP write tools against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   afterEach(async () => {
