@@ -38,7 +38,7 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
   let completeRoute: typeof import("@/app/api/items/[id]/complete/route");
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     collectionRoute = await import("@/app/api/items/route");
     transitionRoute = await import("@/app/api/items/[id]/transition/route");
@@ -48,7 +48,7 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {

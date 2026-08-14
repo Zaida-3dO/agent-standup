@@ -21,11 +21,9 @@
 // several of them (tests/events.test.ts most explicitly) assert on transaction
 // semantics that a concurrent worker's TRUNCATE would corrupt.
 import { randomBytes } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { Client } from "pg";
 import { runMigrations } from "../../scripts/lib/run-migrations.mjs";
 import { withDatabaseName } from "./scratch-db";
-
-const isWindows = process.platform === "win32";
 
 function adminUrl(databaseUrl: string): string {
   const url = new URL(databaseUrl);
@@ -33,16 +31,16 @@ function adminUrl(databaseUrl: string): string {
   return url.toString();
 }
 
-function execSql(url: string, sql: string): void {
-  const result = spawnSync(
-    isWindows ? "npx.cmd" : "npx",
-    ["prisma", "db", "execute", "--url", url, "--stdin"],
-    { input: sql, encoding: "utf-8", shell: isWindows },
-  );
-  if (result.status !== 0) {
-    throw new Error(
-      `prisma db execute failed for ${JSON.stringify(sql)}:\n${result.stderr || result.stdout}`,
-    );
+/** Runs `statements` in order on one connection to `url`, then closes it. */
+async function execSql(url: string, ...statements: string[]): Promise<void> {
+  const client = new Client({ connectionString: url });
+  await client.connect();
+  try {
+    for (const sql of statements) {
+      await client.query(sql);
+    }
+  } finally {
+    await client.end();
   }
 }
 
@@ -58,15 +56,18 @@ export default async function setup(): Promise<() => Promise<void>> {
   const templateName = `agent_standup_test_template_${randomBytes(3).toString("hex")}`;
   const admin = adminUrl(databaseUrl);
 
-  // One statement per invocation: `prisma db execute` wraps multi-statement
-  // input in a transaction, and neither of these may run inside one.
-  execSql(admin, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`);
-  execSql(admin, `CREATE DATABASE "${templateName}";`);
+  // Both on one connection: a direct `pg` connection carries no transaction
+  // wrapper, which DROP/CREATE DATABASE could not run inside.
+  await execSql(
+    admin,
+    `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`,
+    `CREATE DATABASE "${templateName}";`,
+  );
 
   const templateUrl = withDatabaseName(databaseUrl, templateName);
   const applied = await runMigrations({ env: { ...process.env, DATABASE_URL: templateUrl } });
   if (!applied.ok) {
-    execSql(admin, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`);
+    await execSql(admin, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`);
     throw new Error(`migrate deploy failed against the test template database ${templateName}`);
   }
 
@@ -79,6 +80,6 @@ export default async function setup(): Promise<() => Promise<void>> {
   // which `CREATE DATABASE ... TEMPLATE` requires of its source.
 
   return async () => {
-    execSql(admin, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`);
+    await execSql(admin, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`);
   };
 }

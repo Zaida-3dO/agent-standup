@@ -23,7 +23,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
   let keyRoute: typeof import("@/app/api/settings/[key]/route");
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     // Same ordering constraint items-routes.test.ts documents: point
     // DATABASE_URL at the scratch database before importing anything that
     // reaches `service/live.ts`'s process-global singleton.
@@ -35,7 +35,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {

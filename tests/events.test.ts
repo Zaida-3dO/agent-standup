@@ -136,7 +136,7 @@ describeIfDb("the events ledger against Postgres", () => {
   let registry: Record<string, unknown>;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
 
     const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
@@ -154,7 +154,7 @@ describeIfDb("the events ledger against Postgres", () => {
     delete registry[updateItemPriority.name];
     delete registry[appendTwoEvents.name];
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   async function eventsFor(

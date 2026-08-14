@@ -31,7 +31,7 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
   let itemCounter = 0;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     claimRoute = await import("@/app/api/claims/route");
     releaseRoute = await import("@/app/api/claims/release/route");
@@ -44,7 +44,7 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {

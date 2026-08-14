@@ -27,7 +27,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
   let itemRoute: typeof import("@/app/api/items/[id]/route");
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     // `src/lib/prisma.ts` reads DATABASE_URL from the environment at
     // construction time, and `src/lib/service/live.ts` constructs its
     // singleton on module load — so the env var must point at the scratch
@@ -41,7 +41,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {

@@ -27,7 +27,7 @@ describeIfDb("admin service operations against Postgres", () => {
   let runtime: ServiceRuntime;
 
   beforeAll(async () => {
-    const scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    const scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
@@ -37,7 +37,7 @@ describeIfDb("admin service operations against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   // ── repo ────────────────────────────────────────────────────────────

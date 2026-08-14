@@ -159,7 +159,7 @@ describe("scripts/entrypoint.mjs — invalid DB_WAIT_*_SECONDS (no Postgres need
 describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Postgres", () => {
   it("refuses to serve, exits nonzero, and logs FATAL when migrations fail", async () => {
     const dbName = scratchDatabaseName("entrypoint_fail");
-    const scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+    const scratchUrl = await createScratchDatabase(testDatabaseUrl!, dbName);
     const { schemaPath, cleanup } = createBrokenMigrationSchema();
     try {
       const { child, getOutput } = runEntrypoint(
@@ -184,7 +184,7 @@ describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Pos
       expect(getOutput()).not.toContain("APP_STARTED");
     } finally {
       cleanup();
-      dropScratchDatabase(testDatabaseUrl!, dbName);
+      await dropScratchDatabase(testDatabaseUrl!, dbName);
     }
   }, 25_000);
 
@@ -196,7 +196,7 @@ describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Pos
     // and starts — nothing can redirect what gets applied to a real
     // deployment's database via this env var.
     const dbName = scratchDatabaseName("entrypoint_prod_schema_gate");
-    const scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+    const scratchUrl = await createScratchDatabase(testDatabaseUrl!, dbName);
     const { schemaPath, cleanup } = createBrokenMigrationSchema();
     try {
       const { child, getOutput } = runEntrypoint(
@@ -219,13 +219,13 @@ describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Pos
       await waitForExit(child, 5000);
     } finally {
       cleanup();
-      dropScratchDatabase(testDatabaseUrl!, dbName);
+      await dropScratchDatabase(testDatabaseUrl!, dbName);
     }
   }, 25_000);
 
   it("applies migrations and hands off to the real server command on success", async () => {
     const dbName = scratchDatabaseName("entrypoint_ok");
-    const scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+    const scratchUrl = await createScratchDatabase(testDatabaseUrl!, dbName);
     try {
       const { child, getOutput } = runEntrypoint(
         { DATABASE_URL: scratchUrl, DB_WAIT_TIMEOUT_SECONDS: "10" },
@@ -240,7 +240,7 @@ describe.skipIf(!testDatabaseUrl)("scripts/entrypoint.mjs — against a real Pos
       child.kill();
       await waitForExit(child, 5000);
     } finally {
-      dropScratchDatabase(testDatabaseUrl!, dbName);
+      await dropScratchDatabase(testDatabaseUrl!, dbName);
     }
   }, 25_000);
 });
