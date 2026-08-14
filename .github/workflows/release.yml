@@ -9,6 +9,10 @@ on:
         description: "Version tag (e.g. v1.2.0). Leave blank to auto-increment the minor version from the latest tag."
         required: false
         default: ""
+      publish_docker:
+        description: "Build and push the Docker image to ghcr.io"
+        type: boolean
+        default: true
 
 # Deliberately no `concurrency` block here.
 #
@@ -88,6 +92,8 @@ jobs:
           VERSION_INPUT: ${{ inputs.version }}
           REF_NAME: ${{ github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
 
@@ -97,33 +103,77 @@ jobs:
             exit 0
           fi
 
+          # A dispatch can be started from any branch, and everything below
+          # tags whatever that branch points at. Releasing unmerged code is
+          # never the intent: it would publish a Release, move the `latest`
+          # image that docker-compose.prod.yml pulls by default, and update the
+          # version badge that reads the Releases API — all from code that is
+          # not on the default branch. A tag push is exempt because the tag
+          # itself is the deliberate choice of what to release.
+          if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+            echo "::error::Releases are cut from $DEFAULT_BRANCH only, but this run was dispatched from '$REF_NAME'. Merge first, then dispatch from $DEFAULT_BRANCH."
+            exit 1
+          fi
+
           if [ -n "$VERSION_INPUT" ]; then
             next="$VERSION_INPUT"
-            # Fail early and loudly on a typo. Left unchecked, a malformed tag
-            # reaches `type=semver` (which silently emits no version tag for it)
-            # and `gh release create`, publishing an image and a Release under a
-            # name nothing else in the toolchain can parse.
-            if ! printf '%s' "$next" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-              echo "::error::Version '$next' is not of the form v<major>.<minor>.<patch>, e.g. v1.2.0."
+            # Validated by the same script the npm publish uses, rather than by
+            # a second pattern written here. A regex duplicated in two places
+            # drifts: an earlier revision of this job accepted `v01.2.3`, which
+            # scripts/version-from-tag.mjs rejects as non-semver, so a typo
+            # could pass this gate and fail only at the publish step — after the
+            # tag, the image and the Release already existed. Worse, a version
+            # that loose also makes `type=semver` emit no version tag at all,
+            # which is precisely what this validation is here to prevent.
+            #
+            # The script imports only `node:url`, so it runs on the runner's
+            # node without an `npm ci` first.
+            if ! node scripts/version-from-tag.mjs "$next" >/dev/null 2>&1; then
+              echo "::error::Version '$next' is not a valid release tag. Use v<major>.<minor>.<patch>, e.g. v1.2.0 (no leading zeros), optionally with a prerelease suffix such as v1.2.0-rc.1."
               exit 1
             fi
           else
-            latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)"
+            # Prereleases are excluded on purpose, and the grep is what does it
+            # — the glob alone does not. `v[0-9]*.[0-9]*.[0-9]*` is fnmatch, not
+            # a regex, so each `*` also matches `-rc.1`; and with
+            # versionsort.suffix unset, `--sort=-version:refname` ranks
+            # `v1.0.0-rc.1` ABOVE `v1.0.0`. Together those would make a blank
+            # dispatch bump from a release candidate — turning v1.0.0-rc.1 into
+            # v1.1.0 and silently skipping v1.0.0 altogether.
+            # `|| true` is load-bearing: with no matching tag `grep` exits 1,
+            # and under `set -o pipefail` that becomes the pipeline's status.
+            # `errexit` applies to a bare assignment like this one, so without
+            # the fallback the very first release — the one case with no tags
+            # to match — would abort the job instead of starting at v0.1.0.
+            latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | head -n1 || true)"
             if [ -z "$latest" ]; then
               next="v0.1.0"
+              echo "No version given and no existing release tag — starting at $next."
             else
               major="$(printf '%s' "$latest" | cut -d. -f1 | tr -d 'v')"
               minor="$(printf '%s' "$latest" | cut -d. -f2)"
               next="v${major}.$((minor + 1)).0"
+              echo "No version given — auto-incrementing the minor version from $latest to $next."
             fi
-            echo "No version given — auto-incrementing the minor version from ${latest:-no existing tag} to $next."
           fi
 
           # Refuse rather than move an existing tag: the image, the Release and
           # (once enabled) the npm package for that version already exist, and
           # repointing the tag would leave them describing different commits.
+          #
+          # The message names the retry path deliberately. This tag is pushed
+          # before the image builds, so a failed build leaves the tag behind
+          # with nothing published against it — and the obvious next move,
+          # dispatching the same version again, lands here. "Re-run failed jobs"
+          # is the one route that actually retries that version: it keeps this
+          # job's existing output instead of re-running it, so the build retries
+          # against the tag that is already there. Dispatching a *different*
+          # version works too but burns a number and leaves a permanent hole in
+          # the sequence.
           if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
-            echo "::error::Tag $next already exists. Pass a different version."
+            echo "::error::Tag $next already exists. To retry a release whose build failed, use 'Re-run failed jobs' on the original run rather than dispatching again — that reuses this tag. Dispatch a new version only if you intend to skip $next."
             exit 1
           fi
 
@@ -133,8 +183,15 @@ jobs:
           git push origin "$next"
           echo "tag=$next" >> "$GITHUB_OUTPUT"
 
+  # On a tag push this always runs; `inputs.publish_docker` is empty for a
+  # non-dispatch event, so the `!= 'false'` form is what keeps that path
+  # unconditional (an `== 'true'` test would skip the image on every tag push).
+  # On a dispatch the checkbox defaults to true and unticking it releases
+  # without touching ghcr.io — useful when the image for a commit already
+  # exists and only the Release is missing.
   build-and-push:
     needs: tag
+    if: inputs.publish_docker != 'false'
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
     steps:
@@ -186,9 +243,16 @@ jobs:
   # Release announces an image that can be pulled, so it must not exist until
   # the image for this tag actually does. It also needs the `tag` job, both for
   # its output and because `build-and-push` already depends on it.
+  # `always()` is required only because `build-and-push` is now skippable — a
+  # skipped dependency would otherwise skip this job too, silently producing no
+  # Release, which is the exact failure this workflow was changed to fix. The
+  # explicit result test keeps the original guarantee: a Release still never
+  # appears for an image build that FAILED, only for one that was deliberately
+  # not run.
   github-release:
     name: Publish the GitHub Release
     needs: [tag, build-and-push]
+    if: always() && needs.tag.result == 'success' && needs.build-and-push.result != 'failure' && needs.build-and-push.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
@@ -254,7 +318,9 @@ jobs:
   publish-npm:
     name: Publish npm package (standup binary)
     needs: [tag, build-and-push]
-    if: vars.ENABLE_NPM_PUBLISH == 'true'
+    # Same shape as github-release above, for the same reason: tolerate a
+    # deliberately skipped image build, never a failed one.
+    if: always() && vars.ENABLE_NPM_PUBLISH == 'true' && needs.tag.result == 'success' && needs.build-and-push.result != 'failure' && needs.build-and-push.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
