@@ -288,6 +288,28 @@ environment.**
 **Milestone done when:** one hook script covers every guarded event, and the only judgement left on
 the client is the handful of checks that cannot run anywhere else.
 
+> **⚠️ The ask path is inert until #43, and every row below #42 builds on it.** Found in review of
+> #42, and recorded here so five downstream rows do not each rediscover it. Two individually correct
+> contracts compose into a dead path:
+>
+> - `hook_decision` returns `ask` for an ask-list match — that is its whole contract.
+> - The hook reads `ask` as a **deny**, because it has nothing further to consult.
+>
+> So **every ask-list match is denied, even against a healthy, reachable, correctly-configured
+> server.** Relatedly, the hook refreshes its cache only from the rule lists in the response, and the
+> response carries none — so `writeCache` is never called in production, and a machine with no cache
+> file round-trips on every tool call forever.
+>
+> **It fails closed, which is why this is a note rather than a defect.** Nothing is unsafe; the
+> capability is simply absent. #43 is the row that adds the registration and response fields that make
+> it real, which is why it should land before #44, #45, #46 and #88 — those are precisely the rows
+> whose behaviour is supposed to live on the ask list, and each would otherwise be built against a
+> path that cannot fire.
+>
+> The general shape is worth naming, because it is the same one #98–#102 came from: **a composition
+> gap between two rows that are each individually complete.** Neither row's own tests can see it,
+> because neither row is wrong.
+
 ---
 
 ## M7 — Telemetry
