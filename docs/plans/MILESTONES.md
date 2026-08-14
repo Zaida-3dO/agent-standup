@@ -75,9 +75,9 @@ reaches `main` without passing checks.
 > wiring: **request context** (an id minted at the boundary and threaded, so concurrent failures are
 > tellable apart — the only part with real design in it), **the rules engine's refusals** (logged
 > where the rule fires and its reasoning exists, not at the responder, which deliberately logs only
-> `internal`), **the CLI and MCP adapters** (a failure through either is currently as silent as HTTP
-> was), and **the levels below `error`**, of which `backfillStartupWarning` is the one already
-> returning a formatted line with no caller to write it.
+> `internal`), **the CLI and MCP adapters** (a failure through either reaches no log at all), and
+> **the levels below `error`**, of which `backfillStartupWarning` is the one already returning a
+> formatted line with no caller to write it.
 
 ---
 
