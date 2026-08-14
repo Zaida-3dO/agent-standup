@@ -113,7 +113,7 @@ describeIfDb("terminal items are out of the default read", () => {
   let itemsRoute: typeof import("@/app/api/items/route");
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     // The route modules reach `service/live.ts`'s process-global singleton,
     // so DATABASE_URL has to point at the scratch database before they are
     // imported — the same ordering constraint tests/board-routes.test.ts
