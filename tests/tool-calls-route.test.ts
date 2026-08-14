@@ -71,11 +71,20 @@ describeIfDb("POST /api/tool-calls against Postgres", () => {
     expect(rows[0]!.command).toBe("npm test");
   });
 
-  it("answers 400 invalid_json for a body that is not JSON", async () => {
+  it("answers 400 for a body that is not JSON, and says so in the message", async () => {
+    // The shared responder deliberately uses the same `invalid_input` code
+    // here that a schema rejection uses (`_shared/respond.ts`), so the code
+    // alone cannot tell the two apart — the *message* is what distinguishes
+    // "your body was not JSON" from "your body was JSON and was wrong",
+    // which is the difference a client acts on. Asserting the message is
+    // therefore the only assertion here that can fail: dropping the
+    // `invalidJsonResponse()` branch from the route would leave the status
+    // and the code identical and change only this.
     const response = await route.POST(post("{not json", true));
     expect(response.status).toBe(400);
-    const body = (await response.json()) as { code?: string; error?: { code?: string } };
-    expect(body.code ?? body.error?.code).toBe("invalid_json");
+    const body = (await response.json()) as { error?: { code?: string; message?: string } };
+    expect(body.error?.code).toBe("invalid_input");
+    expect(body.error?.message).toMatch(/valid JSON/i);
   });
 
   it("passes the operation's own invalid_input through rather than failing with a 500", async () => {
@@ -87,7 +96,13 @@ describeIfDb("POST /api/tool-calls against Postgres", () => {
       post({ sessionId: "route-session-2", calls: [{ tool: "Bash", ts: "x", inputTokens: -1 }] }),
     );
     expect(response.status).toBe(400);
-    const body = (await response.json()) as { code?: string; error?: { code?: string } };
-    expect(body.code ?? body.error?.code).toBe("invalid_input");
+    const body = (await response.json()) as {
+      error?: { code?: string; message?: string; fields?: string[] };
+    };
+    expect(body.error?.code).toBe("invalid_input");
+    // Distinguishes this from the not-JSON case above, which shares the
+    // code: a schema rejection names the offending field, so a client can
+    // find which of its rows was at fault.
+    expect(body.error?.fields?.length).toBeGreaterThan(0);
   });
 });
