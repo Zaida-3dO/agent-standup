@@ -44,7 +44,7 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | `done` |
 | **95** | **Mutation testing**, wired into CI and scoped to changed files, with a threshold that blocks the pull request below it. Reads the mutation report's own kill attribution rather than a process exit code, so a mutant only counts as killed when a named test caused it — the same shape a whole-suite collection failure would otherwise misreport as a perfect score. Every run also checks a dedicated no-op fixture and refuses to trust its own numbers if that fixture is ever reported killed | 3 | `done` |
 | **106** | **Switch mutation testing back on.** The job is paused in `ci.yml` behind a `false &&`, not deleted — re-enabling is removing two characters, and the required gate follows automatically because it reads that job's result. Paused deliberately during a period of heavy parallel work, because at 22–57 minutes it is by a wide margin the slowest job in the pipeline and it runs on any source change. **Restore it once that push settles.** Whatever survived while it was off is found on the first run after, so budget for a batch of failures rather than a green run — and prefer one sweep to fix them together over discovering them one pull request at a time. If it stays off, it needs a scheduled run and somewhere the last result is visible: a check nobody runs and nobody misses is off, whatever the configuration says | 95 | |
-| **97** | **Application logging.** One JSON object per line on stderr, the conventional five levels (`debug` `info` `warn` `error` `fatal`) with a `LOG_LEVEL` threshold defaulting to `info`. Carries the operator-facing detail the error taxonomy deliberately withholds from clients — above all the `cause` an `InternalError` preserves — plus the request context needed to follow a single request through the layers it touched. Wired at the boundaries a failure actually crosses: the API error responder, the rules engine's refusals, and the adapters | 3 | |
+| **97** | **Application logging.** One JSON object per line on stderr, the conventional five levels (`debug` `info` `warn` `error` `fatal`) with a `LOG_LEVEL` threshold defaulting to `info`. Carries the operator-facing detail the error taxonomy deliberately withholds from clients — above all the `cause` an `InternalError` preserves — plus the request context needed to follow a single request through the layers it touched. Wired at the boundaries a failure actually crosses: the API error responder, the rules engine's refusals, and the adapters | 3 | `done` |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
 reaches `main` without passing checks.
@@ -70,15 +70,27 @@ reaches `main` without passing checks.
 > this one is easier to debug with it and harder without, so it earns its place early, and unlike
 > facet history it has no backfill problem — only the failures that happen before it lands are lost.
 >
-> **Partially landed** (`src/lib/log.ts`): the transport, the five levels with `LOG_LEVEL`, and the
-> `cause` chain — wired into the API error responder, which is what took the motivating failure above
-> from a bisect against a local checkout to a single request. The row stays open for the rest of its
-> wiring: **request context** (an id minted at the boundary and threaded, so concurrent failures are
-> tellable apart — the only part with real design in it), **the rules engine's refusals** (logged
-> where the rule fires and its reasoning exists, not at the responder, which deliberately logs only
-> `internal`), **the CLI and MCP adapters** (a failure through either reaches no log at all), and
-> **the levels below `error`**, of which `backfillStartupWarning` is the one already returning a
-> formatted line with no caller to write it.
+> **How the request context works, since it is the part with real design in it.** The id lives on
+> `ServiceContext.caller.requestId` and is minted at the boundary a call arrives through; the runtime
+> mints one when the adapter did not, so an in-process caller still produces correlated lines, and an
+> adapter's own id wins because the adapter has lines of its own already stamped with it. It is
+> threaded as a value on a type the layers already pass to each other rather than held in ambient
+> storage — `AsyncLocalStorage` would work and would be a second channel a guard could read without
+> any signature saying so, which is the coupling `ServiceContext` exists to make visible.
+>
+> **The levels are a decision, not a default.** An `internal` is `error`, with the `cause`; every
+> other refusal is `debug`, because a code the caller earned is the system working and thousands of
+> them at `error` would bury the one that means something is wrong. A guard's refusal is the
+> exception at `info` — it is the line an operator chasing a stuck item actually wants, and `info` is
+> on at the default threshold. The whole thing writes to **stderr at every level**, which for
+> `mcp-stdio` is a correctness requirement rather than a preference: stdout carries the JSON-RPC
+> framing.
+>
+> **What is deliberately not here, as follow-ups.** The CLI's `http` binding mints an id for its own
+> lines and does **not** send it to the server, because no route reads a caller header — end-to-end
+> correlation across the two processes needs a server that reads one, not a client that sends one.
+> And no route echoes a request id back to a client (`X-Request-Id`), which would be the thing that
+> lets a bug report name the call it came from.
 
 ---
 

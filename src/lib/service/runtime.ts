@@ -11,6 +11,7 @@ import { toServiceError, InvalidInputError, NotFoundError } from "./errors";
 import { getOperation } from "./registry";
 import type { OperationName, OperationOutput } from "./registry";
 import type { Caller, ServiceContext, TransactionHandle } from "./context";
+import { log, newRequestId } from "@/lib/log";
 import type { SettingsSnapshot } from "@/lib/settings";
 
 /**
@@ -88,6 +89,92 @@ export class ServiceRuntime {
   ): Promise<OperationOutput<N>>;
   async call(name: string, input: unknown, options?: CallOptions): Promise<unknown>;
   async call(name: string, input: unknown, options: CallOptions = {}): Promise<unknown> {
+    // Minted here when the adapter did not supply one, so that no line
+    // written for this call is unlabelled — an in-process caller (a script,
+    // a test, the backfill runner) reaches the runtime without crossing an
+    // adapter at all, and an unlabelled line is exactly the one an operator
+    // cannot correlate. An adapter's own id wins, because the adapter is
+    // where the call began and it has lines of its own already stamped
+    // with it.
+    const caller: Caller = {
+      ...(options.caller ?? {}),
+      requestId: options.caller?.requestId ?? newRequestId(),
+    };
+    const requestId = caller.requestId;
+
+    // The line that makes the rest of a request's lines findable. `debug`,
+    // because one per call is the highest-volume thing this application
+    // logs and an operator wants it only when actually following a request
+    // — the `info` default deliberately leaves it out.
+    //
+    // The input is **not** logged, at any level. It is caller-supplied and
+    // unbounded, and `put_setting` carries a settings value whose key may
+    // be marked `sensitive` (`settings/registry`) — a rule this module has
+    // no way to consult and should not have to. Logging the operation, the
+    // transport and who called is what an operator needs to follow a
+    // request; logging what they sent is how a credential ends up in a log
+    // aggregator.
+    log.debug("Service call started.", {
+      requestId,
+      operation: name,
+      ...callerContext(caller),
+    });
+
+    try {
+      const result = await this.#dispatch(name, input, caller);
+      log.debug("Service call finished.", { requestId, operation: name });
+      return result;
+    } catch (error) {
+      const serviceError = toServiceError(error);
+      // The one level split worth stating. An `internal` is a failure
+      // nobody asked for, so it is logged with its `cause` — that is #97's
+      // motivating failure and the whole reason `InternalError` keeps the
+      // original. Every other code is a refusal the caller caused and the
+      // response already explains, so it is `debug`: an operator following
+      // a request wants to see it, and an operator watching for trouble
+      // must not have the one code that means trouble buried under a
+      // thousand well-earned 404s.
+      //
+      // The `cause` reaches the log and stops there. `serviceError` is
+      // rendered by `describeError`, which walks the chain; what an adapter
+      // renders is `toRejection()` plus the fixed message, which has never
+      // included it. The redaction boundary is unchanged by this line.
+      //
+      // Wrapping **the whole dispatch**, rather than only the transaction,
+      // is what makes that split hold for every exit path. An unregistered
+      // operation and an input that fails its schema are refused before a
+      // transaction is ever opened, and they are the two most ordinary
+      // refusals there are — a catch around the transaction alone would
+      // leave exactly those two invisible, which is the shape of the hole
+      // this row exists to close.
+      if (serviceError.code === "internal") {
+        log.error("Service call failed unexpectedly.", {
+          requestId,
+          operation: name,
+          ...callerContext(caller),
+          err: serviceError,
+        });
+      } else {
+        log.debug("Service call refused.", {
+          requestId,
+          operation: name,
+          code: serviceError.code,
+          ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
+        });
+      }
+      throw serviceError;
+    }
+  }
+
+  /**
+   * The four steps, with no logging in them.
+   *
+   * Split out so `call` above can wrap every exit path in one place: the
+   * refusals raised before the transaction opens have to reach the same log
+   * line as the ones raised inside it, and a second `catch` down here would
+   * be a second place for that decision to drift.
+   */
+  async #dispatch(name: string, input: unknown, caller: Caller): Promise<unknown> {
     const operation = getOperation(name);
     if (!operation) {
       throw new NotFoundError(`No such operation: ${name}.`, {
@@ -119,20 +206,39 @@ export class ServiceRuntime {
     // per guard, and not inside the transaction.
     const settings = await this.#resolveSnapshot();
 
-    try {
-      return await this.#transaction(async (db) => {
-        const ctx: ServiceContext = {
-          db,
-          settings,
-          caller: options.caller ?? {},
-          operation: operation.name,
-        };
-        return await operation.handler(ctx, parsed.data as never);
-      });
-    } catch (error) {
-      throw toServiceError(error);
-    }
+    // Step 4 — the body throws to abandon the transaction. `call`'s own
+    // `catch` is what normalises whatever comes out into the taxonomy and
+    // logs it; there is no second catch here, on purpose.
+    return await this.#transaction(async (db) => {
+      const ctx: ServiceContext = {
+        db,
+        settings,
+        caller,
+        operation: operation.name,
+      };
+      return await operation.handler(ctx, parsed.data as never);
+    });
   }
+}
+
+/**
+ * The parts of a caller that belong in a log line.
+ *
+ * An allowlist, not a spread of `caller`: `Caller` is a type other rows may
+ * add fields to, and a spread would put every future field into the log by
+ * default — which is the mechanism by which a credential eventually gets
+ * logged by nobody's decision. The three named here are identifiers the
+ * `events` table already stores against every write, so logging them
+ * discloses nothing a reader of this installation's own data could not
+ * already see. Absent keys are omitted rather than written as `undefined`,
+ * so a line carries no empty fields to read past.
+ */
+function callerContext(caller: Caller): Record<string, string> {
+  return {
+    ...(caller.transport === undefined ? {} : { transport: caller.transport }),
+    ...(caller.sessionId === undefined ? {} : { sessionId: caller.sessionId }),
+    ...(caller.actor === undefined ? {} : { actor: caller.actor }),
+  };
 }
 
 /** The narrow slice of a Prisma client the runtime uses. */

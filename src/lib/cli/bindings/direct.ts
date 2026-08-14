@@ -12,6 +12,7 @@
 // service call" applies to the binding that happens to run in the same
 // process as the service just as much as to the one that does not.
 import { isRehearsalRollback, toServiceError } from "@/lib/service";
+import { log, newRequestId } from "@/lib/log";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
 
 /** The narrow slice of the service runtime a binding uses. */
@@ -19,7 +20,9 @@ export interface CallableService {
   call(
     name: string,
     input: unknown,
-    options?: { caller?: { sessionId?: string; actor?: string; transport?: string } },
+    options?: {
+      caller?: { sessionId?: string; actor?: string; transport?: string; requestId?: string };
+    },
   ): Promise<unknown>;
 }
 
@@ -55,8 +58,17 @@ export function createDirectBinding({ service, sessionId, actor }: DirectBinding
   return {
     name: "direct",
     async invoke(operation: string, input: unknown): Promise<BindingResult> {
+      // Minted at the boundary, like every other adapter's. The command
+      // line is the adapter where this matters least — one caller, one
+      // command — and it is stamped anyway, because a `--direct` command
+      // run against a shared database writes lines into the same stream as
+      // every other caller, and "which of these is mine" is the same
+      // question there as anywhere else.
+      const requestId = newRequestId();
       try {
-        return bindingOk(await service.call(operation, input, { caller }));
+        return bindingOk(
+          await service.call(operation, input, { caller: { ...caller, requestId } }),
+        );
       } catch (error) {
         // `transition_item`'s `dryRun` branch always throws
         // `RehearsalRollback` to abandon its own transaction, even when the
@@ -79,6 +91,36 @@ export function createDirectBinding({ service, sessionId, actor }: DirectBinding
         // throw that the `http` binding would have reported as a 500 and
         // this one would have reported as a crash.
         const serviceError = toServiceError(error);
+        // The command line's half of #97. A failure here reached no log at
+        // all: `bindingRejected` carries only the comparable part of the
+        // refusal plus the fixed message, and `main` renders an `internal`
+        // as its *class* and nothing more — deliberately, since a terminal
+        // must not be shown a connection string. So the `cause` had nowhere
+        // to go and a person debugging a failing command had only the class
+        // name.
+        //
+        // **On stderr, at every level, including this one.** `log.error`
+        // writes to stderr by construction (`lib/log.ts`), which is what
+        // keeps this off the stream a command's actual output goes to —
+        // `standup ... --json | jq` must not receive a log line, and a
+        // shell pipeline is the most likely thing in this whole application
+        // to mistake one for a result.
+        if (serviceError.code === "internal") {
+          log.error("Command failed unexpectedly.", {
+            requestId,
+            transport: caller.transport,
+            operation,
+            err: serviceError,
+          });
+        } else {
+          log.debug("Command refused.", {
+            requestId,
+            transport: caller.transport,
+            operation,
+            code: serviceError.code,
+            ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
+          });
+        }
         return bindingRejected(serviceError.toRejection(), serviceError.message);
       }
     },

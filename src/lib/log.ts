@@ -34,6 +34,38 @@
 // error taxonomy already decides what may cross to a client, and this module
 // only ever writes server-side.
 
+// ── Request context ─────────────────────────────────────────────────────
+//
+// A log line answers "what failed"; a request id answers "which call". With
+// concurrent callers those are different questions, and without the second
+// one an operator reading two interleaved failures cannot tell whether they
+// are one request going wrong twice or two requests going wrong once.
+//
+// The id is minted at the boundary a call arrives through, carried on
+// `ServiceContext.caller.requestId` (`service/context.ts`) and stamped onto
+// every line written for that call — at the adapter, and at the guard that
+// refused deep inside it. It is threaded as a value on a type the layers
+// already pass to each other rather than held in ambient storage:
+// `AsyncLocalStorage` would work, and would be a second channel a guard can
+// read without any signature saying so, which is precisely the coupling
+// `ServiceContext` exists to make visible.
+
+/** The context key every layer agrees on, so a line is greppable by it. */
+export const REQUEST_ID_KEY = "requestId";
+
+/**
+ * Mints a request id.
+ *
+ * A UUID rather than a counter: the processes writing these lines are
+ * replaceable and replicated (the application ships as an image), so a
+ * per-process counter would collide across replicas the moment two of them
+ * are behind one proxy — and the whole value of the id is that it is
+ * unambiguous when two lines land in the same aggregated stream.
+ */
+export function newRequestId(): string {
+  return crypto.randomUUID();
+}
+
 /** The conventional five, ordered least to most severe. */
 export const LOG_LEVELS = ["debug", "info", "warn", "error", "fatal"] as const;
 

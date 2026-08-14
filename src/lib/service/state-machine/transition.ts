@@ -183,6 +183,11 @@ async function evaluate(
     fields: request.fields ?? {},
     db: ctx.db,
     settings: ctx.settings,
+    // Carried so the refusal `runGuards` logs names the call that provoked
+    // it. Passed through rather than read from ambient storage, for the
+    // reason `context.ts` gives: a guard's inputs should be visible in its
+    // type.
+    ...(ctx.caller.requestId === undefined ? {} : { requestId: ctx.caller.requestId }),
   });
 
   return { item, from, to, rejection };

@@ -15,6 +15,7 @@
 // above it — no command, no dispatcher — ever sees a path or a status code.
 import type { Rejection, ServiceErrorCode } from "@/lib/service";
 import { SERVICE_ERROR_CODES } from "@/lib/service";
+import { log, newRequestId } from "@/lib/log";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
 import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
 import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
@@ -270,6 +271,15 @@ export function createHttpBinding({
       if (sessionId !== undefined) headers["X-Standup-Session"] = sessionId;
       if (actor !== undefined) headers["X-Standup-Actor"] = actor;
 
+      // This binding's id labels only the lines written *in this process*.
+      // It is deliberately not sent to the server: nothing there reads it
+      // (no route reads `X-Standup-Session` or `X-Standup-Actor` either), so
+      // a header would be a correlation that looks real in a diff and joins
+      // nothing in a log. End-to-end correlation across the two processes is
+      // a follow-up, and it needs a server that reads the header, not a
+      // client that sends one.
+      const requestId = newRequestId();
+
       let response: Response;
       try {
         response = await doFetch(`${root}${path}`, {
@@ -291,6 +301,28 @@ export function createHttpBinding({
         // this binding's equivalent of one, so the only safe thing to render
         // is a fixed sentence plus the error's *class*, which names the
         // failure mode without carrying an address.
+        //
+        // **The log gets what the terminal must not.** The detail withheld
+        // above — the host, the port, whatever the connect error actually
+        // said — is exactly what a person diagnosing this needs, so it is
+        // kept rather than dropped: `describeError` (`lib/log.ts`) renders
+        // the cause and its own chain onto stderr, which is a stream a
+        // person reads, not one a pipeline parses.
+        log.error("Could not reach the server.", {
+          requestId,
+          transport: "cli",
+          binding: "http",
+          operation,
+          method: route.method,
+          // The path, not the base URL: the path is this build's own route
+          // table and says which call failed, while the base URL is the
+          // configured address §20 keeps out of a rendered message. In a
+          // log it would be defensible; it is left out because the log line
+          // does not need it to be useful and the rule is easier to keep
+          // than to qualify.
+          path,
+          err: cause,
+        });
         return bindingRejected(
           { code: "internal", fields: [] },
           `Could not reach the server (${cause instanceof Error ? cause.name : "unknown error"}). Check the configured address.`,
@@ -306,6 +338,29 @@ export function createHttpBinding({
 
       if (!response.ok) {
         const { rejection, message } = rejectionFromBody(parsed, response.status);
+        if (rejection.code === "internal") {
+          // Either the server itself failed, or it answered with a body
+          // this build does not recognise — and the second is invisible
+          // from the terminal, which sees only "the server refused". The
+          // status is what tells those apart, so it is logged.
+          log.error("The server failed or answered unrecognisably.", {
+            requestId,
+            transport: "cli",
+            binding: "http",
+            operation,
+            status: response.status,
+          });
+        } else {
+          log.debug("The server refused the command.", {
+            requestId,
+            transport: "cli",
+            binding: "http",
+            operation,
+            status: response.status,
+            code: rejection.code,
+            ...(rejection.guard === undefined ? {} : { guard: rejection.guard }),
+          });
+        }
         return bindingRejected(rejection, message);
       }
 
