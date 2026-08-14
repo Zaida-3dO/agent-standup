@@ -7,6 +7,7 @@ import RootLayout, { metadata } from "@/app/layout";
 import Home from "@/app/page";
 import { ProfileProvider } from "@/lib/profile/ProfileProvider";
 import { AppShell } from "@/components/app-shell/AppShell";
+import { Board } from "@/components/board/Board";
 import type { ReactNode } from "react";
 import { findOneByType, walk } from "./helpers/react-element";
 
@@ -41,14 +42,14 @@ describe("RootLayout", () => {
 });
 
 describe("Home", () => {
-  it("renders the app name and a status line, with no wrapping <main> of its own", () => {
-    const element = Home();
-    expect(element.type).not.toBe("main");
-    const text = [...walk(element)]
-      .map((el) => (el.props as { children?: unknown }).children)
-      .filter((c) => typeof c === "string")
-      .join(" ");
-    expect(text).toContain("Agent Standup");
-    expect(text).toContain("board isn");
+  // The home page is the board (MILESTONES.md #37). It renders `Board` and
+  // nothing else — the branching lives in `BoardView`, which is tested
+  // directly in tests/board-view-component.test.ts.
+  it("renders the board", () => {
+    expect(findOneByType(Home(), Board)).toBeDefined();
+  });
+
+  it("adds no wrapping <main> of its own — AppShell already supplies one", () => {
+    expect(Home().type).not.toBe("main");
   });
 });
