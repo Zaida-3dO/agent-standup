@@ -29,9 +29,8 @@
 // real one.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import {
-  createScratchDatabase,
+  createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
@@ -47,11 +46,7 @@ describeIfDb("POST /hook route against Postgres", () => {
   let settingsCache: typeof import("@/lib/service/live").settingsCache;
 
   beforeAll(async () => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
-    const result = await runMigrations({ env: { ...process.env, DATABASE_URL: scratchUrl } });
-    if (!result.ok) {
-      throw new Error(`migrate deploy failed against scratch db ${dbName}`);
-    }
+    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
     // Same ordering constraint every other route test documents: point
     // DATABASE_URL at the scratch database before importing anything that
     // reaches service/live.ts's process-global singleton.
