@@ -264,7 +264,7 @@ describeIfDb("takeoverAssignment — against a real database", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
