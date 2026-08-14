@@ -22,6 +22,7 @@
 // semantics that a concurrent worker's TRUNCATE would corrupt.
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
+import { buildCli } from "../../scripts/build-cli.mjs";
 import { runMigrations } from "../../scripts/lib/run-migrations.mjs";
 import { withDatabaseName } from "./scratch-db";
 
@@ -45,6 +46,23 @@ async function execSql(url: string, ...statements: string[]): Promise<void> {
 }
 
 export default async function setup(): Promise<() => Promise<void>> {
+  // Builds `dist/` exactly once for the whole run, and it has to happen ABOVE
+  // the database guard below: the files that exercise the built artefacts
+  // (`tests/cli-package-publish.test.ts`, `tests/hook-built-script.test.ts`)
+  // need it whether or not a database is configured, and a run without
+  // TEST_DATABASE_URL returns early a few lines down.
+  //
+  // Building here rather than in each file's `beforeAll` is a correctness
+  // requirement, not a saved second. `buildCli` opens by deleting `dist/`
+  // wholesale, and vitest runs those two files in separate parallel workers
+  // against one shared repository root — so two concurrent builds interleave
+  // a delete with the other's writes. With code splitting the entry point and
+  // its chunks are separate files, giving a window where the entry exists and
+  // the chunk it imports does not, and a test that spawns the built binary in
+  // that window fails with a module-resolution error. Running it once, before
+  // any worker starts, leaves a single writer.
+  await buildCli();
+
   const databaseUrl = process.env.TEST_DATABASE_URL;
   // Same contract as the test files themselves: without a real database the
   // DB-backed suites skip, so there is nothing to build a template for.

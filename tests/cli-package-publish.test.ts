@@ -8,8 +8,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
-import { buildCli } from "../scripts/build-cli.mjs";
+import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const entryPath = "dist/bin/standup.js"; // the literal contract: package.json "bin.standup"
@@ -32,9 +31,8 @@ function runBuiltCli(args: string[], env: Record<string, string> = {}) {
   }
 }
 
-beforeAll(async () => {
-  await buildCli();
-}, 30_000);
+// `dist/` is built once for the whole run by `tests/helpers/global-setup.ts`,
+// which is the only writer — see the note there for why a per-file build races.
 
 describe("package.json publish contract", () => {
   const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
