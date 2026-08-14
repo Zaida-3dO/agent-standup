@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "../items/respond";
+import { parseBooleanParam } from "../_shared/query";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -29,6 +30,8 @@ export async function GET(request: Request) {
   if (assignee !== null) input.assignee = assignee;
   const search = url.searchParams.get("search");
   if (search !== null) input.search = search;
+  const includeTerminal = url.searchParams.get("includeTerminal");
+  if (includeTerminal !== null) input.includeTerminal = parseBooleanParam(includeTerminal);
 
   try {
     const board = await service.call("get_board", input, { caller: { transport: "http" } });

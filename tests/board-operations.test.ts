@@ -103,7 +103,14 @@ describeIfDb("get_board against Postgres", () => {
       const task = await createItem({ area: "board-completed", parentId: project.id });
       await setState(task.id, "merged");
 
-      const board = (await runtime.call("get_board", { area: "board-completed" })) as BoardOutput;
+      // `includeTerminal` because this asserts the *column derivation* —
+      // that `merged` maps to `completed` — and finished work is out of the
+      // default read (MILESTONES.md #103), which is a separate behaviour
+      // proved in tests/terminal-items-default.test.ts.
+      const board = (await runtime.call("get_board", {
+        area: "board-completed",
+        includeTerminal: true,
+      })) as BoardOutput;
       expect(board.completed.some((entry) => entry.item.id === task.id)).toBe(true);
     });
   });
@@ -153,8 +160,12 @@ describeIfDb("get_board against Postgres", () => {
       const b = await createItem({ area: "board-project-done", parentId: project.id });
       await setState(b.id, "wont_do");
 
+      // `includeTerminal` for the same reason as "places a merged task in
+      // completed" above: the assertion is about derivation, not about the
+      // default filter #103 put in front of it.
       const board = (await runtime.call("get_board", {
         area: "board-project-done",
+        includeTerminal: true,
       })) as BoardOutput;
       expect(board.completed.some((entry) => entry.item.id === project.id)).toBe(true);
     });
