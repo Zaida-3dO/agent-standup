@@ -55,7 +55,19 @@ import type { SpooledToolCall } from "./spool-record";
  */
 export const DEFAULT_MAX_RECORDS = 20_000;
 
-/** How many records go in one flush request. */
+/**
+ * How many records go in one flush request.
+ *
+ * Comfortably under the ingest's own per-request ceiling, which refuses an
+ * over-sized batch rather than truncating it — the right call server-side,
+ * since a truncated batch would discard whole calls and leave the client
+ * unable to tell how many landed. The consequence for this side is that the
+ * client's batch size is not merely a tuning knob: a value above the
+ * server's limit turns every flush into a permanent rejection, and the
+ * spool then grows to its ceiling and starts dropping. Staying well below
+ * it leaves room for that limit to be lowered without this becoming a
+ * lock-out.
+ */
 export const DEFAULT_BATCH_SIZE = 200;
 
 /** One line's worth of spooled record, plus what reading it cost. */

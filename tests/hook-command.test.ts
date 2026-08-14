@@ -74,6 +74,13 @@ const MATCH_NOTHING = JSON.stringify({
   fetchedAt: NOW,
 });
 
+/** Rules that send everything to the server — the only path that asks. */
+const ASK_EVERYTHING = JSON.stringify({
+  allowPatterns: [],
+  askPatterns: ["."],
+  fetchedAt: NOW,
+});
+
 describe("hook run answers the agent tool and spools the call", () => {
   it("allows silently and writes one record", async () => {
     const spool = memorySpool();
@@ -198,32 +205,85 @@ describe("spooling can never change a verdict", () => {
   });
 
   it("decides before it spools", async () => {
-    // The ordering, asserted rather than assumed: a spool whose append
-    // observes the verdict having already been rendered proves the
-    // filesystem is not in front of the decision.
+    // **The ordering is deliberate and this is what holds it.** Spooling
+    // first would put a filesystem write in front of every verdict, so the
+    // slowest thing in the hook would sit on the path of the fastest and
+    // most common case; and a hook killed between the two would delay a
+    // decision rather than lose a measurement, which is the wrong thing to
+    // lose. Both are stated in three comments and neither was tested — a
+    // refactor that moved the `spoolEvent` call above `runHook` passed the
+    // entire suite.
+    //
+    // The event that orders them is the server call: it happens *inside*
+    // `runHook`, so an append recorded after it proves the spool write
+    // followed the decision rather than preceding it. The ask-list path is
+    // used because it is the one that reaches the server at all.
     const order: string[] = [];
     const spool: SpoolStore = {
       append: () => order.push("append"),
       read: () => "",
       replace: () => {},
     };
+
     await runHookCommand({
       verb: "run",
       stdin: payload(),
       spool,
       now: NOW,
       hook: {
-        cacheText: ALLOW_ALL,
+        cacheText: ASK_EVERYTHING,
         askServer: async () => {
-          order.push("decide");
-          return undefined;
+          order.push("ask");
+          return { decision: "allow" as const };
         },
       },
     });
-    // The allow path never asks, so only the append is recorded — the point
-    // is that it is recorded *after* `runHook` resolved, which the sequence
-    // below pins by there being nothing before it.
-    expect(order).toEqual(["append"]);
+
+    expect(order).toEqual(["ask", "append"]);
+  });
+
+  it("spools after the verdict has been rendered, not merely after the ask", async () => {
+    // Stronger than the sequence above, which a `spoolEvent` call placed
+    // between the ask and the render would still satisfy. Here the spool's
+    // append asserts on a value that only exists once `runHook` has
+    // returned — so the append genuinely cannot run before the verdict is
+    // in hand.
+    let verdictReady = false;
+    let appendSawVerdict: boolean | undefined;
+
+    const spool: SpoolStore = {
+      append: () => {
+        appendSawVerdict = verdictReady;
+      },
+      read: () => "",
+      replace: () => {},
+    };
+
+    const outcome = await runHookCommand({
+      verb: "run",
+      stdin: payload(),
+      spool: {
+        ...spool,
+        append: (line) => {
+          // Reads the flag at append time, which is the moment under test.
+          appendSawVerdict = verdictReady;
+          void line;
+        },
+      },
+      now: NOW,
+      hook: {
+        cacheText: ASK_EVERYTHING,
+        askServer: async () => {
+          // Set as `runHook` resolves its verdict — anything appending
+          // before this point sees `false`.
+          verdictReady = true;
+          return { decision: "allow" as const };
+        },
+      },
+    });
+
+    if (outcome.kind !== "hook-response") throw new Error("unreachable");
+    expect(appendSawVerdict).toBe(true);
   });
 });
 
@@ -275,7 +335,7 @@ describe("hook flush", () => {
       spool,
       now: NOW,
       batchSize: 2,
-      send: async (batch) => batch[0]?.tool === "a",
+      send: async (batch) => batch.calls[0]?.tool === "a",
     });
 
     if (outcome.kind !== "envelope") throw new Error("unreachable");

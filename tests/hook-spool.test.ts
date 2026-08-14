@@ -27,6 +27,7 @@ import {
   trimSpool,
 } from "@/lib/hook/spool";
 import type { SpooledToolCall } from "@/lib/hook/spool-record";
+import { MAX_BATCH_SIZE } from "@/lib/telemetry/contract";
 
 function record(overrides: Partial<SpooledToolCall> = {}): SpooledToolCall {
   return {
@@ -185,6 +186,18 @@ describe("batching", () => {
   it("has a default batch size that is neither one nor unbounded", () => {
     expect(DEFAULT_BATCH_SIZE).toBeGreaterThan(1);
     expect(DEFAULT_BATCH_SIZE).toBeLessThan(DEFAULT_MAX_RECORDS);
+  });
+
+  it("batches within what the ingest will accept in one request", () => {
+    // A composition guard, and the reason it is worth a test rather than a
+    // comment: the server refuses an over-sized batch outright rather than
+    // truncating it. A client batching above that limit would have *every*
+    // flush rejected — and because the flush correctly keeps what was not
+    // acknowledged, the spool would then grow to its own ceiling and begin
+    // dropping the oldest records. Every part of that behaves as designed;
+    // the only thing wrong is one number exceeding another, in a different
+    // module, which nothing else in either half would notice.
+    expect(DEFAULT_BATCH_SIZE).toBeLessThanOrEqual(MAX_BATCH_SIZE);
   });
 });
 

@@ -16,10 +16,13 @@
 //   3. **A cap always leaves a trace.** A truncation nobody can see turns a
 //      measurement into a quiet lie.
 import { describe, expect, it } from "vitest";
+import * as SHARED_CAPS from "@/lib/telemetry/contract";
 import {
   MAX_COMMAND_CHARS,
   MAX_PATHS,
   MAX_PATH_CHARS,
+  MAX_SESSION_ID_CHARS,
+  MAX_TOOL_CHARS,
   TRUNCATION_MARKER,
   buildRecord,
   capPaths,
@@ -199,12 +202,20 @@ describe("the big fields are capped, and the cap leaves a trace", () => {
     expect(capText(command, MAX_COMMAND_CHARS)).toBe(command);
   });
 
-  it("marks a command one character over the cap", () => {
+  it("marks a command one character over the cap, counting the marker inside it", () => {
     // The boundary in both directions: an off-by-one here either truncates
     // everything or nothing, and neither shows up in a mid-range test.
+    //
+    // **The marker is inside the cap, not added on top of it**, so the cap
+    // is a real bound on what is stored rather than an approximate one.
+    // That matters because the same limits are applied again at the ingest:
+    // a client that appended the marker past the bound would produce a
+    // value the server then re-truncates, leaving the marker stranded in
+    // the *middle* of the stored text — a wrong measurement rather than a
+    // partial one.
     const capped = capText("x".repeat(MAX_COMMAND_CHARS + 1), MAX_COMMAND_CHARS);
-    expect(capped).toBe("x".repeat(MAX_COMMAND_CHARS) + TRUNCATION_MARKER);
-    expect(capped.startsWith("x".repeat(MAX_COMMAND_CHARS))).toBe(true);
+    expect(capped.length).toBe(MAX_COMMAND_CHARS);
+    expect(capped.endsWith(TRUNCATION_MARKER)).toBe(true);
   });
 
   it("caps a heredoc-sized command inside buildRecord", () => {
@@ -213,8 +224,19 @@ describe("the big fields are capped, and the cap leaves a trace", () => {
       event: event({ command: "y".repeat(500_000) }),
       now: NOW,
     });
-    expect(record?.command?.length).toBe(MAX_COMMAND_CHARS + TRUNCATION_MARKER.length);
+    expect(record?.command?.length).toBe(MAX_COMMAND_CHARS);
     expect(record?.command?.endsWith(TRUNCATION_MARKER)).toBe(true);
+  });
+
+  it("re-capping an already-capped value is a no-op, so the ingest cannot strand the marker", () => {
+    // The property that makes sharing one caps module worth doing, stated
+    // as a test: the client caps, the server caps the same value again, and
+    // the second pass must change nothing. If the two used different
+    // numbers — or counted the marker differently — this is where it would
+    // show, and nothing else in either codebase would notice.
+    const once = capText("z".repeat(50_000), MAX_COMMAND_CHARS);
+    expect(capText(once, MAX_COMMAND_CHARS)).toBe(once);
+    expect(once.endsWith(TRUNCATION_MARKER)).toBe(true);
   });
 
   it("caps how many paths are kept and how long each may be", () => {
@@ -222,7 +244,37 @@ describe("the big fields are capped, and the cap leaves a trace", () => {
     expect(capPaths(many)?.length).toBe(MAX_PATHS);
 
     const long = capPaths(["z".repeat(MAX_PATH_CHARS + 1)]);
+    expect(long?.[0]?.length).toBe(MAX_PATH_CHARS);
     expect(long?.[0]?.endsWith(TRUNCATION_MARKER)).toBe(true);
+  });
+
+  it("uses the shared limits rather than a second set of its own", () => {
+    // The client and the ingest bound these fields by the *same* numbers,
+    // from one module. Two independent sets is the shape where the client
+    // trims to one bound and the server re-trims to a tighter one — and
+    // each side looks correct in isolation while the stored value is wrong.
+    //
+    // Asserted against the shared module's own exports rather than against
+    // literals, so this fails if the hook ever stops importing them; a
+    // literal here would happily agree with a divergence.
+    expect(MAX_COMMAND_CHARS).toBe(SHARED_CAPS.MAX_COMMAND_CHARS);
+    expect(MAX_PATHS).toBe(SHARED_CAPS.MAX_PATHS);
+    expect(MAX_PATH_CHARS).toBe(SHARED_CAPS.MAX_PATH_CHARS);
+    expect(TRUNCATION_MARKER).toBe(SHARED_CAPS.TRUNCATION_MARKER);
+  });
+
+  it("caps the tool name and the session id, which are index keys server-side", () => {
+    const record = buildRecord({
+      event: { ...event(), sessionId: "s".repeat(MAX_SESSION_ID_CHARS + 50) },
+      now: NOW,
+    });
+    expect(record?.sessionId.length).toBe(MAX_SESSION_ID_CHARS);
+
+    const longTool = buildRecord({
+      event: event({ tool: "T".repeat(MAX_TOOL_CHARS + 50) }),
+      now: NOW,
+    });
+    expect(longTool?.tool.length).toBe(MAX_TOOL_CHARS);
   });
 
   it("keeps the first paths rather than the last", () => {

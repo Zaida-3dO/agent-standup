@@ -10,16 +10,26 @@
 // someone else, and a payload whose field names have to be translated is a
 // payload whose translation can be wrong in one direction only — silently.
 //
-// ── Why the caps are here and not at the ingest ────────────────────────
+// ── Why the caps are here and not only at the ingest ───────────────────
 //
-// #50 caps the big fields server-side, and it must, because it cannot trust
-// a client. That does not make capping here redundant: the spool is a file
-// on a developer's machine that is appended to after *every* tool call, and
-// the field most likely to be enormous is `command` — a heredoc writing a
-// whole source file is a single Bash call whose command text is the file.
-// Uncapped, one such call puts a megabyte on disk and, later, on the wire.
-// So the cap is applied at the point the record is built, where the whole
-// value is in hand and the truncation can be marked.
+// The ingest caps the big fields server-side, and it must, because it
+// cannot trust a client. That does not make capping here redundant: the
+// spool is a file on a developer's machine that is appended to after
+// *every* tool call, and the field most likely to be enormous is `command`
+// — a heredoc writing a whole source file is a single Bash call whose
+// command text is the file. Uncapped, one such call puts a megabyte on disk
+// and, later, on the wire. So the cap is applied at the point the record is
+// built, where the whole value is in hand and the truncation can be marked.
+//
+// **The limits and the capping functions are imported from
+// `@/lib/telemetry/contract`, never redefined here.** That module is the one
+// place they are stated, and it is shared with the ingest deliberately: two
+// independent sets of numbers is the shape where a client trims to one
+// bound and the server re-trims to a tighter one, leaving the marker
+// stranded in the *middle* of the stored value. That produces a wrong
+// measurement rather than a partial one, which is exactly what the caps
+// exist to prevent — and it is invisible from either side alone, because
+// each is individually behaving correctly.
 //
 // **Truncation is recorded, never silent.** A truncated string keeps a
 // visible marker, so a person reading a spooled record can tell the
@@ -32,23 +42,26 @@
 // timestamp is a parameter, as it is everywhere else in `src/lib/hook/**`.
 
 import type { HookEvent } from "./payload";
+import {
+  MAX_COMMAND_CHARS,
+  MAX_PATHS,
+  MAX_PATH_CHARS,
+  MAX_SESSION_ID_CHARS,
+  MAX_TOOL_CHARS,
+  TRUNCATION_MARKER,
+  capPaths as capPathList,
+  capText,
+} from "@/lib/telemetry/contract";
 
-/**
- * How much of a command is kept.
- *
- * Chosen to comfortably hold any command a person would type or an agent
- * would compose, while refusing the pathological case (a file's whole
- * contents arriving as a heredoc). It is exported so the flush's batch
- * sizing can reason about a worst-case record rather than guessing.
- */
-export const MAX_COMMAND_CHARS = 4000;
-
-/** How many paths are kept from one call, and how long each may be. */
-export const MAX_PATHS = 32;
-export const MAX_PATH_CHARS = 512;
-
-/** The marker appended to anything this module shortened. */
-export const TRUNCATION_MARKER = "…[truncated]";
+export {
+  MAX_COMMAND_CHARS,
+  MAX_PATHS,
+  MAX_PATH_CHARS,
+  MAX_SESSION_ID_CHARS,
+  MAX_TOOL_CHARS,
+  TRUNCATION_MARKER,
+  capText,
+};
 
 /**
  * One spooled tool call, shaped to `tool_calls` (SCHEMA.md §10).
@@ -60,8 +73,29 @@ export const TRUNCATION_MARKER = "…[truncated]";
  * The four token counts are separate and never folded into a total, for the
  * reason §10 states outright: they price at wildly different rates, so one
  * total destroys the information the table exists to hold.
+ *
+ * ── This is the SPOOL's shape, not the wire's ──────────────────────────
+ *
+ * Three fields here are deliberately not part of what gets sent, and the
+ * distinction is the reason this type and the request body are not the same
+ * type. `./flush.ts` is where the two are reconciled; see `toWireCall`
+ * there for which fields are dropped and why. Keeping the spool wider than
+ * the wire is the point rather than an oversight: the spool is the capture,
+ * and a field that is captured can be forwarded later, while a field that
+ * was never captured is gone for good.
  */
 export interface SpooledToolCall {
+  /**
+   * Whose call this is.
+   *
+   * Held on **every record** even though the ingest carries it once per
+   * request, on the envelope. The spool is an append-only file that a
+   * single machine writes from every session on it, so a record that did
+   * not name its own session could only be attributed by its position in
+   * the file — which stops being true the moment two sessions interleave,
+   * which is the normal case. The flush groups by this field and lifts it
+   * onto the envelope.
+   */
   readonly sessionId: string;
   readonly ts: string;
   readonly tool: string;
@@ -71,9 +105,22 @@ export interface SpooledToolCall {
   readonly outputTokens: number;
   readonly cacheWriteTokens: number;
   readonly cacheReadTokens: number;
-  /** The exact vendor model ID, when the tool reported one (§11 needs it to cut runs). */
+  /**
+   * The exact vendor model ID, when the tool reported one.
+   *
+   * **Captured but not yet sent** — there is no column for it and no
+   * receiver until row **#51** (runs), which is what will consume it: §11
+   * requires the hook to report model and effort on every call, because
+   * without them a mid-session `/model` switch is invisible and a run
+   * silently spans two models, attributing its score to a blend.
+   *
+   * It is spooled now regardless, because #51 cannot be backfilled from
+   * data nobody captured — the same argument M7 makes for the whole
+   * milestone. The cost of capturing early is a few bytes per record; the
+   * cost of capturing late is every run before the switch being ungradeable.
+   */
   readonly model?: string;
-  /** The literal effort value, when reported. */
+  /** The literal effort value, when reported. Captured but not yet sent — see `model`. */
   readonly effort?: string;
   readonly usage5h?: number;
   readonly usageWeekly?: number;
@@ -98,12 +145,6 @@ export interface ReportedUsage {
   readonly effort?: string;
   readonly usage5h?: number;
   readonly usageWeekly?: number;
-}
-
-/** Shortens `value` to `max` characters, marking it when it did. */
-export function capText(value: string, max: number): string {
-  if (value.length <= max) return value;
-  return value.slice(0, max) + TRUNCATION_MARKER;
 }
 
 /**
@@ -144,25 +185,32 @@ function label(value: unknown, max: number): string | undefined {
 }
 
 /**
- * The paths one call touched, capped in both directions.
+ * The paths one call touched, cleaned and then capped.
  *
- * Capped in count as well as in length because a single Glob or a
- * multi-file Edit can report hundreds, and `paths` exists to measure
- * *spread* (#54's "how wide the file spread is") — a signal that a cap of
- * 32 preserves the shape of and an uncapped list only makes more expensive.
- * Non-string entries are dropped rather than stringified: `[object Object]`
- * is not a path, and putting one on the spool would corrupt a
- * spread measurement with a value that can never match anything.
+ * The capping itself is `@/lib/telemetry/contract`'s `capPaths`, so the client
+ * and the ingest bound this field by the same numbers in the same order.
+ * What is done *here* and not there is the cleaning: non-string entries are
+ * dropped rather than stringified, and blank entries are dropped rather
+ * than kept. `[object Object]` is not a path, and putting one on the spool
+ * would corrupt a spread measurement with a value that can never match
+ * anything.
+ *
+ * The two steps are in this order because dropping junk after the count cap
+ * would let a list of 64 nulls consume the whole allowance and arrive
+ * empty, which reads as "this call touched nothing" — a wrong measurement
+ * rather than a partial one. Cleaning first means the cap is spent on real
+ * paths.
  */
 export function capPaths(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const kept: string[] = [];
+  const cleaned: string[] = [];
   for (const entry of value) {
-    if (kept.length >= MAX_PATHS) break;
-    const one = label(entry, MAX_PATH_CHARS);
-    if (one !== undefined) kept.push(one);
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (trimmed.length > 0) cleaned.push(trimmed);
   }
-  return kept.length === 0 ? undefined : kept;
+  if (cleaned.length === 0) return undefined;
+  return capPathList(cleaned);
 }
 
 export interface BuildRecordOptions {
@@ -192,18 +240,25 @@ export interface BuildRecordOptions {
 export function buildRecord(options: BuildRecordOptions): SpooledToolCall | undefined {
   const { event, now, usage } = options;
 
-  const tool = label(event.tool, 200);
+  const tool = label(event.tool, MAX_TOOL_CHARS);
   if (tool === undefined) return undefined;
 
   const command = event.command === undefined ? undefined : label(event.command, MAX_COMMAND_CHARS);
   const paths = capPaths(options.paths);
-  const model = label(usage?.model, 200);
-  const effort = label(usage?.effort, 200);
+  // `model` and `effort` are identifiers, so they share the tool name's
+  // bound rather than having one invented for them — a vendor model ID is
+  // the same shape and order of length as an MCP-namespaced tool name.
+  const model = label(usage?.model, MAX_TOOL_CHARS);
+  const effort = label(usage?.effort, MAX_TOOL_CHARS);
   const usage5h = readingOf(usage?.usage5h);
   const usageWeekly = readingOf(usage?.usageWeekly);
 
   return {
-    sessionId: event.sessionId,
+    // Capped to the same bound the ingest applies, so the value the flush
+    // groups by is the value the server stores. Capping only server-side
+    // would let two sessions whose ids differ past the cap be spooled apart
+    // and stored together, which merges two sessions' telemetry silently.
+    sessionId: capText(event.sessionId, MAX_SESSION_ID_CHARS),
     ts: new Date(now).toISOString(),
     tool,
     ...(command === undefined ? {} : { command }),

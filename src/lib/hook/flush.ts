@@ -25,15 +25,14 @@
 // collapse later, and a lost one is a hole in a measurement nobody can
 // reconstruct.
 //
-// ── Stopping on the first failure, rather than continuing ──────────────
+// ── Where a failure stops ──────────────────────────────────────────────
 //
-// When a batch fails, the flush stops instead of trying the ones after it.
-// A failing send is overwhelmingly "the server is unreachable" or "the
-// server is refusing", and both are conditions the next batch will meet
-// too — so continuing spends a request per batch to learn the same thing
-// while the hook is holding up a session. Stopping also keeps the spool in
-// order: everything from the failed batch onwards is retained as one
-// contiguous run, in the order it happened.
+// A failed batch abandons **that session** and moves on to the next one.
+// Within a session it stops at the first failure — those batches are the
+// same session's calls in order, and the next one will meet the same
+// condition — but one session's refusal is not evidence about another's.
+// The reasoning is spelled out at the loop itself, because it is the kind
+// of decision that reads as arbitrary without it.
 
 import {
   batches,
@@ -44,6 +43,54 @@ import {
   DEFAULT_MAX_RECORDS,
 } from "./spool";
 import type { SpooledToolCall } from "./spool-record";
+import type { ToolCallBatch, ToolCallRecord } from "@/lib/telemetry/contract";
+
+/**
+ * The wire types come from the shared contract, never from a copy here.
+ *
+ * `ToolCallRecord` is deliberately **narrower than `SpooledToolCall`**, and
+ * the difference is the whole of `toWireCall` below. Because the type is
+ * the one the ingest parses against, adding a field to the spool cannot
+ * silently start failing every flush: the compiler asks what the wire
+ * should do with it, at the one boundary that has to decide.
+ */
+export type { ToolCallBatch, ToolCallRecord } from "@/lib/telemetry/contract";
+
+/**
+ * Reduces one spooled record to what the ingest accepts.
+ *
+ * Three fields are dropped, for two different reasons, and neither is an
+ * omission:
+ *
+ *   - **`sessionId`** moves to the envelope. It is on every spooled record
+ *     because one local file interleaves every session on the machine, but
+ *     the request carries it once — so leaving it on the call would be an
+ *     unrecognised key, and a redundant one.
+ *   - **`model` and `effort`** have no receiver yet. §11 requires the hook
+ *     to report them and row **#51** is what will consume them; until that
+ *     lands there is no column to put them in, and sending them would fail
+ *     the whole batch rather than being ignored. They stay on the spool
+ *     (see `SpooledToolCall`), so #51 begins with history rather than with
+ *     the day it shipped — capture is the half that cannot be backfilled.
+ *
+ * **When #51 lands, this function is the one place that changes.** That is
+ * why the dropping happens here, in a named function on the wire boundary,
+ * rather than being spread across the record builder and the sender.
+ */
+export function toWireCall(record: SpooledToolCall): ToolCallRecord {
+  return {
+    tool: record.tool,
+    ts: record.ts,
+    ...(record.command === undefined ? {} : { command: record.command }),
+    ...(record.paths === undefined ? {} : { paths: record.paths }),
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cacheWriteTokens: record.cacheWriteTokens,
+    cacheReadTokens: record.cacheReadTokens,
+    ...(record.usage5h === undefined ? {} : { usage5h: record.usage5h }),
+    ...(record.usageWeekly === undefined ? {} : { usageWeekly: record.usageWeekly }),
+  };
+}
 
 /**
  * Sends one batch. Resolves `true` when the server took it.
@@ -54,7 +101,7 @@ import type { SpooledToolCall } from "./spool-record";
  * records and stop), and a caller that had to enumerate them could forget
  * one and treat it as success, which deletes telemetry.
  */
-export type SendBatch = (batch: readonly SpooledToolCall[]) => Promise<boolean>;
+export type SendBatch = (batch: ToolCallBatch) => Promise<boolean>;
 
 export interface FlushOptions {
   /** The spool file's contents, or `undefined` when there is no file. */
@@ -110,28 +157,88 @@ export async function flushSpool(options: FlushOptions): Promise<FlushResult> {
   // a flush that ignored that would send an unbounded backlog in one go.
   const trimmed = trimSpool(records, options.maxRecords ?? DEFAULT_MAX_RECORDS);
 
-  const groups = batches(trimmed.records, options.batchSize ?? DEFAULT_BATCH_SIZE);
+  // Grouped by session before being split into batches, because the request
+  // names one session on the envelope. One local spool file holds every
+  // session that ran on the machine, so a batch taken as a straight slice
+  // would routinely span two of them and there would be no correct
+  // `sessionId` to put on it.
+  //
+  // Order is preserved *within* a session, which is the order that matters:
+  // a session's calls stay in the sequence they happened, and sessions are
+  // sent in the order they first appear in the file. What is deliberately
+  // **not** preserved is global interleaving across sessions — nothing
+  // reads it, since every consumer groups by session anyway.
+  const bySession = new Map<string, SpooledToolCall[]>();
+  for (const record of trimmed.records) {
+    const existing = bySession.get(record.sessionId);
+    if (existing === undefined) bySession.set(record.sessionId, [record]);
+    else existing.push(record);
+  }
 
+  const size = options.batchSize ?? DEFAULT_BATCH_SIZE;
   let sent = 0;
   let attempted = 0;
   let stoppedEarly = false;
 
-  for (const batch of groups) {
-    attempted += 1;
-    let accepted = false;
-    try {
-      accepted = await options.send(batch);
-    } catch {
-      accepted = false;
+  // What was acknowledged, tracked as a set rather than as a count.
+  //
+  // A count was correct while every batch was a contiguous prefix of one
+  // list; with per-session grouping it is not — session B's batch can be
+  // acknowledged while session A's fails, so "the first N records" no
+  // longer describes what landed. Retaining by identity keeps the rule
+  // exactly as stated ("nothing leaves the spool until the server says it
+  // took it") under grouping, where retaining by position would silently
+  // delete a failed session's records because a different session
+  // succeeded.
+  const acknowledged = new Set<SpooledToolCall>();
+
+  // ── Where a failure stops, and where it does not ──────────────────────
+  //
+  // A failed batch abandons **that session** and moves to the next one,
+  // rather than abandoning the whole flush. The two candidate rules differ
+  // only when sessions disagree, and that case decides it:
+  //
+  //   - Stopping everything treats one session's failure as evidence about
+  //     every other session. For an unreachable server that is true, and
+  //     costs one wasted request per remaining session — bounded, and
+  //     retried on the next flush anyway.
+  //   - Continuing treats it as evidence about that session only. For a
+  //     server that refuses *one* session's batch — a session id past a
+  //     length the server rejects, a record a later build wrote — stopping
+  //     would mean that one session's stuck batch blocks every other
+  //     session's telemetry indefinitely, and the spool fills to its
+  //     ceiling and begins dropping the oldest records of sessions that
+  //     were never at fault.
+  //
+  // The second failure is silent and unbounded; the first is loud and
+  // bounded. So the flush continues, and `stoppedEarly` reports that
+  // something was left behind.
+  //
+  // Within one session it still stops at the first failure: those batches
+  // are the same session's calls in order, the next one will meet the same
+  // condition, and stopping keeps what is retained contiguous.
+  for (const [sessionId, sessionRecords] of bySession) {
+    for (const batch of batches(sessionRecords, size)) {
+      attempted += 1;
+      let accepted = false;
+      try {
+        accepted = await options.send({ sessionId, calls: batch.map(toWireCall) });
+      } catch {
+        accepted = false;
+      }
+      if (!accepted) {
+        stoppedEarly = true;
+        break;
+      }
+      for (const record of batch) acknowledged.add(record);
+      sent += batch.length;
     }
-    if (!accepted) {
-      stoppedEarly = true;
-      break;
-    }
-    sent += batch.length;
   }
 
-  const retainedRecords = trimmed.records.slice(sent);
+  // Retained in the spool's original order, not the grouped order, so a
+  // file that is flushed repeatedly does not get progressively reordered
+  // by its own retries.
+  const retainedRecords = trimmed.records.filter((record) => !acknowledged.has(record));
   return {
     sent,
     retained: retainedRecords.length,
