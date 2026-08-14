@@ -696,6 +696,8 @@ model RegisteredProcess {
   @@index([machine, executable])
   @@index([rootSessionId])
   @@map("registered_processes")
+}
+
 // How a session registered — the capability signal (SCHEMA.md §21).
 //
 // **Five values, not two.** Registering over the command line proves the

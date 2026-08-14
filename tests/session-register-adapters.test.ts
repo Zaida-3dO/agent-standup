@@ -1,15 +1,24 @@
-// The registration handshake's two adapters — MILESTONES.md #43.
+// The registration handshake's **command-line** adapter, and the transport
+// header helper — MILESTONES.md #43.
 //
-// Both are thin shells over one service call, so what is under test here is
-// the *shell*: does argv become the right operation and the right input, does
-// the HTTP route stamp a transport the body cannot reach, and does the
-// command line's `http` binding say which binding it is on the wire. None of
-// that needs a database — the binding is a recorder and the route is exercised
-// for its request handling only, which is the same scope
-// `tests/cli-ownership-dispatch.test.ts` covers for row #82's commands.
+// The command line is a thin shell over one service call, so what is under
+// test here is the *shell*: does argv become the right operation and the
+// right input, does its `http` binding's route spec split path from body
+// correctly, and does that binding say which binding it is on the wire. None
+// of that needs a database — the binding is a recorder — which is the same
+// scope `tests/cli-ownership-dispatch.test.ts` covers for row #82's commands.
 //
-// The behaviour behind them — what a version means, whether a claim is
-// refused — is `tests/sessions-version-rule.test.ts` and
+// **This file does not reach the HTTP route module.** It exercises
+// `transportForHttpRequest` as a pure function, which is the *helper* the
+// route calls, not the route. The route itself — including the property that
+// a request body cannot override the session id in the path — is
+// `tests/session-register-route.test.ts`, which drives the real handler
+// against a real database. Saying so precisely matters: a header claiming
+// coverage this file does not have is how the route came to have none, and
+// a session-hijack mutant survived the whole suite because of it.
+//
+// The behaviour behind both adapters — what a version means, whether a claim
+// is refused — is `tests/sessions-version-rule.test.ts` and
 // `tests/session-registration.test.ts`. Testing it again through an adapter
 // would be testing the service layer twice and the adapter not at all.
 

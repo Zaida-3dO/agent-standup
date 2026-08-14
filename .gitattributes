@@ -1,0 +1,28 @@
+# Line endings are normalised on the way into the repository.
+#
+# Every text file is stored with LF regardless of the platform it was
+# written on, and checked out with LF. Without this, a tool that rewrites a
+# whole file on Windows can commit it as CRLF, and git records that as every
+# line being deleted and re-added — a change of one line reads as a change of
+# eight hundred, and it conflicts with every other branch touching the file.
+#
+# **The formatter does not cover this.** `format:check` runs Prettier, which
+# refuses files it has no parser for — `prisma/schema.prisma` among them,
+# where it exits with "No parser could be inferred" and the file is skipped
+# entirely. So the one class of file most likely to be rewritten wholesale by
+# a migration tool is exactly the class the formatter never inspects. This
+# rule is enforced by git itself, at the point the blob is written, and so it
+# does not depend on any check remembering to look.
+* text=auto eol=lf
+
+# Binary, byte-for-byte. Listing these is what stops `text=auto` from
+# guessing on a file whose contents happen to look textual.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
