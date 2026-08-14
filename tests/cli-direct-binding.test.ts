@@ -36,6 +36,22 @@ function callerOf(calls: { options: unknown }[]): Record<string, unknown> {
   return options?.caller ?? {};
 }
 
+/**
+ * The caller without its request id.
+ *
+ * The id is minted per call (MILESTONES.md #97), so a test cannot know its
+ * value — but the assertions below are about the *identity* fields being
+ * exactly what was resolved and nothing more, which is still a real claim
+ * once one unknowable field is set aside. Dropping it here rather than
+ * loosening those assertions to `toMatchObject` keeps them exact: a fourth
+ * identity field appearing from nowhere would still fail them.
+ */
+function withoutRequestId(caller: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...caller };
+  delete rest.requestId;
+  return rest;
+}
+
 describe("what the direct binding stamps onto a call", () => {
   it("stamps the transport as cli, so a command cannot claim another one", async () => {
     // SCHEMA.md §21: the registration transport is "stamped by the adapter,
@@ -54,7 +70,25 @@ describe("what the direct binding stamps onto a call", () => {
     const binding = createDirectBinding({ service, sessionId: "s-1", actor: "user-a" });
     await binding.invoke("get_item", { id: "x" });
 
-    expect(callerOf(calls)).toEqual({ transport: "cli", sessionId: "s-1", actor: "user-a" });
+    // `requestId` is stamped alongside these, minted per call, so it is
+    // dropped before comparing rather than pinned to a value no test can
+    // know. What is being asserted is the identity fields, exactly.
+    expect(withoutRequestId(callerOf(calls))).toEqual({
+      transport: "cli",
+      sessionId: "s-1",
+      actor: "user-a",
+    });
+  });
+
+  it("stamps a request id on every call, so its log lines correlate", async () => {
+    // MILESTONES.md #97. The adapter is where a call begins, so the id is
+    // minted here rather than left to the runtime — the binding's own
+    // failure line and the service's lines then carry the same one.
+    const { calls, service } = recordingService();
+    const binding = createDirectBinding({ service });
+    await binding.invoke("get_item", { id: "x" });
+
+    expect(callerOf(calls).requestId).toBeTypeOf("string");
   });
 
   it("omits the session rather than sending it undefined when none resolved", async () => {
@@ -66,7 +100,7 @@ describe("what the direct binding stamps onto a call", () => {
     await binding.invoke("get_item", { id: "x" });
 
     const caller = callerOf(calls);
-    expect(caller).toEqual({ transport: "cli", actor: "user-a" });
+    expect(withoutRequestId(caller)).toEqual({ transport: "cli", actor: "user-a" });
     expect("sessionId" in caller).toBe(false);
   });
 
@@ -76,7 +110,7 @@ describe("what the direct binding stamps onto a call", () => {
     await binding.invoke("get_item", { id: "x" });
 
     const caller = callerOf(calls);
-    expect(caller).toEqual({ transport: "cli", sessionId: "s-1" });
+    expect(withoutRequestId(caller)).toEqual({ transport: "cli", sessionId: "s-1" });
     expect("actor" in caller).toBe(false);
   });
 

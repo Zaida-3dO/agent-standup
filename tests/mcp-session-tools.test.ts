@@ -63,7 +63,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
   let itemCounter = 0;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
@@ -74,7 +74,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   function realRuntimeCall(): ServiceCall {

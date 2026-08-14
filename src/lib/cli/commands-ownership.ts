@@ -32,7 +32,7 @@
 // to touch that file's internals) so `passThroughFlags` below is the same
 // behaviour, defined once for every command in this file.
 import { malformed, type ErrorEnvelope } from "./envelope";
-import { stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
 import type { CommandSpec, InputResult } from "./commands";
 
 /** The flags every command in this build's dispatcher handles itself, never part of an operation's input. */
@@ -125,6 +125,50 @@ function buildCheckpointInput(rest: readonly string[], flags: ParsedArgs["flags"
   return { ok: true, input: { ...withSession.input, itemId: idResult.itemId } };
 }
 
+/**
+ * `session takeover <item-id> --fromSessionId … --bySessionId … --holderType … --holderId … [--force] [--reason …]`.
+ *
+ * `--force` is the one boolean flag in this file, and it needs the same kind
+ * of pre-handling the numeric `pid` coercion in `buildClaimInput` needs, for
+ * the mirror-image reason: `passThroughFlags` refuses a valueless flag
+ * ("--force needs a value"), which for a boolean is exactly backwards —
+ * a bare `--force` is the *correct* way to write it. So it is read with
+ * `booleanFlag` before the pass-through sees it, which also refuses
+ * `--force yes` as "does not take a value" rather than forwarding a string to
+ * a `z.boolean()` that would then complain about a type the caller never
+ * meant to supply.
+ */
+function buildTakeoverInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
+  const idResult = itemIdPositional(rest, "session takeover <item-id>");
+  if (!idResult.ok) return idResult;
+
+  const force = booleanFlag(flags, "force");
+  if (!force.ok) return force;
+
+  // `force` is withheld from the pass-through (it has already been read as a
+  // boolean) rather than destructured out, so there is no unused binding.
+  const others = Object.fromEntries(
+    Object.entries(flags).filter(([name]) => name !== "force"),
+  ) as ParsedArgs["flags"];
+  const passthrough = passThroughFlags(others);
+  if (!passthrough.ok) return passthrough;
+
+  const input: Record<string, unknown> = { ...passthrough.input, itemId: idResult.itemId };
+  // Sent only when actually given. `takeover`'s schema declares `force` as
+  // optional, and a call that never mentioned it should not be recorded as
+  // having explicitly declined to force.
+  if (flags.force !== undefined) input.force = force.value;
+  return { ok: true, input };
+}
+
+function buildSweepInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
+  // `sweep`'s schema is `z.object({}).strict()` — it takes nothing. A stray
+  // flag is therefore passed through and refused by that schema as
+  // `invalid_input` with the offending field named, rather than dropped here
+  // where the caller would never learn its flag did nothing.
+  return passThroughFlags(flags);
+}
+
 function buildMyWorkInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
   const passthrough = passThroughFlags(flags);
   if (!passthrough.ok) return passthrough;
@@ -185,6 +229,22 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
   },
   {
     noun: "session",
+    verb: "takeover",
+    operation: "takeover",
+    summary:
+      "Takes an item from another session. Free if that session is dead; needs --force and --reason if it may be alive.",
+    buildInput: buildTakeoverInput,
+  },
+  {
+    noun: "session",
+    verb: "sweep",
+    operation: "sweep",
+    summary:
+      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items.",
+    buildInput: buildSweepInput,
+  },
+  {
+    noun: "session",
     verb: "checkpoint",
     operation: "checkpoint",
     summary: "Records what you tried, what you ruled out, what's next.",
@@ -224,11 +284,26 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
 /**
  * `claim` as a bare word — PLAN.md's own daily-use example: "use daily:
  * `standup ls`, `standup claim T-…`, `standup complete`." `ls` is already
- * aliased in `commands.ts`; `complete` is row #81's territory. This is the
- * one alias row #82 owns.
+ * aliased in `commands.ts`; `complete` is row #81's territory.
+ *
+ * `sweep` is aliased for a different reason than `claim` is, and the reason is
+ * worth stating: it is not a command a person types daily, it is the command a
+ * **scheduler** invokes. Whatever runs it — a cron entry, a scheduled task, a
+ * container's periodic job — the invocation is written once into a
+ * configuration file and then read by people debugging it much later, so the
+ * short form is the one that stays legible out of context. `standup sweep`
+ * says what it does; `standup session sweep` reads as though it sweeps one
+ * session, which is the opposite of what it does (it sweeps all of them).
+ *
+ * `takeover` is deliberately **not** aliased. Every other alias here shortens
+ * something safe and frequent; takeover is neither, and a one-word form is
+ * exactly what makes a dangerous command easy to fire absent-mindedly.
+ * Requiring `session takeover` costs a word and makes the noun — whose
+ * session — impossible to miss.
  */
 export const OWNERSHIP_ALIASES: Readonly<Record<string, readonly [string, string]>> = Object.freeze(
   {
     claim: ["session", "claim"],
+    sweep: ["session", "sweep"],
   },
 );

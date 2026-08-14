@@ -44,7 +44,7 @@ Every PR after #1 is a branch and a pull request. Build in a worktree, get it re
 | **6** | Deploy to the NAS project directory — compose, production env file, scoped credential, health check | 5 | `done` |
 | **95** | **Mutation testing**, wired into CI and scoped to changed files, with a threshold that blocks the pull request below it. Reads the mutation report's own kill attribution rather than a process exit code, so a mutant only counts as killed when a named test caused it — the same shape a whole-suite collection failure would otherwise misreport as a perfect score. Every run also checks a dedicated no-op fixture and refuses to trust its own numbers if that fixture is ever reported killed | 3 | `done` |
 | **106** | **Switch mutation testing back on.** The job is paused in `ci.yml` behind a `false &&`, not deleted — re-enabling is removing two characters, and the required gate follows automatically because it reads that job's result. Paused deliberately during a period of heavy parallel work, because at 22–57 minutes it is by a wide margin the slowest job in the pipeline and it runs on any source change. **Restore it once that push settles.** Whatever survived while it was off is found on the first run after, so budget for a batch of failures rather than a green run — and prefer one sweep to fix them together over discovering them one pull request at a time. If it stays off, it needs a scheduled run and somewhere the last result is visible: a check nobody runs and nobody misses is off, whatever the configuration says | 95 | |
-| **97** | **Application logging.** One JSON object per line on stderr, the conventional five levels (`debug` `info` `warn` `error` `fatal`) with a `LOG_LEVEL` threshold defaulting to `info`. Carries the operator-facing detail the error taxonomy deliberately withholds from clients — above all the `cause` an `InternalError` preserves — plus the request context needed to follow a single request through the layers it touched. Wired at the boundaries a failure actually crosses: the API error responder, the rules engine's refusals, and the adapters | 3 | |
+| **97** | **Application logging.** One JSON object per line on stderr, the conventional five levels (`debug` `info` `warn` `error` `fatal`) with a `LOG_LEVEL` threshold defaulting to `info`. Carries the operator-facing detail the error taxonomy deliberately withholds from clients — above all the `cause` an `InternalError` preserves — plus the request context needed to follow a single request through the layers it touched. Wired at the boundaries a failure actually crosses: the API error responder, the rules engine's refusals, and the adapters | 3 | `done` |
 
 **Milestone done when:** a merge to `main` produces an image the NAS can pull and run, and nothing
 reaches `main` without passing checks.
@@ -70,15 +70,27 @@ reaches `main` without passing checks.
 > this one is easier to debug with it and harder without, so it earns its place early, and unlike
 > facet history it has no backfill problem — only the failures that happen before it lands are lost.
 >
-> **Partially landed** (`src/lib/log.ts`): the transport, the five levels with `LOG_LEVEL`, and the
-> `cause` chain — wired into the API error responder, which is what took the motivating failure above
-> from a bisect against a local checkout to a single request. The row stays open for the rest of its
-> wiring: **request context** (an id minted at the boundary and threaded, so concurrent failures are
-> tellable apart — the only part with real design in it), **the rules engine's refusals** (logged
-> where the rule fires and its reasoning exists, not at the responder, which deliberately logs only
-> `internal`), **the CLI and MCP adapters** (a failure through either reaches no log at all), and
-> **the levels below `error`**, of which `backfillStartupWarning` is the one already returning a
-> formatted line with no caller to write it.
+> **How the request context works, since it is the part with real design in it.** The id lives on
+> `ServiceContext.caller.requestId` and is minted at the boundary a call arrives through; the runtime
+> mints one when the adapter did not, so an in-process caller still produces correlated lines, and an
+> adapter's own id wins because the adapter has lines of its own already stamped with it. It is
+> threaded as a value on a type the layers already pass to each other rather than held in ambient
+> storage — `AsyncLocalStorage` would work and would be a second channel a guard could read without
+> any signature saying so, which is the coupling `ServiceContext` exists to make visible.
+>
+> **The levels are a decision, not a default.** An `internal` is `error`, with the `cause`; every
+> other refusal is `debug`, because a code the caller earned is the system working and thousands of
+> them at `error` would bury the one that means something is wrong. A guard's refusal is the
+> exception at `info` — it is the line an operator chasing a stuck item actually wants, and `info` is
+> on at the default threshold. The whole thing writes to **stderr at every level**, which for
+> `mcp-stdio` is a correctness requirement rather than a preference: stdout carries the JSON-RPC
+> framing.
+>
+> **What is deliberately not here, as follow-ups.** The CLI's `http` binding mints an id for its own
+> lines and does **not** send it to the server, because no route reads a caller header — end-to-end
+> correlation across the two processes needs a server that reads one, not a client that sends one.
+> And no route echoes a request id back to a client (`X-Request-Id`), which would be the thing that
+> lets a bug report name the call it came from.
 
 ---
 
@@ -174,11 +186,11 @@ race-proof on its own. See `DECISIONS.md` §13d.
 | **90** | **Retiring the environment variables.** A startup check, derived from the registry's `formerEnv` entries, that fails in development and logs loudly in production when a retired name is still set; plus `.env.example`, the production compose environment block, and the README's configuration and database-requirement sections | 77 | `done` |
 | **92** | **Administration API and command line** for installation-owned entities — repositories, areas, machines (including `source_globs`), accounts (including `vendor`, validated against the registered adapter list, and `budget_windows`) | 79, 91 | `done` |
 | **98** | **Artifact writes.** One `record_artifact` service call and its routes/tools/verb — `{itemId, kind, verdict?, reviewRound?, commitSha?, body?, ref?}` — plus an emitter for the `review_requested` event. **The importer is the only writer of the artifacts table**, so #17's three guards refuse every item minted through the product: `→ in_review` wants a `review_requested` event, `plan_review → executing` wants an approved plan artifact, `→ merged` wants a commit artifact and an approving code review at round+tip. One operation clears all three | 17, 20, 26 | |
-| **99** | **Run the liveness ladder.** #24 built `sweepLiveness` and nothing calls it. Give it a trigger — a `standup sweep` verb and a scheduled or hook-driven invocation — so a dead session's claims are actually reclaimed. Until then a crashed session's claim is permanent: the claim insert is `ON CONFLICT DO NOTHING`, so every later claim on that item is refused as already-held with no path to release it | 24 | |
+| **99** | **Run the liveness ladder.** #24 built `sweepLiveness` and nothing calls it. Give it a trigger — a `standup sweep` verb and a scheduled or hook-driven invocation — so a dead session's claims are actually reclaimed. Until then a crashed session's claim is permanent: the claim insert is `ON CONFLICT DO NOTHING`, so every later claim on that item is refused as already-held with no path to release it. **Also forced takeover** — displacing a holder the ladder is not going to release. A dead holder is taken over cleanly; a possibly-alive one requires an explicit `force` **and** a written `reason`, both recorded against the displaced assignment (`superseded_by`, `liveness = superseded`, `released_at`) and in a `takeover` event. That recorded state is what an enforcement hook reads; **the hook itself is #42 and does not exist, so a displaced live session is not yet prevented from continuing** | 24 | |
 | **100** | **Open-loop writes.** `loop_add` / `loop_close` over the `open_loop` / `open_loop_closed` events, with their routes, tools and verbs. The payload validators, the pairing logic and #28's read path all exist; only the write is missing, so `orientation` can display a loop nobody can record. Also add the `SCHEMA.md` section both modules cite as `§3a`, which does not exist | 20, 28 | |
 | **101** | **Wire the notification evaluator.** #25 built `evaluateRules` and named the service layer as its caller "once #27 lands transitions"; #27 landed without it, so nothing evaluates a rule and `people.notify_rules` is never read. Thread the before/after field snapshot from transition and update into it — the evaluator's own header documents the field-name casing the caller has to handle | 25, 27 | |
 | **102** | **Route the four raw event writes through the one writer.** `create_item`, `update_item`, `transition_item` and `complete_item` insert into `events` directly rather than through `appendEvent`, contradicting that module's stated invariant. Their column list omits `session_id`, `assignment_id` and `body`, so every state change and field change lands with a null session — making "who moved this" unanswerable in #28's `whatChanged` for exactly the mutations most worth attributing. Also gives `recordFieldChanges` its first caller | 20 | |
-| **103** | **Terminal items out of the default read.** `get_board` and `list_items` return finished work on every call — it is the majority of the payload and the share only grows, because nothing prunes terminal state. Exclude terminal states by default, with an explicit opt-in (`--all` / `includeTerminal`) for the cases that want them, and apply the same default to the board's completed column. A filter and a default, not new machinery | 26, 36 | |
+| **103** | **Terminal items out of the default read.** `get_board` and `list_items` return finished work on every call — it is the majority of the payload and the share only grows, because nothing prunes terminal state. Exclude terminal states by default, with an explicit opt-in (`--all` / `includeTerminal`) for the cases that want them, and apply the same default to the board's completed column. A filter and a default, not new machinery | 26, 36 | `done` |
 | **104** | **An event type cannot be added without an emitter.** A gating script, with the self-test every gate here ships: enumerate the event-type enum, enumerate what the service layer actually emits, and fail on a value nothing writes. `SCHEMA.md` §3 already states the rule — *add an event type only when the code that emits it exists* — and #98–#102 are what it costs when nothing checks it: a capability declared, validated, guarded and displayed, with no writer. Per-row status cannot show a gap between rows; this can | 20 | |
 | **105** | **Search over items** — `search` as a service call and its routes/tools/verb, indexing title and body and returning ranked matches. Answers "there is a task about this somewhere", which is otherwise unanswerable without pulling every item; the need is sharpest for a session reading a corpus it did not create. **Title and body first, deliberately** — checkpoints, events and artifacts are a substantially larger corpus and a substantially larger piece of work, and are worth attempting only once the cheap index is shown to be insufficient | 26 | |
 | **94** | **Adapter conformance harness.** Drivers behind a map typed from the adapter registry; cases authored once per operation, run against every driver; four assertions — identical outcomes by `code`, `guard` and fields · accept-and-reject per operation · **every registered guard covered by an observed rejection** · adapter completeness with bounded waivers — plus a negative control per assertion and a non-empty-guard-registry assertion | 26, 27, 29, 81, 82, 85 | |
@@ -275,6 +287,28 @@ environment.**
 
 **Milestone done when:** one hook script covers every guarded event, and the only judgement left on
 the client is the handful of checks that cannot run anywhere else.
+
+> **⚠️ The ask path is inert until #43, and every row below #42 builds on it.** Found in review of
+> #42, and recorded here so five downstream rows do not each rediscover it. Two individually correct
+> contracts compose into a dead path:
+>
+> - `hook_decision` returns `ask` for an ask-list match — that is its whole contract.
+> - The hook reads `ask` as a **deny**, because it has nothing further to consult.
+>
+> So **every ask-list match is denied, even against a healthy, reachable, correctly-configured
+> server.** Relatedly, the hook refreshes its cache only from the rule lists in the response, and the
+> response carries none — so `writeCache` is never called in production, and a machine with no cache
+> file round-trips on every tool call forever.
+>
+> **It fails closed, which is why this is a note rather than a defect.** Nothing is unsafe; the
+> capability is simply absent. #43 is the row that adds the registration and response fields that make
+> it real, which is why it should land before #44, #45, #46 and #88 — those are precisely the rows
+> whose behaviour is supposed to live on the ask list, and each would otherwise be built against a
+> path that cannot fire.
+>
+> The general shape is worth naming, because it is the same one #98–#102 came from: **a composition
+> gap between two rows that are each individually complete.** Neither row's own tests can see it,
+> because neither row is wrong.
 
 ---
 

@@ -18,12 +18,12 @@ describeIfDb("connection pool under pressure — real Postgres, real concurrency
   const dbName = scratchDatabaseName("pool");
   let scratchUrl: string;
 
-  beforeAll(() => {
-    scratchUrl = createScratchDatabase(testDatabaseUrl!, dbName);
+  beforeAll(async () => {
+    scratchUrl = await createScratchDatabase(testDatabaseUrl!, dbName);
   });
 
-  afterAll(() => {
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+  afterAll(async () => {
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   it("serves concurrent queries within pool capacity without any error", async () => {

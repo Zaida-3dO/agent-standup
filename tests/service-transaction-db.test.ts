@@ -66,7 +66,7 @@ describeIfDb("the transaction boundary against Postgres", () => {
   let registry: Record<string, unknown>;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
 
     const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
@@ -82,7 +82,7 @@ describeIfDb("the transaction boundary against Postgres", () => {
   afterAll(async () => {
     delete registry[createAreaThenMaybeFail.name];
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   async function areaExists(key: string): Promise<boolean> {

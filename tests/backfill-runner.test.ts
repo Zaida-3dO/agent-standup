@@ -287,13 +287,13 @@ describeDb("runBackfill (real database)", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    const url = createMigratedScratchDatabase(testDatabaseUrl!, databaseName).url;
+    const url = (await createMigratedScratchDatabase(testDatabaseUrl!, databaseName)).url;
     prisma = new PrismaClient({ datasources: { db: { url } } });
   }, 180_000);
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, databaseName);
+    await dropScratchDatabase(testDatabaseUrl!, databaseName);
   });
 
   afterEach(async () => {

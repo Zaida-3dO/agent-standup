@@ -1,13 +1,18 @@
 // Creates and drops disposable, uniquely-named Postgres databases on the
 // same server as TEST_DATABASE_URL, so the DB-integration tests never touch
 // the shared dev/CI `standup` database (and never collide with each other,
-// even running in parallel across test files). Same `prisma db execute`
-// pattern scripts/check-migration-drift.mjs already uses for its shadow
-// database.
+// even running in parallel across test files).
+//
+// Statements go over a direct `pg` connection rather than through
+// `prisma db execute`. The SQL is trivial either way; what differs is that the
+// CLI route pays an `npx` + Prisma-CLI cold start per call, which measures
+// ~1.5s against ~90ms for a connection — and with a database created and
+// dropped per test file, that startup is most of what the DB-backed suites
+// spend their time on. A direct connection also carries no transaction
+// wrapper, so DROP/CREATE DATABASE (which Postgres refuses to run inside one)
+// can share a single connection.
 import { randomBytes } from "node:crypto";
-import { spawnSync } from "node:child_process";
-
-const isWindows = process.platform === "win32";
+import { Client } from "pg";
 
 // One random token per test-file evaluation, appended to every scratch
 // database name in that file. Named for what's being tested, never for who
@@ -22,20 +27,26 @@ export function scratchDatabaseName(purpose: string): string {
   return `agent_standup_test_${purpose}_${runToken}`;
 }
 
-function run(url: string, sql: string): void {
-  const result = spawnSync(
-    isWindows ? "npx.cmd" : "npx",
-    ["prisma", "db", "execute", "--url", url, "--stdin"],
-    {
-      input: sql,
-      encoding: "utf-8",
-      shell: isWindows,
-    },
-  );
-  if (result.status !== 0) {
-    throw new Error(
-      `prisma db execute failed for ${JSON.stringify(sql)}:\n${result.stderr || result.stdout}`,
-    );
+/**
+ * Runs `statements` in order on one connection to `url`, then closes it.
+ *
+ * Sequential on purpose: the callers' statements depend on each other (drop
+ * before create), and sharing the connection is what keeps this to a single
+ * round of connection setup.
+ */
+async function run(url: string, ...statements: string[]): Promise<void> {
+  const client = new Client({ connectionString: url });
+  await client.connect();
+  try {
+    for (const sql of statements) {
+      await client.query(sql);
+    }
+  } catch (cause) {
+    throw new Error(`SQL failed against ${new URL(url).pathname.slice(1)}: ${String(cause)}`, {
+      cause,
+    });
+  } finally {
+    await client.end();
   }
 }
 
@@ -62,14 +73,12 @@ export function withDatabaseName(databaseUrl: string, name: string): string {
 const TEMPLATE_ENV_VAR = "TEST_TEMPLATE_DATABASE";
 
 /** Drops (if present) and recreates `name` on the same server as `databaseUrl`, returning its URL. */
-export function createScratchDatabase(databaseUrl: string, name: string): string {
-  const admin = adminUrl(databaseUrl);
-  // One statement per invocation, deliberately. `prisma db execute` wraps
-  // multi-statement input in a transaction, and neither DROP DATABASE nor
-  // CREATE DATABASE may run inside one ("cannot run inside a transaction
-  // block") — so batching them to save a process spawn does not work.
-  run(admin, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`);
-  run(admin, `CREATE DATABASE "${name}";`);
+export async function createScratchDatabase(databaseUrl: string, name: string): Promise<string> {
+  await run(
+    adminUrl(databaseUrl),
+    `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`,
+    `CREATE DATABASE "${name}";`,
+  );
   return withDatabaseName(databaseUrl, name);
 }
 
@@ -78,11 +87,8 @@ export function createScratchDatabase(databaseUrl: string, name: string): string
  * database instead of returning an empty one — so the caller does NOT need to
  * run `prisma migrate deploy` afterwards.
  *
- * This is the fast path, and it is what keeps the DB-backed suites' setup cost
- * off the critical path. Preparing a database per test file costs one `npx` +
- * Prisma-CLI cold start per subprocess spawned (~2-3s each, dwarfing the SQL),
- * so this keeps that count at one: Postgres populates the new database by
- * copying the template's files rather than re-executing any migration DDL.
+ * This is the fast path: Postgres populates the new database by copying the
+ * template's files rather than re-executing any migration DDL.
  *
  * Isolation is unchanged: every caller still gets its own uniquely-named,
  * disposable database, so files still run in parallel without colliding. The
@@ -93,27 +99,26 @@ export function createScratchDatabase(databaseUrl: string, name: string): string
  * without vitest's global setup. Callers can detect this via the returned
  * `migrated` flag.
  */
-export function createMigratedScratchDatabase(
+export async function createMigratedScratchDatabase(
   databaseUrl: string,
   name: string,
-): { url: string; migrated: boolean } {
+): Promise<{ url: string; migrated: boolean }> {
   const template = process.env[TEMPLATE_ENV_VAR];
   if (!template) {
-    return { url: createScratchDatabase(databaseUrl, name), migrated: false };
+    return { url: await createScratchDatabase(databaseUrl, name), migrated: false };
   }
 
-  // Separate invocations: `prisma db execute` wraps multi-statement input in a
-  // transaction, which neither statement may run inside.
-  //
-  // `CREATE DATABASE ... TEMPLATE` also refuses to run while any other session
-  // is connected to the template, so the global setup disconnects before
-  // workers start. Nothing reconnects to it for the rest of the run.
-  const admin = adminUrl(databaseUrl);
-  run(admin, `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`);
-  run(admin, `CREATE DATABASE "${name}" TEMPLATE "${template}";`);
+  // `CREATE DATABASE ... TEMPLATE` refuses to run while any other session is
+  // connected to the template, so the global setup disconnects before workers
+  // start. Nothing reconnects to it for the rest of the run.
+  await run(
+    adminUrl(databaseUrl),
+    `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`,
+    `CREATE DATABASE "${name}" TEMPLATE "${template}";`,
+  );
   return { url: withDatabaseName(databaseUrl, name), migrated: true };
 }
 
-export function dropScratchDatabase(databaseUrl: string, name: string): void {
-  run(adminUrl(databaseUrl), `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`);
+export async function dropScratchDatabase(databaseUrl: string, name: string): Promise<void> {
+  await run(adminUrl(databaseUrl), `DROP DATABASE IF EXISTS "${name}" WITH (FORCE);`);
 }

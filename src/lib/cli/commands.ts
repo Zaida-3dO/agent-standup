@@ -53,10 +53,21 @@ function noInput(): InputResult {
 /** Collects `--key value` flags into an input object, dropping the global ones. */
 const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
 
-function flagsToInput(flags: ParsedArgs["flags"]): InputResult {
+/**
+ * Collects the value-carrying flags into an operation input.
+ *
+ * `consumed` names flags a command has already read for itself — a boolean
+ * switch such as `--all`, which this function would otherwise refuse as a
+ * flag missing its value. Passing the name here rather than pre-stripping
+ * the flag object keeps the "which flags did this command handle?" answer
+ * in the command entry, where it is readable, instead of in a discarded
+ * destructuring.
+ */
+function flagsToInput(flags: ParsedArgs["flags"], consumed: readonly string[] = []): InputResult {
   const input: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(flags)) {
     if (GLOBAL_FLAGS.has(name)) continue;
+    if (consumed.includes(name)) continue;
     if (value === true) {
       return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
     }
@@ -118,8 +129,28 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     noun: "item",
     verb: "list",
     operation: "list_items",
-    summary: "List items, filtered by state, priority, area, repo or parent.",
-    buildInput: (_rest, flags) => flagsToInput(flags),
+    summary:
+      "List items, filtered by state, priority, area, repo or parent. Finished work is excluded by default; --all includes it.",
+    /**
+     * `--all` is the command line's spelling of `includeTerminal`
+     * (MILESTONES.md #103) — a bare flag, because that is what a switch
+     * looks like here and `--include-terminal true` is not a thing anyone
+     * would type. It cannot go through `flagsToInput`, which refuses a
+     * valueless flag outright ("--all needs a value"), so this verb builds
+     * its own input: `booleanFlag` for the switch, `flagsToInput` for
+     * everything else, with `--all` declared consumed so it does not arrive
+     * at the operation twice under two names.
+     */
+    buildInput: (_rest, flags) => {
+      const all = booleanFlag(flags, "all");
+      if (!all.ok) return all;
+      const built = flagsToInput(flags, ["all"]);
+      if (!built.ok) return built;
+      return {
+        ok: true,
+        input: { ...(built.input as Record<string, unknown>), includeTerminal: all.value },
+      };
+    },
   },
   {
     noun: "item",

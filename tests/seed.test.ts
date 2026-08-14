@@ -27,13 +27,13 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   });
 
   afterAll(async () => {
     await prisma.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   it("seeds two people, the agent name roster, and an account on a clean database", async () => {
@@ -70,7 +70,7 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
     // separate scratch database from the test above, so this test proves
     // idempotency on its own rather than depending on run order.
     const secondDbName = scratchDatabaseName("seed-twice");
-    const secondUrl = createMigratedScratchDatabase(testDatabaseUrl!, secondDbName).url;
+    const secondUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, secondDbName)).url;
     const client = new PrismaClient({ datasourceUrl: secondUrl });
 
     try {
@@ -108,7 +108,7 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
       expect(peopleAfterSecondRun.map((p) => p.id).sort()).toEqual(["user-a", "user-b"]);
     } finally {
       await client.$disconnect();
-      dropScratchDatabase(testDatabaseUrl!, secondDbName);
+      await dropScratchDatabase(testDatabaseUrl!, secondDbName);
     }
   }, 20_000); // creates a scratch database, migrates it, then seeds it twice — slower than vitest's 5s default
 });

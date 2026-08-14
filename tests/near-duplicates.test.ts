@@ -60,13 +60,13 @@ describeIfDb("findNearDuplicateAreas", () => {
   let prisma: PrismaClient;
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   }, 30_000);
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   it("surfaces a real near-duplicate pair created through ensureArea, alongside a negative control that must not appear", async () => {

@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "./respond";
+import { parseBooleanParam } from "../_shared/query";
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -44,6 +45,8 @@ export async function GET(request: Request) {
   if (repo !== null) input.repo = repo;
   const parentId = url.searchParams.get("parentId");
   if (parentId !== null) input.parentId = parentId === "" ? null : parentId;
+  const includeTerminal = url.searchParams.get("includeTerminal");
+  if (includeTerminal !== null) input.includeTerminal = parseBooleanParam(includeTerminal);
   const limit = url.searchParams.get("limit");
   if (limit !== null) input.limit = Number(limit);
   const cursor = url.searchParams.get("cursor");

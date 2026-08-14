@@ -24,7 +24,7 @@ describeIfDb("board HTTP route against Postgres", () => {
   let itemsRoute: typeof import("@/app/api/items/route");
 
   beforeAll(async () => {
-    scratchUrl = createMigratedScratchDatabase(testDatabaseUrl!, dbName).url;
+    scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     boardRoute = await import("@/app/api/board/route");
     itemsRoute = await import("@/app/api/items/route");
@@ -33,7 +33,7 @@ describeIfDb("board HTTP route against Postgres", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    dropScratchDatabase(testDatabaseUrl!, dbName);
+    await dropScratchDatabase(testDatabaseUrl!, dbName);
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {

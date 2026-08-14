@@ -34,6 +34,24 @@ export interface Caller {
    * (`SCHEMA.md` §21) — an adapter stamps it, an operation never guesses.
    */
   readonly transport?: string;
+  /**
+   * The id that ties every log line written for this call together.
+   *
+   * Minted at the boundary the call arrived through, so a single id spans
+   * the adapter's own lines and the guard's — which is what makes two
+   * concurrent failures tellable apart in one stream. Optional here and
+   * defaulted by `ServiceRuntime.call`, so an adapter that has not been
+   * taught to mint one still produces correlated lines rather than
+   * unlabelled ones; an adapter that *has* keeps its own id, because the
+   * adapter is where the call actually began and it has lines of its own to
+   * stamp before the service is ever reached.
+   *
+   * It is deliberately not a secret and deliberately not derived from
+   * anything: it identifies a call within a log stream and nothing else, so
+   * an adapter may echo it back to a caller (`X-Request-Id`) without
+   * disclosing anything.
+   */
+  readonly requestId?: string;
 }
 
 /**

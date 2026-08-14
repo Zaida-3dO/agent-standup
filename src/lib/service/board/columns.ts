@@ -57,6 +57,33 @@ export function columnForState(state: ItemStateValue): BoardColumn {
 }
 
 /**
+ * The states an item does not come back from — MILESTONES.md #103's
+ * "terminal states", which reads want excluded by default.
+ *
+ * **Derived from the column table above rather than written out a fifth
+ * time.** `merged`, `research_done`, `wont_do` and `cancelled` are exactly
+ * the states that map to `completed`, and that is not a coincidence to be
+ * restated: the board's completed column and "work that is finished" are
+ * the same idea reached from two directions. Spelling the four out again
+ * here would create a second list that a future state addition could
+ * update one of and not the other — the silent-drift failure `columns.ts`
+ * already exists to prevent for the mapping itself.
+ *
+ * Note this is the one place in this module that deliberately does *not*
+ * follow `states.ts`'s "write the list out so the test isn't circular"
+ * reasoning. The circularity that argument guards against is a test
+ * reading its expectations from the implementation; here the *test* names
+ * the four states literally (`tests/board-columns.test.ts`), so the
+ * assertion still comes from outside.
+ */
+export const TERMINAL_STATES: readonly ItemStateValue[] = STATES_BY_COLUMN.completed;
+
+/** Whether a state is terminal — finished work, excluded from reads unless asked for. */
+export function isTerminalState(state: ItemStateValue): boolean {
+  return STATE_TO_COLUMN[state] === "completed";
+}
+
+/**
  * A ranking over columns used only to pick the single "most active" column
  * when a project has children spread across several — `in_progress` beats
  * `waiting` beats `blocked-ish` etc. See `columnForProject`'s header for why
