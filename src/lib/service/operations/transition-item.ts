@@ -17,6 +17,8 @@ import {
   type TransitionOutcome,
 } from "../state-machine/transition";
 import { RehearsalRollback } from "./rehearsal-rollback";
+import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
+import { appendEvent } from "@/lib/events";
 
 const inputSchema = z
   .object({
@@ -103,14 +105,18 @@ export const transitionItem = defineOperation({
     // is the dedicated event type for this (§3's payload-shapes table),
     // distinct from the `field-change` an ordinary `update_item` edit
     // writes.
-    await ctx.db.$executeRawUnsafe(
-      `INSERT INTO "Event" ("itemId", "actorType", "actorId", "type", "payload")
-       VALUES ($1, $2::"ActorType", $3, 'state_change'::"EventType", $4::jsonb)`,
-      input.id,
-      ctx.caller.actor ? "agent" : "system",
-      ctx.caller.actor ?? null,
-      JSON.stringify({ from: applied.from, to: applied.to }),
-    );
+    // Through `appendEvent` (#102) — that module's stated invariant, and
+    // what gets `sessionId` and `assignmentId` onto the row. A state change
+    // is the mutation most worth attributing and was the one losing its
+    // session: "who moved this" had no answer for exactly the events people
+    // ask it about.
+    await appendEvent(ctx.db, {
+      itemId: input.id,
+      actor: callerEventActor(ctx.caller),
+      assignmentId: await liveAssignmentId(ctx.db, input.id, ctx.caller),
+      type: "state_change",
+      payload: { from: applied.from, to: applied.to },
+    });
 
     const item = await loadItemRecord(ctx, input.id);
     const outcome: AppliedTransitionOutcome = {

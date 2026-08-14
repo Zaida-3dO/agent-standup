@@ -9,6 +9,8 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "../items/ensure-area-raw";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
+import { recordFieldChanges } from "@/lib/events";
 
 const inputSchema = z
   .object({
@@ -151,16 +153,36 @@ export const updateItem = defineOperation({
     // event per changed field, so an edit touching several fields at once
     // (e.g. re-triaging priority and area together) reads back as several
     // distinct facts rather than one payload a consumer has to unpack.
+    //
+    // Through `recordFieldChanges` (#102), which is that loop plus the
+    // `appendEvent` call — its first caller, and the reason it was written.
+    // Routing through it is what gets `sessionId` and `assignmentId` onto
+    // the rows; the inline five-column insert had nowhere to put either.
+    //
+    // The snapshots handed to it are built from `changes`, NOT from the raw
+    // input and the loaded row. That matters: `changes` already holds the
+    // *stored* form of each value (`mergeAuthority` is spelled one way in
+    // the API and another in the Postgres enum), and it already dropped
+    // every field whose new value equals its stored value. Passing the raw input
+    // instead would re-diff the two encodings against each other and
+    // resurrect the phantom `mergeAuthority` field_change on a no-op that
+    // this function's own loop above exists to prevent. `recordFieldChanges`
+    // compares with the same `JSON.stringify` equality, so every entry here
+    // is one it will agree has changed.
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
     for (const change of changes) {
-      await ctx.db.$executeRawUnsafe(
-        `INSERT INTO "Event" ("itemId", "actorType", "actorId", "type", "payload")
-         VALUES ($1, $2::"ActorType", $3, 'field_change'::"EventType", $4::jsonb)`,
-        id,
-        ctx.caller.actor ? "agent" : "system",
-        ctx.caller.actor ?? null,
-        JSON.stringify({ field: change.field, from: change.from, to: change.to }),
-      );
+      before[change.field] = change.from;
+      after[change.field] = change.to;
     }
+    await recordFieldChanges(ctx.db, {
+      itemId: id,
+      actor: callerEventActor(ctx.caller),
+      assignmentId: await liveAssignmentId(ctx.db, id, ctx.caller),
+      before,
+      after,
+      fields: changes.map((change) => change.field),
+    });
 
     return toItemRecord(updated);
   },
