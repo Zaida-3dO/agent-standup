@@ -27,6 +27,7 @@
 import { ForbiddenError } from "./errors";
 import type { ServiceContext } from "./context";
 import { assessVersion, transportFromStored, variantForTransport } from "@/lib/sessions";
+import { surfaceForTransport } from "@/lib/surfaces";
 import { isHookVariant, type HookVariant } from "@/lib/build-constants";
 
 /** The rule identifier, so a refusal is attributable without parsing its message. */
@@ -85,6 +86,12 @@ export async function assertSessionMayClaim(ctx: ServiceContext, sessionId: stri
   const assessment = assessVersion({
     variant,
     reportedVersion: row?.hookVersion ?? null,
+    // The transport the adapter stamped, so the "register the session"
+    // instruction names the spelling this caller has (MILESTONES.md #111).
+    // Read from the caller rather than from the stored row on purpose: the
+    // row records the surface a previous registration came over, and the
+    // reader of this refusal is on whatever surface they are on *now*.
+    surface: surfaceForTransport(ctx.caller.transport),
   });
 
   if (assessment.mayClaim) return;

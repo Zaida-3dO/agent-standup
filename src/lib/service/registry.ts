@@ -26,6 +26,10 @@
 // declared there appears here.
 import type { AnyOperation, Operation, OperationKind } from "./operation";
 import { provideCatalogue, serviceInfo, type OperationDescriptor } from "./operations/service-info";
+// Tool documentation on demand (MILESTONES.md #111). Registered like any
+// other operation, so every adapter exposes it without per-adapter work and
+// a refusal on any surface can point at a call the caller actually has.
+import { describeTool, provideToolIndex } from "./operations/describe-tool";
 import { createItem } from "./operations/create-item";
 import { getItem } from "./operations/get-item";
 import { updateItem } from "./operations/update-item";
@@ -110,6 +114,7 @@ import { backfill } from "./operations/backfill";
  */
 export const OPERATION_REGISTRY = {
   [serviceInfo.name]: serviceInfo,
+  [describeTool.name]: describeTool,
   [createItem.name]: createItem,
   [getItem.name]: getItem,
   [updateItem.name]: updateItem,
@@ -228,3 +233,9 @@ export function operationsOfKind(kind: OperationKind): readonly AnyOperation[] {
 // every operation and an operation importing the registry back would be a
 // cycle.
 provideCatalogue(describeOperations);
+
+// `describe_tool` reads the same index, installed the same way and for the
+// same reason. It is given the lookup rather than a snapshot of the
+// operations so that what it describes is what is registered — a copied list
+// would be the second source of truth the operation exists to avoid.
+provideToolIndex({ lookup: getOperation, names: () => OPERATION_NAMES });

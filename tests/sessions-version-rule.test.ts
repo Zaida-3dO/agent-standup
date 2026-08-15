@@ -213,8 +213,14 @@ describe("the version comparison", () => {
     const assessment = assessVersion({ variant: undefined, reportedVersion: undefined });
     expect(assessment.verdict).toBe("unregistered");
     expect(assessment.mayClaim).toBe(false);
-    // It has to say what to do instead, or the refusal is a wall.
-    expect(assessment.message).toContain("session register");
+    // It has to say what to do instead, or the refusal is a wall — and it
+    // has to say it in a spelling the reader can use. With no surface given
+    // that means both, because this refusal is reached from every adapter
+    // and naming only one is naming the wrong one to somebody
+    // (MILESTONES.md #111). The per-surface wording is asserted in
+    // `describe-tool.test.ts`.
+    expect(assessment.message).toContain("register_session");
+    expect(assessment.message).toContain("standup register session");
   });
 
   it("REFUSES A CLAIM when a registration named no version", () => {

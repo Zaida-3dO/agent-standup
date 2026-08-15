@@ -22,6 +22,8 @@ import {
   type HookVariant,
   type ProtocolRange,
 } from "./build-constants";
+// A refusal names the call the reader can actually make (MILESTONES.md #111).
+import { invocationFor, type CallSurface } from "./surfaces";
 
 export type { HookVariant };
 
@@ -110,6 +112,22 @@ export interface AssessVersionInput {
   readonly reportedVersion?: number | null | undefined;
   /** The build's ranges. A parameter so a test can drive the boundaries without editing the build. */
   readonly protocols?: Readonly<Record<HookVariant, ProtocolRange>>;
+  /**
+   * The surface the reader of this message is on, so the instruction names a
+   * call they can actually make (MILESTONES.md #111).
+   *
+   * The `unregistered` verdict tells the reader to register the session, and
+   * registering is spelled differently on each surface — `register_session`
+   * as a tool, `standup session register` as a command. Naming only the
+   * command line to a caller reached over MCP is an instruction to run
+   * something that does not exist where they are, which costs the round trip
+   * the message was written to save.
+   *
+   * Optional, and both spellings are named when it is absent: this module is
+   * pure and is called from places that genuinely do not know (a boot-time
+   * check, a test), and naming both is never wrong where naming one can be.
+   */
+  readonly surface?: CallSurface | undefined;
 }
 
 /**
@@ -145,6 +163,7 @@ export function assessVersion({
   variant,
   reportedVersion,
   protocols = HOOK_PROTOCOL,
+  surface,
 }: AssessVersionInput): VersionAssessment {
   // Never registered, or registered without naming a version — which is the
   // same fact for this purpose: no claim was made about what this session
@@ -156,7 +175,7 @@ export function assessVersion({
       message:
         "This session has not registered a hook protocol version, so the server cannot tell " +
         "whether the rules it would enforce are the rules this build expects. Register the " +
-        "session with `standup session register` before claiming an item.",
+        `session with ${invocationFor("register_session", surface)} before claiming an item.`,
     };
   }
 

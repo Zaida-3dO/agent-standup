@@ -25,9 +25,21 @@ export {
   defineOperation,
   type AnyOperation,
   type Operation,
+  type OperationContract,
   type OperationKind,
+  type OperationRule,
   type ParsesInput,
 } from "./operation";
+
+// Tool documentation on demand (MILESTONES.md #111): the operation, and the
+// schema walk that derives its field list from the schema a call is actually
+// rejected by.
+export {
+  describeTool,
+  type DescribeToolInput,
+  type ToolContract,
+} from "./operations/describe-tool";
+export { describeFields, type FieldDescriptor } from "./describe/fields";
 
 export type { Caller, ServiceContext, TransactionHandle } from "./context";
 
@@ -50,6 +62,7 @@ export {
   prismaTransactionRunner,
   type CallOptions,
   type ServiceRuntimeOptions,
+  type ShapeFinding,
   type TransactionCapableClient,
 } from "./runtime";
 

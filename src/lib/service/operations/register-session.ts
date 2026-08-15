@@ -42,6 +42,7 @@ import {
   type SessionTransport,
   type VersionAssessment,
 } from "@/lib/sessions";
+import { surfaceForTransport } from "@/lib/surfaces";
 import { HOOK_VARIANTS, HOOK_PROTOCOL } from "@/lib/build-constants";
 import { ensureNameForSession } from "@/lib/agent-names";
 
@@ -160,7 +161,16 @@ export const registerSession = defineOperation({
       input.personId ?? null,
     );
 
-    const version = assessVersion({ variant, reportedVersion: hookVersion });
+    // `stamped` rather than `ctx.caller.transport`: this operation has
+    // already resolved the transport it was reached over, and that resolved
+    // value is the one the rest of the reply is built from — wording the
+    // message off a second reading of the same fact would be a way for the
+    // two to disagree.
+    const version = assessVersion({
+      variant,
+      reportedVersion: hookVersion,
+      surface: surfaceForTransport(stamped),
+    });
 
     // Named here, not requested separately (§9, §18): this is the call every
     // session makes once, before anything else, so it is where the server
