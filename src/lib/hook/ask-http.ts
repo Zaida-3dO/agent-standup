@@ -15,11 +15,11 @@
 // ── Only `block` blocks ────────────────────────────────────────────────
 //
 // A body whose `decision` this build has never seen reads as an allow, not
-// as an error. That is the §16 posture applied to the one place a future
-// server is most likely to surprise an old script: adding a fourth decision
-// value must not turn every call in an un-updated installation into a
-// refusal. The field is read for the single string that refuses; everything
-// else is a permission.
+// as an error. Scripts are installed on machines and updated on their own
+// schedule, so a server will routinely be ahead of one: adding a fourth
+// decision value must not turn every call in an un-updated installation
+// into a refusal. The field is read for the single string that refuses;
+// everything else is a permission.
 //
 // Note what is deliberately not here: no retry. A hook runs on the critical
 // path of every tool call, and a retry loop turns one unreachable server
