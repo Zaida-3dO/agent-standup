@@ -1,18 +1,31 @@
-// `hook_decision` service operation — MILESTONES.md #41: "The hook decision
-// as a service call". Runs through the real `ServiceRuntime` (input parsing,
-// settings resolution, the transaction boundary) but against a modelled,
-// in-memory transaction handle rather than Postgres — this operation reads
-// no table (same posture as `service_info`), so a real database proves
-// nothing extra here. `tests/hook-decision.test.ts` covers the matching
-// logic itself; this file covers the operation wiring around it: settings
-// actually reach the handler, `Stop` events with no command are handled,
-// input validation happens before the handler runs, and the operation never
-// touches `ctx.db`.
+// `hook_decision` service operation — MILESTONES.md #125.
+//
+// Runs through the real `ServiceRuntime` (input parsing, settings
+// resolution, the transaction boundary) but against a modelled, in-memory
+// transaction handle rather than Postgres — this operation reads no table
+// (same posture as `service_info`), so a real database proves nothing extra
+// here.
+//
+// **What is worth pinning, now that nothing blocks yet.** A suite over an
+// operation that always answers `allow` is trivially green, so the
+// assertions that actually carry weight are the ones about the *shape* of
+// the contract rather than the verdict:
+//
+//   - **`canBlock` tracks the phase and only the phase.** This is the
+//     server's half of "a post entry cannot block" — the hook enforces the
+//     same rule independently, so the invariant survives either side being
+//     wrong, but not both.
+//   - **The input schema is strict and validates before the handler runs.**
+//     The hook is the highest-volume caller in the system and the one most
+//     likely to drift; a field it starts sending that this schema does not
+//     know about must fail loudly rather than be dropped.
+//   - **The database is never touched.** Asserted with a handle that throws,
+//     so this cannot pass by accident.
 import { describe, expect, it } from "vitest";
 import { ServiceRuntime } from "@/lib/service/runtime";
 import type { TransactionHandle } from "@/lib/service/context";
 import { InvalidInputError } from "@/lib/service/errors";
-import { resolveSettings, defaultSnapshot } from "@/lib/settings";
+import { defaultSnapshot } from "@/lib/settings";
 
 /** A transaction handle that fails loudly if the operation ever queries it. */
 function untouchableHandle(): TransactionHandle {
@@ -26,206 +39,149 @@ function untouchableHandle(): TransactionHandle {
   };
 }
 
-function runtimeWithSnapshot(snapshot: ReturnType<typeof defaultSnapshot>): ServiceRuntime {
+function runtime(): ServiceRuntime {
   return new ServiceRuntime({
     transaction: (body) => body(untouchableHandle()),
-    resolveSnapshot: async () => snapshot,
+    resolveSnapshot: async () => defaultSnapshot(),
   });
 }
 
-describe("hook_decision operation", () => {
-  it("allows a PostToolUse command matching the configured allow-list", async () => {
-    const snapshot = resolveSettings({
-      overrides: [{ key: "hook.allow_patterns", value: ["^git status$"] }],
-      revision: 1n,
+type Answer = { decision: string; reason: string | null; canBlock: boolean };
+
+async function call(input: Record<string, unknown>): Promise<Answer> {
+  return (await runtime().call("hook_decision", input)) as Answer;
+}
+
+describe("what the operation answers", () => {
+  it("allows a pre-tool call, because nothing gates yet", async () => {
+    // Not a permissive default that could be misconfigured — there is no
+    // configuration here to get wrong. Gating returns with #128, and this
+    // assertion is what will have to change when it does.
+    const answer = await call({
+      eventType: "PreToolUse",
+      sessionId: "s1",
+      tool: "Bash",
+      command: "git push --force",
     });
-    const runtime = runtimeWithSnapshot(snapshot);
-    const result = (await runtime.call("hook_decision", {
+
+    expect(answer.decision).toBe("allow");
+    expect(answer.reason).toBeNull();
+  });
+
+  it("allows a post-tool call", async () => {
+    const answer = await call({
       eventType: "PostToolUse",
       sessionId: "s1",
       tool: "Bash",
-      command: "git status",
-    })) as { decision: string };
-    expect(result.decision).toBe("allow");
-  });
-
-  it("asks for a command matching the configured ask-list", async () => {
-    const snapshot = resolveSettings({
-      overrides: [{ key: "hook.ask_patterns", value: ["^rm "] }],
-      revision: 1n,
+      command: "ls",
+      toolResult: "a.ts b.ts",
     });
-    const runtime = runtimeWithSnapshot(snapshot);
-    const result = (await runtime.call("hook_decision", {
-      eventType: "PreToolUse",
-      sessionId: "s1",
-      tool: "Bash",
-      command: "rm -rf dist",
-    })) as { decision: string };
-    expect(result.decision).toBe("ask");
+
+    expect(answer.decision).toBe("allow");
   });
 
-  it("denies a command matching neither configured list — the default with nothing set", async () => {
-    // Uses the plain default snapshot: both pattern lists default to `[]`,
-    // so this proves the *installed default* is fail-closed, not merely
-    // that the matcher is when handed empty lists directly.
-    const runtime = runtimeWithSnapshot(defaultSnapshot());
-    const result = (await runtime.call("hook_decision", {
-      eventType: "PreToolUse",
-      sessionId: "s1",
-      tool: "Bash",
-      command: "curl https://example.invalid",
-    })) as { decision: string };
-    expect(result.decision).toBe("deny");
+  it("allows a Stop, which carries no tool or command at all", async () => {
+    const answer = await call({ eventType: "Stop", sessionId: "s1" });
+    expect(answer.decision).toBe("allow");
+  });
+});
+
+describe("canBlock tracks the phase", () => {
+  it("is true for PreToolUse", async () => {
+    expect((await call({ eventType: "PreToolUse", sessionId: "s1" })).canBlock).toBe(true);
   });
 
-  it("allows a Stop event with no command — nothing to be unsure about", async () => {
-    const runtime = runtimeWithSnapshot(defaultSnapshot());
-    const result = (await runtime.call("hook_decision", {
-      eventType: "Stop",
-      sessionId: "s1",
-    })) as { decision: string; matchedList: unknown };
-    expect(result.decision).toBe("allow");
-    expect(result.matchedList).toBeNull();
+  it("is false for PostToolUse", async () => {
+    // The server's half of the invariant. A change that made this true
+    // would let a future gating row emit a block on a call that already
+    // ran — which only the hook's own `canBlock` would then catch.
+    expect((await call({ eventType: "PostToolUse", sessionId: "s1" })).canBlock).toBe(false);
   });
 
-  // The command-less allow is broader than "a Stop event is allowed": it
-  // fires for ANY event type carrying no command, and does not look at
-  // `tool` at all. That width is deliberate — `PostToolUse` fires for
-  // non-Bash tools, which have no command either, and keying on
-  // `eventType === "Stop"` would leave those falling through to the
-  // matches-neither path and reading as a false deny.
-  //
-  // It is still a widening of an allow path in a gate whose default is to
-  // deny when unsure, so these pin exactly how wide it is. Narrowing the
-  // condition to `eventType === "Stop"` fails the first two; removing the
-  // carve-out altogether fails all of them.
-  describe("the command-less carve-out, at its actual width", () => {
-    const commandless = async (input: Record<string, unknown>) => {
-      const runtime = runtimeWithSnapshot(defaultSnapshot());
-      return (await runtime.call("hook_decision", input)) as {
-        decision: string;
-        matchedList: unknown;
-        matchedPattern: unknown;
-      };
-    };
+  it("is false for Stop", async () => {
+    expect((await call({ eventType: "Stop", sessionId: "s1" })).canBlock).toBe(false);
+  });
 
-    it("allows a PostToolUse with no command — a non-Bash tool has none to classify", async () => {
-      const result = await commandless({
+  it("does not depend on the tool or the command", async () => {
+    // The rule is about the phase and nothing else. A `pre` call with no
+    // command is still a moment at which something could be refused.
+    expect((await call({ eventType: "PreToolUse", sessionId: "s1" })).canBlock).toBe(true);
+    expect(
+      (await call({ eventType: "PostToolUse", sessionId: "s1", tool: "Bash", command: "rm -rf /" }))
+        .canBlock,
+    ).toBe(false);
+  });
+});
+
+describe("input validation happens before the handler", () => {
+  it("rejects an unrecognised event type", async () => {
+    await expect(call({ eventType: "BeforeToolUse", sessionId: "s1" })).rejects.toBeInstanceOf(
+      InvalidInputError,
+    );
+  });
+
+  it("rejects a missing session id", async () => {
+    await expect(call({ eventType: "PreToolUse" })).rejects.toBeInstanceOf(InvalidInputError);
+  });
+
+  it("rejects an empty session id", async () => {
+    await expect(call({ eventType: "PreToolUse", sessionId: "" })).rejects.toBeInstanceOf(
+      InvalidInputError,
+    );
+  });
+
+  it("rejects an unknown field rather than dropping it", async () => {
+    // `.strict()`. The hook is the caller most likely to drift, and a field
+    // it starts sending that is silently discarded is a change nobody sees
+    // until the behaviour it was meant to drive never arrives.
+    await expect(
+      call({ eventType: "PreToolUse", sessionId: "s1", matchedList: "ask" }),
+    ).rejects.toBeInstanceOf(InvalidInputError);
+  });
+
+  it("rejects a tool result past the operation's own ceiling", async () => {
+    // The hook truncates before sending. This bound exists because an
+    // operation must not trust its caller to have applied a limit the
+    // caller could change.
+    await expect(
+      call({
         eventType: "PostToolUse",
         sessionId: "s1",
-        tool: "Read",
-      });
-      expect(result.decision).toBe("allow");
-      expect(result.matchedList).toBeNull();
-    });
-
-    it("allows a PreToolUse with no command, for the same reason", async () => {
-      const result = await commandless({
-        eventType: "PreToolUse",
-        sessionId: "s1",
-        tool: "Read",
-      });
-      expect(result.decision).toBe("allow");
-    });
-
-    it("treats an empty-string command as no command, not as a command matching nothing", async () => {
-      // The boundary between the two readings. An empty string is a present
-      // field, so a check written as `command === undefined` alone would
-      // send it down the matching path and deny it.
-      const result = await commandless({
-        eventType: "PreToolUse",
-        sessionId: "s1",
-        tool: "Bash",
-        command: "",
-      });
-      expect(result.decision).toBe("allow");
-    });
-
-    it("does not extend to a present command, whatever the tool", async () => {
-      // The complement, and the one that stops the carve-out swallowing the
-      // gate. A real command with nothing configured still denies.
-      const result = await commandless({
-        eventType: "PreToolUse",
-        sessionId: "s1",
-        tool: "Read",
-        command: "rm -rf /",
-      });
-      expect(result.decision).toBe("deny");
-    });
-
-    it("does not extend to a Stop event that does carry a command", async () => {
-      // `Stop` is not itself the licence — the absence of a command is. A
-      // carve-out written on the event type would allow this.
-      const result = await commandless({
-        eventType: "Stop",
-        sessionId: "s1",
-        command: "rm -rf /",
-      });
-      expect(result.decision).toBe("deny");
-    });
+        toolResult: "x".repeat(8001),
+      }),
+    ).rejects.toBeInstanceOf(InvalidInputError);
   });
 
-  it("rejects a missing sessionId before the handler runs, as invalid_input", async () => {
-    const runtime = runtimeWithSnapshot(defaultSnapshot());
-    const error = await runtime
-      .call("hook_decision", { eventType: "PreToolUse", tool: "Bash", command: "ls" })
-      .catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(InvalidInputError);
-    expect((error as InvalidInputError).fields).toContain("sessionId");
-  });
-
-  it("rejects an unrecognised eventType as invalid_input rather than silently allowing", async () => {
-    const runtime = runtimeWithSnapshot(defaultSnapshot());
-    const error = await runtime
-      .call("hook_decision", {
-        eventType: "SomethingElse",
-        sessionId: "s1",
-        command: "ls",
-      })
-      .catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(InvalidInputError);
-  });
-
-  it("rejects an unknown extra field — schema is strict, like every other operation", async () => {
-    const runtime = runtimeWithSnapshot(defaultSnapshot());
-    const error = await runtime
-      .call("hook_decision", {
-        eventType: "PreToolUse",
-        sessionId: "s1",
-        command: "ls",
-        extra: true,
-      })
-      .catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(InvalidInputError);
-  });
-
-  it("reads the settings snapshot the runtime resolved, not a fresh default", async () => {
-    // Same allow-pattern proof as the first test, but phrased to catch a
-    // handler that ignored `ctx.settings` and read some other source
-    // (e.g. a module-level default) instead: an empty-list snapshot must
-    // deny the exact command an overridden one would allow.
-    const emptySnapshot = defaultSnapshot();
-    const overriddenSnapshot = resolveSettings({
-      overrides: [{ key: "hook.allow_patterns", value: ["^git status$"] }],
-      revision: 7n,
-    });
-
-    const withEmpty = runtimeWithSnapshot(emptySnapshot);
-    const withOverride = runtimeWithSnapshot(overriddenSnapshot);
-
-    const input = {
-      eventType: "PostToolUse" as const,
+  it("accepts a tool result at the ceiling", async () => {
+    const answer = await call({
+      eventType: "PostToolUse",
       sessionId: "s1",
-      tool: "Bash",
-      command: "git status",
-    };
+      toolResult: "x".repeat(8000),
+    });
+    expect(answer.decision).toBe("allow");
+  });
 
-    const deniedResult = (await withEmpty.call("hook_decision", input)) as { decision: string };
-    const allowedResult = (await withOverride.call("hook_decision", input)) as {
-      decision: string;
-    };
+  it("accepts an empty command, which is different from an absent one", async () => {
+    const answer = await call({ eventType: "PreToolUse", sessionId: "s1", command: "" });
+    expect(answer.decision).toBe("allow");
+  });
 
-    expect(deniedResult.decision).toBe("deny");
-    expect(allowedResult.decision).toBe("allow");
+  it("rejects an empty tool name", async () => {
+    await expect(
+      call({ eventType: "PreToolUse", sessionId: "s1", tool: "" }),
+    ).rejects.toBeInstanceOf(InvalidInputError);
+  });
+});
+
+describe("the operation touches no table", () => {
+  it("completes against a transaction handle that throws on any query", async () => {
+    // The handle above throws on both raw methods, so this passing at all
+    // is the assertion — a decision made on every tool call is the
+    // highest-volume path in the system and must stay a dumb pipe.
+    for (const eventType of ["PreToolUse", "PostToolUse", "Stop"]) {
+      await expect(call({ eventType, sessionId: "s1" })).resolves.toMatchObject({
+        decision: "allow",
+      });
+    }
   });
 });

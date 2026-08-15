@@ -1,12 +1,20 @@
-// MILESTONES.md #42 — the transport that asks `POST /hook`
+// MILESTONES.md #125 — the transport that asks `POST /api/hook`
 // (`src/lib/hook/ask-http.ts`).
 //
-// One property, asserted many ways: **every failure returns `undefined`**,
-// which the caller reads as "no answer" and denies. The failures worth
-// enumerating are the ones a plausible implementation forgets — a 500 whose
-// body happens to parse, a body that is JSON but carries no decision, and a
-// server that answered `ask`, which is a server that did not resolve the
-// question it was asked.
+// Two properties, and they pull in opposite directions, which is why both
+// need asserting:
+//
+//   - **Every failure returns `undefined`.** The caller reads that as "no
+//     answer" and, under DECISIONS.md §16, allows. The failures worth
+//     enumerating are the ones a plausible implementation forgets: a 500
+//     whose body happens to parse, and a body that is JSON but not an
+//     object.
+//   - **Only the literal string `block` blocks.** Everything else —
+//     including a decision value this build has never seen — is read as an
+//     allow rather than as an error. That is what stops a newer server
+//     adding a fourth decision from turning every call in an un-updated
+//     installation into a refusal, and it is the single assertion most
+//     likely to be lost to a "tidy up the parsing" change.
 import { describe, expect, it, vi } from "vitest";
 import { createHttpAsk, type FetchLike } from "@/lib/hook/ask-http";
 import type { HookEvent } from "@/lib/hook/payload";
@@ -33,7 +41,7 @@ function ask(fetch: FetchLike) {
 }
 
 describe("the request", () => {
-  it("posts the event's four facts to /api/hook", async () => {
+  it("posts the event's facts to /api/hook", async () => {
     const fetch = responding({ decision: "allow" });
     await ask(fetch)(EVENT);
 
@@ -64,11 +72,22 @@ describe("the request", () => {
     expect(url).toBe("http://server.invalid/api/hook");
   });
 
+  it("sends a tool result when the event carries one", async () => {
+    const fetch = responding({ decision: "allow" });
+    await ask(fetch)({ ...EVENT, eventType: "PostToolUse", toolResult: "3 files changed" });
+
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { body: string },
+    ];
+    expect(JSON.parse(init.body).toolResult).toBe("3 files changed");
+  });
+
   it("omits tool and command entirely for an event that has none", async () => {
     // The route's input schema is `.strict()` and both fields are
     // `.min(1)`, so sending them as empty strings would be rejected as
-    // invalid input — which reaches the caller as a non-success status and
-    // therefore a deny, on an event that should have been allowed.
+    // invalid input — which reaches the caller as a non-success status, and
+    // therefore as an outage rather than as the answer it really was.
     const fetch = responding({ decision: "allow" });
     await ask(fetch)({ eventType: "Stop", sessionId: "s-1" });
 
@@ -96,25 +115,10 @@ describe("the answer, when there is one", () => {
     expect(answer).toEqual({ decision: "allow", reason: "you own this branch" });
   });
 
-  it("reads a deny with its reason", async () => {
-    const answer = await ask(responding({ decision: "deny", reason: "no review at tip" }))(EVENT);
-    expect(answer?.decision).toBe("deny");
+  it("reads a block with its reason", async () => {
+    const answer = await ask(responding({ decision: "block", reason: "no review at tip" }))(EVENT);
+    expect(answer?.decision).toBe("block");
     expect(answer?.reason).toBe("no review at tip");
-  });
-
-  it("carries rules the server volunteered", async () => {
-    const answer = await ask(
-      responding({ decision: "allow", allowPatterns: ["^ls$"], askPatterns: [] }),
-    )(EVENT);
-    expect(answer?.rules).toEqual({ allowPatterns: ["^ls$"], askPatterns: [] });
-  });
-
-  it("drops volunteered rules that do not validate rather than caching them", async () => {
-    const answer = await ask(
-      responding({ decision: "allow", allowPatterns: ["([unclosed"], askPatterns: [] }),
-    )(EVENT);
-    expect(answer?.decision).toBe("allow");
-    expect(answer?.rules).toBeUndefined();
   });
 
   it("carries session enforcement the server volunteered", async () => {
@@ -124,19 +128,47 @@ describe("the answer, when there is one", () => {
     expect(answer?.enforcement).toEqual({ status: "displaced", detail: "s-9" });
   });
 
-  it("reads the server's `ask` as a deny", async () => {
-    // The service layer's third outcome means "a rule must decide". By the
-    // time the route has answered, the deciding is done — so an `ask` coming
-    // back is a server that did not resolve the question. Anything softer
-    // than a deny would make "the server was unsure" the one kind of
-    // uncertainty this hook permits.
-    const answer = await ask(responding({ decision: "ask", matchedPattern: "^git push" }))(EVENT);
-    expect(answer?.decision).toBe("deny");
-    expect(answer?.reason).toContain("did not resolve");
+  it("carries a nudge context the server volunteered", async () => {
+    const answer = await ask(responding({ decision: "allow", nudge: { budgetBand: "wind-down" } }))(
+      EVENT,
+    );
+    expect(answer?.nudge).toEqual({ budgetBand: "wind-down" });
+  });
+
+  it("drops a malformed nudge block without touching the decision", async () => {
+    const answer = await ask(responding({ decision: "block", nudge: "not an object" }))(EVENT);
+    expect(answer?.decision).toBe("block");
+    expect(answer?.nudge).toBeUndefined();
   });
 });
 
-describe("every failure is no answer, which the caller denies on", () => {
+describe("only `block` blocks", () => {
+  it("reads a decision this build does not recognise as an allow", async () => {
+    // The §16 case: a newer server adds a decision value. An un-updated
+    // script must not refuse on it. `undefined` would be wrong here too —
+    // that is the shape reserved for "the server did not answer", and this
+    // server did.
+    for (const decision of ["maybe", "escalate", "deny", true, 7, null]) {
+      const answer = await ask(responding({ decision }))(EVENT);
+      expect(answer?.decision, String(decision)).toBe("allow");
+    }
+  });
+
+  it("reads a body with no decision field as an allow", async () => {
+    expect((await ask(responding({}))(EVENT))?.decision).toBe("allow");
+    expect((await ask(responding({ reason: "just talking" }))(EVENT))?.decision).toBe("allow");
+  });
+
+  it("is case- and whitespace-sensitive about the one word that refuses", async () => {
+    // A near-miss must not block. If this ever needs to be lenient it is a
+    // protocol change, not a parsing tweak.
+    for (const decision of ["Block", "BLOCK", " block", "blocked"]) {
+      expect((await ask(responding({ decision }))(EVENT))?.decision, decision).toBe("allow");
+    }
+  });
+});
+
+describe("every failure is no answer, which the caller allows on", () => {
   it("returns undefined when fetch throws", async () => {
     const fetch = vi.fn(async () => {
       throw new Error("ECONNREFUSED");
@@ -162,16 +194,13 @@ describe("every failure is no answer, which the caller denies on", () => {
     expect(await ask(fetch)(EVENT)).toBeUndefined();
   });
 
-  it("returns undefined when the body carries no decision", async () => {
-    expect(await ask(responding({ matchedList: "ask" }))(EVENT)).toBeUndefined();
-    expect(await ask(responding({}))(EVENT)).toBeUndefined();
+  it("returns undefined when the body is not an object", async () => {
+    // Distinct from "an object with no decision", which is a server that
+    // answered and is read as an allow. These carry nothing readable at
+    // all, so they are honestly reported as no answer — both allow, but
+    // only one of them names an outage in its reason.
     expect(await ask(responding(null))(EVENT)).toBeUndefined();
-  });
-
-  it("returns undefined for a decision this build does not recognise", async () => {
-    // A future server value must not be silently coerced. Anything not in
-    // the known three is no answer, and no answer denies.
-    expect(await ask(responding({ decision: "maybe" }))(EVENT)).toBeUndefined();
-    expect(await ask(responding({ decision: true }))(EVENT)).toBeUndefined();
+    expect(await ask(responding("a string"))(EVENT)).toBeUndefined();
+    expect(await ask(responding([{ decision: "block" }]))(EVENT)).toBeUndefined();
   });
 });

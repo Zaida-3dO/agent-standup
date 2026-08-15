@@ -15,7 +15,7 @@ import type { HookVerdict } from "@/lib/hook/decide";
 const DENY: HookVerdict = {
   decision: "deny",
   reason: "this command matches neither list",
-  source: "unmatched",
+  source: "server",
 };
 
 describe("an allow says nothing", () => {
@@ -24,7 +24,7 @@ describe("an allow says nothing", () => {
     // printed on every allowed call would put a line of noise into the
     // session after every Read, Grep and Glob.
     const rendered = renderResponse(
-      { decision: "allow", reason: "ok", source: "allow-list" },
+      { decision: "allow", reason: "ok", source: "server" },
       "PreToolUse",
     );
     expect(rendered).toEqual({ stdout: "", stderr: "", exitCode: HOOK_EXIT.ALLOW });
