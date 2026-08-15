@@ -22,6 +22,52 @@ import type { ServiceContext } from "./context";
 export type OperationKind = "read" | "write";
 
 /**
+ * A rule an operation enforces that its schema cannot state.
+ *
+ * JSON Schema — and therefore every `inputSchema` a client is shown — can
+ * say a field's type, its enum, and whether it is required *unconditionally*.
+ * It cannot say "required only when another field holds a particular value",
+ * and it cannot say anything at all about a check that runs against the
+ * database. Both kinds exist here: `create_item` requires `originPersonId`
+ * only when `originType` is `person`, and `complete_item`'s summary is
+ * validated for cardinality and conditional presence by a runtime validator.
+ * A caller reading a complete, correct schema still cannot see either, which
+ * is why they are discovered by being refused.
+ *
+ * A rule is declared **at the same site as the check it describes** — beside
+ * the `.refine()`, or beside the constant the validator reads — rather than
+ * in a document listing every operation's rules. A second file would be a
+ * second source of truth, and the first thing it would do is drift.
+ */
+export interface OperationRule {
+  /**
+   * The fields the rule is about. These match the `fields` a refusal of this
+   * rule carries, so a caller that has been refused can find the rule that
+   * refused it without matching on prose.
+   */
+  readonly fields: readonly string[];
+  /** The rule, stated as a caller needs to satisfy it. One or two sentences. */
+  readonly rule: string;
+}
+
+/**
+ * What a caller has to know to make a valid call, beyond the schema.
+ *
+ * Optional on an operation: most operations are fully described by their
+ * schema, and inventing a contract for those would be noise. An operation
+ * declares one when it enforces something a schema cannot carry.
+ */
+export interface OperationContract {
+  /** The rules JSON Schema cannot express. */
+  readonly rules: readonly OperationRule[];
+  /**
+   * A minimal call that satisfies every rule above, as an illustration.
+   * Deliberately a value rather than prose: a caller copies it.
+   */
+  readonly example?: Readonly<Record<string, unknown>>;
+}
+
+/**
  * A declared service operation.
  *
  * The input schema lives here rather than in each adapter, which is what
@@ -39,6 +85,11 @@ export interface Operation<
   readonly kind: OperationKind;
   /** One line, as a tool description or `--help` line would read it. */
   readonly summary: string;
+  /**
+   * The rules a caller cannot read off the schema. Absent when the schema
+   * says everything — see `OperationContract`.
+   */
+  readonly contract?: OperationContract;
   /**
    * The schema. Its *parsed* type is `Input`; the type it accepts, `Raw`,
    * is a separate parameter.
@@ -107,6 +158,7 @@ export interface AnyOperation {
   readonly name: string;
   readonly kind: OperationKind;
   readonly summary: string;
+  readonly contract?: OperationContract;
   readonly input: ParsesInput;
   readonly handler: (ctx: ServiceContext, input: never) => Promise<unknown>;
 }

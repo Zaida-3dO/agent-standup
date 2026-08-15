@@ -20,6 +20,14 @@ import type { ServiceContext } from "../context";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
 import { applyTransition } from "../state-machine/transition";
 import {
+  NOT_DONE_MAX,
+  NOT_DONE_MIN,
+  SHIPPED_CHAR_CAP,
+  SHIPPED_MAX,
+  SHIPPED_MIN,
+  SIMILARITY_REJECT_AT,
+  WHAT_TO_TEST_MAX,
+  WHAT_TO_TEST_MIN,
   validateSummaryShape,
   type NotDoneEntry,
   type SummaryCandidate,
@@ -78,6 +86,91 @@ const inputSchema = z
   });
 
 export type CompleteItemInput = z.infer<typeof inputSchema>;
+
+/**
+ * The conditional matrix (MILESTONES.md #111) — every rule above that no
+ * schema states.
+ *
+ * `summary`'s Zod shape says `shipped` is an array of strings and stops
+ * there. That it must hold between one and five entries, that
+ * `what_to_test` is required exactly when `user_facing` is true and
+ * `how_verified` exactly when it is false, and that an entry too similar to
+ * the item's own history is rejected — all of that is `validateSummaryShape`
+ * and `findSimilarityIssues`, which run at call time and are invisible to a
+ * client reading the schema.
+ *
+ * **The numbers are interpolated from the constants the validator reads**,
+ * not retyped. A cap raised in `summaries/validate.ts` and left stale in a
+ * sentence here would be worse than no sentence: a caller would satisfy the
+ * documentation and still be refused, which is precisely the round trip this
+ * row exists to remove.
+ */
+const contract = {
+  rules: [
+    {
+      fields: ["summary.shipped"],
+      rule:
+        `\`shipped\` must hold ${SHIPPED_MIN}–${SHIPPED_MAX} entries of at most ` +
+        `${SHIPPED_CHAR_CAP} characters each. The schema says only "array of strings"; the ` +
+        `cardinality is checked at call time.`,
+    },
+    {
+      fields: ["summary.what_to_test", "summary.user_facing"],
+      rule:
+        `\`what_to_test\` is required when \`user_facing\` is true — ${WHAT_TO_TEST_MIN}–` +
+        `${WHAT_TO_TEST_MAX} entries — and must be omitted or null when it is false.`,
+    },
+    {
+      fields: ["summary.how_verified", "summary.user_facing"],
+      rule:
+        "`how_verified` is required when `user_facing` is **false**, and says what was run and " +
+        "observed. This is the opposite condition to `what_to_test`: exactly one of the two " +
+        "applies to any given completion, decided by `user_facing`.",
+    },
+    {
+      fields: ["summary.not_done"],
+      rule:
+        `\`not_done\` holds ${NOT_DONE_MIN}–${NOT_DONE_MAX} typed entries. A reason of ` +
+        `\`follow-up\` or \`needs-approval\` requires an \`item_id\` naming a real item, and ` +
+        `that item's state has to bear the reason out: a \`follow-up\` target must not be ` +
+        `actionable, and a \`needs-approval\` target must be blocked on a person. \`descoped\` ` +
+        `needs no linked item.`,
+    },
+    {
+      fields: ["summary.shipped", "summary.watch_for", "summary.not_done"],
+      rule:
+        `Entries are rejected, never truncated, and an entry at least ` +
+        `${Math.round(SIMILARITY_REJECT_AT * 100)}% similar to something already in this item's ` +
+        `own history is refused. Internal vocabulary — raw field names, review shorthand — is ` +
+        `also refused: a summary is written for a reader of the work, not of the system.`,
+    },
+    {
+      fields: ["fields", "summary"],
+      rule:
+        "`fields` carries extras other guards on this transition need (a `commit_sha`, for " +
+        "instance). It may not contain `summary` — pass that in the top-level `summary` field.",
+    },
+    {
+      fields: ["to"],
+      rule:
+        `\`to\` must be one of the completed states (${COMPLETED_STATES.join(", ")}), and the ` +
+        `transition's own guards still apply on top of the summary: completing to \`merged\` ` +
+        `additionally needs the merge evidence that state requires.`,
+    },
+  ],
+  example: {
+    id: "<item id>",
+    to: "merged",
+    summary: {
+      shipped: ["Rate limit added to the public endpoint"],
+      not_done: [],
+      user_facing: false,
+      how_verified:
+        "Ran the suite and drove the endpoint past the limit; the 61st call was refused.",
+      watch_for: [],
+    },
+  },
+} as const;
 
 export interface CompleteItemResult {
   readonly item: ItemRecord;
@@ -189,6 +282,7 @@ export const completeItem = defineOperation({
   kind: "write",
   summary:
     "Finishes an item: moves it into a completed state and records the closing summary that state requires.",
+  contract,
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CompleteItemInput): Promise<CompleteItemResult> {
     const candidate = toCandidate(input.summary);

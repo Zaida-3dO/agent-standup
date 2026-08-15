@@ -60,6 +60,48 @@ const inputSchema = z
 
 export type CreateItemInput = z.infer<typeof inputSchema>;
 
+/**
+ * What a caller cannot read off the schema above (MILESTONES.md #111).
+ *
+ * Declared here, beside the `.refine()` and the lookups it describes, rather
+ * than in a catalogue of every operation's rules: a rule and its enforcement
+ * changing together is the only arrangement in which they cannot disagree.
+ * The `fields` on each entry are the same paths the corresponding refusal
+ * carries, so a caller who has been refused can match the rule to the
+ * rejection without reading prose.
+ */
+const contract = {
+  rules: [
+    {
+      fields: ["originPersonId", "originType"],
+      rule:
+        "`originPersonId` is required when `originType` is `person`, and must name an existing " +
+        "person. It is not required for `source` or `auto`. JSON Schema cannot express a " +
+        "conditionally-required field, so this does not appear in the advertised schema.",
+    },
+    {
+      fields: ["parentId"],
+      rule:
+        "`parentId` decides what is created: omitted makes a project, a project's id makes a " +
+        "task, a task's id makes a subtask. `kind` is derived from that depth and is not a " +
+        "field you send. A create that would exceed the configured `items.max_depth` is refused.",
+    },
+    {
+      fields: ["repo"],
+      rule:
+        "`repo` must be the id of an existing, unarchived repo — repos are never created " +
+        "implicitly by naming one here. `area`, by contrast, is a free label and is created on " +
+        "first use, so the two fields behave differently despite looking alike.",
+    },
+  ],
+  example: {
+    title: "Add a rate limit to the public endpoint",
+    body: "The endpoint is unauthenticated and unbounded.",
+    area: "api",
+    originType: "auto",
+  },
+} as const;
+
 const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | "agent_judgement"> =
   {
     "pre-approved": "pre_approved",
@@ -71,6 +113,7 @@ export const createItem = defineOperation({
   name: "create_item",
   kind: "write",
   summary: "Creates an item — a project, task or subtask, depending on its parent.",
+  contract,
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CreateItemInput): Promise<ItemRecord> {
     let depth = 0;
