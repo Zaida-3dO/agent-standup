@@ -16,6 +16,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { claimItem, type Assignment, type HolderType, type Role } from "@/lib/claims";
 import { assertSessionMayClaim } from "../session-registration";
+import { ensureNameForSession } from "@/lib/agent-names";
 
 const ROLES = [
   "orchestrator",
@@ -50,12 +51,29 @@ const inputSchema = z
 
 export type ClaimOperationInput = z.infer<typeof inputSchema>;
 
+/**
+ * `claim`'s result: the assignment, plus the crew name the claiming session
+ * is now known by.
+ *
+ * `crewName` is `null` for a `holderType: "person"` claim — a person is
+ * named by `holderId` already, and drawing from the agent-name pool for a
+ * human holder would spend a name on nobody who uses it — and also `null`
+ * when the pool is exhausted (see `ensureNameForSession`). It is included on
+ * every claim response, not only a crew's first, so **the parent orchestrator
+ * spawning a subagent learns that subagent's friendly name from the same
+ * call it already makes to record the claim**, rather than needing a second
+ * round trip to ask for one.
+ */
+export interface ClaimResult extends Assignment {
+  readonly crewName: string | null;
+}
+
 export const claim = defineOperation({
   name: "claim",
   kind: "write",
   summary: "Takes ownership of an item in a role. Atomic — two agents can't both win.",
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: ClaimOperationInput): Promise<Assignment> {
+  async handler(ctx: ServiceContext, input: ClaimOperationInput): Promise<ClaimResult> {
     // Checked explicitly, ahead of the insert: `Assignment.itemId` carries a
     // foreign key, so claiming a non-existent item would otherwise surface
     // as a raw Postgres constraint violation (mapped to `InternalError` by
@@ -81,7 +99,7 @@ export const claim = defineOperation({
     // cannot act on the second.
     await assertSessionMayClaim(ctx, input.sessionId);
 
-    return claimItem(ctx.db, {
+    const assignment = await claimItem(ctx.db, {
       itemId: input.itemId,
       role: input.role as Role,
       roleCustom: input.roleCustom ?? null,
@@ -97,5 +115,19 @@ export const claim = defineOperation({
       model: input.model ?? null,
       effort: input.effort ?? null,
     });
+
+    // Named on the same call that claims, not a second one (§9, §18): a
+    // claim made on behalf of a subagent (`holderType: "agent"`) is exactly
+    // the moment a parent orchestrator needs a human-usable name for it, so
+    // the name is assigned here and handed straight back. A person claiming
+    // (`holderType: "person"`) is already named by `holderId` — drawing from
+    // the agent-name pool for a human holder would spend a name nobody
+    // reads, so this only ever names an agent holder.
+    const crewNameRow =
+      input.holderType === "agent"
+        ? await ensureNameForSession(ctx.db, input.sessionId)
+        : undefined;
+
+    return { ...assignment, crewName: crewNameRow?.name ?? null };
   },
 });

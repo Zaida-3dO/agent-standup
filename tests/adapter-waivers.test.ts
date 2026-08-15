@@ -43,10 +43,11 @@ describe("the waiver list", () => {
     // The bound exists so an adapter cannot decline to expose the
     // operations that are hard to get right and then pass the comparison
     // assertions vacuously. `backfill` refuses with `forbidden` and
-    // `invalid_input` only; it declares no guard.
+    // `invalid_input` only; `get_crew_name` refuses with `invalid_input` and
+    // a plain `conflict` for an exhausted pool. Neither declares a guard.
+    const permitted = new Set(["backfill", "get_crew_name"]);
     for (const waiver of ADAPTER_WAIVERS) {
-      const source = waiver.operation;
-      expect(source).toBe("backfill");
+      expect(permitted).toContain(waiver.operation);
     }
   });
 });
@@ -58,10 +59,18 @@ describe("isWaived / waiversFor / exposedOperations", () => {
     expect(isWaived("http", "backfill")).toBe(false);
     expect(isWaived("cli", "backfill")).toBe(false);
     expect(isWaived("mcp_http", "create_item")).toBe(false);
+    expect(isWaived("mcp_http", "get_crew_name")).toBe(true);
+    expect(isWaived("mcp_stdio", "get_crew_name")).toBe(true);
+    expect(isWaived("http", "get_crew_name")).toBe(false);
+    expect(isWaived("cli", "get_crew_name")).toBe(false);
   });
 
   it("groups waivers by adapter", () => {
-    expect(waiversFor("mcp_http").map((w) => w.operation)).toEqual(["backfill"]);
+    expect(
+      waiversFor("mcp_http")
+        .map((w) => w.operation)
+        .sort(),
+    ).toEqual(["backfill", "get_crew_name"]);
     expect(waiversFor("http")).toEqual([]);
   });
 
@@ -73,13 +82,16 @@ describe("isWaived / waiversFor / exposedOperations", () => {
 });
 
 describe("the MCP adapter honours its waiver", () => {
-  it("does NOT advertise backfill as a tool", async () => {
+  it("does NOT advertise backfill or get_crew_name as a tool", async () => {
     // The whole reason for the waiver: an MCP tool list is sent to the
     // model on every session, so a one-shot bulk-import tool would spend
     // context permanently to be callable for minutes. Removing the filter
-    // in createMcpServer puts it straight back into the list.
+    // in createMcpServer puts it straight back into the list. `get_crew_name`
+    // is waived for a different reason (naming is now a side effect of
+    // register_session/claim), same mechanism.
     const tools = toolsFromOperations(exposedOperations("mcp_http", listOperations()));
     expect(tools.map((t) => t.name)).not.toContain("backfill");
+    expect(tools.map((t) => t.name)).not.toContain("get_crew_name");
     expect(tools.map((t) => t.name)).toContain("create_item");
   });
 
@@ -100,6 +112,7 @@ describe("the MCP adapter honours its waiver", () => {
     expect(registered.length).toBeGreaterThan(0);
     expect(registered).toContain("create_item");
     expect(registered).not.toContain("backfill");
+    expect(registered).not.toContain("get_crew_name");
     // Everything else the registry holds IS exposed — the waiver is one
     // named gap, not a general shrinking of the surface.
     const expected = OPERATION_NAMES.filter((name) => !isWaived("mcp_http", name));

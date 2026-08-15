@@ -86,6 +86,70 @@ export async function handOutName(
 }
 
 /**
+ * The name `sessionId` holds, or `undefined` if it holds none.
+ *
+ * The lookup a caller assigning names server-side needs before reaching for
+ * `handOutName`: a session that registers twice, or that claims a second
+ * item, must **keep** the name it already has rather than drawing a second
+ * one from the pool — that would leave its first name permanently held and
+ * orphaned (nothing ever releases it) and give one session two identities in
+ * the same history. Read-only and outside any lock, which is fine for its
+ * one caller's purpose: the write that follows (`handOutName`) is itself
+ * atomic, so a stale read here costs nothing worse than a wasted hand-out
+ * check, never a double allocation.
+ */
+export async function nameHeldBy(
+  client: AgentNameClient,
+  sessionId: string,
+): Promise<AgentNameRow | undefined> {
+  const rows = await client.$queryRawUnsafe<AgentNameRow[]>(
+    `SELECT ${AGENT_COLUMNS} FROM "Agent" WHERE "heldBySessionId" = $1 LIMIT 1`,
+    sessionId,
+  );
+  return rows[0];
+}
+
+/**
+ * The server-side naming path: `sessionId` is handed the name it already
+ * holds, if any, otherwise one is drawn from the pool.
+ *
+ * This is what `register_session` and `claim` call instead of asking an
+ * agent to have called `get_crew_name` first — naming stops being a decision
+ * the caller makes and becomes a side effect of the calls a session was
+ * already required to make. Two properties fall out of composing the two
+ * primitives above rather than writing a third query:
+ *
+ *   - **A session keeps its name across repeat calls.** `register_session` is
+ *     documented as idempotent (a reconnect re-registers), and `claim` is
+ *     called once per item a crew takes on — neither should mint a second
+ *     identity for a session that already has one. The `nameHeldBy` check
+ *     first is what makes that true; without it, a session registering twice
+ *     would hold two names, one of them permanently orphaned (nothing
+ *     releases a name on a session's *second* registration).
+ *   - **An exhausted pool degrades to unnamed, not to a thrown error.**
+ *     `handOutName` returning `undefined` propagates here as `undefined`
+ *     rather than `ConflictError` — `get_crew_name` throws because "give me a
+ *     name" with nothing to give is the caller's whole request failing, but
+ *     naming here is a courtesy riding on a call the session needed to make
+ *     for an unrelated reason (registering, claiming). Failing *that* call
+ *     because the name pool ran dry would make an operational shortage of
+ *     one resource block work on a completely different one.
+ *
+ * Not wrapped in its own transaction: both queries already run inside
+ * whichever transaction the calling operation opened (`ServiceContext.db`),
+ * so the read-then-maybe-write is atomic with everything else that
+ * operation does, the same as any other multi-statement operation body here.
+ */
+export async function ensureNameForSession(
+  client: AgentNameClient,
+  sessionId: string,
+): Promise<AgentNameRow | undefined> {
+  const held = await nameHeldBy(client, sessionId);
+  if (held) return held;
+  return handOutName(client, sessionId);
+}
+
+/**
  * Assigns one *specific* name to `sessionId` — the deliberate-choice path,
  * as opposed to `handOutName`'s "any available one". Used where a caller
  * names the agent itself rather than drawing from the pool (an operator

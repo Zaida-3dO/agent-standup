@@ -1,22 +1,28 @@
-// `get_crew_name` — SCHEMA.md §9, §18 (`get_crew_name`: "Request a name for
-// a new agent"), PLAN.md ("Crew: get me a name."), MILESTONES.md #82.
+// `get_crew_name` — SCHEMA.md §9, §18, PLAN.md ("Crew: get me a name."),
+// MILESTONES.md #82.
 //
-// Thin wrapper around `handOutName` (src/lib/agent-names.ts, MILESTONES.md
-// #34) — the atomic "pick any available row, under concurrency" SQL already
-// lives there and is not duplicated here. #34 delivered the hand-out/
-// assign/retire logic but no service operation and no route, so nothing
-// could reach it through the one door every adapter is required to use
-// (`CLAUDE.md` "Working in this repo": "no adapter may reach the database
-// or a guard directly"). This is that missing operation, following the same
-// thin-wrapper shape #29's `claim`/`release`/`heartbeat` use over
-// `claims.ts`: input validation against a schema every adapter shares, and
-// registration so the command line (`standup crew name`) reaches the same
-// atomic hand-out through the same door.
+// **Not how an agent gets named.** An agent's name is assigned as a side
+// effect of `register_session` and `claim` (`ensureNameForSession`,
+// `@/lib/agent-names`) — the two calls a session already makes to register
+// itself and to take ownership of an item — so an agent never calls this
+// operation at all, and it is waived out of both MCP adapters
+// (`@/lib/adapters/waivers.ts`) for exactly that reason: nothing an agent
+// does should name it in a tool list.
 //
-// **Only hand-out is exposed here, not assign/retire.** PLAN.md's own scope
-// for what an agent needs is exactly "get me a name" — the MCP tool list
-// (SCHEMA.md §18) has `get_crew_name` and nothing else naming-shaped, and no
-// row in MILESTONES.md's command-line section asks for an administrative
+// **What this operation is for, and why it stays registered.** A direct
+// "hand me any available name, right now, with no other side effect" is
+// occasionally useful outside the agent path — an operator pre-warming a
+// name before a session exists, a script auditing the pool — and HTTP/the
+// command line cost nothing to keep it reachable for that
+// (`@/lib/adapters/waivers.ts`'s own reasoning for `backfill` applies
+// equally here: no registered guard can reject this operation, so waiving
+// it from the MCP tool list only loses a call nothing needs to make, not
+// guard coverage). A thin wrapper over `handOutName` (src/lib/agent-names.ts,
+// MILESTONES.md #34) — the atomic "pick any available row, under
+// concurrency" SQL lives there and is not duplicated here.
+//
+// **Only hand-out is exposed here, not assign/retire.** No row in
+// MILESTONES.md's command-line section asks for an administrative
 // assign/retire surface. Those two stay reachable only through
 // `agent-names.ts` directly (e.g. a seed script) until a row actually needs
 // them from an adapter — adding operations nothing calls would be exactly

@@ -43,6 +43,7 @@ import {
   type VersionAssessment,
 } from "@/lib/sessions";
 import { HOOK_VARIANTS, HOOK_PROTOCOL } from "@/lib/build-constants";
+import { ensureNameForSession } from "@/lib/agent-names";
 
 const inputSchema = z
   .object({
@@ -94,6 +95,14 @@ export interface RegisterSessionOutput {
   readonly version: VersionAssessment;
   /** Whether this session may take ownership of an item. */
   readonly mayClaim: boolean;
+  /**
+   * The crew name this session is now known by, assigned server-side as
+   * part of registering — never requested separately (§9, §18). `null`
+   * when the roster is exhausted: registration still succeeds, because
+   * naming is a courtesy that rides on a call the session had to make
+   * anyway, not a precondition for it (see `ensureNameForSession`).
+   */
+  readonly crewName: string | null;
 }
 
 /** The installed name of each hook variant, as row #48's installer writes it into a tool's config. */
@@ -153,6 +162,13 @@ export const registerSession = defineOperation({
 
     const version = assessVersion({ variant, reportedVersion: hookVersion });
 
+    // Named here, not requested separately (§9, §18): this is the call every
+    // session makes once, before anything else, so it is where the server
+    // assigns identity. `ensureNameForSession` keeps a re-registering
+    // session's existing name rather than drawing a second one — see that
+    // function's own comment for why a second draw would orphan the first.
+    const crewNameRow = await ensureNameForSession(ctx.db, input.sessionId);
+
     return {
       sessionId: input.sessionId,
       machine: input.machine,
@@ -167,6 +183,7 @@ export const registerSession = defineOperation({
       },
       version,
       mayClaim: version.mayClaim,
+      crewName: crewNameRow?.name ?? null,
     };
   },
 });

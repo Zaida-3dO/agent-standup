@@ -594,6 +594,12 @@ seen for another is a normal, expected state.
 **No `in_use` flag** — it's "does any assignment hold this name with `released_at IS NULL`". A stored
 copy needs clearing on every release, including releases that happen via takeover or death.
 
+**Assigned automatically, not requested.** A session is drawn a name (or keeps the one it already
+holds) when it registers (§21) and again — for an agent holder specifically — when it claims (§18);
+neither call requires the session to ask for one separately. Assignment is atomic under concurrency:
+`UPDATE ... WHERE name = (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1)` picks and locks one available
+row in a single round trip, so two sessions racing for the last name can never both win it.
+
 ---
 
 ## 10. `tool_calls` — telemetry
@@ -1143,11 +1149,12 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 | `complete` | Finish an item. **Separate from `transition` on purpose** — the required summary shape is in this tool's schema, where the agent can see it. |
 | `checkpoint` | Record what you tried, what you ruled out, what's next. |
 | `note` | Leave a timestamped remark on an item. |
-| `claim` | Take ownership of an item in a role. Atomic — two agents can't both win. |
+| `claim` | Take ownership of an item in a role. Atomic — two agents can't both win. Returns `crew_name` — the name the claiming session is now known by, assigned automatically (§9, §21). |
 | `release` | Give up ownership. |
 | `heartbeat` | Still alive. (Usually unnecessary — the hook does it.) |
-| `get_crew_name` | Request a name for a new agent. |
 | `crew_status` | Non-blocking digest of what your crew is doing. |
+
+**Naming is not a tool a session calls.** A crew name is assigned as a side effect of registering (§21) and of `claim` above — the two calls a session already makes — rather than by a separate request. `get_crew_name` still exists as a registered operation (§9) for the rare caller that wants a name with no other side effect, reachable over HTTP and the command line; it is deliberately absent from this list because no agent needs it.
 
 **Not exposed as MCP:** `wait_for_crew`. It's `standup crew wait` (§20), because only a shell call can be backgrounded — and backgrounding is the whole point.
 
@@ -1274,6 +1281,12 @@ reachable; registering over MCP or HTTP proves a server is reachable. So the tra
 the adapter, not supplied by the caller — decides which hook variant the reply describes. With both
 available the registration transport wins; an explicit override in the payload is honoured and
 recorded as an override.
+
+**Registering is also what names the session.** The reply carries `crewName` — the name this session
+is now known by (§9), assigned atomically from the pool, or the name it already held if it is
+registering again. `crewName` is `null` only when the pool is exhausted; that never blocks
+registration itself, because naming is a courtesy riding on a call the session had to make anyway,
+not a precondition for it.
 
 ### `sessions`
 
