@@ -111,6 +111,7 @@ import {
   type BoardColumn,
 } from "../board/columns";
 import { isItemState } from "../state-machine/states";
+import { areaFilterCondition } from "../items/area-filter";
 
 /**
  * Narrows a raw `state` string to the typed vocabulary, or throws.
@@ -138,6 +139,10 @@ function requireItemState(
 const inputSchema = z
   .object({
     priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+    /**
+     * An area id. Matches an item carrying this area **anywhere in its area
+     * set**, not only as its primary one (SCHEMA.md §23.1).
+     */
     area: z.string().min(1).optional(),
     repo: z.string().min(1).optional(),
     kind: z.enum(["project", "task", "subtask"]).optional(),
@@ -216,7 +221,9 @@ export const getBoard = defineOperation({
       paramIndex++;
     }
     if (input.area !== undefined) {
-      conditions.push(`"area" = $${paramIndex}`);
+      // Matches ANY of the item's areas, not only its primary one — see
+      // `areaFilterCondition` (../items/area-filter.ts) for why.
+      conditions.push(areaFilterCondition(paramIndex));
       values.push(input.area);
       paramIndex++;
     }

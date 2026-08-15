@@ -37,7 +37,10 @@ export interface ItemRecord {
   readonly priority: "P0" | "P1" | "P2" | "P3";
   readonly originType: "person" | "source" | "auto";
   readonly originPersonId: string | null;
+  /** The item's PRIMARY area — `areas[0]`, kept as its own column (SCHEMA.md §23.1). */
   readonly area: string;
+  /** Every area this item belongs to, primary first (SCHEMA.md §23.1). Never empty. */
+  readonly areas: readonly string[];
   readonly repo: string | null;
   readonly branch: string | null;
   readonly needsVisualReview: boolean;
@@ -73,6 +76,7 @@ export interface RawItemRow {
   originType: string;
   originPersonId: string | null;
   area: string;
+  areas: string[] | null;
   repo: string | null;
   branch: string | null;
   needsVisualReview: boolean;
@@ -123,6 +127,22 @@ export function toItemRecord(row: RawItemRow): ItemRecord {
     originType: row.originType as ItemRecord["originType"],
     originPersonId: row.originPersonId,
     area: row.area,
+    // Non-empty for every row, including one whose join rows do not exist —
+    // a row written before `ItemArea` did, or one inserted directly. Both
+    // are real: `array_agg` returns SQL NULL rather than an empty array when
+    // its subquery matches nothing.
+    //
+    // **The `COALESCE` in `ITEM_COLUMNS` is what actually supplies the
+    // fallback**, because it runs in the same query that reads the row. This
+    // `??` is the type-level backstop for it: `RawItemRow.areas` is nullable
+    // (a raw driver row is whatever the caller's SQL selected, and not every
+    // query in the codebase has to use `ITEM_COLUMNS`), so narrowing it here
+    // is what lets `ItemRecord.areas` be a plain non-null array rather than
+    // pushing the null onto every consumer. Removing either one alone leaves
+    // the behaviour correct; removing both hands callers a null — which is
+    // why `tests/item-areas.test.ts` asserts the outcome rather than
+    // either mechanism.
+    areas: row.areas ?? [row.area],
     repo: row.repo,
     branch: row.branch,
     needsVisualReview: row.needsVisualReview,
@@ -297,6 +317,11 @@ export const ITEM_COLUMNS = [
   '"originType"',
   '"originPersonId"',
   "area",
+  // Every area, primary first. A correlated subquery rather than a join,
+  // because every caller of ITEM_COLUMNS selects whole rows and a join would
+  // multiply them by the number of areas — the aggregate has to happen
+  // before the row is returned, not after.
+  '(SELECT COALESCE(array_agg("areaId" ORDER BY ("areaId" <> "Item"."area"), "areaId"), ARRAY["Item"."area"]) FROM "ItemArea" WHERE "itemId" = "Item"."id") AS "areas"',
   "repo",
   "branch",
   '"needsVisualReview"',

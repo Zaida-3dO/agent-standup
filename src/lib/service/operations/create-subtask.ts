@@ -27,6 +27,8 @@ import {
   ancestorDepthOf,
   commonCreateShape,
   insertItem,
+  areaSpellingCheck,
+  areaSpellingMessage,
   originPersonCheck,
   originPersonMessage,
   type CommonCreateInput,
@@ -43,7 +45,8 @@ const inputSchema = z
     taskId: z.string().trim().min(1, "taskId is required"),
   })
   .strict()
-  .refine(originPersonCheck, originPersonMessage);
+  .refine(originPersonCheck, originPersonMessage)
+  .refine(areaSpellingCheck, areaSpellingMessage);
 
 export type CreateSubtaskInput = z.infer<typeof inputSchema>;
 

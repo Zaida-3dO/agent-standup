@@ -127,6 +127,7 @@ model Item {
   // of `Artifact.followUpItemId`. Named for the direction it reads in:
   // "which reviews are relying on this item existing".
   followUpFor Artifact[] @relation("ArtifactFollowUp")
+  areaLinks   ItemArea[]
 
   @@index([state])
   @@index([parentId])
@@ -169,7 +170,38 @@ model Area {
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
   archivedAt  DateTime? @db.Timestamptz(3)
 
-  items Item[]
+  items     Item[]
+  itemLinks ItemArea[]
+}
+
+// An item's areas (SCHEMA.md §23.1). An item may sit in several — a change
+// that is both "web" and "infra" is genuinely both, and forcing a choice puts
+// it where half the people looking for it will not look. Most carry one.
+//
+// A join table rather than a `text[]` column on `Item`, because every area an
+// item names is a reference to an `Area` row: a foreign key makes "this area
+// exists" a property of the database rather than a check some future write
+// path forgets to run. Areas are still auto-created on first use (§23.1) —
+// the key constrains the *shape* of the reference, not who may mint one.
+//
+// `Item.area` is retained alongside this as the item's PRIMARY area, and is
+// the one denormalisation here: it keeps "every item has at least one area"
+// enforceable as a NOT NULL column, and it keeps every existing single-area
+// index and filter working. `setItemAreas` (`service/items/item-areas.ts`)
+// is the one function that writes `ItemArea`, and every direct write to
+// `Item.area` is followed, inside the same transaction, by a call to it —
+// which is what stops the two drifting apart from each other. That still
+// leaves more than one place that writes `Item.area` itself (an insert has
+// to fill the NOT NULL column before a row exists to call `setItemAreas`
+// against); see the comment on `setItemAreas` for the exact list.
+model ItemArea {
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  areaId String
+  area   Area   @relation(fields: [areaId], references: [id])
+
+  @@id([itemId, areaId])
+  @@index([areaId])
 }
 
 enum Role {

@@ -17,6 +17,8 @@ import type { ServiceContext } from "../context";
 import {
   commonCreateShape,
   insertItem,
+  areaSpellingCheck,
+  areaSpellingMessage,
   originPersonCheck,
   originPersonMessage,
   type CommonCreateInput,
@@ -26,7 +28,8 @@ import type { ItemRecord } from "../items/row";
 const inputSchema = z
   .object(commonCreateShape)
   .strict()
-  .refine(originPersonCheck, originPersonMessage);
+  .refine(originPersonCheck, originPersonMessage)
+  .refine(areaSpellingCheck, areaSpellingMessage);
 
 export type CreateProjectInput = z.infer<typeof inputSchema>;
 

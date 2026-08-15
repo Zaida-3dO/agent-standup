@@ -47,6 +47,10 @@ function itemRecord(overrides: Partial<ItemRecord> = {}): ItemRecord {
     originType: "person",
     originPersonId: null,
     area: "web",
+    // The notification whitelist compares the PRIMARY area only — `areas`
+    // is present because `ItemRecord` carries it, not because a rule can
+    // ask about it. Kept in step with `area` so the fixture stays coherent.
+    areas: ["web"],
     repo: null,
     branch: null,
     needsVisualReview: false,

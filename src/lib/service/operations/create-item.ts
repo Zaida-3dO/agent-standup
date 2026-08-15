@@ -29,6 +29,8 @@ import {
   ancestorDepthOf,
   commonCreateShape,
   insertItem,
+  areaSpellingCheck,
+  areaSpellingMessage,
   originPersonCheck,
   originPersonMessage,
   type CommonCreateInput,
@@ -42,7 +44,8 @@ const inputSchema = z
     parentId: z.string().min(1).optional(),
   })
   .strict()
-  .refine(originPersonCheck, originPersonMessage);
+  .refine(originPersonCheck, originPersonMessage)
+  .refine(areaSpellingCheck, areaSpellingMessage);
 
 export type CreateItemInput = z.infer<typeof inputSchema>;
 
