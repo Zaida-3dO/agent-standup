@@ -22,6 +22,7 @@ import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "./ensure-area-raw";
 import { callerEventActor } from "./event-attribution";
 import { appendEvent } from "@/lib/events";
+import { normalizeEmDash } from "@/lib/text-normalize";
 import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
@@ -40,7 +41,10 @@ import {
  * differs per operation by name, requiredness and meaning.
  */
 export const commonCreateShape = {
-  title: z.string().trim().min(1, "title is required"),
+  // `.trim()` first, `normalizeEmDash` after: an em dash at the very edge
+  // of the raw string ("— fix the bug") is still a title-authoring choice,
+  // not whitespace, so it must survive trimming to be normalised at all.
+  title: z.string().trim().min(1, "title is required").transform(normalizeEmDash),
   /**
    * The one-line BLUF — what this work *is* (MILESTONES.md #107).
    * Optional, because an item minted by an importer or a source sweep has
@@ -61,7 +65,19 @@ export const commonCreateShape = {
   driveMode: z.enum(["autonomous", "supervised", "manual"]).default("autonomous"),
   /** Omitted = `items.default_merge_authority` (SCHEMA.md §17.2). */
   mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
-  needsVisualReview: z.boolean().default(false),
+  /**
+   * Omitted = inherited from `repo.needsVisualReview` (MILESTONES.md #126),
+   * or `false` when there is no `repo`. Left `optional()` rather than
+   * `.default(false)` deliberately: a `.default()` resolves before the
+   * handler ever runs, so by the time the handler could check "did the
+   * caller actually say something" the answer would already be lost — the
+   * exact silent-default shape #126 was filed against. An explicit
+   * `false` on a `true`-repo is a real override (back-end-only work in a
+   * repo that generally needs visual review), not a no-op, so the
+   * resolution has to happen after this schema, not inside it — see
+   * `insertItem` below, which is where every creation path resolves it.
+   */
+  needsVisualReview: z.boolean().optional(),
   difficulty: z.record(z.string(), z.number().int().min(1).max(5)).optional(),
   customFields: z.record(z.string(), z.unknown()).optional(),
 } as const;
@@ -167,15 +183,29 @@ export async function insertItem(
   // item that names it commit or roll back together.
   const resolvedArea = await ensureAreaRaw(ctx, input.area);
 
+  // Also carries `needsVisualReview` (MILESTONES.md #126): the same
+  // lookup that already exists to validate `repo` is the natural place to
+  // read the value a create with no explicit `needsVisualReview` should
+  // inherit — one query serves both, rather than adding a second round
+  // trip purely for the inherited field.
+  let repoNeedsVisualReview = false;
   if (input.repo) {
-    const repoRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
-      `SELECT "id" FROM "Repo" WHERE "id" = $1 AND "archivedAt" IS NULL`,
+    const repoRows = await ctx.db.$queryRawUnsafe<{ id: string; needsVisualReview: boolean }[]>(
+      `SELECT "id", "needsVisualReview" FROM "Repo" WHERE "id" = $1 AND "archivedAt" IS NULL`,
       input.repo,
     );
-    if (repoRows.length === 0) {
+    const repoRow = repoRows[0];
+    if (!repoRow) {
       throw new NotFoundError(`No such repo: ${input.repo}.`, { fields: ["repo"] });
     }
+    repoNeedsVisualReview = repoRow.needsVisualReview;
   }
+
+  // Inheritance is a default, never a lock (MILESTONES.md #126): an
+  // explicit `true` or `false` from the caller always wins over whatever
+  // the repo says. Only an omitted field falls through to the repo's
+  // value, and to `false` when there is no repo at all.
+  const needsVisualReview = input.needsVisualReview ?? repoNeedsVisualReview;
 
   if (input.originType === "person" && input.originPersonId) {
     const personRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
@@ -219,7 +249,7 @@ export async function insertItem(
     input.originPersonId ?? null,
     resolvedArea,
     input.repo ?? null,
-    input.needsVisualReview,
+    needsVisualReview,
     input.driveMode,
     mergeAuthority,
     input.difficulty ? JSON.stringify(input.difficulty) : null,

@@ -422,6 +422,140 @@ describeIfDb("explicit create operations", () => {
     });
   });
 
+  // MILESTONES.md #126 — `needsVisualReview` inherits from the repo unless
+  // the caller says otherwise. `create_item` proved this once, against the
+  // single insert it used to own; now that all four creates share
+  // `insertItem` (create-core.ts), the same guarantee has to hold for each
+  // of the three explicit operations too, or moving the logic into the
+  // shared core silently narrowed it back to just one caller. Each case
+  // asserts on the create RESPONSE, exactly as items-operations.test.ts does
+  // for create_item — the defect this proves against is the response
+  // staying silent about the inherited value.
+  describe("needsVisualReview inheritance across the three explicit creates", () => {
+    async function repoWith(id: string, needsVisualReview: boolean): Promise<void> {
+      await runtime.call("create_repo", {
+        id,
+        displayName: id,
+        defaultBranch: "main",
+        needsVisualReview,
+      });
+    }
+
+    it("create_project inherits true from the repo", async () => {
+      await repoWith("nvr-project-true", true);
+      const project = (await call("create_project", {
+        ...base("Inherits true"),
+        repo: "nvr-project-true",
+      })) as Created & { needsVisualReview: boolean };
+      expect(project.needsVisualReview).toBe(true);
+    });
+
+    it("create_project: an explicit false overrides an inherited true", async () => {
+      await repoWith("nvr-project-override", true);
+      const project = (await call("create_project", {
+        ...base("Override false"),
+        repo: "nvr-project-override",
+        needsVisualReview: false,
+      })) as Created & { needsVisualReview: boolean };
+      expect(project.needsVisualReview).toBe(false);
+    });
+
+    it("create_task inherits true from the repo", async () => {
+      await repoWith("nvr-task-true", true);
+      const project = await call("create_project", base("Task's project", "nvr-task"));
+      const task = (await call("create_task", {
+        ...base("Inherits true", "nvr-task"),
+        projectId: project.id,
+        repo: "nvr-task-true",
+      })) as Created & { needsVisualReview: boolean };
+      expect(task.needsVisualReview).toBe(true);
+    });
+
+    it("create_task: an explicit false overrides an inherited true", async () => {
+      await repoWith("nvr-task-override", true);
+      const project = await call("create_project", base("Task's project 2", "nvr-task-2"));
+      const task = (await call("create_task", {
+        ...base("Override false", "nvr-task-2"),
+        projectId: project.id,
+        repo: "nvr-task-override",
+        needsVisualReview: false,
+      })) as Created & { needsVisualReview: boolean };
+      expect(task.needsVisualReview).toBe(false);
+    });
+
+    it("create_subtask inherits true from the repo", async () => {
+      await repoWith("nvr-subtask-true", true);
+      const project = await call("create_project", base("Subtask's project", "nvr-subtask"));
+      const task = await call("create_task", {
+        ...base("Subtask's task", "nvr-subtask"),
+        projectId: project.id,
+      });
+      const subtask = (await call("create_subtask", {
+        ...base("Inherits true", "nvr-subtask"),
+        taskId: task.id,
+        repo: "nvr-subtask-true",
+      })) as Created & { needsVisualReview: boolean };
+      expect(subtask.needsVisualReview).toBe(true);
+    });
+
+    it("create_subtask: an explicit false overrides an inherited true", async () => {
+      await repoWith("nvr-subtask-override", true);
+      const project = await call("create_project", base("Subtask's project 2", "nvr-subtask-2"));
+      const task = await call("create_task", {
+        ...base("Subtask's task 2", "nvr-subtask-2"),
+        projectId: project.id,
+      });
+      const subtask = (await call("create_subtask", {
+        ...base("Override false", "nvr-subtask-2"),
+        taskId: task.id,
+        repo: "nvr-subtask-override",
+        needsVisualReview: false,
+      })) as Created & { needsVisualReview: boolean };
+      expect(subtask.needsVisualReview).toBe(false);
+    });
+
+    it("create_project defaults to false with no repo at all", async () => {
+      const project = (await call("create_project", base("No repo"))) as Created & {
+        needsVisualReview: boolean;
+      };
+      expect(project.needsVisualReview).toBe(false);
+    });
+  });
+
+  // #139 — `title` is normalised the same way on every write path. Proven
+  // once per operation, not exhaustively per em-dash position, because the
+  // normalisation itself (`normalizeEmDash`) already has its own unit
+  // coverage; what matters here is that each of the three explicit creates
+  // actually routes `title` through it via the shared `commonCreateShape`.
+  describe("title em-dash normalisation on the three explicit creates", () => {
+    it("create_project normalises an em dash in title to a hyphen", async () => {
+      const project = await call("create_project", base("Fix the bug — for real this time"));
+      expect(project.title).toBe("Fix the bug - for real this time");
+    });
+
+    it("create_task normalises an em dash in title to a hyphen", async () => {
+      const project = await call("create_project", base("Dash task project", "nvr-dash-task"));
+      const task = await call("create_task", {
+        ...base("Ship it — quietly", "nvr-dash-task"),
+        projectId: project.id,
+      });
+      expect(task.title).toBe("Ship it - quietly");
+    });
+
+    it("create_subtask normalises an em dash in title to a hyphen", async () => {
+      const project = await call("create_project", base("Dash subtask project", "nvr-dash-sub"));
+      const task = await call("create_task", {
+        ...base("Dash subtask task", "nvr-dash-sub"),
+        projectId: project.id,
+      });
+      const subtask = await call("create_subtask", {
+        ...base("Rebase — resolve conflicts", "nvr-dash-sub"),
+        taskId: task.id,
+      });
+      expect(subtask.title).toBe("Rebase - resolve conflicts");
+    });
+  });
+
   // The route handlers, driven directly (SCHEMA.md §22 — "call the route
   // handler directly"). They are thin shells, so what is worth proving is
   // that each shell is wired to the operation its path claims, and that a
