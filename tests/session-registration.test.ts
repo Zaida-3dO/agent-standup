@@ -36,6 +36,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { HOOK_PROTOCOL } from "@/lib/build-constants";
+import { assessVersion } from "@/lib/sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -574,14 +575,48 @@ describeIfDb("session registration and the claim refusal", () => {
       // convenient", not "you have nothing installed" — a session at this
       // verdict already has a working hook and must not be re-pointed at
       // the fetch flow meant for one that has none.
+      //
+      // The real, shipped `HOOK_PROTOCOL.http` is `{ current: 1, minSupported: 1 }`
+      // (`src/lib/build-constants.ts`), which leaves the advisory band empty
+      // — `reportedVersion: minSupported` lands on `current` too, so a
+      // self-adjusting assertion here would silently only ever prove
+      // "current", never "advisory". `assessVersion` takes an injectable
+      // `protocols` range for exactly this reason (see
+      // `tests/sessions-version-rule.test.ts`), so the verdict is proved
+      // for real here with a pinned range that has room on both sides of
+      // the boundary — the same reported version genuinely falls in the
+      // advisory band under it.
+      const widerBand = { current: 9, minSupported: 5 } as const;
+      expect(
+        assessVersion({
+          variant: "http",
+          reportedVersion: widerBand.minSupported,
+          protocols: { http: widerBand, cli: widerBand },
+        }).verdict,
+      ).toBe("advisory");
+
+      // `register_session`'s `fetch` field is driven by whether a version was
+      // reported at all (`hookVersion === null`), not by the verdict — so
+      // this proves the field stays absent for a session that reported *some*
+      // real version, which is what the advisory case actually is.
       const reply = await register("http", {
         sessionId: "advisory-fetch",
         machine: "m",
         hookVersion: HOOK_PROTOCOL.http.minSupported,
       });
-      expect((reply.version as { verdict: string }).verdict).toBe(
-        HOOK_PROTOCOL.http.minSupported < HOOK_PROTOCOL.http.current ? "advisory" : "current",
-      );
+      expect(reply.fetch).toBeUndefined();
+    });
+
+    it("REFUSES to give fetch instructions for an incompatible version either", async () => {
+      // Completes the matrix started above: `fetch` is absent whenever a
+      // version was reported at all, regardless of what the version
+      // comparison thinks of it — incompatible (below min_supported) is the
+      // remaining case besides current and advisory.
+      const reply = await register("http", {
+        sessionId: "incompatible-fetch",
+        machine: "m",
+        hookVersion: 0,
+      });
       expect(reply.fetch).toBeUndefined();
     });
 

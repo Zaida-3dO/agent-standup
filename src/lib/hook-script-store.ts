@@ -78,5 +78,21 @@ export function resolveHookScript({
   const scriptPath = path.join(repoRoot, HOOK_SCRIPTS_DIR, `${variant}.js`);
   if (!existsSync(scriptPath)) return undefined;
 
-  return { variant, contents: readFileSync(scriptPath) };
+  // `existsSync` is true for a directory too — a directory happening to sit
+  // where the built script should be (a broken or partial build) would
+  // otherwise throw `EISDIR` out of `readFileSync` and surface as a bare 500
+  // from the route, breaking the documented "never throws" contract above.
+  // Caught narrowly by error code, not by wrapping the read in a bare
+  // `catch {}`: a blanket catch would also swallow ENOENT from a file
+  // deleted in the gap between the `existsSync` check above and this read
+  // (a real, if rare, race) and any other unexpected read failure — turning
+  // every one of them into the same silent "nothing to send" as a merely
+  // unbuilt variant, and hiding a mutation to the `existsSync` guard itself
+  // behind this catch instead of failing loudly.
+  try {
+    return { variant, contents: readFileSync(scriptPath) };
+  } catch (err) {
+    if (err instanceof Error && "code" in err && err.code === "EISDIR") return undefined;
+    throw err;
+  }
 }
