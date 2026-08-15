@@ -108,6 +108,29 @@ describeIfDb("item service operations against Postgres", () => {
       expect(rows[0]?.displayName).toBe("Infra Tools");
     });
 
+    it("normalises an em dash in title to a hyphen (MILESTONES.md #113), leaving body untouched", async () => {
+      const item = (await runtime.call("create_item", {
+        title: "Ship it — quickly",
+        body: "the brief keeps its em dash — right here",
+        area: "em-dash-title",
+        originType: "auto",
+      })) as { title: string; body: string };
+
+      expect(item.title).toBe("Ship it - quickly");
+      expect(item.body).toBe("the brief keeps its em dash — right here");
+    });
+
+    it("does not touch a title with no em dash — the normalisation only fires on the character it targets", async () => {
+      const item = (await runtime.call("create_item", {
+        title: "café naïve résumé 日本語 🎉",
+        body: "x",
+        area: "no-em-dash-title",
+        originType: "auto",
+      })) as { title: string };
+
+      expect(item.title).toBe("café naïve résumé 日本語 🎉");
+    });
+
     it("derives kind: task at depth 1, subtask at depth 2 and beyond", async () => {
       const project = (await runtime.call("create_item", {
         title: "Depth root",
@@ -308,6 +331,22 @@ describeIfDb("item service operations against Postgres", () => {
       expect(events).toHaveLength(2);
       expect(events[1]?.type).toBe("field_change");
       expect(events[1]?.payload).toEqual({ field: "priority", from: "P2", to: "P0" });
+    });
+
+    it("normalises an em dash in an edited title to a hyphen, same as create_item", async () => {
+      const created = (await runtime.call("create_item", {
+        title: "Original",
+        body: "x",
+        area: "editing",
+        originType: "auto",
+      })) as { id: string };
+
+      const updated = (await runtime.call("update_item", {
+        id: created.id,
+        title: "Renamed — with an em dash",
+      })) as { title: string };
+
+      expect(updated.title).toBe("Renamed - with an em dash");
     });
 
     it("writes one event per changed field when several change at once", async () => {

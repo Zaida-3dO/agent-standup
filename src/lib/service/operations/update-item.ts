@@ -18,11 +18,14 @@ import {
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { recordFieldChanges } from "@/lib/events";
 import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
+import { normalizeEmDash } from "@/lib/text-normalize";
 
 const inputSchema = z
   .object({
     id: z.string().min(1),
-    title: z.string().trim().min(1).optional(),
+    // Same em-dash-to-hyphen normalisation `create_item` applies — see
+    // `text-normalize.ts`. An edit is as much "input" as a create.
+    title: z.string().trim().min(1).transform(normalizeEmDash).optional(),
     /**
      * The one-line BLUF (MILESTONES.md #107). Editable because the row's
      * whole claim is that it is "maintained as it moves" — a headline

@@ -15,6 +15,7 @@ import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "../items/ensure-area-raw";
 import { callerEventActor } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
+import { normalizeEmDash } from "@/lib/text-normalize";
 import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
@@ -25,7 +26,10 @@ import {
 
 const inputSchema = z
   .object({
-    title: z.string().trim().min(1, "title is required"),
+    // `.trim()` first, `normalizeEmDash` after: an em dash at the very edge
+    // of the raw string ("— fix the bug") is still a title-authoring choice,
+    // not whitespace, so it must survive trimming to be normalised at all.
+    title: z.string().trim().min(1, "title is required").transform(normalizeEmDash),
     /**
      * The one-line BLUF — what this work *is* (MILESTONES.md #107).
      * Optional, because an item minted by an importer or a source sweep has
