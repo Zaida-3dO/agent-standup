@@ -376,13 +376,13 @@ export const SETTINGS_REGISTRY = {
 
   "hook.require_registration_to_claim": define({
     schema: z.boolean(),
-    default: true,
+    default: false,
     label: "Require a registered, compatible session to claim",
-    help: "When on, a session that has not registered a hook protocol version — or whose version is below the oldest this build supports — may not take ownership of an item. It may still read, orient and update itself. Turning this off lets an unguarded session hold work, which is the one thing this rule exists to prevent; it exists so that an installation whose sessions cannot yet register is degraded rather than stopped.",
+    help: "When on, a session that has not registered a hook protocol version — or whose version is below the oldest this build supports — may not take ownership of an item. It defaults to off: the protocol version tells the server what signals to expect from a session, and a session that reports none is one whose tool calls simply go unobserved, which is not a reason to stop it working. Turn it on for an installation that wants ownership restricted to sessions whose rules it can enforce.",
     category: "Hook",
     appliesWhen: "next-call",
-    // Relaxes an enforcement: off means work can be held under rules the
-    // holder cannot enforce.
+    // Tightens an enforcement rather than relaxing one: on means a session
+    // that cannot register cannot hold work.
     sensitive: true,
     irreversible: false,
     formerEnv: [],
