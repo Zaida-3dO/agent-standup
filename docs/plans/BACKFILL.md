@@ -17,6 +17,7 @@ know nothing about the shape the data was read from.
   "version": 1,
   "defaultArea": "imported",
   "repoAliases": { "web-app": "web" },
+  "repoDefaultBranches": { "web-app": "main" },
   "actorAliases": {
     "system": { "actorType": "system", "actorId": null },
     "worker-a": { "actorType": "agent", "actorId": "worker-a" },
@@ -223,6 +224,25 @@ means the repo `web` that is already in `repos`" — it asserts one, it does not
 mints the *unaliased* labels only and never an alias's target. An alias pointing at a repo that does
 not exist is refused up front, naming every offending label and target at once, rather than failing
 later on a foreign key.
+
+**A minted repo's `defaultBranch` comes from `repoDefaultBranches`, never from a guess.**
+
+```jsonc
+"repoDefaultBranches": { "web-app": "main" }
+```
+
+The runner that mints repos under `--create-missing-repos` has no filesystem or git access of its
+own — it only ever sees the label your payload names. Only your converter, reading the real checkout,
+can know what a repository's default branch actually is; use `src/lib/backfill/git.ts`'s
+`readDefaultBranch`/`readDefaultBranches` (`git symbolic-ref refs/remotes/origin/HEAD`) if your
+converter runs against real checkouts, or supply the value however you already know it.
+
+**A label with no entry in `repoDefaultBranches` is minted with `defaultBranch: null`** — unknown,
+recorded as such, rather than a constant every repository would then share regardless of what each
+one actually uses. This field is read at PR-creation time: a `null` value makes a caller ask before
+picking a base branch, where a wrong string would let it proceed confidently against the wrong one.
+Fill in the real value with `standup repo update --id <id> --default-branch <branch>` once you know
+it.
 
 `area`, by contrast, is auto-created and normalised — it is required on every item, and blocking the
 most common write in the system is friction nobody should pay.

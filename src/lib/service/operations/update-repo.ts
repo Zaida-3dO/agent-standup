@@ -10,7 +10,10 @@ const inputSchema = z
   .object({
     id: z.string().min(1),
     displayName: z.string().trim().min(1).optional(),
-    defaultBranch: z.string().trim().min(1).optional(),
+    // Nullable like `host`: an explicit `null` clears it back to unknown
+    // rather than the only way to change it being to another guess
+    // (MILESTONES.md #124).
+    defaultBranch: z.string().trim().min(1).nullable().optional(),
     host: z.string().trim().min(1).nullable().optional(),
     needsVisualReview: z.boolean().optional(),
     /** `true` archives (sets `archivedAt` to now), `false` un-archives (clears it). Omitted = no change. */

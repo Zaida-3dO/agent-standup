@@ -236,11 +236,24 @@ export class DanglingRepoAliasError extends Error {
  * `web-app` means the repo you already have as `web`". Minting `web` on the strength
  * of that would invent the very row the caller was asserting already
  * existed, and would hide a typo'd target rather than report it.
+ *
+ * **A minted repo's `defaultBranch` is never guessed.** This runner has no
+ * filesystem or git access of its own — it only ever sees the labels the
+ * payload names — so it cannot itself ask a repository what its default
+ * branch is. `options.repoDefaultBranches` is where a converter that DOES
+ * have that access (it read the real checkout) reports it; a label with no
+ * entry there is minted with `defaultBranch: null`, representing "unknown"
+ * rather than writing a constant every row would then share regardless of
+ * what each repository actually uses (MILESTONES.md #124).
  */
 export async function resolveRepoAliases(
   client: Pick<PrismaClient, "repo">,
   labels: readonly string[],
-  options: { readonly repoAliases: Record<string, string>; readonly createMissingRepos: boolean },
+  options: {
+    readonly repoAliases: Record<string, string>;
+    readonly createMissingRepos: boolean;
+    readonly repoDefaultBranches?: Record<string, string>;
+  },
 ): Promise<RepoResolution> {
   const repoAliases: Record<string, string> = { ...options.repoAliases };
   const created: string[] = [];
@@ -264,7 +277,14 @@ export async function resolveRepoAliases(
       continue;
     }
     try {
-      await createRepo(client, { id, displayName: label, defaultBranch: "main" });
+      // No fallback constant: a label the converter didn't report a branch
+      // for is created with `defaultBranch: null` — unknown, distinct from
+      // a guess (MILESTONES.md #124).
+      await createRepo(client, {
+        id,
+        displayName: label,
+        defaultBranch: options.repoDefaultBranches?.[label] ?? null,
+      });
       created.push(id);
     } catch (error) {
       // Already there from an earlier run — a re-runnable import expects
@@ -372,6 +392,7 @@ export async function runBackfill(
   const repos = await resolveRepoAliases(client, repoLabelsIn(payload), {
     repoAliases: payload.repoAliases ?? {},
     createMissingRepos: options.createMissingRepos,
+    repoDefaultBranches: payload.repoDefaultBranches,
   });
 
   const actors = actorsIn(payload);

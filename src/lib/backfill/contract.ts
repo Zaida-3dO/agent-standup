@@ -245,6 +245,18 @@ export const backfillPayloadSchema = z
       }),
     /** Converter repo label -> an existing `repos.id`. A label with no entry is refused. */
     repoAliases: z.record(z.string(), z.string().min(1)).optional(),
+    /**
+     * Converter repo label -> that repository's real default branch, for a
+     * label `--create-missing-repos` mints (MILESTONES.md #124). The
+     * runner has no filesystem or git access of its own — only the
+     * converter, which reads the actual checkouts, can know this — so it is
+     * never invented here. A label minted with no entry in this map is
+     * created with `defaultBranch: null` (**unknown**, not a guessed
+     * constant): a caller that reads a `null` default branch has to ask
+     * before assuming one, where a wrong string would let it proceed
+     * confidently against the wrong base.
+     */
+    repoDefaultBranches: z.record(z.string(), z.string().min(1)).optional(),
     /** Converter actor label -> who the event is attributed to. A label with no entry is refused. */
     actorAliases: z.record(z.string(), actorAliasSchema).optional(),
     /**

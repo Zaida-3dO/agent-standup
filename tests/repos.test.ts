@@ -110,6 +110,26 @@ describeIfDb("repos — deliberate create only", () => {
     expect(await prisma.repo.findUnique({ where: { id: "nonexistent-repo" } })).toBeNull();
   });
 
+  // MILESTONES.md #124: an importer/converter that cannot determine a
+  // repository's real default branch must be able to say so, distinctly
+  // from a guess — never write a constant it does not actually know.
+  it("stores defaultBranch as null when omitted, rather than defaulting to a guess", async () => {
+    const created = await createRepo(prisma, { id: "unknown-branch", displayName: "Unknown" });
+    expect(created.defaultBranch).toBeNull();
+
+    const row = await prisma.repo.findUniqueOrThrow({ where: { id: "unknown-branch" } });
+    expect(row.defaultBranch).toBeNull();
+  });
+
+  it("stores defaultBranch as null when explicitly passed null", async () => {
+    const created = await createRepo(prisma, {
+      id: "explicit-null-branch",
+      displayName: "Explicit Null",
+      defaultBranch: null,
+    });
+    expect(created.defaultBranch).toBeNull();
+  });
+
   it("listActiveRepos excludes archived repos", async () => {
     await createRepo(prisma, {
       id: "archived-repo",

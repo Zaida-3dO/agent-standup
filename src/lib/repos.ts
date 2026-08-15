@@ -16,7 +16,17 @@ export class RepoAlreadyExistsError extends Error {
 export interface CreateRepoInput {
   id: string;
   displayName: string;
-  defaultBranch: string;
+  /**
+   * `null` or omitted means genuinely unknown — never guessed at. This
+   * field is consumed at PR-creation time (MILESTONES.md #124): an absent
+   * value makes a caller ask before assuming a base branch, while a wrong
+   * string lets it proceed confidently against the wrong one. A caller that
+   * knows the real branch (a human filling in the admin form, a converter
+   * that read it from the repository) should always supply it; this is the
+   * escape hatch for the caller that cannot, not an invitation to skip
+   * asking.
+   */
+  defaultBranch?: string | null;
   host?: string | null;
   needsVisualReview?: boolean;
 }
@@ -32,7 +42,7 @@ export interface CreateRepoInput {
 export async function createRepo(
   client: Pick<PrismaClient, "repo">,
   input: CreateRepoInput,
-): Promise<{ id: string; displayName: string; defaultBranch: string }> {
+): Promise<{ id: string; displayName: string; defaultBranch: string | null }> {
   const existing = await client.repo.findUnique({ where: { id: input.id } });
   if (existing) {
     throw new RepoAlreadyExistsError(input.id);
@@ -42,7 +52,7 @@ export async function createRepo(
     data: {
       id: input.id,
       displayName: input.displayName,
-      defaultBranch: input.defaultBranch,
+      defaultBranch: input.defaultBranch ?? null,
       host: input.host ?? null,
       needsVisualReview: input.needsVisualReview ?? false,
     },

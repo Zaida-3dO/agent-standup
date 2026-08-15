@@ -134,6 +134,39 @@ describeIfDb("admin service operations against Postgres", () => {
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("not_found");
     });
+
+    // MILESTONES.md #124: `defaultBranch` is nullable — unknown is a
+    // distinct, representable state, never a guessed constant.
+    it("create_repo omits defaultBranch and stores it as null, not a guessed value", async () => {
+      const repo = (await runtime.call("create_repo", {
+        id: "repo-unknown-branch",
+        displayName: "Unknown Branch",
+      })) as { defaultBranch: string | null };
+      expect(repo.defaultBranch).toBeNull();
+    });
+
+    it("create_repo accepts an explicit null defaultBranch the same as omitting it", async () => {
+      const repo = (await runtime.call("create_repo", {
+        id: "repo-explicit-null-branch",
+        displayName: "Explicit Null",
+        defaultBranch: null,
+      })) as { defaultBranch: string | null };
+      expect(repo.defaultBranch).toBeNull();
+    });
+
+    it("update_repo can clear defaultBranch back to null", async () => {
+      await runtime.call("create_repo", {
+        id: "repo-clear-branch",
+        displayName: "Clear Me",
+        defaultBranch: "main",
+      });
+
+      const cleared = (await runtime.call("update_repo", {
+        id: "repo-clear-branch",
+        defaultBranch: null,
+      })) as { defaultBranch: string | null };
+      expect(cleared.defaultBranch).toBeNull();
+    });
   });
 
   // ── area ────────────────────────────────────────────────────────────
