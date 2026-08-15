@@ -40,6 +40,15 @@ import { createTask } from "./operations/create-task";
 import { createSubtask } from "./operations/create-subtask";
 import { getItem } from "./operations/get-item";
 import { updateItem } from "./operations/update-item";
+// Correcting an item's *position* in the tree. `kind` is derived from
+// parentage and stored, so a parent set at create and never again left an
+// item's kind — and therefore whether it has a state at all — permanently
+// wrong. These three make position writable: one general move, one narrower
+// move whose refusals match a caller that knows it is holding a task, and
+// one scan that finds the rows already in that condition.
+import { reparentItem } from "./operations/reparent-item";
+import { retypeToTask } from "./operations/retype-to-task";
+import { repairStuckProjects } from "./operations/repair-stuck-projects";
 import { listItems } from "./operations/list-items";
 import { getBoard } from "./operations/get-board";
 // Since your last visit (MILESTONES.md #38): the ledger slice, and the
@@ -128,6 +137,9 @@ export const OPERATION_REGISTRY = {
   [createSubtask.name]: createSubtask,
   [getItem.name]: getItem,
   [updateItem.name]: updateItem,
+  [reparentItem.name]: reparentItem,
+  [retypeToTask.name]: retypeToTask,
+  [repairStuckProjects.name]: repairStuckProjects,
   [listItems.name]: listItems,
   [getBoard.name]: getBoard,
   [getEvents.name]: getEvents,
