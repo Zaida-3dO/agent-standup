@@ -472,10 +472,53 @@ describeIfDb("session registration and the claim refusal", () => {
       expect((reply.version as { verdict: string }).verdict).toBe("current");
     });
 
-    it("says a session that named no version may NOT claim", async () => {
-      const reply = await register("http", { sessionId: "reply-none", machine: "m" });
-      expect(reply.mayClaim).toBe(false);
-      expect((reply.version as { verdict: string }).verdict).toBe("unregistered");
+    describe("under the shipped default (setting off)", () => {
+      // No `beforeEach` here deliberately — this is the posture a fresh
+      // install boots with, and the point of this block is that the
+      // handshake's answer must match what actually happens with nothing
+      // configured, not just with the setting explicitly set to `false`.
+
+      it("says a session that named no version MAY claim, matching a real claim", async () => {
+        // The regression this guards: `mayClaim` used to mirror the version
+        // verdict alone (`unregistered` -> false) regardless of the setting,
+        // so under the shipped default the handshake told an honest,
+        // unhooked session it could not claim while a real claim from that
+        // same session would succeed. A client that trusted the handshake
+        // either stopped working (recreating the ownership deadlock this
+        // setting exists to remove) or reported a version it never ran to
+        // turn the field green — the exact false claim the check exists to
+        // catch. Proved against a real claim, not just the reply, so a fix
+        // that only edits the handshake without changing what actually
+        // happens (or vice versa) fails this test either way.
+        const reply = await register("http", { sessionId: "reply-none", machine: "m" });
+        expect((reply.version as { verdict: string }).verdict).toBe("unregistered");
+        expect(reply.mayClaim).toBe(true);
+
+        const itemId = await newItem();
+        const assignment = (await attemptClaim("reply-none", itemId)) as { id: string };
+        expect(assignment.id).toBeTruthy();
+      });
+    });
+
+    describe("under the strict posture (setting on)", () => {
+      beforeEach(async () => {
+        await putSettingRow("hook.require_registration_to_claim", true);
+      });
+
+      afterEach(async () => {
+        await clearSettingRow("hook.require_registration_to_claim");
+      });
+
+      it("says a session that named no version may NOT claim, matching a real refusal", async () => {
+        const reply = await register("http", { sessionId: "reply-none-strict", machine: "m" });
+        expect((reply.version as { verdict: string }).verdict).toBe("unregistered");
+        expect(reply.mayClaim).toBe(false);
+
+        const itemId = await newItem();
+        await expect(attemptClaim("reply-none-strict", itemId)).rejects.toMatchObject({
+          code: "forbidden",
+        });
+      });
     });
   });
 });

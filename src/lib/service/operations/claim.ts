@@ -87,11 +87,12 @@ export const claim = defineOperation({
       throw new NotFoundError(`No such item: ${input.itemId}.`, { fields: ["itemId"] });
     }
 
-    // §21: no unguarded session holds work. Checked *before* the insert, not
-    // after — a claim that is going to be refused must not first win the
-    // atomic race and displace whoever would otherwise have got it, because
-    // the partial unique index makes that win visible to every other
-    // claimant for as long as the transaction is open.
+    // §21: no unguarded session holds work, where the setting enforcing it is
+    // on. Checked *before* the insert, not after — a claim that is going to
+    // be refused must not first win the atomic race and displace whoever
+    // would otherwise have got it, because the partial unique index makes
+    // that win visible to every other claimant for as long as the
+    // transaction is open.
     //
     // Checked after the item-existence read on purpose, so a claim naming a
     // typo'd item id is told about the typo rather than about its

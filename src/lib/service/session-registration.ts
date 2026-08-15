@@ -1,4 +1,6 @@
-// The claim-side half of §21: **no unguarded session holds work.**
+// The claim-side half of §21: **no unguarded session holds work — where
+// `hook.require_registration_to_claim` is on.** (Off, the shipped default,
+// is covered further down.)
 //
 // ── Why this refuses the claim rather than everything ───────────────────
 //
