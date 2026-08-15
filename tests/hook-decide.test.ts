@@ -161,7 +161,10 @@ describe("post can never block", () => {
 });
 
 describe("session enforcement", () => {
-  const displaced: SessionEnforcement = { status: "displaced", detail: "another session took over" };
+  const displaced: SessionEnforcement = {
+    status: "displaced",
+    detail: "another session took over",
+  };
 
   it("refuses a pre-tool call from a displaced session without asking the server", async () => {
     const askServer = server({ decision: "allow" });

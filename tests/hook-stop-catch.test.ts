@@ -160,7 +160,10 @@ describe("readStopContext", () => {
 });
 
 describe("the catch never blocks the stop — DECISIONS.md §6", () => {
-  const allowed = renderResponse({ decision: "allow", reason: "ok", source: "post-cannot-block" }, "Stop");
+  const allowed = renderResponse(
+    { decision: "allow", reason: "ok", source: "post-cannot-block" },
+    "Stop",
+  );
 
   it("leaves the exit code at zero when it fires", () => {
     const rendered = renderWithStopCatch(allowed, {

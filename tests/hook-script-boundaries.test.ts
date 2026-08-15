@@ -138,16 +138,56 @@ describe("the decision logic stays free of the process it runs in", () => {
   });
 });
 
-describe("the hook shares the server's matcher rather than reimplementing it", () => {
-  it("decide.ts imports decideHook instead of constructing its own RegExp", () => {
-    // DECISIONS.md §4's "one script has nothing to agree with", applied to
-    // the matcher. Two implementations of one match are two things that can
-    // disagree about whether a pattern matched — and the disagreement would
-    // be invisible until it allowed something.
+describe("the hook holds no rules of its own — MILESTONES.md #125", () => {
+  // **The point of the thin client is the protocol version.** A hook script
+  // is installed on a machine and then forgotten, so every behaviour put in
+  // it is a reason to one day need every installation to update. These
+  // checks are crude on purpose: they are the cheapest way to notice a rule
+  // creeping back into the script, and each names what would put it there.
+
+  /** Every hook-build module, with its source, and never an empty list. */
+  function hookModules(): ReadonlyArray<{ file: string; source: string }> {
+    const files = [...tsFilesUnder(HOOK_LIB_DIR), HOOK_BIN];
+    // Guards the guard: an empty list makes every assertion below vacuous.
+    expect(files.length).toBeGreaterThan(1);
+    return files.map((file) => ({ file: repoRelative(file), source: readFileSync(file, "utf-8") }));
+  }
+
+  it("decide.ts constructs no regular expression", () => {
+    // Matching command strings is the thing #125 deleted. A `new RegExp`
+    // here is a local rule by another name, and it is how the pattern lists
+    // would come back one convenient special case at a time.
     const source = readFileSync(path.join(HOOK_LIB_DIR, "decide.ts"), "utf-8");
-    expect(source).toMatch(
-      /import\s*\{[^}]*decideHook[^}]*\}\s*from\s*"@\/lib\/service\/hook-decision"/,
-    );
     expect(source).not.toMatch(/new RegExp\(/);
+  });
+
+  it("no module in the hook build reads a settings value", () => {
+    // Settings are resolved server-side. A hook that read one would be a
+    // hook whose behaviour depends on configuration it fetched separately
+    // from the answer it was given — two sources that can disagree.
+    const offenders = hookModules()
+      .filter(({ source }) => /@\/lib\/settings/.test(source))
+      .map(({ file }) => file);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("no module in the hook build imports the service layer", () => {
+    // The hook talks to the server over HTTP and nothing else. An import of
+    // `@/lib/service` would compile a copy of the server's judgement into
+    // the installed script, which is the exact drift this row removes.
+    const offenders = hookModules()
+      .filter(({ source }) => /@\/lib\/service/.test(source))
+      .map(({ file }) => file);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("the phase check that stops a post event blocking is in the script", () => {
+    // The server enforces this too. Both is deliberate: neither side alone
+    // is trusted, and the only way to refuse a call that already ran is for
+    // both to be wrong at once.
+    const source = readFileSync(path.join(HOOK_LIB_DIR, "decide.ts"), "utf-8");
+    expect(source).toMatch(/eventType === "PreToolUse"/);
   });
 });

@@ -52,14 +52,14 @@ export interface RunHookOptions {
 /**
  * Runs the hook once and returns what the process should emit.
  *
- * **An unreadable payload allows** (DECISIONS.md §16). This reverses what
- * this function used to do, and it is worth being explicit about why,
- * because "we could not read the question" is the case where refusing feels
- * most defensible: a payload shape this build has never seen is a *client*
- * failure, and the cost of denying on it is every tool call in the session
- * refused the moment the agent tool changes its payload — for a hook that,
- * with the pattern lists gone, would not have blocked any of them. The
- * reason still names the parse failure, on the channel a person reads.
+ * **An unreadable payload allows** (DECISIONS.md §16), and it is worth
+ * being explicit about why, because "we could not read the question" is the
+ * case where refusing feels most defensible. A payload shape this build has
+ * never seen is a *client* failure, and the cost of denying on it is every
+ * tool call in the session refused the moment the agent tool changes its
+ * payload — for a hook that enforces nothing locally and would have allowed
+ * all of them. The reason still names the parse failure, on the channel a
+ * person reads.
  */
 export async function runHook(options: RunHookOptions): Promise<RenderedResponse> {
   const parsed = parseHookPayload(options.stdin);

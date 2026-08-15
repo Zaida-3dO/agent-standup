@@ -13,7 +13,7 @@
 // wrapped, and the fallback for an unexpected failure is an *allow* — see
 // DECISIONS.md §16. A hook that crashes has enforced nothing; refusing the
 // call on its way out would refuse a command it never examined, on behalf
-// of rules that no longer live in this script.
+// of rules that live server-side and were never consulted.
 
 import { runHook } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";

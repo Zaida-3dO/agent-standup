@@ -58,9 +58,9 @@ describe("a post entry cannot block", () => {
       assertRegistryValid([entry({ phase: "post", defaultLevel: "block-overridable" })]),
     ).toThrow(InterventionRegistryError);
 
-    expect(() => assertRegistryValid([entry({ phase: "post", defaultLevel: "hard-block" })])).toThrow(
-      /cannot refuse it/,
-    );
+    expect(() =>
+      assertRegistryValid([entry({ phase: "post", defaultLevel: "hard-block" })]),
+    ).toThrow(/cannot refuse it/);
   });
 
   it("registers a pre entry with the same blocking level without complaint", () => {
@@ -160,7 +160,9 @@ describe("registration invariants", () => {
 describe("timing", () => {
   it("forces a blocking finding to fire immediately whatever was configured", async () => {
     const findings = await evaluate({
-      entries: [entry({ id: "b", phase: "pre", defaultLevel: "hard-block", defaultTiming: "digest" })],
+      entries: [
+        entry({ id: "b", phase: "pre", defaultLevel: "hard-block", defaultTiming: "digest" }),
+      ],
       phase: "pre",
       context: {},
     });

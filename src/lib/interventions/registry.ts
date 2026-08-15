@@ -101,7 +101,10 @@ export function assertRegistryValid(entries: readonly Intervention[]): void {
  * that asserts the clamp by going through `evaluate` would also be
  * asserting everything else `evaluate` does.
  */
-export function resolveLevel(phase: InterventionPhase, requested: InterventionLevel): InterventionLevel {
+export function resolveLevel(
+  phase: InterventionPhase,
+  requested: InterventionLevel,
+): InterventionLevel {
   if (phase === "post" && isBlockingLevel(requested)) return "nudge";
   return requested;
 }
@@ -195,9 +198,9 @@ export async function evaluate({
     const timing = resolveTiming(level, override?.timing ?? entry.defaultTiming);
 
     const configured = resolveMessages(entry.messages, override?.messages);
-    // A predicate may substitute the text for this one firing. It replaces
-    // both forms, because a predicate that knows enough to write a specific
-    // sentence knows more than the generic prominent one does.
+    // A predicate may substitute the text for this one firing, and it
+    // substitutes both forms: a predicate that knows enough to write a
+    // specific sentence knows more than the generic prominent one does.
     const messages: InterventionMessages =
       verdict.message === undefined
         ? configured
@@ -226,7 +229,12 @@ export async function evaluate({
  * every call site.
  */
 export function strongestLevel(findings: readonly InterventionFinding[]): InterventionLevel {
-  const ORDER: readonly InterventionLevel[] = ["nothing", "nudge", "block-overridable", "hard-block"];
+  const ORDER: readonly InterventionLevel[] = [
+    "nothing",
+    "nudge",
+    "block-overridable",
+    "hard-block",
+  ];
   let strongest: InterventionLevel = "nothing";
   for (const finding of findings) {
     if (ORDER.indexOf(finding.level) > ORDER.indexOf(strongest)) strongest = finding.level;

@@ -91,7 +91,7 @@ export interface ServerVerdict {
    * event. **Anything else allows**, including a value this build has never
    * seen — see §16. The field is deliberately named for what it does rather
    * than mirroring an enum, so a server adding a fourth decision cannot
-   * accidentally flip an allow into a deny in an old script.
+   * accidentally flip an allow into a deny in a script that predates it.
    */
   readonly decision?: "block" | "allow";
   readonly reason?: string;

@@ -7,7 +7,7 @@
 // on state — item state, claim state, review artifacts, budget — and that
 // state is here and can never be in a script.
 //
-// ── What it answers today, and why that is `allow` ─────────────────────
+// ── What it answers, and why that is `allow` ───────────────────────────
 //
 // **Nothing blocks yet, and that is correct rather than a gap.** The
 // pattern lists this operation used to match against are deleted (#125):
@@ -94,10 +94,10 @@ export const hookDecision = defineOperation({
       };
     }
 
-    // The `pre` branch. It allows unconditionally today; #128 is where the
-    // intervention registry is consulted here, and where the argument in
-    // `src/lib/hook/decide.ts`'s header about fail-open must be revisited
-    // for this phase.
+    // The `pre` branch, and the one place a refusal could ever come from.
+    // It allows unconditionally: #128 is where the intervention registry is
+    // consulted here, and where the argument in `src/lib/hook/decide.ts`'s
+    // header about fail-open must be revisited for this phase.
     return { decision: "allow", reason: null, canBlock };
   },
 });

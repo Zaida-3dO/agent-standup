@@ -31,22 +31,35 @@ Resist adding a second list of tools — there is nowhere to forget an operation
 
 ### The hook
 
-A single script (`src/bin/standup-hook.ts`) serves both `PostToolUse` and `Stop`, classifying against
-cached pattern lists locally and asking the server only on an ask-list match. **It denies whenever it
-cannot get a confident answer** — an unreachable server, an unparseable payload, an unrecognised
-decision and an unknown session identifier all deny. The matcher is imported from
-`src/lib/service/hook-decision.ts` rather than reimplemented, so the script and the server cannot
-disagree about whether a pattern matched.
+A single script (`src/bin/standup-hook.ts`) serves `PreToolUse`, `PostToolUse` and `Stop`. **It pings
+the server and does what it is told.** It holds no rules, no matcher and no cache: it reports the
+event, renders the answer, and that is the whole of it. Every rule worth having is conditional on
+item state, claim state, review artifacts or budget, none of which a script can see.
 
-The cache rules follow from that posture. A *stale* cache is used rather than discarded, and a cache
-stamped in the future counts as stale so clock skew cannot mint a rule set that never expires. An
-*unavailable* cache asks the server instead of matching against empty lists — empty lists would
-refuse every tool call on a machine whose install is merely incomplete. Session enforcement
-(`src/lib/hook/enforcement.ts`) is checked before the pattern lists, so no allow-list entry can
-relax it.
+Keeping it this thin is what protects the **protocol version**. A hook is installed on a machine and
+then forgotten, so anything put in the script is a reason to one day need every installation to
+update. Adding a rule there — even a small, safe one — spends that property.
+
+The phases are not symmetrical. `PreToolUse` holds the call until the server answers and denies on a
+`block`. `PostToolUse` and `Stop` report and may carry a nudge, but **can never block**: the call has
+already run. That invariant is enforced independently in the script and in the service operation, so
+breaking it takes both being wrong at once.
+
+**It fails OPEN** — an unreachable server, an unreadable payload and an unrecognised decision all
+allow. `DECISIONS.md` §16 carries the reasoning and the note that row #128 must revisit it for `pre`
+once real blocking exists.
 
 The hook is built but deliberately absent from `package.json`'s `bin`: it is a path a tool is
 configured to execute, not a command a person runs.
+
+### Interventions
+
+`src/lib/interventions/` is the shape gating returns in (`docs/plans/INTERVENTIONS.md`, row #128): a
+registry keyed by id, each entry declaring a phase, an audience, a default level, timing and two
+messages. A **predicate returns a verdict as a value** — `{triggered, level?, message?, data?}` — and
+the registry decides what to do with it; a predicate that emitted its own nudge could never be
+swapped for an external script. Predicates read only the context handed to them and reach no
+database, which is the contract that makes user-supplied entries possible later.
 
 ---
 

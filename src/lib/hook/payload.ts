@@ -10,8 +10,8 @@
 // never seen", and there is no `HookEvent` on an `ok: false` for it to
 // confuse them with.
 //
-// Both cases now **allow** (DECISIONS.md §16), so the distinction no longer
-// decides a verdict — it decides what the session is *told*, which is the
+// Both cases **allow** (DECISIONS.md §16), so the distinction decides what
+// the session is *told* rather than what it is permitted — which is the
 // difference between a person diagnosing a payload change in five seconds
 // and not knowing anything changed.
 //
@@ -147,7 +147,9 @@ export function parseHookPayload(text: string): ParseResult {
   const tool = firstString(raw, ["tool_name", "toolName", "tool"]);
   const toolInput = property(raw, "tool_input") ?? property(raw, "toolInput");
   const command = firstString(toolInput, COMMAND_FIELDS);
-  const toolResult = readToolResult(property(raw, "tool_response") ?? property(raw, "toolResponse"));
+  const toolResult = readToolResult(
+    property(raw, "tool_response") ?? property(raw, "toolResponse"),
+  );
 
   return {
     ok: true,

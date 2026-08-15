@@ -53,10 +53,10 @@ describe("a deny is emitted on both channels", () => {
     const parsed = JSON.parse(renderResponse(DENY, "PreToolUse").stdout);
     expect(parsed.decision).toBe("deny");
     expect(parsed.reason).toBe("this command matches neither list");
-    // `source` distinguishes "denied because nothing matched" (a rules
-    // question) from "denied because the server was unreachable" (an
-    // outage). Without it the two are indistinguishable in a log.
-    expect(parsed.source).toBe("unmatched");
+    // `source` distinguishes "the server refused this" from "the session is
+    // displaced" and from "no answer, so allowed". Without it those are
+    // indistinguishable in a log, and only one of them is an outage.
+    expect(parsed.source).toBe("server");
   });
 
   it("also writes the nested permission shape, for readers that only understand that one", () => {
