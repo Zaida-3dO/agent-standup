@@ -205,8 +205,25 @@ describeIfDb("crew naming, assigned server-side — against Postgres", () => {
     });
 
     it("does NOT name a person holder — a human is named by holderId already", async () => {
-      await seedNames(1, "person");
-      await register("person-session");
+      const [name] = await seedNames(1, "person");
+      // Registered WITHOUT going through register_session — that operation
+      // names every session it registers regardless of role, which would
+      // hand out the one seeded name before claim ever runs and make this
+      // case indistinguishable from an already-exhausted pool. Registration
+      // itself is not what's under test here, so the session is registered
+      // directly against the table, the same way tests/helpers/
+      // register-sessions.ts does for files whose subject is something else.
+      await prisma.session.upsert({
+        where: { id: "person-session" },
+        create: {
+          id: "person-session",
+          machine: "m",
+          transport: "http",
+          hookVariant: "http",
+          hookVersion: HOOK_PROTOCOL.http.current,
+        },
+        update: {},
+      });
       const itemId = await seedItem();
 
       const assignment = (await runtime.call("claim", {
@@ -219,10 +236,10 @@ describeIfDb("crew naming, assigned server-side — against Postgres", () => {
       })) as { crewName: string | null };
       expect(assignment.crewName).toBeNull();
 
-      // The pool was not touched — the seeded name is still available for
-      // an agent that actually needs one.
-      const stillHeld = await prisma.agent.count({ where: { heldBySessionId: { not: null } } });
-      expect(stillHeld).toBe(0);
+      // The pool was not touched by claim — the seeded name is still
+      // unheld, available for an agent that actually needs one.
+      const row = await prisma.agent.findUniqueOrThrow({ where: { name: name! } });
+      expect(row.heldBySessionId).toBeNull();
     });
 
     it("claim still succeeds when the name pool is exhausted — crewName is null, not a thrown error", async () => {
