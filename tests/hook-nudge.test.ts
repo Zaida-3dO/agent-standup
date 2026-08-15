@@ -19,13 +19,7 @@ import {
 import { decideWithNudges, type ServerVerdict } from "@/lib/hook/decide";
 import { renderWithNudges, HOOK_EXIT } from "@/lib/hook/response";
 import { runHook } from "@/lib/hook/run";
-import type { CacheState } from "@/lib/hook/rules-cache";
 import type { HookEvent } from "@/lib/hook/payload";
-
-const cacheWith = (allowPatterns: string[], askPatterns: string[] = []): CacheState => ({
-  status: "fresh",
-  rules: { allowPatterns, askPatterns },
-});
 
 const event = (over: Partial<HookEvent> = {}): HookEvent => ({
   eventType: "PostToolUse",
@@ -36,6 +30,7 @@ const event = (over: Partial<HookEvent> = {}): HookEvent => ({
 });
 
 const noServer = async (): Promise<ServerVerdict | undefined> => undefined;
+const allowing = async (): Promise<ServerVerdict> => ({ decision: "allow" });
 
 describe("evaluateNudges — the four kinds", () => {
   it("nudges an orchestrator doing write-shaped work itself under `allowed`", () => {
@@ -257,7 +252,7 @@ describe("a nudge never blocks — the defining property of #46", () => {
 
   it("renders an allowed call with a nudge as exit code zero", () => {
     const rendered = renderWithNudges(
-      { decision: "allow", reason: "ok", source: "allow-list" },
+      { decision: "allow", reason: "ok", source: "server" },
       "PostToolUse",
       [{ kind: "wind-down", text: "wind down please" }],
     );
@@ -267,7 +262,7 @@ describe("a nudge never blocks — the defining property of #46", () => {
 
   it("keeps stdout empty on an allowed call, so a JSON reader still parses nothing", () => {
     const rendered = renderWithNudges(
-      { decision: "allow", reason: "ok", source: "allow-list" },
+      { decision: "allow", reason: "ok", source: "server" },
       "PostToolUse",
       [{ kind: "staging", text: "commit something" }],
     );
@@ -277,18 +272,18 @@ describe("a nudge never blocks — the defining property of #46", () => {
 
   it("does not change a denial's exit code or reason when nudges ride along", () => {
     const denied = renderWithNudges(
-      { decision: "deny", reason: "matched neither list", source: "unmatched" },
+      { decision: "deny", reason: "blocked by the server", source: "server" },
       "PostToolUse",
       [{ kind: "escalation", text: "someone is waiting" }],
     );
     expect(denied.exitCode).toBe(HOOK_EXIT.DENY);
-    expect(JSON.parse(denied.stdout).reason).toBe("matched neither list");
-    expect(denied.stderr).toContain("matched neither list");
+    expect(JSON.parse(denied.stdout).reason).toBe("blocked by the server");
+    expect(denied.stderr).toContain("blocked by the server");
     expect(denied.stderr).toContain("someone is waiting");
   });
 
   it("renders identically to the plain renderer when there are no nudges", () => {
-    const verdict = { decision: "allow", reason: "ok", source: "allow-list" } as const;
+    const verdict = { decision: "allow", reason: "ok", source: "server" } as const;
     expect(renderWithNudges(verdict, "PostToolUse", [])).toEqual({
       stdout: "",
       stderr: "",
@@ -298,7 +293,7 @@ describe("a nudge never blocks — the defining property of #46", () => {
 
   it("labels each nudge with its kind so a reader can tell them apart", () => {
     const rendered = renderWithNudges(
-      { decision: "allow", reason: "ok", source: "allow-list" },
+      { decision: "allow", reason: "ok", source: "server" },
       "PostToolUse",
       [
         { kind: "delegate", text: "delegate this" },
@@ -318,12 +313,7 @@ describe("a nudge never blocks — the defining property of #46", () => {
         tool_name: "Edit",
         tool_input: { command: "edit a file" },
       }),
-      cacheText: JSON.stringify({
-        fetchedAt: 1_000,
-        allowPatterns: ["edit a file"],
-        askPatterns: [],
-      }),
-      askServer: noServer,
+      askServer: allowing,
       now: 1_000,
       nudge: { budgetBand: "wind-down" },
     });
@@ -336,12 +326,10 @@ describe("a nudge never blocks — the defining property of #46", () => {
   it("does not let a nudge context turn an allowed command into a denial", async () => {
     const withoutNudge = await decideWithNudges({
       event: event(),
-      cache: cacheWith(["ls"]),
       askServer: noServer,
     });
     const withNudge = await decideWithNudges({
       event: event(),
-      cache: cacheWith(["ls"]),
       askServer: noServer,
       nudge: {
         budgetBand: "wind-down",
@@ -357,16 +345,15 @@ describe("a nudge never blocks — the defining property of #46", () => {
     expect(withNudge.nudges.length).toBeGreaterThan(0);
   });
 
-  it("does not let a nudge context turn a denied command into an allow", async () => {
+  it("does not let a nudge context turn a blocked command into an allow", async () => {
     const { verdict, nudges } = await decideWithNudges({
-      event: event({ command: "rm -rf /" }),
-      cache: cacheWith([]),
-      askServer: noServer,
+      event: event({ eventType: "PreToolUse", command: "git merge" }),
+      askServer: async () => ({ decision: "block" as const, reason: "no approval at tip" }),
       nudge: { budgetBand: "wind-down" },
     });
 
     expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("unmatched");
+    expect(verdict.source).toBe("server");
     expect(nudges.map((n) => n.kind)).toEqual(["wind-down"]);
   });
 
@@ -374,8 +361,7 @@ describe("a nudge never blocks — the defining property of #46", () => {
   // be pausing rather than retrying — so nudges are computed for a deny too.
   it("still nudges an enforcement-denied session", async () => {
     const { verdict, nudges } = await decideWithNudges({
-      event: event(),
-      cache: cacheWith(["ls"]),
+      event: event({ eventType: "PreToolUse" }),
       askServer: noServer,
       enforcement: { status: "displaced" },
       nudge: { budgetBand: "wind-down" },
@@ -385,13 +371,27 @@ describe("a nudge never blocks — the defining property of #46", () => {
     expect(verdict.source).toBe("enforcement");
     expect(nudges.map((n) => n.kind)).toEqual(["wind-down"]);
   });
+
+  // The mirror of the case above, on the phase that cannot refuse. Without
+  // it, an implementation that suppressed nudges whenever it allowed would
+  // pass every other test here.
+  it("still nudges a displaced session on a post event, which it cannot refuse", async () => {
+    const { verdict, nudges } = await decideWithNudges({
+      event: event({ eventType: "PostToolUse" }),
+      askServer: noServer,
+      enforcement: { status: "displaced" },
+      nudge: { budgetBand: "wind-down" },
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(nudges.map((n) => n.kind)).toEqual(["wind-down"]);
+  });
 });
 
 describe("decideWithNudges — composition", () => {
   it("derives write-shapedness from the event's tool when the context is silent", async () => {
     const { nudges } = await decideWithNudges({
       event: event({ tool: "Edit" }),
-      cache: cacheWith(["ls"]),
       askServer: noServer,
       nudge: { unstagedFiles: 2 },
     });
@@ -401,7 +401,6 @@ describe("decideWithNudges — composition", () => {
   it("stays silent when the event's tool is read-shaped", async () => {
     const { nudges } = await decideWithNudges({
       event: event({ tool: "Read" }),
-      cache: cacheWith(["ls"]),
       askServer: noServer,
       nudge: { unstagedFiles: 2 },
     });
@@ -411,7 +410,6 @@ describe("decideWithNudges — composition", () => {
   it("lets an explicit writeShaped in the context override the tool name", async () => {
     const { nudges } = await decideWithNudges({
       event: event({ tool: "Read" }),
-      cache: cacheWith(["ls"]),
       askServer: noServer,
       nudge: { unstagedFiles: 2, writeShaped: true },
     });
@@ -421,7 +419,6 @@ describe("decideWithNudges — composition", () => {
   it("takes nudge context the server volunteered on the ask round trip", async () => {
     const { verdict, nudges } = await decideWithNudges({
       event: event({ command: "deploy" }),
-      cache: cacheWith([], ["deploy"]),
       askServer: async () => ({
         decision: "allow",
         nudge: { budgetBand: "wind-down" },
@@ -437,7 +434,6 @@ describe("decideWithNudges — composition", () => {
   it("merges the server's context over the local one without erasing it", async () => {
     const { nudges } = await decideWithNudges({
       event: event({ command: "deploy" }),
-      cache: cacheWith([], ["deploy"]),
       askServer: async () => ({ decision: "allow", nudge: { budgetBand: "wind-down" } }),
       nudge: { escalation: "kept from local context" },
     });
@@ -456,7 +452,6 @@ describe("decideWithNudges — composition", () => {
   it("lets the server's value win when both sides set the same field", async () => {
     const { nudges } = await decideWithNudges({
       event: event({ command: "deploy" }),
-      cache: cacheWith([], ["deploy"]),
       askServer: async () => ({
         decision: "allow",
         nudge: { escalation: "the newer escalation from the server" },
@@ -471,7 +466,6 @@ describe("decideWithNudges — composition", () => {
   it("returns no nudges when nothing is known, which is the common path", async () => {
     const { verdict, nudges } = await decideWithNudges({
       event: event(),
-      cache: cacheWith(["ls"]),
       askServer: noServer,
     });
     expect(verdict.decision).toBe("allow");

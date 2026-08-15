@@ -1,32 +1,33 @@
-// Asking the server for a verdict — `POST /hook` (SCHEMA.md §19, "The dumb
-// pipe. Sends event type, session, tool, command. Returns allow/deny for
-// guarded patterns, or nudge text, or nothing.").
+// Asking the server what to do about one event — `POST /api/hook`.
 //
 // This is an adapter, and it obeys the adapter rule (CLAUDE.md, "Working in
 // this repo"): it resolves input, makes one call, and shapes the result. It
 // reaches no database and holds no judgement — the judgement is
-// `hook_decision` in the service layer, reached through the route that
-// row #41 shipped.
+// `hook_decision` in the service layer.
 //
 // ── Every failure is the same value, on purpose ────────────────────────
 //
-// `undefined` for an unreachable server, a non-success status, a body that
-// is not JSON, and a body whose `decision` this build does not recognise.
-// They collapse because they have one consequence — the caller denies
-// (`./decide.ts`) — and enumerating them at the call site would eventually
-// mean forgetting one and letting it reach the success branch. The reason a
-// caller *needs* is "no answer"; which flavour of no answer is a
-// troubleshooting detail, and troubleshooting detail that can flip a deny
-// into an allow by being handled inattentively is not worth its cost.
+// `undefined` for an unreachable server, a non-success status, and a body
+// that is not JSON. They collapse because they have one consequence — the
+// caller allows (`./decide.ts`, DECISIONS.md §16) — and enumerating them at
+// the call site would eventually mean forgetting one.
+//
+// ── Only `block` blocks ────────────────────────────────────────────────
+//
+// A body whose `decision` this build has never seen reads as an allow, not
+// as an error. Scripts are installed on machines and updated on their own
+// schedule, so a server will routinely be ahead of one: adding a fourth
+// decision value must not turn every call in an un-updated installation
+// into a refusal. The field is read for the single string that refuses;
+// everything else is a permission.
 //
 // Note what is deliberately not here: no retry. A hook runs on the critical
-// path of every guarded tool call, and a retry loop turns one unreachable
-// server into a multi-second stall on every one of them. One attempt with a
-// timeout, then deny — which the agent can act on immediately.
+// path of every tool call, and a retry loop turns one unreachable server
+// into a multi-second stall on every one of them. One attempt with a
+// timeout, then whatever the caller does with no answer.
 
 import type { ServerVerdict } from "./decide";
 import type { HookEvent } from "./payload";
-import { readRulesFromResponse } from "./rules-cache";
 import { readSessionStatus } from "./enforcement";
 import { readStopContext } from "./stop-catch";
 import { readNudgeContext } from "./nudge";
@@ -37,7 +38,13 @@ export type FetchLike = (
   init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
-/** How long to wait for a verdict before giving up and denying, in milliseconds. */
+/**
+ * How long to wait for an answer before giving up, in milliseconds.
+ *
+ * A `PreToolUse` call is *held* for this long in the worst case, so it is
+ * the ceiling on how much an unreachable server can cost a session per tool
+ * call. Short enough that an outage is an annoyance rather than a stall.
+ */
 export const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface AskHttpOptions {
@@ -57,18 +64,11 @@ function property(value: unknown, key: string): unknown {
 /**
  * Builds the `askServer` function `runHook` takes.
  *
- * The response is read for three things, in decreasing order of how much
- * this build depends on them: the decision (required — its absence is "no
- * answer"), the session enforcement (optional; the row that produces it is
- * later), and a fresh rule set (optional; it is how the cache is refreshed
- * without a second request).
- *
- * **`ask` from the server is read as a deny.** The service layer's three
- * outcomes include `ask`, meaning "a rule must decide" — but by the time the
- * route has answered, the deciding is done, so an `ask` coming back is a
- * server that did not resolve the question it was asked. Treating it as
- * anything softer than a deny would make "the server was unsure" the one
- * kind of uncertainty this hook permits.
+ * The request carries what happened; the response carries what to do about
+ * it. `toolResult` is sent on a `PostToolUse` so the server can evaluate
+ * findings about *what a call produced* rather than only about what was
+ * asked for — the server is the only party that can, and it is free to
+ * ignore it.
  */
 export function createHttpAsk({
   baseUrl,
@@ -90,6 +90,7 @@ export function createHttpAsk({
           sessionId: event.sessionId,
           ...(event.tool === undefined ? {} : { tool: event.tool }),
           ...(event.command === undefined ? {} : { command: event.command }),
+          ...(event.toolResult === undefined ? {} : { toolResult: event.toolResult }),
         }),
         ...(signal === undefined ? {} : { signal }),
       });
@@ -106,29 +107,25 @@ export function createHttpAsk({
       return undefined;
     }
 
-    const decision = property(body, "decision");
-    if (decision !== "allow" && decision !== "deny" && decision !== "ask") return undefined;
+    // A body that is not an object carries nothing readable. It is
+    // `undefined` rather than an empty verdict so that the caller's
+    // "unreachable" reason names it honestly — both allow, but only one of
+    // them is a server that answered.
+    if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
 
+    const rawDecision = property(body, "decision");
     const reason = property(body, "reason");
-    const rules = readRulesFromResponse(body);
     const enforcement = readSessionStatus(property(body, "enforcement"));
     // Both advisory, and read after the decision: a malformed block in
-    // either is dropped by its own reader and can never affect the verdict
-    // above.
+    // either is dropped by its own reader and can never affect the verdict.
     const stop = readStopContext(property(body, "stop"));
     const nudge = readNudgeContext(property(body, "nudge"));
 
     return {
-      decision: decision === "allow" ? "allow" : "deny",
-      ...(typeof reason === "string" && reason.length > 0
-        ? { reason }
-        : decision === "ask"
-          ? {
-              reason:
-                "the server did not resolve this command to allow or deny, so the hook denies it",
-            }
-          : {}),
-      ...(rules === undefined ? {} : { rules }),
+      // The one string that refuses. Everything else — including a value
+      // this build does not recognise — is an allow.
+      decision: rawDecision === "block" ? "block" : "allow",
+      ...(typeof reason === "string" && reason.length > 0 ? { reason } : {}),
       ...(enforcement === undefined ? {} : { enforcement }),
       ...(stop === undefined ? {} : { stop }),
       ...(nudge === undefined ? {} : { nudge }),

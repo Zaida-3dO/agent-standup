@@ -15,7 +15,7 @@ import type { HookVerdict } from "@/lib/hook/decide";
 const DENY: HookVerdict = {
   decision: "deny",
   reason: "this command matches neither list",
-  source: "unmatched",
+  source: "server",
 };
 
 describe("an allow says nothing", () => {
@@ -24,7 +24,7 @@ describe("an allow says nothing", () => {
     // printed on every allowed call would put a line of noise into the
     // session after every Read, Grep and Glob.
     const rendered = renderResponse(
-      { decision: "allow", reason: "ok", source: "allow-list" },
+      { decision: "allow", reason: "ok", source: "server" },
       "PreToolUse",
     );
     expect(rendered).toEqual({ stdout: "", stderr: "", exitCode: HOOK_EXIT.ALLOW });
@@ -53,10 +53,10 @@ describe("a deny is emitted on both channels", () => {
     const parsed = JSON.parse(renderResponse(DENY, "PreToolUse").stdout);
     expect(parsed.decision).toBe("deny");
     expect(parsed.reason).toBe("this command matches neither list");
-    // `source` distinguishes "denied because nothing matched" (a rules
-    // question) from "denied because the server was unreachable" (an
-    // outage). Without it the two are indistinguishable in a log.
-    expect(parsed.source).toBe("unmatched");
+    // `source` distinguishes "the server refused this" from "the session is
+    // displaced" and from "no answer, so allowed". Without it those are
+    // indistinguishable in a log, and only one of them is an outage.
+    expect(parsed.source).toBe("server");
   });
 
   it("also writes the nested permission shape, for readers that only understand that one", () => {

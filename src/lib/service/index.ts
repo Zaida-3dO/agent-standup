@@ -179,19 +179,14 @@ export {
 } from "./operations/complete-item";
 export { RehearsalRollback, isRehearsalRollback } from "./operations/rehearsal-rollback";
 
-// The hook decision (MILESTONES.md #41): allow-list silent, ask-list
-// answered, denies when unsure. `decideHook` is the pure classification the
-// operation and any future caller (`standup hook`, MILESTONES.md #88) share;
-// the operation is the one entry point the service layer exposes for it.
-export {
-  decideHook,
-  HOOK_DECISIONS,
-  type HookDecision,
-  type HookDecisionInput,
-  type HookDecisionResult,
-} from "./hook-decision";
+// The hook decision (MILESTONES.md #125). The hook script reports an event
+// and renders the answer; this operation is the only party that decides
+// anything, because every rule worth having is conditional on state a
+// script cannot see.
 export {
   hookDecision,
+  HOOK_DECISIONS,
+  type HookDecision,
   type HookDecisionOperationInput,
   type HookDecisionOperationOutput,
 } from "./operations/hook-decision";

@@ -1,41 +1,38 @@
-// `hook_decision` — MILESTONES.md #41, SCHEMA.md §19 `POST /hook`: "The dumb
-// pipe. Sends event type, session, tool, command. Returns allow/deny for
-// guarded patterns, or nudge text, or nothing."
+// `hook_decision` — MILESTONES.md #125, SCHEMA.md §19 `POST /hook`.
 //
-// This operation is the service-layer half of that contract: allow-list
-// silent, ask-list answered, denies when unsure (MILESTONES.md #41's own
-// row text). It is one of two callers of `decideHook`
-// (`src/lib/service/hook-decision.ts`) — the HTTP route (`../hook/route.ts`)
-// is the other, and `standup hook` (MILESTONES.md #88) will be a third, over
-// the same operation rather than a second implementation of the match.
+// **The server side of a hook that carries no logic.** The script reports an
+// event and renders whatever comes back (`src/lib/hook/decide.ts`); this
+// operation is the only party that decides anything, which is the whole
+// point of the arrangement: every rule anyone actually wants is conditional
+// on state — item state, claim state, review artifacts, budget — and that
+// state is here and can never be in a script.
 //
-// What this row does NOT do, on purpose, because later rows own it:
-// - It never returns nudge text or a merge-gate/kill-guard verdict — #44-#47
-//   add judgement on top of the `ask` outcome; this operation only decides
-//   which of the three buckets a command falls into.
-// - It touches no table and appends no event: a decision made on every tool
-//   call is the highest-volume path in the system (DECISIONS.md §4's whole
-//   point is keeping it a "dumb pipe"), so it reads settings only, the same
-//   posture `service_info` already uses for a DB-free read.
-// - **Any event with no command is allowed by construction** — nothing to
-//   match against, and "unsure" does not apply to an event with no command
-//   to be unsure about. This is deliberately broader than "a `Stop` event
-//   is allowed", and the width is the point rather than an oversight:
-//   `PostToolUse` fires for non-Bash tools too, and those carry no command
-//   either, so keying the carve-out on `eventType === "Stop"` would leave
-//   every command-less `PostToolUse` falling through to the "matches
-//   neither list" path and reading as a false `deny`. What is being allowed
-//   is precisely "there is nothing here to classify", which is a statement
-//   about the payload and not about which event produced it.
+// ── What it answers, and why that is `allow` ───────────────────────────
 //
-//   It is still a widening of an allow path in a gate whose default is to
-//   deny when unsure, so it is pinned by test rather than left to this
-//   comment: see `tests/hook-decision-operation.test.ts`. The boundary can
-//   move, but not silently.
+// **Nothing blocks yet, and that is correct rather than a gap.** The
+// pattern lists this operation used to match against are deleted (#125):
+// matching command strings could not express a single one of the real
+// rules, all of which are of the form *never do X **without** Y*. Gating
+// returns with Interventions (#128), which is where the conditions live.
+//
+// Until then the honest answer to "may this run?" is yes. Note what that is
+// *not*: it is not a permissive default that a misconfiguration could
+// widen, because there is no configuration here to get wrong. There is no
+// rule to fail open past.
+//
+// ── `post` can never block, enforced on both sides ─────────────────────
+//
+// The hook enforces it (`canBlock`) and so does this operation. Two checks
+// for one invariant is deliberate and is not the "two implementations that
+// can disagree" that DECISIONS.md §4 warns about — they cannot disagree,
+// because neither can produce a block on a `post` event, and the only way
+// to break the rule is for *both* to be wrong at once.
+//
+// It touches no table and appends no event: a decision made on every tool
+// call is the highest-volume path in the system, so it stays a dumb pipe.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { decideHook, HOOK_DECISIONS, type HookDecision } from "../hook-decision";
 
 const EVENT_TYPES = ["PreToolUse", "PostToolUse", "Stop"] as const;
 
@@ -45,41 +42,62 @@ const inputSchema = z
     sessionId: z.string().min(1),
     /** The tool the hook observed, e.g. `Bash`. Absent for a `Stop` event. */
     tool: z.string().min(1).optional(),
-    /** The command text to classify. Absent for a `Stop` event. */
+    /** The command text the call carried. Absent for a `Stop` event. */
     command: z.string().optional(),
+    /**
+     * What the tool produced, on a `PostToolUse`. Bounded by the hook
+     * before it is sent; bounded again here because an operation must not
+     * trust its caller to have applied a limit the caller could change.
+     */
+    toolResult: z.string().max(8000).optional(),
   })
   .strict();
 
 export type HookDecisionOperationInput = z.infer<typeof inputSchema>;
 
+/** The two things this operation can say. Only `block` refuses. */
+export const HOOK_DECISIONS = ["allow", "block"] as const;
+export type HookDecision = (typeof HOOK_DECISIONS)[number];
+
 export interface HookDecisionOperationOutput {
   readonly decision: HookDecision;
-  readonly matchedList: "allow" | "ask" | null;
-  readonly matchedPattern: string | null;
+  /**
+   * Why, when there is a why. `null` on the ordinary allow — a reason on
+   * every call would put a line of noise into a session after every Read
+   * the agent performs.
+   */
+  readonly reason: string | null;
+  /**
+   * Whether this phase could have blocked at all. Carried so a caller
+   * reading a log can tell "nothing objected" apart from "something might
+   * have, but the phase cannot refuse" without re-deriving the rule.
+   */
+  readonly canBlock: boolean;
 }
 
 export const hookDecision = defineOperation({
   name: "hook_decision",
   kind: "read",
-  summary: "Classifies one hook event as allow, ask or deny against the configured pattern lists.",
+  summary: "Answers one hook event with allow or block, and any advisory text to surface.",
   input: inputSchema,
   async handler(
-    ctx: ServiceContext,
+    _ctx: ServiceContext,
     input: HookDecisionOperationInput,
   ): Promise<HookDecisionOperationOutput> {
-    // A `Stop` event, or any event with nothing to match, has no command to
-    // be unsure about — allowed by construction rather than falling through
-    // the "matches neither list" path and reading as a false `deny`.
-    if (input.command === undefined || input.command.length === 0) {
-      return { decision: "allow", matchedList: null, matchedPattern: null };
+    const canBlock = input.eventType === "PreToolUse";
+
+    if (!canBlock) {
+      return {
+        decision: "allow",
+        reason: null,
+        canBlock,
+      };
     }
 
-    return decideHook({
-      command: input.command,
-      allowPatterns: ctx.settings.values["hook.allow_patterns"],
-      askPatterns: ctx.settings.values["hook.ask_patterns"],
-    });
+    // The `pre` branch, and the one place a refusal could ever come from.
+    // It allows unconditionally: #128 is where the intervention registry is
+    // consulted here, and where the argument in `src/lib/hook/decide.ts`'s
+    // header about fail-open must be revisited for this phase.
+    return { decision: "allow", reason: null, canBlock };
   },
 });
-
-export { HOOK_DECISIONS };

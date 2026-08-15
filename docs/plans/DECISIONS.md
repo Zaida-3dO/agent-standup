@@ -185,13 +185,13 @@ it's "task tracker for AI coding agents," where both are central. Cost is record
 
 ## 4. The hook layer
 
-**One script, wired to both `PostToolUse` and `Stop`**, branching on the event type from stdin. Two
-lists: patterns it always allows (log silently) and patterns where it **waits for a server verdict**.
-Fails **closed** — no answer means denied.
+**One script, wired to `PreToolUse`, `PostToolUse` and `Stop`**, branching on the event type from
+stdin.
 
-The ask-list is **patterns, not tool names.** Matching on `Bash` would send every command your agents
-run off-box and add a round trip to everything. The server supplies a cached pattern list; no match →
-allow locally, zero network.
+> **⚠️ Superseded in part by §16 and by row #125.** The pattern lists this section describes are
+> deleted, and the fail-closed posture is reversed. What survives is everything below about *one
+> script rather than a folder of them*, and the reasoning for keeping judgement server-side — which
+> #125 extends rather than contradicts. §16 carries the current posture.
 
 **The machine-wide-kill guard is server-side too** (the user's call, overriding my suggestion of a
 local floor — two implementations of one safety rule can disagree, and an installation that skipped
@@ -1128,6 +1128,67 @@ the middle of being switched cannot reliably track the item that represents swit
 left `executing` across the boundary has two homes, and one of them is about to stop being read. It
 costs a sentence, and it belongs in two places rather than one: **§11**, which decides the shape of
 the import, and **#40**, the row that performs it. Both now carry it.
+
+## 16. The hook fails OPEN (2026-08-15)
+
+**Every way of not getting a confident answer allows the tool call.** An unreachable server, a
+non-success response, a body that cannot be parsed, a decision value this build does not recognise,
+a payload shape it has never seen, and an unexpected exception on the way out — all six allow.
+
+This **reverses** the posture stated in §4, and it is written as its own entry rather than edited
+into that one because a reversal that leaves no trace is a decision nobody can audit. §4's reasoning
+was sound *for the system it described*.
+
+### Why the trade flipped
+
+Fail-closed buys something only when the guard has something to enforce. §4's hook classified every
+command against two cached pattern lists and refused anything it could not resolve; there, denying
+on no answer refused a bounded set of *guarded* commands during an outage, which is plainly better
+than permitting them unwatched.
+
+**Milestone row #125 deletes those lists**, because matching command strings cannot express any rule
+anyone actually wants: every real one is conditional — *never merge **without an approval***, *never
+stage the whole tree **on a shared checkout*** — and the condition lives in server state that a
+local matcher will never see. With the lists gone the hook enforces nothing locally, so fail-closed
+has one side left and it is all cost:
+
+- An installation that wires the hook and then has a server hiccup loses **every tool call in every
+  session on that machine** — including the `Edit` that would unwire the hook, which is the failure
+  mode with no way out from inside.
+- What it protects in exchange is **nothing**: the calls it refuses are calls the server would have
+  allowed, because there is no rule to allow them past.
+
+A guard that cannot refuse anything, but can refuse everything when it breaks, is strictly worse
+than no guard.
+
+### What this is not
+
+It is **not** a permissive default that a misconfiguration could widen, and there is deliberately no
+setting that turns fail-open off. Both would be misreadings: there is no configuration here to get
+wrong, because the client holds no rules to be configured. The refusals that remain are the ones the
+*server* states explicitly — a `block` on a `PreToolUse`, and session enforcement — and neither is
+reachable by accident.
+
+Failures are still **named**, not swallowed. Each allow carries a `source` distinguishing "the
+server answered" from "the server could not be reached" from "the payload was unreadable", and the
+reason reaches the channel a person reads. An outage that leaves no trace is one nobody finds.
+
+### ⚠️ This must be revisited when blocking returns
+
+**Interventions (row #128) is where gating comes back**, and at that point a `pre` decision genuinely
+gates something again — the argument above stops holding for that phase, because there will be rules
+to fail open past. The question that row has to answer, deliberately left open here rather than
+guessed at: **when a `block-overridable` or `hard-block` intervention exists and the server cannot be
+reached, does the `pre` call allow or refuse?** Both are defensible and the answer probably differs
+per level.
+
+Two things do **not** need revisiting, whatever #128 decides:
+
+- **`post` and `Stop` always allow.** The call has already run; a refusal there refuses something
+  that already took effect. This is enforced independently in the hook script and in the service
+  operation, so breaking it requires both to be wrong at once.
+- **An unreadable payload allows.** That is a client failure, and refusing every call because the
+  agent tool changed its payload shape is the same all-cost trade in a different disguise.
 
 ## 14. Still open
 

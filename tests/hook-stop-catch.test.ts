@@ -160,7 +160,10 @@ describe("readStopContext", () => {
 });
 
 describe("the catch never blocks the stop — DECISIONS.md §6", () => {
-  const allowed = renderResponse({ decision: "allow", reason: "ok", source: "no-command" }, "Stop");
+  const allowed = renderResponse(
+    { decision: "allow", reason: "ok", source: "post-cannot-block" },
+    "Stop",
+  );
 
   it("leaves the exit code at zero when it fires", () => {
     const rendered = renderWithStopCatch(allowed, {
@@ -268,7 +271,6 @@ describe("runHook — wiring", () => {
         tool_name: "Bash",
         tool_input: { command: "ls" },
       }),
-      cacheText: JSON.stringify({ fetchedAt: 1_000, allowPatterns: ["ls"], askPatterns: [] }),
       askServer: noServer,
       now: 1_000,
       stop: { liveCrew: 3 },
@@ -277,11 +279,12 @@ describe("runHook — wiring", () => {
     expect(rendered.exitCode).toBe(HOOK_EXIT.ALLOW);
   });
 
-  // A `Stop` carries no command and so makes no server call — the catch
-  // works entirely from what the caller already knows. That is worth an
-  // explicit test rather than an assumption, because it is the reason the
-  // context is a `runHook` parameter at all.
-  it("does not call the server on a stop", async () => {
+  // A `Stop` still pings the server — the thin client classifies nothing
+  // locally, so it has no basis for deciding an event is uninteresting
+  // (MILESTONES.md #125). What matters is that the catch does not *depend*
+  // on that call: it works from what the caller already knows, which is why
+  // the context is a `runHook` parameter at all.
+  it("calls the server on a stop, and renders the catch even when the call fails", async () => {
     let called = false;
     const rendered = await runHook({
       stdin: stopStdin,
@@ -293,7 +296,7 @@ describe("runHook — wiring", () => {
       stop: { liveCrew: 2 },
     });
 
-    expect(called).toBe(false);
+    expect(called).toBe(true);
     expect(rendered.stderr).toContain("2 crew members");
   });
 

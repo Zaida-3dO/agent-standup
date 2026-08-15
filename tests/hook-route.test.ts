@@ -3,30 +3,19 @@
 // thing being tested") against a real Postgres. Same shape as
 // tests/claims-routes.test.ts and tests/settings-routes.test.ts.
 //
-// This is the end-to-end proof for MILESTONES.md #41's "The route is one
-// caller": a setting override, once stored, is read back by the hook
-// route's own decision through the real settings snapshot the running
-// process resolves — not a shortcut that hands the operation a value
-// directly.
+// **What a database proves here, now that the decision reads no table.**
+// `hook_decision` is a dumb pipe by design (MILESTONES.md #125): it touches
+// nothing and answers from the event alone, which `tests/hook-decision-
+// operation.test.ts` covers as values. What only a real process can show is
+// the *transport* around it — that the route is reachable and composes with
+// the live runtime that `service/live.ts` builds against an actual
+// connection, that malformed input is a 400 rather than a 500, and that the
+// phase contract survives serialisation both ways.
 //
-// Overrides are written with a direct SQL insert plus a revision bump
-// (`putSettingRow` below — the same two statements `put_setting`'s handler
-// issues, src/lib/service/operations/put-setting.ts) rather than through
-// the live `PUT /settings/{key}` HTTP route, and `settingsCache.invalidate()`
-// is called immediately afterward. That combination is deliberate:
-// `service/live.ts` composes `hookRoute`'s runtime with a `SettingsCache`
-// that serves a held snapshot from memory for up to `revalidateAfterMs`
-// (SCHEMA.md §17.3) — real, and correct: a hook decision made on every tool
-// call must not cost a database read each time. `invalidate()` is the
-// documented escape hatch for "a process that has just written a setting"
-// (`src/lib/settings/cache.ts`), which is exactly this test's position.
-// Nothing in the application's own write routes calls it yet — a
-// pre-existing gap in the settings write path (rows #78/#83), not something
-// #41 introduces or is scoped to fix — so this test reaches the same
-// process-global `settingsCache` `service/live.ts` exports and calls it
-// directly, rather than waiting out the interval or masking the gap by
-// constructing a fresh, uncached runtime that would prove nothing about the
-// real one.
+// That is a narrower claim than this file used to make, and deliberately so:
+// a route whose operation reads no settings has no settings behaviour to
+// prove, and a test that wrote one anyway would be asserting the plumbing of
+// a value nothing consumes.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -43,7 +32,6 @@ describeIfDb("POST /hook route against Postgres", () => {
   let scratchUrl: string;
   let prisma: PrismaClient;
   let hookRoute: typeof import("@/app/api/hook/route");
-  let settingsCache: typeof import("@/lib/service/live").settingsCache;
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
@@ -52,7 +40,6 @@ describeIfDb("POST /hook route against Postgres", () => {
     // reaches service/live.ts's process-global singleton.
     process.env.DATABASE_URL = scratchUrl;
     hookRoute = await import("@/app/api/hook/route");
-    ({ settingsCache } = await import("@/lib/service/live"));
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
   }, 60_000);
 
@@ -69,26 +56,10 @@ describeIfDb("POST /hook route against Postgres", () => {
     });
   }
 
-  /** Writes one settings override row and bumps the revision — see header. */
-  async function putSettingRow(key: string, value: unknown): Promise<void> {
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO "settings" ("key", "value", "updatedByType", "updatedById")
-       VALUES ($1, $2::jsonb, 'system'::"ActorType", NULL)
-       ON CONFLICT ("key") DO UPDATE
-         SET "value" = EXCLUDED."value", "updatedAt" = CURRENT_TIMESTAMP`,
-      key,
-      JSON.stringify(value),
-    );
-    await prisma.$executeRawUnsafe(
-      `UPDATE "settings_revision" SET "revision" = "revision" + 1 WHERE "id" = 1`,
-    );
-    // The documented "immediate in the process that made the change" path
-    // (src/lib/settings/cache.ts) — see this file's header for why the
-    // test calls it directly rather than the write route doing so.
-    settingsCache.invalidate();
-  }
-
-  it("denies a command matching neither list by default — nothing configured yet", async () => {
+  it("allows a pre-tool call and says the phase could have blocked", async () => {
+    // Nothing gates yet (#128 is where it returns), so the decision is an
+    // allow — but `canBlock` must still distinguish the phase, because it is
+    // what a later gating row will hang a refusal off.
     const response = await hookRoute.POST(
       jsonRequest("http://localhost/api/hook", "POST", {
         eventType: "PreToolUse",
@@ -98,46 +69,58 @@ describeIfDb("POST /hook route against Postgres", () => {
       }),
     );
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as { decision: string };
-    expect(payload.decision).toBe("deny");
+    const payload = (await response.json()) as { decision: string; canBlock: boolean };
+    expect(payload.decision).toBe("allow");
+    expect(payload.canBlock).toBe(true);
   });
 
-  it("allows silently once the command matches a written allow-list override", async () => {
-    await putSettingRow("hook.allow_patterns", ["^git status$"]);
-
+  it("reports a post-tool call as one that could not have blocked", async () => {
+    // The server's half of "a post entry cannot block", proven over the
+    // wire. The hook enforces the same rule independently, so the invariant
+    // survives either side being wrong — but not both.
     const response = await hookRoute.POST(
       jsonRequest("http://localhost/api/hook", "POST", {
         eventType: "PostToolUse",
         sessionId: "route-hook-s2",
         tool: "Bash",
         command: "git status",
+        toolResult: "nothing to commit",
       }),
     );
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as {
-      decision: string;
-      matchedList: string;
-      matchedPattern: string;
-    };
+    const payload = (await response.json()) as { decision: string; canBlock: boolean };
     expect(payload.decision).toBe("allow");
-    expect(payload.matchedList).toBe("allow");
-    expect(payload.matchedPattern).toBe("^git status$");
+    expect(payload.canBlock).toBe(false);
   });
 
-  it("asks once the command matches a written ask-list override, and is not allowed", async () => {
-    await putSettingRow("hook.ask_patterns", ["^rm "]);
-
+  it("rejects an unknown field rather than dropping it", async () => {
+    // `.strict()`, over the wire. The hook is the caller most likely to
+    // drift, and a field it starts sending that is silently discarded is a
+    // change nobody sees until the behaviour it drives never arrives.
     const response = await hookRoute.POST(
       jsonRequest("http://localhost/api/hook", "POST", {
         eventType: "PreToolUse",
         sessionId: "route-hook-s3",
-        tool: "Bash",
-        command: "rm -rf build",
+        matchedList: "ask",
       }),
     );
-    expect(response.status).toBe(200);
-    const payload = (await response.json()) as { decision: string };
-    expect(payload.decision).toBe("ask");
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("invalid_input");
+  });
+
+  it("rejects a tool result past the operation's ceiling with a 400, not a 500", async () => {
+    const response = await hookRoute.POST(
+      jsonRequest("http://localhost/api/hook", "POST", {
+        eventType: "PostToolUse",
+        sessionId: "route-hook-s5",
+        toolResult: "x".repeat(8001),
+      }),
+    );
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error: { code: string; fields: string[] } };
+    expect(payload.error.code).toBe("invalid_input");
+    expect(payload.error.fields).toContain("toolResult");
   });
 
   it("POST /hook with malformed JSON returns 400, not a 500", async () => {

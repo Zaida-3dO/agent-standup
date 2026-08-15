@@ -19,12 +19,11 @@ import type { SpoolStore } from "@/lib/cli/hook-command";
 
 const NOW = 1_700_000_000_000;
 
-const ALLOW_ALL = JSON.stringify({ allowPatterns: ["."], askPatterns: [], fetchedAt: NOW });
-const MATCH_NOTHING = JSON.stringify({
-  allowPatterns: ["^never$"],
-  askPatterns: [],
-  fetchedAt: NOW,
-});
+/** A server that allows. With no local rules left, this is the ordinary path. */
+const ALLOWING = async () => ({ decision: "allow" as const });
+
+/** A server that refuses. The only thing that can produce a deny on a `pre` call. */
+const BLOCKING = async () => ({ decision: "block" as const, reason: "refused by the server" });
 
 function memorySpool(initial = ""): SpoolStore & { text: () => string } {
   let text = initial;
@@ -40,9 +39,9 @@ function memorySpool(initial = ""): SpoolStore & { text: () => string } {
   };
 }
 
-function payload(): string {
+function payload(eventType = "PostToolUse"): string {
   return JSON.stringify({
-    hook_event_name: "PostToolUse",
+    hook_event_name: eventType,
     session_id: "session-a",
     tool_name: "Bash",
     tool_input: { command: "git status" },
@@ -72,7 +71,7 @@ describe("standup hook reaches the hook without resolving a binding", () => {
         spool,
         now: NOW,
         stdin: payload(),
-        hook: { cacheText: ALLOW_ALL, askServer: async () => undefined },
+        hook: { askServer: ALLOWING },
       },
     });
 
@@ -87,8 +86,9 @@ describe("standup hook reaches the hook without resolving a binding", () => {
       hook: {
         spool: memorySpool(),
         now: NOW,
-        stdin: payload(),
-        hook: { cacheText: MATCH_NOTHING, askServer: async () => undefined },
+        // `PreToolUse`: the only phase on which a block is a refusal.
+        stdin: payload("PreToolUse"),
+        hook: { askServer: BLOCKING },
       },
     });
 
@@ -143,8 +143,9 @@ describe("the rendering flag cannot change what a guard says", () => {
       hook: {
         spool: memorySpool(),
         now: NOW,
-        stdin: payload(),
-        hook: { cacheText: MATCH_NOTHING, askServer: async () => undefined },
+        // `PreToolUse`: the only phase on which a block is a refusal.
+        stdin: payload("PreToolUse"),
+        hook: { askServer: BLOCKING },
       },
     });
 
@@ -158,7 +159,7 @@ describe("the rendering flag cannot change what a guard says", () => {
     expect(written.hookSpecificOutput).toBeDefined();
     expect(written.ok).toBe(undefined);
     // The reason still reaches a tool that only reads stderr.
-    expect(err.join("")).toContain("neither the allow-list nor the ask-list");
+    expect(err.join("")).toContain("refused by the server");
   });
 
   it("renders identically with and without --json", async () => {
@@ -169,8 +170,9 @@ describe("the rendering flag cannot change what a guard says", () => {
       hook: {
         spool: memorySpool(),
         now: NOW,
-        stdin: payload(),
-        hook: { cacheText: MATCH_NOTHING, askServer: async () => undefined },
+        // `PreToolUse`: the only phase on which a block is a refusal.
+        stdin: payload("PreToolUse"),
+        hook: { askServer: BLOCKING },
       },
     });
 
@@ -192,7 +194,7 @@ describe("the rendering flag cannot change what a guard says", () => {
         spool: memorySpool(),
         now: NOW,
         stdin: payload(),
-        hook: { cacheText: ALLOW_ALL, askServer: async () => undefined },
+        hook: { askServer: ALLOWING },
       },
     });
 

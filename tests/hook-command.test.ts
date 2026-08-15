@@ -19,6 +19,12 @@ import type { SpooledToolCall } from "@/lib/hook/spool-record";
 
 const NOW = 1_700_000_000_000;
 
+/** A server that allows. With no local rules left, this is the ordinary path. */
+const ALLOWING = async () => ({ decision: "allow" as const });
+
+/** A server that refuses. The only thing that can produce a deny on a `pre` call. */
+const BLOCKING = async () => ({ decision: "block" as const, reason: "refused by the server" });
+
 /** An in-memory spool. The append path is an append, as on disk. */
 function memorySpool(initial = ""): SpoolStore & { text: () => string } {
   let text = initial;
@@ -61,25 +67,6 @@ function payload(overrides: Record<string, unknown> = {}): string {
 }
 
 /** Rules that allow everything, so a verdict is an allow unless stated. */
-const ALLOW_ALL = JSON.stringify({
-  allowPatterns: ["."],
-  askPatterns: [],
-  fetchedAt: NOW,
-});
-
-/** Rules that match nothing, so an unmatched command denies. */
-const MATCH_NOTHING = JSON.stringify({
-  allowPatterns: ["^never-matches-this$"],
-  askPatterns: [],
-  fetchedAt: NOW,
-});
-
-/** Rules that send everything to the server — the only path that asks. */
-const ASK_EVERYTHING = JSON.stringify({
-  allowPatterns: [],
-  askPatterns: ["."],
-  fetchedAt: NOW,
-});
 
 describe("hook run answers the agent tool and spools the call", () => {
   it("allows silently and writes one record", async () => {
@@ -89,7 +76,7 @@ describe("hook run answers the agent tool and spools the call", () => {
       stdin: payload(),
       spool,
       now: NOW,
-      hook: { cacheText: ALLOW_ALL, askServer: async () => undefined },
+      hook: { askServer: ALLOWING },
     });
 
     expect(outcome.kind).toBe("hook-response");
@@ -109,16 +96,17 @@ describe("hook run answers the agent tool and spools the call", () => {
   });
 
   it("spools the call it denied, too", async () => {
-    // A denied call is a call that happened, and it is one of the most
+    // A denied call is a call that was attempted, and it is one of the most
     // interesting rows in the table. Spooling only allows would silently
     // omit exactly the events anyone would go looking for.
     const spool = memorySpool();
     const outcome = await runHookCommand({
       verb: "run",
-      stdin: payload(),
+      // `PreToolUse`: the only phase a block can refuse.
+      stdin: payload({ hook_event_name: "PreToolUse" }),
       spool,
       now: NOW,
-      hook: { cacheText: MATCH_NOTHING, askServer: async () => undefined },
+      hook: { askServer: BLOCKING },
     });
 
     if (outcome.kind !== "hook-response") throw new Error("unreachable");
@@ -126,21 +114,21 @@ describe("hook run answers the agent tool and spools the call", () => {
     expect(readSpool(spool.text()).records.length).toBe(1);
   });
 
-  it("spools nothing for a payload it could not read, and still denies", async () => {
-    // The unreadable payload denies (row #42's contract) and there is
-    // nothing to measure — inventing a record for it would put a row in the
-    // table describing an event nobody can attribute.
+  it("spools nothing for a payload it could not read, and allows it", async () => {
+    // The unreadable payload allows (DECISIONS.md §16) and there is nothing
+    // to measure — inventing a record for it would put a row in the table
+    // describing an event nobody can attribute.
     const spool = memorySpool();
     const outcome = await runHookCommand({
       verb: "run",
       stdin: "{not json",
       spool,
       now: NOW,
-      hook: { cacheText: ALLOW_ALL, askServer: async () => undefined },
+      hook: { askServer: ALLOWING },
     });
 
     if (outcome.kind !== "hook-response") throw new Error("unreachable");
-    expect(outcome.response.exitCode).toBe(HOOK_EXIT.DENY);
+    expect(outcome.response.exitCode).toBe(HOOK_EXIT.ALLOW);
     expect(spool.text()).toBe("");
   });
 
@@ -151,7 +139,7 @@ describe("hook run answers the agent tool and spools the call", () => {
       stdin: JSON.stringify({ hook_event_name: "Stop", session_id: "session-a" }),
       spool,
       now: NOW,
-      hook: { cacheText: ALLOW_ALL, askServer: async () => undefined },
+      hook: { askServer: ALLOWING },
     });
 
     if (outcome.kind !== "hook-response") throw new Error("unreachable");
@@ -169,7 +157,7 @@ describe("spooling can never change a verdict", () => {
       stdin: payload(),
       spool: brokenSpool(),
       now: NOW,
-      hook: { cacheText: ALLOW_ALL, askServer: async () => undefined },
+      hook: { askServer: ALLOWING },
     });
 
     if (outcome.kind !== "hook-response") throw new Error("unreachable");
@@ -184,14 +172,14 @@ describe("spooling can never change a verdict", () => {
       stdin: payload(),
       spool: memorySpool(),
       now: NOW,
-      hook: { cacheText: MATCH_NOTHING, askServer: async () => undefined },
+      hook: { askServer: BLOCKING },
     });
     const broken = await runHookCommand({
       verb: "run",
       stdin: payload(),
       spool: brokenSpool(),
       now: NOW,
-      hook: { cacheText: MATCH_NOTHING, askServer: async () => undefined },
+      hook: { askServer: BLOCKING },
     });
 
     if (working.kind !== "hook-response" || broken.kind !== "hook-response") {
@@ -231,7 +219,6 @@ describe("spooling can never change a verdict", () => {
       spool,
       now: NOW,
       hook: {
-        cacheText: ASK_EVERYTHING,
         askServer: async () => {
           order.push("ask");
           return { decision: "allow" as const };
@@ -272,7 +259,6 @@ describe("spooling can never change a verdict", () => {
       },
       now: NOW,
       hook: {
-        cacheText: ASK_EVERYTHING,
         askServer: async () => {
           // Set as `runHook` resolves its verdict — anything appending
           // before this point sees `false`.
