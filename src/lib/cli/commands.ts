@@ -177,7 +177,43 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     noun: "item",
     verb: "create",
     operation: "create_item",
-    summary: "Create an item.",
+    summary:
+      "Deprecated — use `project create`, `task create` or `subtask create`. Creates an item whose kind is inferred from --parentId.",
+    buildInput: (_rest, flags) => flagsToInput(flags),
+  },
+  // The three explicit creates, one noun each. A separate noun rather than
+  // `item create --kind project`: a `--kind` flag would be a value the
+  // operation would then have to reconcile against the parent it was given,
+  // which is the ambiguity these commands exist to remove. The noun *is* the
+  // kind, so there is nothing to reconcile.
+  //
+  // The parent goes through `flagsToInput` like every other field rather
+  // than being read as a positional. It is required, but requiredness is the
+  // operation's schema's to enforce (this file's header: "Field validation
+  // is not done here"), and a positional would produce a second rejection
+  // this adapter could give that no other adapter would.
+  {
+    noun: "project",
+    verb: "create",
+    operation: "create_project",
+    summary:
+      "Create a project — a root container for tasks. A project has no state of its own and cannot be transitioned.",
+    buildInput: (_rest, flags) => flagsToInput(flags),
+  },
+  {
+    noun: "task",
+    verb: "create",
+    operation: "create_task",
+    summary:
+      'Create a task under a project. --projectId is required; pass a project id, or "inbox" for the configured inbox project.',
+    buildInput: (_rest, flags) => flagsToInput(flags),
+  },
+  {
+    noun: "subtask",
+    verb: "create",
+    operation: "create_subtask",
+    summary:
+      "Create a subtask under a task. --taskId is required and must name a task, not a project.",
     buildInput: (_rest, flags) => flagsToInput(flags),
   },
   {

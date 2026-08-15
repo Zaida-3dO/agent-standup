@@ -168,7 +168,7 @@ describe("describe_tool returns one tool's full contract", () => {
 
 describe("describe_tool rejects what it should", () => {
   it("refuses an unknown tool and lists the ones that exist", async () => {
-    const error = await refusal("describe_tool", { tool: "create_task" });
+    const error = await refusal("describe_tool", { tool: "no_such_tool" });
     expect(error.code).toBe("not_found");
     expect(error.fields).toContain("tool");
     // The list is the point: a caller with a near-miss name gets the right
@@ -274,9 +274,9 @@ describe("a shape refusal names the call that would have prevented it", () => {
   });
 
   it("routes an unregistered operation name too", async () => {
-    const error = await refusal("create_task", {}, "mcp-http");
+    const error = await refusal("no_such_tool", {}, "mcp-http");
     expect(error.code).toBe("not_found");
-    expect(error.message).toContain('describe_tool("create_task")');
+    expect(error.message).toContain('describe_tool("no_such_tool")');
   });
 
   it("routes from complete_item, the other operation with invisible rules", async () => {
