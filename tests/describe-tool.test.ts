@@ -416,9 +416,9 @@ describe("the contract cannot drift from what is enforced", () => {
 
   it("only ever names fields that the described tool actually has", async () => {
     // The drift that would make this whole feature worse than nothing:
-    // documentation pointing at a field that no longer exists. Every rule's
-    // `fields` must resolve against the live schema — allowing for dotted
-    // paths into a nested object, whose root is what is checked.
+    // documentation pointing at a field the schema does not have. Every
+    // rule's `fields` must resolve against the live schema — allowing for
+    // dotted paths into a nested object, whose root is what is checked.
     for (const name of OPERATION_NAMES) {
       const contract = await contractFor(name);
       const known = new Set(contract.fields.map((field) => field.name));

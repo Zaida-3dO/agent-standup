@@ -274,8 +274,24 @@ describeIfDb("session registration and the claim refusal", () => {
     });
 
     it("names what to do in the refusal rather than just refusing", async () => {
-      const itemId = await newItem();
-      await expect(attemptClaim("ghost-2", itemId)).rejects.toThrow(/session register/);
+      // And names it for the surface this caller is actually on. The claim
+      // above arrives over `http`, so the refusal points at the
+      // `register_session` endpoint rather than at a terminal command the
+      // reader has no terminal for (MILESTONES.md #111). This is the
+      // end-to-end proof that the transport reaches the wording: the
+      // per-surface unit assertions are in `describe-tool.test.ts`, but
+      // only a real service call exercises the threading.
+      const error = await attemptClaim("ghost-2", await newItem()).then(
+        () => {
+          throw new Error("Expected the claim to be refused.");
+        },
+        (caught: unknown) => caught as Error,
+      );
+      expect(error.message).toContain("register_session");
+      // The negative half, asserted on the captured message rather than
+      // through a `.not.toThrow()` — which passes for a call that rejects
+      // with anything else at all, and so could not fail here.
+      expect(error.message).not.toContain("standup session register");
     });
 
     it("does NOT refuse an advisory (below current, at or above min_supported)", async () => {

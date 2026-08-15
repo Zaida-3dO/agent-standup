@@ -162,9 +162,9 @@ function typeNameOf(node: ZodNode): string {
  * Every field of an operation's input schema.
  *
  * Returns an empty list rather than throwing for a schema with no object
- * under it. An operation taking a non-object input is not currently possible
- * — every registered one takes an object — but `describe_tool` answering
- * "this tool has no documented fields" is a better failure than
+ * under it. Every registered operation takes an object, so this is a
+ * defensive path rather than one a caller reaches — but `describe_tool`
+ * answering "this tool has no documented fields" is a better failure than
  * `describe_tool` throwing, because the rules half of the answer is still
  * worth returning.
  */
