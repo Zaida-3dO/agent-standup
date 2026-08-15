@@ -8,7 +8,8 @@
 export interface RepoRecord {
   readonly id: string;
   readonly displayName: string;
-  readonly defaultBranch: string;
+  /** `null` means genuinely unknown (MILESTONES.md #124) — never a guessed constant. */
+  readonly defaultBranch: string | null;
   readonly host: string | null;
   readonly needsVisualReview: boolean;
   readonly createdAt: string;
@@ -19,7 +20,7 @@ export interface RepoRecord {
 export interface RawRepoRow {
   id: string;
   displayName: string;
-  defaultBranch: string;
+  defaultBranch: string | null;
   host: string | null;
   needsVisualReview: boolean;
   createdAt: Date | string;

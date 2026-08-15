@@ -271,6 +271,27 @@ describe("parsePayload", () => {
     });
     expect(payload.actorAliases!.system).toEqual({ actorType: "system", actorId: null });
   });
+
+  it("accepts repoDefaultBranches as a plain label -> branch map", () => {
+    const payload = parsePayload({
+      version: 1,
+      defaultArea: "a",
+      tasks: [],
+      repoDefaultBranches: { "web-app": "main", "infra-tools": "trunk" },
+    });
+    expect(payload.repoDefaultBranches).toEqual({ "web-app": "main", "infra-tools": "trunk" });
+  });
+
+  it("REFUSES an empty-string value in repoDefaultBranches rather than accepting a blank branch name", () => {
+    expect(() =>
+      parsePayload({
+        version: 1,
+        defaultArea: "a",
+        tasks: [],
+        repoDefaultBranches: { "web-app": "" },
+      }),
+    ).toThrow(/repoDefaultBranches/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -394,6 +415,59 @@ describeDb("runBackfill (real database)", () => {
     expect(report.repos.created).toEqual([]);
     expect(report.repos.unmapped).toEqual([]);
     expect(report.counts.itemsImported).toBe(2);
+  }, 120_000);
+
+  // MILESTONES.md #124: the defect this whole row exists to close. Every
+  // imported repository row carried the identical `defaultBranch` value on
+  // an installation where the real values demonstrably differed — reading
+  // as a constant written at import rather than a value read per
+  // repository. This test mints two repos from one payload whose labels
+  // have genuinely different real branches and proves the two rows differ.
+  // A regression that reintroduces a shared fallback constant (e.g. "main")
+  // makes this fail, because both repos would then agree.
+  it("mints two repos with DIFFERENT real default branches when the payload supplies different ones", async () => {
+    const base = payloadFixture();
+    const payload = {
+      ...base,
+      repoDefaultBranches: { "repo-one": "main", "repo-two": "trunk" },
+      tasks: [
+        { ...base.tasks[0]!, repo: "repo-one" },
+        { ...base.tasks[1]!, repo: "repo-two" },
+      ],
+    };
+
+    const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+    expect(report.repos.created.sort()).toEqual(["repo-one", "repo-two"]);
+
+    const repoOne = await prisma.repo.findUniqueOrThrow({ where: { id: "repo-one" } });
+    const repoTwo = await prisma.repo.findUniqueOrThrow({ where: { id: "repo-two" } });
+    expect(repoOne.defaultBranch).toBe("main");
+    expect(repoTwo.defaultBranch).toBe("trunk");
+    expect(repoOne.defaultBranch).not.toBe(repoTwo.defaultBranch);
+  }, 120_000);
+
+  it("mints a repo with defaultBranch NULL when the payload names no branch for its label — never a constant", async () => {
+    // The regression case with the fallback deleted: no repoDefaultBranches
+    // entry for "repo-one" at all. Asserting `null` here, rather than any
+    // string, is what would fail if a hardcoded fallback (e.g. "main") crept
+    // back in — a fallback of "main" happens to coincide with a common real
+    // branch name, which is exactly how the original defect went unnoticed.
+    const payload = payloadFixture({ repoDefaultBranches: {} });
+
+    const report = await runBackfill(prisma, payload, RUN_OPTIONS);
+    expect(report.repos.created).toEqual(["repo-one"]);
+
+    const repo = await prisma.repo.findUniqueOrThrow({ where: { id: "repo-one" } });
+    expect(repo.defaultBranch).toBeNull();
+  }, 120_000);
+
+  it("prefers the payload's repoDefaultBranches entry over any built-in default", async () => {
+    const payload = payloadFixture({ repoDefaultBranches: { "repo-one": "develop" } });
+
+    await runBackfill(prisma, payload, RUN_OPTIONS);
+
+    const repo = await prisma.repo.findUniqueOrThrow({ where: { id: "repo-one" } });
+    expect(repo.defaultBranch).toBe("develop");
   }, 120_000);
 
   it("REFUSES an alias whose target repo does not exist, naming label, target and remedy", async () => {

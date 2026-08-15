@@ -18,7 +18,12 @@ const inputSchema = z
   .object({
     id: z.string().trim().min(1),
     displayName: z.string().trim().min(1),
-    defaultBranch: z.string().trim().min(1),
+    // Nullable and optional — omitted or explicit `null` records "unknown"
+    // rather than guessing (MILESTONES.md #124). A human filling in the
+    // admin form is still expected to state it; this is not a relaxation
+    // of that expectation, it is what makes an honest "I don't know" a
+    // legal answer instead of forcing a made-up one.
+    defaultBranch: z.string().trim().min(1).nullable().optional(),
     host: z.string().trim().min(1).optional(),
     needsVisualReview: z.boolean().default(false),
   })
@@ -46,7 +51,7 @@ export const createRepo = defineOperation({
        RETURNING ${REPO_COLUMNS}`,
       input.id,
       input.displayName,
-      input.defaultBranch,
+      input.defaultBranch ?? null,
       input.host ?? null,
       input.needsVisualReview,
     );

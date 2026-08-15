@@ -10,10 +10,10 @@
 // the surface next door.
 //
 // **What this deliberately does NOT do is invent validation.** Every rule
-// about a value — that a repository's default branch is required, that an
-// account's vendor must have a registered adapter, that `sourceGlobs` and
-// `budgetWindows` satisfy the settings registry (§17.7) — lives in the
-// service operations #92 delivered, and is enforced there for every caller.
+// about a value — that an account's vendor must have a registered adapter,
+// that `sourceGlobs` and `budgetWindows` satisfy the settings registry
+// (§17.7) — lives in the service operations #92 delivered, and is enforced
+// there for every caller.
 // This layer decides what to *draw* and reports what the service *refuses*.
 // A second copy of the rules here would be a second thing to keep in step,
 // and the one that drifts is always the copy furthest from the database.
@@ -108,9 +108,8 @@ const REPOS: AdminKind = {
     {
       name: "defaultBranch",
       label: "Default branch",
-      help: "The branch a change targets unless something says otherwise.",
+      help: "The branch a change targets unless something says otherwise. Leave blank if you don't know it — a caller reading a blank value has to ask, which is safer than a guess it would trust.",
       kind: "text",
-      requiredOnCreate: true,
     },
     {
       name: "host",

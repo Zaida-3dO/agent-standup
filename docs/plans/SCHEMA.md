@@ -1434,6 +1434,10 @@ data operation at runtime, not a migration and a deploy.
 `items.repo` and `items.area` become foreign keys, and `items.repo` gains the index that its filters
 already assume.
 
+**`default_branch` is nullable.** `null` means genuinely unknown, distinct from any string — never a
+guessed constant. It is read at PR-creation time, where an absent value makes a caller ask before
+picking a base branch and a wrong string would let it proceed confidently against the wrong one.
+
 **The honest limit:** normalisation kills case and separator variants, not synonyms — `web` and
 `website` will coexist. The answer is the one used elsewhere for the same shape: surface
 near-duplicates for merging, and promote what recurs. An accepted limit, not a hidden one.

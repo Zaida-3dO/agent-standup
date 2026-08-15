@@ -147,7 +147,14 @@ model Item {
 model Repo {
   id                String    @id
   displayName       String
-  defaultBranch     String
+  // Nullable on purpose (MILESTONES.md #124): unknown is a distinct,
+  // representable state from a guess. A caller that cannot determine the
+  // real branch — the importer had no filesystem/git access to the
+  // repository, or a converter genuinely could not tell — records that as
+  // `null` rather than writing a constant. `null` is consumed at
+  // PR-creation time as "ask before assuming"; a wrong string there would
+  // instead let a caller proceed confidently against the wrong base.
+  defaultBranch     String?
   host              String?
   needsVisualReview Boolean   @default(false)
   createdAt         DateTime  @default(now()) @db.Timestamptz(3)
