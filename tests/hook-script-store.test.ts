@@ -79,13 +79,36 @@ describe("resolveHookScript", () => {
       expect(result).toBeUndefined();
     });
 
+    it("REFUSES a traversal string even when it would resolve to a real .js file", () => {
+      // The allowlist (`isHookVariant`) is the *only* thing standing between
+      // a caller and an arbitrary `.js` read — `path.join` happily walks
+      // `..` segments, and `existsSync`/`readFileSync` have no opinion about
+      // where the resolved path ends up. So this seeds a real `.js` file
+      // *outside* `dist/hook-scripts` (a sibling directory, the shape a
+      // bundler's own output tree actually has) and proves a traversal
+      // string that would resolve straight to it is still refused. If the
+      // allowlist check were ever removed or reordered after the
+      // `existsSync` check, this file existing would make the naive read
+      // succeed — that is exactly the failure this test exists to catch.
+      const outsideDir = path.join(scratch, "dist", "bin");
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(
+        path.join(outsideDir, "standup.js"),
+        "#!/usr/bin/env node\nconsole.log('reachable');\n",
+      );
+
+      expect(resolveHookScript({ variant: "../bin/standup", repoRoot: scratch })).toBeUndefined();
+      expect(resolveHookScript({ variant: "..\\bin\\standup", repoRoot: scratch })).toBeUndefined();
+    });
+
     it("does not read a file for a directory of the same name as a variant", () => {
-      // A directory named "http.js" would pass a naive `existsSync` check
-      // and then throw on `readFileSync` — this asserts the function still
-      // reports "nothing to send" rather than throwing.
+      // A directory named "http.js" passes a naive `existsSync` check and
+      // would throw `EISDIR` on `readFileSync` — this asserts the function
+      // still reports "nothing to send" (`undefined`) rather than throwing,
+      // matching this module's documented "never throws" contract.
       const dir = path.join(scratch, "dist", "hook-scripts");
       mkdirSync(path.join(dir, "http.js"), { recursive: true });
-      expect(() => resolveHookScript({ variant: "http", repoRoot: scratch })).toThrow();
+      expect(resolveHookScript({ variant: "http", repoRoot: scratch })).toBeUndefined();
     });
   });
 

@@ -96,5 +96,27 @@ describe("GET /api/hook/script", () => {
       const response = await route.GET(new Request("http://localhost/api/hook/script?variant=cli"));
       expect(response.headers.get("cache-control")).toBe("no-store");
     });
+
+    it("REFUSES a traversal string with 404, even when it resolves to a real .js file", async () => {
+      // Same attack `hook-script-store.test.ts` proves against
+      // `resolveHookScript` directly, exercised through the real route a
+      // caller actually reaches — a sibling `.js` file the traversal
+      // string's `..` segments walk straight to.
+      const outsideDir = path.join(scratch, "dist", "bin");
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(
+        path.join(outsideDir, "standup.js"),
+        "#!/usr/bin/env node\nconsole.log('reachable');\n",
+      );
+
+      const route = await loadRoute();
+      const response = await route.GET(
+        new Request(
+          `http://localhost/api/hook/script?variant=${encodeURIComponent("../bin/standup")}`,
+        ),
+      );
+
+      expect(response.status).toBe(404);
+    });
   });
 });
