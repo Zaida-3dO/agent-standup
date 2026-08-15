@@ -9,7 +9,8 @@
 //
 // The schema takes no parent field at all, so "a project with a parent" is
 // not an input this operation can be given — `.strict()` refuses `parentId`
-// and `projectId` as unrecognised keys rather than silently ignoring them.
+// and `projectId` as unrecognised keys rather than silently ignoring them,
+// so a caller reaching for the wrong operation is told rather than obliged.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
