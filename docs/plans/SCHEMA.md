@@ -1315,20 +1315,32 @@ accepts (§17.6).
 |---|---|
 | At or above `current` | Nothing to say. |
 | Below `current`, at or above `min_supported` | **Advisory** — a nudge on the handshake and on the next hook call. A fix must not disable every session the moment it deploys; anything that genuinely must be enforced is expressed by raising `min_supported`, which is a deliberate act in a release. |
-| Below `min_supported` | **The session may not claim.** |
-| Never registered | **The session may not claim**, and is nudged to register on its first write-shaped action. |
+| Below `min_supported` | **The session may not claim** — but only where `hook.require_registration_to_claim` is on. |
+| Never registered | **The session may not claim** where that setting is on, and is nudged to register on its first write-shaped action either way. |
 
-**Refusing the claim rather than everything is the honest maximum.** A hook can always be not
-installed, so its presence cannot be enforced on a machine the server does not control. What *can* be
-enforced, in the service layer and therefore through every adapter, is that **no unguarded session
-holds work**: such a session may still read, orient and update itself, but may not take ownership of
-an item under rules it cannot enforce.
+**Where the refusal applies, refusing the claim rather than everything is the honest maximum.** A
+hook can always be not installed, so its presence cannot be enforced on a machine the server does not
+control. What *can* be enforced, in the service layer and therefore through every adapter, is that
+**no unguarded session holds work**: such a session may still read, orient and update itself, but may
+not take ownership of an item under rules it cannot enforce.
 
-**`hook.require_registration_to_claim` turns that refusal off**, and defaults to on. It is the
-escape hatch for an installation whose clients cannot yet register — degraded rather than stopped —
-and it is `sensitive` because off means work is held under rules the holder cannot enforce. It
-defaults to *on* deliberately: a rule that ships off is a rule nobody has run, and the first time
-anyone would learn whether the refusals work is the day someone turns it on.
+**`hook.require_registration_to_claim` turns that refusal on**, and defaults to off. It is
+`sensitive` in the tightening direction: on means a session that cannot register cannot hold work,
+which is the right posture for an installation that has finished rolling the hook out and wants to
+keep it that way.
+
+**It defaults to off because the version is information, not permission.** What a reported version
+tells the server is which signals to expect from that session: one running the hook reports its tool
+calls, so silence from it means something; one running no hook reports nothing, so silence from it
+means nothing at all. Both facts are useful, and neither is a reason to refuse the session work.
+
+Enforcing it by default also made ownership unreachable for an honest caller, which is the sharper
+argument. Claiming required a registered version; registering one truthfully required running the
+hook; and a session with no hook had no way to obtain one. The only route through was to assert a
+version it had not run — precisely the false claim the check exists to catch. **A gate whose only
+exit is a lie protects nothing**, and the cost of shipping it off is met instead by asserting both
+positions of the gate in the test suite, so the refusals are exercised on every run rather than first
+exercised the day an installation turns them on.
 
 **How a `cli-http` registration is told apart from a plain `http` one.** Four of the five transports
 are self-evident to the adapter that receives them, because of where that adapter runs. The fifth is

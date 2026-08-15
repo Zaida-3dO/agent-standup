@@ -81,8 +81,17 @@ interface SessionRow {
  * Off, the rest of the product is unchanged for such a session: it mints,
  * transitions, records artifacts, requests reviews, checkpoints and claims.
  * The single thing it loses is enforcement, because there is nothing there
- * to enforce with. **Record that it is unhooked** and let every downstream
- * decision read it, rather than refusing the session outright.
+ * to enforce with.
+ *
+ * **Nothing compensates for that loss, and saying so plainly is the honest
+ * statement.** The obvious compensation — surfacing the session as unhooked
+ * wherever its work is read, so a reader can tell "no rule fired" apart from
+ * "no rule could fire" — is an intended follow-up and **is not built**.
+ * Nothing writes that state and nothing reads it. The `Session` row carries
+ * the raw material (`hookVersion` is null for a session that named none), so
+ * it is a display and propagation problem rather than a schema one; until
+ * something does it, the accurate claim is that the difference is invisible
+ * downstream.
  *
  * On, ownership is restricted to sessions whose rules this build can expect
  * — the right posture for an installation that has finished rolling the hook

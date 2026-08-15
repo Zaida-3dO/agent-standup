@@ -1,20 +1,23 @@
 // Seeds registered sessions for tests whose subject is not registration.
 //
-// SCHEMA.md §21 (MILESTONES.md #43) refuses a claim from a session that has
-// not registered a hook protocol version. That rule is proved — from both
-// sides, including every refusal — in `tests/session-registration.test.ts`.
-// Every *other* DB-backed file that claims an item is testing something else
-// (claim/release semantics, board filters, MCP tool wiring), and re-deriving
-// the registration in each of them would put the same four lines in four
-// places and make each file's setup say less about what it is actually for.
+// SCHEMA.md §21 (MILESTONES.md #43) lets an installation refuse a claim from
+// a session that has not registered a hook protocol version, behind
+// `hook.require_registration_to_claim`. That rule is proved — from both
+// sides, in both of the setting's positions — in
+// `tests/session-registration.test.ts`. Every *other* DB-backed file that
+// claims an item is testing something else (claim/release semantics, board
+// filters, MCP tool wiring), and re-deriving the registration in each of them
+// would put the same four lines in four places and make each file's setup say
+// less about what it is actually for.
 //
-// **A helper rather than turning the rule off in those tests.** A setting
-// exists that would disable the check, and reaching for it here would mean
-// the rest of the suite ran against a configuration the deployment default
-// is not — so a regression that only appears when the rule is on would be
-// invisible everywhere except the one file that tests the rule. Seeding a
-// registration is what a real session does, so the other files exercise the
-// same path a running installation does.
+// **The setting defaults to off, so those claims succeed with or without this
+// helper.** It earns its place for a different reason: registering is the
+// first thing a real client does, so a file that claims from a registered
+// session exercises the shape a running installation presents, and its setup
+// stays correct for an installation that chooses the strict posture. Turning
+// the setting on across the rest of the suite would be the mistake in the
+// other direction — it would make every unrelated file's setup depend on a
+// posture the deployment default is not.
 
 import type { PrismaClient } from "@prisma/client";
 import { HOOK_PROTOCOL } from "@/lib/build-constants";

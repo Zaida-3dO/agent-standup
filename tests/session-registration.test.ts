@@ -16,9 +16,20 @@
 //      the refusal happened *before* the write rather than being reported
 //      after one.
 //
+// **The `claiming` block sets `hook.require_registration_to_claim` itself,
+// in both positions, rather than inheriting whatever the registry's default
+// happens to be.** The refusals only exist when the setting is on, so a
+// block that never named it would be asserting them against a default — and
+// the day that default moves, every refusal here stops being exercised while
+// the file still reports a full row of passing tests. A posture a test
+// depends on is part of that test's setup. The positive case is asserted the
+// same way and with the setting off, because "an unregistered session can own
+// work" is the deployed behaviour and it deserves the same end-to-end proof
+// the refusals get, not just a unit test against a fake context.
+//
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -34,12 +45,13 @@ describeIfDb("session registration and the claim refusal", () => {
   let scratchUrl: string;
   let prisma: PrismaClient;
   let service: typeof import("@/lib/service/live").service;
+  let settingsCache: typeof import("@/lib/service/live").settingsCache;
   let itemCounter = 0;
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
-    ({ service } = await import("@/lib/service/live"));
+    ({ service, settingsCache } = await import("@/lib/service/live"));
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
     await prisma.area.create({ data: { id: "reg-area", displayName: "Registration area" } });
   }, 60_000);
@@ -95,6 +107,42 @@ describeIfDb("session registration and the claim refusal", () => {
       },
       { caller: { transport: "http", sessionId } },
     );
+  }
+
+  /**
+   * Writes one settings override row, bumps the revision, and drops the
+   * held snapshot — the same two statements `put_setting`'s handler issues
+   * (`src/lib/service/operations/put-setting.ts`) followed by the documented
+   * "immediate in the process that made the change" escape hatch
+   * (`src/lib/settings/cache.ts`).
+   *
+   * The invalidate is not optional. `service/live.ts` composes the runtime
+   * with a `SettingsCache` that serves a held snapshot for up to
+   * `revalidateAfterMs`, so without it the service would keep reading the
+   * value from before the write and every assertion below would be about the
+   * previous posture rather than the one it just set.
+   */
+  async function putSettingRow(key: string, value: unknown): Promise<void> {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "settings" ("key", "value", "updatedByType", "updatedById")
+       VALUES ($1, $2::jsonb, 'system'::"ActorType", NULL)
+       ON CONFLICT ("key") DO UPDATE
+         SET "value" = EXCLUDED."value", "updatedAt" = CURRENT_TIMESTAMP`,
+      key,
+      JSON.stringify(value),
+    );
+    await prisma.$executeRawUnsafe(
+      `UPDATE "settings_revision" SET "revision" = "revision" + 1 WHERE "id" = 1`,
+    );
+    settingsCache.invalidate();
+  }
+
+  async function clearSettingRow(key: string): Promise<void> {
+    await prisma.$executeRawUnsafe(`DELETE FROM "settings" WHERE "key" = $1`, key);
+    await prisma.$executeRawUnsafe(
+      `UPDATE "settings_revision" SET "revision" = "revision" + 1 WHERE "id" = 1`,
+    );
+    settingsCache.invalidate();
   }
 
   describe("the transport is a capability signal, not a self-report", () => {
@@ -217,7 +265,18 @@ describeIfDb("session registration and the claim refusal", () => {
     });
   });
 
-  describe("claiming", () => {
+  describe("claiming under the strict posture", () => {
+    // Set deliberately rather than inherited: see this file's header. The
+    // refusals below are only reachable with this on, so the block that
+    // asserts them is the block that has to establish it.
+    beforeEach(async () => {
+      await putSettingRow("hook.require_registration_to_claim", true);
+    });
+
+    afterEach(async () => {
+      await clearSettingRow("hook.require_registration_to_claim");
+    });
+
     it("lets a registered, current session claim", async () => {
       const itemId = await newItem();
       await register("http", {
@@ -344,6 +403,59 @@ describeIfDb("session registration and the claim refusal", () => {
       // act on their registration in that moment, so the typo is the more
       // useful sentence.
       await expect(attemptClaim("also-a-ghost", "no-such-item")).rejects.toMatchObject({
+        code: "not_found",
+      });
+    });
+  });
+
+  describe("claiming under the shipped posture", () => {
+    // The mirror of the block above, and the half that is actually deployed:
+    // with the setting off, running no hook costs a session nothing. Asserted
+    // through the live service rather than against a fake context, because
+    // the claim reaching the assignment table is the whole of what "ownership
+    // does not depend on the hook" means — a unit test on
+    // `assertSessionMayClaim` alone would still pass if some caller between
+    // the operation and the table refused the session for the same reason.
+    beforeEach(async () => {
+      await putSettingRow("hook.require_registration_to_claim", false);
+    });
+
+    afterEach(async () => {
+      await clearSettingRow("hook.require_registration_to_claim");
+    });
+
+    it("lets a session that never registered claim", async () => {
+      const itemId = await newItem();
+      const assignment = (await attemptClaim("unhooked-session", itemId)) as { id: string };
+      expect(assignment.id).toBeTruthy();
+      expect(await prisma.assignment.count({ where: { sessionId: "unhooked-session" } })).toBe(1);
+      // No registration was invented on the way through: the session is a
+      // ghost before the claim and still one after it, which is what makes
+      // its tool calls unobserved rather than merely unenforced.
+      expect(await prisma.session.findUnique({ where: { id: "unhooked-session" } })).toBeNull();
+    });
+
+    it("lets a session below min_supported claim", async () => {
+      // The other refusal the strict posture makes: off, an out-of-date hook
+      // is information about which signals to expect, not grounds to refuse.
+      const itemId = await newItem();
+      await prisma.session.create({
+        data: {
+          id: "ancient-but-allowed",
+          machine: "m",
+          transport: "http",
+          hookVariant: "http",
+          hookVersion: HOOK_PROTOCOL.http.minSupported - 1,
+        },
+      });
+      const assignment = (await attemptClaim("ancient-but-allowed", itemId)) as { id: string };
+      expect(assignment.id).toBeTruthy();
+    });
+
+    it("still reports a bad item id as not_found", async () => {
+      // The claim's own checks are untouched by the posture — turning the
+      // gate off relaxes one rule, not the operation.
+      await expect(attemptClaim("another-ghost", "no-such-item")).rejects.toMatchObject({
         code: "not_found",
       });
     });
