@@ -254,6 +254,117 @@ describeIfDb("item service operations against Postgres", () => {
         .catch(() => undefined);
       expect(await itemCount()).toBe(before);
     });
+
+    // MILESTONES.md #126 — `needsVisualReview` inherits from the repo unless
+    // the caller says otherwise, and the resolved value comes back in the
+    // create response. Each test asserts on the RESPONSE, not a follow-up
+    // `get_item`: the defect being fixed is that the response stayed silent
+    // about the inherited value, so a test reading the value back from a
+    // second call would pass even if the response itself never changed.
+    describe("needsVisualReview inheritance", () => {
+      it("inherits true from a repo registered needsVisualReview: true", async () => {
+        await runtime.call("create_repo", {
+          id: "nvr-repo-true",
+          displayName: "Needs Visual Review",
+          defaultBranch: "main",
+          needsVisualReview: true,
+        });
+        const item = (await runtime.call("create_item", {
+          title: "Inherits true",
+          body: "x",
+          area: "nvr-inherit",
+          originType: "auto",
+          repo: "nvr-repo-true",
+        })) as { needsVisualReview: boolean };
+        expect(item.needsVisualReview).toBe(true);
+      });
+
+      it("inherits false from a repo registered needsVisualReview: false", async () => {
+        await runtime.call("create_repo", {
+          id: "nvr-repo-false",
+          displayName: "Does Not Need Visual Review",
+          defaultBranch: "main",
+          needsVisualReview: false,
+        });
+        const item = (await runtime.call("create_item", {
+          title: "Inherits false",
+          body: "x",
+          area: "nvr-inherit",
+          originType: "auto",
+          repo: "nvr-repo-false",
+        })) as { needsVisualReview: boolean };
+        expect(item.needsVisualReview).toBe(false);
+      });
+
+      it("defaults to false with no repo at all", async () => {
+        const item = (await runtime.call("create_item", {
+          title: "No repo",
+          body: "x",
+          area: "nvr-inherit",
+          originType: "auto",
+        })) as { needsVisualReview: boolean };
+        expect(item.needsVisualReview).toBe(false);
+      });
+
+      it("an explicit false beats an inherited true — the override is not a lock", async () => {
+        await runtime.call("create_repo", {
+          id: "nvr-repo-override-false",
+          displayName: "Override False",
+          defaultBranch: "main",
+          needsVisualReview: true,
+        });
+        const item = (await runtime.call("create_item", {
+          title: "Back-end only work",
+          body: "x",
+          area: "nvr-inherit",
+          originType: "auto",
+          repo: "nvr-repo-override-false",
+          needsVisualReview: false,
+        })) as { needsVisualReview: boolean };
+        expect(item.needsVisualReview).toBe(false);
+      });
+
+      it("an explicit true on a false-repo works — the override goes both directions", async () => {
+        await runtime.call("create_repo", {
+          id: "nvr-repo-override-true",
+          displayName: "Override True",
+          defaultBranch: "main",
+          needsVisualReview: false,
+        });
+        const item = (await runtime.call("create_item", {
+          title: "Frontend work in a usually-backend repo",
+          body: "x",
+          area: "nvr-inherit",
+          originType: "auto",
+          repo: "nvr-repo-override-true",
+          needsVisualReview: true,
+        })) as { needsVisualReview: boolean };
+        expect(item.needsVisualReview).toBe(true);
+      });
+
+      it("persists the inherited value, not just the response — a second read agrees", async () => {
+        await runtime.call("create_repo", {
+          id: "nvr-repo-persist",
+          displayName: "Persist Check",
+          defaultBranch: "main",
+          needsVisualReview: true,
+        });
+        const created = (await runtime.call("create_item", {
+          title: "Persisted inheritance",
+          body: "x",
+          area: "nvr-inherit",
+          originType: "auto",
+          repo: "nvr-repo-persist",
+        })) as { id: string; needsVisualReview: boolean };
+        expect(created.needsVisualReview).toBe(true);
+
+        const rows = await prisma.$queryRawUnsafe<{ needsVisualReview: boolean }[]>(
+          `SELECT "needsVisualReview" FROM "Item" WHERE "id" = $1`,
+          created.id,
+        );
+        expect(rows[0]?.needsVisualReview).toBe(true);
+      });
+    });
   });
 
   describe("get_item", () => {
