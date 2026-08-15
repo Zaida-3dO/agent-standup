@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest";
 import { normalizeEmDash } from "@/lib/text-normalize";
 
 describe("normalizeEmDash", () => {
-  it("replaces a single em dash with a plain hyphen", () => {
+  it("rewrites a single em dash to a plain hyphen", () => {
     expect(normalizeEmDash("Ship it — quickly")).toBe("Ship it - quickly");
   });
 
-  it("replaces every em dash in a string with one each — not just the first", () => {
+  it("rewrites every em dash in a string, one each — not just the first", () => {
     expect(normalizeEmDash("a — b — c")).toBe("a - b - c");
   });
 
@@ -47,11 +47,11 @@ describe("normalizeEmDash", () => {
     expect(normalizeEmDash("")).toBe("");
   });
 
-  it("does not merge adjacent words — the hyphen replaces the dash, it does not remove it", () => {
-    // Guards against an implementation that stripped the character rather
-    // than replacing it, which would silently glue "it" and "today" together.
-    const result = normalizeEmDash("it—today");
-    expect(result).toBe("it-today");
-    expect(result).not.toBe("ittoday");
+  it("does not merge adjacent words — the em dash is swapped for a hyphen, never dropped", () => {
+    // Guards against an implementation that stripped the character
+    // entirely, which would silently glue the two words together.
+    const result = normalizeEmDash("go—now");
+    expect(result).toBe("go-now");
+    expect(result).not.toBe("gonow");
   });
 });

@@ -17,7 +17,7 @@
 const EM_DASH = "—";
 
 /**
- * Replaces every em dash with a plain ASCII hyphen-minus.
+ * Rewrites every em dash to a plain ASCII hyphen-minus.
  *
  * Pure and total — no locale, no async, safe to call from a Zod
  * `.transform()` on any string field that should carry this house style.

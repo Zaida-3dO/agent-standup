@@ -329,8 +329,8 @@ describe("undecodable bytes at the HTTP boundary (MILESTONES.md #113, companion)
     process.env.DATABASE_URL ??= "postgres://placeholder/placeholder";
     const { POST } = await import("@/app/api/items/route");
     // The invalid byte sits where a structural character is expected, so the
-    // decoded text is not valid JSON at all (U+FFFD in place of `"`), and
-    // `request.json()` throws a SyntaxError — the route's existing
+    // decoded text is not valid JSON at all (a U+FFFD sits where `"` should
+    // be), and `request.json()` throws a SyntaxError — the route's existing
     // catch-and-400 path, exercised here with a byte-level cause rather than
     // a typed one.
     const body = Buffer.concat([
