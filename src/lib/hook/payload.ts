@@ -1,34 +1,26 @@
-// The hook payload, as it arrives on stdin — MILESTONES.md #42
-// ("The hook script: one file, fires after each tool call and at stop"),
-// DECISIONS.md §4 ("One script, wired to both `PostToolUse` and `Stop`,
-// branching on the event type from stdin").
+// The hook payload, as it arrives on stdin — MILESTONES.md #125,
+// DECISIONS.md §4 ("One script, branching on the event type from stdin").
 //
 // The agent tool writes a JSON object to the hook process's stdin. This
 // module turns that text into a normalised `HookEvent` — or says it could
 // not, which is a *distinct* answer from "an event with nothing in it".
-// That distinction is the whole reason this is a module rather than a
-// `JSON.parse` at the call site:
+// That distinction is why this is a module rather than a `JSON.parse` at
+// the call site: the caller must be able to tell "a `Stop`, which carries
+// no command" apart from "a payload from a tool version this build has
+// never seen", and there is no `HookEvent` on an `ok: false` for it to
+// confuse them with.
 //
-//   - An event that genuinely carries no command (a `Stop`, which has no
-//     tool at all) is well-formed, and the decision layer allows it because
-//     there is nothing to be unsure *about*.
-//   - A payload that could not be understood is NOT that. It might have
-//     carried `rm -rf /`. Returning a command-less event for it would route
-//     it into the same "nothing to match" branch and allow it — the exact
-//     shape of failure DECISIONS.md §4 forbids ("Fails **closed** — no
-//     answer means denied").
-//
-// So `parseHookPayload` returns a discriminated result, and the caller
-// cannot accidentally treat the second case as the first: there is no
-// `HookEvent` on an `ok: false`, so there is nothing to pass on.
+// Both cases now **allow** (DECISIONS.md §16), so the distinction no longer
+// decides a verdict — it decides what the session is *told*, which is the
+// difference between a person diagnosing a payload change in five seconds
+// and not knowing anything changed.
 //
 // **Field names are read leniently, in a fixed order, and nothing is
 // inferred.** Hook payload shapes differ between agent tools and between
-// versions of one tool, and a field this module does not recognise must
-// degrade to "no command found", which denies — never to a guess that
-// happens to allow. The accepted spellings are listed explicitly below
+// versions of one tool. The accepted spellings are listed explicitly below
 // rather than discovered by scanning for any string property, because a
-// scan would eventually pick up an unrelated field and classify against it.
+// scan would eventually pick up an unrelated field and report it as the
+// command.
 
 /** The event types the hook understands. Anything else is refused. */
 export const HOOK_EVENT_TYPES = ["PreToolUse", "PostToolUse", "Stop"] as const;
@@ -45,14 +37,37 @@ export interface HookEvent {
   /** The tool the hook observed, e.g. `Bash`. Absent on a `Stop`. */
   readonly tool?: string;
   /**
-   * The command text to classify. Absent when the event carries none —
+   * The command text the call carried. Absent when the event carries none —
    * a `Stop`, or a tool whose input has no command-shaped field.
    *
    * Absent is **not** the same as "the payload was unreadable": that case
    * never produces a `HookEvent` at all.
    */
   readonly command?: string;
+  /**
+   * What the tool produced, on a `PostToolUse`.
+   *
+   * Carried as text and never interpreted here. The hook reports; the
+   * server is the only party that decides whether a result means anything,
+   * so parsing it locally would be exactly the kind of logic that makes a
+   * script a reason to bump the protocol version.
+   *
+   * **Truncated** — see `MAX_TOOL_RESULT_CHARS`. A tool result is
+   * unbounded (a file read, a full test log) and the hook is on the
+   * critical path of every call; posting megabytes per call would make the
+   * hook the slowest thing in the session.
+   */
+  readonly toolResult?: string;
 }
+
+/**
+ * How much of a tool result is carried.
+ *
+ * The head rather than the tail: a result's first characters identify what
+ * it is, where its last characters are as likely to be the tail of a file
+ * as anything meaningful. A server that needs more can ask the session.
+ */
+export const MAX_TOOL_RESULT_CHARS = 4000;
 
 export type ParseResult =
   | { readonly ok: true; readonly event: HookEvent }
@@ -61,13 +76,12 @@ export type ParseResult =
 /**
  * The command-shaped fields of a tool input, in the order they are tried.
  *
- * `command` is the Bash-shaped one and the only one the guarded patterns are
- * really written against; the rest are here so that a Write or an Edit is
- * classified against the path it touches rather than silently reading as an
- * event with no command. Order is first-match, and it is fixed rather than
- * "whichever is longest" so that the same payload always classifies the same
- * way — a matcher whose input depends on field iteration order is a matcher
- * whose denials are not reproducible.
+ * `command` is the Bash-shaped one; the rest are here so that a Write or an
+ * Edit reports the path it touches rather than reading as an event with no
+ * command at all. Order is first-match, and it is fixed rather than
+ * "whichever is longest" so the same payload always reports the same field —
+ * an event whose content depends on field iteration order is one whose
+ * server-side findings are not reproducible.
  */
 const COMMAND_FIELDS = ["command", "file_path", "filePath", "path", "pattern", "url"] as const;
 
@@ -93,15 +107,17 @@ function firstString(source: unknown, keys: readonly string[]): string | undefin
  * Refuses — rather than defaulting — on: text that is not JSON, JSON that is
  * not an object, an unrecognised or missing `hook_event_name`, and a missing
  * session identifier. Each of those is a payload this build does not
- * understand, and the honest answer to "should this tool call run?" when the
- * question itself was unreadable is that we do not know, which denies.
+ * understand, and reporting it as an event with no command would file it
+ * under the same heading as a `Stop`, hiding a payload-shape change behind
+ * a case that is entirely normal.
  *
  * The session identifier is required even though the local decision does not
  * turn on it, because every consumer of this event downstream
  * (the telemetry ingest of #50, the session handshake of #43, and the
  * displacement check in `./enforcement.ts`) is keyed on the session. An
- * event that cannot say whose it is cannot be enforced against the right
- * session, and enforcing against the wrong one is worse than refusing.
+ * event that cannot say whose it is would be attributed to the wrong
+ * session, and a finding recorded against the wrong session is worse than
+ * no finding at all.
  */
 export function parseHookPayload(text: string): ParseResult {
   let raw: unknown;
@@ -131,6 +147,7 @@ export function parseHookPayload(text: string): ParseResult {
   const tool = firstString(raw, ["tool_name", "toolName", "tool"]);
   const toolInput = property(raw, "tool_input") ?? property(raw, "toolInput");
   const command = firstString(toolInput, COMMAND_FIELDS);
+  const toolResult = readToolResult(property(raw, "tool_response") ?? property(raw, "toolResponse"));
 
   return {
     ok: true,
@@ -139,6 +156,34 @@ export function parseHookPayload(text: string): ParseResult {
       sessionId,
       ...(tool === undefined ? {} : { tool }),
       ...(command === undefined ? {} : { command }),
+      ...(toolResult === undefined ? {} : { toolResult }),
     },
   };
+}
+
+/**
+ * Normalises a tool response into bounded text.
+ *
+ * A string is taken as-is; anything else is serialised, because tools
+ * differ on whether a result is a string or an object and the hook has no
+ * business caring which. Serialisation that fails — a circular structure —
+ * yields nothing rather than throwing: a tool result is the least important
+ * field on the event, and losing it must never cost the call it describes.
+ */
+function readToolResult(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value) ?? "";
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (text.length === 0) return undefined;
+  return text.length > MAX_TOOL_RESULT_CHARS ? text.slice(0, MAX_TOOL_RESULT_CHARS) : text;
 }

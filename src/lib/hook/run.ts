@@ -1,22 +1,23 @@
-// The hook, end to end — MILESTONES.md #42's "one file, fires after each
-// tool call and at stop, cached rules".
+// The hook, end to end — MILESTONES.md #125.
 //
-// "One file" is the *installed* artefact: one script wired to both events,
-// branching on the event type from stdin (DECISIONS.md §4). This module is
-// that script's body, with every effect it needs supplied as a parameter —
-// stdin as a string, the cache as read/write functions, the server as one
-// async call, the clock as a number. `../../bin/standup-hook.ts` is the only
-// place those become real, and it is eleven lines.
+// One installed script wired to `PreToolUse`, `PostToolUse` and `Stop`,
+// branching on the event type from stdin. This module is that script's body,
+// with every effect it needs supplied as a parameter — stdin as a string,
+// the server as one async call, the clock as a number.
+// `../../bin/standup-hook.ts` is the only place those become real.
 //
 // The split matters more here than for an ordinary command. The behaviour
-// worth testing in a guard is what it does when things go wrong — an
-// unreadable cache, an unreachable server, a payload from a tool version
-// nobody has seen — and every one of those is trivial to construct as an
-// argument and painful to construct as a filesystem and a socket.
+// worth testing in a hook is what it does when things go wrong — an
+// unreachable server, a payload from a tool version nobody has seen — and
+// every one of those is trivial to construct as an argument and painful to
+// construct as a socket.
+//
+// **This module holds no rules**, and that is the design rather than an
+// accident of it: see `./decide.ts` for why the script is kept thin enough
+// that its protocol version should rarely need bumping again.
 
 import { parseHookPayload } from "./payload";
-import { readCache, serialiseCache, type CacheState, type HookRules } from "./rules-cache";
-import { decideWithNudges, type AskKillGuard, type AskServer, type HookVerdict } from "./decide";
+import { decideWithNudges, type AskServer, type HookVerdict } from "./decide";
 import {
   renderResponse,
   renderWithNudges,
@@ -30,23 +31,12 @@ import type { NudgeContext } from "./nudge";
 export interface RunHookOptions {
   /** Everything the agent tool wrote to the hook's stdin. */
   readonly stdin: string;
-  /** The cache file's contents, or `undefined` when there is no file. */
-  readonly cacheText?: string;
-  /** Persists a freshly fetched rule set. Failures are swallowed by the caller. */
-  readonly writeCache?: (text: string) => void;
   /** Asks the server. See `AskServer` — `undefined` means "no answer", for any reason. */
   readonly askServer: AskServer;
-  /** Epoch milliseconds. Injected so cache freshness is decided without a clock. */
-  readonly now: number;
-  readonly ttlMs?: number;
+  /** Epoch milliseconds. Injected so nothing here reads a clock. */
+  readonly now?: number;
   /** Enforcement known locally, before any server call. */
   readonly enforcement?: SessionEnforcement;
-  /**
-   * Asks the ownership check (MILESTONES.md #45). Absent means the guard is
-   * not installed — see `decide` for why that is not the same as
-   * unreachable.
-   */
-  readonly askKillGuard?: AskKillGuard;
   /**
    * What is known about this session's crew when it tries to stop
    * (MILESTONES.md #47). Advisory: nothing here can refuse the stop.
@@ -62,73 +52,46 @@ export interface RunHookOptions {
 /**
  * Runs the hook once and returns what the process should emit.
  *
- * **An unreadable payload denies.** This is the case most likely to be
- * reached by accident — a tool version whose payload shape this build has
- * never seen — and it is also the one where allowing is most tempting,
- * because the failure is obviously "ours" rather than the command's. It
- * still denies: the hook was asked whether a command it could not read
- * should run, and the honest answer to that is no. The reason names the
- * parse failure, so the fix is a five-second read rather than a mystery.
- *
- * The event name rendered for that case is `"Unknown"` — there is no
- * payload to take one from, and inventing `PostToolUse` would produce a
- * response claiming to describe an event that may never have occurred.
+ * **An unreadable payload allows** (DECISIONS.md §16). This reverses what
+ * this function used to do, and it is worth being explicit about why,
+ * because "we could not read the question" is the case where refusing feels
+ * most defensible: a payload shape this build has never seen is a *client*
+ * failure, and the cost of denying on it is every tool call in the session
+ * refused the moment the agent tool changes its payload — for a hook that,
+ * with the pattern lists gone, would not have blocked any of them. The
+ * reason still names the parse failure, on the channel a person reads.
  */
 export async function runHook(options: RunHookOptions): Promise<RenderedResponse> {
   const parsed = parseHookPayload(options.stdin);
   if (!parsed.ok) {
     const verdict: HookVerdict = {
-      decision: "deny",
-      reason: `the hook could not read this event (${parsed.reason}), and denies when it cannot tell what is being run`,
-      source: "no-rules",
+      decision: "allow",
+      reason: `the hook could not read this event (${parsed.reason})`,
+      source: "unreadable-payload",
     };
+    // Rendered through the ordinary path so an unreadable payload produces
+    // exactly what any other allow does — an empty stdout and exit zero —
+    // rather than a special shape a reader would have to know about.
     return renderResponse(verdict, "Unknown");
   }
 
   const event = parsed.event;
-  const cache: CacheState = readCache({
-    text: options.cacheText,
-    now: options.now,
-    ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
-  });
 
-  // A stale or unavailable cache is refreshed opportunistically from
-  // whatever the server volunteers on the call this event already makes —
-  // never by a second, dedicated round trip. §4's cost argument is that the
-  // common path is free; buying freshness with an extra request on every
-  // stale call would spend exactly what the cache was built to save.
-  let refreshed: HookRules | undefined;
   let volunteeredStop: StopContext | undefined;
   const askServer: AskServer = async (asked) => {
     const answer = await options.askServer(asked);
-    if (answer?.rules !== undefined) refreshed = answer.rules;
-    // Advisory, and read alongside the rules for the same reason: whatever
-    // the server volunteers on a round trip this event was making anyway is
-    // free. It never triggers a request of its own — a `Stop` carries no
-    // command, so it makes no server call at all, and the catch has to work
-    // from what the caller already knows.
+    // Advisory. Whatever the server volunteers on a round trip this event
+    // was making anyway is free; it never triggers a request of its own.
     if (answer?.stop !== undefined) volunteeredStop = answer.stop;
     return answer;
   };
 
   const { verdict, nudges } = await decideWithNudges({
     event,
-    cache,
     askServer,
     ...(options.enforcement === undefined ? {} : { enforcement: options.enforcement }),
-    ...(options.askKillGuard === undefined ? {} : { askKillGuard: options.askKillGuard }),
     ...(options.nudge === undefined ? {} : { nudge: options.nudge }),
   });
-
-  if (refreshed !== undefined && options.writeCache !== undefined) {
-    try {
-      options.writeCache(serialiseCache(refreshed, options.now));
-    } catch {
-      // A cache that cannot be written is a slower hook, not a wrong one:
-      // the next call simply asks again. Failing the tool call over it would
-      // turn a full disk into an outage of every agent on the machine.
-    }
-  }
 
   // The stop-hook catch (MILESTONES.md #47). Evaluated after the verdict and
   // composed beside it — never inside it — so that no branch here can turn
@@ -143,8 +106,7 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
   // stdout untouched, and both carry the exit code through from what they
   // wrap — so neither can block, and neither can undo the other. What the
   // order settles is which line the agent reads last, and on a `Stop` the
-  // catch is the most actionable thing the hook has to say. So nudges are
-  // rendered first and the catch wraps them, landing at the end.
+  // catch is the most actionable thing the hook has to say.
   return renderWithStopCatch(renderWithNudges(verdict, event.eventType, nudges), stopCatch);
 }
 

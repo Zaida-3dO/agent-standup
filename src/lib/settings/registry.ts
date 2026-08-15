@@ -11,7 +11,6 @@
 import { z } from "zod";
 import { budgetWindowsSchema } from "./budget-windows";
 import { capabilityDocSchema } from "./capability-doc";
-import { hookPatternListSchema } from "./hook-pattern";
 
 /**
  * The categories a setting can be filed under. Closed rather than free
@@ -342,20 +341,6 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
-  "hook.allow_patterns": define({
-    schema: hookPatternListSchema,
-    default: [],
-    label: "Hook allow patterns",
-    help: "Regular expressions matched against the command text the hook observes. A match is allowed silently — logged, never sent for a verdict. Checked before the ask-list, so a command matching both reads as allowed.",
-    category: "Hook",
-    appliesWhen: "next-call",
-    // Relaxes an enforcement: a broad pattern here silently skips the
-    // ask-list for everything it matches.
-    sensitive: true,
-    irreversible: false,
-    formerEnv: [],
-  }),
-
   "hook.require_registration_to_claim": define({
     schema: z.boolean(),
     default: true,
@@ -366,18 +351,6 @@ export const SETTINGS_REGISTRY = {
     // Relaxes an enforcement: off means work can be held under rules the
     // holder cannot enforce.
     sensitive: true,
-    irreversible: false,
-    formerEnv: [],
-  }),
-
-  "hook.ask_patterns": define({
-    schema: hookPatternListSchema,
-    default: [],
-    label: "Hook ask patterns",
-    help: "Regular expressions matched against the command text the hook observes. A match that is not already covered by the allow-list waits for a server verdict instead of running unexamined. Anything matching neither list is denied.",
-    category: "Hook",
-    appliesWhen: "next-call",
-    sensitive: false,
     irreversible: false,
     formerEnv: [],
   }),

@@ -1,0 +1,201 @@
+// Interventions — the shape, not the catalogue. MILESTONES.md #128,
+// `docs/plans/INTERVENTIONS.md`.
+//
+// An intervention is a **detectable situation** plus a **response**. This
+// module defines what one *is*; `./registry.ts` defines what the system does
+// with a set of them. The catalogue itself — what is worth detecting — lives
+// in `docs/plans/INTERVENTIONS.md` and grows independently of this code.
+//
+// ── The three decisions that keep custom entries possible ──────────────
+//
+// #128 asks that v1 not foreclose user-supplied interventions, and names
+// three cheap things that keep the door open. All three are here, and all
+// three are properties of the *types* rather than conventions to remember:
+//
+//   1. **A predicate declares the context it needs; it does not go and get
+//      it.** `IntervnetionContext` is handed in. There is no database client
+//      reachable from a predicate, because the type it is given does not
+//      carry one — which is what makes "the built-ins obey a contract they
+//      do not strictly need yet" enforceable rather than aspirational. An
+//      external script's stdin payload is exactly this object serialised.
+//   2. **The verdict is a returned value, never a side effect.**
+//      `InterventionVerdict` — `{triggered, level?, message?, data?}` — is
+//      the whole of what a predicate may produce. A predicate that emitted
+//      its own nudge could not be swapped for an external process; one that
+//      returns a finding can. Nothing here has a channel to emit on.
+//   3. **The registry is keyed by id, and every entry carries a `source`**
+//      (`builtin` | `custom`) from the start, even while only `builtin`
+//      exists. A settings row attaches to an id, so a custom entry inherits
+//      the whole configuration surface for free rather than needing one
+//      built for it.
+
+/**
+ * Which side of the tool call an entry runs on.
+ *
+ * This is the field that decides what responses are even available —
+ * see `LEVELS_BY_PHASE` in `./registry.ts`.
+ */
+export const INTERVENTION_PHASES = ["pre", "post"] as const;
+export type InterventionPhase = (typeof INTERVENTION_PHASES)[number];
+
+/**
+ * Who the finding is addressed to.
+ *
+ * `orchestrator` for flow findings — whoever runs the queue is the only
+ * party that can spawn a reviewer or start the next step. `agent` for
+ * hygiene and correctness — the actor is the only party that can tidy up
+ * after itself or not run the command.
+ */
+export const INTERVENTION_AUDIENCES = ["orchestrator", "agent"] as const;
+export type InterventionAudience = (typeof INTERVENTION_AUDIENCES)[number];
+
+/**
+ * The response ladder, weakest to strongest.
+ *
+ * **Prominence is a property of the message, not a level.** Every entry
+ * stores a plain and a prominent message and the front end picks between
+ * them; both are still `nudge`. Keeping the enum this small is what stops
+ * "how alarming is it" being confused with "does it stop me".
+ */
+export const INTERVENTION_LEVELS = ["nothing", "nudge", "block-overridable", "hard-block"] as const;
+export type InterventionLevel = (typeof INTERVENTION_LEVELS)[number];
+
+/** Whether an entry fires at once or rides the next digest (~5 minutes). */
+export const INTERVENTION_TIMINGS = ["immediate", "digest"] as const;
+export type InterventionTiming = (typeof INTERVENTION_TIMINGS)[number];
+
+/** Where an entry came from. `custom` is not built yet; the field is. */
+export const INTERVENTION_SOURCES = ["builtin", "custom"] as const;
+export type InterventionSource = (typeof INTERVENTION_SOURCES)[number];
+
+/** The levels that stop a call, as opposed to talking about it. */
+const BLOCKING_LEVELS: ReadonlySet<InterventionLevel> = new Set<InterventionLevel>([
+  "block-overridable",
+  "hard-block",
+]);
+
+export function isBlockingLevel(level: InterventionLevel): boolean {
+  return BLOCKING_LEVELS.has(level);
+}
+
+/**
+ * The two default messages an entry ships with.
+ *
+ * Both are required. An entry with only a plain message would leave the
+ * front end nothing to escalate to, and an entry with only a prominent one
+ * would shout on every delivery — and shouting on every delivery is
+ * indistinguishable, to the reader, from not being worth reading.
+ */
+export interface InterventionMessages {
+  readonly plain: string;
+  readonly prominent: string;
+}
+
+/**
+ * What a predicate is handed.
+ *
+ * Deliberately a plain, serialisable value: it is what an external script
+ * would receive on stdin. Every field is optional because every one comes
+ * from a different place and any may be absent — an absent field means
+ * "not known", which a well-written predicate answers with `triggered:
+ * false` rather than by guessing.
+ *
+ * This will grow as the catalogue does (item state, claim state, review
+ * artifacts, budget). What must not grow is its *kind*: it stays data
+ * handed in, never a handle something can be fetched through.
+ */
+export interface InterventionContext {
+  /** The session whose call is being evaluated. */
+  readonly sessionId?: string;
+  /** The tool being called, e.g. `Bash`. */
+  readonly tool?: string;
+  /** The command text, when the tool carries one. */
+  readonly command?: string;
+  /** Whether the session is acting as an orchestrator with crew beneath it. */
+  readonly isOrchestrator?: boolean;
+  /** The working directory the call was made from, when known. */
+  readonly cwd?: string;
+  /** Whether that directory is a linked git worktree with its own index. */
+  readonly isLinkedWorktree?: boolean;
+  /** The item this session holds a claim on, when it holds one. */
+  readonly itemId?: number;
+  /** The item's state, when an item is in play. */
+  readonly itemState?: string;
+  /** Whether an approving review artifact exists at the current tip. */
+  readonly hasApprovalAtTip?: boolean;
+}
+
+/**
+ * What a predicate returns. The *whole* of what it may produce.
+ *
+ * `level`, `message` and `data` are all optional overrides on a triggered
+ * finding — the registry supplies the configured defaults for anything the
+ * predicate does not name. A predicate that only answers "yes, this is
+ * happening" is a complete and normal predicate.
+ */
+export interface InterventionVerdict {
+  readonly triggered: boolean;
+  /** Overrides the entry's configured level for this one firing. */
+  readonly level?: InterventionLevel;
+  /** Overrides the entry's message for this one firing. */
+  readonly message?: string;
+  /** Anything worth recording on the resulting event. Must be serialisable. */
+  readonly data?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * A predicate: context in, verdict out.
+ *
+ * Pure and time-bounded by contract — no writes, no I/O, no clock of its
+ * own. That is the sandbox an external script needs, and enforcing it on
+ * built-ins from the start is what makes the boundary real instead of
+ * retrofitted. It may be async so that an external process can eventually
+ * be one without changing this type.
+ */
+export type InterventionPredicate = (
+  context: InterventionContext,
+) => InterventionVerdict | Promise<InterventionVerdict>;
+
+/** One entry in the registry. */
+export interface Intervention {
+  readonly id: string;
+  readonly source: InterventionSource;
+  /** A one-line statement of the situation, for the settings page. */
+  readonly summary: string;
+  readonly phase: InterventionPhase;
+  readonly audience: InterventionAudience;
+  readonly defaultLevel: InterventionLevel;
+  readonly defaultTiming: InterventionTiming;
+  readonly messages: InterventionMessages;
+  readonly predicate: InterventionPredicate;
+}
+
+/**
+ * An installation's overrides for one entry. Every field is optional; an
+ * absent field tracks the product's default, which is what lets a later
+ * release retune a message or retire an entry without a migration.
+ */
+export interface InterventionOverride {
+  readonly enabled?: boolean;
+  readonly level?: InterventionLevel;
+  readonly timing?: InterventionTiming;
+  readonly messages?: Partial<InterventionMessages>;
+}
+
+/**
+ * A finding: an entry that triggered, resolved against its configuration.
+ *
+ * This is what the registry produces and what a caller acts on. Note it
+ * carries no channel and no rendering — deciding *how loudly* to say it is
+ * the front end's call between `messages.plain` and `messages.prominent`.
+ */
+export interface InterventionFinding {
+  readonly id: string;
+  readonly source: InterventionSource;
+  readonly phase: InterventionPhase;
+  readonly audience: InterventionAudience;
+  readonly level: InterventionLevel;
+  readonly timing: InterventionTiming;
+  readonly messages: InterventionMessages;
+  readonly data?: Readonly<Record<string, unknown>>;
+}

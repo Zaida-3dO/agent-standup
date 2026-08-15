@@ -171,9 +171,6 @@ export async function runHookCommand(options: HookCommandOptions): Promise<HookC
       stdin,
       now: options.now,
       askServer: options.hook?.askServer ?? (async () => undefined),
-      ...(options.hook?.cacheText === undefined ? {} : { cacheText: options.hook.cacheText }),
-      ...(options.hook?.writeCache === undefined ? {} : { writeCache: options.hook.writeCache }),
-      ...(options.hook?.ttlMs === undefined ? {} : { ttlMs: options.hook.ttlMs }),
       ...(options.hook?.enforcement === undefined ? {} : { enforcement: options.hook.enforcement }),
     });
 
