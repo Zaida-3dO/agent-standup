@@ -40,6 +40,13 @@
 import { build } from "esbuild";
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { buildHookScripts } from "./build-hook-scripts.mjs";
+
+export {
+  HOOK_SCRIPTS_DIR,
+  HOOK_SCRIPT_ENTRY_POINTS,
+  buildHookScripts,
+} from "./build-hook-scripts.mjs";
 
 export const ENTRY_POINT = "src/bin/standup.ts";
 
@@ -78,6 +85,15 @@ export async function buildCli() {
     sourcemap: false,
     logLevel: "info",
   });
+
+  // `buildHookScripts` writes under `dist/hook-scripts/`, inside the tree
+  // this function just deleted and recreated above — run it after, never
+  // concurrently with, the `rm` above, or the two race over the same
+  // directory. `GET /hook/script` (`src/app/api/hook/script/route.ts`) reads
+  // this output, so every caller of `buildCli` (the npm `prepack` script,
+  // `tests/helpers/global-setup.ts`, the Docker build) produces it too,
+  // rather than needing a second command remembered in each place.
+  await buildHookScripts();
 }
 
 if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {

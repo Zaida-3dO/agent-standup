@@ -1177,7 +1177,8 @@ Same service, different consumers.
 | `POST /poll` | Launcher. Sends machine, live sessions, usage snapshot, pending source hashes. Returns zero or more dispatches, each with a server-composed prompt. |
 | `POST /hook` | The dumb pipe. Sends event type, session, tool, command. Returns allow/deny for guarded patterns, or nudge text, or nothing. |
 | `POST /tool-calls` | Telemetry ingest (§10). One flush: `{sessionId, calls[]}` — the session on the envelope, because a flush is one session's work and it makes the assignment lookup once per request rather than once per record. Caps the big fields (truncating, marked) and refuses malformed measurements. Answers `201` with what the batch was attributed to, including `null` for a ghost session. Beside `/hook` rather than under `/items` because a ghost session has no item to nest under. |
-| `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim — which reflects `hook.require_registration_to_claim` (§21), not the version verdict alone. |
+| `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim — which reflects `hook.require_registration_to_claim` (§21), not the version verdict alone. Registering with no version at all also returns `fetch` — where to get the hook and where to put it (§21). |
+| `GET /hook/script?variant=<variant>` | Serves the built hook script for one variant — the other half of the bootstrap loop `register_session` starts (§21). `404` for a variant this build has no script for, whether or not it is a real `HookVariant`; not cacheable (`no-store`), because the URL names a variant, not a version, and the file behind it changes across releases with nothing in the URL to signal that. |
 | `POST /kill-guard` | *"Would this command end a process my crew does not own?"* Takes the command and the asking session; answers `allow` / `deny` with the reason naming what would have been hit. The **judgement is here and only here** — the hook parses the command locally (it is the one part that cannot run anywhere else) and sends everything it cannot rule out. A command the local parser cannot decompose is sent rather than assumed harmless, and an unreachable server denies. |
 
 The other three process operations — `register_process`, `end_process` and `list_processes` — are
@@ -1287,6 +1288,51 @@ is now known by (§9), assigned atomically from the pool, or the name it already
 registering again. `crewName` is `null` only when the pool is exhausted; that never blocks
 registration itself, because naming is a courtesy riding on a call the session had to make anyway,
 not a precondition for it.
+
+### The bootstrap loop — obtaining a hook, not just being told which one
+
+Naming a variant and a protocol version is only useful to a session that can already reach the
+script. A session on an arbitrary machine has no reason to hold a source checkout of this
+repository, so being told "run the `http` hook" with no way to obtain one is a dead end dressed as an
+instruction. Registering with **no hook version at all** answers with a route out instead:
+
+1. **The session registers, reporting no `hookVersion`.** This is the honest state of a session that
+   has never run the hook — indistinguishable from one reporting one truthfully, because both are "I
+   have made no claim about what I can enforce" (the same reading `assessVersion`'s `unregistered`
+   verdict already gives this case).
+2. **The reply carries `fetch`** — present only in this case, absent once any version has been
+   reported (including a stale one; a session that already has *something* installed does not need
+   fetch instructions repeated at it on every ordinary re-registration). Two fields:
+   - **`scriptUrl`** — a path, `GET /hook/script?variant=<variant>` for the session's own
+     `hookVariant`. A URL rather than the script inline: an MCP response is not the place for a
+     payload that size, and a URL also lets a client fetch it with ordinary tooling. A path, not a
+     full URL — the service layer holds no notion of its own external address (§22), and a caller
+     reaching this handshake at all already has the base URL it registered against.
+   - **`install`** — deliberately vague: what the file is and that it must be wired to `PreToolUse`
+     and `PostToolUse`, never a concrete path. The server cannot know a given machine's layout for
+     "where hooks live", and a wrong concrete path would look authoritative while being wrong on most
+     machines — worse than an honest "figure out where yours go."
+3. **The session fetches `scriptUrl`, installs it, and registers again reporting the version it now
+   runs.** The server records `hookVersion` on the same row (an upsert, as every re-registration is)
+   — no separate "hooked" flag exists or is needed, because `hookVersion !== null` already means
+   exactly that.
+
+### Serving the script
+
+`GET /hook/script?variant=<variant>` returns the built artefact for that variant, as bytes — not
+executed, not parsed, just written back. `404` for a variant this build has no script for, and
+**the same `404`** whether the name isn't a real `HookVariant` at all or is one (`cli` is a real,
+versioned slot in this schema) with no script built for it yet: from a caller's perspective both mean
+"there is nothing to fetch," and answering them alike means adding a `cli` script later costs one
+entry in the build map, never a change to this route's behaviour.
+
+**Not cacheable — `no-store`.** The URL names a variant, not a version, and the file behind it
+changes on any release that touches the hook. A cache — browser, proxy, CDN — sitting in front of
+this route would keep serving a stale build after an upgrade with nothing in the URL to signal the
+content changed, which is silently worse than no caching: a session believing it just fetched the
+current hook while in fact running a stale one. Content-addressing the URL itself (naming the
+protocol version) would make long-lived caching correct and cheap; until then `no-store` is the only
+response that cannot go stale.
 
 ### `sessions`
 

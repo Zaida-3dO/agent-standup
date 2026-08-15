@@ -521,4 +521,94 @@ describeIfDb("session registration and the claim refusal", () => {
       });
     });
   });
+
+  describe("the bootstrap loop — MILESTONES.md #125(b)", () => {
+    // "A session must be able to say 'I have no hook, I have not set one
+    // up' and get a route out rather than a dead end." This is that route:
+    // registering with no version names where to fetch one; registering
+    // with a version does not repeat instructions for a hook that is
+    // already installed.
+    it("gives fetch instructions when the session reports no hook version at all", async () => {
+      const reply = await register("http", { sessionId: "no-hook-yet", machine: "m" });
+      expect(reply.hookVersion).toBeNull();
+      expect(reply.fetch).toBeDefined();
+      const fetch = reply.fetch as { scriptUrl: string; install: string };
+      // Names the variant the reply is describing (http, for this
+      // transport), not a bare path a caller has to guess a query string
+      // onto.
+      expect(fetch.scriptUrl).toBe("/api/hook/script?variant=http");
+      expect(typeof fetch.install).toBe("string");
+      expect(fetch.install.length).toBeGreaterThan(0);
+    });
+
+    it("names the OVERRIDDEN variant's script, not the transport-derived one", async () => {
+      // An http-transport caller that asked for the cli variant should be
+      // pointed at the cli script, matching `hookVariant` in the same reply
+      // — not silently pointed at http because that's what the transport
+      // would have implied.
+      const reply = await register("http", {
+        sessionId: "override-fetch",
+        machine: "m",
+        hookVariant: "cli",
+      });
+      expect(reply.hookVariant).toBe("cli");
+      const fetch = reply.fetch as { scriptUrl: string };
+      expect(fetch.scriptUrl).toBe("/api/hook/script?variant=cli");
+    });
+
+    it("REFUSES to give fetch instructions once a version IS reported", async () => {
+      // The negative case that makes the field mean something: a session
+      // that already has a hook installed and working must not be told to
+      // go fetch a new one on every ordinary re-registration.
+      const reply = await register("http", {
+        sessionId: "already-hooked",
+        machine: "m",
+        hookVersion: HOOK_PROTOCOL.http.current,
+      });
+      expect(reply.hookVersion).toBe(HOOK_PROTOCOL.http.current);
+      expect(reply.fetch).toBeUndefined();
+    });
+
+    it("REFUSES to give fetch instructions for a stale-but-reported version (advisory)", async () => {
+      // Below `current` but at/above `minSupported` is "update when
+      // convenient", not "you have nothing installed" — a session at this
+      // verdict already has a working hook and must not be re-pointed at
+      // the fetch flow meant for one that has none.
+      const reply = await register("http", {
+        sessionId: "advisory-fetch",
+        machine: "m",
+        hookVersion: HOOK_PROTOCOL.http.minSupported,
+      });
+      expect((reply.version as { verdict: string }).verdict).toBe(
+        HOOK_PROTOCOL.http.minSupported < HOOK_PROTOCOL.http.current ? "advisory" : "current",
+      );
+      expect(reply.fetch).toBeUndefined();
+    });
+
+    it("records the session as hooked (hookVersion persisted) on the second handshake", async () => {
+      // Step 4-5 of the bootstrap loop: "the session installs it, then
+      // registers again reporting the version it now runs" -> "the server
+      // records the session as hooked". Proved against the stored row, not
+      // just the reply, since the row is what every later read (claim
+      // refusal, orientation) actually consults.
+      await register("http", { sessionId: "two-step", machine: "m" });
+      let row = await prisma.session.findUniqueOrThrow({ where: { id: "two-step" } });
+      expect(row.hookVersion).toBeNull();
+
+      await register("http", {
+        sessionId: "two-step",
+        machine: "m",
+        hookVersion: HOOK_PROTOCOL.http.current,
+      });
+      row = await prisma.session.findUniqueOrThrow({ where: { id: "two-step" } });
+      expect(row.hookVersion).toBe(HOOK_PROTOCOL.http.current);
+
+      const reply = await register("http", {
+        sessionId: "two-step",
+        machine: "m",
+        hookVersion: HOOK_PROTOCOL.http.current,
+      });
+      expect(reply.fetch).toBeUndefined();
+    });
+  });
 });

@@ -221,4 +221,24 @@ describeIfDb("POST /api/sessions/{id}/register", () => {
       expect(payload.registration.version.verdict).toBe("unregistered");
     });
   });
+
+  describe("the bootstrap loop reaches a real HTTP caller — MILESTONES.md #125(b)", () => {
+    it("carries fetch instructions when no version was reported", async () => {
+      const response = await post("http-no-hook", { machine: "m" });
+      const payload = (await response.json()) as {
+        registration: { fetch?: { scriptUrl: string; install: string } };
+      };
+      expect(payload.registration.fetch).toBeDefined();
+      expect(payload.registration.fetch?.scriptUrl).toBe("/api/hook/script?variant=http");
+    });
+
+    it("omits fetch instructions once a version is reported", async () => {
+      const response = await post("http-has-hook", {
+        machine: "m",
+        hookVersion: HOOK_PROTOCOL.http.current,
+      });
+      const payload = (await response.json()) as { registration: { fetch?: unknown } };
+      expect(payload.registration.fetch).toBeUndefined();
+    });
+  });
 });

@@ -121,6 +121,47 @@ export interface RegisterSessionOutput {
    * anyway, not a precondition for it (see `ensureNameForSession`).
    */
   readonly crewName: string | null;
+  /**
+   * Where to get the hook, present only when this registration reported no
+   * version at all — MILESTONES.md #125(b).
+   *
+   * "No version" is read the same way `assessVersion`'s `unregistered`
+   * verdict reads it (`@/lib/sessions.ts`): a session that has never run the
+   * hook has made no claim about what it can enforce, and *that* is the
+   * session with nowhere to go without this field — one that already
+   * reported a version has a hook installed and needs no fetch instructions
+   * repeated at it on every re-registration. `version.verdict` is not what
+   * this checks, because `advisory` and `incompatible` both describe a
+   * session that reported a version below `current` — and both still
+   * describe a session that already has *something* installed;
+   * `hookVersion === null` is the literal fact this field exists to answer.
+   *
+   * Absent, not `null`, when it does not apply: a client checking
+   * `"fetch" in registration` gets a clean answer either way, and omitting
+   * the key is one field simpler to document than a key that is sometimes
+   * an object and sometimes `null`.
+   */
+  readonly fetch?: {
+    /**
+     * Where to `GET` the built script for this session's `hookVariant` —
+     * `src/app/api/hook/script/route.ts`. A path, not a full URL: the
+     * service layer holds no notion of its own external address (§22 — "the
+     * service never knows an HTTP status exists", and by the same boundary
+     * it never knows its own host), and a caller reaching this handshake at
+     * all already has the base URL it registered against, so joining the
+     * two costs it nothing an absolute URL would have saved.
+     */
+    readonly scriptUrl: string;
+    /**
+     * Deliberately vague, matching the hook's own posture as a thin client
+     * (DECISIONS.md): the server cannot know where a given machine keeps
+     * its other hooks, so it says what the file is and what it must be
+     * wired to, not a path to write it to. A wrong concrete path would be
+     * worse than an honest "figure out where yours go" — it would look
+     * authoritative and be wrong on most machines.
+     */
+    readonly install: string;
+  };
 }
 
 /** The installed name of each hook variant, as row #48's installer writes it into a tool's config. */
@@ -128,6 +169,24 @@ const HOOK_NAMES: Readonly<Record<string, string>> = Object.freeze({
   cli: "standup-hook (command-line variant)",
   http: "standup-hook (http variant)",
 });
+
+/**
+ * Builds the fetch instructions for a session that reported no hook version.
+ *
+ * This is the route out MILESTONES.md #125(b) exists to add: without it, a
+ * session told "you should be running the `http` hook" and nothing else has
+ * no way to obtain one unless it already happens to hold a source checkout
+ * of this repository — the dead end the row's description names directly.
+ */
+function fetchInstructionsFor(variant: string): RegisterSessionOutput["fetch"] {
+  return {
+    scriptUrl: `/api/hook/script?variant=${encodeURIComponent(variant)}`,
+    install:
+      "Download this to wherever your other hooks live, then wire it to PreToolUse and " +
+      "PostToolUse. The server cannot know your tool's layout, so this is deliberately not a " +
+      "path — it names the file and what it must be wired to, not where to put it.",
+  };
+}
 
 export const registerSession = defineOperation({
   name: "register_session",
@@ -219,6 +278,7 @@ export const registerSession = defineOperation({
       version,
       mayClaim,
       crewName: crewNameRow?.name ?? null,
+      ...(hookVersion === null ? { fetch: fetchInstructionsFor(variant) } : {}),
     };
   },
 });

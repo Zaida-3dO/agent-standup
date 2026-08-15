@@ -38,6 +38,14 @@ COPY . .
 # the deploy environment, not from this stage.
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
 RUN npx prisma generate && npm run build
+# `GET /api/hook/script` (src/app/api/hook/script/route.ts, MILESTONES.md
+# #125(b)) reads this at runtime under `dist/hook-scripts/` — the
+# self-contained, servable build `scripts/build-hook-scripts.mjs` produces,
+# distinct from `dist/bin/` (the split, published-package build `npm run
+# build:cli` also makes, and which this image never needs). `esbuild` is a
+# devDependency, so this has to run in a stage that still has `deps`'
+# `node_modules`, not the production-only `prod-deps` one below.
+RUN node scripts/build-hook-scripts.mjs
 
 FROM node:24-alpine AS runner
 WORKDIR /app
@@ -59,6 +67,7 @@ COPY --from=build --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=build --chown=nextjs:nodejs /app/scripts ./scripts
+COPY --from=build --chown=nextjs:nodejs /app/dist/hook-scripts ./dist/hook-scripts
 
 USER nextjs
 EXPOSE 3000
