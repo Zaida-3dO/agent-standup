@@ -212,7 +212,12 @@ describeIfDb("POST /api/sessions/{id}/register", () => {
       const payload = (await response.json()) as {
         registration: { mayClaim: boolean; version: { verdict: string } };
       };
-      expect(payload.registration.mayClaim).toBe(false);
+      // The version verdict is "unregistered" — that fact is still reported
+      // in full. But `mayClaim` answers a different question: under the
+      // shipped default (`hook.require_registration_to_claim` off, unset by
+      // this test), a claim from this session would in fact succeed, so the
+      // handshake must say so rather than echo the version verdict alone.
+      expect(payload.registration.mayClaim).toBe(true);
       expect(payload.registration.version.verdict).toBe("unregistered");
     });
   });

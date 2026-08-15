@@ -1177,7 +1177,7 @@ Same service, different consumers.
 | `POST /poll` | Launcher. Sends machine, live sessions, usage snapshot, pending source hashes. Returns zero or more dispatches, each with a server-composed prompt. |
 | `POST /hook` | The dumb pipe. Sends event type, session, tool, command. Returns allow/deny for guarded patterns, or nudge text, or nothing. |
 | `POST /tool-calls` | Telemetry ingest (§10). One flush: `{sessionId, calls[]}` — the session on the envelope, because a flush is one session's work and it makes the assignment lookup once per request rather than once per record. Caps the big fields (truncating, marked) and refuses malformed measurements. Answers `201` with what the batch was attributed to, including `null` for a ghost session. Beside `/hook` rather than under `/items` because a ghost session has no item to nest under. |
-| `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim. |
+| `POST /sessions/{id}/register` | Handshake. Reports the hook variant and its protocol version; the **transport the registration arrived over is stamped by the adapter** and decides which hook variant the reply describes (§21). The reply says what to update, and whether the session may claim — which reflects `hook.require_registration_to_claim` (§21), not the version verdict alone. |
 | `POST /kill-guard` | *"Would this command end a process my crew does not own?"* Takes the command and the asking session; answers `allow` / `deny` with the reason naming what would have been hit. The **judgement is here and only here** — the hook parses the command locally (it is the one part that cannot run anywhere else) and sends everything it cannot rule out. A command the local parser cannot decompose is sent rather than assumed harmless, and an unreachable server denies. |
 
 The other three process operations — `register_process`, `end_process` and `list_processes` — are
@@ -1315,20 +1315,32 @@ accepts (§17.6).
 |---|---|
 | At or above `current` | Nothing to say. |
 | Below `current`, at or above `min_supported` | **Advisory** — a nudge on the handshake and on the next hook call. A fix must not disable every session the moment it deploys; anything that genuinely must be enforced is expressed by raising `min_supported`, which is a deliberate act in a release. |
-| Below `min_supported` | **The session may not claim.** |
-| Never registered | **The session may not claim**, and is nudged to register on its first write-shaped action. |
+| Below `min_supported` | **The session may not claim** — but only where `hook.require_registration_to_claim` is on. |
+| Never registered | **The session may not claim** where that setting is on, and is nudged to register on its first write-shaped action either way. |
 
-**Refusing the claim rather than everything is the honest maximum.** A hook can always be not
-installed, so its presence cannot be enforced on a machine the server does not control. What *can* be
-enforced, in the service layer and therefore through every adapter, is that **no unguarded session
-holds work**: such a session may still read, orient and update itself, but may not take ownership of
-an item under rules it cannot enforce.
+**Where the refusal applies, refusing the claim rather than everything is the honest maximum.** A
+hook can always be not installed, so its presence cannot be enforced on a machine the server does not
+control. What *can* be enforced, in the service layer and therefore through every adapter, is that
+**no unguarded session holds work**: such a session may still read, orient and update itself, but may
+not take ownership of an item under rules it cannot enforce.
 
-**`hook.require_registration_to_claim` turns that refusal off**, and defaults to on. It is the
-escape hatch for an installation whose clients cannot yet register — degraded rather than stopped —
-and it is `sensitive` because off means work is held under rules the holder cannot enforce. It
-defaults to *on* deliberately: a rule that ships off is a rule nobody has run, and the first time
-anyone would learn whether the refusals work is the day someone turns it on.
+**`hook.require_registration_to_claim` turns that refusal on**, and defaults to off. It is
+`sensitive` in the tightening direction: on means a session that cannot register cannot hold work,
+which is the right posture for an installation that has finished rolling the hook out and wants to
+keep it that way.
+
+**It defaults to off because the version is information, not permission.** What a reported version
+tells the server is which signals to expect from that session: one running the hook reports its tool
+calls, so silence from it means something; one running no hook reports nothing, so silence from it
+means nothing at all. Both facts are useful, and neither is a reason to refuse the session work.
+
+Enforcing it by default also made ownership unreachable for an honest caller, which is the sharper
+argument. Claiming required a registered version; registering one truthfully required running the
+hook; and a session with no hook had no way to obtain one. The only route through was to assert a
+version it had not run — precisely the false claim the check exists to catch. **A gate whose only
+exit is a lie protects nothing**, and the cost of shipping it off is met instead by asserting both
+positions of the gate in the test suite, so the refusals are exercised on every run rather than first
+exercised the day an installation turns them on.
 
 **How a `cli-http` registration is told apart from a plain `http` one.** Four of the five transports
 are self-evident to the adapter that receives them, because of where that adapter runs. The fifth is

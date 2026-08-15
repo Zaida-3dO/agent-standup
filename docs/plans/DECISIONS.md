@@ -933,12 +933,19 @@ the database's migration state. **This collapse does not generalise:** a hosted 
 hook shells out to the command line has a package and an image versioned independently, and still
 needs the comparison.
 
-**A stale hook is advisory; an incompatible or absent one may not claim.** Refusing everything on a
-version bump would make every fix a breaking change, and the minimum-supported version is the escape
-valve for anything that genuinely must be enforced. Refusing the *claim* is the honest maximum: a
-hook can always be not installed, so what is enforceable server-side is that **no unguarded session
-holds work.** Such a session can still read, orient and update itself; it cannot take ownership of an
-item under rules it is unable to enforce. That is a rule that is enforced rather than one that asks.
+**A stale hook is advisory; an incompatible or absent one may not claim — where
+`hook.require_registration_to_claim` is on.** Refusing everything on a version bump would make every
+fix a breaking change, and the minimum-supported version is the escape valve for anything that
+genuinely must be enforced. Refusing the *claim* is the honest maximum: a hook can always be not
+installed, so what is enforceable server-side is that **no unguarded session holds work.** Such a
+session can still read, orient and update itself; it cannot take ownership of an item under rules it
+is unable to enforce. That is a rule that is enforced rather than one that asks — but only once an
+installation has opted into it. The setting defaults to off, because enforcing it unconditionally left
+an honest caller with no route to compliance: claiming required a registered version, registering one
+truthfully required running the hook, and a session with no hook had no way to obtain one — so the
+only way through the gate was to assert a version it never ran, which is the exact false claim this
+check exists to catch. Off, the rule doesn't fire and nothing is lost that wasn't already lost; on, it
+is the enforced rule described above, for an installation that has finished rolling the hook out.
 
 **Wait-for-crew is one command whose implementation follows the binding, never the caller** — a caller
 that must know its own transport is exactly what goes stale when an installation changes shape. Over

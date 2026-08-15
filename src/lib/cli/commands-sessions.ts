@@ -7,9 +7,11 @@
 //
 // **The noun is `session`**, which `commands-ownership.ts` already
 // established for every verb whose operation requires a `sessionId`.
-// `register` is one of those, and it is the verb that must run *before* the
-// rest of them — `session claim` refuses a session this command has not been
-// run for.
+// `register` is one of those. By default `session claim` does not require it
+// to have run first — `hook.require_registration_to_claim` is off — but
+// turning that setting on makes it the verb that must run before the rest of
+// them, because `session claim` then refuses a session this command has not
+// been run for.
 //
 // ── What this command deliberately does not send ───────────────────────
 //
@@ -102,7 +104,7 @@ export const SESSION_COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "register",
     operation: "register_session",
     summary:
-      "Registers this session and reports which hook to install, and whether its protocol version lets it claim.",
+      "Registers this session and reports which hook to install, and whether it may claim (`hook.require_registration_to_claim`, off by default, is what decides this — the protocol version alone does not).",
     buildInput: buildRegisterInput,
   },
 ]);

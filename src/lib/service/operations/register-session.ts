@@ -94,7 +94,24 @@ export interface RegisterSessionOutput {
   /** What this build speaks and the oldest it accepts, for this session's variant. */
   readonly protocol: { readonly current: number; readonly minSupported: number };
   readonly version: VersionAssessment;
-  /** Whether this session may take ownership of an item. */
+  /**
+   * Whether this session may take ownership of an item — resolved against
+   * `hook.require_registration_to_claim`, not just the version verdict.
+   *
+   * `assessVersion` only ever compares versions; it has no idea the setting
+   * exists, because it is the pure half of §21 and the setting is a policy
+   * choice, not a fact about a protocol number. `assertSessionMayClaim`
+   * (`session-registration.ts`) is what a real claim actually consults, and
+   * with the setting off (the shipped default) it returns `undefined`
+   * immediately — every session may claim regardless of what it reported
+   * here, including one that reported nothing at all. Echoing
+   * `version.mayClaim` unconditionally would tell a session it may not claim
+   * in exactly that case, when a claim would in fact succeed: the handshake
+   * would be recommending the one dishonest way through the gate this
+   * setting exists to close. So this field mirrors the setting first and the
+   * version verdict only when the setting is on — the same two-step
+   * `assertSessionMayClaim` performs.
+   */
   readonly mayClaim: boolean;
   /**
    * The crew name this session is now known by, assigned server-side as
@@ -116,7 +133,7 @@ export const registerSession = defineOperation({
   name: "register_session",
   kind: "write",
   summary:
-    "Registers a session and reports which hook variant it should run, and whether its protocol version lets it claim.",
+    "Registers a session and reports which hook variant it should run, and whether it may claim (governed by `hook.require_registration_to_claim`, off by default — not the protocol version alone).",
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RegisterSessionInput): Promise<RegisterSessionOutput> {
     const stamped = ctx.caller.transport;
@@ -179,6 +196,14 @@ export const registerSession = defineOperation({
     // function's own comment for why a second draw would orphan the first.
     const crewNameRow = await ensureNameForSession(ctx.db, input.sessionId);
 
+    // Mirrors `assertSessionMayClaim` (`../session-registration.ts`): off,
+    // the setting is the whole answer — a claim will succeed regardless of
+    // what this session reported, so the handshake must say so rather than
+    // repeat the version verdict on its own. On, the version verdict is the
+    // answer, exactly as the claim path applies it.
+    const requireRegistration = ctx.settings.values["hook.require_registration_to_claim"] === true;
+    const mayClaim = requireRegistration ? version.mayClaim : true;
+
     return {
       sessionId: input.sessionId,
       machine: input.machine,
@@ -192,7 +217,7 @@ export const registerSession = defineOperation({
         minSupported: HOOK_PROTOCOL[variant].minSupported,
       },
       version,
-      mayClaim: version.mayClaim,
+      mayClaim,
       crewName: crewNameRow?.name ?? null,
     };
   },

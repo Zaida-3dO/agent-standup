@@ -1,4 +1,6 @@
-// The claim-side half of §21: **no unguarded session holds work.**
+// The claim-side half of §21: **no unguarded session holds work — where
+// `hook.require_registration_to_claim` is on.** (Off, the shipped default,
+// is covered further down.)
 //
 // ── Why this refuses the claim rather than everything ───────────────────
 //
@@ -60,17 +62,42 @@ interface SessionRow {
  * session the moment it deploys. The nudge goes back on the handshake and on
  * the next hook call; the claim proceeds.
  *
- * ── The setting, and why it defaults to enforcing ──────────────────────
+ * ── The setting, and why it defaults to OFF ────────────────────────────
  *
- * `hook.require_registration_to_claim` turns this off. It defaults to
- * **on**, because a rule that ships off is a rule nobody has run: the
- * refusals below would never have fired against a real installation, and the
- * first time anyone found out whether they worked would be the day someone
- * turned it on. It exists because an installation whose sessions cannot yet
- * register should be *degraded* rather than stopped — the escape hatch is for
- * the deployment that discovers its clients are older than its server, and
- * it is marked `sensitive` because turning it off lets work be held under
- * rules the holder cannot enforce, which is the one thing this rule prevents.
+ * `hook.require_registration_to_claim` turns this on, and it defaults to
+ * **off**.
+ *
+ * The version is *information*, not permission. What it tells the server is
+ * which signals to expect: a session running the hook reports its tool
+ * calls, so silence from it means something; a session running no hook
+ * reports nothing, so silence from it means nothing at all. Both facts are
+ * useful and neither is a reason to refuse the session work.
+ *
+ * Defaulting to enforcement made ownership unreachable for an honest
+ * caller. Claiming required a version, registering a version truthfully
+ * required running the hook, and a session with no hook had no way to
+ * obtain one — so the only route through was to assert a version it did not
+ * run, which is precisely the false claim this check exists to catch. A gate
+ * whose only exit is a lie is not protecting anything.
+ *
+ * Off, the rest of the product is unchanged for such a session: it mints,
+ * transitions, records artifacts, requests reviews, checkpoints and claims.
+ * The single thing it loses is enforcement, because there is nothing there
+ * to enforce with.
+ *
+ * **Nothing compensates for that loss, and saying so plainly is the honest
+ * statement.** The obvious compensation — surfacing the session as unhooked
+ * wherever its work is read, so a reader can tell "no rule fired" apart from
+ * "no rule could fire" — is an intended follow-up and **is not built**.
+ * Nothing writes that state and nothing reads it. The `Session` row carries
+ * the raw material (`hookVersion` is null for a session that named none), so
+ * it is a display and propagation problem rather than a schema one; until
+ * something does it, the accurate claim is that the difference is invisible
+ * downstream.
+ *
+ * On, ownership is restricted to sessions whose rules this build can expect
+ * — the right posture for an installation that has finished rolling the hook
+ * out and wants to keep it that way.
  */
 export async function assertSessionMayClaim(ctx: ServiceContext, sessionId: string): Promise<void> {
   if (ctx.settings.values["hook.require_registration_to_claim"] !== true) return;
