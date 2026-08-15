@@ -39,7 +39,7 @@ starting the next four things.
 - The real constraints are **the dependency graph** and **the budget**, in that order. When the graph
   opens, fill it.
 
-Note the limits of worktree isolation: it separates *files*, not *lines*. A file every branch must
+Note the limits of worktree isolation: it separates _files_, not _lines_. A file every branch must
 append to — a central registry, a barrel export, a manifest — serialises the fan-out anyway, because
 each merge forces every other branch to re-resolve the same region. Prefer self-registration over a
 central list that every change edits.
@@ -57,7 +57,7 @@ to a worker. Hands off the code.
 Run `git status` in the primary checkout on every pass. An unexpected untracked source file there is
 a worker writing outside its worktree — probe it immediately.
 
-*Why this is a rule and not a nicety:* a builder once wrote several hundred lines of its assigned
+_Why this is a rule and not a nicety:_ a builder once wrote several hundred lines of its assigned
 work into the shared checkout instead of its worktree. With a dozen workers in the repository that
 file was one broad `git add` away from being committed under another worker's name, and it was
 invisible in its own branch's diff because it was never on that branch. It was found by accident.
