@@ -251,4 +251,45 @@ describeIfDb("importItems — against a real Postgres", () => {
     });
     expect(rows).toHaveLength(1);
   });
+
+  // The MEDIUM-1 regression: `importItems` writes `Item.area` directly (it
+  // must — the column is NOT NULL and no `ItemArea` row can reference an
+  // item that doesn't exist yet), and used to stop there. An item with
+  // `Item.area` set but zero `ItemArea` rows reads back with the right
+  // `area` on the item record itself (the `COALESCE`/`?? [row.area]`
+  // fallbacks paper over exactly that gap) while being genuinely invisible
+  // to `areaFilterCondition`, which deliberately reads ONLY `ItemArea`. So
+  // asserting `row.area` alone — as the tests above already do — would NOT
+  // have caught this; the assertion has to go through the filter.
+  it("writes an ItemArea row for an imported task, so it is findable by area filter — not just readable on the row", async () => {
+    const task: SourceTask = { ...baseTask, id: "area-join-1", area: "imported-area" };
+
+    await importItems(prisma, [task], { repoAliases: { "web-app": "web" } });
+
+    const item = await prisma.item.findFirstOrThrow({
+      where: { customFields: { path: ["legacy_id"], equals: "area-join-1" } },
+    });
+
+    // Fails if the `$executeRawUnsafe` INSERT into "ItemArea" is removed
+    // from `importItems`: the row would exist with no linked area at all.
+    const linked = await prisma.$queryRawUnsafe<{ areaId: string }[]>(
+      `SELECT "areaId" FROM "ItemArea" WHERE "itemId" = $1`,
+      item.id,
+    );
+    expect(linked.map((row) => row.areaId)).toEqual(["imported-area"]);
+
+    // The load-bearing assertion. `areaFilterCondition` (area-filter.ts)
+    // reads only "ItemArea", so this is the check that actually exercises
+    // the drift the one-writer invariant exists to prevent — a row missing
+    // from "ItemArea" fails HERE even though `item.area` above is correct.
+    const matches = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT "i"."id" FROM "Item" "i"
+       WHERE EXISTS (
+         SELECT 1 FROM "ItemArea" "ia"
+         WHERE "ia"."itemId" = "i"."id" AND "ia"."areaId" = $1
+       )`,
+      "imported-area",
+    );
+    expect(matches.map((row) => row.id)).toContain(item.id);
+  });
 });

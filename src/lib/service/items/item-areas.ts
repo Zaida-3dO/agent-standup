@@ -55,11 +55,23 @@ export async function resolveAreasRaw(
 /**
  * Writes an item's area set as exactly `areaIds` (already resolved).
  *
- * The **one** writer of both `ItemArea` and `Item.area`, which is what keeps
- * the denormalisation honest: the primary area is `areaIds[0]` by
- * definition, and it is set in the same statement sequence, inside the
- * caller's single transaction. Nothing else in the service layer writes
- * either, so the two representations have no way to drift apart.
+ * The **one function** both representations are written through: the primary
+ * area is `areaIds[0]` by definition, and it is set in the same statement
+ * sequence, inside the caller's single transaction. Every caller reaches
+ * `Item.area` and `ItemArea` through this one place, so the two
+ * representations have no way to drift apart *from each other* — but this
+ * function is not the only place `Item.area` itself gets written. Two
+ * callers set that column directly, in a raw `INSERT`, before a row (and
+ * therefore an id `setItemAreas` could target) exists yet:
+ * `resolveInboxProject` (`./inbox-project.ts`) calls `setItemAreas` itself,
+ * immediately afterward, in the same transaction; the item importer
+ * (`@/lib/import-items.ts`) cannot import this module (it is a narrow
+ * Prisma-client-shaped importer that also runs as a standalone script, with
+ * no `ServiceContext` to hand this function) and instead runs the equivalent
+ * single-row `INSERT INTO "ItemArea"` inline, same transaction, same effect.
+ * So the invariant that holds is narrower than "nothing else writes
+ * `Item.area`": it is "every write to `Item.area` is followed, same
+ * transaction, by a write that makes `ItemArea` agree with it."
  *
  * Delete-then-insert rather than a diff: an area set is a handful of rows
  * that arrives whole, and computing the difference would be more code for

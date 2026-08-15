@@ -278,7 +278,10 @@ export interface ImportItemsResult {
  * snapshot for it.
  */
 export async function importItems(
-  client: Pick<PrismaClient, "item" | "area" | "$executeRaw" | "$queryRaw">,
+  client: Pick<
+    PrismaClient,
+    "item" | "area" | "$executeRaw" | "$queryRaw" | "$executeRawUnsafe" | "$queryRawUnsafe"
+  >,
   tasks: SourceTask[],
   options: ImportItemsOptions,
 ): Promise<ImportItemsResult> {
@@ -307,10 +310,11 @@ export async function importItems(
     }
 
     const area = await ensureArea(client, task.area);
+    const id = crypto.randomUUID();
 
     await client.item.create({
       data: {
-        id: crypto.randomUUID(),
+        id,
         kind: "task",
         title: task.title,
         body: task.body,
@@ -335,6 +339,28 @@ export async function importItems(
         customFields: { ...(task.customFields ?? {}), legacy_id: task.id },
       },
     });
+
+    // The insert above writes `Item.area` directly — it has to, the column
+    // is NOT NULL and no `ItemArea` row can reference an item id that
+    // doesn't exist yet. This is the second write `setItemAreas`
+    // (`./service/items/item-areas.ts`) warns about: without it, every
+    // imported item gets zero `ItemArea` rows and is invisible to
+    // `areaFilterCondition`, which deliberately reads only that table. Raw
+    // SQL rather than importing `setItemAreas` itself: this module is a
+    // narrow Prisma-client-shaped importer that also runs as a standalone
+    // script (see the module header), and `setItemAreas` takes a full
+    // `ServiceContext` it has no way to construct one of here — the
+    // statement below is exactly what that function's own body runs for a
+    // fresh item's single area, kept in the same transaction the caller
+    // already opened (`transactionBackedClient`, when run through the
+    // service operation) or the client's own connection (when run as a
+    // script).
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ItemArea" ("itemId", "areaId") VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      id,
+      area.id,
+    );
+
     imported++;
   }
 

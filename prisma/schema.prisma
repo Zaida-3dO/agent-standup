@@ -187,9 +187,13 @@ model Area {
 // `Item.area` is retained alongside this as the item's PRIMARY area, and is
 // the one denormalisation here: it keeps "every item has at least one area"
 // enforceable as a NOT NULL column, and it keeps every existing single-area
-// index and filter working. Both are written by one function inside one
-// transaction (`service/items/item-areas.ts`), which is what stops them
-// drifting — there is no second writer.
+// index and filter working. `setItemAreas` (`service/items/item-areas.ts`)
+// is the one function that writes `ItemArea`, and every direct write to
+// `Item.area` is followed, inside the same transaction, by a call to it —
+// which is what stops the two drifting apart from each other. That still
+// leaves more than one place that writes `Item.area` itself (an insert has
+// to fill the NOT NULL column before a row exists to call `setItemAreas`
+// against); see the comment on `setItemAreas` for the exact list.
 model ItemArea {
   itemId String
   item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)

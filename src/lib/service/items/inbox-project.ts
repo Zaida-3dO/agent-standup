@@ -23,6 +23,7 @@
 import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "./ensure-area-raw";
 import { callerEventActor } from "./event-attribution";
+import { setItemAreas } from "./item-areas";
 import { appendEvent } from "@/lib/events";
 import { InternalError } from "../errors";
 
@@ -105,6 +106,16 @@ export async function resolveInboxProject(
       "The operation failed unexpectedly.",
     );
   }
+
+  // The insert above writes `Item.area` directly (it needs the column filled
+  // before the row exists), so this is the second write `setItemAreas`
+  // warns against — except it is the SAME function, called immediately
+  // after, inside this call's one transaction. The project ends up with
+  // exactly one `ItemArea` row (its primary), which is what makes it
+  // visible to `areaFilterCondition` — that filter reads ONLY `ItemArea`,
+  // so an inbox project with none is invisible to every area filter even
+  // though its own `area` column names one correctly.
+  await setItemAreas(ctx, row.id, [area]);
 
   // The inbox is an item like any other, so its creation is a ledger row
   // like any other (SCHEMA.md §3) — otherwise a project would exist that

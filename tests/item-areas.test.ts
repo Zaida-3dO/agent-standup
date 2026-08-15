@@ -316,6 +316,93 @@ describeIfDb("item areas", () => {
     });
   });
 
+  describe("the auto-created inbox project carries its area", () => {
+    // The MEDIUM-1 regression, reproduced end to end through the public
+    // service API exactly as the review found it: `resolveInboxProject`
+    // writes `Item.area` in a raw INSERT and, before the fix, never called
+    // `setItemAreas` — so the inbox project it minted had `Item.area` set
+    // correctly but ZERO `ItemArea` rows, making it invisible to
+    // `areaFilterCondition`, which deliberately reads only that table.
+    //
+    // Asserting `item.areas` on the read alone would NOT have caught this —
+    // the `COALESCE`/`?? [row.area]` fallbacks make that read correct even
+    // when the join table is empty, which is exactly why this survived.
+    // The assertion has to go through `list_items`'s actual filter.
+    it("is findable by area filter after create_task(projectId: 'inbox', area: ...)", async () => {
+      const task = await call("create_task", {
+        ...base("Filed to the inbox"),
+        projectId: "inbox",
+        area: "inbox-filter-area",
+      });
+
+      const inboxProjectId = await (async () => {
+        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
+          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
+          task.id,
+        );
+        return rows[0]!.parentId!;
+      })();
+
+      // Fails if `resolveInboxProject` stops calling `setItemAreas` after
+      // its insert: the inbox project would have `Item.area` set but no
+      // `ItemArea` row at all.
+      expect(await linkedAreas(inboxProjectId)).toEqual(["inbox-filter-area"]);
+
+      // The load-bearing assertion, matching the exact reproduction in the
+      // review: filtering to the area the task named must surface the
+      // INBOX PROJECT itself, not just the task inside it.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const listed = (await (runtime.call as any)("list_items", {
+        area: "inbox-filter-area",
+      })) as { items: { id: string }[] };
+      expect(listed.items.map((i) => i.id)).toContain(inboxProjectId);
+    });
+
+    it("finding the existing inbox project on a second call does not touch its area link", async () => {
+      // The inbox is a process-wide singleton found by title (see
+      // `resolveInboxProject`'s own header on the find-or-create race), so
+      // by the time this test runs another test in this suite has already
+      // minted it. That is exactly the case this test wants: call
+      // `create_task(projectId: "inbox")` again, with a DIFFERENT area, and
+      // confirm the inbox project's own area link is untouched — the write
+      // only happens on the branch that actually inserts the project row.
+      const first = await call("create_task", {
+        ...base("Primes the inbox project for this test"),
+        projectId: "inbox",
+        area: "inbox-reuse-priming-area",
+      });
+      const primedParentId = await (async () => {
+        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
+          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
+          first.id,
+        );
+        return rows[0]!.parentId!;
+      })();
+      const before = await linkedAreas(primedParentId);
+
+      const second = await call("create_task", {
+        ...base("Reuses the inbox project with a different area"),
+        projectId: "inbox",
+        area: "inbox-reuse-should-not-appear",
+      });
+      const secondParentId = await (async () => {
+        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
+          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
+          second.id,
+        );
+        return rows[0]!.parentId!;
+      })();
+
+      expect(secondParentId).toBe(primedParentId);
+      // Fails if `resolveInboxProject` called `setItemAreas` unconditionally
+      // instead of only on the branch that inserts a new row: the second
+      // task's area would leak into the (already-existing) inbox project's
+      // link, changing `before` into something containing
+      // "inbox-reuse-should-not-appear".
+      expect(await linkedAreas(primedParentId)).toEqual(before);
+    });
+  });
+
   describe("filtering matches any of an item's areas", () => {
     it("finds an item by its non-primary area in list_items and get_board", async () => {
       const item = await call("create_project", {
