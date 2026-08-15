@@ -61,6 +61,23 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
       "is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "get_crew_name",
+    reason:
+      "Naming is assigned server-side as a side effect of register_session and claim " +
+      "(ensureNameForSession, @/lib/agent-names) — an agent never needs to call this " +
+      "separately, so it has no business sitting in a tool list with a required sessionId " +
+      "field the other agent-facing tools' schemas do not explain. It carries no guard " +
+      "rejection (handOutName's only failure mode is an exhausted pool, mapped to a plain " +
+      "conflict), so §22's bound on waivers is satisfied. Reach it over HTTP or the command " +
+      "line for the rare caller that wants a name with no other side effect.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_crew_name",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */
