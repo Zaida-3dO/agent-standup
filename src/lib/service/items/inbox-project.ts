@@ -1,0 +1,103 @@
+// Find-or-create for the inbox project — SCHEMA.md §17.2
+// (`items.inbox_project`).
+//
+// The inbox is addressed by *title*, resolved to an id here. A setting that
+// held an id could not ship a working default, because no id exists in a
+// database nobody has written to yet; a title can, so quick capture works on
+// a fresh install with no configuration at all.
+//
+// Find-or-create rather than create: the second task filed to the inbox must
+// land in the same project as the first, or the "inbox" is a pile of
+// single-task projects. The lookup is `title = $1 AND parentId IS NULL`,
+// which is the definition of a root project with that name.
+//
+// **The race, and why it is left where it is.** Two concurrent inbox creates
+// can both find nothing and both insert, producing two projects with the
+// same title. There is no unique index on `Item.title` and adding one would
+// be wrong — projects are allowed to share a title in general. The outcome
+// of losing this race is a duplicate inbox project, which is untidy and
+// self-correcting (the next call finds one of them and uses it consistently
+// thereafter, since the lookup is ordered), not a lost or misfiled task. A
+// constraint that made it impossible would cost every other project the
+// right to a non-unique name, which is a worse trade than the duplicate.
+import type { ServiceContext } from "../context";
+import { ensureAreaRaw } from "./ensure-area-raw";
+import { callerEventActor } from "./event-attribution";
+import { appendEvent } from "@/lib/events";
+import { InternalError } from "../errors";
+
+/**
+ * The id of the inbox project, creating it if this is the first task to ask.
+ *
+ * `origin` is taken from the task being filed so the minted project is
+ * attributed the same way the task is — a project that appeared because a
+ * source sweep captured something is a `source` project, not an `auto` one,
+ * and `origin_person` is required whenever `origin_type` is `person`
+ * (SCHEMA.md §1) so it cannot simply be dropped.
+ */
+export async function resolveInboxProject(
+  ctx: ServiceContext,
+  origin: {
+    readonly area: string;
+    readonly originType: "person" | "source" | "auto";
+    readonly originPersonId?: string;
+  },
+): Promise<string> {
+  const title = ctx.settings.values["items.inbox_project"];
+
+  const existing = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
+    `SELECT "id" FROM "Item"
+     WHERE "parentId" IS NULL AND "title" = $1
+     ORDER BY "createdAt" ASC, "id" ASC
+     LIMIT 1`,
+    title,
+  );
+  const found = existing[0];
+  if (found) return found.id;
+
+  // The inbox inherits the filed task's area rather than inventing one. An
+  // area is required on every item (SCHEMA.md §1) and there is no sensible
+  // constant to reach for — a hardcoded "inbox" area would mint a second
+  // piece of vocabulary nobody asked for and make the inbox's own filtering
+  // useless.
+  const area = await ensureAreaRaw(ctx, origin.area);
+
+  const id = crypto.randomUUID();
+  const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
+    `INSERT INTO "Item" (
+       "id", "parentId", "kind", "title", "body", "state", "priority",
+       "originType", "originPersonId", "area", "needsVisualReview",
+       "driveMode", "mergeAuthority", "updatedAt"
+     ) VALUES (
+       $1, NULL, 'project'::"ItemKind", $2, '', 'on_deck'::"ItemState", 'P2'::"Priority",
+       $3::"OriginType", $4, $5, false,
+       'autonomous'::"DriveMode", $6::"MergeAuthority", CURRENT_TIMESTAMP
+     )
+     RETURNING "id"`,
+    id,
+    title,
+    origin.originType,
+    origin.originPersonId ?? null,
+    area,
+    ctx.settings.values["items.default_merge_authority"].replace(/-/g, "_"),
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new InternalError(
+      new Error("Inbox project insert returned no row."),
+      "The operation failed unexpectedly.",
+    );
+  }
+
+  // The inbox is an item like any other, so its creation is a ledger row
+  // like any other (SCHEMA.md §3) — otherwise a project would exist that
+  // "when did this come to exist" cannot answer.
+  await appendEvent(ctx.db, {
+    itemId: row.id,
+    actor: callerEventActor(ctx.caller),
+    type: "field_change",
+    payload: { field: "state", from: null, to: "on_deck" },
+  });
+
+  return row.id;
+}

@@ -134,6 +134,24 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  "items.inbox_project": define({
+    // A title, not an id. A default that named an id could not ship with a
+    // value — no id exists in a fresh database — so it would default to
+    // empty and the escape hatch would be off until somebody configured it,
+    // which is the opposite of what quick capture needs. A title is
+    // find-or-create: the first task that asks for the inbox mints the
+    // project, and every later one lands in the same row.
+    schema: z.string().trim().min(1).max(200),
+    default: "Inbox",
+    label: "Inbox project",
+    help: 'The project a task lands in when it is created with projectId set to "inbox" instead of a real project id. Created on first use if it does not exist. Changing this points later inbox tasks at a different project; tasks already filed do not move.',
+    category: "Items",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "agents.subagent_delegation": define({
     schema: z.enum(["never", "allowed", "required"]),
     default: "allowed",

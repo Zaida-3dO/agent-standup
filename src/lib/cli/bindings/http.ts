@@ -94,6 +94,24 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     request: (input) => ({ path: "/api/items", body: input }),
     unwrap: (body) => property(body, "item"),
   },
+  // The three explicit creates. Each posts to its own collection, so which
+  // kind is being made is visible in the request rather than inferred from
+  // the body — the same property the operations exist to give a caller.
+  create_project: {
+    method: "POST",
+    request: (input) => ({ path: "/api/projects", body: input }),
+    unwrap: (body) => property(body, "item"),
+  },
+  create_task: {
+    method: "POST",
+    request: (input) => ({ path: "/api/tasks", body: input }),
+    unwrap: (body) => property(body, "item"),
+  },
+  create_subtask: {
+    method: "POST",
+    request: (input) => ({ path: "/api/subtasks", body: input }),
+    unwrap: (body) => property(body, "item"),
+  },
   get_item: {
     method: "GET",
     // `id` goes in the path; every other input — `full` (MILESTONES.md

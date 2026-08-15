@@ -31,6 +31,13 @@ import { provideCatalogue, serviceInfo, type OperationDescriptor } from "./opera
 // a refusal on any surface can point at a call the caller actually has.
 import { describeTool, provideToolIndex } from "./operations/describe-tool";
 import { createItem } from "./operations/create-item";
+// The three explicit creates. One operation per kind, so a caller states
+// which of project/task/subtask it wants rather than having it inferred from
+// whether a parent pointer happened to be supplied — `create_item` above is
+// the deprecated shim that inferred it.
+import { createProject } from "./operations/create-project";
+import { createTask } from "./operations/create-task";
+import { createSubtask } from "./operations/create-subtask";
 import { getItem } from "./operations/get-item";
 import { updateItem } from "./operations/update-item";
 import { listItems } from "./operations/list-items";
@@ -116,6 +123,9 @@ export const OPERATION_REGISTRY = {
   [serviceInfo.name]: serviceInfo,
   [describeTool.name]: describeTool,
   [createItem.name]: createItem,
+  [createProject.name]: createProject,
+  [createTask.name]: createTask,
+  [createSubtask.name]: createSubtask,
   [getItem.name]: getItem,
   [updateItem.name]: updateItem,
   [listItems.name]: listItems,
