@@ -28,6 +28,12 @@ function ctxWith(required: boolean, rows: unknown[] = []) {
   return {
     settings: { values: { [KEY]: required } },
     db: { $queryRawUnsafe: async () => rows },
+    // A refusal names the call the reader can actually make
+    // (MILESTONES.md #111), which means resolving the caller's surface off
+    // `ctx.caller.transport` even on the refusal path this file drives
+    // directly (rather than through an adapter, which would stamp this for
+    // real).
+    caller: { transport: "http" },
   } as unknown as Parameters<typeof assertSessionMayClaim>[0];
 }
 
