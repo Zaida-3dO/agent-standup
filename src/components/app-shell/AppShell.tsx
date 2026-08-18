@@ -10,9 +10,11 @@
 // draft, the pending flag and the error are UI-only and specific to the one
 // place a create form renders; putting them in the shared profile context
 // would make every consumer of `useProfile()` (not just the shell) carry
-// state that only this component ever reads. `choose` (already on the
-// context) is enough to wire a freshly created profile in as active —
-// see `onCreateSubmit` below.
+// state that only this component ever reads. `choose` and `addPerson`
+// (both already on the context) are enough to wire a freshly created
+// profile in as active and visible — see `onCreateSubmit` below, and
+// `addPerson`'s own header (`./state.ts`) for why landing it in `people`
+// is a separate step from activating it.
 import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
@@ -48,6 +50,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         setCreating(false);
         setCreateDraft("");
         setCreateOpen(false);
+        // T21 — lands the new row in `people` first, so the picker (which
+        // reads `people` to decide what to render) never sees `choose`'s
+        // activation before the profile it is activating exists in the
+        // list. See `addPerson` (`ProfileProvider.tsx`/`state.ts`) for why
+        // this appends rather than refetching.
+        profile.addPerson(created);
         // Activates the person just created — see the module header on why
         // this reuses `choose` rather than the shell tracking its own
         // "who's active" state a second time.

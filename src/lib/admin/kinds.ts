@@ -49,6 +49,19 @@ export interface AdminField {
    * override says "look nowhere", and inheriting says "use the setting".
    */
   readonly overridesSetting?: string;
+  /**
+   * This `text` field's #92 schema is `.min(1).optional()`, never
+   * `.nullable()` — the column is `NOT NULL` with no "unset" state to
+   * return to (`displayName` on every entity that has one: `update_person`,
+   * `update_account`, `update_area`, `update_repo`). An emptied box cannot
+   * mean "clear it" the way it does for a genuinely nullable field like
+   * `host` or `avatar`, because the service would refuse the resulting
+   * `null` with a raw schema-mismatch message ("Expected string, received
+   * null") that names no field and suggests no fix. `values.ts`'s
+   * `fromInput` uses this to refuse the empty box itself, with a message
+   * that does both.
+   */
+  readonly requiredOnEdit?: boolean;
 }
 
 export interface AdminKind {
@@ -314,6 +327,7 @@ const PEOPLE: AdminKind = {
       label: "Display name",
       help: "What they are called on screen.",
       kind: "text",
+      requiredOnEdit: true,
     },
     {
       name: "avatar",

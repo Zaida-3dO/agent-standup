@@ -24,6 +24,7 @@ function baseValue(overrides: Partial<ProfileContextValue> = {}): ProfileContext
     openPicker: () => {},
     closePicker: () => {},
     choose: () => {},
+    addPerson: () => {},
     ...overrides,
   };
 }

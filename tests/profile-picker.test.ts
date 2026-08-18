@@ -200,9 +200,22 @@ describe("ProfilePicker — T13's empty state is a create form, not a message", 
     expect(textOf(element)).toContain("displayName is required");
   });
 
-  it("shows no error message when createError is null", () => {
-    const element = ProfilePicker(baseProps({ people: [], createError: null }));
-    expect(textOf(element)).not.toContain("null");
+  it("shows no error message element when createError is null", () => {
+    // `people: [userA]` with `createOpen: true` (rather than an empty
+    // `people` list) so the tree has no *other* `<p>` — the empty-state
+    // "No profiles are set up yet" paragraph only renders when `people` is
+    // empty. That isolates the assertion to the create-error paragraph
+    // alone: with `createError: null` there must be zero `<p>` elements at
+    // all. Asserting on element presence rather than on whether the
+    // rendered text happens to contain the literal word "null" is the
+    // point — a check keyed on that word would pass even if the error
+    // paragraph rendered with any other content, e.g. an object
+    // stringified oddly or an empty string coerced from something
+    // falsy-but-truthy-looking.
+    const element = ProfilePicker(
+      baseProps({ people: [userA], createOpen: true, createError: null }),
+    );
+    expect(findAllByType(element, "p")).toHaveLength(0);
   });
 });
 

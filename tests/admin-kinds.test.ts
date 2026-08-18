@@ -173,6 +173,25 @@ describe("what each kind allows", () => {
     expect(names).not.toContain("id");
   });
 
+  it("marks a person's displayName requiredOnEdit — update_person's schema has no cleared state for it", () => {
+    // T21: `update_person`'s `displayName` is `.min(1).optional()`, never
+    // `.nullable()` — the column is NOT NULL with no "unset" state. This
+    // flag is what `values.ts`'s `fromInput` reads to refuse an emptied box
+    // client-side instead of sending a `null` the service would refuse
+    // with an unnamed schema-mismatch message.
+    const people = adminKindBySlug("people")!;
+    const displayName = people.fields.find((field) => field.name === "displayName")!;
+    expect(displayName.requiredOnEdit).toBe(true);
+  });
+
+  it("does NOT mark avatar or colour requiredOnEdit — both are genuinely clearable", () => {
+    const people = adminKindBySlug("people")!;
+    const avatar = people.fields.find((field) => field.name === "avatar")!;
+    const colour = people.fields.find((field) => field.name === "colour")!;
+    expect(avatar.requiredOnEdit).toBeFalsy();
+    expect(colour.requiredOnEdit).toBeFalsy();
+  });
+
   it("archives repositories, areas and people, and never offers a delete", () => {
     // §23.1: "Archive, never delete — attribution and history point at
     // these rows."

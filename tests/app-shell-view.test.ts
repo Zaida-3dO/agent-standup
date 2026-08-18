@@ -113,4 +113,34 @@ describe("AppShellView", () => {
     (topBar.props as { onSwitchProfile: () => void }).onSwitchProfile();
     expect(opened).toBe(true);
   });
+
+  // T21 — a follow-up from #175's review: `ProfileProvider`'s
+  // `fetchPeople()` runs once on mount, and (before this fix) `choose`
+  // never touched `people`, so creating the FIRST profile in a session left
+  // `people` stale at `[]` even though `activeProfile` was the profile just
+  // created. Opening the switcher in that state showed "No profiles are
+  // set up yet" over a profile that plainly exists. This is the exact
+  // shape the reviewer's own probe against the real components used to
+  // confirm the bug — reproduced here as the regression test, with `people`
+  // now containing the created row (what `addPerson` lands): flip it back
+  // to `people: []` and this fails, proving the test would have caught the
+  // original bug.
+  it("does not show the empty-picker message when the switcher is opened right after creating the first profile", () => {
+    const created: Profile = {
+      id: "user-new",
+      displayName: "Newly Created",
+      avatar: null,
+      colour: null,
+    };
+    const element = AppShellView(
+      baseProps({ people: [created], activeProfile: created, pickerOpen: true }),
+    );
+    const picker = findOneByType(element, ProfilePicker);
+    expect((picker.props as { people: readonly Profile[] }).people).toContain(created);
+    const text = [...walk(element)]
+      .map((el) => (el.props as { children?: unknown }).children)
+      .filter((c) => typeof c === "string")
+      .join(" ");
+    expect(text).not.toContain("No profiles are set up yet");
+  });
 });

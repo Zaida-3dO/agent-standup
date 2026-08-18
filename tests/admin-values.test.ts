@@ -14,12 +14,14 @@ import { fromInput, toCell, toInput } from "@/lib/admin/values";
 const repos = adminKindBySlug("repos")!;
 const machines = adminKindBySlug("machines")!;
 const accounts = adminKindBySlug("accounts")!;
+const people = adminKindBySlug("people")!;
 
 const host = repos.fields.find((f) => f.name === "host")!;
 const needsVisualReview = repos.fields.find((f) => f.name === "needsVisualReview")!;
 const planType = accounts.fields.find((f) => f.name === "planType")!;
 const sourceGlobs = machines.fields.find((f) => f.name === "sourceGlobs")!;
 const budgetWindows = accounts.fields.find((f) => f.name === "budgetWindows")!;
+const personDisplayName = people.fields.find((f) => f.name === "displayName")!;
 
 describe("rendering a stored value into its input", () => {
   it("shows null as empty rather than the word null", () => {
@@ -71,6 +73,27 @@ describe("reading an input back", () => {
 
   it("trims a text field, so a stray space does not become part of the value", () => {
     expect(fromInput("  git.example  ", host)).toEqual({ ok: true, value: "git.example" });
+  });
+
+  it("refuses an emptied requiredOnEdit text field rather than sending null", () => {
+    // `displayName`'s #92 schema (`update_person`) is `.min(1).optional()`,
+    // never `.nullable()` — there is no "cleared" state for the service to
+    // accept. Sending `null` anyway would reach the service and be refused
+    // with a raw schema-mismatch message ("Expected string, received
+    // null"); this must never happen because the client stops it first.
+    const result = fromInput("", personDisplayName);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).not.toContain("null");
+    expect(result.error.toLowerCase()).toContain("cannot be cleared");
+  });
+
+  it("refuses a requiredOnEdit field of only whitespace the same way", () => {
+    expect(fromInput("   ", personDisplayName).ok).toBe(false);
+  });
+
+  it("still accepts a non-empty value for a requiredOnEdit field, trimmed", () => {
+    expect(fromInput("  Ope  ", personDisplayName)).toEqual({ ok: true, value: "Ope" });
   });
 
   it("refuses malformed JSON rather than sending the text on as a string", () => {
