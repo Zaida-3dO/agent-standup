@@ -143,6 +143,36 @@ export interface InterventionContext {
    * branch on every repository that never recorded one.
    */
   readonly defaultBranch?: string;
+  /**
+   * Another live crew already holding this same checkout — I15.
+   *
+   * Present only when one exists, and it describes a *different* root
+   * session: a worker its own orchestrator spawned shares the checkout
+   * legitimately and must never block itself, which is why the assembler
+   * compares roots rather than sessions. Absent means either nobody else
+   * holds it or the server could not tell, and a predicate reads both the
+   * same way — no finding.
+   */
+  readonly occupyingCrew?: OccupyingCrew;
+}
+
+/**
+ * Who else is working in a checkout, as a predicate needs to see them.
+ *
+ * Enough to *name* the holder rather than merely refuse: `INTERVENTIONS.md`
+ * asks I15's message to say who holds it, which item, which branch and how
+ * long ago they were last active, because a refusal that says only "someone
+ * else is here" leaves the caller with no move except to override it.
+ */
+export interface OccupyingCrew {
+  /** The root session of the crew holding it. */
+  readonly rootSessionId: string;
+  /** The item they hold, so the caller can look it up. */
+  readonly itemId: string;
+  /** The branch they are on, when the claim recorded one. */
+  readonly branch?: string;
+  /** Seconds since that crew was last active. */
+  readonly lastActiveSecondsAgo?: number;
 }
 
 /**

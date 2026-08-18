@@ -62,9 +62,26 @@ export interface ContextNeeds {
   readonly assignment: boolean;
   /** Whether an approving review sits at the item's tip — the merge gate's own primitives. */
   readonly approval: boolean;
+  /** Whether another live crew holds this checkout — I15, one query over `Assignment`. */
+  readonly occupancy: boolean;
 }
 
-const NOTHING: ContextNeeds = { assignment: false, approval: false };
+const NOTHING: ContextNeeds = { assignment: false, approval: false, occupancy: false };
+
+/**
+ * Tools whose whole purpose is to modify a file in the checkout.
+ *
+ * The gate for I15, and deliberately narrower than "write-shaped". These
+ * three carry no command text to inspect, so the tool name is the only
+ * signal there is that a checkout is being written to — and each of them
+ * always is. `Bash` is excluded because it is overwhelmingly reads, and its
+ * genuine writes are recognised by shape further down.
+ */
+const CHECKOUT_WRITE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "NotebookEdit"]);
+
+function isCheckoutWrite(tool: string | undefined): boolean {
+  return tool !== undefined && CHECKOUT_WRITE_TOOLS.has(tool);
+}
 
 /**
  * Decides what this call could possibly need, from the command text alone.
@@ -80,19 +97,41 @@ const NOTHING: ContextNeeds = { assignment: false, approval: false };
  * (`docs/plans/INTERVENTIONS.md` I12). So it appears in no branch here, and
  * that is the design rather than an omission.
  */
-export function needs(command: string | undefined): ContextNeeds {
-  if (command === undefined || command.trim() === "") return NOTHING;
+export function needs(command: string | undefined, tool?: string): ContextNeeds {
+  // I15 turns on no command shape at all — it asks who else holds the
+  // checkout — so its gate is the *tool* rather than the command text.
+  //
+  // **The gate is a file-editing tool, deliberately not every write-shaped
+  // one.** `isWriteShaped` (`../hook/nudge.ts`) counts `Bash`, which is the
+  // right answer for the question that module asks — has this session
+  // changed anything? — and the wrong one here, because `Bash` is also
+  // every `ls`, every `git status` and every `npm test`. Gating on it would
+  // put a query on the most common call in the system to answer a question
+  // only a write can raise, which is precisely the per-call cost this whole
+  // function exists to avoid; a test asserts `ls -la` still touches no
+  // table, and it would have caught it.
+  //
+  // A `Bash` command that genuinely writes is not lost: it reaches the same
+  // predicate through the command-shape branches below, which is where a
+  // command's *meaning* is read. What this gate covers is the tools whose
+  // entire purpose is to modify a file in the checkout, where there is no
+  // command text to inspect.
+  const occupancy = isCheckoutWrite(tool);
+
+  if (command === undefined || command.trim() === "") {
+    return occupancy ? { assignment: true, approval: false, occupancy: true } : NOTHING;
+  }
 
   // A merge attempt is the only shape that needs to know whether an
   // approval sits at the tip, and it needs the assignment first in order to
   // know *which item's* tip to ask about.
-  if (isMergeAttempt(command)) return { assignment: true, approval: true };
+  if (isMergeAttempt(command)) return { assignment: true, approval: true, occupancy };
 
   // A broad `git add` needs to know whether the checkout is shared, which
   // is the claim's `worktree` — no artifact question is involved.
-  if (isBroadGitAdd(command)) return { assignment: true, approval: false };
+  if (isBroadGitAdd(command)) return { assignment: true, approval: false, occupancy };
 
-  return NOTHING;
+  return occupancy ? { assignment: true, approval: false, occupancy: true } : NOTHING;
 }
 
 /** The one row shape the claim lookup reads. */
@@ -101,6 +140,20 @@ interface AssignmentRow {
   worktree: string | null;
   state: string;
   defaultBranch: string | null;
+  /** The root of this session's own crew — compared against, never displayed. */
+  rootSessionId: string;
+  /** The repository the claimed item belongs to. Null when the item names none. */
+  repo: string | null;
+  /** The machine this session registered on. Null when it never registered. */
+  machine: string | null;
+}
+
+/** One other crew holding the same checkout — I15's query result. */
+interface OccupancyRow {
+  rootSessionId: string;
+  itemId: string;
+  branch: string | null;
+  lastActiveSecondsAgo: number | null;
 }
 
 /**
@@ -128,7 +181,7 @@ export async function assembleContext(options: {
     ...(command === undefined ? {} : { command }),
   };
 
-  const wanted = needs(command);
+  const wanted = needs(command, tool);
   if (!wanted.assignment) return base;
 
   // The session's live claim, and the item and repository behind it. One
@@ -136,13 +189,17 @@ export async function assembleContext(options: {
   // branch are both facts about the same claim, and asking for them
   // separately would let two of them describe different claims.
   const rows = await db.$queryRawUnsafe<AssignmentRow[]>(
-    `SELECT a."itemId"        AS "itemId",
-            a."worktree"      AS "worktree",
-            i."state"::text   AS "state",
-            r."defaultBranch" AS "defaultBranch"
+    `SELECT a."itemId"          AS "itemId",
+            a."worktree"        AS "worktree",
+            a."rootSessionId"   AS "rootSessionId",
+            i."state"::text     AS "state",
+            i."repo"            AS "repo",
+            r."defaultBranch"   AS "defaultBranch",
+            s."machine"         AS "machine"
        FROM "Assignment" a
        JOIN "Item" i ON i."id" = a."itemId"
        LEFT JOIN "Repo" r ON r."id" = i."repo"
+       LEFT JOIN "Session" s ON s."id" = a."sessionId"
       WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL
       ORDER BY a."claimedAt" DESC
       LIMIT 1`,
@@ -167,7 +224,16 @@ export async function assembleContext(options: {
     ...(claim.worktree === null ? {} : { isLinkedWorktree: claim.worktree.trim() !== "" }),
   };
 
-  if (!wanted.approval) return withClaim;
+  // I15 — who else holds this checkout. Keyed on `(machine, repo)` and
+  // compared on ROOT sessions, for the reasons the entry itself records:
+  // `worktree` is unnormalised free text that does not compare equal across
+  // spellings, and a worker its own orchestrator spawned shares the
+  // checkout legitimately.
+  const withOccupancy = wanted.occupancy
+    ? { ...withClaim, ...(await occupancyFor(db, claim)) }
+    : withClaim;
+
+  if (!wanted.approval) return withOccupancy;
 
   // The merge gate's own primitives, reused rather than reimplemented. If
   // this asked the question differently from the guard that enforces it at
@@ -178,12 +244,75 @@ export async function assembleContext(options: {
   const approved = await hasApprovingArtifactAtCurrentRoundAndTip(db, claim.itemId, "code_review");
 
   return {
-    ...withClaim,
+    ...withOccupancy,
     // With no commit artifact at all there is no tip for an approval to be
     // at, so "is there an approval at tip" has no true answer and the field
     // stays absent. An item nobody has committed to is not an item somebody
     // is merging without review; it is one that has not got there yet.
     ...(tip === null ? {} : { hasApprovalAtTip: approved }),
     ...(claim.defaultBranch === null ? {} : { defaultBranch: claim.defaultBranch }),
+  };
+}
+
+/**
+ * Finds another live crew holding the same checkout, if there is one.
+ *
+ * Returns a fragment to spread rather than a value, so "nobody else is
+ * here" and "the question could not be asked" produce the same thing — an
+ * absent field — without the caller branching on which it was. The
+ * predicate reads both as no finding, which is the honest answer to both.
+ *
+ * ── The three conditions, each load-bearing ────────────────────────────
+ *
+ *   - `machine` and `repo` must both be known. Either being null makes the
+ *     pair unanswerable, and a query that dropped the null half would
+ *     compare every checkout on every machine against this one.
+ *   - `rootSessionId <> $3` is the self-exclusion. Compared on roots, so an
+ *     orchestrator and the builder it spawned do not block each other —
+ *     this is the distinction `registered_processes` established and I15 is
+ *     its first consumer.
+ *   - `liveness = 'running'` and `releasedAt IS NULL`. A stalled or dead
+ *     crew is the liveness sweep's business, not this entry's: blocking on
+ *     a claim whose holder is gone would refuse work on the strength of a
+ *     crew that has already finished.
+ */
+async function occupancyFor(
+  db: TransactionHandle,
+  claim: AssignmentRow,
+): Promise<Partial<InterventionContext>> {
+  if (claim.machine === null || claim.repo === null) return {};
+
+  const rows = await db.$queryRawUnsafe<OccupancyRow[]>(
+    `SELECT a."rootSessionId" AS "rootSessionId",
+            a."itemId"        AS "itemId",
+            a."branch"        AS "branch",
+            FLOOR(EXTRACT(EPOCH FROM (NOW() - a."lastActive")))::int AS "lastActiveSecondsAgo"
+       FROM "Assignment" a
+       JOIN "Item" i ON i."id" = a."itemId"
+       JOIN "Session" s ON s."id" = a."sessionId"
+      WHERE s."machine" = $1
+        AND i."repo" = $2
+        AND a."rootSessionId" <> $3
+        AND a."releasedAt" IS NULL
+        AND a."liveness" = 'running'
+      ORDER BY a."lastActive" DESC
+      LIMIT 1`,
+    claim.machine,
+    claim.repo,
+    claim.rootSessionId,
+  );
+
+  const holder = rows[0];
+  if (holder === undefined) return {};
+
+  return {
+    occupyingCrew: {
+      rootSessionId: holder.rootSessionId,
+      itemId: holder.itemId,
+      ...(holder.branch === null ? {} : { branch: holder.branch }),
+      ...(holder.lastActiveSecondsAgo === null
+        ? {}
+        : { lastActiveSecondsAgo: holder.lastActiveSecondsAgo }),
+    },
   };
 }

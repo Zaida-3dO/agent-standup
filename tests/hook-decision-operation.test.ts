@@ -271,6 +271,14 @@ describe("the operation touches no table on the ordinary path", () => {
     // change made context assembly unconditional, every one of these would
     // fail — which is precisely the regression worth catching, because it
     // would be invisible in behaviour and only show up as load.
+    //
+    // **`Bash` is on this list on purpose, and it is the load-bearing
+    // entry.** It is the tool almost every call arrives on, and it is
+    // write-shaped by the nudge module's reckoning — so a checkout-occupancy
+    // gate keyed on "write-shaped" rather than on the file-editing tools
+    // would put a query behind every `ls`, every `npm test` and every
+    // `git status` here. That is the regression this case exists to catch,
+    // and it caught it.
     const ordinary = [
       { tool: "Read", command: undefined },
       { tool: "Bash", command: "ls -la" },
@@ -278,7 +286,6 @@ describe("the operation touches no table on the ordinary path", () => {
       { tool: "Bash", command: "git status" },
       { tool: "Bash", command: "git commit -m 'x'" },
       { tool: "Bash", command: "git add src/lib/thing.ts" },
-      { tool: "Edit", command: undefined },
     ];
 
     for (const { tool, command } of ordinary) {
@@ -291,6 +298,23 @@ describe("the operation touches no table on the ordinary path", () => {
         }),
       ).resolves.toMatchObject({ decision: "allow" });
     }
+  });
+
+  it("looks up the claim for a file edit, which I15 can be about", async () => {
+    // `Edit` leaves the free class deliberately, and the reason is worth
+    // stating rather than quietly editing the list above: the property is
+    // "a call that *could not* be the subject of any finding costs no
+    // query", and an edit into a checkout another crew holds is exactly
+    // what I15 is about — so an edit can be the subject of one, and paying
+    // a query to find out is the entry working rather than the gate
+    // leaking.
+    //
+    // It is still one lookup rather than an unconditional assembly, and it
+    // is bounded to the three tools whose whole purpose is to modify a file.
+    // The handle throws on any query, so reaching it is the assertion.
+    await expect(
+      call({ eventType: "PreToolUse", sessionId: "s1", tool: "Edit" }),
+    ).rejects.toThrow();
   });
 
   it("completes for a broad process kill, which blocks on shape alone", async () => {

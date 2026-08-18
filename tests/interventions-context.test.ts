@@ -50,20 +50,36 @@ describe("needs — what a call could possibly require", () => {
       // an explicitly settled decision against an ownership check.
       "taskkill /F /IM node.exe",
     ]) {
-      expect(needs(command), String(command)).toEqual({ assignment: false, approval: false });
+      expect(needs(command), String(command)).toEqual({
+        assignment: false,
+        approval: false,
+        occupancy: false,
+      });
     }
   });
 
   it("needs the claim and the approval for a merge attempt", () => {
-    expect(needs("git merge feature")).toEqual({ assignment: true, approval: true });
-    expect(needs("gh pr merge 12")).toEqual({ assignment: true, approval: true });
+    expect(needs("git merge feature")).toEqual({
+      assignment: true,
+      approval: true,
+      occupancy: false,
+    });
+    expect(needs("gh pr merge 12")).toEqual({
+      assignment: true,
+      approval: true,
+      occupancy: false,
+    });
   });
 
   it("needs only the claim for a broad git add", () => {
     // Whether the checkout is shared is a fact about the claim. No artifact
     // question is involved, and paying for one would be the cost this split
     // exists to avoid.
-    expect(needs("git add -A")).toEqual({ assignment: true, approval: false });
+    expect(needs("git add -A")).toEqual({
+      assignment: true,
+      approval: false,
+      occupancy: false,
+    });
   });
 });
 
@@ -178,5 +194,134 @@ describe("assembleContext — absent means unknown", () => {
     });
 
     expect(context.defaultBranch).toBeUndefined();
+  });
+});
+
+describe("occupancy — who else holds this checkout (I15)", () => {
+  /** A handle answering each query in turn, so a two-query path is testable. */
+  function sequencedHandle(responses: unknown[][]): TransactionHandle & { queries: string[] } {
+    const queries: string[] = [];
+    let call = 0;
+    return {
+      queries,
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        queries.push(query);
+        const answer = responses[call] ?? [];
+        call += 1;
+        return answer as T;
+      },
+      $executeRawUnsafe: async () => {
+        throw new Error("context assembly must never write");
+      },
+    } as TransactionHandle & { queries: string[] };
+  }
+
+  const claimRow = {
+    itemId: "item-a",
+    worktree: null,
+    state: "executing",
+    defaultBranch: "main",
+    rootSessionId: "root-mine",
+    repo: "web",
+    machine: "desktop",
+  };
+
+  it("costs nothing on a read, which is the whole point of the gate", async () => {
+    // The property this row was told to preserve, asserted for the tool
+    // gate specifically. `Read` cannot interleave anything with another
+    // crew's work, so paying a query to tell it a crew is present would
+    // spend the highest-volume path's budget to reach a conclusion nothing
+    // could act on.
+    const db = countingHandle();
+    await assembleContext({ db, sessionId: "s1", tool: "Read" });
+    expect(db.queries).toEqual([]);
+  });
+
+  it("costs nothing on an ordinary Bash call", async () => {
+    // `Bash` is write-shaped for the nudge module's question and is *not*
+    // the gate here, because `Bash` is also every `ls` and every
+    // `git status`. Gating on it would put a query on the most common call
+    // in the system.
+    const db = countingHandle();
+    await assembleContext({ db, sessionId: "s1", tool: "Bash", command: "ls -la" });
+    expect(db.queries).toEqual([]);
+  });
+
+  it("looks for another crew when a file is edited", async () => {
+    const db = sequencedHandle([[claimRow], []]);
+    await assembleContext({ db, sessionId: "s1", tool: "Edit" });
+    expect(db.queries).toHaveLength(2);
+    expect(db.queries[1]).toContain(`FROM "Assignment"`);
+  });
+
+  it("reports the holder, named well enough to go and ask", async () => {
+    const db = sequencedHandle([
+      [claimRow],
+      [
+        {
+          rootSessionId: "root-theirs",
+          itemId: "item-b",
+          branch: "feat/x",
+          lastActiveSecondsAgo: 12,
+        },
+      ],
+    ]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(context.occupyingCrew).toEqual({
+      rootSessionId: "root-theirs",
+      itemId: "item-b",
+      branch: "feat/x",
+      lastActiveSecondsAgo: 12,
+    });
+  });
+
+  it("leaves the field absent when nobody else holds it", async () => {
+    const db = sequencedHandle([[claimRow], []]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(context.occupyingCrew).toBeUndefined();
+  });
+
+  it("excludes the caller's own crew by root session", async () => {
+    // The distinction `registered_processes` established, and I15 is its
+    // first consumer: a worker an orchestrator spawned shares the checkout
+    // legitimately and must never block itself. Asserted on the query
+    // rather than on a row, because the exclusion is what the SQL does.
+    const db = sequencedHandle([[claimRow], []]);
+    await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(db.queries[1]).toContain(`a."rootSessionId" <> $3`);
+  });
+
+  it("keys on the machine and the repo, never on the worktree path", async () => {
+    // `worktree` is unnormalised free text, so two spellings of one
+    // directory do not compare equal and a predicate over it would pass
+    // silently on exactly the collisions it exists to catch.
+    const db = sequencedHandle([[claimRow], []]);
+    await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    const occupancyQuery = db.queries[1] ?? "";
+    expect(occupancyQuery).toContain(`s."machine" = $1`);
+    expect(occupancyQuery).toContain(`i."repo" = $2`);
+    expect(occupancyQuery).not.toContain(`"worktree"`);
+  });
+
+  it("ignores a crew that is not running", async () => {
+    // A stalled or dead claim is the liveness sweep's business. Blocking on
+    // one would refuse work on the strength of a crew that has finished.
+    const db = sequencedHandle([[claimRow], []]);
+    await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    const occupancyQuery = db.queries[1] ?? "";
+    expect(occupancyQuery).toContain(`a."liveness" = 'running'`);
+    expect(occupancyQuery).toContain(`a."releasedAt" IS NULL`);
+  });
+
+  it("asks nothing when the machine or the repo is unknown", async () => {
+    // Either being null makes the pair unanswerable, and a query that
+    // dropped the null half would compare every checkout on every machine
+    // against this one.
+    for (const partial of [{ machine: null }, { repo: null }]) {
+      const db = sequencedHandle([[{ ...claimRow, ...partial }], []]);
+      const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+      expect(db.queries).toHaveLength(1);
+      expect(context.occupyingCrew).toBeUndefined();
+    }
   });
 });
