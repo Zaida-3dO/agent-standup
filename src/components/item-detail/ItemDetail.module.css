@@ -402,6 +402,15 @@
   min-width: 0;
 }
 
+/* A verdict label is a chip, and a chip that wraps mid-label stops reading
+   as one — "LGTM, with nits" broke across two lines inside its own border,
+   which looks like a rendering fault rather than a badge. It keeps its
+   label on one line and lets the row wrap around it instead. */
+.verdictGroup .verdict {
+  flex: none;
+  white-space: nowrap;
+}
+
 .verdictMeaning {
   margin: var(--space-1) 0 var(--space-2);
   color: var(--text-muted);
@@ -627,6 +636,68 @@
 }
 
 .disclosureSummary:hover {
+  color: var(--text-primary);
+}
+
+/* The default browser marker is suppressed in favour of the explicit one
+   below, which can be positioned and rotated with the rest of the row
+   rather than sitting outside it at a size the theme does not control. */
+.disclosureSummary {
+  list-style: none;
+}
+
+.disclosureSummary::-webkit-details-marker {
+  display: none;
+}
+
+/* The affordance. A row whose collapsed and expanded states render
+   identically reads as inert text, so the history behind it is reachable
+   only by a reader who happens to click. The marker rotates a quarter turn
+   on open, which is the one convention a reader already knows. */
+.disclosureMarker {
+  display: inline-block;
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+details[open] > .disclosureSummary .disclosureMarker {
+  transform: rotate(90deg);
+}
+
+/* The word, because the marker alone is a shape a reader has to interpret.
+   It sits at the trailing edge, where a control is expected.
+
+   The label swaps to "Hide" when the row is open, so it names the action
+   available rather than only signalling that the row has two states. It is
+   done in CSS rather than in the markup because the open state lives in the
+   DOM, not in React's — the component is hook-free deliberately, and reading
+   `open` back into state to relabel a word would make it stateful and take
+   it out of reach of the DOM-free test harness. The text in the markup is
+   the closed-state label, so it is what a reader with CSS disabled sees. */
+.disclosureHint {
+  margin-left: auto;
+  padding-left: var(--space-3);
+  color: var(--accent-fg);
+  font-size: var(--text-3xs);
+  text-decoration: underline;
+}
+
+details[open] > .disclosureSummary .disclosureHint {
+  /* Two halves, because the open-state word stands in for the one in the
+     markup: the source text is hidden by zeroing the font, and the
+     pseudo-element below paints the word at the inherited size. */
+  font-size: 0;
+}
+
+details[open] > .disclosureSummary .disclosureHint::before {
+  content: "Hide";
+  font-size: var(--text-3xs);
+}
+
+.disclosureSummary:hover .disclosureHint {
   color: var(--text-primary);
 }
 

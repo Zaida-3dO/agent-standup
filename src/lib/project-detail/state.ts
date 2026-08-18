@@ -6,8 +6,8 @@
 // with no DOM, so the fetch shaping and the loading/error/loaded branching
 // are only directly testable outside a component. The container is thin
 // wiring over what is here.
-import { uiApiPath } from "@/lib/ui-proxy/path";
 import type { ProjectDetail } from "./types";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type ProjectDetailLoadState =
   | { status: "loading" }

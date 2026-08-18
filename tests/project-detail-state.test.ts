@@ -132,9 +132,7 @@ describe("fetchProjectDetail", () => {
   it("encodes the id, so an id with a slash cannot reach a different path", async () => {
     const { impl, calls } = stubFetch({ body: { detail: { project: minimalProject } } });
     await fetchProjectDetail("a/b", impl);
-    // Dropping `encodeURIComponent` sends `GET /api/ui/projects/a/b`. The
-    // `/api/ui/` prefix is the proxy the browser reaches the API through —
-    // a bare `/api/` path arrives with no credential and is refused.
+    // Dropping `encodeURIComponent` sends `GET /api/projects/a/b`.
     expect(calls[0]!.url).toBe("/api/ui/projects/a%2Fb");
   });
 });

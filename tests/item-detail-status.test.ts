@@ -23,6 +23,16 @@ import {
   deriveHeadlineFromBody,
   CHECKPOINT_HEADLINE_MAX_CHARS,
 } from "@/lib/item-detail/checkpoint-headline";
+// The SERVER's copy of the same rule. Imported here and nowhere else in the
+// front end: this file is the seam that pins the two together, and importing
+// it is safe precisely because the only thing the server module pulls in is
+// a *type* (`TransactionHandle`), which is erased at build time and so never
+// reaches a bundle. See the pinning suite at the bottom of this file.
+import {
+  checkpointHeadline as serverCheckpointHeadline,
+  deriveHeadlineFromBody as serverDeriveHeadlineFromBody,
+  CHECKPOINT_HEADLINE_MAX_CHARS as SERVER_CHECKPOINT_HEADLINE_MAX_CHARS,
+} from "@/lib/service/items/checkpoint-headline";
 import type {
   DetailAssignment,
   DetailHistoryEntry,
@@ -488,5 +498,47 @@ describe("statusSummary", () => {
     expect(summary.blocked?.kind).toBe("person");
     expect(summary.checkpoint?.headline).toBe("half way");
     expect(summary.loops.map((l) => l.text)).toEqual(["unverified"]);
+  });
+});
+
+describe("the copy is pinned to the server's rule", () => {
+  // `src/lib/item-detail/checkpoint-headline.ts` is a deliberate copy of
+  // `src/lib/service/items/checkpoint-headline.ts`, because the server's
+  // module sits behind the database-import boundary that
+  // `npm run check:db-imports` enforces. Its header claims the two are
+  // "pinned to each other by a test that feeds the same rows to both and
+  // requires the same answer" — THIS is that test, and without it the claim
+  // was false: each side merely hard-coded the same constant independently,
+  // which catches a symmetric edit and misses the realistic drift, where
+  // somebody improves one side only.
+  //
+  // Feeding both the same rows is the whole point. An assertion that each
+  // side "returns something sensible" would pass either through a
+  // one-sided change; an assertion that they return THE SAME THING cannot.
+  const rows: { readonly headline: string | null; readonly body: string | null }[] = [
+    { headline: "stored wins", body: "a different line" },
+    { headline: null, body: "derive from this\nnot this" },
+    { headline: null, body: "   leading and trailing   " },
+    { headline: null, body: "\n\n\nonly blank lines above" },
+    { headline: null, body: "   \n\t\n" },
+    { headline: null, body: "" },
+    { headline: null, body: null },
+    { headline: "", body: "an empty stored headline still wins" },
+    { headline: null, body: "x".repeat(CHECKPOINT_HEADLINE_MAX_CHARS + 50) },
+    { headline: null, body: "y".repeat(CHECKPOINT_HEADLINE_MAX_CHARS) },
+    { headline: null, body: "z".repeat(CHECKPOINT_HEADLINE_MAX_CHARS + 1) },
+    { headline: "  padded stored  ", body: "prose" },
+  ];
+
+  it("agrees with the server on the cap", () => {
+    expect(CHECKPOINT_HEADLINE_MAX_CHARS).toBe(SERVER_CHECKPOINT_HEADLINE_MAX_CHARS);
+  });
+
+  it.each(rows)("agrees with the server on checkpointHeadline for %j", (row) => {
+    expect(checkpointHeadline(row)).toBe(serverCheckpointHeadline(row));
+  });
+
+  it.each(rows)("agrees with the server on deriveHeadlineFromBody for %j", (row) => {
+    expect(deriveHeadlineFromBody(row.body)).toBe(serverDeriveHeadlineFromBody(row.body));
   });
 });
