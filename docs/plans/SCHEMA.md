@@ -223,8 +223,17 @@ discovered at 3am.
 
 **It is called delete and it never deletes.** Nothing leaves the database; the row stops being
 *served*. No ordinary read returns it, no board column counts it, no parent derives its state from
-it — unlike `cancelled`, which is a real outcome and correctly still appears. Every inbound link and
-every attribution keeps resolving, which is the whole reason the row is kept.
+it, and no repair pass will move it — unlike `cancelled`, which is a real outcome and correctly still
+appears. Every inbound link and every attribution keeps resolving, which is the whole reason the row
+is kept.
+
+**Three reads still reach it, each on purpose.** `get_item` and `get_item_detail` resolve one **by
+id**, which is what a stale link needs in order to land somewhere real and find its replacement;
+`get_events` reads the append-only ledger, because the row is withheld from item reads rather than
+erased from history, and the archive event carrying the reason is the most useful row in it. There is
+no single predicate every item read passes through, so that guarantee is held by a *set* of call
+sites agreeing — and a test enumerates the reads from the operation registry and drives each one, so
+a read added later that serves an archived row fails on the day it is written.
 
 **What it is for, and why `cancelled` does not cover it.** A cancellation records work that was
 wanted, considered, and deliberately not done. A duplicate is not that, and neither is a row created

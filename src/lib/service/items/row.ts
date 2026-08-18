@@ -63,9 +63,10 @@ export interface ItemRecord {
   readonly completedAt: string | null;
   /**
    * When this item was withdrawn from circulation (MILESTONES.md #137).
-   * Null on everything an ordinary read can reach, because those reads
-   * filter archived rows out — so a non-null value here is only ever seen
-   * by a caller that asked for one deliberately.
+   * Null on everything a list-shaped read returns, because those reads
+   * filter archived rows out — so a non-null value here is only ever seen by
+   * a caller holding the id of a specific item, which is the one way an
+   * archived row is reachable.
    */
   readonly archivedAt: string | null;
   /** Why it was archived. Non-null exactly when `archivedAt` is. */
