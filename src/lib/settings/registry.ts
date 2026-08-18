@@ -32,6 +32,7 @@ export const SETTING_CATEGORIES = [
   "Retention",
   "Hook",
   "Telemetry",
+  "Interface",
 ] as const;
 
 export type SettingCategory = (typeof SETTING_CATEGORIES)[number];
@@ -438,6 +439,34 @@ export const SETTINGS_REGISTRY = {
     label: "File-spread threshold",
     help: "How many distinct files a session must touch before its spread reads as wide. Distinct files, not calls: reading one file thirty times is not a spread of thirty.",
     category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  // Where `/` sends a reader. A setting rather than a constant because the
+  // right answer is a claim about how this installation is used and not a
+  // property of the build: a digest is the better entry for someone
+  // triaging overnight work every morning, and the project list is the
+  // better one for someone who steers weekly and rarely reads a feed. Both
+  // readings are defensible, so this is settled by use rather than by
+  // argument — the value is one preference change, not a rewrite.
+  //
+  // Not `sensitive`: it relaxes no enforcement and gates nothing. Every
+  // destination it can name is reachable from the sidebar on every screen,
+  // so the worst a wrong value does is cost one click.
+  "ui.default_landing": define({
+    // The route ids, not paths. A path stored here would be free text that
+    // could name a route that does not exist — and the failure would be a
+    // reader landing on a 404 on the one screen they cannot navigate away
+    // from before it renders. An id is checked against the map at build
+    // time (`tests/nav-landing.test.ts` asserts every option resolves).
+    schema: z.enum(["standup", "projects", "board", "needs-you"]),
+    default: "standup",
+    label: "Default landing page",
+    help: "Which screen the root of the app shows. Standup is an overnight digest, Projects is the project list, Board is the kanban, and Needs you is the narrow list of items blocked on you. Every one of them is also reachable from the sidebar, so this only decides what you see first.",
+    category: "Interface",
     appliesWhen: "next-call",
     sensitive: false,
     irreversible: false,

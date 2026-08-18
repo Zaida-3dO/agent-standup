@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { AppShellView, type AppShellViewProps } from "@/components/app-shell/AppShellView";
 import { ProfilePicker } from "@/components/profile-picker/ProfilePicker";
 import { TopBar } from "@/components/top-bar/TopBar";
+import { SidebarView } from "@/components/sidebar/SidebarView";
 import type { Profile } from "@/lib/profile/types";
 import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 
@@ -142,5 +143,115 @@ describe("AppShellView", () => {
       .filter((c) => typeof c === "string")
       .join(" ");
     expect(text).not.toContain("No profiles are set up yet");
+  });
+});
+
+describe("AppShellView — the application frame", () => {
+  it("renders the sidebar, the top strip and the page once a profile is active", () => {
+    const element = AppShellView(baseProps({ people: [userA], activeProfile: userA }));
+    expect(findAllByType(element, SidebarView)).toHaveLength(1);
+    expect(findAllByType(element, TopBar)).toHaveLength(1);
+    expect(findAllByType(element, "main")).toHaveLength(1);
+  });
+
+  it("renders NO sidebar while the picker is gating the app", () => {
+    // A rail offering eight destinations behind a gate that blocks seven of
+    // them would be seven links to the picker.
+    const element = AppShellView(baseProps({ people: [userA], activeProfile: null }));
+    expect(findAllByType(element, SidebarView)).toHaveLength(0);
+  });
+
+  it("renders NO sidebar on the first-run escape either", () => {
+    const element = AppShellView(
+      baseProps({ people: [], activeProfile: null, pathname: "/settings" }),
+    );
+    expect(findAllByType(element, SidebarView)).toHaveLength(0);
+    expect(findAllByType(element, "main")).toHaveLength(1);
+  });
+
+  it("hands the sidebar the counts it was given", () => {
+    const element = AppShellView(
+      baseProps({
+        people: [userA],
+        activeProfile: userA,
+        counts: { unseen: 6, needsYou: 2 },
+      }),
+    );
+    const sidebar = findOneByType(element, SidebarView);
+    // Hardcoding the counts inside the shell rather than relaying them
+    // fails this.
+    expect((sidebar.props as { counts: unknown }).counts).toEqual({ unseen: 6, needsYou: 2 });
+  });
+
+  it("defaults the counts to zeroes rather than passing undefined down", () => {
+    const element = AppShellView(baseProps({ people: [userA], activeProfile: userA }));
+    const sidebar = findOneByType(element, SidebarView);
+    expect((sidebar.props as { counts: unknown }).counts).toEqual({ unseen: 0, needsYou: 0 });
+  });
+
+  it("derives the breadcrumb from the path it was given", () => {
+    const element = AppShellView(
+      baseProps({ people: [userA], activeProfile: userA, pathname: "/board" }),
+    );
+    const topBar = findOneByType(element, TopBar);
+    expect((topBar.props as { crumbs: unknown }).crumbs).toEqual([{ label: "Board", href: null }]);
+  });
+
+  it("passes no crumbs at all when the path is unknown", () => {
+    // `crumbsFor(undefined)` would be a crash; an empty trail is the honest
+    // answer to "where am I" before the router has said.
+    const element = AppShellView(baseProps({ people: [userA], activeProfile: userA }));
+    const topBar = findOneByType(element, TopBar);
+    expect((topBar.props as { crumbs: unknown }).crumbs).toEqual([]);
+  });
+
+  it("relays the sheet's open state and its close handler to the sidebar", () => {
+    let closed = 0;
+    const element = AppShellView(
+      baseProps({
+        people: [userA],
+        activeProfile: userA,
+        navOpen: true,
+        onCloseNav: () => void closed++,
+      }),
+    );
+    const sidebar = findOneByType(element, SidebarView);
+    expect((sidebar.props as { sheetOpen: boolean }).sheetOpen).toBe(true);
+    (sidebar.props as { onCloseSheet: () => void }).onCloseSheet();
+    expect(closed).toBe(1);
+  });
+
+  it("keeps the sheet closed by default", () => {
+    const element = AppShellView(baseProps({ people: [userA], activeProfile: userA }));
+    expect((findOneByType(element, SidebarView).props as { sheetOpen: boolean }).sheetOpen).toBe(
+      false,
+    );
+  });
+
+  it("relays the density value and toggle to the top strip", () => {
+    let toggled = 0;
+    const element = AppShellView(
+      baseProps({
+        people: [userA],
+        activeProfile: userA,
+        density: "compact",
+        onToggleDensity: () => void toggled++,
+      }),
+    );
+    const topBar = findOneByType(element, TopBar);
+    expect((topBar.props as { density: unknown }).density).toBe("compact");
+    (topBar.props as { onToggleDensity: () => void }).onToggleDensity();
+    expect(toggled).toBe(1);
+  });
+
+  it("still opens the switch panel over the frame, without losing the sidebar", () => {
+    // The profile picker's behaviour is unchanged by the move — it opens
+    // over the page, and the frame stays put behind it.
+    const element = AppShellView(
+      baseProps({ people: [userA], activeProfile: userA, pickerOpen: true }),
+    );
+    expect(findAllByType(element, ProfilePicker)).toHaveLength(1);
+    expect(findAllByType(element, SidebarView)).toHaveLength(1);
+    expect(findAllByType(element, "main")).toHaveLength(1);
   });
 });

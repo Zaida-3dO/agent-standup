@@ -4,6 +4,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { ProfileProvider } from "@/lib/profile/ProfileProvider";
 import { AppShell } from "@/components/app-shell/AppShell";
+import { densityBootScript } from "@/lib/nav/density";
 // The design system. Imported here and nowhere else — this is the only
 // place in the app that loads a global stylesheet, so every token below is
 // available to every component's CSS module without any of them importing
@@ -35,6 +36,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     // `globals.css` (`--font-geist-sans`, `--font-geist-mono`) resolve for
     // the whole tree.
     <html lang="en" className={`dark ${GeistSans.variable} ${GeistMono.variable}`}>
+      <head>
+        {/* Applies the stored display density before first paint.
+            Deliberately an inline script rather than an effect: an effect
+            runs after the first paint, so anyone who chose compact would
+            watch the page render comfortable and visibly reflow on every
+            single load. The script only ever adds one class and swallows
+            its own errors — see `densityBootScript`. */}
+        <script dangerouslySetInnerHTML={{ __html: densityBootScript() }} />
+      </head>
       <body>
         <ProfileProvider>
           <AppShell>{children}</AppShell>

@@ -607,3 +607,53 @@ body {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-variant-ligatures: none;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   10. Density.
+   ══════════════════════════════════════════════════════════════════════
+
+   Two densities, applied as a class on `<html>` — the same mechanism the
+   theme uses, and for the same reason: no component asks which density is
+   active, and nothing has to re-render when it changes. Comfortable is the
+   baseline declared in §8 and carries no class at all, so `.density-compact`
+   below is the entire difference between the two.
+
+   **SPACING AND LINE-HEIGHT ONLY. NOT FONT SIZE.**
+
+   This is the rule that makes the feature safe. The seven type steps in §8
+   are chosen against each other and against the contrast work in §2–§6; a
+   density that shrank them would not be a denser version of the same
+   design, it would be a second, unstated scale under which none of those
+   judgements still hold — smallest-first, so `--text-3xs` (11px, already at
+   the floor) would go under it. Compressing the space *between* things gets
+   the rows-per-screen that compact is wanted for and leaves every character
+   exactly the size it was.
+
+   The steps compress progressively rather than by a flat ratio: the small
+   ones barely move, because 4px is already the grid's unit and halving it
+   would take things off the grid, while the large ones — the page gutters
+   and section gaps, which are where the wasted vertical space actually is —
+   give up the most.
+
+   Line-height tightens by roughly one notch each. `--leading-tight` is left
+   alone: it is already at 1.25 and is used for headings, where less than
+   that starts clipping descenders against the line above.
+
+   Compact is not a licence to break the touch-target floor. `--space-2`
+   (8px) stays 8px here, which is what keeps a nav row at 44px even
+   compacted — see `Sidebar.module.css`. */
+
+html.density-compact {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 10px;
+  --space-4: 12px;
+  --space-5: 14px;
+  --space-6: 16px;
+  --space-8: 20px;
+  --space-10: 26px;
+  --space-12: 32px;
+
+  --leading-normal: 1.35;
+  --leading-relaxed: 1.45;
+}

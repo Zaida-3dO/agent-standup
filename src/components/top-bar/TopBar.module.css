@@ -1,25 +1,165 @@
+/* The top strip. Breadcrumb on the left, page-level controls on the right. */
+
 .bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1.25rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-default);
   background: var(--surface-panel);
   color: var(--text-primary);
+  /* Stays put while the page scrolls, for the same reason the rail does:
+     the breadcrumb answers "where am I", which is a question you ask most
+     often when you are deep in a long page. */
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 
-.title {
-  font-weight: 600;
-  font-size: 1rem;
+.left,
+.right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.left {
+  flex: 1 1 auto;
+}
+
+.right {
+  flex: 0 0 auto;
+}
+
+/* The sheet trigger. Only exists below the breakpoint — above it the rail
+   is on screen and a button opening a second copy of it would be a control
+   that appears to do nothing. */
+.menuButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.menuButton:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+@media (max-width: 900px) {
+  .menuButton {
+    display: flex;
+  }
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+}
+
+.crumbGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.crumb {
+  color: var(--text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.crumb:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.crumbCurrent {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crumbSeparator {
+  color: var(--text-faint);
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  cursor: not-allowed;
+}
+
+.searchLabel {
+  white-space: nowrap;
+}
+
+/* The search stand-in is the first thing to go when the strip runs out of
+   room: it does nothing yet, so it is the one control here whose absence
+   costs a reader nothing. */
+@media (max-width: 640px) {
+  .search {
+    display: none;
+  }
+}
+
+.densityButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.densityButton:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.densityButton[aria-pressed="true"] {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--text-primary);
 }
 
 .switcher {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.75rem 0.25rem 0.25rem;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -34,13 +174,26 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
   background: var(--border-strong);
-  font-size: 0.875rem;
+  font-size: var(--text-2xs);
 }
 
 .name {
-  font-size: 0.875rem;
+  font-size: var(--text-2xs);
+}
+
+/* The name is the strip's least load-bearing text on a narrow screen — the
+   avatar still identifies who is active, and the button's accessible name
+   still says it in full. */
+@media (max-width: 640px) {
+  .name {
+    display: none;
+  }
+
+  .switcher {
+    padding: var(--space-1);
+  }
 }
