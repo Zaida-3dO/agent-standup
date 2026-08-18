@@ -13,6 +13,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   OPERATION_NAMES,
+  OPERATION_REGISTRY,
   ServiceRuntime,
   isServiceError,
   prismaTransactionRunner,
@@ -38,6 +39,50 @@ describe("sweep and takeover are registered service operations", () => {
     // unreachable through every adapter at once.
     expect(OPERATION_NAMES).toContain("sweep");
     expect(OPERATION_NAMES).toContain("takeover");
+  });
+  // Every operation declares three pieces of metadata in the object it hands
+  // `defineOperation`, and all three are load-bearing rather than decorative:
+  // `name` is the key every adapter dispatches on, `kind` decides whether an
+  // adapter may waive the operation under SCHEMA.md §22's read-only rule, and
+  // `summary` is the text an agent reads when choosing a tool. Nothing that
+  // ran against them could observe them, and the reason is worth recording
+  // because it generalises to every operation, not just these two.
+  //
+  // `tests/service-registry.test.ts` already asserts all three across the
+  // whole registry, correctly, and those assertions genuinely fail when the
+  // metadata is emptied. But the object passed to `defineOperation` is
+  // evaluated once when the module is imported, not inside any test body, so
+  // per-test coverage analysis attributes it to no test at all — the
+  // registry-wide assertions are recorded as covering zero of it. A gate that
+  // cannot see a test cannot credit it, so emptying `name`, `kind` or
+  // `summary` was a change no run objected to.
+  //
+  // Reading the metadata off the registry *here*, inside the test body, is
+  // what makes the coverage real: this executes while the run is watching,
+  // against the same registry entry an adapter resolves at dispatch.
+  it("declares the metadata every adapter dispatches on", () => {
+    for (const name of ["sweep", "takeover"] as const) {
+      const operation = OPERATION_REGISTRY[name];
+
+      // A `name` disagreeing with its key makes a lookup return an operation
+      // reporting a different one — invisible on whichever side is not read.
+      expect(operation.name).toBe(name);
+
+      // Both of these WRITE. Declared as reads, §22 would let a read-only
+      // adapter waive them while they still release other sessions' claims.
+      expect(operation.kind).toBe("write");
+
+      // Long enough to actually describe the operation, matching the bar
+      // `service-registry.test.ts` and `adapter-registry.test.ts` both use.
+      expect(operation.summary.trim().length).toBeGreaterThan(10);
+    }
+
+    // Pinned verbatim rather than by shape: the summary is the whole of what
+    // an agent sees before choosing this tool, and "releases claims held by
+    // dead sessions" is the part that has to survive an edit.
+    expect(OPERATION_REGISTRY.sweep.summary).toBe(
+      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items.",
+    );
   });
 });
 
