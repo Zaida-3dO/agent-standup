@@ -88,11 +88,24 @@ which is the failure this design exists to avoid.
 
 Status: blank = not built · `built` = live in the registry.
 
+**A `built` entry is live; it is not necessarily the whole entry as written here.** Detection is
+bounded by what the server can actually observe, and two of the entries below are shipped against a
+narrower signal than their description asks for — I1 keys on the item's own state rather than on a
+builder's report, and I7 on the same, because the PR fields it would really read (`mergeable`,
+`mergeStateStatus`) are not collected by anything. Each says so in its own row. The alternative was
+to ship a predicate that quietly never fires, and an entry that cannot trigger is worse than an
+absent one: it reads as coverage on the settings page and provides none.
+
+**The unbuilt entries carry their reason in code**, in `UNIMPLEMENTED_CATALOGUE_ENTRIES`
+(`src/lib/interventions/builtins.ts`), naming the signal that is missing rather than the feature. A
+test asserts that list and the registry together account for every entry here, so an entry cannot be
+silently dropped from both.
+
 ### Flow — work that has stopped moving
 
 | # | Situation | Phase | Audience | Default level | Timing | Status |
 |---|---|---|---|---|---|---|
-| **I1** | **Coding is finished and no reviewer exists.** An item whose builder reported done, with no reviewer assignment and no review request. Was milestone row #114 | `post` | `orchestrator` | nudge | digest | |
+| **I1** | **Coding is finished and no reviewer exists.** An item whose builder reported done, with no reviewer assignment and no review request. Was milestone row #114 | `post` | `orchestrator` | nudge | digest | `built` |
 | **I2** | **An available row nobody is building.** The dependency graph says a row is unblocked and no crew holds it. The rule it encodes is stated in `../orchestration.md`: an unblocked row should never sit idle, because a row the graph says is available with nothing building it is a failure of orchestration rather than a neutral state. | `post` | `orchestrator` | nudge | digest | |
 | **I3** | **A claim held by a session that has gone quiet** while its holder is demonstrably working elsewhere. Distinct from the liveness sweep (#99/#130), which reclaims *dead* sessions — this is about a live session sitting on work it is not doing | `post` | `orchestrator` | nudge | digest | |
 | **I4** | **A subagent reported complete and the orchestrator has not started the next step.** The handoff that silently does not happen | `post` | `orchestrator` | nudge | digest | |
@@ -112,7 +125,7 @@ Status: blank = not built · `built` = live in the registry.
 
 | # | Situation | Phase | Audience | Default level | Timing | Status |
 |---|---|---|---|---|---|---|
-| **I7** | **A PR with zero checks that is also unmergeable.** A conflicting PR runs no checks at all, which is byte-identical to CI not having started — so it reads as quiet rather than red. Cost a session ~20 minutes chasing trigger filters and rate limits before thinking to ask whether the PR was mergeable. The server can just look: `mergeable` / `mergeStateStatus`. **`post` by nature** — the PR already exists by the time there is anything to notice, so this one informs rather than stops. **Filed as an intervention rather than the documentation line originally proposed**, because a doc line relies on someone remembering, which is precisely what failed. See milestone row **#127** and the field note it came from | `post` | `agent` | nudge | immediate | |
+| **I7** | **A PR with zero checks that is also unmergeable.** A conflicting PR runs no checks at all, which is byte-identical to CI not having started — so it reads as quiet rather than red. Cost a session ~20 minutes chasing trigger filters and rate limits before thinking to ask whether the PR was mergeable. The server can just look: `mergeable` / `mergeStateStatus`. **`post` by nature** — the PR already exists by the time there is anything to notice, so this one informs rather than stops. **Filed as an intervention rather than the documentation line originally proposed**, because a doc line relies on someone remembering, which is precisely what failed. See milestone row **#127** and the field note it came from | `post` | `agent` | nudge | immediate | `built` |
 
 ### Budget and scale
 
@@ -128,9 +141,9 @@ the allow/ask lists rather than fixing them.
 
 | # | Situation | Phase | Audience | Default level | Timing | Status |
 |---|---|---|---|---|---|---|
-| **I10** | **A merge to the default branch with no approving review artifact at tip.** The rule is *not* "never run `git merge`" — it is "not without an approval", which is why a command matcher cannot express it. **Was milestone row #44**, whose one-line description — *"the judgement server-side, only command parsing local"* — is this file's thesis stated before this file existed: the server decides, the client only recognises that a merge is being attempted. Folded here from the milestone queue | `pre` | `agent` | block, overridable | immediate | |
-| **I11** | **A broad `git add` on a shared checkout** (`-A`, `--all`, `.`, `-u`, `:/`) — stages other agents' work under your name. Inert inside a linked worktree, which has its own index, so the check is scope-aware rather than command-aware | `pre` | `agent` | block, overridable | immediate | |
-| **I12** | **A broad process kill** — a kill not scoped to a specific process. **Block with a written reason, not an ownership check** (settled 2026-08-15). The point is to make the caller pause and ask whether a narrower kill would do, which is the answer most of the time; it does not need to know whether a given PID is the caller's. That matters because the ownership route needs a live process registry, correct PID attribution and an accurate crew root — machinery whose failure mode is *silently wrong* in both directions, blocking work that was fine or waving through the exact kill it exists to stop. A prompt to think costs none of that and catches the same mistake. `kill_guard` remains as a service call for anything that later wants the precise answer | `pre` | `agent` | block, overridable | immediate | |
+| **I10** | **A merge to the default branch with no approving review artifact at tip.** The rule is *not* "never run `git merge`" — it is "not without an approval", which is why a command matcher cannot express it. **Was milestone row #44**, whose one-line description — *"the judgement server-side, only command parsing local"* — is this file's thesis stated before this file existed: the server decides, the client only recognises that a merge is being attempted. Folded here from the milestone queue | `pre` | `agent` | block, overridable | immediate | `built` |
+| **I11** | **A broad `git add` on a shared checkout** (`-A`, `--all`, `.`, `-u`, `:/`) — stages other agents' work under your name. Inert inside a linked worktree, which has its own index, so the check is scope-aware rather than command-aware | `pre` | `agent` | block, overridable | immediate | `built` |
+| **I12** | **A broad process kill** — a kill not scoped to a specific process. **Block with a written reason, not an ownership check** (settled 2026-08-15). The point is to make the caller pause and ask whether a narrower kill would do, which is the answer most of the time; it does not need to know whether a given PID is the caller's. That matters because the ownership route needs a live process registry, correct PID attribution and an accurate crew root — machinery whose failure mode is *silently wrong* in both directions, blocking work that was fine or waving through the exact kill it exists to stop. A prompt to think costs none of that and catches the same mistake. `kill_guard` remains as a service call for anything that later wants the precise answer | `pre` | `agent` | block, overridable | immediate | `built` |
 | **I17** | **A merge to the default branch carrying unsigned commits.** Nothing in the schema, the catalogue or the milestone queue covers commit signing, which is a gap rather than a decision — **I10 already reaches into *merge without an approving review at tip*, and this is the same shape at the same phase**: a condition on the commits being merged, evaluated against server-held state, expressible only as a rule about *this* merge rather than as a command matcher. The situation is detectable wherever I10's is — the item's tip is already known, and a signature is a property of the commit object at that sha. **Two things must be settled before it is built, and neither is obvious enough to assume.** First, *whose* signature counts: an installation where agents author every commit needs a trusted-key set that means something, and a rule that accepts any valid signature verifies only that signing happened, not that a trusted party signed. Second, whether it is a merge-time check or a record-time one — checking at `record_artifact` for the `commit` kind catches it earlier and closer to the author, while checking at merge is the point where the consequence lands. **Ships disabled by default**, per the defaults rule below: an installation with no signing convention would otherwise be blocked on arrival by a rule it never adopted, and this catalogue's own guidance is to prefer the weakest level that works. Filed from external field feedback (`feedback/other system.md`, F6) | `pre` | `agent` | block, overridable | immediate | |
 
 ---
