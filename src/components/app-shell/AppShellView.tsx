@@ -38,6 +38,14 @@ export interface AppShellViewProps {
    * accidental escape.
    */
   readonly pathname?: string;
+  /** T13's create form on `ProfilePicker` — see `AppShell.tsx` for why this state lives in the container rather than the profile context. */
+  readonly createOpen: boolean;
+  readonly createDraft: string;
+  readonly creating: boolean;
+  readonly createError: string | null;
+  readonly onToggleCreate: () => void;
+  readonly onCreateDraftChange: (raw: string) => void;
+  readonly onCreateSubmit: () => void;
   readonly children: ReactNode;
 }
 
@@ -50,6 +58,13 @@ export function AppShellView({
   closePicker,
   openPicker,
   pathname,
+  createOpen,
+  createDraft,
+  creating,
+  createError,
+  onToggleCreate,
+  onCreateDraftChange,
+  onCreateSubmit,
   children,
 }: AppShellViewProps) {
   if (error) {
@@ -86,13 +101,38 @@ export function AppShellView({
   // cancel back to, so the picker fills the whole page rather than opening
   // over it.
   if (!activeProfile) {
-    return <ProfilePicker people={people} onChoose={choose} />;
+    return (
+      <ProfilePicker
+        people={people}
+        onChoose={choose}
+        createOpen={createOpen}
+        createDraft={createDraft}
+        creating={creating}
+        createError={createError}
+        onToggleCreate={onToggleCreate}
+        onCreateDraftChange={onCreateDraftChange}
+        onCreateSubmit={onCreateSubmit}
+      />
+    );
   }
 
   return (
     <>
       <TopBar activeProfile={activeProfile} onSwitchProfile={openPicker} />
-      {pickerOpen && <ProfilePicker people={people} onChoose={choose} onClose={closePicker} />}
+      {pickerOpen && (
+        <ProfilePicker
+          people={people}
+          onChoose={choose}
+          onClose={closePicker}
+          createOpen={createOpen}
+          createDraft={createDraft}
+          creating={creating}
+          createError={createError}
+          onToggleCreate={onToggleCreate}
+          onCreateDraftChange={onCreateDraftChange}
+          onCreateSubmit={onCreateSubmit}
+        />
+      )}
       <main>{children}</main>
     </>
   );

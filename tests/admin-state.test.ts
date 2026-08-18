@@ -22,7 +22,6 @@ import {
 
 const repos = adminKindBySlug("repos")!;
 const machines = adminKindBySlug("machines")!;
-const people = adminKindBySlug("people")!;
 
 const sourceGlobs = machines.fields.find((field) => field.name === "sourceGlobs")!;
 const displayName = repos.fields.find((field) => field.name === "displayName")!;
@@ -212,8 +211,16 @@ describe("writing", () => {
   });
 
   it("refuses to archive a kind that cannot be archived, without calling fetch", async () => {
+    // `machines` carries no `archivedAt` column at all (T13: `people` now
+    // CAN archive, backed by `update_person`'s `archived` flag, so it no
+    // longer proves this refusal path).
     const fetchImpl = vi.fn(async () => jsonResponse({}));
-    const outcome = await setArchived(people, "user-a", true, fetchImpl as unknown as typeof fetch);
+    const outcome = await setArchived(
+      machines,
+      "machine-a",
+      true,
+      fetchImpl as unknown as typeof fetch,
+    );
     expect(outcome.ok).toBe(false);
     expect(fetchImpl).not.toHaveBeenCalled();
   });

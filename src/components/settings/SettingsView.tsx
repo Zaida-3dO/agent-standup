@@ -9,6 +9,7 @@
 // `Settings.tsx` is the thin client container that fetches and hands this
 // component its props.
 import { Fragment } from "react";
+import Link from "next/link";
 import type { SettingsLoadState } from "@/lib/settings-page/state";
 import { settingsPageModel } from "@/lib/settings-page/model";
 import { SettingField } from "./SettingField";
@@ -66,6 +67,16 @@ export function SettingsView(props: SettingsViewProps) {
         Every setting this build reads, with its value and where that value came from. Revision{" "}
         {model.revision}.
       </p>
+
+      {/* T13: the non-first-run entry to profile management — #86 already
+          made this page reachable with zero profiles; this is where an
+          EXISTING one is renamed, recoloured or archived once at least one
+          exists. New profiles are created from the picker itself. */}
+      <div className={styles.links}>
+        <Link className={styles.link} href="/admin/people">
+          Manage profiles
+        </Link>
+      </div>
 
       {model.sections.map((section) => (
         <section key={section.category} className={styles.section}>

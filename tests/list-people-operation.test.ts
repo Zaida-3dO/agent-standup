@@ -76,11 +76,15 @@ describeIfDb("list_people against Postgres", () => {
 
     const output = (await runtime.call("list_people", {})) as ListPeopleOutput;
     const found = output.people.find((p) => p.id === "list-people-a");
+    // T13: `archivedAt` joined the shape (always present, null when
+    // active) so the admin grid can render the same record the picker
+    // reads — see list-people.ts's header.
     expect(found).toEqual({
       id: "list-people-a",
       displayName: "Person A",
       avatar: "🙂",
       colour: "#ff0000",
+      archivedAt: null,
     });
   });
 
@@ -105,6 +109,36 @@ describeIfDb("list_people against Postgres", () => {
     const ids = output.people.map((p) => p.id);
     expect(ids).toContain("list-people-live");
     expect(ids).not.toContain("list-people-archived");
+  });
+
+  it("includes an archived person when includeArchived is true, with archivedAt set", async () => {
+    await insertPerson({ id: "list-people-visible", displayName: "Still Around" });
+    await insertPerson({
+      id: "list-people-archived-visible",
+      displayName: "Archived",
+      archivedAt: new Date("2024-05-01T00:00:00Z"),
+    });
+
+    const output = (await runtime.call("list_people", {
+      includeArchived: true,
+    })) as ListPeopleOutput;
+    const found = output.people.find((p) => p.id === "list-people-archived-visible");
+    expect(found).toBeDefined();
+    expect(found?.archivedAt).toBe("2024-05-01T00:00:00.000Z");
+    // The active one is still there too — includeArchived widens, it does
+    // not replace, the default set.
+    expect(output.people.map((p) => p.id)).toContain("list-people-visible");
+  });
+
+  it("defaults includeArchived to false when omitted, matching list_repos's own default", async () => {
+    await insertPerson({
+      id: "list-people-default-archived",
+      displayName: "Archived By Default",
+      archivedAt: new Date(),
+    });
+
+    const output = (await runtime.call("list_people", {})) as ListPeopleOutput;
+    expect(output.people.map((p) => p.id)).not.toContain("list-people-default-archived");
   });
 
   it("orders people by createdAt ascending, not insertion order or id order", async () => {

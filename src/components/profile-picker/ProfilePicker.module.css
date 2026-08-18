@@ -92,3 +92,80 @@
 .empty {
   color: #a1a1aa;
 }
+
+.tileAdd {
+  border-style: dashed;
+  background: transparent;
+}
+
+.tileAdd:hover,
+.tileAdd:focus-visible {
+  background: #1f1f24;
+}
+
+.createForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.createLabel {
+  font-size: 0.875rem;
+  color: #a1a1aa;
+}
+
+.createInput {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.375rem;
+  background: #1f1f24;
+  color: inherit;
+  font-size: 1rem;
+}
+
+.createInput:disabled {
+  opacity: 0.6;
+}
+
+.createActions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.createSubmit {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: #6366f1;
+  color: #f4f4f5;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.createSubmit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.createCancel {
+  padding: 0.5rem 1rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.createCancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.createError {
+  color: #f87171;
+  font-size: 0.875rem;
+  margin: 0;
+}
