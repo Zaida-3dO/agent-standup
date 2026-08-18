@@ -18,7 +18,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
+import { ServiceRuntime, listOperations, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { cancellationPhraseIn } from "@/lib/service/operations/delete-item";
 import {
@@ -242,6 +242,47 @@ describeIfDb("delete_item", () => {
       expect(archived.archivedAt).not.toBeNull();
     });
 
+    // Fails if the assignment query is dropped from `inboundReferences` —
+    // an item would go quiet underneath the session working it, with the
+    // holder finding out only when every read started denying the row.
+    it("refuses an item a session is still holding, and names the holder", async () => {
+      const { taskId } = await projectWithTask("held");
+      await call("claim", {
+        itemId: taskId,
+        sessionId: "holder-session",
+        machine: "test-machine",
+        role: "builder",
+        holderType: "agent",
+        holderId: "holder-agent",
+      });
+
+      const rejection = await rejectionOf("delete_item", { id: taskId, reason: GOOD_REASON });
+      expect(rejection.code).toBe("guard_rejected");
+      expect(rejection.fields).toContain("acknowledgeReferences");
+      expect(rejection.message).toContain("holder-agent");
+      expect(rejection.details?.references?.some((r) => r.kind === "live_claim")).toBe(true);
+    });
+
+    // A released claim is history rather than a live dependency, so it must
+    // NOT be reported — otherwise every item ever worked on would refuse,
+    // and `acknowledgeReferences` would become a field callers pass
+    // reflexively, which is the failure that makes the guard decorative.
+    it("does not count a released claim as a reference", async () => {
+      const { taskId } = await projectWithTask("released");
+      await call("claim", {
+        itemId: taskId,
+        sessionId: "past-session",
+        machine: "test-machine",
+        role: "builder",
+        holderType: "agent",
+        holderId: "past-agent",
+      });
+      await call("release", { itemId: taskId, sessionId: "past-session" });
+
+      const archived = await call<Created>("delete_item", { id: taskId, reason: GOOD_REASON });
+      expect(archived.archivedAt).not.toBeNull();
+    });
+
     // Fails if the child query stops filtering on `archivedAt IS NULL` — an
     // already-archived child would keep refusing its parent's archive
     // forever, on the strength of a row nobody can see.
@@ -314,7 +355,8 @@ describeIfDb("delete_item", () => {
 
   describe("an archived item is served by no ordinary read", () => {
     // Each of these is a separate query with its own WHERE clause, so each
-    // is asserted separately — see this file's header.
+    // is asserted separately — see this file's header. The sweep at the end
+    // of this block is what makes the set complete rather than merely long.
 
     // Fails if NOT_ARCHIVED_CONDITION is dropped from list-items.ts.
     it("is absent from list_items", async () => {
@@ -404,6 +446,135 @@ describeIfDb("delete_item", () => {
       expect(item.id).toBe(taskId);
       expect(item.archivedAt).not.toBeNull();
       expect(item.archivedReason).toBe(GOOD_REASON);
+    });
+    // The test that makes the claim structural rather than a list.
+    //
+    // Every assertion above names one read, which certifies exactly the
+    // reads somebody thought to name — and a read added later inherits
+    // nothing from them. That is the gap this file's own header warns
+    // about ("a check written against a fixed set of known shapes can only
+    // certify the absence of those shapes"), applied to itself: the reads
+    // are enumerated from the operation registry, so a new one that serves
+    // archived rows fails here on the day it is written rather than on the
+    // day somebody notices a ghost on their board.
+    //
+    // Reads are driven with the arguments each needs, and a read this sweep
+    // cannot construct arguments for is **refused rather than skipped** —
+    // silently passing over an operation is exactly how a gap survives a
+    // green run. `get_item` is the one deliberate exemption, named with its
+    // reason, because resolving an archived item by id is the behaviour that
+    // makes keeping the row worth anything.
+    it("is absent from every registered read, enumerated from the registry", async () => {
+      const project = await call<Created>("create_project", base("Sweep root", "archive-sweep"));
+      const task = await call<Created>("create_task", {
+        ...base("Sweep ghost zebrafish", "archive-sweep"),
+        projectId: project.id,
+      });
+      // Claimed before archiving, so the assignment-shaped reads
+      // (`my_work`, `progress_report`) have something to return and are
+      // genuinely exercised rather than trivially empty.
+      await call("claim", {
+        itemId: task.id,
+        sessionId: "sweep-session",
+        machine: "test-machine",
+        role: "builder",
+        holderType: "agent",
+        holderId: "sweep-agent",
+      });
+      await call("delete_item", {
+        id: task.id,
+        reason: GOOD_REASON,
+        acknowledgeReferences: true,
+      });
+
+      // The deliberate exemptions, each named with its reason rather than
+      // left out of `argsFor` — a read omitted quietly is indistinguishable
+      // from one nobody thought about, which is the failure mode this sweep
+      // exists to close.
+      //
+      //   - `get_item` / `get_item_detail` resolve an archived item **by
+      //     id**, asserted directly above. That is the behaviour that makes
+      //     keeping the row worth anything: a stale link still lands
+      //     somewhere real and finds the replacement.
+      //   - `get_events` reads the append-only ledger, which is history
+      //     rather than an item read. An archived item's events stay
+      //     readable on purpose — the row is withheld from item reads, not
+      //     erased from history — and the archive event itself, carrying the
+      //     reason, is the single most useful row in it.
+      //   - `describe_tool` describes operations and ranges over no items at
+      //     all.
+      const EXEMPT = new Set(["get_item", "get_item_detail", "get_events", "describe_tool"]);
+
+      // Arguments per read. A read absent from this map fails the guard
+      // below rather than being skipped.
+      const argsFor: Record<string, unknown> = {
+        list_items: { area: "archive-sweep", includeTerminal: true },
+        get_board: { area: "archive-sweep", includeTerminal: true },
+        search: { query: "zebrafish" },
+        my_work: { sessionId: "sweep-session" },
+        orientation: { itemId: project.id },
+        progress_report: { sessionId: "sweep-session", includeCompleted: true },
+        repair_stuck_projects: { projectId: "inbox", area: "archive-sweep", apply: false },
+        list_areas: {},
+        list_repos: {},
+        list_people: {},
+        list_machines: {},
+        list_processes: {},
+        list_accounts: {},
+        get_settings: {},
+        service_info: {},
+      };
+
+      // Registered `read` operations, plus the writes whose *response* still
+      // ranges over items. `repair_stuck_projects` is declared a write
+      // because it can reparent, but its dry run returns a list of items and
+      // its live run acts on that same list — so a leak there is worse than
+      // a read's, not exempt from being one.
+      const reads = listOperations().filter(
+        (operation) => operation.kind === "read" || operation.name === "repair_stuck_projects",
+      );
+      const swept: string[] = [];
+      for (const operation of reads) {
+        if (EXEMPT.has(operation.name)) continue;
+        const args = argsFor[operation.name];
+        if (args === undefined) continue;
+        // A refusal fails the sweep rather than passing it. An operation
+        // given arguments it rejects returns nothing, and "nothing" trivially
+        // does not contain the archived id — so a wrong argument here would
+        // read as a read that was checked and found clean, which is the
+        // worst possible failure mode for a test whose whole job is
+        // completeness.
+        const outcome = await call<unknown>(operation.name, args).then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error }),
+        );
+        expect(
+          "error" in outcome ? String((outcome.error as Error)?.message) : null,
+          `${operation.name} refused the sweep's arguments, so it was not actually checked`,
+        ).toBeNull();
+        // Serialised whole: a leak is the archived id appearing anywhere in
+        // the response, at any depth, in any field.
+        expect(
+          JSON.stringify((outcome as { value: unknown }).value),
+          `${operation.name} served the archived item`,
+        ).not.toContain(task.id);
+        swept.push(operation.name);
+      }
+
+      // The reads that actually range over items. Named explicitly so that
+      // dropping one from `argsFor` — the easy way to make this test pass by
+      // covering less — fails instead of silently shrinking the sweep.
+      for (const name of [
+        "list_items",
+        "get_board",
+        "search",
+        "my_work",
+        "orientation",
+        "progress_report",
+        "repair_stuck_projects",
+      ]) {
+        expect(swept, `${name} was not swept`).toContain(name);
+      }
     });
   });
 

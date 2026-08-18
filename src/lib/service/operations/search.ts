@@ -46,6 +46,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { TERMINAL_STATES } from "../board/columns";
 import { areaFilterCondition } from "../items/area-filter";
+import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import { buildExcerpt, rankMatch, type MatchField } from "../items/search-rank";
 
 /**
@@ -252,6 +253,11 @@ export const search = defineOperation({
       paramIndex++;
     }
 
+    // Archived rows never rank (MILESTONES.md #137). This read matters more
+    // than most: it is the documented way to find a specific item, so an
+    // archived duplicate surfacing here would come back in the exact tool a
+    // caller uses to find the survivor it was archived in favour of.
+    //
     // One extra row past the ceiling, so "more matched than we ranked" is a
     // fact this query establishes rather than an inference from the page
     // being full — a candidate set of exactly the ceiling is not evidence
@@ -261,7 +267,7 @@ export const search = defineOperation({
       { id: string; title: string; state: string; headline: string | null; body: string }[]
     >(
       `SELECT "id", "title", "state", "headline", "body" FROM "Item"
-       WHERE ${conditions.join(" AND ")}
+       WHERE ${NOT_ARCHIVED_CONDITION} AND ${conditions.join(" AND ")}
        ORDER BY "createdAt" DESC, "id" DESC
        LIMIT $${paramIndex}`,
       ...values,

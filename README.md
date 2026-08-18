@@ -258,13 +258,13 @@ in changes. In that setup:
 
 ## What is built
 
-The service layer holds **66 registered operations** (`src/lib/service/registry.ts`). Every rule
+The service layer holds **69 registered operations** (`src/lib/service/registry.ts`). Every rule
 lives there, so an adapter is a thin shell over one service call and adds no rule of its own —
 which is what makes a refusal the same refusal whichever way in you came.
 
 **The four adapters do not all expose the same set, and the difference is worth knowing before you
-pick one.** MCP derives its tools from the registry and so carries 64 of the 66, declining two by
-written waiver (`src/lib/adapters/waivers.ts`). The command line routes 46 and the web API 45,
+pick one.** MCP derives its tools from the registry and so carries 66 of the 69, declining three by
+written waiver (`src/lib/adapters/waivers.ts`). The command line routes 46 and the web API 49,
 because each maps operations through its own table and those tables lag the registry — `service_info`
 and `describe_tool`, for instance, are reachable from MCP and the command line but have no HTTP
 route. Ask a running instance rather than taking any of this on trust:

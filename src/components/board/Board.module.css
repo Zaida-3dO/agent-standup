@@ -25,23 +25,44 @@
    chrome leaves. No number is written down, so any chrome height is correct,
    including none.
 
-   These three selectors are `:global` because the elements belong to the app
-   frame rather than to this component, and they are deliberately narrow:
+   These selectors are `:global` because the elements belong to the app frame
+   rather than to this component, and they are deliberately narrow:
    `display`/`height` only, nothing about how the frame looks. `min-height:
-   0` on `main` is the one that is easy to miss — without it a flex child's
-   min-content height wins and the board grows to fit its cards rather than
-   scrolling them. */
+   0` is the one that is easy to miss — without it a flex child's min-content
+   height wins and the board grows to fit its cards rather than scrolling
+   them.
+
+   **`main` is matched at any depth, not as a child of `body`**, so a frame
+   that wraps it — a navigation rail beside a column of chrome-then-page —
+   does not silently stop matching and return the page to one unbounded
+   column. Every element on the path has to participate for the height to
+   resolve, which is what the `:has()` rule does: an ancestor of `main`
+   becomes a flex column too. `:has()` degrades safely; without it the board
+   is still bounded by its own `max-height: 100dvh`.
+
+   **This does not survive an ancestor that sets its own height.** A frame
+   element declaring `min-height: 100dvh` is taller than the space left below
+   the chrome by exactly the chrome's height, and no rule here can override a
+   value that element owns — measured at 61px of page overflow against a
+   shell doing precisely that. The fix belongs in the frame (a `height`
+   bounded by the viewport rather than a `min-height` equal to it), not in
+   another override from this file; a board reaching further into the frame's
+   layout to win would be the harder problem to unpick later. Until then the
+   board is still individually bounded and its columns still scroll — the
+   page simply regains the chrome's height of scroll. */
 :global(html),
 :global(body) {
   height: 100%;
 }
 
-:global(body) {
+:global(body),
+:global(body *:has(> main)) {
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
-:global(body) > :global(main) {
+:global(body) :global(main) {
   flex: 1;
   min-height: 0;
   display: flex;

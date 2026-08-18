@@ -107,9 +107,57 @@ describe("safeUrl", () => {
     expect(safeUrl("//evil.example.com/x")).toBe("");
   });
 
+  it("refuses a protocol-relative URL written with backslashes", () => {
+    // URL resolution treats a backslash like a slash in the authority
+    // position, so these resolve OFF-ORIGIN exactly as `//host/path` does
+    // — while sliding past a guard that only looked for two forward
+    // slashes. Verified against the resolver rather than assumed:
+    // `new URL(String.raw`/\h/x`, base).origin` is `h`, not the base.
+    //
+    // These are refused by THIS function rather than by whatever the
+    // renderer happens to percent-encode, because it is exported and
+    // tested as a standalone rule and the next caller may not encode.
+    expect(safeUrl(String.raw`/\evil.example.com/x`)).toBe("");
+    expect(safeUrl(String.raw`\/evil.example.com/x`)).toBe("");
+    expect(safeUrl(String.raw`\\evil.example.com/x`)).toBe("");
+
+    // Pinned against the resolver itself, so this documents a FACT about
+    // URL resolution rather than a belief about it: each of these really
+    // does reach another origin, which is what makes refusing them
+    // security behaviour rather than over-blocking.
+    for (const form of [
+      String.raw`/\evil.example.com/x`,
+      String.raw`\/evil.example.com/x`,
+      String.raw`\\evil.example.com/x`,
+    ]) {
+      expect(new URL(form, "https://app.example/i/x").origin).toBe("https://evil.example.com");
+    }
+  });
+
+  it("still permits an ordinary path that merely contains a backslash", () => {
+    // The guard is about the first two characters (where the authority
+    // begins), not about backslashes anywhere — a path containing one is
+    // same-origin and must keep working.
+    expect(safeUrl(String.raw`/path\with\backslashes`)).toBe(String.raw`/path\with\backslashes`);
+  });
   it("refuses an empty or whitespace-only URL", () => {
     expect(safeUrl("")).toBe("");
     expect(safeUrl("   ")).toBe("");
+  });
+
+  it("treats a percent-encoded colon as a path, because that is what a browser does", () => {
+    // `javascript%3Aalert(1)` LOOKS like a near-miss that slipped through,
+    // and it is worth recording why it is not one. A percent-encoded colon
+    // is not a scheme delimiter: a browser resolving this against the page
+    // URL produces `https://<origin>/items/javascript%3Aalert(1)` — an
+    // ordinary relative path that navigates to a missing page. There is no
+    // scheme, so there is nothing to execute.
+    //
+    // Passing it through is therefore correct rather than lenient, and the
+    // assertion is here so a future reader who spots it in a scan does not
+    // "fix" it into a denylist entry.
+    expect(safeUrl("javascript%3Aalert(1)")).toBe("javascript%3Aalert(1)");
+    expect(new URL("javascript%3Aalert(1)", "https://app.example/items/x").protocol).toBe("https:");
   });
 });
 
@@ -331,6 +379,28 @@ describe("the tab model", () => {
     expect(tabFromHash("")).toBe(DEFAULT_TAB);
     expect(tabFromHash(null)).toBe(DEFAULT_TAB);
     expect(tabFromHash(undefined)).toBe(DEFAULT_TAB);
+  });
+
+  it("builds a hash with its leading #, which is what makes the link a fragment", () => {
+    // ── Asserted directly, and NOT only via the round trip below ──────
+    //
+    // `tabFromHash` accepts a bare name as well as a `#`-prefixed one, so
+    // a round-trip assertion absorbs a `hashForTab` that dropped the `#`
+    // on BOTH sides and stays green. That was verified by mutation: with
+    // the `#` removed, the whole suite still passed.
+    //
+    // The mutation is not cosmetic, which is why this assertion is worth
+    // its own test. Both consumers break, and neither breaks loudly:
+    // `TabStrip` would emit `href="activity"`, a RELATIVE path resolving
+    // `/items/abc` to `/items/activity` — navigating away from the item
+    // rather than switching its tab — and the container's
+    // `replaceState` would rewrite the URL to point at a different item
+    // id entirely.
+    expect(hashForTab("activity")).toBe("#activity");
+    expect(hashForTab("overview")).toBe("#overview");
+    for (const tab of TABS) {
+      expect(hashForTab(tab).startsWith("#")).toBe(true);
+    }
   });
 
   it("round-trips a tab through its hash", () => {

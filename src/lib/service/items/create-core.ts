@@ -243,9 +243,10 @@ export function assertOriginResolved(input: {
 }): asserts input is { originType: string; originPersonId?: string } {
   if (input.originType !== undefined) return;
   throw new InvalidInputError(
-    "originType is required — pass person, source or auto. A session that registers with a " +
-      "personId declares a person origin once and inherits it on every later create; a session " +
-      "that registers with no personId names originType per call.",
+    "originType is required — pass person, source or auto. A session that registered with a " +
+      "personId inherits a person origin on every later create and need not send this field; " +
+      "reaching this message means no such declaration was found for the calling session, so " +
+      "name originType in the call or register with a personId.",
     { fields: ["originType"] },
   );
 }
