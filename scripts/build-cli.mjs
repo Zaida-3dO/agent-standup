@@ -41,6 +41,9 @@ import { build } from "esbuild";
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { buildHookScripts } from "./build-hook-scripts.mjs";
+import { buildPlugin } from "./build-plugin.mjs";
+
+export { PLUGIN_DIR, buildPlugin } from "./build-plugin.mjs";
 
 export {
   HOOK_SCRIPTS_DIR,
@@ -94,6 +97,15 @@ export async function buildCli() {
   // `tests/helpers/global-setup.ts`, the Docker build) produces it too,
   // rather than needing a second command remembered in each place.
   await buildHookScripts();
+
+  // The plugin directory (MILESTONES.md #48) is written from the values in
+  // the bundle this function just produced, so it runs last and cannot be
+  // hoisted above the build it reads. It writes configuration only — the
+  // binary and the hook script it points at are resolved from the installed
+  // package at run time, never copied in beside it.
+  const { readFile } = await import("node:fs/promises");
+  const pkg = JSON.parse(await readFile("package.json", "utf8"));
+  await buildPlugin({ version: pkg.version });
 }
 
 if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
