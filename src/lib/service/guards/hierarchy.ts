@@ -9,6 +9,7 @@
 // item" to "any child row in the tree" — the same test, run against the
 // `items.parent_id` relationship instead of a `not_done` entry's `item_id`.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+import { NOT_ARCHIVED_CONDITION } from "../items/row";
 
 /**
  * The four states SCHEMA.md §1.1's "Completed" column and §16's `blocked`/
@@ -74,8 +75,20 @@ interface ChildStateRow {
  * recursive shape.
  */
 async function hasActionableChild(db: GuardInput["db"], itemId: string): Promise<boolean> {
+  // Archived children are not asked about (MILESTONES.md #137). An archived
+  // row is one the installation has said should never have existed, and it
+  // will never be transitioned again because no ordinary read can reach it
+  // to transition — so counting it as actionable would block its parent from
+  // ever finishing, citing a child the caller cannot see, cannot open, and
+  // cannot move. That is a deadlock, not a guard.
+  //
+  // The induction in this function's header survives the exclusion. It turns
+  // on a live grandchild keeping its immediate parent non-actionable, and an
+  // archived item has no bearing on that: a live child is still asked about
+  // here whatever its own children are doing, and archiving is never applied
+  // to a row on behalf of its descendants.
   const rows = await db.$queryRawUnsafe<ChildStateRow[]>(
-    `SELECT "state" FROM "Item" WHERE "parentId" = $1`,
+    `SELECT "state" FROM "Item" WHERE "parentId" = $1 AND ${NOT_ARCHIVED_CONDITION}`,
     itemId,
   );
   return rows.some((row) => isActionable(row.state));

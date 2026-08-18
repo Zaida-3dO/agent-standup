@@ -61,6 +61,17 @@ export interface ItemRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt: string | null;
+  /**
+   * When this item was withdrawn from circulation (MILESTONES.md #137).
+   * Null on everything an ordinary read can reach, because those reads
+   * filter archived rows out — so a non-null value here is only ever seen
+   * by a caller that asked for one deliberately.
+   */
+  readonly archivedAt: string | null;
+  /** Why it was archived. Non-null exactly when `archivedAt` is. */
+  readonly archivedReason: string | null;
+  /** The item this one was archived in favour of, where one was named. */
+  readonly supersededById: string | null;
 }
 
 /** The raw shape `$queryRawUnsafe` returns for one `"Item"` row — driver values, not yet an `ItemRecord`. */
@@ -97,6 +108,9 @@ export interface RawItemRow {
   createdAt: Date | string;
   updatedAt: Date | string;
   completedAt: Date | string | null;
+  archivedAt: Date | string | null;
+  archivedReason: string | null;
+  supersededById: string | null;
 }
 
 function isoOrNull(value: Date | string | null): string | null {
@@ -166,6 +180,9 @@ export function toItemRecord(row: RawItemRow): ItemRecord {
     createdAt: isoOrNull(row.createdAt) as string,
     updatedAt: isoOrNull(row.updatedAt) as string,
     completedAt: isoOrNull(row.completedAt),
+    archivedAt: isoOrNull(row.archivedAt),
+    archivedReason: row.archivedReason,
+    supersededById: row.supersededById,
   };
 }
 
@@ -342,7 +359,30 @@ export const ITEM_COLUMNS = [
   '"createdAt"',
   '"updatedAt"',
   '"completedAt"',
+  '"archivedAt"',
+  '"archivedReason"',
+  '"supersededById"',
 ].join(", ");
+
+/**
+ * The condition every ordinary item read adds so archived rows are not
+ * served (MILESTONES.md #137).
+ *
+ * A shared constant rather than the string written at each site, for one
+ * reason worth stating: there is no single funnel every item read passes
+ * through — each operation builds its own `WHERE` — so the guarantee "an
+ * archived item is served by no ordinary read" is held by a *set* of call
+ * sites agreeing with each other. A constant makes that set greppable and
+ * gives `tests/item-archive.test.ts` one symbol to assert every read uses,
+ * which is what turns the agreement from a convention into something a test
+ * can check.
+ *
+ * Deliberately parameterless. Every peer condition in these queries takes a
+ * `$n` placeholder and threads `paramIndex`; this one takes none, so it can
+ * be pushed into a condition list at any position without disturbing the
+ * placeholder numbering the surrounding code is counting on.
+ */
+export const NOT_ARCHIVED_CONDITION = '"archivedAt" IS NULL';
 
 /**
  * Which column list a read should select, given the caller's `full` flag.

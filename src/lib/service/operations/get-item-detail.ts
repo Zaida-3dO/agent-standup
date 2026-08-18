@@ -51,7 +51,13 @@ import { z } from "zod";
 import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  ITEM_COLUMNS,
+  NOT_ARCHIVED_CONDITION,
+  toItemRecord,
+  type ItemRecord,
+  type RawItemRow,
+} from "../items/row";
 // `columnForProject` rather than a local copy of the same rule: its own
 // header says the mapping lives in one place so `get_board` and every other
 // reader cannot drift apart on it, and a project's column on the detail
@@ -269,17 +275,25 @@ export const getItemDetail = defineOperation({
     // relative position would be whatever the plan happened to produce, and
     // a tree that reorders itself between two identical reads is worse than
     // one ordered by something arbitrary but stable.
+    // Both arms of the recursion exclude archived rows (MILESTONES.md #137),
+    // which prunes an archived item's whole subtree rather than only the row
+    // itself. That is the honest reading for a tree: an archived parent's
+    // children are reachable in the interface *through* the parent, so
+    // showing them under a node the reader cannot see would place them
+    // nowhere. The board's own walk filters only its final select instead,
+    // because there a descendant contributes a state rather than a position.
     const subtreeRows = await ctx.db.$queryRawUnsafe<RawSubtreeRow[]>(
       `WITH RECURSIVE subtree AS (
          SELECT i."id", i."parentId", i."title", i."kind", i."state", i."priority",
                 1 AS "depth",
                 ARRAY[to_char(i."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.MS') || i."id"] AS "path"
-         FROM "Item" i WHERE i."parentId" = $1
+         FROM "Item" i WHERE i."parentId" = $1 AND i.${NOT_ARCHIVED_CONDITION}
          UNION ALL
          SELECT i."id", i."parentId", i."title", i."kind", i."state", i."priority",
                 s."depth" + 1,
                 s."path" || (to_char(i."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.MS') || i."id")
          FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
+         WHERE i.${NOT_ARCHIVED_CONDITION}
        )
        SELECT "id", "parentId", "title", "kind", "state", "priority", "depth"
        FROM subtree ORDER BY "path" ASC`,

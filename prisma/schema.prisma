@@ -117,6 +117,24 @@ model Item {
   createdAt         DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
   completedAt       DateTime?      @db.Timestamptz(3)
+  // Withdrawn from circulation without leaving the database (MILESTONES.md
+  // #137). Distinct from every terminal state: `cancelled` records a
+  // decision not to do the work and is a real outcome that still shows up,
+  // while an archived row is one that should never have existed — a
+  // duplicate, or something created by accident — and is served by no
+  // ordinary read. Nullable because "when" answers "whether" and also
+  // records the fact a boolean would discard.
+  archivedAt        DateTime?      @db.Timestamptz(3)
+  // Why, required by the operation that sets `archivedAt`. Stored on the row
+  // rather than left to the event log alone, so "why is this invisible" is
+  // answerable from the row a reader already has.
+  archivedReason    String?
+  // The item this one was archived in favour of, where there is one — most
+  // often the surviving half of a duplicate. A pointer rather than prose, so
+  // a reader arriving by a stale link can be sent somewhere live.
+  supersededById    String?
+  supersededBy      Item?          @relation("Superseded", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes        Item[]         @relation("Superseded")
 
   assignments Assignment[]
   events      Event[]
@@ -135,6 +153,19 @@ model Item {
   @@index([repo])
   @@index([state, priority])
   @@index([sourceRef])
+  // `Item_archivedAt_idx` is deliberately absent here and lives only in the
+  // migration SQL. It is a PARTIAL index — `WHERE "archivedAt" IS NOT NULL`
+  // — which this schema language cannot express, and declaring the full
+  // index instead would not be the same object: it would index every row,
+  // taxing the common write to serve a read that only ever asks about the
+  // small archived minority.
+  //
+  // That asymmetry is safe rather than latent drift, for the reason
+  // `tests/partial-index-drift.test.ts` pins: `prisma migrate diff` compares
+  // against the datamodel, and a partial index has no datamodel
+  // representation, so the diff cannot see one in either direction.
+  // Declaring it here is what *would* make the drift check red, because the
+  // migration's partial index and this file's full one are different objects.
 }
 
 // Installation-owned reference data (SCHEMA.md §23) — not build-owned
@@ -835,8 +866,15 @@ model Session {
   // and an enum here would refuse a registration for naming a tool this
   // build had not heard of.
   client   String?
+  // Who this session acts for, and how its work is driven — the two halves
+  // of one declaration made at registration and inherited by later calls
+  // (MILESTONES.md #111). Both nullable, and both nullable for the same
+  // reason: "declared nothing" is a distinct fact from "declared the value
+  // that happens to be the default", and only the first should fall through
+  // to an item-level default.
   personId String?
   person   Person? @relation(fields: [personId], references: [id])
+  driveMode DriveMode?
 
   registeredAt DateTime @default(now()) @db.Timestamptz(3)
   lastSeenAt   DateTime @default(now()) @db.Timestamptz(3)
