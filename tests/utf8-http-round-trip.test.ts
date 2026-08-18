@@ -47,7 +47,12 @@
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+  withAuth,
+} from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { handleMcpRequest } from "@/lib/mcp/http";
@@ -57,9 +62,6 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
-
-/** The token the authenticated route in this file is configured to accept. */
-const UTF8_TEST_TOKEN = "utf8-round-trip-token";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -94,7 +96,7 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
     // One route in this file is reached through its own handler, which
     // authenticates; the MCP cases below call `handleMcpRequest` directly,
     // beneath the mount that would.
-    vi.stubEnv("STANDUP_TOKENS", `test-machine:${UTF8_TEST_TOKEN}`);
+    stubAuthEnvironment();
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
@@ -192,7 +194,7 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
       const postResponse = await collectionRoute.POST(
         new Request("http://localhost/api/items", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: withAuth({ "content-type": "application/json" }),
           body: JSON.stringify({
             title: sample,
             body: `body containing ${sample}`,
@@ -206,7 +208,7 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
       expect(postPayload.item.title).toBe(sample);
 
       const getResponse = await itemRoute.GET(
-        new Request(`http://localhost/api/items/${postPayload.item.id}?full=true`),
+        authenticatedRequest(`http://localhost/api/items/${postPayload.item.id}?full=true`),
         { params: Promise.resolve({ id: postPayload.item.id }) },
       );
       expect(getResponse.status).toBe(200);
@@ -301,7 +303,7 @@ describe("undecodable bytes at the HTTP boundary (MILESTONES.md #113, companion)
   // be configured here too. This block runs with no database, hence its own
   // stub rather than the one in the DB-gated block above.
   beforeEach(() => {
-    vi.stubEnv("STANDUP_TOKENS", `test-machine:${UTF8_TEST_TOKEN}`);
+    stubAuthEnvironment();
   });
 
   // No database, no service call, and no route import: this reproduces the
@@ -359,10 +361,7 @@ describe("undecodable bytes at the HTTP boundary (MILESTONES.md #113, companion)
         // The route authenticates before it reads the body, so an
         // unauthenticated call would be refused with a 401 and never reach
         // the decoding path this case exists to exercise.
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${UTF8_TEST_TOKEN}`,
-        },
+        headers: withAuth({ "content-type": "application/json" }),
         body,
       }),
     );

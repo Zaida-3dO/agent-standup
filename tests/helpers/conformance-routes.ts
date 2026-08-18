@@ -17,6 +17,7 @@
 // reported by assertion 4 as an unexposed surface instead of silently
 // passing. Add a route here when a case needs it.
 import type { NextResponse } from "next/server";
+import { authenticatedRequest } from "./authenticated-requests";
 
 type Handler = (
   request: Request,
@@ -91,7 +92,14 @@ async function loadRoutes(): Promise<readonly RouteEntry[]> {
  */
 export async function routeFetch(url: string, init: RequestInit): Promise<Response> {
   const parsed = new URL(url);
-  const request = new Request(url, init);
+  // The web API authenticates every call, so this driver presents a token
+  // the way a real client does. It is not an exemption from the comparison
+  // — it is what makes the comparison meaningful: the other three drivers
+  // run in-process and cross no transport, so they have nothing to present,
+  // and an HTTP driver sending no credential would report `forbidden` for
+  // every case and "disagree" with them on all of it while proving nothing
+  // about the operations under test.
+  const request = authenticatedRequest(url, init);
   const method = (init.method ?? "GET").toUpperCase();
 
   for (const route of await loadRoutes()) {

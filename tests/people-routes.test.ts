@@ -89,7 +89,7 @@ describeIfDb("people HTTP route against Postgres", () => {
 
   it("GET /people?includeArchived=true includes an archived profile, with archivedAt set", async () => {
     const response = await peopleRoute.GET(
-      new Request("http://localhost/api/people?includeArchived=true"),
+      authenticatedRequest("http://localhost/api/people?includeArchived=true"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -102,7 +102,7 @@ describeIfDb("people HTTP route against Postgres", () => {
 
   it("GET /people?includeArchived=false behaves exactly like the default (no query param)", async () => {
     const response = await peopleRoute.GET(
-      new Request("http://localhost/api/people?includeArchived=false"),
+      authenticatedRequest("http://localhost/api/people?includeArchived=false"),
     );
     const payload = (await response.json()) as { people: { id: string }[] };
     expect(payload.people.some((p) => p.id === "people-route-archived")).toBe(false);

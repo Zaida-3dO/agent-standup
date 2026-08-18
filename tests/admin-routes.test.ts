@@ -601,14 +601,16 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
         { params: Promise.resolve({ id: "route-person-archived" }) },
       );
 
-      const response = await peopleCollection.GET(new Request("http://localhost/api/people"));
+      const response = await peopleCollection.GET(
+        authenticatedRequest("http://localhost/api/people"),
+      );
       const payload = (await response.json()) as { people: { id: string }[] };
       expect(payload.people.some((p) => p.id === "route-person-archived")).toBe(false);
     });
 
     it("GET /people?includeArchived=true includes an archived person, with archivedAt set", async () => {
       const response = await peopleCollection.GET(
-        new Request("http://localhost/api/people?includeArchived=true"),
+        authenticatedRequest("http://localhost/api/people?includeArchived=true"),
       );
       expect(response.status).toBe(200);
       const payload = (await response.json()) as {
