@@ -140,8 +140,16 @@ export function rankMatch(fields: SearchableFields, query: string): MatchRanking
   return { score: total, matchedIn: best };
 }
 
-/** How much of the surrounding text an excerpt carries on each side of the match. */
-const EXCERPT_CONTEXT = 60;
+/**
+ * How much of the surrounding text an excerpt carries on each side of the
+ * match.
+ *
+ * Exported so a test can assert the excerpt is bounded *by this*, rather
+ * than merely shorter than the body it came from — an excerpt that ignored
+ * the match position and returned a leading slice would satisfy the weaker
+ * claim while being exactly the thing `buildExcerpt` exists not to do.
+ */
+export const EXCERPT_CONTEXT = 60;
 
 /**
  * The snippet of `body` around the match — the line that shows a caller

@@ -28,6 +28,7 @@ import {
   enforceResponseSize,
   responseSize,
   responseTooLargeMessage,
+  wireCopiesFor,
 } from "@/lib/service/response-size";
 import { defaultSnapshot } from "@/lib/settings";
 import { operationsOfKind } from "@/lib/service/registry";
@@ -118,6 +119,53 @@ describe("the refusal a read gets when it will not fit", () => {
       expect(details.operation).toBe("get_board");
       expect(details.limit).toBe(MAX_RESPONSE_CHARS);
       expect(Number(details.size)).toBeGreaterThan(MAX_RESPONSE_CHARS);
+    }
+  });
+});
+
+describe("what a surface actually puts on the wire", () => {
+  // **A ceiling on the payload is not a ceiling on what arrives.** The MCP
+  // adapter renders every success twice — once as `text`, once as
+  // `structuredContent` — so a payload just under the ceiling would deliver
+  // just under twice it, on the surface an agent is most likely reading
+  // through. Measured: a result the payload check scores at ~180k leaves as
+  // a ~360k envelope.
+  it("counts an MCP response twice, because that surface sends it twice", () => {
+    expect(wireCopiesFor("mcp")).toBe(2);
+  });
+
+  it("counts every other surface once", () => {
+    expect(wireCopiesFor("http")).toBe(1);
+    expect(wireCopiesFor("cli")).toBe(1);
+    // An unknown surface is not assumed to duplicate — one copy is the
+    // honest default.
+    expect(wireCopiesFor(undefined)).toBe(1);
+  });
+
+  // The behavioural half, and the load-bearing one: the same payload is
+  // accepted on a single-copy surface and refused on the doubling one. A
+  // guard that ignored the multiplier would accept it on both.
+  it("refuses on MCP a payload it accepts on HTTP", () => {
+    // Over half the ceiling, under the whole of it — the band where the two
+    // surfaces must disagree.
+    const payload = "x".repeat(MAX_RESPONSE_CHARS * 0.6);
+    expect(responseSize(payload)!).toBeLessThan(MAX_RESPONSE_CHARS);
+    expect(() => enforceResponseSize("get_board", "read", "http", payload)).not.toThrow();
+    expect(() => enforceResponseSize("get_board", "read", "mcp-http", payload)).toThrow();
+  });
+
+  // The refusal quotes what the caller would have received, not the payload
+  // — a caller told "180,000 characters, over the 200,000 limit" would have
+  // a refusal that contradicts itself.
+  it("reports the delivered size, and keeps the payload size beside it", () => {
+    const payload = "x".repeat(MAX_RESPONSE_CHARS * 0.6);
+    try {
+      enforceResponseSize("get_board", "read", "mcp-stdio", payload);
+      expect.unreachable("an oversized MCP response should have been refused");
+    } catch (error) {
+      const details = (error as { details?: Record<string, unknown> }).details ?? {};
+      expect(Number(details.size)).toBeGreaterThan(MAX_RESPONSE_CHARS);
+      expect(Number(details.size)).toBe(Number(details.payload) * 2);
     }
   });
 });

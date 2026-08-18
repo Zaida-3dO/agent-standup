@@ -57,12 +57,18 @@ export const MAX_RESPONSE_CHARS = 200_000;
 export const RESPONSE_TOO_LARGE_GUARD = "response.too_large";
 
 /**
- * The size of a response as the caller will actually receive it.
+ * The serialised size of a response, before any adapter renders it.
  *
- * `JSON.stringify` because that is what crosses every one of this
- * application's boundaries — an HTTP body, an MCP tool result, the command
- * line's JSON envelope. Measuring the JavaScript object graph instead would
- * measure a thing no caller ever sees.
+ * `JSON.stringify` because a serialised form is what crosses every one of
+ * this application's boundaries — an HTTP body, an MCP tool result, the
+ * command line's JSON envelope. Measuring the JavaScript object graph
+ * instead would measure a thing no caller ever sees.
+ *
+ * **This is the payload's own size, not the number of characters that reach
+ * a particular caller.** An adapter may render the same value more than
+ * once, so what lands in a context is a multiple of this — see
+ * `WIRE_COPIES_PER_SURFACE`, which is what `enforceResponseSize` applies on
+ * top of this figure.
  *
  * A value that cannot be serialised at all — a circular structure — is not
  * a size problem and must not be reported as one, so it is treated as
@@ -79,6 +85,35 @@ export function responseSize(value: unknown): number | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * How many times a surface puts the payload on the wire.
+ *
+ * **A ceiling on the payload is not a ceiling on what arrives** wherever an
+ * adapter renders the same value twice, and one here does: an MCP tool
+ * result carries the answer as both a `text` rendering and as
+ * `structuredContent`, because clients are split on which they read and
+ * neither is safely droppable (`mcp/result.ts` carries that reasoning). A
+ * caller on that surface therefore receives two copies of everything, so a
+ * payload measured at just under the ceiling would deliver just under twice
+ * it — on the surface an agent is most likely to be reading through, which
+ * is exactly the overflow this guard exists to prevent.
+ *
+ * Applying the factor here rather than raising the ceiling keeps the
+ * constant meaning one thing: `MAX_RESPONSE_CHARS` is what a caller may
+ * receive, and each surface states how much wire it spends per character of
+ * payload. A surface absent from this table sends one copy, which is the
+ * honest default — an adapter that starts duplicating its output adds an
+ * entry here rather than silently halving the guard.
+ */
+const WIRE_COPIES_PER_SURFACE: Readonly<Record<string, number>> = {
+  mcp: 2,
+};
+
+/** How many copies of the payload the caller's surface puts on the wire. */
+export function wireCopiesFor(surface: CallSurface | undefined): number {
+  return surface === undefined ? 1 : (WIRE_COPIES_PER_SURFACE[surface] ?? 1);
 }
 
 /**
@@ -149,11 +184,18 @@ export function enforceResponseSize(
   result: unknown,
 ): void {
   if (kind !== "read") return;
-  const size = responseSize(result);
-  if (size === null || size <= MAX_RESPONSE_CHARS) return;
+  const payload = responseSize(result);
+  if (payload === null) return;
+  const surface = surfaceForTransport(transport);
+  // What the caller receives, which is the payload times however many copies
+  // its surface puts on the wire — see `WIRE_COPIES_PER_SURFACE`. Measuring
+  // the payload alone would leave the guard half as strong on the surface
+  // that duplicates, which is the one an agent most often reads through.
+  const delivered = payload * wireCopiesFor(surface);
+  if (delivered <= MAX_RESPONSE_CHARS) return;
   throw new GuardRejectedError(
     RESPONSE_TOO_LARGE_GUARD,
-    responseTooLargeMessage(operation, size, surfaceForTransport(transport)),
-    { details: { operation, size, limit: MAX_RESPONSE_CHARS } },
+    responseTooLargeMessage(operation, delivered, surface),
+    { details: { operation, size: delivered, payload, limit: MAX_RESPONSE_CHARS } },
   );
 }

@@ -29,7 +29,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { OPERATION_REGISTRY } from "@/lib/service/registry";
-import { buildExcerpt, rankMatch } from "@/lib/service/items/search-rank";
+import { EXCERPT_CONTEXT, buildExcerpt, rankMatch } from "@/lib/service/items/search-rank";
 import {
   escapeLikePattern,
   DEFAULT_SEARCH_LIMIT,
@@ -144,12 +144,25 @@ describe("ranking — a title match beats a body match", () => {
 });
 
 describe("the excerpt — the evidence a match actually happened", () => {
+  // **Asserting the bound, not merely that something was cut.** An excerpt
+  // that ignored the match position and returned a leading slice would be
+  // shorter than the body too, so `length < body.length` is satisfied by
+  // exactly the implementation this function exists not to be. The bound is
+  // therefore stated against `EXCERPT_CONTEXT`: at most that much context on
+  // each side, the query itself, and at most two ellipsis characters.
   it("centres on the match rather than on the start of the body", () => {
-    const body = `${"x".repeat(300)} the needle here ${"y".repeat(300)}`;
-    const excerpt = buildExcerpt(body, "needle");
-    expect(excerpt).toContain("needle");
-    // Shortened, or it would be the whole body under another name.
-    expect(excerpt!.length).toBeLessThan(body.length);
+    const query = "needle";
+    const body = `${"x".repeat(300)} the ${query} here ${"y".repeat(300)}`;
+    const excerpt = buildExcerpt(body, query);
+    expect(excerpt).toContain(query);
+    expect(excerpt!.length).toBeLessThanOrEqual(query.length + 2 * EXCERPT_CONTEXT + 2);
+    // Both ends were cut, so both are marked — which also pins down that the
+    // window really is centred rather than anchored at either end.
+    expect(excerpt!.startsWith("…")).toBe(true);
+    expect(excerpt!.endsWith("…")).toBe(true);
+    // The far ends of the body are outside the window entirely.
+    expect(excerpt).not.toContain("x".repeat(EXCERPT_CONTEXT + 1));
+    expect(excerpt).not.toContain("y".repeat(EXCERPT_CONTEXT + 1));
   });
 
   // The load-bearing negative: an excerpt that did not contain the match
@@ -320,6 +333,15 @@ describeIfDb("search over a real corpus", () => {
       body: "no mention at all",
       state: "executing",
     });
+    // Two rows whose titles are byte-identical, so they score identically and
+    // only the id tie-break can order them. `s-tie-a` is seeded FIRST, making
+    // it the older row, so the candidate query — which reads newest-first —
+    // hands them to the ranker as [s-tie-b, s-tie-a]. `Array.sort` is stable,
+    // so a comparator without the tie-break preserves exactly that order.
+    // Expecting the opposite is therefore a claim about the tie-break itself
+    // rather than about the order the rows arrived in.
+    await seed({ id: "s-tie-a", title: "Tied ranking case", body: "nothing", state: "executing" });
+    await seed({ id: "s-tie-b", title: "Tied ranking case", body: "nothing", state: "executing" });
     // The wildcard pair. Searching for the literal `50%` must find the row
     // that really contains it and NOT the decoy — unescaped, the pattern
     // becomes `%50%%`, whose `%` matches any run of characters and so also
@@ -495,6 +517,17 @@ describeIfDb("search over a real corpus", () => {
     expect(result.matches).toHaveLength(2);
   });
 
+  // The tie-break the comparator documents. Two rows with equal scores must
+  // be ordered by id rather than by whatever the scan produced — without it,
+  // equally-ranked rows could swap places between calls, which reads as
+  // instability rather than as the tie it is. The rows are seeded so the
+  // candidate query returns them in the OPPOSITE order to the expectation,
+  // so a comparator that dropped the tie-break fails here.
+  it("breaks a score tie by id, not by the order the rows arrived in", async () => {
+    const ids = (await call({ query: "Tied ranking case" })).matches.map((m) => m.id);
+    expect(ids).toEqual(["s-tie-a", "s-tie-b"]);
+  });
+
   it("returns a stable order for a repeated identical query", async () => {
     const first = (await call({ query: "search" })).matches.map((m) => m.id);
     const second = (await call({ query: "search" })).matches.map((m) => m.id);
@@ -564,5 +597,26 @@ describeIfDb("a query broader than the ranking ceiling", () => {
   it("still returns only a page, not every match", async () => {
     const result = (await runtime.call("search", { query: "widespread" } as never)) as SearchOutput;
     expect(result.matches.length).toBeLessThanOrEqual(DEFAULT_SEARCH_LIMIT);
+  });
+
+  // The notice tells a caller these are "the best of the most recent
+  // matches", which is a claim about *which* rows survived the ceiling — and
+  // that claim rests entirely on the candidate query's ordering. Every row
+  // here scores identically (the query matches the same field in each), so
+  // nothing but the ordering decides who is kept. The corpus is seeded
+  // newest-first by index, so the oldest rows are the ones the ceiling must
+  // drop; asserting that pins the ordering the notice depends on.
+  it("keeps the most recent matches when it cannot rank them all", async () => {
+    const result = (await runtime.call("search", {
+      query: "widespread",
+      limit: MAX_SEARCH_LIMIT,
+    } as never)) as SearchOutput;
+    const kept = new Set(result.matches.map((m) => m.id));
+    // `ceiling-0` is the newest row and must survive the cut.
+    expect(kept.has("ceiling-0")).toBe(true);
+    // The rows past the ceiling are the oldest, and must not.
+    for (let i = RANK_CANDIDATE_CEILING; i < RANK_CANDIDATE_CEILING + 25; i++) {
+      expect(kept.has(`ceiling-${i}`)).toBe(false);
+    }
   });
 });
