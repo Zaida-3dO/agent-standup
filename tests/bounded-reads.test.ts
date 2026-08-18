@@ -293,6 +293,15 @@ describeIfDb("every registered read is bounded against a realistic corpus", () =
         return { id: "nonexistent" };
       case "kill_guard":
         return { pid: 1, sessionId };
+      // `get_costs` has a required `groupBy`, so an unfiltered call is
+      // refused before it reads anything — and a refusal is treated here as
+      // a bounded answer, which would let this operation pass the sweep
+      // without its payload ever being measured. Supplying the grouping
+      // with the largest cardinality is what puts it back under the
+      // assertion: one row per session that has ever run is the shape most
+      // able to grow without bound.
+      case "get_costs":
+        return { groupBy: "session" };
       default:
         return {};
     }

@@ -434,9 +434,10 @@ describeIfDb("runs and cost — the ingest's rollup against Postgres", () => {
       const { sessionId, itemId } = await heldSession("executing");
       await record(sessionId, [call({ model: "vendor-cheap", inputTokens: 1_000_000 })]);
 
-      // Moving the item and cutting a new run puts the later calls in a
-      // different stage. The run is cut by a model change, which is the only
-      // thing that opens a run able to carry the new state.
+      // Moving the item puts the later calls in a different stage. A model
+      // change happens to coincide here, so this case would pass even if a
+      // stage alone did not cut — which is why the case below drives a
+      // transition with no model change at all.
       await prisma.item.update({ where: { id: itemId }, data: { state: "in_review" } });
       await record(sessionId, [call({ model: "vendor-dear", inputTokens: 1_000_000 })]);
 
@@ -447,6 +448,68 @@ describeIfDb("runs and cost — the ingest's rollup against Postgres", () => {
       const byStage = Object.fromEntries(result.groups.map((g) => [g.key, g.cost]));
       expect(byStage["executing"]).toBeCloseTo(1, 6);
       expect(byStage["in_review"]).toBeCloseTo(10, 6);
+    });
+
+    it("cuts a run when the stage moves, even with no model change", async () => {
+      // The case that decides whether per-stage cost means anything. A run
+      // is the unit cost is attributed by, so a run spanning a transition
+      // reports all of its cost against the stage it opened in — and that
+      // error is not bounded by a flush interval like §10's, it lasts as
+      // long as the run does. Here the model is identical across the
+      // transition, so nothing but the stage can cut the run.
+      const { sessionId, itemId } = await heldSession("executing");
+      await record(sessionId, [call({ model: "vendor-cheap", inputTokens: 1_000_000 })]);
+
+      await prisma.item.update({ where: { id: itemId }, data: { state: "in_review" } });
+      await record(sessionId, [call({ model: "vendor-cheap", inputTokens: 3_000_000 })]);
+
+      const runs = await runsFor(itemId);
+      expect(runs).toHaveLength(2);
+      expect(runs.map((r) => r.stateAt)).toEqual(["executing", "in_review"]);
+      // Both runs keep the model in force: the stage moved, nothing said the
+      // model had.
+      expect(runs.map((r) => r.model)).toEqual(["vendor-cheap", "vendor-cheap"]);
+      expect(runs[0]!.endedAt).not.toBeNull();
+      expect(runs[1]!.endedAt).toBeNull();
+
+      const result = (await runtime.call("get_costs", {
+        groupBy: "stage",
+        itemId,
+      })) as GetCostsOutput;
+      const byStage = Object.fromEntries(result.groups.map((g) => [g.key, g.cost]));
+      expect(byStage["executing"]).toBeCloseTo(1, 6);
+      expect(byStage["in_review"]).toBeCloseTo(3, 6);
+    });
+
+    it("keeps a run open across batches while the stage holds", async () => {
+      // The other half of the same rule, and the one that stops it becoming
+      // a run per flush: an unchanged stage is not a reason to cut.
+      const { sessionId, itemId } = await heldSession("executing");
+      await record(sessionId, [call({ model: "vendor-cheap" })]);
+      await record(sessionId, [call({ model: "vendor-cheap" })]);
+
+      const runs = await runsFor(itemId);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]!.toolCallCount).toBe(2);
+    });
+
+    it("records a facet first reported on the call that crosses a stage", async () => {
+      // A stage change and an adoption can land on the same call. The stage
+      // opens a new run; the adopted model must travel onto it rather than
+      // being discarded by the stage taking that branch first — otherwise
+      // the new run is unattributed and unpriceable despite the call having
+      // said exactly what served it.
+      const { sessionId, itemId } = await heldSession("executing");
+      await record(sessionId, [call()]);
+
+      await prisma.item.update({ where: { id: itemId }, data: { state: "in_review" } });
+      await record(sessionId, [call({ model: "vendor-cheap", inputTokens: 1_000_000 })]);
+
+      const runs = await runsFor(itemId);
+      expect(runs).toHaveLength(2);
+      expect(runs[1]!.stateAt).toBe("in_review");
+      expect(runs[1]!.model).toBe("vendor-cheap");
+      expect(Number(runs[1]!.cost)).toBeCloseTo(1, 6);
     });
 
     it("reports unpriced runs rather than counting them as free", async () => {
