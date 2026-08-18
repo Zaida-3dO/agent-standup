@@ -38,9 +38,10 @@ import {
   originPersonCheck,
   originPersonMessage,
   type CommonCreateInput,
+  type CreatedItem,
+  TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
 import { resolveInboxProject } from "../items/inbox-project";
-import type { ItemRecord } from "../items/row";
 
 /**
  * The literal a caller writes in `projectId` to mean "the inbox".
@@ -81,9 +82,24 @@ export const createTask = defineOperation({
   kind: "write",
   summary:
     'Creates a task under a project. projectId is required — pass a project\'s id, or the literal "inbox" to file it in the configured inbox project. A task has its own state and can be transitioned.',
+  contract: {
+    // The title convention (MILESTONES.md #131). Declared here so a
+    // caller reaches it the moment it is refused on any other field —
+    // `runtime.ts` appends a `describe_tool` pointer to every
+    // `invalid_input` refusal — and so `describe_tool` can state it on
+    // demand rather than it being charged to every turn in `summary`.
+    rules: [TITLE_CONVENTION_CONTRACT_RULE],
+    example: {
+      title: "Let people reset a forgotten password",
+      body: "The reset link expires too fast.",
+      area: "web",
+      originType: "auto",
+      projectId: "inbox",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: CreateTaskInput): Promise<ItemRecord> {
+  async handler(ctx: ServiceContext, input: CreateTaskInput): Promise<CreatedItem> {
     const { projectId, ...common } = input;
 
     const parentId =

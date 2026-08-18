@@ -32,8 +32,9 @@ import {
   originPersonCheck,
   originPersonMessage,
   type CommonCreateInput,
+  type CreatedItem,
+  TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
-import type { ItemRecord } from "../items/row";
 
 const inputSchema = z
   .object({
@@ -61,9 +62,24 @@ export const createSubtask = defineOperation({
   kind: "write",
   summary:
     "Creates a subtask under a task. taskId is required and must name a task or a deeper subtask, never a project. A subtask has its own state and can be transitioned.",
+  contract: {
+    // The title convention (MILESTONES.md #131). Declared here so a
+    // caller reaches it the moment it is refused on any other field —
+    // `runtime.ts` appends a `describe_tool` pointer to every
+    // `invalid_input` refusal — and so `describe_tool` can state it on
+    // demand rather than it being charged to every turn in `summary`.
+    rules: [TITLE_CONVENTION_CONTRACT_RULE],
+    example: {
+      title: "Send the reset email",
+      body: "Wire the mailer to the reset flow.",
+      area: "web",
+      originType: "auto",
+      taskId: "a-task-id",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: CreateSubtaskInput): Promise<ItemRecord> {
+  async handler(ctx: ServiceContext, input: CreateSubtaskInput): Promise<CreatedItem> {
     const { taskId, ...common } = input;
 
     const depth = await ancestorDepthOf(ctx, taskId);
