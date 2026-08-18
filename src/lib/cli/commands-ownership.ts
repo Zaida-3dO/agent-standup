@@ -43,11 +43,24 @@ type FieldsResult =
   | { readonly ok: true; readonly input: Record<string, unknown> }
   | { readonly ok: false; readonly envelope: ErrorEnvelope };
 
-/** Same behaviour as `commands.ts`'s own `flagsToInput` — see this file's header for why it is a second copy. */
-function passThroughFlags(flags: ParsedArgs["flags"]): FieldsResult {
+/**
+ * Same behaviour as `commands.ts`'s own `flagsToInput` — see this file's
+ * header for why it is a second copy.
+ *
+ * `consumed` names the flags a caller has already read itself, which is what
+ * lets a bare switch exist at all: this function refuses a valueless flag
+ * outright, so a switch has to be read by `booleanFlag` first and then
+ * declared here, or it arrives at the operation twice under two spellings.
+ * `commands.ts` takes the same list for the same reason.
+ */
+function passThroughFlags(
+  flags: ParsedArgs["flags"],
+  consumed: readonly string[] = [],
+): FieldsResult {
   const input: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(flags)) {
     if (GLOBAL_FLAGS.has(name)) continue;
+    if (consumed.includes(name)) continue;
     if (value === true) {
       return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
     }
@@ -176,17 +189,30 @@ function buildMyWorkInput(_rest: readonly string[], flags: ParsedArgs["flags"]):
 }
 
 /**
- * `progress_report` takes the same session flag `my_work` does, so it builds
- * its input the same way — the difference between the two is what the server
- * does with the session, not how a caller names it.
+ * `progress_report` takes the same session flag `my_work` does — the
+ * difference between the two is what the server does with the session, not
+ * how a caller names it.
+ *
+ * `--include-completed` is a bare switch, because that is what a switch looks
+ * like here and `--include-completed true` is not a thing anyone would type.
+ * It therefore cannot go through `passThroughFlags`, which refuses a
+ * valueless flag: it is read by `booleanFlag` and declared consumed, exactly
+ * as `--all` and `--full` are on `item list`.
  */
 function buildProgressReportInput(
   _rest: readonly string[],
   flags: ParsedArgs["flags"],
 ): InputResult {
-  const passthrough = passThroughFlags(flags);
+  const includeCompleted = booleanFlag(flags, "include-completed");
+  if (!includeCompleted.ok) return includeCompleted;
+  const passthrough = passThroughFlags(flags, ["include-completed"]);
   if (!passthrough.ok) return passthrough;
-  return withSessionId(passthrough.input, flags);
+  const withSession = withSessionId(passthrough.input, flags);
+  if (!withSession.ok) return withSession;
+  return {
+    ok: true,
+    input: { ...withSession.input, includeCompleted: includeCompleted.value },
+  };
 }
 
 function buildNoteInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
@@ -277,7 +303,7 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "progress",
     operation: "progress_report",
     summary:
-      "A progress report on everything this session holds, in one fixed shape every time it is asked.",
+      "A progress report on everything this session holds, in one fixed shape every time it is asked. Finished work is counted but not listed; --include-completed lists it.",
     buildInput: buildProgressReportInput,
   },
   {
