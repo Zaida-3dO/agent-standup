@@ -16,6 +16,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 import type { ItemDetailOutput } from "@/lib/service/operations/get-item-detail";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -325,8 +326,24 @@ describeIfDb("get_item_detail against Postgres", () => {
       // to cross the wire, not just exist in the table.
       const project = await createItem({ area: "detail-history-headline" });
       const task = await createItem({ area: "detail-history-headline", parentId: project.id });
+      // A checkpoint attributes to a live assignment, so the session has to
+      // hold one — and a claim is refused from a session that has not
+      // registered a hook protocol version (SCHEMA.md §21). Both are
+      // satisfied the way a real session satisfies them rather than
+      // side-stepped, so this exercises the same path a session takes.
+      const sessionId = "session-detail-headline";
+      await registerSessions(prisma, [sessionId]);
+      await runtime.call("claim", {
+        itemId: task.id,
+        sessionId,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-detail-headline",
+        machine: "a-machine",
+      });
       await runtime.call("checkpoint", {
         itemId: task.id,
+        sessionId,
         body: "a first line that is NOT the headline\nmore prose",
         headline: "the stored headline",
       });

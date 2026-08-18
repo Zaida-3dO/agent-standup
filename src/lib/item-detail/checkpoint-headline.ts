@@ -10,12 +10,18 @@
 // the client bundle's import graph, which is the precise thing that check
 // exists to prevent by accident.
 //
-// **What stops the copy drifting.** The cap and the precedence are asserted
-// on both sides, and the two are pinned to each other by a test that feeds
-// the same rows to both and requires the same answer
-// (`tests/item-detail-status.test.ts`). A copy nobody compares is how two
-// surfaces end up quoting a different line from the same checkpoint; a copy
-// under a shared assertion is a boundary, which is what this is.
+// **What stops the copy drifting.** `tests/item-detail-status.test.ts` has a
+// suite ("the copy is pinned to the server's rule") that imports BOTH this
+// module and the server's, feeds them the same twelve rows, and requires the
+// same answer from each — plus equality of the cap.
+//
+// Feeding both the same rows is the part that carries the weight. Asserting
+// only that each side behaves sensibly on its own would pass a one-sided
+// change, which is the realistic way these drift: somebody improves one
+// copy. Requiring the two to AGREE cannot. That test file is the only place
+// in the front end that imports the server module, and it is safe to do so
+// because the sole thing that module pulls in is a type, erased at build
+// time and never reaching a bundle.
 //
 // The rule itself: a stored headline always wins, and prose is the floor.
 // The derivation is never an override — a version that derived first and
