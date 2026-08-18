@@ -652,6 +652,14 @@ clause by another route removes the backstop. So the verification path re-checks
 own source and refuses while it is unhonoured. An inspection may stand in for a review that was never
 possible; it may not discharge a promise a review that *did* happen made.
 
+**The check asks whether an unhonoured bargain exists anywhere on the item, not whether the newest
+approving review carries one** — and the difference is reachable with one ordinary call. Recording a
+review does not check its `commit_sha` against the tip, so a *deliberately stale* plain approval can
+be written: too stale to satisfy any merge clause itself, but newest by creation time, and therefore
+able to answer "nothing deferred here" on behalf of an unhonoured bargain recorded before it. An
+obligation may only be retired by a review with standing to retire it — strictly newer, approving,
+and qualifying at the current round and tip, which is the same bar the merge rests on.
+
 **Scoped to the tip commit, not to the review round.** The artifact must name the item's current tip,
 so an inspection cannot silently carry across to later code — the claim is "I read what is actually
 there". Round is deliberately not required: `max(review_round)` spans every artifact kind, so
