@@ -106,7 +106,9 @@ describe("runSweepOnce", () => {
     });
 
     expect(result).toEqual({ released: ["a"], moves: [] });
-    const [url, init] = fetchImpl.mock.calls[0];
+    const call = fetchImpl.mock.calls[0];
+    expect(call).toBeDefined();
+    const [url, init] = call ?? [];
     expect(url).toBe("http://app:3000/api/sweep");
     // `POST`, not `GET`: the route refuses a GET, and the reason it refuses
     // (a mutating endpoint a prefetch could fire) is worth pinning on the
