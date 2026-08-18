@@ -29,6 +29,7 @@ export const SETTING_CATEGORIES = [
   "Minting",
   "Retention",
   "Hook",
+  "Telemetry",
 ] as const;
 
 export type SettingCategory = (typeof SETTING_CATEGORIES)[number];
@@ -369,6 +370,64 @@ export const SETTINGS_REGISTRY = {
     // Tightens an enforcement rather than relaxing one: on means a session
     // that cannot register cannot hold work.
     sensitive: true,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  // The four `shape.*` keys below are the thresholds a session-shape reading
+  // is taken against (`@/lib/telemetry/shape`). They are settings rather than
+  // constants because what counts as "wide" or "circling" is a property of
+  // the repository being worked in, not of this build: a spread of 30 files
+  // is a routine afternoon in a large application and a red flag in a small
+  // library. None of them is `sensitive` — a shape signal is advice, and
+  // every consumer of it (a digest, a nudge) is advisory by construction, so
+  // a threshold set uselessly high silences a hint rather than disarming an
+  // enforcement.
+
+  "shape.minimum_sample": define({
+    schema: z.number().int().positive(),
+    default: 20,
+    label: "Shape minimum sample",
+    help: "How many tool calls a session must have made before its shape is reported as anything other than unknown. Below this the reading is withheld rather than guessed, because a judgement drawn from a handful of calls is noise presented as a finding.",
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "shape.repeat_threshold": define({
+    schema: z.number().int().positive(),
+    default: 3,
+    label: "Repeat-command threshold",
+    help: "How many times a session must return to a command it already ran — with other work in between — before that reads as going in circles. A command run and immediately re-run is a retry loop and counts once however long it runs, so this counts returns rather than attempts.",
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "shape.spread_threshold": define({
+    schema: z.number().int().positive(),
+    default: 25,
+    label: "File-spread threshold",
+    help: "How many distinct files a session must touch before its spread reads as wide. Distinct files, not calls: reading one file thirty times is not a spread of thirty.",
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "shape.read_share_threshold": define({
+    schema: z.number().min(0).max(1),
+    default: 0.9,
+    label: "Read-share threshold",
+    help: "The share of a session's classifiable calls that must be reads before it reads as mostly-looking, between 0 and 1. Taken over calls that could be classified as a read or a write, so shell commands — which may be either — neither raise nor lower it.",
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
     irreversible: false,
     formerEnv: [],
   }),

@@ -111,6 +111,9 @@ import { killGuard } from "./operations/kill-guard";
 // Telemetry (MILESTONES.md #50): the hook's tool-call ingest, and the
 // foundation every later M7 row reads.
 import { recordToolCalls } from "./operations/record-tool-calls";
+// Session shape (MILESTONES.md #54): the read side of the same rows — how a
+// session's recent work is going, as opposed to what it cost.
+import { getSessionShape } from "./operations/get-session-shape";
 // The registration handshake (MILESTONES.md #43, SCHEMA.md §21). Registered
 // like any other operation, so every adapter reaches it through the same
 // door and stamps its own transport on the way in.
@@ -189,6 +192,7 @@ export const OPERATION_REGISTRY = {
   [listProcesses.name]: listProcesses,
   [killGuard.name]: killGuard,
   [recordToolCalls.name]: recordToolCalls,
+  [getSessionShape.name]: getSessionShape,
   [registerSession.name]: registerSession,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;
