@@ -214,6 +214,87 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(error.fields).toEqual(["commitSha"]);
     });
 
+    // #138 — a `historical_verification` closes an item on an inspection of
+    // merged code rather than on a review. Its whole claim to being an
+    // acceptable substitute is that the claim is CHECKABLE, which means the
+    // evidence is mandatory rather than conventional.
+    it("refuses a historical_verification with no commitSha", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "historical_verification",
+        body: "I looked at it and it seemed fine.",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      // An inspection that does not name the code it read cannot be
+      // confirmed or refuted by the next person to look — which would make
+      // it exactly the unfalsifiable approval this kind exists to replace.
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["commitSha"]);
+    });
+
+    it("refuses a historical_verification with no body", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+    });
+
+    it("refuses a historical_verification whose body is only whitespace", async () => {
+      // A blank string satisfies "a body was supplied" while recording
+      // nothing, which is the same as recording nothing.
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "   \n  ",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+    });
+
+    it("accepts a historical_verification carrying both, and stores it as its own kind — never as a review", async () => {
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "Read the merged code at abc123: the routes named in the brief are absent.",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.kind).toBe("historical_verification");
+      // No verdict, because it is not a review and has no judgement to give.
+      // This is what stops a reader — human or query — from ever counting it
+      // as an approval.
+      expect(artifact.verdict).toBeNull();
+    });
+
+    it("refuses a verdict on a historical_verification — it is not a review and must never read as one", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected",
+        verdict: "lgtm",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["verdict", "kind"]);
+    });
+
     it("refuses a verdict on an artifact that is not a review", async () => {
       const itemId = await createTask();
       const error = await recordFails({

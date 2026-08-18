@@ -471,14 +471,55 @@ Each entry is `{ text, reason, item_id? }`:
 | `reason` | Requires | Rejected when |
 |---|---|---|
 | `follow-up` | A **minted `item_id`** | That item is **actionable** — not `blocked` and not `paused`. Completion fails with *"this follow-up isn't blocked; go do it."* |
+| `follow-up-scheduled` | A minted `item_id` that is **scheduled** and a **sibling** | That item is closed, `someday`, `blocked`/`paused`, or a **descendant** of the item being completed |
 | `needs-approval` | A minted `item_id` that is `blocked` with `blocked_on_type = person` | The linked item isn't actually blocked on someone |
 | `descoped` | Nothing — no work is being deferred | — |
 
 `descoped` is the tiny-and-benign case: a deliberate decision not to do something, recorded as a
 decision rather than a failure.
 
-**There is no reason code for *ran out of time*, *too hard*, or *will do later*.** They can't be
-expressed, so a task can't quietly carry them to completion.
+**`follow-up-scheduled` is the other half of `follow-up`, not a softer version of it.** `follow-up`
+proves deferral by requiring the linked item to be **stopped**: if the work were startable, nothing
+would be stopping you doing it. That is right for *"something is in the way"*, and it stays exactly
+as strict. It is the wrong test — unsatisfiable, in fact — for the outcome §17 of `DECISIONS.md`
+calls correct: a review raises findings that are real but not blocking, the change merges, and the
+findings become a **sibling** item that is open and ready to pick up. Open and ready is actionable,
+which `follow-up` refuses, so the endorsed shape was the one shape that could not be recorded — and
+the observed response was to drop `not_done` and write the deferral into `watch_for` as prose,
+losing exactly the machine-readable link this field exists to keep.
+
+So the second reason asks for the **mirror** proof: not that the work is stopped, but that it is
+**live** — a real open row, and a sibling rather than a descendant. The two reasons accept disjoint
+sets of linked states, so neither is a route around the other.
+
+**Each reason has to charge a real price, or it becomes the cheap way out.** `follow-up` charges by
+demanding the linked item be `blocked` or `paused` — and `blocked` demands a reason and a
+`blocked_on_type`, so faking it lands the work on somebody's needs-you list and makes it *more*
+visible. `follow-up-scheduled` charges by demanding the linked item be genuinely **scheduled**:
+`someday` is refused, because it is the one state whose meaning is *unscheduled*, and accepting it
+would let *"I will get to it"* complete cleanly while making the reason's own name false.
+
+**The two prices are not equal.** A false `blocked` costs a reason, a `blocked_on_type`, and a place
+on somebody's needs-you list. Refusing `someday` costs a positive assertion that the work is queued —
+which is real, because it is a claim someone can disagree with and it lands in a permanent record,
+but lighter, since a newly minted item already sits in an accepted state and `someday` and `on_deck`
+render in the same board column. Recorded here rather than smoothed over: a design that claimed
+parity would be claiming more than it delivers.
+
+**This is a widening, and it is recorded as one.** Mutual exclusivity between the two follow-up
+reasons is not on its own a guarantee; the question is whether their *union* covers "later", and the
+`someday` exclusion is what keeps it from doing so. The comparison that justifies the trade is not
+against a perfect version of this rule but against what was actually happening: the endorsed shape
+had no representation, so deferrals were being written into `watch_for` as prose — costless,
+requiring no false statement either, and with the machine-readable link destroyed. A priced,
+checkable, linked path is better than that. It is still less airtight than three reasons were, and
+saying so here is cheaper than letting a future reader discover it.
+
+**The sibling requirement is enforced, not advised.** A follow-up parented *under* the item being
+completed asserts that the item is not finished without it, which contradicts completing it — and an
+open descendant already blocks the completion through the hierarchy rule below. Refusing it here
+names the actual mistake (the follow-up is inside the work instead of beside it) rather than leaving
+the caller to infer it from a hierarchy rejection that never mentions `not_done`.
 
 **The rejection message is the mechanism, not decoration.** A bare validation error teaches an agent to
 satisfy the check; the rejection should ask the question instead:
@@ -517,6 +558,60 @@ is already the place that says which transitions require what.
 | `created_by_type` | enum | `person` · `agent`. A review by a person and one by a reviewer agent are both evidence. |
 | `created_by_id` | `text` | → `people.id` or `agents.name`, per `created_by_type`. |
 | `created_at` | `timestamptz` | |
+
+---
+
+### 6b. `historical_verification` — closing work that finished before this installation existed
+
+Entering `merged` requires an approving `code_review` at the item's current review round and tip
+commit. That is right for a change being proposed, and it is the only thing standing between
+unreviewed code and a board that says the code was reviewed. It has **no truthful answer for work
+that already shipped** under a process this installation did not run: there is no reviewer who could
+have written that artifact, because there was nothing to review it in.
+
+**The failure mode is a forged approval, and it should not depend on good manners.** An agent facing
+that refusal can record a `code_review` with an approving verdict and close the item in one call, and
+nothing in the product can tell that apart from a real review — a forged review is identical to an
+honest one in kind, in verdict, and in every column a reader sees. The gate's whole value then rests
+on an agent declining to do the cheap thing, and the pressure to do it is highest exactly where the
+approval would mean least.
+
+So the merge gate accepts an artifact of kind `historical_verification` as an **alternative
+satisfier** for the code-review clause. Four properties bound it, and none of them carries the
+argument alone:
+
+1. **The window cannot be opened from inside.** It is an environment variable checked fail-closed, so
+   nothing reachable over HTTP, MCP or the command line can turn it on for itself. While it is shut
+   this path does not exist and the gate behaves exactly as it does without it. The window is
+   announced at startup, for the same reason the import window is: the realistic failure is opening it
+   for one cleanup, being interrupted, and leaving it open.
+2. **It is not a review and cannot be read as one.** This does not make fabrication impossible — an
+   agent willing to forge a review will forge an inspection. What it buys is that the fabrication is
+   *visible*: an item closed this way is permanently marked as closed-on-inspection, in its artifact
+   list, in its closing summary's `final_state`, and by the absence of a `review` event. The cheap
+   path leaves a trace, which is precisely what an approving verdict recorded on the review path
+   does not.
+3. **The claim has to be checkable.** A verdict is a judgement and cannot be audited; an inspection is
+   a set of facts and can be. The artifact is refused at the write unless it names the commit it was
+   checked against and records what was inspected, so a later reader can confirm or refute it. A claim
+   someone can be publicly wrong about is a different kind of thing from an unfalsifiable approval.
+4. **It never satisfies authorisation.** `merge_authority` of `needs_approval` is enforced by a
+   separate clause reading `kind = 'code_review' AND created_by_type = 'person'`, untouched by this.
+   The window widens what counts as review **evidence**, never what counts as **authorisation**.
+
+**Scoped to the tip commit, not to the review round.** The artifact must name the item's current tip,
+so an inspection cannot silently carry across to later code — the claim is "I read what is actually
+there". Round is deliberately not required: `max(review_round)` spans every artifact kind, so
+requiring a match would let an artifact recorded at a higher round invalidate an honest `code_review`
+on a live item. An inspection of merged code is not part of a review conversation and is not scoped
+to one.
+
+**What was deliberately not used as the gate.** Keying this to a property of the row — that it arrived
+through an import — was rejected twice over. The obvious markers (`origin_type`, a `legacy_id` in
+`custom_fields`) are caller-supplied through the ordinary create path, so gating on them would rest
+the protection on a value the caller writes. And even an unforgeable column would grant a permanent
+second merge path to a permanent class of rows, still standing long after one of those items has been
+reopened and worked on live. A window is bounded by construction and expires by being closed.
 
 ---
 

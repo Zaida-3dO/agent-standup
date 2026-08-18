@@ -45,6 +45,7 @@ const ARTIFACT_KINDS = [
   "visual_review",
   "test_run",
   "commit",
+  "historical_verification",
   "screenshot",
   "other",
 ] as const;
@@ -260,6 +261,36 @@ export const recordArtifact = defineOperation({
       throw new InvalidInputError("A commit artifact must record its commitSha.", {
         fields: ["commitSha"],
       });
+    }
+
+    // A `historical_verification` must carry the evidence that makes it
+    // checkable — SCHEMA.md §6b. This is the requirement the whole kind rests
+    // on, so it is enforced at the write rather than described in a doc.
+    //
+    // The distinction it protects: an approving verdict is a *judgement*, and
+    // a judgement cannot be audited after the fact — there is nothing in it
+    // to be right or wrong about. An inspection is a set of *facts*: which
+    // commit was read, and what was checked in it. Recorded, those can be
+    // confirmed or refuted by the next person to look. A
+    // `historical_verification` with no commit and no account of what was
+    // inspected would be an unfalsifiable approval wearing a different name,
+    // which is precisely the thing this kind exists to be an alternative to.
+    if (input.kind === "historical_verification") {
+      if (input.commitSha === undefined || input.commitSha === null) {
+        throw new InvalidInputError(
+          "A historical_verification must record the commitSha it was checked against — an " +
+            "inspection that does not say which code it read cannot be confirmed by anyone else.",
+          { fields: ["commitSha"] },
+        );
+      }
+      if (input.body === undefined || input.body === null || input.body.trim().length === 0) {
+        throw new InvalidInputError(
+          "A historical_verification must record in `body` what was inspected and how it was " +
+            "confirmed — the evidence is the entire difference between this and an approval " +
+            "nobody can check.",
+          { fields: ["body"] },
+        );
+      }
     }
 
     // §6: "Null on artifacts that aren't reviews — a plan document has no

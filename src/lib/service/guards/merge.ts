@@ -29,6 +29,7 @@
 // own doc for the exact scenario this closes.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
+import { historicalVerificationSatisfies } from "./historical-verification";
 import {
   approvingArtifactAtCurrentRoundAndTip,
   currentReviewRound,
@@ -98,10 +99,42 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
     "Entering merged requires an approving code_review artifact at the item's current review round and tip commit.",
   appliesTo: (_from, to) => to === "merged",
   async check(input: GuardInput) {
+    // ── The historical-verification alternative ───────────────────────────
+    //
+    // Checked FIRST and inside this clause, not as a sixth guard, for a
+    // structural reason: guards are AND-composed and the first rejection
+    // wins (`state-machine/guard.ts`), so a new guard could only ever ADD a
+    // requirement — it could never satisfy the one this clause enforces.
+    // An alternative satisfier has to live where the requirement lives.
+    //
+    // It answers a different question from the one below it. This clause
+    // normally asks "did a reviewer approve the change before it shipped",
+    // which for work that shipped before this installation existed has no
+    // truthful answer. `historicalVerificationSatisfies` asks the question
+    // that does: "has someone inspected the merged code and recorded what
+    // they found". Both are evidence; they are not the same evidence, and
+    // the point of keeping them separate kinds is that no reader can later
+    // mistake one for the other. See `./historical-verification.ts`.
+    const historical = await historicalVerificationSatisfies(input.db, input.item.id);
+    if (historical.satisfied) {
+      return guardOk;
+    }
+
     const approvedAtAll = await hasApproval(input.db, input.item.id, "code_review");
     if (!approvedAtAll) {
+      // When the window is open, a caller who has just been refused for
+      // want of a review is exactly the caller who needs to know the other
+      // path exists — and, more importantly, what it costs. Saying nothing
+      // here is what makes forging a `code_review` the discoverable option.
       return guardRejected(
-        "No approved code_review artifact for this item — get the code reviewed and approved before merging.",
+        "No approved code_review artifact for this item — get the code reviewed and approved before merging." +
+          (historical.offerAlternative
+            ? " If this item's work shipped before this installation existed and there is no " +
+              "reviewer who could honestly have approved it, record a historical_verification " +
+              "artifact instead: it must name the commit it was checked against and say what " +
+              "was inspected, and it is recorded permanently as an inspection rather than as a " +
+              "review."
+            : ""),
         { fields: ["state"] },
       );
     }
@@ -295,6 +328,22 @@ interface FollowUpItemRow {
  * link-to-something-already-closed are different mistakes with different
  * fixes, and a guard that answered all three with one message would make the
  * caller guess which.
+ *
+ * **Unaffected by the historical-verification path, and worth saying why,
+ * because the opposite is a plausible reading.** That path lets
+ * `merge.requires_approving_code_review` be satisfied without a qualifying
+ * `code_review`, and this guard returns `ok` when it finds no qualifying
+ * `code_review` — so it looks as though an inspection-closed item could
+ * carry an `lgtm_with_followups` bargain that nothing enforces. It cannot,
+ * for a reason that holds by construction rather than by care: this guard
+ * goes quiet only when there is **no qualifying approval at all**, and an
+ * item with no qualifying approval has no `lgtm_with_followups` verdict
+ * resting on it either — the verdict lives on the very artifact that is
+ * absent. Where such an artifact *is* present and current, this guard fires
+ * exactly as before; the historical path adds an alternative satisfier to
+ * the other clause and removes nothing from this one. The bargain
+ * `lgtm_with_followups` strikes is between a reviewer and a merge, and an
+ * item closed on inspection never entered into it.
  */
 export const mergeRequiresLinkedFollowUpGuard: Guard = {
   id: "merge.requires_linked_followup",

@@ -15,6 +15,37 @@ export async function register() {
   checkFormerEnv();
 
   await announceBackfillWindow();
+  await announceHistoricalVerificationWindow();
+}
+
+/**
+ * Writes the historical-verification window's startup warning, if the window
+ * is open.
+ *
+ * Announced for the same reason the backfill window is, and the reasoning
+ * transfers exactly: the realistic failure is not an attacker but an
+ * operator opening the window for one backlog cleanup, being interrupted,
+ * and leaving it open. While it is open, an item can enter `merged` on a
+ * recorded inspection instead of an approving review, which is a fact about
+ * what the board's merge gate means while it is open — and therefore one nobody
+ * should have to raise the log level to discover.
+ *
+ * Separate from `announceBackfillWindow` rather than folded into it: the two
+ * windows are independent, either can be open without the other, and a
+ * single combined line would have to describe whichever combination it
+ * found.
+ *
+ * Exported so a test can call it with an environment of its own, rather than
+ * having to invoke `register()` and satisfy everything else in it.
+ */
+export async function announceHistoricalVerificationWindow(
+  env: Record<string, string | undefined> = process.env,
+): Promise<void> {
+  const { historicalVerificationStartupWarning } =
+    await import("./lib/service/guards/historical-verification-enabled");
+  const { log } = await import("./lib/log");
+  const warning = historicalVerificationStartupWarning(env);
+  if (warning !== null) log.warn(warning);
 }
 
 /**

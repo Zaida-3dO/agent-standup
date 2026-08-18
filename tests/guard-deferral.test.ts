@@ -62,19 +62,23 @@ describeIfDb("the deferral-proof guard, against Postgres", () => {
     id?: string;
     blockedOnType?: "person" | "external_process" | "time" | null;
     blockedOnPersonId?: string | null;
+    /** Set to build a real tree — `follow-up-scheduled`'s sibling rule is a claim about `parentId`, so these tests write one. */
+    parentId?: string | null;
+    kind?: "project" | "task" | "subtask";
   }): Promise<string> {
     counter += 1;
     const id = opts.id ?? `task-${counter}`;
     await prisma.item.create({
       data: {
         id,
-        kind: "task",
+        kind: (opts.kind ?? "task") as never,
         title: `Item ${counter}`,
         body: "body",
         state: opts.state as never,
         originType: "person",
         area: "web",
         mergeAuthority: "needs_approval",
+        parentId: opts.parentId ?? null,
         blockedReason: opts.blockedOnType ? "waiting" : null,
         blockedOnType: (opts.blockedOnType ?? null) as never,
         blockedOnPersonId: opts.blockedOnPersonId ?? null,
@@ -377,6 +381,207 @@ describeIfDb("the deferral-proof guard, against Postgres", () => {
       expect((error as { code?: string }).code).toBe("guard_rejected");
       expect((error as { fields?: string[] }).fields).toContain("not_done[1].item_id");
       expect(await readState(id)).toBe("executing");
+    });
+  });
+
+  // #139(a) — the endorsed shape for a review follow-up (DECISIONS.md §17)
+  // is an OPEN SIBLING, which `follow-up` refuses precisely because it is
+  // actionable. These are the cases proving the second reason accepts that
+  // shape without becoming a way to say "I'll do it later".
+  describe("'follow-up-scheduled' — the open-sibling shape §17 endorses", () => {
+    it("ACCEPTS an open, actionable sibling — the exact case that has no satisfiable answer under 'follow-up'", async () => {
+      const project = await createItem({ state: "on_deck", kind: "project" });
+      // `on_deck` is what create_item produces: open, actionable, ready to
+      // pick up. Under `follow-up` this same row is a rejection.
+      const sibling = await createItem({ state: "on_deck", parentId: project });
+      const id = await createItem({ state: "executing", parentId: project });
+      await transition(
+        id,
+        "merged",
+        summaryWith([
+          { text: "extract the shared helper", reason: "follow-up-scheduled", item_id: sibling },
+        ]),
+      );
+      expect(await readState(id)).toBe("merged");
+      // The sibling is untouched — completing the work does not close or
+      // alter the row that carries its follow-up.
+      expect(await readState(sibling)).toBe("on_deck");
+    });
+
+    it("the SAME linked item is refused under 'follow-up' and accepted under 'follow-up-scheduled' — the two reasons are mirror claims, not synonyms", async () => {
+      const project = await createItem({ state: "on_deck", kind: "project" });
+      const sibling = await createItem({ state: "on_deck", parentId: project });
+      const underFollowUp = await createItem({ state: "executing", parentId: project });
+      const error = await transition(
+        underFollowUp,
+        "merged",
+        summaryWith([{ text: "same work", reason: "follow-up", item_id: sibling }]),
+      ).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect(await readState(underFollowUp)).toBe("executing");
+
+      const underScheduled = await createItem({ state: "executing", parentId: project });
+      await transition(
+        underScheduled,
+        "merged",
+        summaryWith([{ text: "same work", reason: "follow-up-scheduled", item_id: sibling }]),
+      );
+      expect(await readState(underScheduled)).toBe("merged");
+    });
+
+    it("REFUSES a 'someday' item — the costless parking space that would let 'I ran out of time' through", async () => {
+      // The load-bearing case for §5a surviving a fourth reason. `follow-up`
+      // charges for an evasion by demanding a false `blocked` that lands on
+      // someone's needs-you list. If this reason accepted `someday`, the same
+      // evasion would cost nothing and require no false statement at all:
+      // mint a row, park it, complete. That is the class §5a exists to make
+      // unsayable, and it must not arrive through the new door.
+      const project = await createItem({ state: "on_deck", kind: "project" });
+      const parked = await createItem({ state: "someday", parentId: project });
+      const id = await createItem({ state: "executing", parentId: project });
+      const error = await transition(
+        id,
+        "merged",
+        summaryWith([{ text: "ran out of road", reason: "follow-up-scheduled", item_id: parked }]),
+      ).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { guard?: string }).guard).toBe(DEFERRAL_FOLLOW_UP_GUARD_ID);
+      expect((error as { message?: string }).message).toContain("not scheduled");
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("REFUSES a blocked item — the mirror of the rule above, so 'follow-up-scheduled' cannot absorb what 'follow-up' is for", async () => {
+      // A blocked item is not *scheduled*; it is stuck, which is the other
+      // reason's claim. Accepting it here would make the two reasons
+      // interchangeable and let a caller pick whichever one their linked
+      // item happens to satisfy.
+      const project = await createItem({ state: "on_deck", kind: "project" });
+      const blocked = await createItem({
+        state: "blocked",
+        blockedOnType: "person",
+        blockedOnPersonId: "user-a",
+        parentId: project,
+      });
+      const id = await createItem({ state: "executing", parentId: project });
+      const error = await transition(
+        id,
+        "merged",
+        summaryWith([{ text: "queued", reason: "follow-up-scheduled", item_id: blocked }]),
+      ).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { guard?: string }).guard).toBe(DEFERRAL_FOLLOW_UP_GUARD_ID);
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("REFUSES a descendant — DECISIONS.md §17's sibling rule, enforced rather than advised", async () => {
+      const project = await createItem({ state: "on_deck", kind: "project" });
+      const id = await createItem({ state: "executing", parentId: project });
+      // Parented UNDER the completing item — the mistake §17 was written
+      // about, and the one that deadlocked five merged PRs.
+      const child = await createItem({ state: "on_deck", parentId: id, kind: "subtask" });
+      const error = await transition(
+        id,
+        "merged",
+        summaryWith([{ text: "left for later", reason: "follow-up-scheduled", item_id: child }]),
+      ).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { guard?: string }).guard).toBe(DEFERRAL_FOLLOW_UP_GUARD_ID);
+      expect((error as { message?: string }).message).toContain("beside the work");
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("REFUSES a deeper descendant, not merely a direct child — the check walks the tree rather than comparing one parentId", async () => {
+      // A grandchild is still inside the work. Comparing `linked.parentId`
+      // to the completing item's id would pass this, which is why the
+      // implementation walks ancestors instead.
+      const project = await createItem({ state: "on_deck", kind: "project" });
+      const id = await createItem({ state: "executing", parentId: project });
+      const child = await createItem({ state: "on_deck", parentId: id, kind: "subtask" });
+      const grandchild = await createItem({ state: "on_deck", parentId: child, kind: "subtask" });
+      const error = await transition(
+        id,
+        "merged",
+        summaryWith([
+          { text: "buried follow-up", reason: "follow-up-scheduled", item_id: grandchild },
+        ]),
+      ).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { guard?: string }).guard).toBe(DEFERRAL_FOLLOW_UP_GUARD_ID);
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("ACCEPTS an unrelated open item that is not a descendant — the rule bars containment, not distance", async () => {
+      // The constraint §17 states is about lifecycle containment. An item
+      // under a different project is not inside this work either, so there
+      // is nothing for this guard to object to.
+      const projectA = await createItem({ state: "on_deck", kind: "project" });
+      const projectB = await createItem({ state: "on_deck", kind: "project" });
+      const elsewhere = await createItem({ state: "on_deck", parentId: projectB });
+      const id = await createItem({ state: "executing", parentId: projectA });
+      await transition(
+        id,
+        "merged",
+        summaryWith([
+          { text: "tracked on the other board", reason: "follow-up-scheduled", item_id: elsewhere },
+        ]),
+      );
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES a closed item — a merged/cancelled row is not a schedule, so it cannot carry deferred work", async () => {
+      for (const closed of ["merged", "wont_do", "cancelled", "research_done"]) {
+        const project = await createItem({ state: "on_deck", kind: "project" });
+        const done = await createItem({ state: closed, parentId: project });
+        const id = await createItem({ state: "executing", parentId: project });
+        const error = await transition(
+          id,
+          "merged",
+          summaryWith([{ text: "already handled?", reason: "follow-up-scheduled", item_id: done }]),
+        ).catch((e: unknown) => e);
+        expect((error as { code?: string }).code).toBe("guard_rejected");
+        expect((error as { guard?: string }).guard).toBe(DEFERRAL_FOLLOW_UP_GUARD_ID);
+        expect(await readState(id)).toBe("executing");
+      }
+    });
+
+    it("REFUSES with no item_id — the new reason is not an escape from needing a real row", async () => {
+      const id = await createItem({ state: "executing" });
+      const error = await transition(
+        id,
+        "merged",
+        summaryWith([{ text: "will get to it", reason: "follow-up-scheduled" }]),
+      ).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { guard?: string }).guard).toBe(DEFERRAL_FOLLOW_UP_GUARD_ID);
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("REFUSES a nonexistent item_id — the row is read, not taken on trust", async () => {
+      const id = await createItem({ state: "executing" });
+      const error = await transition(
+        id,
+        "merged",
+        summaryWith([
+          { text: "x", reason: "follow-up-scheduled", item_id: "00000000-not-a-real-item" },
+        ]),
+      ).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("the 'follow-up' rejection points at the reason that WOULD work, so the next call can succeed", async () => {
+      // The refusal reported three times in the field said only "go back to
+      // executing and finish it" — advice that is not available once the PR
+      // has merged. It must now name the alternative claim.
+      const project = await createItem({ state: "on_deck", kind: "project" });
+      const sibling = await createItem({ state: "on_deck", parentId: project });
+      const id = await createItem({ state: "executing", parentId: project });
+      const error = await transition(
+        id,
+        "merged",
+        summaryWith([{ text: "review finding", reason: "follow-up", item_id: sibling }]),
+      ).catch((e: unknown) => e);
+      expect((error as { message?: string }).message).toContain("follow-up-scheduled");
     });
   });
 

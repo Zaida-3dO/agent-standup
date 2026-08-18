@@ -22,6 +22,7 @@ import { applyTransition } from "../state-machine/transition";
 import {
   NOT_DONE_MAX,
   NOT_DONE_MIN,
+  NOT_DONE_REASONS,
   SHIPPED_CHAR_CAP,
   SHIPPED_MAX,
   SHIPPED_MIN,
@@ -38,6 +39,10 @@ import {
 // header for why: it needs to be covered by the guard-registration
 // canonicalisation sweep, which only scans `guards/`.
 import { findSimilarityIssues } from "../guards/summaries";
+// The single implementation of SCHEMA.md §5a's per-entry proof, shared with
+// `deferralFollowUpGuard` — see `checkNotDoneProofs` below for why this is
+// imported rather than reimplemented.
+import { findNotDoneProofIssues } from "../guards/deferral";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
 
@@ -47,7 +52,12 @@ const COMPLETED_STATES = ["merged", "research_done", "wont_do", "cancelled"] as 
 const notDoneEntrySchema = z
   .object({
     text: z.string(),
-    reason: z.enum(["follow-up", "needs-approval", "descoped"]),
+    // Derived from `NOT_DONE_REASONS`, not written out again: the closed set
+    // is declared once in `summaries/validate.ts` (its own header — "the one
+    // place the closed set is declared"), and a second literal list here
+    // would be free to fall behind it, refusing at the schema boundary a
+    // reason the validator and the guard both accept.
+    reason: z.enum(NOT_DONE_REASONS),
     item_id: z.string().min(1).optional(),
   })
   .strict();
@@ -130,11 +140,13 @@ const contract = {
     {
       fields: ["summary.not_done"],
       rule:
-        `\`not_done\` holds ${NOT_DONE_MIN}–${NOT_DONE_MAX} typed entries. A reason of ` +
-        `\`follow-up\` or \`needs-approval\` requires an \`item_id\` naming a real item, and ` +
-        `that item's state has to bear the reason out: a \`follow-up\` target must not be ` +
-        `actionable, and a \`needs-approval\` target must be blocked on a person. \`descoped\` ` +
-        `needs no linked item.`,
+        `\`not_done\` holds ${NOT_DONE_MIN}–${NOT_DONE_MAX} typed entries. Every reason except ` +
+        `\`descoped\` requires an \`item_id\` naming a real item, and that item's state has to ` +
+        `bear the reason out. \`follow-up\` says the work is stuck, so its target must be ` +
+        `blocked or paused. \`follow-up-scheduled\` says the opposite — the work is not ` +
+        `deferred but committed to as its own queue row — so its target must be open and a ` +
+        `sibling rather than a descendant of the item being completed. \`needs-approval\` ` +
+        `requires a target blocked on a person. \`descoped\` needs no linked item.`,
     },
     {
       fields: ["summary.shipped", "summary.watch_for", "summary.not_done"],
@@ -188,81 +200,71 @@ function toCandidate(summary: CompleteItemInput["summary"]): SummaryCandidate {
 }
 
 /**
- * Checks SCHEMA.md §5a's per-entry proof for a `not_done` reason of
- * `follow-up` or `needs-approval`: the linked `item_id` must exist, and must
- * be in the state that reason claims (not actionable, for `follow-up`;
- * `blocked` with `blocked_on_type = person`, for `needs-approval`).
- * `descoped` needs no linked item at all.
+ * Checks SCHEMA.md §5a's per-entry proof for every `not_done` reason that
+ * requires a linked item, by delegating to the single implementation in
+ * `guards/deferral.ts`.
  *
- * This is the one piece of §5a's static-validator surface that
+ * **A thin wrapper, deliberately, rather than a second copy of the rule.**
+ * This check and `deferralFollowUpGuard` answer the same question at two
+ * points on one call — here, up front, so a caller sees every problem in one
+ * rejection round, and again inside `applyTransition`, where it is what
+ * actually gates. When the two were written separately they drifted: this one
+ * accepted a `merged`/`wont_do`/`cancelled` linked item as proof of a
+ * `follow-up` while the guard accepted only `blocked`/`paused`, so a summary
+ * pointing at a closed item passed the up-front check and was then refused by
+ * the guard — the caller having been told it was fine moments earlier. One
+ * implementation cannot do that, whichever way a future edit goes.
+ *
+ * This remains the one piece of §5a's validator surface that
  * `validateSummaryShape` (pure, no database) cannot check on its own — it
- * needs to read the linked item's current row, so it lives here rather than
- * in `summaries/validate.ts`, the same split `findSimilarityIssues` already
- * draws for the one other database-dependent check.
+ * needs to read the linked item's current row, the same split
+ * `findSimilarityIssues` already draws for the other database-dependent check.
  */
 async function checkNotDoneProofs(
   ctx: ServiceContext,
+  itemId: string,
   notDone: CompleteItemInput["summary"]["not_done"],
 ): Promise<{ field: string; message: string }[]> {
-  const issues: { field: string; message: string }[] = [];
-  const NON_ACTIONABLE = new Set([
-    "blocked",
-    "paused",
-    "merged",
-    "research_done",
-    "wont_do",
-    "cancelled",
-  ]);
+  return findNotDoneProofIssues(ctx.db, itemId, notDone as readonly NotDoneEntry[]);
+}
 
-  for (let i = 0; i < notDone.length; i++) {
-    const entry = notDone[i]!;
-    if (entry.reason === "descoped") continue;
-
-    if (!entry.item_id) {
-      issues.push({
-        field: `not_done[${i}].item_id`,
-        message: `not_done[${i}] has reason "${entry.reason}", which requires a minted item_id.`,
-      });
-      continue;
-    }
-
-    const rows = await ctx.db.$queryRawUnsafe<{ state: string; blockedOnType: string | null }[]>(
-      `SELECT "state", "blockedOnType" FROM "Item" WHERE "id" = $1`,
-      entry.item_id,
-    );
-    const linked = rows[0];
-    if (!linked) {
-      issues.push({
-        field: `not_done[${i}].item_id`,
-        message: `not_done[${i}].item_id (${entry.item_id}) does not name an existing item.`,
-      });
-      continue;
-    }
-
-    if (entry.reason === "follow-up") {
-      // Required: the linked item is actionable (SCHEMA.md §5a — a
-      // `follow-up` proves it's actually blocked by pointing at an item
-      // that is *not* actionable). An actionable linked item means nothing
-      // is stopping the work from happening now, which is exactly the case
-      // this reason must not be usable for.
-      if (NON_ACTIONABLE.has(linked.state)) continue;
-      issues.push({
-        field: `not_done[${i}].item_id`,
-        message:
-          "You're deferring this, but nothing is blocking it. Is there a good reason you didn't " +
-          "just do it now? If not, go back to executing and finish it.",
-      });
-    } else if (entry.reason === "needs-approval") {
-      if (linked.state !== "blocked" || linked.blockedOnType !== "person") {
-        issues.push({
-          field: `not_done[${i}].item_id`,
-          message: `not_done[${i}].item_id (${entry.item_id}) must be blocked with blocked_on_type "person" for reason "needs-approval".`,
-        });
-      }
-    }
-  }
-
-  return issues;
+/**
+ * The `final_state` value for this completion — derived from the item's own
+ * artifacts, never authored by the caller (SCHEMA.md §5, "derived, never
+ * authored").
+ *
+ * Records **how** the completion satisfied the merge gate. `closed_on` is
+ * `historical_verification` when the item is being closed on a recorded
+ * inspection of already-merged code rather than on a review that approved a
+ * proposed change, and `review` in the ordinary case. The two are genuinely
+ * different claims (SCHEMA.md §6b), and the value of keeping them distinct
+ * evaporates if the distinction is only visible to a guard: this puts it on
+ * the closing record a person actually reads, alongside the commit it was
+ * checked against.
+ *
+ * Returns `{}` for a completion that is not a merge — `wont_do`,
+ * `cancelled` and `research_done` never went through the merge gate, so
+ * there is no gate-satisfaction to describe and inventing a `closed_on` for
+ * them would assert something about a path they did not take.
+ */
+async function deriveFinalState(
+  ctx: ServiceContext,
+  itemId: string,
+): Promise<Record<string, unknown>> {
+  const rows = await ctx.db.$queryRawUnsafe<{ commitSha: string | null }[]>(
+    `SELECT "commitSha"
+       FROM "Artifact"
+      WHERE "itemId" = $1 AND "kind" = 'historical_verification'::"ArtifactKind"
+      ORDER BY "createdAt" DESC, "id" DESC
+      LIMIT 1`,
+    itemId,
+  );
+  const verification = rows[0];
+  if (!verification) return {};
+  return {
+    closed_on: "historical_verification",
+    verified_at_commit: verification.commitSha,
+  };
 }
 
 async function loadItemRecord(ctx: ServiceContext, id: string): Promise<ItemRecord> {
@@ -309,7 +311,7 @@ export const completeItem = defineOperation({
       input.id,
     );
     const similarityIssues = findSimilarityIssues(candidate, historyRows);
-    const notDoneProofIssues = await checkNotDoneProofs(ctx, input.summary.not_done);
+    const notDoneProofIssues = await checkNotDoneProofs(ctx, input.id, input.summary.not_done);
 
     const allIssues = [
       ...shapeIssues.map((i) => ({ field: i.field, message: i.message })),
@@ -362,10 +364,16 @@ export const completeItem = defineOperation({
       // `final_state` is "derived, never authored" (SCHEMA.md §5) — commit,
       // branch and merged_at are owned by rows this milestone has not yet
       // built (#29's checkpoint/note path, the merge guard's artifact).
-      // An empty object is the honest value this row can compute; a future
-      // row that adds those fields extends this write, it does not replace
-      // this one's shape.
-      JSON.stringify({}),
+      // Derived here, never taken from the caller, which is what makes it
+      // trustworthy: `closed_on` records HOW this completion satisfied the
+      // merge gate, read back from the artifacts that actually satisfied it.
+      //
+      // Why it belongs on the summary rather than only on the artifact: the
+      // summary is the closing record a person reads, and an item closed on
+      // an inspection rather than a review is exactly the fact that must not
+      // require anyone to go digging through an artifact list to discover.
+      // A distinction nobody can see is not a distinction.
+      JSON.stringify(await deriveFinalState(ctx, input.id)),
     );
 
     // "Every mutating call appends a row" (SCHEMA.md §3) — same
