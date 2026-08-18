@@ -56,6 +56,11 @@ async function loadRoutes(): Promise<readonly RouteEntry[]> {
   const items = (await import("@/app/api/items/route")) as unknown as Record<string, unknown>;
   const item = (await import("@/app/api/items/[id]/route")) as unknown as Record<string, unknown>;
   const projects = (await import("@/app/api/projects/route")) as unknown as Record<string, unknown>;
+  const tasks = (await import("@/app/api/tasks/route")) as unknown as Record<string, unknown>;
+  const transition = (await import("@/app/api/items/[id]/transition/route")) as unknown as Record<
+    string,
+    unknown
+  >;
 
   const built: readonly RouteEntry[] = [
     {
@@ -68,6 +73,18 @@ async function loadRoutes(): Promise<readonly RouteEntry[]> {
     {
       pattern: /^\/api\/projects$/,
       handlers: { POST: handlerFrom(projects, "POST", "/api/projects") },
+    },
+    {
+      pattern: /^\/api\/tasks$/,
+      handlers: { POST: handlerFrom(tasks, "POST", "/api/tasks") },
+    },
+    {
+      // Before the bare `/api/items/{id}` pattern, which would otherwise
+      // not match this path at all — the id group stops at a slash — but
+      // ordering it first keeps the table readable as most-specific-first.
+      pattern: /^\/api\/items\/([^/]+)\/transition$/,
+      handlers: { POST: handlerFrom(transition, "POST", "/api/items/[id]/transition") },
+      params: ["id"],
     },
     {
       pattern: /^\/api\/items\/([^/]+)$/,
