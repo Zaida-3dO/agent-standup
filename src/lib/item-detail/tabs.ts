@@ -2,11 +2,11 @@
 //
 // ── Why the tabs are data rather than markup ───────────────────────────
 //
-// The six tabs are filled by separate pieces of work landing at separate
+// The tabs are filled by separate pieces of work landing at separate
 // times, so the set has to be nameable — as a type, so a tab that does not
 // exist fails to compile, and as a runtime list, so the tab strip is
-// rendered by mapping rather than by six hand-written buttons that can
-// drift out of step with the six panels. `TABS` below is both.
+// rendered by mapping rather than by hand-written buttons that can drift
+// out of step with the panels. `TABS` below is both.
 //
 // ── Why the URL carries the active tab ─────────────────────────────────
 //
@@ -26,7 +26,15 @@
 // nothing about this module or the router to build one.
 
 /** Every tab, in the order the strip shows them. */
-export const TABS = ["overview", "plan", "reviews", "subtasks", "activity", "summary"] as const;
+export const TABS = [
+  "overview",
+  "plan",
+  "reviews",
+  "subtasks",
+  "activity",
+  "summary",
+  "agent",
+] as const;
 
 export type DetailTab = (typeof TABS)[number];
 
@@ -41,10 +49,9 @@ export const DEFAULT_TAB: DetailTab = "overview";
 /**
  * What each tab is called on screen.
  *
- * A `Record<DetailTab, string>` deliberately: adding a seventh tab to
- * `TABS` fails to compile here until someone decides what it is called,
- * which is the property that keeps a tab from shipping with its id showing
- * as its label.
+ * A `Record<DetailTab, string>` deliberately: adding a tab to `TABS` fails
+ * to compile here until someone decides what it is called, which is the
+ * property that keeps a tab from shipping with its id showing as its label.
  */
 export const TAB_LABELS: Record<DetailTab, string> = {
   overview: "Overview",
@@ -53,6 +60,7 @@ export const TAB_LABELS: Record<DetailTab, string> = {
   subtasks: "Subtasks",
   activity: "Activity",
   summary: "Summary",
+  agent: "Agent view",
 };
 
 /** True if `value` names a tab — the type guard the hash parser narrows with. */

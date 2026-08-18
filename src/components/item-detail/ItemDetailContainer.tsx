@@ -38,7 +38,9 @@ import {
   type DetailLoadState,
 } from "@/lib/item-detail/state";
 import { DEFAULT_TAB, hashForTab, tabFromHash, type DetailTab } from "@/lib/item-detail/tabs";
+import { fetchAgentView, agentViewErrorMessageFrom } from "@/lib/item-detail/orientation-state";
 import { ItemDetailView } from "./ItemDetailView";
+import type { AgentPanelState } from "./AgentPanel";
 
 export interface ItemDetailContainerProps {
   readonly itemId: string;
@@ -84,6 +86,14 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   // ignore the flag.
   const [now, setNow] = useState(0);
 
+  // The agent view is a SECOND read, and deliberately not made on arrival.
+  // `orientation` is the most expensive call this page can issue — it
+  // embeds the whole item record and an unbounded event list — and the
+  // panel that shows it is the one a reader opens rarely and on purpose.
+  // Fetching it with the detail would put the page's largest cost on every
+  // visit, including every visit that never opens the tab.
+  const [agentState, setAgentState] = useState<AgentPanelState>({ status: "idle" });
+
   useEffect(() => {
     let cancelled = false;
     fetchItemDetail(itemId)
@@ -117,6 +127,17 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
     };
   }, []);
 
+  const onLoadAgentView = useCallback(() => {
+    setAgentState({ status: "loading" });
+    fetchAgentView(itemId)
+      .then((view) => {
+        setAgentState({ status: "loaded", view });
+      })
+      .catch((err: unknown) => {
+        setAgentState({ status: "error", message: agentViewErrorMessageFrom(err) });
+      });
+  }, [itemId]);
+
   const onTabChange = useCallback((tab: DetailTab) => {
     setActiveTab(tab);
     // See the header: `replaceState` rather than `location.hash` so the
@@ -130,6 +151,8 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
       activeTab={activeTab}
       onTabChange={onTabChange}
       now={now}
+      agentState={agentState}
+      onLoadAgentView={onLoadAgentView}
     />
   );
 }

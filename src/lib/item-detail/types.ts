@@ -74,6 +74,14 @@ export interface DetailArtifact {
   readonly ref: string | null;
   readonly body: string | null;
   readonly findings: unknown;
+  /**
+   * The item this review's findings were deferred into. Set only for
+   * `lgtm_with_followups` — the verdict that merges on the promise that the
+   * outstanding work is filed as its own item — and null for every other.
+   * The Reviews tab links it, so the promise is checkable rather than
+   * merely stated.
+   */
+  readonly followUpItemId: string | null;
   readonly createdAt: string;
 }
 

@@ -122,6 +122,16 @@ export interface ItemDetailArtifact {
   readonly ref: string | null;
   readonly body: string | null;
   readonly findings: unknown;
+  /**
+   * The item this review's findings were deferred into — set only for
+   * `lgtm_with_followups`, which is the one verdict that merges on the
+   * promise that the outstanding work is filed somewhere (SCHEMA.md §6a).
+   *
+   * Surfaced for the same reason `createdByType` is: the whole bargain of
+   * that verdict is that the follow-up is real, and a reader deciding
+   * whether the merge was honest cannot check a promise they cannot see.
+   */
+  readonly followUpItemId: string | null;
   /** `person` or `agent` — who produced this artifact. See the select in the handler for why it is surfaced. */
   readonly createdByType: string;
   readonly createdAt: string;
@@ -219,6 +229,7 @@ interface RawArtifactRow {
   ref: string | null;
   body: string | null;
   findings: unknown;
+  followUpItemId: string | null;
   createdByType: string;
   createdAt: Date;
 }
@@ -351,8 +362,8 @@ export const getItemDetail = defineOperation({
       // was invisible to every human and agent reading the item back. A
       // record that cannot be read is not an audit trail.
       `SELECT "id", "kind"::text AS "kind", "verdict"::text AS "verdict", "reviewRound",
-              "commitSha", "ref", "body", "findings", "createdByType"::text AS "createdByType",
-              "createdAt"
+              "commitSha", "ref", "body", "findings", "followUpItemId",
+              "createdByType"::text AS "createdByType", "createdAt"
        FROM "Artifact" WHERE "itemId" = $1
        ORDER BY "reviewRound" ASC, "createdAt" ASC`,
       input.id,
@@ -366,6 +377,7 @@ export const getItemDetail = defineOperation({
       ref: row.ref,
       body: row.body,
       findings: row.findings ?? null,
+      followUpItemId: row.followUpItemId,
       createdByType: row.createdByType,
       createdAt: row.createdAt.toISOString(),
     }));
