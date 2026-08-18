@@ -9,6 +9,9 @@
 // cannot be implemented inside one adapter and missing from another.
 import type { z } from "zod";
 import { toServiceError, InvalidInputError, NotFoundError } from "./errors";
+// A read whose response will not fit refuses rather than overflowing the
+// caller it was read in (MILESTONES.md #115).
+import { enforceResponseSize } from "./response-size";
 import { getOperation } from "./registry";
 import type { OperationName, OperationOutput } from "./registry";
 import type { Caller, ServiceContext, TransactionHandle } from "./context";
@@ -227,7 +230,7 @@ export class ServiceRuntime {
     // Step 4 — the body throws to abandon the transaction. `call`'s own
     // `catch` is what normalises whatever comes out into the taxonomy and
     // logs it; there is no second catch here, on purpose.
-    return await this.#transaction(async (db) => {
+    const result = await this.#transaction(async (db) => {
       const ctx: ServiceContext = {
         db,
         settings,
@@ -236,6 +239,20 @@ export class ServiceRuntime {
       };
       return await operation.handler(ctx, parsed.data as never);
     });
+
+    // Step 5 — a read that will not fit is refused rather than returned
+    // (MILESTONES.md #115). Here rather than inside an operation because
+    // this is the seam every call crosses on every adapter, so a read added
+    // later is covered without its author remembering to cover it.
+    //
+    // **After the transaction, deliberately.** The size of a response is a
+    // property of the rows that were read, which is not known until the
+    // body has run — and for a read there is nothing to roll back, so
+    // refusing here costs a wasted query and no correctness. Measuring
+    // inside the transaction would hold it open across the serialisation of
+    // the very response that is too big to serialise cheaply.
+    enforceResponseSize(operation.name, operation.kind, caller.transport, result);
+    return result;
   }
 }
 

@@ -141,6 +141,14 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     request: (input) => ({ path: `/api/items${queryString(input)}` }),
     unwrap: (body) => body,
   },
+  // Row #105. `GET /search` returns the result object unwrapped, like every
+  // other list-shaped read, so `unwrap` is the identity — the same shape
+  // `direct` returns for the same call.
+  search: {
+    method: "GET",
+    request: (input) => ({ path: `/api/search${queryString(input)}` }),
+    unwrap: (body) => body,
+  },
   // Row #83 — `standup config`. `src/app/api/settings/**` returns every
   // settings operation's result unwrapped already (SCHEMA.md §19), so
   // `unwrap` is the identity for all four — the same shape `direct` returns.

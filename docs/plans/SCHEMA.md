@@ -1215,6 +1215,7 @@ usable, and belongs with MILESTONES.md #48.
 | Endpoint | Purpose |
 |---|---|
 | `GET /board?priority=&area=&repo=&kind=&state=&assignee=&search=&includeTerminal=` | Items grouped by derived column. Filters compose (AND); `state` excludes projects (§1: their stored state is a creation leftover, never a fact about them); `assignee` matches a live assignment's holder; `search` is a case-insensitive substring match over title/body. **Finished work is excluded by default** — `includeTerminal` asks for it, and filtering on a terminal `state` directly still returns it. |
+| `GET /search?q=&state=&area=&repo=&openOnly=&limit=` | Find items by text in `title`, `headline` or `body`, best match first. A case-insensitive **literal** substring match (a caller's `%`/`_` are escaped), ranked title > headline > body with bonuses for an exact field and a word-start match. **Every state is searched by default, finished work included** — the inverse of the list reads, because a caller naming a phrase wants that item whatever state it reached; `openOnly` excludes terminal work. Returns `{id, title, state, headline, matchedIn, score, excerpt}` per match plus `considered`, `truncated` and a `notice`; never a whole record — read one with `GET /items/{id}`. |
 | `GET /events?since=` | Since-your-last-visit. A **slice**, never the whole ledger. |
 | `POST /events/{id}/seen` | Mark read. Optionally carries facet scores. |
 | `GET /items/{id}` | Read one item for the UI. |

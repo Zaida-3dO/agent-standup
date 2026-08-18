@@ -21,6 +21,17 @@ export {
   type ServiceErrorOptions,
 } from "./errors";
 
+// A read that will not fit refuses rather than overflowing the caller it was
+// read in (MILESTONES.md #115). Exported so an adapter can name the ceiling
+// and a test can assert against it rather than restating the number.
+export {
+  MAX_RESPONSE_CHARS,
+  RESPONSE_TOO_LARGE_GUARD,
+  enforceResponseSize,
+  responseSize,
+  responseTooLargeMessage,
+} from "./response-size";
+
 export {
   defineOperation,
   type AnyOperation,
@@ -131,6 +142,7 @@ export type { CreateItemInput } from "./operations/create-item";
 export type { GetItemInput } from "./operations/get-item";
 export type { UpdateItemInput } from "./operations/update-item";
 export type { ListItemsInput, ListItemsOutput } from "./operations/list-items";
+export type { SearchInput, SearchOutput, SearchMatch } from "./operations/search";
 export type { GetSettingsInput, GetSettingsOutput } from "./operations/get-settings";
 export type { GetSettingInput } from "./operations/get-setting";
 export type { PatchSettingsInput, PatchSettingsOutput } from "./operations/patch-settings";
