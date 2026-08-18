@@ -10,6 +10,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -20,6 +21,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("artifact HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("artifact_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -45,7 +50,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -156,7 +161,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
     it("answers 400 for a malformed body", async () => {
       const id = await seedItem();
       const response = await artifactsRoute.POST(
-        new Request(`http://test.invalid/api/items/${id}/artifacts`, {
+        authenticatedRequest(`http://test.invalid/api/items/${id}/artifacts`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{not json",
@@ -212,7 +217,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
     it("answers 400 for a malformed body", async () => {
       const id = await seedItem();
       const response = await reviewRequestsRoute.POST(
-        new Request(`http://test.invalid/api/items/${id}/review-requests`, {
+        authenticatedRequest(`http://test.invalid/api/items/${id}/review-requests`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{not json",

@@ -23,6 +23,7 @@
 // real Postgres, the same shape as `tests/hook-route.test.ts` — the service
 // call has to genuinely execute for the runtime to log anything at all.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { REQUEST_ID_HEADER } from "@/lib/request-id-header";
 import { LOG_LEVEL_ENV_VAR } from "@/lib/log";
 import { captureLogs, type CapturedLogs } from "./helpers/capture-logs";
@@ -36,6 +37,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("a request id survives the hop and comes back", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("request_id_e2e");
   let scratchUrl: string;
   let hookRoute: typeof import("@/app/api/hook/route");
@@ -73,7 +78,7 @@ describeIfDb("a request id survives the hop and comes back", () => {
 
   /** A `POST /hook` body the operation accepts — the route is incidental here. */
   function hookRequest(headers: Record<string, string>): Request {
-    return new Request("http://localhost/api/hook", {
+    return authenticatedRequest("http://localhost/api/hook", {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify({

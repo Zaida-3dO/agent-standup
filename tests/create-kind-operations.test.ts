@@ -15,6 +15,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { stubAuthEnvironment, withAuth } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
 import {
@@ -45,6 +46,10 @@ interface Rejection {
 }
 
 describeIfDb("explicit create operations", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("create_kinds");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -583,7 +588,7 @@ describeIfDb("explicit create operations", () => {
     function post(path: string, body: unknown): Request {
       return new Request(`http://localhost${path}`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: withAuth({ "content-type": "application/json" }),
         body: JSON.stringify(body),
       });
     }
@@ -655,7 +660,7 @@ describeIfDb("explicit create operations", () => {
       const response = await routes.projects.POST(
         new Request("http://localhost/api/projects", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: withAuth({ "content-type": "application/json" }),
           body: "{not json",
         }),
       );

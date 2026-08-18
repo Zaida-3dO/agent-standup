@@ -30,6 +30,24 @@ export interface Caller {
   /** The person or agent the session acts as, if known. */
   readonly actor?: string;
   /**
+   * The machine a request authenticated as, when the transport proved one.
+   *
+   * The distinction from `actor` is the point of the field. An actor is
+   * what a caller *says* it is — a header on an HTTP call, a value passed
+   * on a direct one — and nothing anywhere verifies it. A machine here is
+   * what a caller *proved*: a per-machine bearer token resolved to the
+   * machine that holds it, on a transport that refuses the call outright
+   * when it does not. Keeping them in separate fields is what stops a
+   * verified fact and a self-report being read as the same kind of thing
+   * by whatever comes to consume them.
+   *
+   * Optional because not every transport can prove one — a command line
+   * running against the database directly is the same trust boundary as
+   * the process itself, and has no token to present. Absent means "not
+   * established", never "not trusted".
+   */
+  readonly machine?: string;
+  /**
    * How the call arrived. The same names the conformance drivers use
    * (`SCHEMA.md` §21) — an adapter stamps it, an operation never guesses.
    */

@@ -10,6 +10,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -21,6 +22,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("claim_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -63,7 +68,7 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -110,7 +115,7 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
 
   it("POST /api/claims with malformed JSON returns 400, not a 500", async () => {
     const response = await claimRoute.POST(
-      new Request("http://localhost/api/claims", {
+      authenticatedRequest("http://localhost/api/claims", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{not json",
@@ -324,7 +329,7 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
   it("POST /api/items/{id}/notes with malformed JSON returns 400, not a 500", async () => {
     const itemId = await seedItem();
     const response = await notesRoute.POST(
-      new Request(`http://localhost/api/items/${itemId}/notes`, {
+      authenticatedRequest(`http://localhost/api/items/${itemId}/notes`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{not json",

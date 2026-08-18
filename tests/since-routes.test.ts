@@ -7,6 +7,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -17,6 +18,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("events HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("since_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -41,7 +46,7 @@ describeIfDb("events HTTP routes against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -114,7 +119,7 @@ describeIfDb("events HTTP routes against Postgres", () => {
   }
 
   async function getEvents(query = ""): Promise<{ status: number; body: Record<string, unknown> }> {
-    const response = await eventsRoute.GET(new Request(`http://test/api/events${query}`));
+    const response = await eventsRoute.GET(authenticatedRequest(`http://test/api/events${query}`));
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   }
 
@@ -284,7 +289,7 @@ describeIfDb("events HTTP routes against Postgres", () => {
       const itemId = await createItem("Route empty body");
       const eventId = await appendNote(itemId, "note");
       const response = await seenRoute.POST(
-        new Request(`http://test/api/events/${eventId}/seen`, { method: "POST" }),
+        authenticatedRequest(`http://test/api/events/${eventId}/seen`, { method: "POST" }),
         { params: Promise.resolve({ id: eventId }) },
       );
       expect(response.status).toBe(400);
@@ -295,7 +300,7 @@ describeIfDb("events HTTP routes against Postgres", () => {
       const itemId = await createItem("Route bad json");
       const eventId = await appendNote(itemId, "note");
       const response = await seenRoute.POST(
-        new Request(`http://test/api/events/${eventId}/seen`, {
+        authenticatedRequest(`http://test/api/events/${eventId}/seen`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{not json",

@@ -91,12 +91,17 @@ export function createStatelessTransport(): WebStandardStreamableHTTPServerTrans
  * table this adapter is forbidden to touch; checking it here would either
  * duplicate that check or invent a weaker one.
  */
-export function identityFromHeaders(headers: Headers): McpCallerIdentity {
+export function identityFromHeaders(headers: Headers, machine?: string): McpCallerIdentity {
   const sessionId = headers.get(SESSION_HEADER)?.trim();
   const actor = headers.get(ACTOR_HEADER)?.trim();
   return {
     ...(sessionId ? { sessionId } : {}),
     ...(actor ? { actor } : {}),
+    // Never read from a header, and that is the whole distinction. The two
+    // above are what a caller says about itself; this is what the mount
+    // proved before calling here, passed in as an argument precisely so
+    // that no request can put a value in it.
+    ...(machine ? { machine } : {}),
   };
 }
 
@@ -114,12 +119,16 @@ export function identityFromHeaders(headers: Headers): McpCallerIdentity {
  * cannot leak one. `close()` on a stateless transport tears down only this
  * request's state; there is no session to end.
  */
-export async function handleMcpRequest(request: Request, call: ServiceCall): Promise<Response> {
+export async function handleMcpRequest(
+  request: Request,
+  call: ServiceCall,
+  machine?: string,
+): Promise<Response> {
   const server = createMcpServer({
     call,
     transport: MCP_HTTP_TRANSPORT,
     adapter: "mcp_http",
-    identity: identityFromHeaders(request.headers),
+    identity: identityFromHeaders(request.headers, machine),
   });
   const transport = createStatelessTransport();
   try {

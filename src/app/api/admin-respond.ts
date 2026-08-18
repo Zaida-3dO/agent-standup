@@ -11,7 +11,7 @@
 // actually drift if it were duplicated four times instead.
 import { NextResponse } from "next/server";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
-import { httpCaller, withRequestId } from "./_shared/respond";
+import { authenticatedCaller, withRequestId } from "./_shared/respond";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   invalid_input: 400,
@@ -68,4 +68,4 @@ export async function readJsonBody(request: Request): Promise<Record<string, unk
   }
 }
 
-export { httpCaller, withRequestId };
+export { authenticatedCaller, withRequestId };

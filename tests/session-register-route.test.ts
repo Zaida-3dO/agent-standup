@@ -27,6 +27,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -39,6 +40,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("POST /api/sessions/{id}/register", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("session_register_route");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -66,7 +71,7 @@ describeIfDb("POST /api/sessions/{id}/register", () => {
     headers: Record<string, string> = {},
   ): Promise<Response> {
     return route.POST(
-      new Request(`http://localhost/api/sessions/${encodeURIComponent(id)}/register`, {
+      authenticatedRequest(`http://localhost/api/sessions/${encodeURIComponent(id)}/register`, {
         method: "POST",
         headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify(body),
@@ -175,7 +180,7 @@ describeIfDb("POST /api/sessions/{id}/register", () => {
   describe("what the route does with a body it cannot use", () => {
     it("answers 400 for a body that is not JSON at all", async () => {
       const response = await route.POST(
-        new Request("http://localhost/api/sessions/bad-json/register", {
+        authenticatedRequest("http://localhost/api/sessions/bad-json/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{not json",
@@ -193,7 +198,7 @@ describeIfDb("POST /api/sessions/{id}/register", () => {
       // is that it is a *typed* refusal (400 `invalid_input`) rather than an
       // unhandled throw surfacing as a 500.
       const response = await route.POST(
-        new Request("http://localhost/api/sessions/scalar-body/register", {
+        authenticatedRequest("http://localhost/api/sessions/scalar-body/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify("just a string"),

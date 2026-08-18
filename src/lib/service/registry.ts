@@ -100,6 +100,7 @@ import { getArea } from "./operations/get-area";
 import { createArea } from "./operations/create-area";
 import { updateArea } from "./operations/update-area";
 import { listMachines } from "./operations/list-machines";
+import { readiness } from "./operations/readiness";
 import { getMachine } from "./operations/get-machine";
 import { updateMachine } from "./operations/update-machine";
 import { listAccounts } from "./operations/list-accounts";
@@ -197,6 +198,7 @@ export const OPERATION_REGISTRY = {
   [createArea.name]: createArea,
   [updateArea.name]: updateArea,
   [listMachines.name]: listMachines,
+  [readiness.name]: readiness,
   [getMachine.name]: getMachine,
   [updateMachine.name]: updateMachine,
   [listAccounts.name]: listAccounts,

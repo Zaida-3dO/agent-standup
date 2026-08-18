@@ -1295,6 +1295,77 @@ the title on every read, so an item with a work-order title is legible without t
 and a title can be corrected one at a time through `update_item` by whoever is already looking at it.
 The convention therefore applies where it is cheap and reversible — at authorship, on new work —
 rather than as a migration whose blast radius exceeds the problem it solves.
+## 19. Auth on the HTTP transport, and what the deferral did not anticipate (2026-08-18)
+
+§5 defers authentication: *"reachable on a trusted network without a token for v0."* **That was a
+sound judgement about exposure and it is not being reversed on those grounds.** Nothing here claims
+the network became more hostile, and nothing here is a retreat from the position that a small
+installation on a private network does not need a login screen. The deferral reasoned about who could
+reach the port, and on that question it was right.
+
+**What it did not anticipate is what a client on another machine does in the absence of a remote
+path: it connects to Postgres directly.** That is the whole of the argument, and it is not a security
+argument.
+
+- Every rule this product enforces — a merge needing an approving review at tip, a completion needing
+  a structured summary, a transition needing an approved plan — is **application code in the service
+  layer.** Postgres does not know any of them exist.
+- A direct connection therefore does not *defeat* a guard. It never reaches the code that performs
+  one. An item lands in `merged` with no commit, no review and no summary, and every component
+  behaves exactly as designed, because the rules were never consulted.
+- **This is not a hypothetical about a careless operator.** It is what the product's own architecture
+  leaves as the only option: the thin-client pieces exist (`mcp/http.ts`, `cli/bindings/http.ts`, a
+  transport-agnostic core, `STANDUP_URL` selecting the `http` binding), and the only missing piece is
+  a way for a remote call to be accepted. Absent that, `DATABASE_URL` is not a shortcut; it is the
+  path.
+
+The sharpest version of it: §13a and #85 take the *same* invariant seriously enough to enforce it
+twice inside one process — a lint rule and an independent import-graph check with a deliberately
+broken fixture asserted to be caught, so the rule survives either mechanism being bypassed. **That
+invariant was rigorous within a host and silently void across hosts**, purely because there was no
+authenticated remote path for it to hold in favour of. Auth is therefore best read as **the
+multi-host enabler**, not as a security to-do: it is what makes "call the API from another machine" a
+thing that can be done at all.
+
+**Database-level permissions cannot substitute, and it is worth saying why explicitly**, because it
+is the obvious cheaper answer. A restricted role can refuse a write to a table. It cannot express
+*allowed only with an approving review at tip*, because that is conditional on state a grant cannot
+evaluate — the condition is a question about other rows, at a particular round, at the moment of the
+write. Every guard in this product is that shape. A role narrow enough to be safe would refuse the
+legitimate writes too.
+
+**Per-machine tokens rather than one shared secret.** `machines` is already a first-class entity with
+a name, so a token per row costs no new concept and buys two properties a shared secret cannot have:
+revocation that is not an outage (retiring one machine leaves the rest working, whereas a shared
+secret can only be rotated everywhere at once, which is why in practice it never is), and attribution
+worth reading. An actor header on its own is advisory in the strict sense — a caller says who it is
+and nothing checks. Resolving a token to a machine gives the server one fact about a caller it
+did not take on trust, which is why `caller.machine` and `caller.actor` are separate fields: one is
+proved and one is declared, and collapsing them would lose exactly the distinction the token buys.
+
+**In the environment, not in settings.** §13e is explicit that the settings table is never a secret
+store — every value is served to the front end and printed by the command line, with no redaction
+path, and the registry's own test fails the build on a credential-shaped key. A token is such a key.
+It is also bootstrap by §17.1's test (known before the process can reach the database), and it has a
+third property that matters most: living in the deployment layer means nothing reachable over HTTP,
+MCP or the command line can mint one. A token store writable through the API would be writable by the
+surface it exists to gate.
+
+**Fails closed, including when unconfigured.** With no tokens set the server refuses every
+authenticated call rather than serving them all. This is the opposite of the convenient default and
+is deliberate, for the reason `backfill/enabled.ts` already argues at length: a gate that switches
+itself off when its configuration is missing protects nothing precisely when something has gone wrong
+with the deployment, and it does so silently, because a gate failing open produces no signal.
+
+**What is deliberately not solved here.** Tokens are compared, not scoped: presenting a valid token
+does not confer a capability, it only allows the call to be *served*, and every question about what
+may then be done is still answered by the service layer against item state. There are no roles, no
+per-operation grants and no expiry — an installation revokes by editing the deployment's environment
+and restarting. That is a real limit and the right one for now: the alternative is an authorisation
+model layered on top of a state machine that already answers those questions, in a different
+vocabulary, with two places to disagree.
+
+---
 
 ## 14. Still open
 

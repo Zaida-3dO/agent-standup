@@ -293,6 +293,7 @@ async function buildBinding(
       baseUrl: config.standupUrl as string,
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       ...identity,
+      ...(config.token === undefined ? {} : { token: config.token }),
     });
   }
 

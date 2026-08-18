@@ -73,7 +73,14 @@ describe("every route that calls the service correlates its request id", () => {
       if (EXEMPT.has(relative)) return false;
       const source = readFileSync(file, "utf-8");
       if (!source.includes("service.call")) return false;
-      return !source.includes("httpCaller(request)");
+      // Either accessor resolves the id: `authenticatedCaller` is the gated
+      // path every routed request takes, and it resolves the id through
+      // `httpCaller` internally, so both spellings satisfy the property this
+      // test guards. A route using neither has no inbound id at all, which
+      // is the thing being caught.
+      return !(
+        source.includes("authenticatedCaller(request)") || source.includes("httpCaller(request)")
+      );
     });
 
     expect(offenders.map(repoRelative)).toEqual([]);

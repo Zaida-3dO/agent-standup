@@ -17,6 +17,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -27,6 +28,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("POST /api/tool-calls against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("tool_calls_route");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -45,7 +50,7 @@ describeIfDb("POST /api/tool-calls against Postgres", () => {
   });
 
   function post(body: unknown, raw = false): Request {
-    return new Request("http://localhost/api/tool-calls", {
+    return authenticatedRequest("http://localhost/api/tool-calls", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: raw ? (body as string) : JSON.stringify(body),

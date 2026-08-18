@@ -13,6 +13,7 @@
 // without TEST_DATABASE_URL like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { TERMINAL_STATES, isTerminalState } from "@/lib/service/board/columns";
@@ -26,6 +27,10 @@ import {
 import type { BoardOutput } from "@/lib/service/operations/get-board";
 
 describe("which states are terminal", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   // Written out literally rather than read back off `STATES_BY_COLUMN`,
   // for the reason `states.ts` gives about circularity: an assertion that
   // sourced its expectation from the implementation would pass whatever
@@ -366,7 +371,7 @@ describeIfDb("terminal items are out of the default read", () => {
 
   describe("the HTTP routes pass the flag through", () => {
     async function getJson(route: { GET: (r: Request) => Promise<Response> }, url: string) {
-      const response = await route.GET(new Request(url));
+      const response = await route.GET(authenticatedRequest(url));
       return { status: response.status, body: (await response.json()) as Record<string, unknown> };
     }
 
@@ -437,7 +442,7 @@ describeIfDb("terminal items are out of the default read", () => {
 
     it("refuses an uninterpretable includeTerminal rather than guessing", async () => {
       const response = await itemsRoute.GET(
-        new Request("http://localhost/api/items?includeTerminal=maybe"),
+        authenticatedRequest("http://localhost/api/items?includeTerminal=maybe"),
       );
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: { code: string; fields?: string[] } };

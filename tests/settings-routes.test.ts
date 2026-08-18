@@ -6,6 +6,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -16,6 +17,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("settings HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("settings_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -39,7 +44,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -47,7 +52,9 @@ describeIfDb("settings HTTP routes against Postgres", () => {
   }
 
   it("GET /settings returns every declared setting with a revision — AC1", async () => {
-    const response = await collectionRoute.GET(new Request("http://localhost/api/settings"));
+    const response = await collectionRoute.GET(
+      authenticatedRequest("http://localhost/api/settings"),
+    );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
       settings: { key: string; value: unknown }[];
@@ -60,7 +67,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
 
   it("GET /settings/{key} reads one setting", async () => {
     const response = await keyRoute.GET(
-      new Request("http://localhost/api/settings/budget.enabled"),
+      authenticatedRequest("http://localhost/api/settings/budget.enabled"),
       {
         params: Promise.resolve({ key: "budget.enabled" }),
       },
@@ -72,9 +79,12 @@ describeIfDb("settings HTTP routes against Postgres", () => {
   });
 
   it("GET /settings/{key} returns 404 for a key this build does not declare", async () => {
-    const response = await keyRoute.GET(new Request("http://localhost/api/settings/nope"), {
-      params: Promise.resolve({ key: "nope" }),
-    });
+    const response = await keyRoute.GET(
+      authenticatedRequest("http://localhost/api/settings/nope"),
+      {
+        params: Promise.resolve({ key: "nope" }),
+      },
+    );
     expect(response.status).toBe(404);
     const payload = (await response.json()) as { error: { code: string } };
     expect(payload.error.code).toBe("not_found");
@@ -90,7 +100,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
     expect(put.value).toBe(150);
 
     const reread = await keyRoute
-      .GET(new Request("http://localhost/api/settings/poll.interval_seconds"), {
+      .GET(authenticatedRequest("http://localhost/api/settings/poll.interval_seconds"), {
         params: Promise.resolve({ key: "poll.interval_seconds" }),
       })
       .then((r) => r.json() as Promise<{ value: unknown }>);
@@ -111,7 +121,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
 
   it("PUT with malformed JSON returns 400, not a 500", async () => {
     const response = await keyRoute.PUT(
-      new Request("http://localhost/api/settings/budget.enabled", {
+      authenticatedRequest("http://localhost/api/settings/budget.enabled", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: "{not json",
@@ -130,7 +140,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
     );
 
     const deleteResponse = await keyRoute.DELETE(
-      new Request("http://localhost/api/settings/dispatch.failed_after_seconds", {
+      authenticatedRequest("http://localhost/api/settings/dispatch.failed_after_seconds", {
         method: "DELETE",
       }),
       { params: Promise.resolve({ key: "dispatch.failed_after_seconds" }) },
@@ -143,7 +153,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
 
   it("PATCH /settings applies a map in one transaction, all-or-nothing — AC2", async () => {
     const before = await collectionRoute
-      .GET(new Request("http://localhost/api/settings"))
+      .GET(authenticatedRequest("http://localhost/api/settings"))
       .then((r) => r.json() as Promise<{ revision: string }>);
 
     const response = await collectionRoute.PATCH(
@@ -159,14 +169,14 @@ describeIfDb("settings HTTP routes against Postgres", () => {
     expect(patched.settings.map((s) => s.value).sort()).toEqual([42, true].sort());
 
     const after = await collectionRoute
-      .GET(new Request("http://localhost/api/settings"))
+      .GET(authenticatedRequest("http://localhost/api/settings"))
       .then((r) => r.json() as Promise<{ revision: string }>);
     expect(BigInt(after.revision)).toBe(BigInt(before.revision) + 1n);
   });
 
   it("PATCH /settings with one invalid key writes NOTHING through the route — AC2, atomicity", async () => {
     const beforeThreshold = await keyRoute
-      .GET(new Request("http://localhost/api/settings/liveness.stale_after_seconds"), {
+      .GET(authenticatedRequest("http://localhost/api/settings/liveness.stale_after_seconds"), {
         params: Promise.resolve({ key: "liveness.stale_after_seconds" }),
       })
       .then((r) => r.json() as Promise<{ value: unknown; source: string }>);
@@ -184,7 +194,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
     expect(payload.error.code).toBe("invalid_input");
 
     const afterThreshold = await keyRoute
-      .GET(new Request("http://localhost/api/settings/liveness.stale_after_seconds"), {
+      .GET(authenticatedRequest("http://localhost/api/settings/liveness.stale_after_seconds"), {
         params: Promise.resolve({ key: "liveness.stale_after_seconds" }),
       })
       .then((r) => r.json() as Promise<{ value: unknown; source: string }>);

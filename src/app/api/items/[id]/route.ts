@@ -2,11 +2,13 @@
 // `PATCH /items/{id}`). Thin shell over `service.call` — see items/route.ts.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, withRequestId, serviceErrorResponse } from "../respond";
+import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../respond";
 import { parseBooleanParam } from "../../_shared/query";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { id } = await params;
   const input: Record<string, unknown> = { id };
   // `?full=true` opts out of the slim default (MILESTONES.md #107).
@@ -21,7 +23,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { id } = await params;
   let body: Record<string, unknown>;
   try {

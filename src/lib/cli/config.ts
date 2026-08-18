@@ -30,6 +30,7 @@ export interface CliEnvironment {
   readonly DATABASE_URL?: string;
   readonly STANDUP_SESSION_ID?: string;
   readonly STANDUP_ACTOR?: string;
+  readonly STANDUP_TOKEN?: string;
   readonly [name: string]: string | undefined;
 }
 
@@ -39,6 +40,7 @@ export interface CliFileConfig {
   readonly databaseUrl?: string;
   readonly sessionId?: string;
   readonly actor?: string;
+  readonly token?: string;
 }
 
 /** The flags that participate in precedence. */
@@ -77,6 +79,21 @@ export interface ResolvedConfig {
   readonly databaseUrl?: string;
   readonly sessionId?: string;
   readonly actor?: string;
+  /**
+   * The bearer token presented to the server, when one is configured.
+   *
+   * Only ever meaningful on the `http` binding — the `direct` binding *is*
+   * the trust boundary rather than a caller crossing one, and has nothing
+   * to present a token to.
+   *
+   * **Deliberately has no flag.** Every other value here can be overridden
+   * on the command line, and this one cannot, because a credential typed as
+   * an argument is written to shell history and visible in the process list
+   * to every other user on the machine. The environment and the
+   * configuration file are both places a secret can live without being
+   * recorded by the act of using it.
+   */
+  readonly token?: string;
 }
 
 export interface ResolveInputs {
@@ -117,6 +134,7 @@ export function resolveConfig({ flags = {}, env = {}, file = {} }: ResolveInputs
   const databaseUrl = firstDefined(env.DATABASE_URL, file.databaseUrl);
   const sessionId = firstDefined(flags.session, env.STANDUP_SESSION_ID, file.sessionId);
   const actor = firstDefined(flags.as, env.STANDUP_ACTOR, file.actor);
+  const token = firstDefined(env.STANDUP_TOKEN, file.token);
 
   const identity = {
     ...(sessionId === undefined ? {} : { sessionId }),
@@ -134,7 +152,19 @@ export function resolveConfig({ flags = {}, env = {}, file = {} }: ResolveInputs
   }
 
   if (standupUrl !== undefined) {
-    return { ok: true, config: { binding: "http", standupUrl, ...identity } };
+    // The token rides only on this branch. Adding it to a `direct`
+    // resolution would put a credential on a config object that never
+    // presents one, and the two `direct` returns above are the reason it is
+    // spread here rather than folded into `identity`.
+    return {
+      ok: true,
+      config: {
+        binding: "http",
+        standupUrl,
+        ...identity,
+        ...(token === undefined ? {} : { token }),
+      },
+    };
   }
 
   if (databaseUrl !== undefined) {

@@ -3,10 +3,12 @@
 // header for why creation happens through `PATCH /machines/{name}` instead.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, withRequestId, serviceErrorResponse } from "../admin-respond";
+import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../admin-respond";
 
 export async function GET(request: Request) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   try {
     const result = await service.call("list_machines", {}, { caller });
     return withRequestId(NextResponse.json(result), requestId);

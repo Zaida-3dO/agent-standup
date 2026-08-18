@@ -231,6 +231,16 @@ export interface HttpBindingOptions {
   readonly fetch?: FetchLike;
   readonly sessionId?: string;
   readonly actor?: string;
+  /**
+   * The bearer token to present, when the server requires one.
+   *
+   * Optional so that this binding still builds without it, and the server
+   * answers the resulting call with a 401 that says what is missing. A
+   * binding that refused to construct would turn a fixable configuration
+   * problem into a crash at a point where nothing yet knows whether the
+   * server even wants a token.
+   */
+  readonly token?: string;
 }
 
 function isServiceErrorCode(value: unknown): value is ServiceErrorCode {
@@ -294,6 +304,7 @@ export function createHttpBinding({
   fetch: fetchImpl,
   sessionId,
   actor,
+  token,
 }: HttpBindingOptions): Binding {
   const root = baseUrl.replace(/\/+$/, "");
   const doFetch: FetchLike = fetchImpl ?? ((url, init) => globalThis.fetch(url, init));
@@ -314,6 +325,12 @@ export function createHttpBinding({
       if (body !== undefined) headers["Content-Type"] = "application/json";
       if (sessionId !== undefined) headers[SESSION_HEADER] = sessionId;
       if (actor !== undefined) headers[ACTOR_HEADER] = actor;
+      // The credential, and the reason the two headers above can be
+      // believed at all. A session and an actor are what this client says
+      // about itself; the token is the thing the server checks, and the
+      // machine it resolves to is what gives those claims an origin the
+      // server established rather than accepted.
+      if (token !== undefined) headers.Authorization = `Bearer ${token}`;
       // SCHEMA.md §21's five transports include `cli-http` — the command
       // line talking to a server — and from the server's side that request
       // is indistinguishable from any other HTTP call. This header is how

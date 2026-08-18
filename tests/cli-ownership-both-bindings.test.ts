@@ -211,8 +211,18 @@ function directBinding(): Binding {
   return createDirectBinding({ service: sharedService });
 }
 
+/** The token these routes are configured to accept. */
+const TEST_TOKEN = "both-bindings-token";
+
 function httpBinding(): Binding {
-  return createHttpBinding({ baseUrl: "http://server.invalid", fetch: routeFetch });
+  // The routes below authenticate, so the binding presents the token the
+  // environment is stubbed with — otherwise this compares `direct` against a
+  // uniform 401 instead of against the HTTP adapter.
+  return createHttpBinding({
+    baseUrl: "http://server.invalid",
+    fetch: routeFetch,
+    token: TEST_TOKEN,
+  });
 }
 
 /** Everything about an outcome both bindings must agree on. */
@@ -253,6 +263,8 @@ async function bothBindings(argv: readonly string[], setup: () => void = () => {
 }
 
 beforeEach(() => {
+  // These routes authenticate every call.
+  vi.stubEnv("STANDUP_TOKENS", `test-machine:${TEST_TOKEN}`);
   resetState();
 });
 

@@ -33,6 +33,15 @@ services:
       - "${APP_PORT:-3000}:3000"
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
+      # Per-machine bearer tokens, `machine:token` comma-separated. Required:
+      # with it unset the server refuses every authenticated call, which is
+      # the intended posture rather than an inconvenience — a gate that
+      # switched itself off when unconfigured would be open exactly when a
+      # deployment had gone wrong. It is bootstrap by the same test as the
+      # line above (known before the process reaches the database), and it
+      # could not be a stored setting in any case: settings are served to the
+      # front end and printed by the command line, with no redaction path.
+      STANDUP_TOKENS: ${STANDUP_TOKENS:?Set STANDUP_TOKENS in .env.production, e.g. laptop:TOKEN,desktop:TOKEN}
       # Everything the application reads once it is running is a database
       # setting, configured via /settings or `standup config set` — not an
       # environment variable. What's left here is only what must be known
@@ -49,6 +58,20 @@ services:
       DB_WAIT_INTERVAL_SECONDS: ${DB_WAIT_INTERVAL_SECONDS:-2}
       TZ: ${TZ:-UTC}
     healthcheck:
+      # Readiness, not liveness — and the distinction decides what this
+      # check is worth. A compose health state is what `depends_on:
+      # service_healthy` and any orchestrator's traffic decision read, and
+      # both of those want *can it serve a query*. `/api/health` deliberately
+      # avoids the database, so it answers 200 from a process whose Postgres
+      # is still initialising: a healthcheck pointed at it goes green while
+      # every real call still fails. `/api/ready` runs the cheapest real
+      # query and reports the migration state with it, so a container that
+      # is connected but two migrations behind is not reported as ready.
+      #
+      # The probe is unauthenticated by design, which is why this needs no
+      # token: the things that ask it run before an installation is
+      # configured. It answers only booleans and counts.
+      #
       # Uses Node's built-in fetch rather than curl/wget — the runner image
       # (node:24-alpine) doesn't ship either, but Node always does.
       test:
@@ -56,7 +79,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://localhost:3000/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 10s

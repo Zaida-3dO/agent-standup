@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import { log } from "@/lib/log";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
-import { httpCaller, withRequestId } from "../_shared/respond";
+import { authenticatedCaller, withRequestId } from "../_shared/respond";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   invalid_input: 400,
@@ -59,4 +59,4 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
 // module it already imports, rather than reaching across directories for a
 // second. The helper itself lives in `_shared` because resolving an inbound
 // request id is common to every route, not something this row owns.
-export { httpCaller, withRequestId };
+export { authenticatedCaller, withRequestId };

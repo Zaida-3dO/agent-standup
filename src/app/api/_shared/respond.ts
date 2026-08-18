@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { log } from "@/lib/log";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
 import { REQUEST_ID_HEADER, requestIdForHttpRequest } from "@/lib/request-id-header";
+import { authenticate } from "@/lib/auth";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   invalid_input: 400,
@@ -130,4 +131,102 @@ export function serializeAppendedEvent(event: {
   readonly ts: Date;
 }): { id: string; txId: string; ts: string } {
   return { id: String(event.id), txId: String(event.txId), ts: event.ts.toISOString() };
+}
+
+/**
+ * The 401 every route returns for a request that did not authenticate.
+ *
+ * **The body says which of the two failures it was, and nothing more.** A
+ * caller that sent no credential is told to send one; a caller that sent a
+ * bad one is told it was not recognised. Neither message names a machine,
+ * confirms that a machine exists, or says anything about how many tokens
+ * are configured — the refusal is a fact about this request, not a readable
+ * description of the installation's configuration.
+ *
+ * `WWW-Authenticate` is set because the status is defined in terms of it:
+ * a 401 without it tells a client it may retry but not with what, and the
+ * header is the one machine-readable part of this response that a generic
+ * HTTP client already knows how to act on.
+ *
+ * The code is `forbidden` rather than a new member of the taxonomy. The
+ * taxonomy is the *service layer's* vocabulary and authentication happens
+ * before any service call — but a client parsing the envelope should not
+ * have to learn a code that appears on no operation, and "you may not do
+ * this" is what both mean. The status carries the distinction that matters:
+ * `forbidden` from an operation is a 403, this is a 401.
+ */
+export function unauthenticatedResponse(
+  reason: "missing" | "invalid",
+  requestId?: string,
+): NextResponse {
+  const message =
+    reason === "missing"
+      ? "This request needs a bearer token. Send it as `Authorization: Bearer <token>`."
+      : "The bearer token presented was not recognised.";
+  const response = NextResponse.json(
+    { error: { code: "forbidden", message, fields: [] } },
+    { status: 401 },
+  );
+  response.headers.set("WWW-Authenticate", 'Bearer realm="standup"');
+  return withRequestId(response, requestId);
+}
+
+/**
+ * The authenticated equivalent of `httpCaller` — the one gate every routed
+ * request passes.
+ *
+ * **Why the gate lives here rather than in each route.** There are dozens
+ * of routes and there will be more, and a check written per-route is a
+ * check a new route forgets. Every route already calls this module to
+ * resolve its request id and caller, so putting authentication in the same
+ * call makes "was this request authenticated" inseparable from "who is
+ * calling" — a route physically cannot obtain a caller without having
+ * passed the gate, because the caller is what the gate returns.
+ *
+ * Returns a discriminated union rather than throwing. A throw would be
+ * caught by the `catch` every route already wraps its service call in, and
+ * rendered by `serviceErrorResponse` as whatever the taxonomy mapped it to
+ * — turning a deliberate 401 into a 500 or a 403 depending on which error
+ * class it was dressed as. A union forces the route to return the refusal
+ * it was handed, unchanged.
+ *
+ * **The authenticated machine name is what makes the actor header
+ * trustworthy.** The actor a caller declares is a self-report; the machine
+ * resolved from a token is not. Carrying both lets a write record who the
+ * caller said it was alongside the machine the server proved it came from.
+ */
+export function authenticatedCaller(request: Request):
+  | {
+      readonly ok: true;
+      readonly requestId: string;
+      readonly caller: {
+        readonly transport: string;
+        readonly requestId: string;
+        readonly machine: string;
+      };
+    }
+  | { readonly ok: false; readonly response: NextResponse } {
+  const { requestId } = httpCaller(request);
+  const result = authenticate(request);
+
+  if (!result.ok) {
+    // Logged at `warn`: a refused call is not the server failing, but it is
+    // the thing an operator rolling out tokens needs to see — a machine
+    // that has not been configured yet produces a steady trickle of these
+    // and nothing else anywhere would say so. The token is never logged,
+    // in either form: a rejected credential is still a credential, and a
+    // log is a place secrets outlive the request that carried them.
+    log.warn("Refused an unauthenticated request.", {
+      transport: "http",
+      requestId,
+      reason: result.reason,
+    });
+    return { ok: false, response: unauthenticatedResponse(result.reason, requestId) };
+  }
+
+  return {
+    ok: true,
+    requestId,
+    caller: { transport: "http", requestId, machine: result.machine.machine },
+  };
 }

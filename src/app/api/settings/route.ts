@@ -8,10 +8,12 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "./respond";
-import { httpCaller, withRequestId } from "../_shared/respond";
+import { authenticatedCaller, withRequestId } from "../_shared/respond";
 
 export async function GET(request: Request) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   try {
     const result = await service.call("get_settings", {}, { caller });
     // The revision doubles as the entity tag (SCHEMA.md §17.2) — carried in
@@ -28,7 +30,9 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   let body: unknown;
   try {
     body = await request.json();

@@ -20,7 +20,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
-  httpCaller,
+  authenticatedCaller,
   withRequestId,
   invalidJsonResponse,
   serviceErrorResponse,
@@ -28,7 +28,15 @@ import {
 import { CLI_TRANSPORT_HEADER, transportForHttpRequest } from "@/lib/session-transport-header";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { requestId } = httpCaller(request);
+  // Registration is a write to the sessions registry, so it authenticates
+  // like every other one. A client reaches this route already configured —
+  // it has to know where the server is to call it at all — so the token is
+  // in hand by the time it registers; it is the *hook script* fetch that
+  // happens before a session has anything, and that route is the one left
+  // open.
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId } = auth;
   const { id } = await params;
 
   let body: unknown;
@@ -50,6 +58,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           transport: transportForHttpRequest(request.headers.get(CLI_TRANSPORT_HEADER)),
           sessionId: id,
           requestId,
+          // The machine the token proved, beside the transport the request
+          // declared — the same pairing every other route now carries.
+          machine: auth.caller.machine,
         },
       },
     );

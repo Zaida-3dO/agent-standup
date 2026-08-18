@@ -32,6 +32,7 @@
 // the thing it is for.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { guardRegistry } from "@/lib/service/state-machine/guard";
@@ -116,6 +117,11 @@ describeIfDb("adapter conformance — every way in agrees", () => {
   let runtime: ServiceRuntime;
   let drivers: readonly ConformanceDriver[];
   let observations: Observation[] = [];
+
+  // The web API driver presents a bearer token, so the environment has to
+  // carry one — see `helpers/conformance-routes.ts` for why an HTTP driver
+  // sending no credential would agree with nothing.
+  beforeAll(stubAuthEnvironment);
 
   beforeAll(async () => {
     const url = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;

@@ -6,7 +6,7 @@
 // table both already own the right to define independently.
 import { NextResponse } from "next/server";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
-import { httpCaller, withRequestId } from "../_shared/respond";
+import { authenticatedCaller, withRequestId } from "../_shared/respond";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   invalid_input: 400,
@@ -23,7 +23,7 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
  * the mapped status.
  *
  * The request id is threaded through so a refusal names the same call the
- * server logged — see `httpCaller` in `_shared/respond.ts` for why every
+ * server logged — see `authenticatedCaller` in `_shared/respond.ts` for why every
  * response carries it, not just the failures.
  */
 export function serviceErrorResponse(error: unknown, requestId?: string): NextResponse {
@@ -36,4 +36,4 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
   );
 }
 
-export { httpCaller, withRequestId };
+export { authenticatedCaller, withRequestId };
