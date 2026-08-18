@@ -39,6 +39,14 @@ export interface RunState {
   readonly id: string;
   readonly model: string | null;
   readonly effort: string | null;
+  /**
+   * The stage the run's calls are attributed to.
+   *
+   * Held here as well as on the row because a stage change closes a run, so
+   * the value in force has to be comparable against the item's state at the
+   * next call without re-reading the row.
+   */
+  readonly stateAt: string | null;
   readonly inputTokens: bigint;
   readonly outputTokens: bigint;
   readonly cacheWriteTokens: bigint;
@@ -63,6 +71,7 @@ interface OpenRunRow {
   readonly id: string;
   readonly model: string;
   readonly effort: string;
+  readonly stateAt: string | null;
   readonly inputTokens: bigint;
   readonly outputTokens: bigint;
   readonly cacheWriteTokens: bigint;
@@ -107,7 +116,8 @@ export async function openRun(
   assignmentId: string,
 ): Promise<RunState | null> {
   const rows = await db.$queryRawUnsafe<OpenRunRow[]>(
-    `SELECT "id", "model", "effort", "inputTokens", "outputTokens",
+    `SELECT "id", "model", "effort", "stateAt"::text AS "stateAt",
+            "inputTokens", "outputTokens",
             "cacheWriteTokens", "cacheReadTokens", "toolCallCount"
      FROM "Run"
      WHERE "assignmentId" = $1 AND "endedAt" IS NULL
@@ -125,6 +135,7 @@ export async function openRun(
     // the first genuine report instead of adopting it into this one.
     model: row.model === UNREPORTED ? null : row.model,
     effort: row.effort === UNREPORTED ? null : row.effort,
+    stateAt: row.stateAt,
     inputTokens: BigInt(row.inputTokens),
     outputTokens: BigInt(row.outputTokens),
     cacheWriteTokens: BigInt(row.cacheWriteTokens),
@@ -176,12 +187,38 @@ export async function attribute(
     reported,
   );
 
-  if (decision.action === "cut") {
+  // A stage change closes a run too, and for the same reason `(model,
+  // effort)` does: the run is the unit cost is attributed by, so a run
+  // spanning two stages attributes all of its cost to whichever stage it
+  // opened in. That is not a bounded inaccuracy like §10's flush-interval
+  // error — it lasts as long as the run does, so a long run that opened in
+  // `executing` would report a whole review's cost against `executing`,
+  // and the per-stage rollup #53 exists to produce would be wrong by
+  // however much work happened after the transition.
+  //
+  // Unlike model and effort, this is not a client report and is never
+  // "unreported": it is resolved server-side at ingest from the item's own
+  // state, so a difference here is always a real transition rather than an
+  // absence of evidence.
+  const stageChanged = current !== null && current.stateAt !== owner.stateAt;
+
+  if (decision.action === "cut" || stageChanged) {
     if (current !== null) {
       await persistRun(db, current, prices);
       await closeRun(db, current.id, at);
     }
-    const opened = await insertRun(db, owner, decision.model, decision.effort, at);
+    // Which facets the new run opens with depends on what the call said,
+    // and all three decisions have to be honoured here because a stage
+    // change can coincide with any of them:
+    //
+    //   * `cut`   — the reported pair, already resolved by the rule.
+    //   * `adopt` — the pair after adoption, so a facet first reported on
+    //     the very call that crosses a stage is still recorded rather than
+    //     discarded by the stage taking this branch first.
+    //   * `keep`  — the pair in force, because nothing said either changed.
+    const model = decision.action === "keep" ? (current?.model ?? null) : decision.model;
+    const effort = decision.action === "keep" ? (current?.effort ?? null) : decision.effort;
+    const opened = await insertRun(db, owner, model, effort, at);
     return addCall(opened, counts);
   }
 
@@ -288,6 +325,7 @@ async function insertRun(
     id,
     model,
     effort,
+    stateAt: owner.stateAt,
     inputTokens: 0n,
     outputTokens: 0n,
     cacheWriteTokens: 0n,
