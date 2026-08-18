@@ -1,0 +1,33 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 60ch;
+  padding: var(--space-10) var(--space-6);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--text-primary);
+}
+
+.summary {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+/* Quiet, not alarming. An unbuilt screen is a known gap in a frame that is
+   itself finished — it is not an error, and painting it like one would put
+   it in the same visual class as a failure. */
+.note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}

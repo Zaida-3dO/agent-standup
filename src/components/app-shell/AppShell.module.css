@@ -5,3 +5,28 @@
   min-height: 60vh;
   color: var(--text-faint);
 }
+
+/* The whole application: rail beside a column of top-strip-then-page. */
+.shell {
+  display: flex;
+  align-items: flex-start;
+  min-height: 100dvh;
+}
+
+.column {
+  /* `min-width: 0` is what stops a wide child — the board's four columns,
+     a long identifier — from forcing the flex item wider than the viewport
+     and giving the whole page a horizontal scrollbar. A flex item's default
+     `min-width: auto` refuses to shrink below its content, so without this
+     line the "nothing overflows horizontally" requirement is not met on any
+     screen narrow enough to matter. */
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+}

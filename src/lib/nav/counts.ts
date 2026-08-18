@@ -1,0 +1,105 @@
+// The two numbers the sidebar puts beside a destination.
+//
+// **Both are fetched, neither is a constant.** A badge is a claim that
+// something is waiting, so a hardcoded one is not a placeholder, it is a
+// lie that looks exactly like a working feature — and the reader who
+// stopped trusting the number will not start again when it becomes real.
+//
+// The pure half of the sidebar's data loading, split out for the reason
+// `src/lib/board/state.ts` is: the harness runs `environment: "node"` with
+// no DOM, so the request shaping and the counting are only directly
+// testable as plain functions.
+//
+// **No database access, and none possible.** Both reads go through the
+// HTTP adapter, each a thin shell over one `service.call`; nothing here
+// imports the service layer or the database client.
+import { fetchBoardColumn } from "@/lib/board/state";
+import { needsYou } from "@/lib/board/view";
+import { fetchFeed } from "@/lib/since/state";
+
+export interface NavCounts {
+  /** Events this profile has not marked seen — the Standup badge. */
+  readonly unseen: number;
+  /** Items blocked on this person — the Needs you badge. */
+  readonly needsYou: number;
+}
+
+export function emptyCounts(): NavCounts {
+  return { unseen: 0, needsYou: 0 };
+}
+
+/**
+ * How many items are blocked on this person.
+ *
+ * Reads the **Waiting column only**, not the whole board. `needsYou`
+ * (`@/lib/board/view`) already requires `state === "blocked"`, and the
+ * server groups every blocked item into Waiting, so the other three columns
+ * cannot contribute a match — asking for them would be three extra requests
+ * on every page load to count zero each time.
+ *
+ * The board view keeps scanning all four (see `needsYouCount`'s header),
+ * and that is right *there*: it has the whole board in memory already, so
+ * the extra pass is free. Here it is not free, and the trade goes the other
+ * way. If the server's grouping ever changes so a blocked item can sit
+ * elsewhere, this under-counts and `needsYouCount` does not — which is
+ * exactly the seam a reviewer should look at first.
+ *
+ * With no active profile the count is zero without a request at all: nothing
+ * can need you when the app does not know who you are, and issuing the read
+ * anyway would show a stranger's queue.
+ */
+export async function fetchNeedsYouCount(
+  personId: string | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<number> {
+  if (personId === null) return 0;
+  const section = await fetchBoardColumn("waiting", { fetchImpl });
+  return section.entries.filter((entry) => needsYou(entry, personId)).length;
+}
+
+/**
+ * How many events this profile has not seen.
+ *
+ * `unseenCount` is computed server-side over the whole ledger, so the
+ * `limit: 1` is not a sample — the number does not depend on how many
+ * events come back, and asking for one keeps the badge's request from
+ * pulling a page of event bodies nothing renders.
+ */
+export async function fetchUnseenCount(
+  personId: string | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<number> {
+  const feed = await fetchFeed({ personId, limit: 1 }, fetchImpl);
+  return feed.unseenCount;
+}
+
+/**
+ * Both counts, fetched together.
+ *
+ * **A failure resolves to zero rather than rejecting**, and each side fails
+ * independently. The sidebar is chrome on every page in the app: a rejected
+ * badge fetch that propagated would take down navigation on a screen whose
+ * own content had loaded perfectly, to report that a number is unavailable.
+ * Zero renders as no badge at all (see `NavBadge`), so the failure mode is
+ * a missing badge, which is honest — it is not a badge showing a wrong
+ * number.
+ */
+export async function fetchNavCounts(
+  personId: string | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<NavCounts> {
+  const [unseen, needsYouTotal] = await Promise.all([
+    fetchUnseenCount(personId, fetchImpl).catch(() => 0),
+    fetchNeedsYouCount(personId, fetchImpl).catch(() => 0),
+  ]);
+  return { unseen, needsYou: needsYouTotal };
+}
+
+/** The count a nav entry shows, or `null` when it carries no badge. */
+export function countForBadge(
+  badge: "unseen" | "needsYou" | undefined,
+  counts: NavCounts,
+): number | null {
+  if (badge === undefined) return null;
+  return badge === "unseen" ? counts.unseen : counts.needsYou;
+}

@@ -1,12 +1,16 @@
-// "Since your last visit" — MILESTONES.md #38.
+// `/since` — kept as a redirect, not deleted.
 //
-// No wrapping <main> here — AppShell (src/components/app-shell) already
-// supplies the one for the whole app, above the top bar's sibling content,
-// same as `src/app/page.tsx`. `SinceLastVisit` is a client component
-// because it fetches on mount and needs the active profile from context;
-// this page stays a server component that simply places it.
-import { SinceLastVisit } from "@/components/since/SinceLastVisit";
+// The screen it named is now `/activity`, but the path itself is in
+// browser histories, bookmarks and anything that ever linked to it, and a
+// 404 there would look exactly like the feature having been removed. A
+// redirect costs one file and keeps every one of those links working.
+//
+// `redirect()` from a server component issues a real HTTP redirect during
+// the render, so nothing of this route is ever painted — the reader sees
+// `/activity` and not a flash of an empty page on the way to it.
+import { redirect } from "next/navigation";
+import { SINCE_REDIRECT_TARGET } from "@/lib/nav/redirects";
 
 export default function SincePage() {
-  return <SinceLastVisit />;
+  redirect(SINCE_REDIRECT_TARGET);
 }

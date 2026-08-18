@@ -1,0 +1,169 @@
+/* The navigation rail, and the same nav as a mobile sheet.
+ *
+ * Every value below is a token from `globals.css`. The two exceptions are
+ * the rail's own width and the breakpoint, which are layout constants
+ * rather than design-system values — a width is not a colour or a spacing
+ * step, and there is no token role for "how wide is the nav".
+ */
+
+.rail {
+  /* Wide enough for the longest label ("Needs you") plus its icon and a
+     three-digit badge without wrapping, and no wider — a rail is a
+     permanent tax on the content's width. */
+  width: 216px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-3);
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-default);
+  /* Sticks rather than scrolls with the page: navigation you have to
+     scroll back up to reach is navigation you stop using. */
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+/* Under the breakpoint the rail is gone entirely and the sheet is the only
+   way to the nav. Hidden in CSS, not by a JS viewport check — see
+   `SidebarView.tsx`. */
+@media (max-width: 900px) {
+  .rail {
+    display: none;
+  }
+}
+
+.brand {
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.nav {
+  min-width: 0;
+}
+
+.navList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* 44px minimum at comfortable density: 10px of padding either side of a
+     20px line box clears it, and the touch-target floor is the reason the
+     compact override below stops at 8px rather than going lower. */
+  padding: var(--space-3) var(--space-3);
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.navItem:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+/* The active item, selected on the attribute the component sets for
+   assistive technology — so the visual state and the announced one cannot
+   disagree. Colour is reinforcement: the weight change carries it in
+   greyscale. */
+.navItem[aria-current="page"] {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  box-shadow: inset 2px 0 0 0 var(--accent-border);
+}
+
+.navLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  flex-shrink: 0;
+  min-width: 20px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--text-primary);
+  font-size: var(--text-3xs);
+  line-height: 18px;
+  text-align: center;
+}
+
+/* ── The mobile sheet ─────────────────────────────────────────────────── */
+
+.sheetLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  background: var(--surface-scrim);
+  cursor: pointer;
+}
+
+.sheet {
+  position: relative;
+  /* Never wider than the viewport, and never so wide on a small phone that
+     the scrim disappears — the visible scrim is what says "this is over the
+     page, tap outside to dismiss". */
+  width: min(280px, 82vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-3);
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-default);
+  box-shadow: var(--shadow-overlay);
+  overflow-y: auto;
+}
+
+.sheetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sheetClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.sheetClose:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}

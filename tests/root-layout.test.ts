@@ -5,9 +5,11 @@
 import { describe, expect, it } from "vitest";
 import RootLayout, { metadata } from "@/app/layout";
 import Home from "@/app/page";
+import BoardPage from "@/app/board/page";
 import { ProfileProvider } from "@/lib/profile/ProfileProvider";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { Board } from "@/components/board/Board";
+import { Landing } from "@/components/landing/Landing";
 import type { ReactNode } from "react";
 import { findOneByType, walk } from "./helpers/react-element";
 
@@ -42,14 +44,33 @@ describe("RootLayout", () => {
 });
 
 describe("Home", () => {
-  // The home page is the board (MILESTONES.md #37). It renders `Board` and
-  // nothing else — the branching lives in `BoardView`, which is tested
-  // directly in tests/board-view-component.test.ts.
-  it("renders the board", () => {
-    expect(findOneByType(Home(), Board)).toBeDefined();
+  // The root is a CHOICE, not a screen: `ui.default_landing` decides what
+  // it shows, and `Landing` is the component that reads the setting and
+  // either renders the digest in place or redirects. The decision itself is
+  // tested in tests/nav-landing.test.ts; this only proves the root places
+  // the chooser and nothing else.
+  it("renders the landing chooser", () => {
+    expect(findOneByType(Home(), Landing)).toBeDefined();
+  });
+
+  it("does NOT render the board directly — the kanban moved to /board", () => {
+    // Reverting `src/app/page.tsx` to render `Board` fails this, which is
+    // the point: the root and the board are now different addresses.
+    expect([...walk(Home())].filter((el) => el.type === Board)).toHaveLength(0);
   });
 
   it("adds no wrapping <main> of its own — AppShell already supplies one", () => {
     expect(Home().type).not.toBe("main");
+  });
+});
+
+describe("BoardPage", () => {
+  // The kanban survives the move unchanged; only its address changed.
+  it("renders the board at /board", () => {
+    expect(findOneByType(BoardPage(), Board)).toBeDefined();
+  });
+
+  it("adds no wrapping <main> of its own — AppShell already supplies one", () => {
+    expect(BoardPage().type).not.toBe("main");
   });
 });

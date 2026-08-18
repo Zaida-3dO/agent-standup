@@ -163,6 +163,7 @@ export const KEY_PREFIXES: Readonly<Record<string, string>> = {
   retention: "Retention",
   hook: "Hook",
   shape: "Telemetry",
+  ui: "Interface",
 };
 
 /**
