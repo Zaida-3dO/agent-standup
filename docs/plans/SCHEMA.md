@@ -1363,6 +1363,45 @@ its configuration is missing protects nothing precisely when a deployment has go
 failure at rollout is cheaper than a server that has quietly been open since someone mistyped a
 variable name.
 
+### The front end calls through a server that holds the credential
+
+**A browser is not a machine, and the argument above is an argument about
+machines.** A machine holds configuration, an operator can hand it a secret,
+and its token can be withdrawn without anyone else noticing. A browser has
+none of those properties: there is nobody to hand it a credential, and
+anything shipped to a page is readable by whoever opens the developer tools —
+which would publish the token to every reader and make per-machine revocation
+meaningless.
+
+So the front end is not given one. It calls `/api/ui/*`, a route that runs on
+the server, attaches the token for a machine of its own (`browser` by default,
+`STANDUP_BROWSER_MACHINE` to override) and forwards to the very same handlers
+every remote client reaches. The credential lives in the server process and is
+never serialised into a response.
+
+**This is deliberately not a same-origin exemption.** The tempting shortcut is
+to admit a request that looks like it came from the app — `Origin`,
+`Sec-Fetch-Site`, a referer. Every one of those is a value the client chooses,
+so a gate on them refuses only clients that are honest about being clients,
+while reading like a boundary. It would also split the model by verb — reads
+exempt, writes not — and the front end genuinely writes: it transitions items,
+edits settings and marks events seen. Nothing here is exempt instead: the
+forwarded call presents a real token, is matched against the table by the same
+constant-time comparison, and resolves to a real machine name that appears in
+the logs and beside attributed writes.
+
+**It fails closed like everything else.** With no token configured for that
+machine the route refuses with a 503 naming the variable to set, rather than
+forwarding the call without a credential — which is the one shape that could
+later be "fixed" by exempting the forwarded call from the gate, leaving the
+API open to anyone who can reach the port.
+
+The forwarding route strips the browser's own `Authorization` before attaching
+the server's, so a reader cannot have this server present a guessed token and
+use it as an oracle; it refuses path segments that would escape `/api`; and it
+takes the destination's origin from the request URL rather than any header, so
+a client cannot choose where a request carrying a valid credential is sent.
+
 **Three routes are deliberately unauthenticated**, each because its consumers run *before* an
 installation is configured and hold no credential: `GET /health` and `GET /ready` (probes read by
 restart policies, deployment gates and load balancers) and `GET /hook/script` (fetched during the

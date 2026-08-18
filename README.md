@@ -57,6 +57,23 @@ reason as the rest of this list, plus one specific to it: settings are
 served to the front end and printed by the command line, with no redaction
 path, so a credential cannot live there.
 
+**The front end needs one of those tokens too, and it must be its own.** A
+browser is not a machine: it holds no configuration, and anything handed to a
+page is readable by whoever opens the developer tools, which would make
+revoking one machine's access meaningless. So the browser is never given a
+credential. It calls `/api/ui/*`, a server-side route that attaches the token
+for the machine named `browser` (override with `STANDUP_BROWSER_MACHINE`) and
+forwards to the same authenticated handlers every other client reaches — so
+the call is authenticated by the ordinary gate rather than exempted from it,
+and the token stays in the server process. Configure one alongside the rest:
+
+```
+STANDUP_TOKENS=browser:TOKEN-A,laptop:TOKEN-B
+```
+
+With no token configured for that machine the front end serves a 503 saying
+so, rather than falling back to calling the API without one.
+
 Everything else is a setting: typed, defaulted in code, and readable and
 writable once the app is running, from `/settings` in the front end or
 `standup config set` on the command line. A fresh database boots fully
