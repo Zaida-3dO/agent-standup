@@ -118,10 +118,21 @@ export function operationFiles(root = repoRoot) {
  * The declarations in one file's text that are not covered by the
  * annotation, as line numbers.
  *
- * A declaration counts as annotated when a disable comment appears within
- * the lookbehind window above it **and** is not already closed by a restore
- * comment between the two — a restore in between means the range ended
- * before reaching this declaration, so it covers something else.
+ * A declaration counts as annotated when **both** hold:
+ *
+ *   - a disable comment appears within the lookbehind window above it and is
+ *     not already closed by a restore between the two — a restore in between
+ *     means that range ended before reaching this declaration, so it covers
+ *     something else; and
+ *   - a restore comment follows, within the same window below.
+ *
+ * The closing half matters as much as the opening one, and it is the easier
+ * of the two to leave out. An unclosed range does not stop at the metadata:
+ * it runs on through the `input` schema and the whole handler, silencing
+ * mutants that are genuinely killable and genuinely worth killing. That is a
+ * real loss of signal wearing the annotation's clothes, and it is exactly
+ * what this check exists to prevent — so a range with no visible end is
+ * reported rather than trusted.
  */
 export function unannotatedDeclarations(text) {
   const lines = text.split(/\r?\n/);
@@ -130,17 +141,35 @@ export function unannotatedDeclarations(text) {
   for (let index = 0; index < lines.length; index += 1) {
     if (!lines[index].includes(DECLARATION)) continue;
 
-    let annotated = false;
+    let opened = false;
     for (let back = index - 1; back >= 0 && index - back <= LOOKBEHIND_LINES; back -= 1) {
       const line = lines[back];
       if (line.includes(RESTORE_COMMENT)) break;
       if (line.includes(DISABLE_COMMENT)) {
-        annotated = true;
+        opened = true;
         break;
       }
     }
 
-    if (!annotated) found.push(index + 1);
+    // The range must also visibly end. Searching forward stops at the next
+    // declaration as well as at the window edge: a restore found beyond one
+    // belongs to that declaration, not this one, and reading it as this
+    // one's would call an unclosed range closed.
+    let closed = false;
+    for (
+      let ahead = index + 1;
+      ahead < lines.length && ahead - index <= LOOKBEHIND_LINES;
+      ahead += 1
+    ) {
+      const line = lines[ahead];
+      if (line.includes(DECLARATION)) break;
+      if (line.includes(RESTORE_COMMENT)) {
+        closed = true;
+        break;
+      }
+    }
+
+    if (!opened || !closed) found.push(index + 1);
   }
 
   return found;

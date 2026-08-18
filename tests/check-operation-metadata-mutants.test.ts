@@ -93,16 +93,20 @@ describe("what counts as annotated", () => {
   it("accepts an annotation separated from the declaration by its own reasoning", () => {
     // The comment carries a written reason and that reason is the point of
     // it, so the annotation is not required to sit on the line immediately
-    // above — a multi-line block is the shape actually wanted.
-    const spaced = `${DISABLE_COMMENT} : line one\n// line two\n// line three\n${UNANNOTATED}`;
+    // above — a multi-line block is the shape actually wanted. Built from the
+    // properly-closed fixture, because the opening half alone does not count.
+    const spaced = `// line one\n// line two\n${ANNOTATED}`;
     expect(unannotatedDeclarations(spaced)).toEqual([]);
   });
 
   it("does not accept an annotation further above than the lookbehind window", () => {
     // Bounded so an unrelated disable elsewhere in the file cannot be
-    // mistaken for this declaration's own.
+    // mistaken for this declaration's own. The declaration below closes its
+    // range properly, so the only thing that can fail it is the disable
+    // sitting out of reach — which is what this test is actually about.
     const filler = "// filler\n".repeat(LOOKBEHIND_LINES + 5);
-    expect(unannotatedDeclarations(`${DISABLE_COMMENT}\n${filler}${UNANNOTATED}`)).toHaveLength(1);
+    const body = ANNOTATED.slice(ANNOTATED.indexOf("export const"));
+    expect(unannotatedDeclarations(`${DISABLE_COMMENT}\n${filler}${body}`)).toHaveLength(1);
   });
 
   it("does not accept an annotation already closed before the declaration", () => {
@@ -110,8 +114,51 @@ describe("what counts as annotated", () => {
     // else entirely, so the declaration is genuinely unprotected. Without
     // this, one disable at the top of a file would appear to cover every
     // declaration below it however many restores intervened.
-    const closed = `${DISABLE_COMMENT}\nconst other = 1;\n${RESTORE_COMMENT}\n${UNANNOTATED}`;
+    const body = ANNOTATED.slice(ANNOTATED.indexOf("export const"));
+    const closed = `${DISABLE_COMMENT}\nconst other = 1;\n${RESTORE_COMMENT}\n${body}`;
     expect(unannotatedDeclarations(closed)).toHaveLength(1);
+  });
+
+  it("rejects a disable range that is never closed", () => {
+    // The false negative with teeth. An unclosed range does not stop at the
+    // metadata — it runs on through the `input` schema and the whole
+    // handler, silencing mutants that are genuinely killable and worth
+    // killing. That is a real loss of signal wearing the annotation's
+    // clothes, so a range with no visible end is reported rather than
+    // trusted.
+    const unclosed = `${DISABLE_COMMENT} : reason
+export const note = ${DECLARATION}
+  name: "note",
+  input: inputSchema,
+  async handler() {
+    return 1;
+  },
+});
+`;
+    expect(unannotatedDeclarations(unclosed)).toHaveLength(1);
+  });
+
+  it("does not borrow the NEXT declaration's restore to close this one", () => {
+    // A restore found past another declaration belongs to that one. Reading
+    // it as this declaration's would call an unclosed range closed — and
+    // would do so precisely in the two-operations-per-file shape that
+    // already exists here.
+    const borrowed =
+      `${DISABLE_COMMENT} : reason
+export const a = ${DECLARATION}
+  name: "a",
+  input: inputSchema,
+});
+` +
+      `${DISABLE_COMMENT} : reason
+export const b = ${DECLARATION}
+  name: "b",
+  ${RESTORE_COMMENT}
+  input: inputSchema,
+});
+`;
+    // Only the first is unclosed; the second closes properly.
+    expect(unannotatedDeclarations(borrowed)).toHaveLength(1);
   });
 
   it("ignores files that declare no operation", () => {

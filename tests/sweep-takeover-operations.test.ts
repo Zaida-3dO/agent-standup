@@ -50,16 +50,23 @@ describe("sweep and takeover are registered service operations", () => {
   //
   // `tests/service-registry.test.ts` already asserts all three across the
   // whole registry, correctly, and those assertions genuinely fail when the
-  // metadata is emptied. But the object passed to `defineOperation` is
-  // evaluated once when the module is imported, not inside any test body, so
-  // per-test coverage analysis attributes it to no test at all — the
-  // registry-wide assertions are recorded as covering zero of it. A gate that
-  // cannot see a test cannot credit it, so emptying `name`, `kind` or
-  // `summary` was a change no run objected to.
+  // metadata is emptied. This pins the two operations declared in this file
+  // specifically, and pins `sweep`'s summary verbatim — a registry-wide
+  // "longer than ten characters" bar cannot say that the sentence still
+  // mentions releasing claims held by dead sessions, which is the part worth
+  // not losing.
   //
-  // Reading the metadata off the registry *here*, inside the test body, is
-  // what makes the coverage real: this executes while the run is watching,
-  // against the same registry entry an adapter resolves at dispatch.
+  // **It does not, and cannot, make these fields killable under mutation
+  // testing** — reading the metadata off the registry inside a test body does
+  // not change that, which is worth stating because it is the intuitive
+  // assumption and it is wrong. The object passed to `defineOperation` is
+  // evaluated once at import and read into the registry there; a mutant is
+  // switched at run time, so by the time this body executes the value it
+  // reads was computed before the mutant existed. Measured: with this test in
+  // place, all four metadata mutants still survive. That is why the
+  // declaration carries a disable annotation, required and explained by
+  // `scripts/check-operation-metadata-mutants.mjs`. This test earns its place
+  // by failing on a hand-edit, not by satisfying a mutation gate.
   it("declares the metadata every adapter dispatches on", () => {
     for (const name of ["sweep", "takeover"] as const) {
       const operation = OPERATION_REGISTRY[name];
