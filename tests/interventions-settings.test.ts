@@ -199,6 +199,22 @@ describe("resolving stored rows into overrides", () => {
     expect(resolved.overrides["retired-entry"]).toEqual({ enabled: true });
   });
 
+  it("reports a retired entry even when its stored value went stale", () => {
+    // `rejected` and `unknownIds` answer different questions, and one row
+    // can be the subject of both: the value is invalid *and* an entry
+    // absent from this build still has configuration here. Losing the
+    // second fact would defeat the purpose of `unknownIds` — preserving the
+    // record that the installation made a decision — and it would be lost
+    // in exactly the case that produces it, since a release that narrows a
+    // field's schema is the same kind of release that retires an entry.
+    const resolved = resolveInterventionSettings({
+      stored: [{ key: "interventions.retired-entry.level", value: "not-a-level" }],
+      entries,
+    });
+    expect(resolved.rejected).toHaveLength(1);
+    expect(resolved.unknownIds).toEqual(["retired-entry"]);
+  });
+
   it("ignores rows from other namespaces without reporting them", () => {
     // `stored` may legitimately be handed every settings row there is, so a
     // key under another prefix is not this module's business — reporting it

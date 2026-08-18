@@ -144,8 +144,17 @@ interface AssignmentRow {
   rootSessionId: string;
   /** The repository the claimed item belongs to. Null when the item names none. */
   repo: string | null;
-  /** The machine this session registered on. Null when it never registered. */
-  machine: string | null;
+  /**
+   * The machine the claim was taken on.
+   *
+   * Read off the assignment, which is the row that owns it: `claim` requires
+   * a machine and stores it here, and it does so without a `Session` row
+   * existing at all — session registration is a separate act that an
+   * installation is not obliged to perform. A lookup that resolved the
+   * machine through `Session` would therefore answer `null` for the ordinary
+   * claim and silently disable every check keyed on it.
+   */
+  machine: string;
 }
 
 /** One other crew holding the same checkout — I15's query result. */
@@ -195,11 +204,10 @@ export async function assembleContext(options: {
             i."state"::text     AS "state",
             i."repo"            AS "repo",
             r."defaultBranch"   AS "defaultBranch",
-            s."machine"         AS "machine"
+            a."machine"         AS "machine"
        FROM "Assignment" a
        JOIN "Item" i ON i."id" = a."itemId"
        LEFT JOIN "Repo" r ON r."id" = i."repo"
-       LEFT JOIN "Session" s ON s."id" = a."sessionId"
       WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL
       ORDER BY a."claimedAt" DESC
       LIMIT 1`,
@@ -264,9 +272,12 @@ export async function assembleContext(options: {
  *
  * ── The three conditions, each load-bearing ────────────────────────────
  *
- *   - `machine` and `repo` must both be known. Either being null makes the
- *     pair unanswerable, and a query that dropped the null half would
- *     compare every checkout on every machine against this one.
+ *   - The `(machine, repo)` pair must be answerable. The machine is read off
+ *     the assignment rather than resolved through a session, because `claim`
+ *     stores it there and does not require a session registration to exist —
+ *     resolving it the other way answers `null` for an ordinary claim and
+ *     silently disables the entry. The item's repository is genuinely
+ *     nullable, and without it the pair cannot be compared.
  *   - `rootSessionId <> $3` is the self-exclusion. Compared on roots, so an
  *     orchestrator and the builder it spawned do not block each other —
  *     this is the distinction `registered_processes` established and I15 is
@@ -280,7 +291,12 @@ async function occupancyFor(
   db: TransactionHandle,
   claim: AssignmentRow,
 ): Promise<Partial<InterventionContext>> {
-  if (claim.machine === null || claim.repo === null) return {};
+  // Only the repository can be unknown here. `Assignment.machine` is NOT
+  // NULL and `claim` requires it, so the machine half of the pair is always
+  // answerable; the item's `repo` is nullable, and without it the pair
+  // cannot be compared — a query that dropped that half would match every
+  // checkout on the machine against this one.
+  if (claim.repo === null) return {};
 
   const rows = await db.$queryRawUnsafe<OccupancyRow[]>(
     `SELECT a."rootSessionId" AS "rootSessionId",
@@ -289,8 +305,7 @@ async function occupancyFor(
             FLOOR(EXTRACT(EPOCH FROM (NOW() - a."lastActive")))::int AS "lastActiveSecondsAgo"
        FROM "Assignment" a
        JOIN "Item" i ON i."id" = a."itemId"
-       JOIN "Session" s ON s."id" = a."sessionId"
-      WHERE s."machine" = $1
+      WHERE a."machine" = $1
         AND i."repo" = $2
         AND a."rootSessionId" <> $3
         AND a."releasedAt" IS NULL

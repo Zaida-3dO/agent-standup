@@ -124,6 +124,16 @@ describe("accumulating findings", () => {
     }
     expect(accumulator.pendingCount("s1")).toBe(3);
   });
+
+  it("says plainly that a finding past the bound was not held", () => {
+    // The contract is "returns whether it was held", and a caller routing
+    // on it would drop the finding entirely if this claimed otherwise —
+    // neither delivering it now nor batching it for later.
+    const accumulator = new DigestAccumulator({ maxPending: 1 });
+    expect(accumulator.add("s1", finding({ id: "first" }), 0)).toBe(true);
+    expect(accumulator.add("s1", finding({ id: "second" }), 0)).toBe(false);
+    expect(accumulator.pendingCount("s1")).toBe(1);
+  });
 });
 
 describe("when a batch is due", () => {

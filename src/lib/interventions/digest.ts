@@ -149,7 +149,9 @@ export class DigestAccumulator {
    *
    * `false` for a finding that does not ride the digest — the caller
    * delivers that one itself — so a call site can route on one call rather
-   * than testing the timing and then adding it.
+   * than testing the timing and then adding it. `false` **also** when the
+   * buffer is full, for the same reason: the answer is "not held", and a
+   * caller that believed otherwise would drop it entirely.
    *
    * **Deduplicated by id.** The same entry triggering repeatedly within one
    * window is one finding, and the *first* is kept rather than the last:
@@ -162,7 +164,14 @@ export class DigestAccumulator {
 
     const existing = this.pending.get(sessionId) ?? [];
     if (existing.some((held) => held.finding.id === finding.id)) return true;
-    if (existing.length >= this.maxPending) return true;
+    // At the bound the finding is dropped, and the caller is told so rather
+    // than being left to believe it was queued. `true` here would be a lie
+    // in the one direction that matters: a caller routing on the return
+    // value — which this method's contract invites — would deliver neither
+    // now nor later, and the finding would vanish silently. Answering
+    // `false` means "not held", which is exactly true, and leaves the
+    // caller free to deliver it immediately if it would rather not lose it.
+    if (existing.length >= this.maxPending) return false;
 
     existing.push({ finding, at });
     this.pending.set(sessionId, existing);

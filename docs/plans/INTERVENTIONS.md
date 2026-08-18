@@ -95,8 +95,11 @@ builder's report, and I7 on the same, because the PR fields it would really read
 `mergeStateStatus`) are not collected by anything. **I15 fires on a write into the checkout, not on a
 claim**: the tools whose whole purpose is to edit a file are the ones that carry no command text to
 read, so the tool name is the signal; a `claim` that lands in an occupied checkout is not refused,
-because the intervention payload on the ordinary service responses is not wired. Each says so in its
-own row. The alternative was
+because the intervention payload on the ordinary service responses is not wired. It is narrowed
+twice more, both deliberately — it **does not fire inside a linked worktree**, because
+`(machine, repo)` cannot tell two crews sharing one working tree from two crews each in their own and
+the second is the intended arrangement; and it fires only for a session that itself holds a claim,
+because the checkout is identified through that claim. Each says so in its own row. The alternative was
 to ship a predicate that quietly never fires, and an entry that cannot trigger is worse than an
 absent one: it reads as coverage on the settings page and provides none.
 
