@@ -212,6 +212,7 @@ export {
   MAX_BATCH_SIZE,
   type RecordToolCallsInput,
   type RecordToolCallsOutput,
+  type RunTouch,
 } from "./operations/record-tool-calls";
 
 // Session shape (MILESTONES.md #54): the read side of the rows above. The
@@ -224,6 +225,22 @@ export {
   type GetSessionShapeInput,
   type GetSessionShapeOutput,
 } from "./operations/get-session-shape";
+
+// Cost aggregation (MILESTONES.md #53). The totals are recomputed from the
+// stored token counts at the configured rates rather than summed from the
+// stored `cost` column — see the operation's header for why a summed total
+// corresponds to no price table that ever existed.
+export {
+  getCosts,
+  fold,
+  COST_GROUPINGS,
+  DEFAULT_COST_GROUPS,
+  MAX_COST_GROUPS,
+  type CostGroup,
+  type CostGrouping,
+  type GetCostsInput,
+  type GetCostsOutput,
+} from "./operations/get-costs";
 
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself

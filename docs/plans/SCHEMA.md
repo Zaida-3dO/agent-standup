@@ -761,17 +761,19 @@ compares each report against the open run and cuts a new one when it differs.
 | `id` | `uuid` PK | |
 | `item_id` | `text` → `items.id` | |
 | `assignment_id` | `uuid` → `assignments.id` | |
+| `session_id` | `text` null | The session whose calls the run rolls up. Implied by the assignment, and stored anyway because the per-session rollup must not depend on a join that omits work with no assignment behind it. |
+| `state_at` | state enum, null | The stage the run's calls were attributed to, carried up from `tool_calls.state_at` (§10) at ingest. Denormalised for the reason that column is: the per-stage rollup is an indexed read here, and a scan of the highest-volume table if derived. Inherits §10's caveat — it is the stage the work was *attributed* to, not an exact per-call reading. |
 | `started_at` | `timestamptz` | |
 | `ended_at` | `timestamptz` null | Null while running. |
-| `model` | `text` | **Exact vendor model ID**, per §2 — required to recompute `cost` from the token counts, and to keep scoring buckets from merging different model generations. |
+| `model` | `text` | **Exact vendor model ID**, per §2 — required to recompute `cost` from the token counts, and to keep scoring buckets from merging different model generations. A run whose calls all arrived without one carries a named sentinel rather than an empty string, so "nothing reported this" is visible in a query result and cannot collide with a vendor ID; a sentinel matches no rate, so such a run is unpriced rather than free. |
 | `effort` | `text` | Literal effort value. |
-| `selection_reason` | enum | `recommended` · `exploration` · `override` · `pinned`. Why this model was used. `override` is the valuable one — an agent rejecting the soft-deny — because whether overridden runs go better or worse is the picker's own report card. |
+| `selection_reason` | enum, null | `recommended` · `exploration` · `override` · `pinned`. Why this model was used. `override` is the valuable one — an agent rejecting the soft-deny — because whether overridden runs go better or worse is the picker's own report card. **Null where no dispatch decision stands behind the run** — every value names a choice something made and stated, and a run cut from telemetry has none: the hook reports which model served a call, never why it was picked. Filling it with `recommended` in that case would put runs nobody recommended anything about into the comparison group recommendations are graded against, so null is both the truthful value and the excludable one. |
 | `recommendation_strength` | `numeric` null | Confidence at dispatch time. Low strength is what licenses an exploration in the first place. |
 | `input_tokens` | `bigint` | **The facts.** Four separate counts — they price at wildly different rates, so a single total destroys the information. |
 | `output_tokens` | `bigint` | |
 | `cache_write_tokens` | `bigint` | |
 | `cache_read_tokens` | `bigint` | |
-| `cost` | `numeric` | Denormalised convenience for sorting and rollups. **Recomputable** from the counts + `model`; the counts are the truth. |
+| `cost` | `numeric` | Denormalised convenience for sorting and rollups. **Recomputable** from the counts + `model`; the counts are the truth. Rates live in the `pricing.model_prices` setting (§17.2) rather than in code, and the stored figure is **recomputed from the accumulated counts on every write, never incremented** — an incremented total is a sum of figures priced under whatever rates were configured at each flush, so it corresponds to no price table that ever existed and cannot be reproduced or corrected. Null where the model has no configured rate: unpriced and free are opposite claims, and collapsing them makes a total read as complete while being short by an unknown amount. |
 | `tool_call_count` | `int` | |
 | `turn_count` | `int` | |
 | `outcome` | enum | `completed` · `stalled` · `superseded` · `failed`. |
@@ -1029,6 +1031,7 @@ typed.
 | `visual_review.doc` | path or null, `null` | Capabilities | Document explaining how a visual review is performed here. Null = visual review unavailable. Wanted whenever any item sets `needs_visual_review`, or the item reaches the gate with no way through it. |
 | `minting.backlog_low_threshold` | int, `3` | Minting | On-deck count below this triggers a mint request. |
 | `minting.source_globs` | list of globs, `[]` | Minting | Where minting looks. The default; a machine that carries its own `source_globs` overrides it, because filesystem layouts differ per machine. See §17.7. |
+| `pricing.model_prices` | object, `{}` | Pricing | What each model costs per million tokens, keyed by exact vendor model ID, with a separate rate for input, output, cache writes and cache reads. Run costs are recomputed from these rates and the stored counts, so a corrected rate corrects every figure computed afterwards. Empty by default: a table of figures compiled into the build is current on the day it is written and stale after, and a stale rate yields a confident wrong total where an absent one yields a visible gap. A model with no entry is recorded and left unpriced rather than counted as free. |
 | `retention.tool_calls_days` | int or null, `null` | Retention | Null = keep. Applies to `tool_calls` only. |
 | `shape.minimum_sample` | int, `20` | Telemetry | Tool calls a session must have made before its shape is reported as anything but `unknown`. Below it the reading is withheld rather than guessed. |
 | `shape.repeat_threshold` | int, `3` | Telemetry | Returns to a command — with other work in between — before that reads as circling. Counts **returns, not attempts**: a command run and immediately re-run is a retry loop and counts once however long it runs. |

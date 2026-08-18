@@ -159,6 +159,7 @@ export const KEY_PREFIXES: Readonly<Record<string, string>> = {
   notify: "Capabilities",
   visual_review: "Capabilities",
   minting: "Minting",
+  pricing: "Pricing",
   retention: "Retention",
   hook: "Hook",
   shape: "Telemetry",

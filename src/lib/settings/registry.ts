@@ -11,6 +11,7 @@
 import { z } from "zod";
 import { budgetWindowsSchema } from "./budget-windows";
 import { capabilityDocSchema } from "./capability-doc";
+import { modelPricesSchema } from "@/lib/telemetry/pricing";
 
 /**
  * The categories a setting can be filed under. Closed rather than free
@@ -27,6 +28,7 @@ export const SETTING_CATEGORIES = [
   "Model picker",
   "Capabilities",
   "Minting",
+  "Pricing",
   "Retention",
   "Hook",
   "Telemetry",
@@ -342,6 +344,28 @@ export const SETTINGS_REGISTRY = {
     help: "Where minting looks for work. This is the default; a machine carrying its own source globs overrides it, because filesystem layouts differ per machine.",
     category: "Minting",
     appliesWhen: "next-poll",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "pricing.model_prices": define({
+    schema: modelPricesSchema,
+    // Empty, and the emptiness is the design (see `modelPricesSchema`). A
+    // table of figures compiled into the build would be current on the day
+    // it was written and quietly stale on every day after, and a stale rate
+    // produces a confident wrong total rather than a visible gap. Empty
+    // prices nothing and says so — every cost reads as "not known" until
+    // somebody states what a model costs here.
+    default: {},
+    label: "Model prices",
+    help: "What each model costs per million tokens, keyed by its exact vendor model ID, with a separate rate for input, output, cache writes and cache reads. Run costs are recomputed from these rates and the stored token counts, so correcting a rate here corrects every figure computed from it afterwards. A model with no entry is recorded and left unpriced rather than counted as free.",
+    category: "Pricing",
+    appliesWhen: "next-call",
+    // Neither relaxes an enforcement nor destroys anything. A wrong rate
+    // yields a wrong figure, and the figure is recomputable from counts
+    // this setting cannot touch — which is the whole reason the counts are
+    // stored beside the cost.
     sensitive: false,
     irreversible: false,
     formerEnv: [],

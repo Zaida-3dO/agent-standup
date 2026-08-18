@@ -198,11 +198,25 @@ export function capPaths(paths: readonly string[]): string[] {
  * rather than once per record. A spool that spans sessions groups by
  * session before posting, which is free while the batch is being built.
  *
- * **`model` and `effort` are not here either.** SCHEMA.md §11 is explicit
- * that they are not columns on `tool_calls` ("two strings on ~450k rows a
- * year buys little"). MILESTONES.md #51 is the row that consumes them, and
- * it owns deciding how they travel — putting them on this record now would
- * be defining a field with nowhere to go and no reader.
+ * **`model` and `effort` travel on the record and are not stored on it.**
+ * SCHEMA.md §11 is explicit that they are not columns on `tool_calls` ("two
+ * strings on ~450k rows a year buys little") — and equally explicit that
+ * the feature "requires **the hook to report model and effort on every
+ * call**, or a `/model` switch is invisible and the run silently spans
+ * both". Those two statements are not in tension: the fields are reported
+ * per call because a change can happen at any call, and are stored per
+ * *run* because that is where the value is constant by construction. The
+ * server compares each report against the open run and cuts a new one when
+ * it differs, so the per-call report is consumed at ingest rather than
+ * written down.
+ *
+ * They are **per-record rather than on the envelope**, unlike `sessionId`.
+ * The envelope is for what a batch cannot disagree about, and this is
+ * exactly what a batch *can* disagree about: a mid-session model switch
+ * lands in the middle of a flush, and hoisting the field would force the
+ * spool to either split a batch on every switch or report one model for
+ * calls served by two — which is the blend the run boundary exists to
+ * prevent.
  *
  * The four token counts are separate and never folded into a total, for the
  * reason §10 states outright: they price at wildly different rates, so one
@@ -218,6 +232,16 @@ export interface ToolCallRecord {
   readonly outputTokens: number;
   readonly cacheWriteTokens: number;
   readonly cacheReadTokens: number;
+  /**
+   * The exact vendor model ID that served this call, when the agent tool
+   * reported one (§11: "**The exact vendor model ID** — never a friendly
+   * form"). Absent when it reported none, which is a real and common case:
+   * a tool that does not surface the field leaves the calls unattributed
+   * rather than attributing them to a guess.
+   */
+  readonly model?: string;
+  /** The literal effort value, when reported. Absent for the same reason as `model`. */
+  readonly effort?: string;
   readonly usage5h?: number;
   readonly usageWeekly?: number;
 }

@@ -109,6 +109,16 @@ import {
   capPaths,
   capText,
 } from "@/lib/telemetry/contract";
+import { costForModel } from "@/lib/telemetry/pricing";
+import {
+  UNREPORTED,
+  attribute,
+  openRun,
+  persistRun,
+  pricesFrom,
+  type RunOwner,
+  type RunState,
+} from "../telemetry/runs";
 
 /**
  * The largest token count accepted, matching Postgres `integer`.
@@ -160,11 +170,13 @@ const usageReading = z.number().finite().min(0).nullable().optional();
  * written into the one table §10 says cannot be reconstructed. Loud and
  * recoverable beats quiet and permanent.
  *
- * `model` and `effort` are **not** accepted here, and that is not an
- * oversight. §11 is explicit that they are not columns on this table ("two
- * strings on ~450k rows a year buys little"); #51 is the row that consumes
- * them, and it will decide how they arrive. Accepting them now would mean
- * accepting a field this build has nowhere to put.
+ * `model` and `effort` are accepted and are **not stored on this table**.
+ * §11 is explicit on both halves: they are not columns here ("two strings
+ * on ~450k rows a year buys little"), and the feature "requires the hook to
+ * report model and effort on every call, or a `/model` switch is invisible
+ * and the run silently spans both". They are read to decide run boundaries
+ * (`../../telemetry/run-boundary`) and then discarded, which is why a
+ * `ToolCall` row has no trace of them and a `Run` row does.
  */
 const recordSchema = z
   .object({
@@ -180,6 +192,24 @@ const recordSchema = z
     outputTokens: tokenCount.optional(),
     cacheWriteTokens: tokenCount.optional(),
     cacheReadTokens: tokenCount.optional(),
+    /**
+     * The exact vendor model ID that served this call, and the effort it ran
+     * at, when the agent tool reported them.
+     *
+     * **Nullable as well as optional**, because the hook's own reader treats
+     * an unreadable field as absent rather than as a refusal, and a client
+     * that serialises "nothing" as an explicit `null` must not have its
+     * whole batch rejected for saying the same thing a different way. Both
+     * collapse to "not reported" at the boundary decision.
+     *
+     * Bounded by the tool name's cap rather than one invented for them: a
+     * vendor model ID is the same shape and order of length as an
+     * MCP-namespaced tool name, and it is the bound the spool already
+     * applies, so a value that arrives uncapped is one this server capped
+     * where the client did not.
+     */
+    model: z.string().max(MAX_TOOL_CHARS).nullable().optional(),
+    effort: z.string().max(MAX_TOOL_CHARS).nullable().optional(),
     usage5h: usageReading,
     usageWeekly: usageReading,
   })
@@ -237,6 +267,38 @@ export interface RecordToolCallsOutput {
    * exactly like a small one from the client's side.
    */
   readonly truncatedFields: number;
+  /**
+   * The runs this batch touched, in the order they were opened or extended.
+   *
+   * Returned because a client has no other way to see the boundary
+   * decisions its own reports caused. A flush that reports two models
+   * produces two entries here, which is how a hook author confirms the
+   * field is being read at all — the alternative is inferring it from a
+   * table they may not be able to query.
+   *
+   * Empty for a ghost session: §11 defines a run as "one agent's turn on
+   * one item", so work with no item has calls but no runs.
+   */
+  readonly runs: readonly RunTouch[];
+}
+
+/** One run this batch opened or added calls to. */
+export interface RunTouch {
+  readonly id: string;
+  /** True when this batch opened it, false when it was already open. */
+  readonly opened: boolean;
+  /** The run's model after this batch, or null if nothing has ever reported one. */
+  readonly model: string | null;
+  readonly effort: string | null;
+  /** Calls from *this batch* attributed to it — not the run's lifetime total. */
+  readonly calls: number;
+  /**
+   * The run's cost after this batch, or null when its model has no rate in
+   * `pricing.model_prices`. Recomputed from the run's accumulated counts on
+   * every batch rather than incremented, so the stored figure is always the
+   * one the current price table produces for the counts beside it.
+   */
+  readonly cost: number | null;
 }
 
 interface LiveAssignmentRow {
@@ -301,6 +363,28 @@ export const recordToolCalls = defineOperation({
 
     const live = await liveAssignment(ctx.db, sessionId);
 
+    // The run rollup (#51). Only for a session holding an item: §11 defines
+    // a run as "one agent's turn on **one item**", and a ghost session has
+    // none — its calls are recorded as `ToolCall` rows and roll up to
+    // nothing, which is the honest reading rather than a gap. The token
+    // counts survive either way, so unminted work is still measured.
+    const prices = pricesFrom(ctx.settings);
+    const owner: RunOwner | null =
+      live === null
+        ? null
+        : {
+            assignmentId: live.id,
+            itemId: live.itemId,
+            sessionId,
+            stateAt: live.state,
+          };
+    let run = owner === null ? null : await openRun(ctx.db, owner.assignmentId);
+    // Every run this batch opened or extended, keyed by id so a batch that
+    // switches model and switches back reports two entries rather than
+    // three — the second switch reopens nothing, it cuts a third run, and
+    // the map records each distinct run once with its final state.
+    const touched = new Map<string, RunState>();
+
     for (const call of input.calls) {
       const tool = capText(call.tool, MAX_TOOL_CHARS);
       if (tool !== call.tool) truncatedFields += 1;
@@ -340,6 +424,58 @@ export const recordToolCalls = defineOperation({
         call.usage5h ?? null,
         call.usageWeekly ?? null,
       );
+
+      // The boundary decision is per call and cannot be deferred: a model
+      // change lands at one specific call, and a decision made once at the
+      // end of a batch could not say which calls fell either side of it.
+      // What *is* deferred is the run's own row write — see `attribute`.
+      if (owner !== null) {
+        run = await attribute(
+          ctx.db,
+          owner,
+          run,
+          { model: call.model, effort: call.effort },
+          {
+            inputTokens: call.inputTokens ?? 0,
+            outputTokens: call.outputTokens ?? 0,
+            cacheWriteTokens: call.cacheWriteTokens ?? 0,
+            cacheReadTokens: call.cacheReadTokens ?? 0,
+          },
+          call.ts,
+          prices,
+        );
+        touched.set(run.id, run);
+      }
+    }
+
+    // The run still open at the end of the batch is written once, here,
+    // rather than on every call. Runs closed mid-batch by a cut were
+    // written at the moment they were closed, so every touched run has had
+    // its final counts and its recomputed cost stored by the time this
+    // returns.
+    const runs: RunTouch[] = [];
+    for (const state of touched.values()) {
+      const cost =
+        state.id === run?.id
+          ? await persistRun(ctx.db, state, prices)
+          : costForModel(
+              state.model ?? UNREPORTED,
+              {
+                inputTokens: Number(state.inputTokens),
+                outputTokens: Number(state.outputTokens),
+                cacheWriteTokens: Number(state.cacheWriteTokens),
+                cacheReadTokens: Number(state.cacheReadTokens),
+              },
+              prices,
+            ).cost;
+      runs.push({
+        id: state.id,
+        opened: state.opened,
+        model: state.model,
+        effort: state.effort,
+        calls: state.callsThisBatch,
+        cost,
+      });
     }
 
     return {
@@ -349,6 +485,7 @@ export const recordToolCalls = defineOperation({
       itemId: live?.itemId ?? null,
       stateAt: live?.state ?? null,
       truncatedFields,
+      runs,
     };
   },
 });

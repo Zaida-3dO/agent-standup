@@ -438,19 +438,37 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
       expect(error.code).toBe("invalid_input");
     });
 
-    it("REFUSES model and effort — this table has no column for them", async () => {
-      // SCHEMA.md §11 keeps model and effort off `tool_calls` deliberately
-      // ("two strings on ~450k rows a year buys little"), so accepting them
-      // here would mean taking a field with nowhere to put it and dropping
-      // it on the floor. #51 is the row that consumes them and owns
-      // deciding how they travel; until then, refusing is the honest answer
-      // and the loud one.
-      const withModel = await recordRejection("s-strict-2", [
-        { ...call(), model: "some-vendor-model-id" },
+    it("accepts model and effort, and stores neither as a column on this table", async () => {
+      // Both halves matter and they are easy to mistake for a contradiction.
+      // SCHEMA.md §11 keeps the two strings off `tool_calls` ("two strings on
+      // ~450k rows a year buys little") *and* requires the hook to report
+      // them on every call, because a run is bounded by (assignment, model,
+      // effort) and a change can land at any call. They are read to decide
+      // where one run ends and the next begins, then discarded — so a
+      // `ToolCall` row carries no trace of either, and the fields are still
+      // absent from the projection the table exposes.
+      const result = await record("s-facets-1", [
+        { ...call(), model: "some-vendor-model-id", effort: "high" },
       ]);
+      expect(result.recorded).toBe(1);
+
+      const rows = await rowsFor("s-facets-1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).not.toHaveProperty("model");
+      expect(rows[0]).not.toHaveProperty("effort");
+    });
+
+    it("REFUSES a model or effort past the identifier cap", async () => {
+      // Bounded like every other string on this payload. An unbounded value
+      // here would reach the run's own `model` column, which is what a cost
+      // and a score are keyed on — so a value too long to be a vendor ID is
+      // a client bug worth naming rather than silently clipping into an
+      // identifier that matches no price and no scoring bucket.
+      const tooLong = "m".repeat(MAX_TOOL_CHARS + 1);
+      const withModel = await recordRejection("s-strict-2", [{ ...call(), model: tooLong }]);
       expect(withModel.code).toBe("invalid_input");
 
-      const withEffort = await recordRejection("s-strict-3", [{ ...call(), effort: "high" }]);
+      const withEffort = await recordRejection("s-strict-3", [{ ...call(), effort: tooLong }]);
       expect(withEffort.code).toBe("invalid_input");
     });
 

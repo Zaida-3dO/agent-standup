@@ -70,11 +70,12 @@ describe("the wire shape matches what the ingest accepts", () => {
     expect(seen[0]?.calls[0]).not.toHaveProperty("sessionId");
   });
 
-  it("drops model and effort, which have no receiver until the runs row", async () => {
-    // Kept on the spool and withheld from the wire. Sending them would fail
-    // the whole batch; dropping them from the *capture* would mean the runs
-    // row starts with no history, which is the half that cannot be
-    // backfilled.
+  it("forwards model and effort, which the run boundary reads per call", async () => {
+    // SCHEMA.md §11 requires the hook to report both on every call: without
+    // them a mid-session model switch is invisible and one run silently
+    // spans two models, attributing its score to a blend. The ingest
+    // consumes them to decide where a run ends — it does not store them per
+    // call, which is why no `tool_calls` column corresponds to either.
     const spooled: SpooledToolCall = {
       ...record("Bash"),
       model: "vendor-model-1",
@@ -82,6 +83,18 @@ describe("the wire shape matches what the ingest accepts", () => {
     };
     const { send, seen } = recorder([]);
     await flushSpool({ spoolText: serialiseRecord(spooled), send });
+
+    expect(seen[0]?.calls[0]?.model).toBe("vendor-model-1");
+    expect(seen[0]?.calls[0]?.effort).toBe("high");
+  });
+
+  it("omits model and effort entirely when the tool reported neither", async () => {
+    // Absent rather than sent as null. "Not reported" is the common case,
+    // and the boundary rule reads an absent facet as no evidence — so a
+    // record that has nothing to say says nothing, rather than asserting a
+    // null the rule then has to collapse back.
+    const { send, seen } = recorder([]);
+    await flushSpool({ spoolText: serialiseRecord(record("Bash")), send });
 
     expect(seen[0]?.calls[0]).not.toHaveProperty("model");
     expect(seen[0]?.calls[0]).not.toHaveProperty("effort");
@@ -107,7 +120,9 @@ describe("the wire shape matches what the ingest accepts", () => {
       "cacheReadTokens",
       "cacheWriteTokens",
       "command",
+      "effort",
       "inputTokens",
+      "model",
       "outputTokens",
       "paths",
       "tool",
