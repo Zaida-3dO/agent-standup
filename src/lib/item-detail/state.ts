@@ -48,6 +48,8 @@ export async function fetchItemDetail(
     history: detail.history ?? [],
     historyTruncated: detail.historyTruncated ?? false,
     summary: detail.summary ?? null,
+    assignments: detail.assignments ?? [],
+    previousHolders: detail.previousHolders ?? [],
   };
 }
 

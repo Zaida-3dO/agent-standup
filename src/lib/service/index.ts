@@ -248,6 +248,18 @@ export {
 } from "./summaries";
 
 export type { GetBoardInput, BoardOutput, BoardEntry } from "./operations/get-board";
+// Ownership as the reads return it (MILESTONES.md M10 T3). The two shapes
+// live in one module so the board's slim form and the detail view's full
+// form cannot drift on the fields they share.
+export type { BoardAssignment, ItemDetailAssignment } from "./items/assignment-view";
+export type {
+  GetItemDetailInput,
+  ItemDetailOutput,
+  ItemDetailArtifact,
+  ItemDetailHistoryEntry,
+  ItemDetailSubtaskNode,
+  ItemDetailSummary,
+} from "./operations/get-item-detail";
 export type { ListPeopleInput, ListPeopleOutput, PersonRecord } from "./operations/list-people";
 export {
   BOARD_COLUMNS,

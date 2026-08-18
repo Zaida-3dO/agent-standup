@@ -29,6 +29,24 @@
 // walked — and the client renders that rather than recomputing a derivation
 // it cannot reproduce (the convention #37's review established: the client
 // reads what the server derived).
+//
+// **Ownership, current and past (F7).** This read is the one screen that can
+// answer "where is this work actually happening", so it returns the *whole*
+// assignment row — machine, branch, worktree, model, effort, session, pid —
+// where a board card gets seven scalars (`items/assignment-view.ts`).
+//
+// It returns **previous holders separately**, and that is the half worth
+// stating: a released assignment is the record of who had this item before
+// the current holder, which is what makes *"who was on this before it
+// stalled"* answerable at all. Nothing else in the store carries it —
+// `assignments` is the only table that remembers a session that has since
+// let go. Returning live and released in one list with a null check to
+// re-split would push that partition onto every reader; returning only the
+// live ones would drop the history on the floor.
+//
+// Both come from **one** statement over the same index, partitioned here,
+// because they are the same rows differing only by whether `releasedAt` is
+// set — two queries would pay two round trips for one question.
 import { z } from "zod";
 import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
@@ -40,6 +58,12 @@ import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "..
 // view has to be the column the board shows for that same project.
 import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
 import type { ItemStateValue } from "../state-machine/states";
+import {
+  ALL_ITEM_ASSIGNMENTS_SQL,
+  toItemDetailAssignment,
+  type ItemDetailAssignment,
+  type RawItemDetailAssignmentRow,
+} from "../items/assignment-view";
 
 const inputSchema = z
   .object({
@@ -136,6 +160,23 @@ export interface ItemDetailOutput {
   /** True when the ledger has more entries than were returned — so the view can say so rather than imply completeness. */
   readonly historyTruncated: boolean;
   readonly summary: ItemDetailSummary | null;
+  /**
+   * Who holds this item right now — live assignments (`releasedAt IS NULL`),
+   * newest claim first. Empty when nobody does, never absent.
+   *
+   * An array because one item can be held by several holders at once
+   * (SCHEMA.md §2: an orchestrator *plus* a builder *plus* two reviewers).
+   */
+  readonly assignments: readonly ItemDetailAssignment[];
+  /**
+   * Who held it before — released assignments, most recent first.
+   *
+   * The ownership history, and the only place it exists: a released row is
+   * the store's sole record of a session that has let go. Kept apart from
+   * `assignments` rather than merged and re-split by a null check — see the
+   * module header.
+   */
+  readonly previousHolders: readonly ItemDetailAssignment[];
 }
 
 interface RawSubtreeRow {
@@ -191,7 +232,8 @@ interface RawSummaryRow {
 export const getItemDetail = defineOperation({
   name: "get_item_detail",
   kind: "read",
-  summary: "One item in full: its subtask tree, artifacts, history, and completion summary.",
+  summary:
+    "One item in full: its subtask tree, artifacts, history, completion summary, who holds it now, and who held it before.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetItemDetailInput): Promise<ItemDetailOutput> {
@@ -337,6 +379,34 @@ export const getItemDetail = defineOperation({
         }
       : null;
 
-    return { item, column, subtasks, artifacts, history, historyTruncated, summary };
+    // Every assignment on this item, live and released, in one statement —
+    // partitioned on `releasedAt` here rather than fetched twice. The
+    // predicate is the same one `liveAssignments` in claims.ts enforces on,
+    // so this read and the claim machinery cannot disagree about which rows
+    // count as current.
+    const assignmentRows = await ctx.db.$queryRawUnsafe<RawItemDetailAssignmentRow[]>(
+      ALL_ITEM_ASSIGNMENTS_SQL,
+      input.id,
+    );
+    const assignments: ItemDetailAssignment[] = [];
+    const previousHolders: ItemDetailAssignment[] = [];
+    for (const row of assignmentRows) {
+      const assignment = toItemDetailAssignment(row);
+      // Partitioned on the mapped `releasedAt` rather than the raw column so
+      // the two lists cannot disagree with the field each row carries.
+      (assignment.releasedAt === null ? assignments : previousHolders).push(assignment);
+    }
+
+    return {
+      item,
+      column,
+      subtasks,
+      artifacts,
+      history,
+      historyTruncated,
+      summary,
+      assignments,
+      previousHolders,
+    };
   },
 });

@@ -111,6 +111,30 @@
 // it with nothing would be the same class of bug as answering an explicit
 // `state: "merged"` with nothing.
 //
+// **A card says who is on it (F7).** `assignee` was a filter input with no
+// matching output: a caller could narrow the board to one holder and still
+// not be told, for any card, who held it. So every entry carries its live
+// assignments — the slim `BoardAssignment` shape, seven scalars, described
+// in `items/assignment-view.ts`.
+//
+// Two properties of how it is fetched are load-bearing:
+//
+//   - **One statement for the whole response, not one per card.** The rows
+//     for every entry across every returned column are read in a single
+//     `itemId = ANY(...)` query after the pages are assembled, so a
+//     sixty-eight-card board costs one added round trip rather than
+//     sixty-eight. A card-by-card fetch is the obvious implementation and
+//     is the one thing this read cannot afford.
+//   - **It is the slim shape, deliberately.** This response has already had
+//     to be narrowed twice for size (#107, #109), and ownership carries
+//     seven more columns that no card draws — machine, branch, worktree,
+//     model, effort, session, pid. Those are `get_item_detail`'s, on a
+//     response that returns one item.
+//
+// An item nobody holds gets `[]`, never a missing field: "nobody is on this"
+// and "this read does not report ownership" are different facts, and #123's
+// lesson is that they must not render identically.
+//
 // **All five dimensions filter server-side, in this one WHERE clause** —
 // not fetched-whole-then-filtered in a client. #36 already established the
 // pattern (priority/area/repo/kind as SQL conditions on the same query that
@@ -153,6 +177,12 @@ import {
 } from "../board/slice";
 import { isItemState } from "../state-machine/states";
 import { areaFilterCondition } from "../items/area-filter";
+import {
+  LIVE_BOARD_ASSIGNMENTS_SQL,
+  groupBoardAssignmentsByItem,
+  type BoardAssignment,
+  type RawBoardAssignmentRow,
+} from "../items/assignment-view";
 
 /**
  * Narrows a raw `state` string to the typed vocabulary, or throws.
@@ -273,6 +303,19 @@ export interface BoardEntry {
   readonly item: BoardItemSummaryRecord | ItemRecord;
   /** The item's own state, mapped straight through for a task/subtask. Always present on a project too — see `columns.ts`'s `columnForProject` header for why it must not be read as the project's column. */
   readonly column: BoardColumn;
+  /**
+   * Who holds this item — live assignments only (`releasedAt IS
+   * NULL`), in the order they were claimed.
+   *
+   * **Empty, never absent, when nobody holds it.** An array is also the
+   * right shape rather than a single holder: SCHEMA.md §2 allows an
+   * orchestrator, a builder and two reviewers on one item at once, so a
+   * scalar field would have to pick one and silently hide the rest.
+   *
+   * The slim shape — see `BoardAssignment` for what it deliberately omits
+   * and why.
+   */
+  readonly assignments: readonly BoardAssignment[];
 }
 
 /**
@@ -333,7 +376,7 @@ export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "One paginated page of one board column, with that column's true total. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee and search; pass full for whole records.",
+    "One paginated page of one board column, with that column's true total, and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee and search; pass full for whole records.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
@@ -498,7 +541,9 @@ export const getBoard = defineOperation({
         );
         if (dropCompletedProjects && column === "completed") continue;
         const list = projectEntries.get(column) ?? [];
-        list.push({ item, column });
+        // Ownership is attached in one pass over the whole response below,
+        // so nothing here — project or task — queries for its own holder.
+        list.push({ item, column, assignments: [] });
         projectEntries.set(column, list);
       }
     }
@@ -595,6 +640,7 @@ export const getBoard = defineOperation({
         entries = items.map((item) => ({
           item,
           column: columnForState(requireItemState(item.state, item.id)),
+          assignments: [],
         }));
         nextCursor = hasMore ? (entries[entries.length - 1]?.item.id ?? null) : null;
       }
@@ -616,6 +662,38 @@ export const getBoard = defineOperation({
         nextCursor,
         withheld: false,
       };
+    }
+
+    // Ownership for every entry in the whole response, in **one** statement
+    // (F7). Deliberately after the pages are assembled rather than inside
+    // the per-column loop: the ids are only all known here, and one query
+    // per column would reintroduce a smaller version of the same N+1 this
+    // is shaped to avoid. Skipped entirely when nothing was returned, so a
+    // withheld or empty board adds no query at all.
+    const entryIds = requested.flatMap((column) =>
+      board[column].entries.map((entry) => entry.item.id),
+    );
+    if (entryIds.length > 0) {
+      const assignmentRows = await ctx.db.$queryRawUnsafe<RawBoardAssignmentRow[]>(
+        LIVE_BOARD_ASSIGNMENTS_SQL,
+        // De-duplicated because a project appears on the first page of its
+        // derived column only, but nothing stops the same id reaching this
+        // list twice if that ever changes — and a duplicated id would
+        // duplicate every one of its assignment rows.
+        [...new Set(entryIds)],
+      );
+      const assignmentsByItem = groupBoardAssignmentsByItem(assignmentRows);
+      for (const column of requested) {
+        board[column] = {
+          ...board[column],
+          entries: board[column].entries.map((entry) => ({
+            ...entry,
+            // `?? []` is what makes "nobody holds this" an empty array
+            // rather than an absent field — see `BoardEntry.assignments`.
+            assignments: assignmentsByItem.get(entry.item.id) ?? [],
+          })),
+        };
+      }
     }
 
     // The notice names only what was actually withheld, with its real

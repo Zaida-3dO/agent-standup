@@ -210,5 +210,7 @@ export function emptyDetailFor(item: ItemDetail["item"]): ItemDetail {
     history: [],
     historyTruncated: false,
     summary: null,
+    assignments: [],
+    previousHolders: [],
   };
 }
