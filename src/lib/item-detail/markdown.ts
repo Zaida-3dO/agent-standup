@@ -59,6 +59,20 @@ const ALLOWED_SCHEMES: ReadonlySet<string> = new Set(["http:", "https:", "mailto
 const REFUSED = "";
 
 /**
+ * Whether a scheme-less reference points at another origin.
+ *
+ * True when the first two characters are slashes — of either kind, for the
+ * reason given at the call site. Checked on the first two characters
+ * specifically, because that is the position the authority component
+ * starts at; a slash later in the path is an ordinary path separator and
+ * says nothing about the origin.
+ */
+function isProtocolRelative(url: string): boolean {
+  const SLASHES = "/\\";
+  return SLASHES.includes(url[0] ?? "") && SLASHES.includes(url[1] ?? "");
+}
+
+/**
  * A URL as it is safe to place in an `href` or `src`, or `""` if it is not.
  *
  * **Relative URLs are permitted.** A body may reasonably link to `/items/x`
@@ -83,11 +97,19 @@ export function safeUrl(url: string): string {
     parsed = new URL(trimmed);
   } catch {
     // No scheme — a relative reference. Refuse a protocol-relative URL
-    // (`//host/path`) all the same: it parses as relative here but a
-    // browser resolves it to an absolute request against another origin,
-    // so allowing it would let a body reach off-origin through a form this
-    // function had classified as same-origin.
-    return trimmed.startsWith("//") ? REFUSED : trimmed;
+    // all the same: it parses as relative here but a browser resolves it
+    // to an absolute request against another origin, so allowing it would
+    // let a body reach off-origin through a form this function had
+    // classified as same-origin.
+    //
+    // **A backslash counts as a slash for this test.** URL resolution
+    // treats `\` and `/` alike in the authority position, so
+    // `/\host/path` and `\/host/path` both resolve to `//host/path` —
+    // off-origin — while sliding past a check that only looked for two
+    // literal forward slashes. Normalising first means the rule is stated
+    // once and holds for every spelling of it, rather than being enforced
+    // by whatever a downstream renderer happens to escape.
+    return isProtocolRelative(trimmed) ? REFUSED : trimmed;
   }
 
   return ALLOWED_SCHEMES.has(parsed.protocol) ? trimmed : REFUSED;
