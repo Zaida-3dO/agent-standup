@@ -607,6 +607,59 @@ describe("the correctness entries that block", () => {
   });
 });
 
+describe("I15 — a checkout another crew already holds", () => {
+  const entry = BUILTIN_INTERVENTIONS.find((one) => one.id === "checkout-held-by-another-crew");
+
+  it("is registered as a blocking pre entry", () => {
+    expect(entry).toBeDefined();
+    expect(entry?.phase).toBe("pre");
+    expect(entry?.defaultLevel).toBe("block-overridable");
+    // Blocks are always immediate — a block that rode a digest would arrive
+    // five minutes after the call it was meant to stop.
+    expect(entry?.defaultTiming).toBe("immediate");
+  });
+
+  it("does not fire when nobody else holds the checkout", async () => {
+    // The overwhelmingly common case: an ordinary session on an unclaimed
+    // checkout. An absent holder means either nobody is there or the server
+    // could not tell, and blocking on an unanswered question is how a guard
+    // becomes an obstacle.
+    const verdict = await entry?.predicate({ sessionId: "s1", tool: "Write" });
+    expect(verdict?.triggered).toBe(false);
+  });
+
+  it("fires and names the holder when one is present", async () => {
+    const verdict = await entry?.predicate({
+      sessionId: "s1",
+      tool: "Write",
+      occupyingCrew: {
+        rootSessionId: "root-theirs",
+        itemId: "item-b",
+        branch: "feat/x",
+        lastActiveSecondsAgo: 30,
+      },
+    });
+    expect(verdict?.triggered).toBe(true);
+    // Naming the holder is the difference between a refusal a caller can
+    // act on and one whose only available move is to override it.
+    expect(verdict?.message).toContain("root-theirs");
+    expect(verdict?.message).toContain("item-b");
+    expect(verdict?.message).toContain("feat/x");
+    expect(verdict?.message).toContain("30s ago");
+  });
+
+  it("still names the holder when the branch and activity are unknown", async () => {
+    const verdict = await entry?.predicate({
+      sessionId: "s1",
+      occupyingCrew: { rootSessionId: "root-theirs", itemId: "item-b" },
+    });
+    expect(verdict?.triggered).toBe(true);
+    expect(verdict?.message).toContain("root-theirs");
+    // No dangling "on branch undefined" or "last active undefineds ago".
+    expect(verdict?.message).not.toContain("undefined");
+  });
+});
+
 describe("the catalogue entries that are deliberately not built", () => {
   it("records a reason for every unimplemented entry", () => {
     // The catalogue's instruction is to say so and stop when a situation
@@ -650,6 +703,7 @@ describe("the catalogue entries that are deliberately not built", () => {
       I10: "merge-without-approval-at-tip",
       I11: "broad-git-add-on-shared-checkout",
       I12: "broad-process-kill",
+      I15: "checkout-held-by-another-crew",
     };
     const shipped = new Set(BUILTIN_INTERVENTIONS.map((entry) => entry.id));
 

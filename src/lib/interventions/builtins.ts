@@ -19,6 +19,9 @@
 //     is the whole case for this mechanism existing.
 //   - **I11** is `pre`, blocks, and turns on context rather than on the
 //     command text.
+//   - **I15** is the entry that turns on *no* command shape at all — it
+//     reads only who else holds the checkout, which is why it is the one
+//     whose context the assembler gathers for any write-shaped call.
 //   - **I1** and **I7** are `post` nudges that ride the digest, and could
 //     not block even if someone configured them to.
 //
@@ -281,6 +284,78 @@ const finishedWithNoReviewer: Intervention = {
 };
 
 /**
+ * **I15** — another live crew already holds this checkout.
+ *
+ * The entry the catalogue calls closest to buildable, and it is the first
+ * consumer of the careful root-session attribution `registered_processes`
+ * established: **the comparison is between root sessions, never between
+ * sessions.** A builder an orchestrator spawned is the same crew working
+ * the same checkout on purpose, and a check keyed on `sessionId` would
+ * refuse a crew its own parent's claim — blocking the ordinary case while
+ * still permitting the one this exists to stop.
+ *
+ * ── Keyed on `(machine, repo)`, deliberately not on the worktree path ──
+ *
+ * `Assignment.worktree` is unnormalised free text, so `/path/to/repo`,
+ * `/path/to/repo/` and a home-relative spelling of the same directory do
+ * not compare equal. A predicate over it would pass silently on exactly the
+ * collisions it exists to catch — the *silently wrong in both directions*
+ * failure I12 retreated from, arrived at by a different route. The pair
+ * that does compare reliably is the machine and the repository id, and both
+ * are columns rather than paths.
+ *
+ * **`block-overridable`, not hard**: two crews in one checkout is sometimes
+ * deliberate and the caller may know something the claim table does not.
+ * The recorded reason is the value, per the catalogue.
+ */
+const checkoutHeldByAnotherCrew: Intervention = {
+  id: "checkout-held-by-another-crew",
+  source: "builtin",
+  summary: "A write into a checkout on this machine that another live crew already holds.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "block-overridable",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "Another crew is already working in this checkout on this machine. Working here too will " +
+      "mix the two sets of changes. Take your own worktree, or proceed with a written reason.",
+    prominent:
+      "⚠️ Do not proceed until you have read this. Another live crew holds this checkout on this " +
+      "machine right now, and writing here would interleave your changes with theirs in one " +
+      "working tree — neither of you would be able to commit cleanly. Create your own worktree " +
+      "and work there. If you genuinely need this checkout, say why: the reason is recorded.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    const holder = context.occupyingCrew;
+    // Absent means nobody else holds it *or* the server could not tell, and
+    // the two are read the same way. Blocking on an unanswered question is
+    // how a guard becomes an obstacle, and this one would refuse the most
+    // common case of all: an ordinary session on an unclaimed checkout.
+    if (holder === undefined) return { triggered: false };
+    return {
+      triggered: true,
+      // The message names the holder rather than only refusing. A caller
+      // told *who* has it can go and ask; one told only "occupied" can do
+      // nothing but override.
+      message:
+        `Another crew (root session ${holder.rootSessionId}) is already working in this checkout ` +
+        `on item ${holder.itemId}` +
+        (holder.branch === undefined ? "" : ` on branch ${holder.branch}`) +
+        (holder.lastActiveSecondsAgo === undefined
+          ? ""
+          : `, last active ${holder.lastActiveSecondsAgo}s ago`) +
+        ". Take your own worktree, or proceed with a written reason.",
+      data: {
+        rootSessionId: holder.rootSessionId,
+        itemId: holder.itemId,
+        ...(holder.branch === undefined ? {} : { branch: holder.branch }),
+      },
+    };
+  },
+};
+
+/**
  * The built-in entries, in a fixed order.
  *
  * Fixed rather than incidental so that findings come back in the same order
@@ -295,6 +370,7 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   mergeWithoutApprovalAtTip,
   broadGitAddOnSharedCheckout,
   broadProcessKill,
+  checkoutHeldByAnotherCrew,
   finishedWithNoReviewer,
   reviewWithoutApprovalAtTip,
 ];
@@ -373,13 +449,6 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "a cumulative view of a session's own tool calls. The rows exist, but reaching them from a " +
       "predicate means the context assembler carrying a windowed count on every call — which is " +
       "the per-call cost the assembly gate exists to avoid, and it needs a cheaper shape first.",
-  },
-  {
-    id: "I15",
-    missing:
-      "nothing — the assignment table carries every field, and this is the entry closest to " +
-      "buildable. It is unbuilt only because it fires on `claim` rather than on a tool call, and " +
-      "the intervention payload on the ordinary service responses is not wired.",
   },
   {
     id: "I16",
