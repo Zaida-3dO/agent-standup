@@ -2,8 +2,11 @@
 // MILESTONES.md #129.
 //
 // `tests/request-id-header.test.ts` proves the pieces as values: the header
-// is read, an unsafe value is refused, a response carries the id back.
-// What that cannot show is the property the row is actually about — that
+// is read, an unsafe value is refused, a response carries the id back. That
+// split is not merely convenient — some of those values cannot reach this
+// file at all, because `new Request` refuses to construct a header carrying
+// a newline, so the forged-log-record case is only reachable as a value.
+// What the value tests cannot show is the property the row is actually about — that
 // **the id a caller sends is the id the server writes into its own log
 // lines, and the id it hands back**. That spans a route, the service
 // runtime and the logger, and it is exactly the kind of claim that stays
@@ -123,14 +126,31 @@ describeIfDb("a request id survives the hop and comes back", () => {
   });
 
   it("ignores an unsafe id rather than writing it into a log line", async () => {
-    // A newline would forge a second JSON record. The call still succeeds —
-    // a bad log label is never a failed operation — but the server labels it
-    // with an id of its own, and that is what comes back.
-    const forged = 'x"}\n{"level":"fatal","msg":"forged"';
-    const response = await hookRoute.POST(hookRequest({ [REQUEST_ID_HEADER]: forged }));
+    // **A newline cannot be tested here, and that is worth stating rather
+    // than working around.** `new Request` refuses to construct a header
+    // whose value contains one, so the platform rejects it before any code
+    // in this repository runs — the guard against a forged log record is
+    // therefore proven where it is reachable, as a value, in
+    // `tests/request-id-header.test.ts`.
+    //
+    // What *is* reachable over a real request is a value HTTP permits but
+    // this application will not label a log line with. An interior space is
+    // that case: legal in a header, useless as a greppable id.
+    const unusable = "two words";
+    const response = await hookRoute.POST(hookRequest({ [REQUEST_ID_HEADER]: unusable }));
 
+    // The call still succeeds — a bad log label is never a failed operation
+    // — but the server labels it with an id of its own, and that is what
+    // comes back and what appears in the log.
     expect(response.status).toBe(200);
-    expect(response.headers.get(REQUEST_ID_HEADER)).toMatch(/^[0-9a-f-]{36}$/);
-    expect(logs.stderr().some((line) => line.msg === "forged")).toBe(false);
+    const echoed = response.headers.get(REQUEST_ID_HEADER);
+    expect(echoed).toMatch(/^[0-9a-f-]{36}$/);
+    expect(echoed).not.toBe(unusable);
+    expect(
+      logs
+        .stderr()
+        .some((line) => line.msg === "Service call started." && line.requestId === echoed),
+    ).toBe(true);
+    expect(logs.stderr().some((line) => line.requestId === unusable)).toBe(false);
   });
 });
