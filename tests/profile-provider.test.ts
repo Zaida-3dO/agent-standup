@@ -40,6 +40,7 @@ describe("useProfile", () => {
       openPicker: () => {},
       closePicker: () => {},
       choose: () => {},
+      addPerson: () => {},
     };
     function Reader() {
       const ctx = useContext(ProfileContext);

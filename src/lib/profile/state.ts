@@ -29,12 +29,19 @@ export interface ProfileContextValue {
   readonly closePicker: () => void;
   /** Sets the active profile and remembers it in the browser. */
   readonly choose: (profile: Profile) => void;
+  /**
+   * Appends a freshly created profile to `people`, so it shows up in the
+   * picker without a reload. See `withPersonAdded` — the pure logic this
+   * wraps — for why appending the known row beats a refetch.
+   */
+  readonly addPerson: (person: Profile) => void;
 }
 
 export interface ProfileActions {
   readonly openPicker: () => void;
   readonly closePicker: () => void;
   readonly choose: (profile: Profile) => void;
+  readonly addPerson: (person: Profile) => void;
 }
 
 /**
@@ -70,4 +77,31 @@ export async function fetchPeople(fetchImpl: typeof fetch = fetch): Promise<read
 /** Turns a caught value into the message the error state shows — never a raw, possibly-unhelpful object. */
 export function errorMessageFrom(err: unknown): string {
   return err instanceof Error ? err.message : "Could not load profiles.";
+}
+
+/**
+ * Appends a freshly created person to a `LoadState`, so `ProfilePicker`
+ * sees it in the same session it was created — the bug this closes: a
+ * mount-only `fetchPeople()` effect means nothing re-fetches `people` after
+ * a create, so the picker read a stale empty (or merely incomplete) list
+ * and rendered "No profiles are set up yet" over a profile that plainly
+ * exists.
+ *
+ * Appends the known-created row rather than triggering a refetch: the
+ * caller already has the exact `Profile` `POST`'s response returned, a
+ * refetch would be a second round-trip to re-learn what is already known,
+ * and it would reintroduce a loading flicker right after the create
+ * spinner the form just cleared.
+ *
+ * A no-op outside `status: "loaded"` — there is no list to append to while
+ * still loading or in an error state, and silently fabricating one would
+ * hide whichever of those is real. In practice `addPerson` is only ever
+ * called once a profile was successfully created, which cannot happen
+ * before the initial fetch resolves (the create form isn't reachable
+ * without a `people` list to render), so that branch is defensive rather
+ * than reachable — kept for totality, not because it fires.
+ */
+export function withPersonAdded(loadState: LoadState, person: Profile): LoadState {
+  if (loadState.status !== "loaded") return loadState;
+  return { status: "loaded", people: [...loadState.people, person] };
 }

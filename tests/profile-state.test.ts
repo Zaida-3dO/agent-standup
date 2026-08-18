@@ -3,14 +3,20 @@
 // itself. No hooks, no DOM — matches this repo's test harness
 // (`vitest.config.ts`: `environment: "node"`).
 import { describe, expect, it, vi } from "vitest";
-import { deriveProfileContextValue, errorMessageFrom, fetchPeople } from "@/lib/profile/state";
+import {
+  deriveProfileContextValue,
+  errorMessageFrom,
+  fetchPeople,
+  withPersonAdded,
+} from "@/lib/profile/state";
 import type { Profile } from "@/lib/profile/types";
 
 const userA: Profile = { id: "user-a", displayName: "User A", avatar: null, colour: null };
+const userB: Profile = { id: "user-b", displayName: "User B", avatar: null, colour: null };
 const people: readonly Profile[] = [userA];
 
 function actions() {
-  return { openPicker: () => {}, closePicker: () => {}, choose: () => {} };
+  return { openPicker: () => {}, closePicker: () => {}, choose: () => {}, addPerson: () => {} };
 }
 
 describe("deriveProfileContextValue", () => {
@@ -65,14 +71,17 @@ describe("deriveProfileContextValue", () => {
     const openPicker = () => {};
     const closePicker = () => {};
     const choose = () => {};
+    const addPerson = () => {};
     const value = deriveProfileContextValue({ status: "loading" }, null, false, {
       openPicker,
       closePicker,
       choose,
+      addPerson,
     });
     expect(value.openPicker).toBe(openPicker);
     expect(value.closePicker).toBe(closePicker);
     expect(value.choose).toBe(choose);
+    expect(value.addPerson).toBe(addPerson);
   });
 });
 
@@ -85,6 +94,34 @@ describe("errorMessageFrom", () => {
     expect(errorMessageFrom("a string was thrown")).toBe("Could not load profiles.");
     expect(errorMessageFrom(undefined)).toBe("Could not load profiles.");
     expect(errorMessageFrom({ weird: true })).toBe("Could not load profiles.");
+  });
+});
+
+describe("withPersonAdded", () => {
+  it("appends the person to a loaded list", () => {
+    const result = withPersonAdded({ status: "loaded", people: [userA] }, userB);
+    expect(result).toEqual({ status: "loaded", people: [userA, userB] });
+  });
+
+  it("appends to an empty loaded list — the first-profile-ever case T21 fixes", () => {
+    const result = withPersonAdded({ status: "loaded", people: [] }, userA);
+    expect(result).toEqual({ status: "loaded", people: [userA] });
+  });
+
+  it("does not mutate the original people array", () => {
+    const original: readonly Profile[] = [userA];
+    withPersonAdded({ status: "loaded", people: original }, userB);
+    expect(original).toEqual([userA]);
+  });
+
+  it("is a no-op while still loading", () => {
+    const loading = { status: "loading" as const };
+    expect(withPersonAdded(loading, userA)).toBe(loading);
+  });
+
+  it("is a no-op on an error state", () => {
+    const errored = { status: "error" as const, message: "boom" };
+    expect(withPersonAdded(errored, userA)).toBe(errored);
   });
 });
 

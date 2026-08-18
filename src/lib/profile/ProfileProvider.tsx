@@ -18,7 +18,13 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { resolveActiveProfile } from "./resolve";
 import { readStoredProfileId, writeStoredProfileId } from "./storage";
-import { deriveProfileContextValue, errorMessageFrom, fetchPeople, type LoadState } from "./state";
+import {
+  deriveProfileContextValue,
+  errorMessageFrom,
+  fetchPeople,
+  withPersonAdded,
+  type LoadState,
+} from "./state";
 import type { ProfileContextValue } from "./state";
 import type { Profile } from "./types";
 
@@ -63,10 +69,18 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const openPicker = useCallback(() => setPickerOpenedByUser(true), []);
   const closePicker = useCallback(() => setPickerOpenedByUser(false), []);
 
+  // T21 — landing a freshly created profile into `people` without a
+  // reload. See `withPersonAdded` (`./state.ts`) for why this appends the
+  // known row rather than refetching.
+  const addPerson = useCallback((person: Profile) => {
+    setLoadState((current) => withPersonAdded(current, person));
+  }, []);
+
   const value = deriveProfileContextValue(loadState, activeProfile, pickerOpenedByUser, {
     openPicker,
     closePicker,
     choose,
+    addPerson,
   });
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;

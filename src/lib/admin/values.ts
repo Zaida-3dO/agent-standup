@@ -60,6 +60,16 @@ export function fromInput(raw: string, field: AdminField): ParseResult {
     }
     default: {
       const trimmed = raw.trim();
+      if (trimmed === "" && field.requiredOnEdit) {
+        // `displayName`'s #92 schema is `.min(1).optional()`, never
+        // `.nullable()` (see `AdminField.requiredOnEdit`'s header) — there
+        // is no "cleared" state to send `null` for. Sending it anyway would
+        // reach the service and be refused with a raw schema-mismatch
+        // message ("Expected string, received null") that names no field
+        // and suggests no fix. Refusing here, before the request goes out,
+        // gets a message that does both.
+        return { ok: false, error: "cannot be cleared — enter a value, or leave it unchanged." };
+      }
       // An emptied optional text field means "clear it". The #92 schemas
       // spell a cleared optional as `null` (`host` is
       // `.nullable().optional()`), so an empty box becomes `null` rather
