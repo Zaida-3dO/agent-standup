@@ -178,9 +178,11 @@ function typeNameOf(node: ZodNode): string {
  * caller is better served by `unknown` plus the real member list than by
  * either half alone.
  *
- * Returns `undefined` — not an empty array — for a node with no values, so
- * the spread at the call site adds no key at all. `enumValues: []` would
- * claim an enum with no members, which is a different and wrong statement.
+ * Returns `undefined` — not an empty array — whenever there is nothing to
+ * report, so the spread at the call site adds no key at all. That covers
+ * both the node with no `values` and the one whose values resolve to an
+ * empty list: `enumValues: []` would claim an enum permitting nothing, which
+ * is a different and wrong statement from "this field is not an enum".
  */
 function enumValuesOf(node: ZodNode): readonly string[] | undefined {
   const values = node._def.values;
@@ -195,9 +197,10 @@ function enumValuesOf(node: ZodNode): readonly string[] | undefined {
   // a number. Mirroring the validator is deliberate — the list a caller is
   // shown and the list they are checked against have to be the same list.
   const object = values as Record<string, string | number>;
-  return Object.keys(object)
+  const members = Object.keys(object)
     .filter((key) => typeof object[object[key] as unknown as string] !== "number")
     .map((key) => String(object[key]));
+  return members.length > 0 ? members : undefined;
 }
 
 /** The `enumValues` half of a descriptor, present only when there are values. */

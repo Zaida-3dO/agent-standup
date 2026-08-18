@@ -291,6 +291,15 @@ describe("the field walker reads what the schema says", () => {
     expect(level?.enumValues).not.toContain("A");
   });
 
+  it("adds no enumValues key for an enum that resolves to no members", () => {
+    // `enumValues: []` would claim an enum permitting nothing, which is a
+    // different and wrong statement from "this field is not an enum". The
+    // empty object reaches the resolver with a truthy `values`, so the
+    // early return for an absent one does not cover it.
+    const fields = describeFields(z.object({ nothing: z.nativeEnum({}) }));
+    expect(fields[0]).not.toHaveProperty("enumValues");
+  });
+
   it("adds no enumValues key at all for a field that is not an enum", () => {
     // `enumValues: []` would be a claim — an enum permitting nothing — where
     // the truth is that the question does not apply. Kills the mutant that

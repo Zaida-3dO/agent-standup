@@ -262,6 +262,20 @@ describe("nothing is left running after a request", () => {
   });
 });
 
+/**
+ * A `Headers`-shaped object that returns values **exactly** as given.
+ *
+ * A real `Headers` strips surrounding whitespace in its own constructor, so a
+ * test that built one could never reach this module's trimming at all — it
+ * would assert the platform's normalisation and pass just as happily with the
+ * trim deleted, which is the hollow-test shape this suite exists to avoid.
+ * Feeding un-normalised values is the only way to put the assertion on the
+ * code under test rather than on undici.
+ */
+function rawHeaders(values: Record<string, string>): Headers {
+  return { get: (name: string) => values[name] ?? null } as Headers;
+}
+
 describe("a stateless request says who is calling in its headers", () => {
   // Statelessness is exactly why this has to be a header: the transport mints
   // no session id and remembers nothing between requests, so a caller that
@@ -312,12 +326,12 @@ describe("a stateless request says who is calling in its headers", () => {
     // assignment rather than falling back to the attribution that honestly
     // describes it.
     expect(
-      identityFromHeaders(new Headers({ [SESSION_HEADER]: "", [ACTOR_HEADER]: "   " })),
+      identityFromHeaders(rawHeaders({ [SESSION_HEADER]: "", [ACTOR_HEADER]: "   " })),
     ).toEqual({});
   });
 
   it("trims a header rather than carrying its surrounding whitespace", () => {
-    expect(identityFromHeaders(new Headers({ [SESSION_HEADER]: "  session-c  " }))).toEqual({
+    expect(identityFromHeaders(rawHeaders({ [SESSION_HEADER]: "  session-c  " }))).toEqual({
       sessionId: "session-c",
     });
   });
