@@ -47,7 +47,12 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
     >
       <div className={styles.cardHeader}>
         <h2 className={styles.cardTitle}>
-          <Link href={`/items/${project.id}`} className={styles.cardLink}>
+          {/* `/projects/{id}`, not `/items/{id}` — a project's own row has
+              no state to show, so the item view would render the leftover
+              default `create_item` writes. The project page derives the
+              reading from the children instead, which is the only honest
+              answer for this kind. */}
+          <Link href={`/projects/${project.id}`} className={styles.cardLink}>
             {project.title}
           </Link>
         </h2>
@@ -80,7 +85,14 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
           <span className={styles.suspectBadge}>Needs attention</span>
           <span className={styles.suspectText}>
             No work under this project yet — it cannot show progress or be completed until it has
-            children.
+            children.{" "}
+            {/* The flag now leads somewhere. A condition a reader can see and
+                cannot act on teaches them to ignore the flag; the project
+                page carries the two repairs, and — just as importantly —
+                what those repairs will and will not achieve. */}
+            <Link href={`/projects/${project.id}`} className={styles.suspectLink}>
+              Repair it
+            </Link>
           </span>
         </p>
       ) : (

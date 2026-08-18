@@ -1,0 +1,528 @@
+/* The project page, painted entirely from the token layer
+   (`src/app/globals.css`). No literal colour appears in this file: a value
+   hardcoded here is one the theme switch cannot reach, and light mode is a
+   token remap rather than a second stylesheet. */
+
+.page {
+  padding: 1.25rem;
+  min-height: 100%;
+  background: var(--surface-app);
+  color: var(--text-primary);
+}
+
+/* Same surface as `.page` — the loading and error states are this screen
+   before it has anything to show, so they must not flash a different
+   colour of page underneath. */
+.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  padding: 1.25rem;
+  background: var(--surface-app);
+  color: var(--text-muted);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.breadcrumb {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.breadcrumbLink {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.breadcrumbLink:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.headline {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.headerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.repo {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+/* ── The derived-state block ─────────────────────────────────────────────
+   The most important region on the page. It carries three things a single
+   column value throws away: the reading, the spread beneath it, and the
+   child that caused it. */
+
+.derived {
+  padding: 0.9rem 1rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.derivedTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.derivedColumn {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.derivedNote {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* The plain-language sentence. Visible, not only an aria-label: the whole
+   point is that a reader does not have to assemble it themselves. */
+.derivedSentence {
+  margin: 0 0 0.7rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.cause {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid var(--state-blocked-border);
+  border-radius: 0 4px 4px 0;
+  background: var(--surface-sunken);
+  font-size: 0.87rem;
+}
+
+.causeLabel {
+  color: var(--text-muted);
+}
+
+.causeLink {
+  color: var(--text-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.causeLink:hover {
+  text-decoration: underline;
+}
+
+.causeReason {
+  width: 100%;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* ── Progress ────────────────────────────────────────────────────────── */
+
+.progressBlock {
+  margin-bottom: 0.7rem;
+}
+
+.progressLabels {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.3rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.progressPercent {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.progressTrack {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--state-merged-border);
+  transition: width 200ms ease;
+}
+
+/* The distribution strip. Each band is coloured from the state's own token
+   (set inline from `stateTokens`), so a state that is amber here is amber
+   on the board. */
+.strip {
+  display: flex;
+  height: 8px;
+  margin-top: 0.5rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+
+.stripSegment {
+  display: block;
+  height: 100%;
+}
+
+/* The strip is decorative; this is the same information as text, so it is
+   not lost to a reader who cannot see the bands. */
+.stripLegend {
+  margin: 0.4rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+/* ── Sections ───────────────────────────────────────────────────────── */
+
+.section {
+  margin-bottom: 1.5rem;
+}
+
+.sectionHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 620;
+}
+
+.sectionCount {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.sectionNote {
+  margin: 0 0 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* ── A child row ────────────────────────────────────────────────────── */
+
+.child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+/* Amber, matching the grid's treatment: this is data that needs attention,
+   not work that is blocked, and red is already spent on the second meaning. */
+.childSuspect {
+  border-color: var(--trust-unverified-border);
+  background: var(--trust-unverified-bg);
+}
+
+.childTitle {
+  flex: 1 1 12rem;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.childTitle:hover {
+  text-decoration: underline;
+}
+
+.childMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.childProgress {
+  font-variant-numeric: tabular-nums;
+}
+
+.childFlag {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--trust-unverified-border);
+  border-radius: 999px;
+  background: var(--trust-unverified-bg);
+  color: var(--trust-unverified);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.crew {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.crewDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--presence-live);
+}
+
+/* ── Blocked children ───────────────────────────────────────────────── */
+
+.blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--state-blocked-border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--state-blocked-bg);
+}
+
+.blockedTitle {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.blockedTitle:hover {
+  text-decoration: underline;
+}
+
+.blockedReason {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.blockedMeta {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+/* ── Activity ───────────────────────────────────────────────────────── */
+
+.activityRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.83rem;
+}
+
+.activityType {
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+
+.activityItem {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.activityItem:hover {
+  text-decoration: underline;
+}
+
+.activityBody {
+  width: 100%;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.activityWhen {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+/* ── The cost slot, which a later task fills ────────────────────────── */
+
+.costSlot {
+  padding: 0.7rem 0.85rem;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 0.83rem;
+}
+
+/* ── Repair ─────────────────────────────────────────────────────────── */
+
+.repair {
+  padding: 0.9rem 1rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--trust-unverified-border);
+  border-radius: 8px;
+  background: var(--trust-unverified-bg);
+}
+
+/* Red rather than amber when a repair cannot reach a closed item — this is
+   the difference between "needs attention" and "this route ends in a
+   refusal", and the two must not look the same. */
+.repairDeadEnd {
+  border-color: var(--state-blocked-border);
+  background: var(--state-blocked-bg);
+}
+
+.repairTitle {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 620;
+}
+
+.repairText {
+  margin: 0 0 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+/* The limit is the sentence that must be read before committing, so it is
+   weighted more heavily than the description above it — not less. */
+.repairLimit {
+  margin: 0 0 0.7rem;
+  padding: 0.5rem 0.6rem;
+  border-left: 3px solid var(--state-blocked-border);
+  border-radius: 0 4px 4px 0;
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.repairForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.repairField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 14rem;
+}
+
+.repairLabel {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.repairInput {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-app);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.repairButton {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.repairButton:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.repairButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.repairOutcome {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.repairDone {
+  border: 1px solid var(--state-merged-border);
+  background: var(--state-merged-bg);
+  color: var(--text-primary);
+}
+
+.repairRefused {
+  border: 1px solid var(--state-blocked-border);
+  background: var(--state-blocked-bg);
+  color: var(--text-primary);
+}
+
+.empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}

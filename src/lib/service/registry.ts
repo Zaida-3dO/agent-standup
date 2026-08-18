@@ -63,6 +63,7 @@ import { getBoard } from "./operations/get-board";
 // a store outgrows one flat column of cards, and the only level at which
 // progress is a meaningful ratio.
 import { getProjects } from "./operations/get-projects";
+import { getProjectDetail } from "./operations/get-project-detail";
 // Since your last visit (MILESTONES.md #38): the ledger slice, and the
 // per-profile read state that decides what in it is new to you.
 import { getEvents } from "./operations/get-events";
@@ -169,6 +170,7 @@ export const OPERATION_REGISTRY = {
   [search.name]: search,
   [getBoard.name]: getBoard,
   [getProjects.name]: getProjects,
+  [getProjectDetail.name]: getProjectDetail,
   [getEvents.name]: getEvents,
   [markEventSeen.name]: markEventSeen,
   [getItemDetail.name]: getItemDetail,
