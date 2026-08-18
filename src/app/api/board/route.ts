@@ -9,10 +9,11 @@
 // grouping and filter logic live in exactly one place.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../items/respond";
+import { httpCaller, serviceErrorResponse } from "../items/respond";
 import { parseBooleanParam } from "../_shared/query";
 
 export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const url = new URL(request.url);
   const input: Record<string, unknown> = {};
 
@@ -39,9 +40,9 @@ export async function GET(request: Request) {
   if (full !== null) input.full = parseBooleanParam(full);
 
   try {
-    const board = await service.call("get_board", input, { caller: { transport: "http" } });
+    const board = await service.call("get_board", input, { caller });
     return NextResponse.json({ board });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

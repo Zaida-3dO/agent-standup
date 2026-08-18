@@ -18,21 +18,23 @@
 // the service does not have.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, readJsonBody, serviceErrorResponse } from "../../admin-respond";
+import {
+  httpCaller,
+  invalidJsonResponse,
+  readJsonBody,
+  serviceErrorResponse,
+} from "../../admin-respond";
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   const body = await readJsonBody(request);
   if (body === null) return invalidJsonResponse();
 
   try {
-    const person = await service.call(
-      "update_person",
-      { ...body, id },
-      { caller: { transport: "http" } },
-    );
+    const person = await service.call("update_person", { ...body, id }, { caller });
     return NextResponse.json({ person });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

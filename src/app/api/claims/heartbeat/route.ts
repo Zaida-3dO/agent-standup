@@ -2,9 +2,10 @@
 // `service.call` — see ../route.ts.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../../_shared/respond";
+import { invalidJsonResponse, serviceErrorResponse, httpCaller } from "../../_shared/respond";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -13,9 +14,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const assignment = await service.call("heartbeat", body, { caller: { transport: "http" } });
+    const assignment = await service.call("heartbeat", body, { caller });
     return NextResponse.json({ assignment });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

@@ -4,9 +4,10 @@
 // settings, and imports no database client.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../_shared/respond";
+import { invalidJsonResponse, serviceErrorResponse, httpCaller } from "../_shared/respond";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -15,9 +16,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const assignment = await service.call("claim", body, { caller: { transport: "http" } });
+    const assignment = await service.call("claim", body, { caller });
     return NextResponse.json({ assignment }, { status: 201 });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

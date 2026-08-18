@@ -3,9 +3,10 @@
 // as every route in this directory.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../../respond";
+import { httpCaller, serviceErrorResponse } from "../../respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
 
   let body: Record<string, unknown>;
@@ -20,13 +21,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    const result = await service.call(
-      "complete_item",
-      { ...body, id },
-      { caller: { transport: "http" } },
-    );
+    const result = await service.call("complete_item", { ...body, id }, { caller });
     return NextResponse.json(result);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

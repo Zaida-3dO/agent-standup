@@ -10,9 +10,11 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "./respond";
+import { httpCaller } from "../_shared/respond";
 import { parseBooleanParam } from "../_shared/query";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -24,14 +26,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const item = await service.call("create_item", body, { caller: { transport: "http" } });
+    const item = await service.call("create_item", body, { caller });
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const url = new URL(request.url);
   const input: Record<string, unknown> = {};
 
@@ -58,9 +61,9 @@ export async function GET(request: Request) {
   if (cursor !== null) input.cursor = cursor;
 
   try {
-    const result = await service.call("list_items", input, { caller: { transport: "http" } });
+    const result = await service.call("list_items", input, { caller });
     return NextResponse.json(result);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

@@ -3,19 +3,21 @@
 // Thin shell over `service.call` — see ../route.ts.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../respond";
+import { httpCaller, serviceErrorResponse } from "../respond";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ key: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ key: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { key } = await params;
   try {
-    const setting = await service.call("get_setting", { key }, { caller: { transport: "http" } });
+    const setting = await service.call("get_setting", { key }, { caller });
     return NextResponse.json(setting);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ key: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { key } = await params;
   let body: Record<string, unknown>;
   try {
@@ -29,27 +31,20 @@ export async function PUT(request: Request, { params }: { params: Promise<{ key:
   }
 
   try {
-    const setting = await service.call(
-      "put_setting",
-      { ...body, key },
-      { caller: { transport: "http" } },
-    );
+    const setting = await service.call("put_setting", { ...body, key }, { caller });
     return NextResponse.json(setting);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ key: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ key: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { key } = await params;
   try {
-    const setting = await service.call(
-      "delete_setting",
-      { key },
-      { caller: { transport: "http" } },
-    );
+    const setting = await service.call("delete_setting", { key }, { caller });
     return NextResponse.json(setting);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

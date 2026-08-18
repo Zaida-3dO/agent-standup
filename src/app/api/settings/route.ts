@@ -8,21 +8,24 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "./respond";
+import { httpCaller } from "../_shared/respond";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   try {
-    const result = await service.call("get_settings", {}, { caller: { transport: "http" } });
+    const result = await service.call("get_settings", {}, { caller });
     // The revision doubles as the entity tag (SCHEMA.md §17.2) — carried in
     // both the body (for a client parsing it as JSON) and the ETag header
     // (for a client that wants the cheap "did anything change" comparison
     // without decoding the body).
     return NextResponse.json(result, { headers: { ETag: `"${result.revision}"` } });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function PATCH(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -34,9 +37,9 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    const result = await service.call("patch_settings", body, { caller: { transport: "http" } });
+    const result = await service.call("patch_settings", body, { caller });
     return NextResponse.json(result);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

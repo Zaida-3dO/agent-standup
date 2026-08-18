@@ -1162,6 +1162,27 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 
 Same service, different consumers.
 
+### Request ids — `X-Request-Id`, in both directions
+
+Every endpoint below that calls a service operation reads this header and echoes it, so it is stated
+once here rather than repeated per row. Three routes are exempt: `GET /health` and `GET /hook/script`
+run no operation, so there is no server-side line for an id to join; and the MCP mount at `/mcp`
+mints an id per *tool call* rather than per request, because one HTTP request there can carry
+several — labelling the envelope would be the wrong grain.
+
+A caller that sends `X-Request-Id` has that value stamped on every server-side log line written for
+the call, which is what lets a client's own lines and the server's be read as one call instead of
+two unrelated ones. A caller that sends nothing gets an id minted for it. Either way the id comes
+back on the response — on a success as much as on a failure — because "I called X and got Y" is
+asked about both, and the value in hand is what finds the call in the log.
+
+The id is a **log label and nothing else**: it is never looked up, never compared against stored
+state, and authorises nothing, which is what makes accepting a caller-supplied one safe. What it
+cannot be allowed to do is corrupt the newline-delimited JSON it lands in, so a value carrying a
+newline, a control character, whitespace, non-ASCII bytes, or more than 200 characters is **ignored
+in favour of a minted one rather than refused** — a bad log label is not worth failing an operation
+over.
+
 **Agent-facing** — one per MCP tool above, plus:
 
 | Endpoint | Purpose |

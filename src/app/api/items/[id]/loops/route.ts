@@ -8,12 +8,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
+  httpCaller,
   invalidJsonResponse,
   serializeAppendedEvent,
   serviceErrorResponse,
 } from "../../../_shared/respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   let body: Record<string, unknown>;
   try {
@@ -24,11 +26,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    const added = await service.call(
-      "loop_add",
-      { ...body, itemId: id },
-      { caller: { transport: "http" } },
-    );
+    const added = await service.call("loop_add", { ...body, itemId: id }, { caller });
     // `loopId` is returned alongside the event because it is generated
     // server-side unless the caller supplied one, and without it the loop
     // that was just opened could never be closed.
@@ -37,6 +35,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       { status: 201 },
     );
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

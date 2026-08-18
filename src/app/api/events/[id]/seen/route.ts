@@ -16,9 +16,10 @@
 // original `seenAt`.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../../../_shared/respond";
+import { httpCaller, invalidJsonResponse, serviceErrorResponse } from "../../../_shared/respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
 
   // An empty body is legitimate here — every field this endpoint needs
@@ -35,13 +36,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    const result = await service.call(
-      "mark_event_seen",
-      { ...body, eventId: id },
-      { caller: { transport: "http" } },
-    );
+    const result = await service.call("mark_event_seen", { ...body, eventId: id }, { caller });
     return NextResponse.json(result);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

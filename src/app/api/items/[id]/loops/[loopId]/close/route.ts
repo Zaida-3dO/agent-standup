@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
+  httpCaller,
   invalidJsonResponse,
   serializeAppendedEvent,
   serviceErrorResponse,
@@ -16,6 +17,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string; loopId: string }> },
 ) {
+  const { requestId, caller } = httpCaller(request);
   const { id, loopId } = await params;
   let body: Record<string, unknown>;
   try {
@@ -32,13 +34,9 @@ export async function POST(
   }
 
   try {
-    const event = await service.call(
-      "loop_close",
-      { ...body, itemId: id, loopId },
-      { caller: { transport: "http" } },
-    );
+    const event = await service.call("loop_close", { ...body, itemId: id, loopId }, { caller });
     return NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

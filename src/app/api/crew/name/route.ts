@@ -5,9 +5,10 @@
 // shape as `src/app/api/claims/route.ts`.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../../_shared/respond";
+import { invalidJsonResponse, serviceErrorResponse, httpCaller } from "../../_shared/respond";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -16,9 +17,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const name = await service.call("get_crew_name", body, { caller: { transport: "http" } });
+    const name = await service.call("get_crew_name", body, { caller });
     return NextResponse.json({ name }, { status: 201 });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

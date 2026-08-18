@@ -19,10 +19,11 @@
 // signal rather than a self-report (§21).
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../../../_shared/respond";
+import { httpCaller, invalidJsonResponse, serviceErrorResponse } from "../../../_shared/respond";
 import { CLI_TRANSPORT_HEADER, transportForHttpRequest } from "@/lib/session-transport-header";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId } = httpCaller(request);
   const { id } = await params;
 
   let body: unknown;
@@ -43,11 +44,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           // header is acceptable here and what it cannot be used to claim.
           transport: transportForHttpRequest(request.headers.get(CLI_TRANSPORT_HEADER)),
           sessionId: id,
+          requestId,
         },
       },
     );
     return NextResponse.json({ registration });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

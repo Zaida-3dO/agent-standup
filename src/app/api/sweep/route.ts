@@ -12,9 +12,10 @@
 // with no reader to serve.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../_shared/respond";
+import { invalidJsonResponse, serviceErrorResponse, httpCaller } from "../_shared/respond";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown = {};
   try {
     const text = await request.text();
@@ -26,9 +27,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await service.call("sweep", body, { caller: { transport: "http" } });
+    const result = await service.call("sweep", body, { caller });
     return NextResponse.json(result);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

@@ -7,9 +7,10 @@
 // database client imported here.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../../respond";
+import { httpCaller, serviceErrorResponse } from "../../respond";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   const url = new URL(request.url);
   const input: Record<string, unknown> = { itemId: id };
@@ -17,9 +18,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (since !== null) input.since = since;
 
   try {
-    const result = await service.call("orientation", input, { caller: { transport: "http" } });
+    const result = await service.call("orientation", input, { caller });
     return NextResponse.json(result);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

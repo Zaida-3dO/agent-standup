@@ -10,9 +10,10 @@
 // resolution, no database client.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../items/respond";
+import { httpCaller, serviceErrorResponse } from "../items/respond";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -24,9 +25,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const item = await service.call("create_project", body, { caller: { transport: "http" } });
+    const item = await service.call("create_project", body, { caller });
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

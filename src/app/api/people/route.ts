@@ -12,13 +12,14 @@
 // separate deliberate creation verb like `repos`.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../items/respond";
+import { httpCaller, serviceErrorResponse } from "../items/respond";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   try {
-    const result = await service.call("list_people", {}, { caller: { transport: "http" } });
+    const result = await service.call("list_people", {}, { caller });
     return NextResponse.json(result);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

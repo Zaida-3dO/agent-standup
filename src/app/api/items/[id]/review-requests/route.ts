@@ -11,12 +11,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
+  httpCaller,
   invalidJsonResponse,
   serializeAppendedEvent,
   serviceErrorResponse,
 } from "../../../_shared/respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   let body: Record<string, unknown>;
   try {
@@ -27,13 +29,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    const event = await service.call(
-      "request_review",
-      { ...body, itemId: id },
-      { caller: { transport: "http" } },
-    );
+    const event = await service.call("request_review", { ...body, itemId: id }, { caller });
     return NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

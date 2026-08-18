@@ -2,31 +2,34 @@
 // `PATCH /areas/{id}`. MILESTONES.md #92. Same shape as ../../repos/[id]/route.ts.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, readJsonBody, serviceErrorResponse } from "../../admin-respond";
+import {
+  httpCaller,
+  invalidJsonResponse,
+  readJsonBody,
+  serviceErrorResponse,
+} from "../../admin-respond";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   try {
-    const area = await service.call("get_area", { id }, { caller: { transport: "http" } });
+    const area = await service.call("get_area", { id }, { caller });
     return NextResponse.json({ area });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   const body = await readJsonBody(request);
   if (body === null) return invalidJsonResponse();
 
   try {
-    const area = await service.call(
-      "update_area",
-      { ...body, id },
-      { caller: { transport: "http" } },
-    );
+    const area = await service.call("update_area", { ...body, id }, { caller });
     return NextResponse.json({ area });
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

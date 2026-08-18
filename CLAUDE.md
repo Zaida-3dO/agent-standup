@@ -338,6 +338,15 @@ you.
   `branches: [main]`, so a PR opened against a branch that is itself not `main` matches no event and
   runs **zero** checks — and a PR with no runs at all reads as quiet, not red, which is easy to miss
   when several agents are working in parallel here. No checks is not the same claim as checks passed.
+  **That is not the only way to get zero checks, and it is not the most likely one. When no checks
+  appear, check `mergeable` first** — `gh pr view <n> --json mergeable,mergeStateStatus` — because a
+  PR that cannot merge runs nothing either, and the two are byte-identical from the outside. Several
+  PRs merge per hour here, so a branch acquiring a conflict between opening and CI starting is
+  routine, while a wrong base branch is a one-off mistake. Ruling out the base branch and then
+  reaching for trigger filters or Actions rate limits is the expensive path, and it has been walked:
+  the cheap question is whether the PR is mergeable at all. A doc line relies on someone remembering,
+  which is exactly what failed, so this is also filed as intervention **I7** in
+  `docs/plans/INTERVENTIONS.md` — the server can see both halves and say so.
   There is also a sharp corollary worth knowing before it happens: merging a parent PR with
   `--delete-branch` **auto-closes any PR still open against that branch**, and this cannot be undone
   by reopening or retargeting the closed PR — the only way out is a new PR opened from the same,

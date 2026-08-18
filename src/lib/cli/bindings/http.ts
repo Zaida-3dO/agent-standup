@@ -24,6 +24,7 @@ import { ARTIFACT_HTTP_ROUTES } from "./http-routes-artifacts"; // row #98 — a
 import { LOOP_HTTP_ROUTES } from "./http-routes-loops"; // row #100 - open-loop writes
 import { SESSION_HTTP_ROUTES } from "./http-routes-sessions";
 import { CLI_TRANSPORT_HEADER } from "@/lib/session-transport-header";
+import { REQUEST_ID_HEADER } from "@/lib/request-id-header";
 
 /** How one operation is expressed as an HTTP request. */
 export interface RouteSpec {
@@ -317,14 +318,19 @@ export function createHttpBinding({
       // claim a capability the transport does not confer.
       headers[CLI_TRANSPORT_HEADER] = "cli-http";
 
-      // This binding's id labels only the lines written *in this process*.
-      // It is deliberately not sent to the server: nothing there reads it
-      // (no route reads `X-Standup-Session` or `X-Standup-Actor` either), so
-      // a header would be a correlation that looks real in a diff and joins
-      // nothing in a log. End-to-end correlation across the two processes is
-      // a follow-up, and it needs a server that reads the header, not a
-      // client that sends one.
+      // This binding's id labels the lines written in this process, and —
+      // because it is sent — the lines the server writes for the same call.
+      // That is the whole point of sending it: without it the two processes
+      // each mint their own id and write correlated lines that cannot be
+      // joined, so an operator holding a client-side failure has no way to
+      // find the server's account of the same call.
+      //
+      // Minted before the request rather than read from the response so the
+      // id also labels the failures where there *is* no response — an
+      // unreachable server is the case most worth correlating and the one a
+      // server-assigned id could never cover.
       const requestId = newRequestId();
+      headers[REQUEST_ID_HEADER] = requestId;
 
       let response: Response;
       try {

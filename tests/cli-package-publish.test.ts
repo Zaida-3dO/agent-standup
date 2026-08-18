@@ -177,4 +177,27 @@ describe("npm pack — what actually ships", () => {
     },
     NPM_PACK_TIMEOUT_MS,
   );
+
+  it("never lets its own `npm pack` rebuild dist/ from under a parallel worker", () => {
+    // MILESTONES.md #127(b). The comment above explains why
+    // `--ignore-scripts` is load-bearing; this asserts it, because a comment
+    // cannot fail. Dropping the flag reinstates a `prepack` that deletes
+    // `dist/` while `tests/hook-built-script.test.ts` is spawning a binary
+    // out of it — and the resulting failure lands in *that* file, on
+    // whichever assertion happened to fall inside the window, naming nothing
+    // that would lead anyone back to this line.
+    //
+    // Read from this file's own source rather than parameterised into the
+    // call above: the thing worth pinning is that the command this test
+    // actually runs carries the flag, which a variable shared between the
+    // two would assert about itself.
+    const source = readFileSync(path.join(repoRoot, "tests/cli-package-publish.test.ts"), "utf8");
+    const packInvocations = source.match(/execSync\(\s*"npm pack[^"]*"/g) ?? [];
+
+    // Guards the guard — a renamed call would otherwise make this vacuous.
+    expect(packInvocations.length).toBeGreaterThan(0);
+    for (const invocation of packInvocations) {
+      expect(invocation).toContain("--ignore-scripts");
+    }
+  });
 });
