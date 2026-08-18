@@ -16,7 +16,7 @@
 //
 // ── Why this is an environment variable, and not a stored setting ───────
 //
-// The same split `backfill/enabled.ts` draws, for the same reason: a switch
+// The same split `src/lib/backfill/enabled.ts` draws, for the same reason: a switch
 // deciding whether a surface exists at all is bootstrap, and it has one
 // property no database-backed setting could have — **the toggle lives in the
 // deployment layer, so nothing reachable over HTTP, MCP or the command line
@@ -43,8 +43,11 @@
 // written as a truthiness test is open for every value its author did not
 // think of, and in JavaScript every non-empty string is truthy, including
 // the string `"false"`. Case is not folded, for the reason
-// `backfill/enabled.ts` gives: one exact spelling is a rule with no edge to
+// `src/lib/backfill/enabled.ts` gives: one exact spelling is a rule with no edge to
 // get wrong, and it greps cleanly in a deployment manifest.
+//
+// Both windows are listed in `.env.example`, which is where an operator
+// looks to check whether one is still set.
 
 /** The one value that opens the window. Anything else, including any other casing, does not. */
 export const HISTORICAL_VERIFICATION_ENABLED_VALUE = "true";

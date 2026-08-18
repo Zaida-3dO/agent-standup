@@ -119,6 +119,24 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
     if (historical.satisfied) {
       return guardOk;
     }
+    // A verification exists and would otherwise have satisfied this clause,
+    // but the item carries an `lgtm_with_followups` whose bargain is not
+    // honoured. Refused HERE rather than left to
+    // `merge.requires_linked_followup`, because that guard resolves its
+    // approval by round and tip and so cannot see a bargain that has fallen
+    // out of qualification — which is precisely the case an inspection at a
+    // higher round creates. Named explicitly so the caller is not told to go
+    // and get a code review when the actual obstacle is a dead follow-up.
+    if (historical.blockedByFollowUp) {
+      return guardRejected(
+        "This item has a code review that merged on the promise its findings would be done " +
+          `separately, but ${historical.blockedByFollowUp}. A historical_verification records ` +
+          "that shipped code was inspected; it does not discharge a promise a review already " +
+          "made. Link a follow-up item that is still open, or re-review at a verdict matching " +
+          "what was actually found.",
+        { fields: ["state"] },
+      );
+    }
 
     const approvedAtAll = await hasApproval(input.db, input.item.id, "code_review");
     if (!approvedAtAll) {
@@ -329,21 +347,26 @@ interface FollowUpItemRow {
  * fixes, and a guard that answered all three with one message would make the
  * caller guess which.
  *
- * **Unaffected by the historical-verification path, and worth saying why,
- * because the opposite is a plausible reading.** That path lets
- * `merge.requires_approving_code_review` be satisfied without a qualifying
- * `code_review`, and this guard returns `ok` when it finds no qualifying
- * `code_review` — so it looks as though an inspection-closed item could
- * carry an `lgtm_with_followups` bargain that nothing enforces. It cannot,
- * for a reason that holds by construction rather than by care: this guard
- * goes quiet only when there is **no qualifying approval at all**, and an
- * item with no qualifying approval has no `lgtm_with_followups` verdict
- * resting on it either — the verdict lives on the very artifact that is
- * absent. Where such an artifact *is* present and current, this guard fires
- * exactly as before; the historical path adds an alternative satisfier to
- * the other clause and removes nothing from this one. The bargain
- * `lgtm_with_followups` strikes is between a reviewer and a merge, and an
- * item closed on inspection never entered into it.
+ * **Why this guard is not the whole of the `lgtm_with_followups`
+ * obligation.** This guard resolves the approval it reasons about through
+ * `approvingArtifactAtCurrentRoundAndTip`, which qualifies on **round and
+ * tip**. "No qualifying approval" is therefore not the same claim as "no
+ * approval": an honest `lgtm_with_followups` stops qualifying the moment
+ * either axis moves, and this guard then correctly says nothing, because the
+ * artifact it would reason about is not the one the merge is resting on.
+ *
+ * What made that safe was that the same non-qualification also refused the
+ * merge outright at `merge.requires_approving_code_review` — so an
+ * unqualified bargain could never actually reach a merge. An alternative
+ * satisfier for that clause removes the backstop, and `currentReviewRound`
+ * being `MAX(review_round)` across *every* artifact kind means a verification
+ * recorded at a higher round demotes the review by itself. So the
+ * verification path re-checks the obligation at its own source
+ * (`historical-verification.ts`'s `unhonouredFollowUpBargain`) rather than
+ * assuming this guard covers it. Kept there and not widened here on purpose:
+ * this guard's contract is "the approval the merge rests on", and broadening
+ * it to any approval ever recorded would change what it means for the
+ * ordinary review path too.
  */
 export const mergeRequiresLinkedFollowUpGuard: Guard = {
   id: "merge.requires_linked_followup",

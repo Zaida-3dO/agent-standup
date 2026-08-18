@@ -1384,6 +1384,49 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         kind: "historical_verification",
         commitSha: "abc123",
         body: "inspected at abc123",
+        // Authored by a PERSON deliberately. The authorisation clause also
+        // requires `createdByType = 'person'`, so an agent-authored artifact
+        // would be refused for that reason instead and this test would pass
+        // without ever exercising the kind check — leaving the guarantee it
+        // claims to protect undefended against a future edit that widened
+        // the query's `kind` filter.
+        createdByType: "person",
+      });
+
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { message?: string }).message).toContain("needs_approval");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("does NOT satisfy needs_approval even when person-authored AND carrying an approving verdict — the defence in depth, spelled out", async () => {
+      // The clause is defended twice over, and a test that exercises only one
+      // layer passes for the wrong reason.
+      //
+      //   1. `record_artifact` refuses a verdict on a non-review kind, so a
+      //      verification with an approving verdict cannot be written through
+      //      the product at all. That is the PRIMARY defence, and it is what
+      //      makes the authorisation query's `verdict = ANY(...)` filter
+      //      exclude this kind regardless of anything else.
+      //   2. The query is additionally scoped to `kind = 'code_review'`.
+      //
+      // This inserts the artifact DIRECTLY, bypassing (1), so that (2) is the
+      // only thing left standing — otherwise widening the query's `kind`
+      // filter would be an undetectable regression. Person-authored and
+      // approving, so neither `createdByType` nor `verdict` can be the reason
+      // it is refused.
+      openWindow();
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        createdByType: "person",
+        verdict: "approved",
       });
 
       const reg = new GuardRegistry();
@@ -1442,6 +1485,158 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect((error as { code?: string }).code).toBe("guard_rejected");
       expect((error as { guard?: string }).guard).toBe("merge.requires_linked_followup");
       expect(await readState(id)).toBe("in_review");
+    });
+
+    // ── The follow-up bargain cannot be dissolved by an inspection ────────
+    //
+    // Found by adversarial probe, not by reading: `merge.requires_linked_followup`
+    // resolves its approval by ROUND AND TIP, so an honest `lgtm_with_followups`
+    // stops qualifying when either moves and that guard then correctly says
+    // nothing. That is safe only while the same non-qualification also refuses
+    // the merge at the code-review clause — which an alternative satisfier
+    // removes. Both demotion routes are pinned here.
+    it("REFUSES when a higher-round verification demotes an lgtm_with_followups whose follow-up is dead — round demotion", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      const deadFollowUp = await createTask({ state: "cancelled" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        reviewRound: 1,
+        followUpItemId: deadFollowUp,
+      });
+      // `currentReviewRound` is MAX(reviewRound) across EVERY kind, so this
+      // one artifact pushes the item to round 2 and the honest review at
+      // round 1 stops qualifying — one caller-supplied parameter.
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        reviewRound: 2,
+      });
+
+      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      // The refusal must name the real obstacle. Telling the caller to go and
+      // get a code review, when the actual problem is a dead follow-up, sends
+      // them to fix the wrong thing.
+      expect((error as { message?: string }).message).toContain("follow-up");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("REFUSES when a verification at a newer tip demotes an lgtm_with_followups whose follow-up is dead — tip demotion, no explicit round needed", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      const deadFollowUp = await createTask({ state: "wont_do" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "old111",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "old111",
+        followUpItemId: deadFollowUp,
+        createdAt: new Date(Date.now() - 50_000),
+      });
+      // A newer commit moves the tip, so the review fails to qualify on the
+      // tip axis alone, with every artifact still at round 1.
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "new222" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "new222",
+        body: "inspected at new222",
+      });
+
+      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { message?: string }).message).toContain("follow-up");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("ALLOWS a demoted lgtm_with_followups whose follow-up is still LIVE — the bargain is honoured, so nothing is owed", async () => {
+      // The other half of the rule: this must refuse an unhonoured bargain
+      // without refusing an honoured one, or it would simply block every
+      // item that ever carried the verdict.
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      const liveFollowUp = await createTask({ state: "on_deck" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        reviewRound: 1,
+        followUpItemId: liveFollowUp,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        reviewRound: 2,
+      });
+
+      await callTransition(id, "merged", reviewClauseOnly());
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES a demoted lgtm_with_followups that links NO follow-up at all", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        reviewRound: 1,
+        followUpItemId: null,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        reviewRound: 2,
+      });
+
+      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { message?: string }).message).toContain("follow-up");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("ALLOWS a plain lgtm that was demoted — only the followups tier carries an obligation to honour", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "abc123",
+        reviewRound: 1,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        reviewRound: 2,
+      });
+
+      await callTransition(id, "merged", reviewClauseOnly());
+      expect(await readState(id)).toBe("merged");
     });
 
     it("still REFUSES with no commit artifact at all — there is no tip to have inspected", async () => {
