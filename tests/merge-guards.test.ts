@@ -1276,6 +1276,23 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       return reg;
     }
 
+    /**
+     * Every merge guard, as production installs them.
+     *
+     * The single-clause registry above isolates *which* clause answered, which
+     * is what most of these cases are about. It cannot answer the question the
+     * follow-up obligation actually poses — "can this item reach `merged`" —
+     * because the guard enforcing that obligation is not in it. A case that
+     * asserts a merge succeeds, or that an obligation survives, has to run
+     * against the whole conjunction or it is asserting about a system nobody
+     * runs.
+     */
+    function allMergeGuards() {
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      return reg;
+    }
+
     it("REFUSES while the window is CLOSED, even with a perfectly-formed artifact — the default posture is unchanged", async () => {
       // The most important case in this block. With the window shut, this
       // path does not exist and the guard must behave exactly as it did
@@ -1636,6 +1653,149 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       });
 
       await callTransition(id, "merged", reviewClauseOnly());
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES when a newer but STALE plain lgtm shadows an unhonoured bargain — supersession needs standing, not just recency", async () => {
+      // The selection rule this pins. `record_artifact` never checks a
+      // code_review commitSha against the tip, so a caller can record a
+      // deliberately stale plain `lgtm`: too stale to satisfy any merge
+      // clause itself, but newest by createdAt. If the obligation check asked
+      // only about the newest approving review, that decoy would answer "no
+      // follow-up required" on behalf of the unhonoured bargain below it, and
+      // the item would merge with a dead follow-up — discharged by a review
+      // that never reviewed the code being merged.
+      //
+      // Run against the FULL registry: the claim is "this item cannot reach
+      // merged", which no single clause can settle.
+      openWindow();
+      const id = await createTask({ state: "in_review", mergeAuthority: "pre_approved" });
+      const deadFollowUp = await createTask({ state: "cancelled" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        followUpItemId: deadFollowUp,
+        createdAt: new Date(Date.now() - 40_000),
+      });
+      // The decoy — newest, approving, and naming a commit nobody is shipping.
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "not-the-tip",
+        createdAt: new Date(Date.now() - 20_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        reviewRound: 2,
+      });
+
+      const error = await callTransition(id, "merged", allMergeGuards()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { message?: string }).message).toContain("follow-up");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("ALLOWS when a newer QUALIFYING clean review supersedes the bargain — an obligation can be retired, but only by a review with standing", async () => {
+      // The other half of the selection rule. A later review that genuinely
+      // reviewed the shipping code IS the most recent word on the change, and
+      // must be able to retire an earlier deferral — otherwise one
+      // lgtm_with_followups would poison an item permanently.
+      openWindow();
+      const id = await createTask({ state: "in_review", mergeAuthority: "pre_approved" });
+      const deadFollowUp = await createTask({ state: "cancelled" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        followUpItemId: deadFollowUp,
+        createdAt: new Date(Date.now() - 40_000),
+      });
+      // Newer, approving, AND at the current round and tip — it could carry
+      // the merge on its own, so it has standing to retire the deferral.
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "abc123",
+        createdAt: new Date(Date.now() - 20_000),
+      });
+
+      await callTransition(id, "merged", allMergeGuards());
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES an unhonoured bargain that is not the newest approving review, through the full registry", async () => {
+      // Guards against the check narrowing back to "the newest approving
+      // review" by any route: here the newest approving row is a plain lgtm
+      // at the tip but at an EARLIER round, so it does not qualify, and the
+      // older bargain still stands.
+      openWindow();
+      const id = await createTask({ state: "in_review", mergeAuthority: "pre_approved" });
+      const deadFollowUp = await createTask({ state: "merged" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        reviewRound: 1,
+        followUpItemId: deadFollowUp,
+        createdAt: new Date(Date.now() - 40_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "abc123",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 20_000),
+      });
+      // Pushes the round to 2, so the plain lgtm at round 1 stops qualifying.
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        reviewRound: 2,
+      });
+
+      const error = await callTransition(id, "merged", allMergeGuards()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { message?: string }).message).toContain("follow-up");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("ALLOWS a demoted bargain whose follow-up is live, through the full registry — no over-refusal", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review", mergeAuthority: "pre_approved" });
+      const liveFollowUp = await createTask({ state: "on_deck" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        reviewRound: 1,
+        followUpItemId: liveFollowUp,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+        reviewRound: 2,
+      });
+
+      await callTransition(id, "merged", allMergeGuards());
       expect(await readState(id)).toBe("merged");
     });
 

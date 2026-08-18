@@ -79,8 +79,9 @@
 // on live. A window is bounded by construction and expires by being closed.
 import type { TransactionHandle } from "../context";
 import { currentTipCommitSha } from "./artifact-tip";
+import { currentReviewRound } from "./merge-review-round";
 import { isHistoricalVerificationEnabled } from "./historical-verification-enabled";
-import { APPROVING_VERDICTS, requiresLinkedFollowUp } from "../../verdicts";
+import { APPROVING_VERDICTS } from "../../verdicts";
 
 /** The artifact kind that records work verified by inspection against already-merged code. */
 export const HISTORICAL_VERIFICATION_KIND = "historical_verification";
@@ -203,11 +204,11 @@ export async function historicalVerificationSatisfies(
   // route removes the backstop, so the obligation has to be re-checked here
   // rather than assumed to be someone else's job.
   //
-  // Deliberately scoped to the item, not to a round or a tip: the question is
-  // "does an unhonoured bargain exist anywhere on this item", and a bargain
-  // that fell out of qualification is exactly the one at risk of being
-  // forgotten. `LIMIT 1` on the newest, because a later clean review is the
-  // most recent word on the change.
+  // Scoped to the item rather than to a round or a tip: a bargain that fell
+  // out of qualification is exactly the one at risk of being forgotten, so
+  // asking only about the approval that qualifies would miss the case that
+  // matters. Which review may RETIRE a bargain is a separate question,
+  // and there the qualification bar does apply — see the function itself.
   const unhonoured = await unhonouredFollowUpBargain(db, itemId);
   if (unhonoured) {
     return { satisfied: false, offerAlternative: true, blockedByFollowUp: unhonoured };
@@ -220,6 +221,10 @@ interface FollowUpBargainRow {
   verdict: string | null;
   followUpItemId: string | null;
   followUpState: string | null;
+  /** True when the LEFT JOIN matched nothing — a link to an item that is gone. */
+  followUpMissing: boolean;
+  /** True when a strictly-newer approving review qualifying at the current round and tip retires this bargain. */
+  superseded: boolean;
 }
 
 /**
@@ -236,9 +241,27 @@ const CLOSED_FOLLOW_UP_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A description of this item's newest `lgtm_with_followups` approval when its
- * bargain is **not** honoured — no link, or a link to something already
- * closed — or `null` when there is no such approval or its follow-up is live.
+ * A description of an **unhonoured** `lgtm_with_followups` bargain on this
+ * item — one whose findings were never given a live home — or `null` when
+ * every bargain the item carries is honoured or superseded.
+ *
+ * **An EXISTS over every bargain, not a property of the newest approval.**
+ * The obvious shape — take the newest approving review and ask whether it
+ * requires a follow-up — is wrong, and wrong in a way that is reachable with
+ * one extra ordinary call. `record_artifact` does not check a `code_review`'s
+ * `commitSha` against the tip, so a caller can record a *deliberately stale*
+ * plain `lgtm`: too stale to satisfy any merge clause itself, but newest by
+ * `createdAt`, so it wins a `LIMIT 1` and answers "no follow-up required" on
+ * behalf of an unhonoured bargain sitting one row below. The obligation would
+ * be discharged by a review that never reviewed the code being merged.
+ *
+ * So the question this asks is the one the guard actually needs — *does an
+ * unhonoured bargain exist anywhere on this item* — and supersession is
+ * granted only to a review that could itself carry the merge: strictly newer,
+ * approving, and **qualifying at the current round and tip**. That is the
+ * same bar `merge.requires_linked_followup` applies to the approval it rests
+ * on, which is the point: an obligation may only be retired by a review with
+ * standing to retire it. A stale row has no standing.
  *
  * Returns a sentence rather than a boolean because the caller turns it into a
  * refusal, and a refusal that cannot say which obligation it is enforcing
@@ -248,29 +271,58 @@ async function unhonouredFollowUpBargain(
   db: TransactionHandle,
   itemId: string,
 ): Promise<string | null> {
+  const round = await currentReviewRound(db, itemId);
+  const tip = await currentTipCommitSha(db, itemId);
+
   const rows = await db.$queryRawUnsafe<FollowUpBargainRow[]>(
-    `SELECT a."verdict"::text AS "verdict", a."followUpItemId", i."state"::text AS "followUpState"
+    // Every `lgtm_with_followups` on the item, oldest first, each carrying
+    // whether a strictly-newer *qualifying* approval supersedes it.
+    //
+    // `i."id" IS NULL` distinguishes "the join found no row" from "the row's
+    // state is null" — the same test `merge.ts` makes for a dangling link,
+    // rather than inferring absence from a null column value.
+    //
+    // The supersession subquery mirrors `approvingArtifactAtCurrentRoundAndTip`:
+    // approving verdict, at the item's current review round, naming the
+    // current tip commit. `IS NOT DISTINCT FROM` for the sha so that an item
+    // with no commit artifact at all (tip null) compares as equal to a null
+    // `commitSha`, which is the reading the tip helpers already document.
+    `SELECT a."verdict"::text AS "verdict",
+            a."followUpItemId",
+            i."state"::text AS "followUpState",
+            (i."id" IS NULL) AS "followUpMissing",
+            EXISTS (
+              SELECT 1 FROM "Artifact" s
+               WHERE s."itemId" = a."itemId"
+                 AND s."kind" = 'code_review'::"ArtifactKind"
+                 AND s."verdict" = ANY($2::"Verdict"[])
+                 AND s."reviewRound" = $3
+                 AND s."commitSha" IS NOT DISTINCT FROM $4
+                 AND (s."createdAt", s."id") > (a."createdAt", a."id")
+            ) AS "superseded"
        FROM "Artifact" a
        LEFT JOIN "Item" i ON i."id" = a."followUpItemId"
       WHERE a."itemId" = $1 AND a."kind" = 'code_review'::"ArtifactKind"
-        AND a."verdict" = ANY($2::"Verdict"[])
-      ORDER BY a."createdAt" DESC, a."id" DESC
-      LIMIT 1`,
+        AND a."verdict" = 'lgtm_with_followups'::"Verdict"
+      ORDER BY a."createdAt" ASC, a."id" ASC`,
     itemId,
     APPROVING_VERDICTS,
+    round,
+    tip,
   );
-  const approval = rows[0];
-  if (!approval || !requiresLinkedFollowUp(approval.verdict)) {
-    return null;
+
+  for (const bargain of rows) {
+    if (bargain.superseded) continue;
+    if (!bargain.followUpItemId) {
+      return "it links no follow-up item";
+    }
+    if (bargain.followUpMissing) {
+      return `its follow-up item ${bargain.followUpItemId} does not exist`;
+    }
+    if (bargain.followUpState !== null && CLOSED_FOLLOW_UP_STATES.has(bargain.followUpState)) {
+      return `its follow-up item ${bargain.followUpItemId} is already ${bargain.followUpState}`;
+    }
   }
-  if (!approval.followUpItemId) {
-    return "it links no follow-up item";
-  }
-  if (approval.followUpState === null) {
-    return `its follow-up item ${approval.followUpItemId} does not exist`;
-  }
-  if (CLOSED_FOLLOW_UP_STATES.has(approval.followUpState)) {
-    return `its follow-up item ${approval.followUpItemId} is already ${approval.followUpState}`;
-  }
+
   return null;
 }
