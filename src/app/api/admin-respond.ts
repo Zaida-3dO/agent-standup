@@ -11,6 +11,7 @@
 // actually drift if it were duplicated four times instead.
 import { NextResponse } from "next/server";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
+import { httpCaller, withRequestId } from "./_shared/respond";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   invalid_input: 400,
@@ -22,19 +23,38 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   internal: 500,
 };
 
-/** Renders any thrown value as the JSON error envelope this adapter uses, with the mapped status. */
-export function serviceErrorResponse(error: unknown): NextResponse {
+/**
+ * Renders any thrown value as the JSON error envelope this adapter uses, with
+ * the mapped status.
+ *
+ * The request id is threaded through so a refusal names the same call the
+ * server logged — see `httpCaller` in `_shared/respond.ts` for why every
+ * response carries it, not just the failures.
+ */
+export function serviceErrorResponse(error: unknown, requestId?: string): NextResponse {
   const serviceError = toServiceError(error);
   const status = STATUS_BY_CODE[serviceError.code];
   const rejection = serviceError.toRejection();
-  return NextResponse.json({ error: { message: serviceError.message, ...rejection } }, { status });
+  return withRequestId(
+    NextResponse.json({ error: { message: serviceError.message, ...rejection } }, { status }),
+    requestId,
+  );
 }
 
-/** Renders an unparseable request body the same way every route here does. */
-export function invalidJsonResponse(): NextResponse {
-  return NextResponse.json(
-    { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
-    { status: 400 },
+/**
+ * Renders a malformed-JSON body as the same 400 envelope every route uses for it.
+ *
+ * Carries the request id like every other response: a caller whose body was
+ * rejected is exactly the one likely to be asking why, and an id is the
+ * thing that finds the attempt in the log.
+ */
+export function invalidJsonResponse(requestId?: string): NextResponse {
+  return withRequestId(
+    NextResponse.json(
+      { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
+      { status: 400 },
+    ),
+    requestId,
   );
 }
 
@@ -47,3 +67,5 @@ export async function readJsonBody(request: Request): Promise<Record<string, unk
     return null;
   }
 }
+
+export { httpCaller, withRequestId };

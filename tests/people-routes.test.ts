@@ -35,7 +35,7 @@ describeIfDb("people HTTP route against Postgres", () => {
   });
 
   it("GET /people returns 200 with an empty list against a database with no people", async () => {
-    const response = await peopleRoute.GET();
+    const response = await peopleRoute.GET(new Request("http://localhost/api/people"));
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { people: unknown[] };
     expect(payload.people).toEqual([]);
@@ -47,7 +47,7 @@ describeIfDb("people HTTP route against Postgres", () => {
        VALUES ('people-route-a', 'Route Person', null, '#abcdef', now())`,
     );
 
-    const response = await peopleRoute.GET();
+    const response = await peopleRoute.GET(new Request("http://localhost/api/people"));
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
       people: { id: string; displayName: string; avatar: string | null; colour: string | null }[];
@@ -67,7 +67,7 @@ describeIfDb("people HTTP route against Postgres", () => {
        VALUES ('people-route-archived', 'Gone', now(), now())`,
     );
 
-    const response = await peopleRoute.GET();
+    const response = await peopleRoute.GET(new Request("http://localhost/api/people"));
     const payload = (await response.json()) as { people: { id: string }[] };
     expect(payload.people.some((p) => p.id === "people-route-archived")).toBe(false);
   });

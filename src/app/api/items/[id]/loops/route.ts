@@ -8,35 +8,37 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
+  httpCaller,
+  withRequestId,
   invalidJsonResponse,
   serializeAppendedEvent,
   serviceErrorResponse,
 } from "../../../_shared/respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   let body: Record<string, unknown>;
   try {
     const parsed = (await request.json()) as unknown;
     body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
-    const added = await service.call(
-      "loop_add",
-      { ...body, itemId: id },
-      { caller: { transport: "http" } },
-    );
+    const added = await service.call("loop_add", { ...body, itemId: id }, { caller });
     // `loopId` is returned alongside the event because it is generated
     // server-side unless the caller supplied one, and without it the loop
     // that was just opened could never be closed.
-    return NextResponse.json(
-      { loopId: added.loopId, event: serializeAppendedEvent(added.event) },
-      { status: 201 },
+    return withRequestId(
+      NextResponse.json(
+        { loopId: added.loopId, event: serializeAppendedEvent(added.event) },
+        { status: 201 },
+      ),
+      requestId,
     );
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

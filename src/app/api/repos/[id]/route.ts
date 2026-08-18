@@ -3,31 +3,35 @@
 // MILESTONES.md #92.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, readJsonBody, serviceErrorResponse } from "../../admin-respond";
+import {
+  httpCaller,
+  withRequestId,
+  invalidJsonResponse,
+  readJsonBody,
+  serviceErrorResponse,
+} from "../../admin-respond";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   try {
-    const repo = await service.call("get_repo", { id }, { caller: { transport: "http" } });
-    return NextResponse.json({ repo });
+    const repo = await service.call("get_repo", { id }, { caller });
+    return withRequestId(NextResponse.json({ repo }), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse();
+  if (body === null) return invalidJsonResponse(requestId);
 
   try {
-    const repo = await service.call(
-      "update_repo",
-      { ...body, id },
-      { caller: { transport: "http" } },
-    );
-    return NextResponse.json({ repo });
+    const repo = await service.call("update_repo", { ...body, id }, { caller });
+    return withRequestId(NextResponse.json({ repo }), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

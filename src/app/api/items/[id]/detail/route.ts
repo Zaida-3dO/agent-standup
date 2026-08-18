@@ -6,9 +6,10 @@
 // transaction opened, no settings resolved, no database client imported.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../../respond";
+import { httpCaller, withRequestId, serviceErrorResponse } from "../../respond";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   const url = new URL(request.url);
   const input: Record<string, unknown> = { id };
@@ -27,10 +28,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   try {
     const detail = await service.call("get_item_detail", input, {
-      caller: { transport: "http" },
+      caller,
     });
-    return NextResponse.json({ detail });
+    return withRequestId(NextResponse.json({ detail }), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

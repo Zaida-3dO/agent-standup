@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { log } from "@/lib/log";
 import { toServiceError, type ServiceErrorCode } from "@/lib/service";
+import { REQUEST_ID_HEADER, requestIdForHttpRequest } from "@/lib/request-id-header";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   invalid_input: 400,
@@ -38,21 +39,76 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
  * guard is the system working, and logging those at error level would bury the
  * one code that means something is actually wrong.
  */
-export function serviceErrorResponse(error: unknown): NextResponse {
+export function serviceErrorResponse(error: unknown, requestId?: string): NextResponse {
   const serviceError = toServiceError(error);
   const status = STATUS_BY_CODE[serviceError.code];
   const rejection = serviceError.toRejection();
   if (serviceError.code === "internal") {
-    log.error("Request failed unexpectedly.", { transport: "http", err: serviceError });
+    log.error("Request failed unexpectedly.", {
+      transport: "http",
+      ...(requestId === undefined ? {} : { requestId }),
+      err: serviceError,
+    });
   }
-  return NextResponse.json({ error: { message: serviceError.message, ...rejection } }, { status });
+  return withRequestId(
+    NextResponse.json({ error: { message: serviceError.message, ...rejection } }, { status }),
+    requestId,
+  );
 }
 
-/** Renders a malformed-JSON body as the same 400 envelope every route uses for it. */
-export function invalidJsonResponse(): NextResponse {
-  return NextResponse.json(
-    { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
-    { status: 400 },
+/**
+ * The request id to use for one inbound HTTP call, and the caller context to
+ * hand `service.call`.
+ *
+ * Every route resolves this once, at the top, and then uses the same value
+ * for the service call and for the response — which is the whole point:
+ * an id echoed to the caller that was not the id the service logged would
+ * be worse than not echoing one, because it would name a call that does not
+ * appear anywhere in the log.
+ *
+ * `transport` is stamped here rather than being repeated at every call site
+ * for the same reason: it is a fact about *how the call arrived*, and this
+ * is the one module that knows a call arrived over HTTP.
+ */
+export function httpCaller(request: Request): {
+  readonly requestId: string;
+  readonly caller: { readonly transport: string; readonly requestId: string };
+} {
+  const requestId = requestIdForHttpRequest(request.headers.get(REQUEST_ID_HEADER));
+  return { requestId, caller: { transport: "http", requestId } };
+}
+
+/**
+ * Stamps the served request id onto a response.
+ *
+ * Applied to every response a route produces — a success, a refusal and a
+ * 500 alike — because "I called X and got Y" is asked about all three, and
+ * an id present only on failures is missing precisely when someone is
+ * trying to report that a *successful* call returned the wrong thing.
+ *
+ * Tolerates an absent id so a route that has not resolved one (a malformed
+ * body rejected before anything else happens) still returns a well-formed
+ * response rather than a header reading `undefined`.
+ */
+export function withRequestId(response: NextResponse, requestId?: string): NextResponse {
+  if (requestId !== undefined) response.headers.set(REQUEST_ID_HEADER, requestId);
+  return response;
+}
+
+/**
+ * Renders a malformed-JSON body as the same 400 envelope every route uses for it.
+ *
+ * Carries the request id like every other response: a caller whose body was
+ * rejected is exactly the one likely to be asking why, and an id is the
+ * thing that finds the attempt in the log.
+ */
+export function invalidJsonResponse(requestId?: string): NextResponse {
+  return withRequestId(
+    NextResponse.json(
+      { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
+      { status: 400 },
+    ),
+    requestId,
   );
 }
 

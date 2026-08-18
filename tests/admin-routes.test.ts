@@ -327,7 +327,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /machines lists every machine PATCH has created so far", async () => {
-      const response = await machinesCollection.GET();
+      const response = await machinesCollection.GET(new Request("http://localhost/api/machines"));
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { machines: { name: string }[] };
       expect(payload.machines.some((m) => m.name === "route-desktop")).toBe(true);
@@ -451,7 +451,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /accounts lists every account PATCH has created so far", async () => {
-      const response = await accountsCollection.GET();
+      const response = await accountsCollection.GET(new Request("http://localhost/api/accounts"));
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { accounts: { id: string }[] };
       expect(payload.accounts.some((a) => a.id === "route-account-new")).toBe(true);
@@ -562,7 +562,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /people lists every person PATCH has created so far", async () => {
-      const response = await peopleCollection.GET();
+      const response = await peopleCollection.GET(new Request("http://localhost/api/people"));
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { people: { id: string }[] };
       expect(payload.people.some((p) => p.id === "route-person-new")).toBe(true);

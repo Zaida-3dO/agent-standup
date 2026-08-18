@@ -8,18 +8,15 @@
 // should be told so rather than silently getting the other's behaviour.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../../respond";
+import { httpCaller, withRequestId, serviceErrorResponse } from "../../respond";
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ key: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ key: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { key } = await params;
   try {
-    const removed = await service.call(
-      "remove_unrecognised_setting",
-      { key },
-      { caller: { transport: "http" } },
-    );
-    return NextResponse.json(removed);
+    const removed = await service.call("remove_unrecognised_setting", { key }, { caller });
+    return withRequestId(NextResponse.json(removed), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

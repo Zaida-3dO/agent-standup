@@ -6,30 +6,38 @@
 // call the service, render the result.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, readJsonBody, serviceErrorResponse } from "../admin-respond";
+import {
+  httpCaller,
+  withRequestId,
+  invalidJsonResponse,
+  readJsonBody,
+  serviceErrorResponse,
+} from "../admin-respond";
 
 export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const url = new URL(request.url);
   const includeArchived = url.searchParams.get("includeArchived");
   const input: Record<string, unknown> = {};
   if (includeArchived !== null) input.includeArchived = includeArchived === "true";
 
   try {
-    const result = await service.call("list_repos", input, { caller: { transport: "http" } });
-    return NextResponse.json(result);
+    const result = await service.call("list_repos", input, { caller });
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse();
+  if (body === null) return invalidJsonResponse(requestId);
 
   try {
-    const repo = await service.call("create_repo", body, { caller: { transport: "http" } });
-    return NextResponse.json({ repo }, { status: 201 });
+    const repo = await service.call("create_repo", body, { caller });
+    return withRequestId(NextResponse.json({ repo }, { status: 201 }), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

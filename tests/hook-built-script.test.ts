@@ -40,6 +40,28 @@ let scratch: string;
 
 // `dist/` is built once for the whole run by `tests/helpers/global-setup.ts`,
 // which is the only writer — see the note there for why a per-file build races.
+//
+// ── This file had a reputation for flaking, and it is worth knowing why ──
+//
+// Four CI runs of one unchanged commit once failed here with a *different
+// subset* each time — a missing `dist/bin/standup-hook.js`, then assorted
+// exit-code and stderr assertions — against a green suite locally. That
+// pattern (varying failures, one artefact, no diff touching the hook) is the
+// signature of a **build race, not a flaky assertion**: every one of those
+// failures is what a spawned binary does when its chunk is missing from
+// under it.
+//
+// Both writers that caused it are closed, and each is documented where it
+// was fixed rather than here: `dist/` is built once before any worker starts
+// (`tests/helpers/global-setup.ts`), and `tests/cli-package-publish.test.ts`
+// passes `--ignore-scripts` to `npm pack` so its `prepack` cannot delete
+// `dist/` mid-run from a parallel worker.
+//
+// The point of recording it: if this file starts failing intermittently
+// again, **suspect a third writer to `dist/` before suspecting these
+// assertions**, and confirm by looking at whether the failures vary between
+// runs. Adding a retry here would hide exactly the signal that identifies
+// the cause.
 beforeAll(() => {
   scratch = mkdtempSync(path.join(tmpdir(), "standup-hook-"));
 });

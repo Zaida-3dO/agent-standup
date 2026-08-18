@@ -47,7 +47,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
   }
 
   it("GET /settings returns every declared setting with a revision — AC1", async () => {
-    const response = await collectionRoute.GET();
+    const response = await collectionRoute.GET(new Request("http://localhost/api/settings"));
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
       settings: { key: string; value: unknown }[];
@@ -143,7 +143,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
 
   it("PATCH /settings applies a map in one transaction, all-or-nothing — AC2", async () => {
     const before = await collectionRoute
-      .GET()
+      .GET(new Request("http://localhost/api/settings"))
       .then((r) => r.json() as Promise<{ revision: string }>);
 
     const response = await collectionRoute.PATCH(
@@ -159,7 +159,7 @@ describeIfDb("settings HTTP routes against Postgres", () => {
     expect(patched.settings.map((s) => s.value).sort()).toEqual([42, true].sort());
 
     const after = await collectionRoute
-      .GET()
+      .GET(new Request("http://localhost/api/settings"))
       .then((r) => r.json() as Promise<{ revision: string }>);
     expect(BigInt(after.revision)).toBe(BigInt(before.revision) + 1n);
   });

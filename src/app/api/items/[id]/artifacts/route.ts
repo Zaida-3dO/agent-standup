@@ -11,33 +11,38 @@
 // see `_shared/respond.ts`'s header.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../../../_shared/respond";
+import {
+  httpCaller,
+  withRequestId,
+  invalidJsonResponse,
+  serviceErrorResponse,
+} from "../../../_shared/respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   let body: Record<string, unknown>;
   try {
     const parsed = (await request.json()) as unknown;
     body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
-    const artifact = await service.call(
-      "record_artifact",
-      { ...body, itemId: id },
-      { caller: { transport: "http" } },
-    );
+    const artifact = await service.call("record_artifact", { ...body, itemId: id }, { caller });
     // `createdAt` is a `Date`; everything else the operation returns is a
     // string, a number or null. There is no bigint in this shape — unlike an
     // appended event, whose `id`/`txId` need `serializeAppendedEvent` — so
     // the row serialises as-is apart from the timestamp.
-    return NextResponse.json(
-      { artifact: { ...artifact, createdAt: artifact.createdAt.toISOString() } },
-      { status: 201 },
+    return withRequestId(
+      NextResponse.json(
+        { artifact: { ...artifact, createdAt: artifact.createdAt.toISOString() } },
+        { status: 201 },
+      ),
+      requestId,
     );
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

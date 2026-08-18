@@ -10,28 +10,36 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "./respond";
+import { httpCaller, withRequestId } from "../_shared/respond";
 import { parseBooleanParam } from "../_shared/query";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
-      { status: 400 },
+    return withRequestId(
+      NextResponse.json(
+        {
+          error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] },
+        },
+        { status: 400 },
+      ),
+      requestId,
     );
   }
 
   try {
-    const item = await service.call("create_item", body, { caller: { transport: "http" } });
-    return NextResponse.json({ item }, { status: 201 });
+    const item = await service.call("create_item", body, { caller });
+    return withRequestId(NextResponse.json({ item }, { status: 201 }), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const url = new URL(request.url);
   const input: Record<string, unknown> = {};
 
@@ -58,9 +66,9 @@ export async function GET(request: Request) {
   if (cursor !== null) input.cursor = cursor;
 
   try {
-    const result = await service.call("list_items", input, { caller: { transport: "http" } });
-    return NextResponse.json(result);
+    const result = await service.call("list_items", input, { caller });
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

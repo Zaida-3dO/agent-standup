@@ -9,6 +9,7 @@
 // folded in there.
 import { describe, expect, it } from "vitest";
 import { HTTP_ROUTES, createHttpBinding } from "@/lib/cli";
+import { REQUEST_ID_HEADER } from "@/lib/request-id-header";
 
 /** Captures the request the binding built, and answers with a canned response. */
 function capture(response: Response) {
@@ -112,6 +113,34 @@ describe("the request the http binding builds", () => {
     expect(headers["X-Standup-Actor"]).toBe("user-a");
     // In the body they would fail the operation schema's `.strict()` parse.
     expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ title: "t" });
+  });
+
+  it("sends the request id it labels its own log lines with — MILESTONES.md #129", async () => {
+    // The client half of end-to-end correlation. This binding logs failures
+    // against an id it mints per call; sending that same id is what lets the
+    // server's lines for the call be found next to the client's, instead of
+    // the two processes each labelling the same call differently.
+    const { seen, fetch } = capture(json({ item: {} }));
+    const binding = createHttpBinding({ baseUrl: "https://example.test", fetch });
+    await binding.invoke("create_item", { title: "t" });
+
+    const headers = seen[0]?.init.headers as Record<string, string>;
+    expect(headers[REQUEST_ID_HEADER]).toMatch(/^[0-9a-f-]{36}$/);
+    // A header, not a body field — the same reason the session and actor
+    // travel as headers: it is who is calling, not part of the input, and a
+    // body field would fail the operation's `.strict()` parse.
+    expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ title: "t" });
+  });
+
+  it("gives each call its own id, so two calls never share one", async () => {
+    const { seen, fetch } = capture(json({ item: {} }));
+    const binding = createHttpBinding({ baseUrl: "https://example.test", fetch });
+    await binding.invoke("create_item", { title: "one" });
+    await binding.invoke("create_item", { title: "two" });
+
+    const first = (seen[0]?.init.headers as Record<string, string>)[REQUEST_ID_HEADER];
+    const second = (seen[1]?.init.headers as Record<string, string>)[REQUEST_ID_HEADER];
+    expect(first).not.toBe(second);
   });
 });
 

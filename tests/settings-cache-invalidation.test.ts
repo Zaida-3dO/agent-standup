@@ -158,7 +158,7 @@ describeIfDb("a settings write is visible to the next read, with no sleep", () =
     const held = live.settingsCache.peek();
 
     await readSetting("budget.enabled");
-    await collectionRoute.GET();
+    await collectionRoute.GET(new Request("http://localhost/api/settings"));
 
     // The complement that stops "invalidate on every call" from passing the
     // tests above. A read is not a change, and discarding the snapshot on

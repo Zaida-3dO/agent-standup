@@ -3,20 +3,26 @@
 // closed", is produced by the service and rendered unedited.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse } from "../_shared/respond";
+import {
+  invalidJsonResponse,
+  serviceErrorResponse,
+  httpCaller,
+  withRequestId,
+} from "../_shared/respond";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
-    const result = await service.call("backfill", body, { caller: { transport: "http" } });
-    return NextResponse.json(result, { status: 200 });
+    const result = await service.call("backfill", body, { caller });
+    return withRequestId(NextResponse.json(result, { status: 200 }), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

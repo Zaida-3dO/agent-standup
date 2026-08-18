@@ -3,23 +3,29 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
+  httpCaller,
+  withRequestId,
   invalidJsonResponse,
   serializeAppendedEvent,
   serviceErrorResponse,
 } from "../_shared/respond";
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
-    const event = await service.call("checkpoint", body, { caller: { transport: "http" } });
-    return NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 });
+    const event = await service.call("checkpoint", body, { caller });
+    return withRequestId(
+      NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 }),
+      requestId,
+    );
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

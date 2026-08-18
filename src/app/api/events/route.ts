@@ -14,10 +14,11 @@
 // are refused, with the same `invalid_input` any other adapter would give.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { serviceErrorResponse } from "../items/respond";
+import { httpCaller, withRequestId, serviceErrorResponse } from "../items/respond";
 import { parseBooleanParam } from "../_shared/query";
 
 export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const url = new URL(request.url);
   const input: Record<string, unknown> = {};
 
@@ -40,9 +41,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    const events = await service.call("get_events", input, { caller: { transport: "http" } });
-    return NextResponse.json(events);
+    const events = await service.call("get_events", input, { caller });
+    return withRequestId(NextResponse.json(events), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }

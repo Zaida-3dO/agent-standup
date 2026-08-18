@@ -3,30 +3,38 @@
 // ../repos/route.ts.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, readJsonBody, serviceErrorResponse } from "../admin-respond";
+import {
+  httpCaller,
+  withRequestId,
+  invalidJsonResponse,
+  readJsonBody,
+  serviceErrorResponse,
+} from "../admin-respond";
 
 export async function GET(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const url = new URL(request.url);
   const includeArchived = url.searchParams.get("includeArchived");
   const input: Record<string, unknown> = {};
   if (includeArchived !== null) input.includeArchived = includeArchived === "true";
 
   try {
-    const result = await service.call("list_areas", input, { caller: { transport: "http" } });
-    return NextResponse.json(result);
+    const result = await service.call("list_areas", input, { caller });
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
 
 export async function POST(request: Request) {
+  const { requestId, caller } = httpCaller(request);
   const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse();
+  if (body === null) return invalidJsonResponse(requestId);
 
   try {
-    const area = await service.call("create_area", body, { caller: { transport: "http" } });
-    return NextResponse.json({ area }, { status: 201 });
+    const area = await service.call("create_area", body, { caller });
+    return withRequestId(NextResponse.json({ area }, { status: 201 }), requestId);
   } catch (error) {
-    return serviceErrorResponse(error);
+    return serviceErrorResponse(error, requestId);
   }
 }
