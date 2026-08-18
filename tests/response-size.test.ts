@@ -256,7 +256,7 @@ describe("the guard is wired into the runtime, not merely available", () => {
   // the test above.
   it("returns a read that fits, through the same path", async () => {
     const runtime = runtimeReturning(heavyRows(2, 100));
-    const result = (await runtime.call("list_items", { full: true })) as { items: unknown[] };
+    const result = await runtime.call("list_items", { full: true });
     expect(result.items).toHaveLength(2);
   });
 
