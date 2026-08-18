@@ -236,7 +236,7 @@ describeIfDb("progress_report against Postgres", () => {
   });
 
   describe("the bullets, read from what sessions already recorded", () => {
-    it("uses the newest checkpoint headline as the row's first bullet", async () => {
+    it("uses a checkpoint headline as the row's first bullet", async () => {
       // The bullets are derived rather than authored — that is the variance
       // the row exists to remove. Fails if the checkpoint lookup is dropped
       // and every row falls back to its state.
@@ -254,6 +254,33 @@ describeIfDb("progress_report against Postgres", () => {
       expect(result.rows[0]?.bullets[0]).toBe(
         "Initial review found issues and returned it to the builder.",
       );
+    });
+
+    it("takes the NEWEST checkpoint, not the first one written", async () => {
+      // Two checkpoints, deliberately. A single-checkpoint case cannot tell
+      // newest from oldest — it passes just as happily against `ORDER BY id
+      // ASC`, which was how this ordering originally shipped unpinned. The
+      // ordering is what the report's whole "where is this up to" claim
+      // rests on: an item that has moved three times would otherwise be
+      // described by the state it was in first.
+      const sessionId = "session-checkpoint-order";
+      const itemId = await heldItem(sessionId);
+
+      await runtime.call("checkpoint", {
+        itemId,
+        sessionId,
+        headline: "The oldest checkpoint on this item.",
+        body: "Written first.",
+      });
+      await runtime.call("checkpoint", {
+        itemId,
+        sessionId,
+        headline: "The newest checkpoint on this item.",
+        body: "Written second.",
+      });
+
+      const result = await report(sessionId);
+      expect(result.rows[0]?.bullets[0]).toBe("The newest checkpoint on this item.");
     });
 
     it("says so plainly when no checkpoint has been recorded", async () => {

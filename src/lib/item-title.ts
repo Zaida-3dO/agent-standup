@@ -66,6 +66,26 @@ export interface TitleFinding {
 const CROSS_REFERENCE = /(^|[\s(([])(#\d+|PR-\d+|§\d+(\.\d+)?[a-z]?)\b/;
 
 /**
+ * A token that is a lowercase-initial product name rather than code.
+ *
+ * A whole family of real product names opens lower-case and then capitalises,
+ * and structurally that is indistinguishable from `camelCase` — which is why
+ * these are recognised by shape and set aside, rather than left to be flagged.
+ * Two shapes cover it: one to three lower-case letters followed by an all-caps
+ * run, and a single lower-case letter followed by one capitalised word.
+ *
+ * This names *shapes*, never the actual brands. The repository's rule against
+ * writing real values into a matcher applies to product names as much as to
+ * anything else, and a list of them would need extending forever.
+ *
+ * The bound is what keeps it honest: a real identifier carries at least two
+ * lower-case letters before its capital and more after it, so `appendEvent`,
+ * `toItemRecord`, `getUserById`, `normalizeEmDash`, `isoOrString` and `myWork`
+ * match neither shape. Checked against those exact names.
+ */
+const LOWERCASE_INITIAL_BRAND = /^(?:[a-z]{1,3}[A-Z]+|[a-z][A-Z][a-z]+)$/;
+
+/**
  * A code identifier: `camelCase`, `snake_case`, `dotted.path`, `fn()`.
  *
  * Each alternative requires evidence that survives being read aloud — an
@@ -73,8 +93,32 @@ const CROSS_REFERENCE = /(^|[\s(([])(#\d+|PR-\d+|§\d+(\.\d+)?[a-z]?)\b/;
  * characters, a dot between two lower-case runs, or a call's parentheses. A
  * plain capitalised word ("Inbox", "Postgres") matches none of them, which is
  * the property that keeps this off ordinary prose.
+ *
+ * Two alternatives are bounded at **two** lower-case characters rather than
+ * one, and the difference is load-bearing. `[a-z]+[A-Z]` fires on every
+ * lowercase-initial product name, and `[a-z]+\.[a-z]+` fires on ordinary
+ * abbreviations such as a sentence's "e.g." or a time's "a.m." — neither of
+ * which is code. Requiring two either side clears both without losing a real
+ * identifier, since one short enough to fall in the gap would be too short to
+ * read as an identifier anyway.
  */
-const CODE_IDENTIFIER = /\b(\w+[a-z0-9]\w*_\w+|[a-z]+[A-Z]\w*|[a-z]+\.[a-z]+\w*|\w+\(\))/;
+const CODE_IDENTIFIER = /\b(\w+[a-z0-9]\w*_\w+|[a-z]{2,}[A-Z]\w*|[a-z]{2,}\.[a-z]{2,}\w*|\w+\(\))/;
+
+/**
+ * `title` with any lowercase-initial product name removed, for the identifier
+ * check alone.
+ *
+ * Dropping the token is simpler than teaching one pattern to carve an
+ * exception out of another, and it is deliberately scoped: the words are
+ * removed from what `CODE_IDENTIFIER` reads, never from the title itself,
+ * which reaches the caller untouched.
+ */
+function withoutBrandTokens(title: string): string {
+  return title
+    .split(/\s+/)
+    .filter((token) => !LOWERCASE_INITIAL_BRAND.test(token.replace(/[^\w]/g, "")))
+    .join(" ");
+}
 
 /**
  * A file path or a file with an extension: `src/lib/thing.ts`, `run.mjs`.
@@ -122,7 +166,7 @@ export function findTitleFindings(title: string, field = "title"): TitleFinding[
         "The title carries a bare issue, PR or section number, which means nothing to someone reading the board. Say what the work achieves and keep the reference in the body.",
     });
   }
-  if (CODE_IDENTIFIER.test(title)) {
+  if (CODE_IDENTIFIER.test(withoutBrandTokens(title))) {
     findings.push({
       field,
       rule: "code_identifier",

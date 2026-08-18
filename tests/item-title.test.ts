@@ -150,6 +150,54 @@ describe("findTitleFindings — the prose it must leave alone", () => {
     expect(findTitleFindings("Users cannot log in. Fix it")).toEqual([]);
   });
 
+  // Lowercase-initial product names — the review's finding, pinned by the
+  // exact strings it failed on. These are structurally identical to
+  // camelCase, so a matcher bounded at one lower-case character flags every
+  // one of them. That is the false-positive class that would teach a caller
+  // to ignore the advice entirely, which costs more than the check is worth.
+  const BRANDS = [
+    "iPhone users cannot upload a photo",
+    "eBay import drops the second address line",
+    "macOS build fails on first run",
+    "eSIM activation fails to complete",
+    "iOS share sheet is blank",
+    "The iPod page returns an error",
+  ];
+
+  for (const title of BRANDS) {
+    it(`stays silent on a lowercase-initial product name: ${JSON.stringify(title)}`, () => {
+      expect(findTitleFindings(title)).toEqual([]);
+    });
+  }
+
+  // The other half of that finding: an abbreviation with a dot is not a
+  // dotted path. Fails if the dotted alternative is loosened back to one
+  // character either side.
+  it("does not treat an ordinary abbreviation as a dotted path", () => {
+    expect(findTitleFindings("Handle the empty state, e.g. a new account")).toEqual([]);
+    expect(findTitleFindings("Stop sending email at 3 a.m. to new users")).toEqual([]);
+  });
+
+  // The bound that makes the two above safe must not have swallowed the
+  // identifiers it exists to catch. These are real names from this codebase,
+  // and every one must still be flagged — the narrowing is only worth having
+  // if it costs no true positives.
+  it("still flags real identifiers after the narrowing", () => {
+    for (const title of [
+      "route writes through appendEvent",
+      "call toItemRecord for every row",
+      "fix getUserById in the resolver",
+      "update normalizeEmDash to cover more cases",
+      "use myWork instead of the item filter",
+      "fix isoOrString for a Date input",
+    ]) {
+      expect(
+        findTitleFindings(title).map((f) => f.rule),
+        title,
+      ).toContain("code_identifier");
+    }
+  });
+
   // A date is not a section reference, and a version is not a code path.
   it("does not fire on dates or version numbers", () => {
     expect(findTitleFindings("Freeze the 2026 pricing tier")).toEqual([]);

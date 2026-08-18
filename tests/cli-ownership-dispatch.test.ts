@@ -30,6 +30,7 @@ describe("<noun> <verb> resolves to the right operation", () => {
     [["session", "heartbeat", "item-1"], "heartbeat"],
     [["session", "checkpoint", "item-1"], "checkpoint"],
     [["session", "my-work"], "my_work"],
+    [["session", "progress"], "progress_report"],
     [["item", "note", "item-1"], "note"],
     [["item", "orientation", "item-1"], "orientation"],
     [["crew", "name"], "get_crew_name"],
@@ -182,6 +183,53 @@ describe("session my-work — sessionId only, no positional", () => {
     const binding = recorder();
     await runCommand(["session", "my-work"], binding);
     expect(binding.calls).toEqual([{ operation: "my_work", input: {} }]);
+  });
+});
+
+describe("session progress — the report's own switch (MILESTONES.md #136)", () => {
+  it("sends sessionId and includeCompleted false when the switch is absent", async () => {
+    const binding = recorder();
+    await runCommand(["session", "progress", "--session", "s1"], binding);
+    expect(binding.calls).toEqual([
+      { operation: "progress_report", input: { sessionId: "s1", includeCompleted: false } },
+    ]);
+  });
+
+  // The finding this test exists for: `--include-completed` is a bare switch,
+  // and `passThroughFlags` refuses a valueless flag outright. Without
+  // `booleanFlag` reading it first, the flag has **no spelling that reaches
+  // the operation** — bare is refused by the adapter, and `=true` arrives as
+  // the string the strict schema then rejects. Fails if that wiring is
+  // dropped, which is exactly how it shipped unreachable.
+  it("sends includeCompleted true for the bare switch", async () => {
+    const binding = recorder();
+    await runCommand(["session", "progress", "--session", "s1", "--include-completed"], binding);
+    expect(binding.calls).toEqual([
+      { operation: "progress_report", input: { sessionId: "s1", includeCompleted: true } },
+    ]);
+  });
+
+  // A switch that took a value would be a second spelling for the same
+  // thing, and the one the schema rejects. Refused by the adapter instead,
+  // where the message can say so.
+  it("refuses a value on the switch rather than passing a string through", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(
+      ["session", "progress", "--session", "s1", "--include-completed", "true"],
+      binding,
+    );
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  // The switch must not also arrive under its raw flag name — that is what
+  // declaring it consumed prevents, and `.strict()` would refuse the call if
+  // it leaked through.
+  it("does not pass the raw flag name through beside the mapped field", async () => {
+    const binding = recorder();
+    await runCommand(["session", "progress", "--session", "s1", "--include-completed"], binding);
+    const input = binding.calls[0]?.input as Record<string, unknown>;
+    expect(input["include-completed"]).toBeUndefined();
   });
 });
 
