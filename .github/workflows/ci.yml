@@ -284,35 +284,34 @@ jobs:
   mutation-testing:
     name: Mutation testing (changed files)
     needs: [changes, build-and-test]
-    # PAUSED. `false &&` disables this job without deleting it; drop those
-    # two characters to switch it back on, and the gate below follows
-    # automatically because it reads this job's result — a paused job
-    # reports `skipped`, which that gate passes, and a running one reports
-    # `success` or `failure`, which it judges on the merits.
+    # What this job answers, and nothing else in the pipeline does: would a
+    # test actually fail if the behaviour it names regressed? A test that
+    # asserts nothing passes the ordinary suite, reads as coverage in a diff,
+    # and has survived both a green run and a human review here. Mutation
+    # testing is the only check that can tell the two apart, because it is
+    # the only one that changes the source and demands the suite notice.
     #
-    # Why: this is the slowest job in the pipeline by a wide margin (22-57
-    # min) and it runs on any source change, which is most pull requests.
-    # During a period of heavy parallel work that cost is paid on every
-    # branch at once, and the pipeline's latency is what decides how fast
-    # work merges.
+    # **Scoped to the source files a pull request actually changed**, not the
+    # whole tree. Mutation testing costs roughly the full test suite per
+    # mutant, so a whole-tree run scales with the repository rather than with
+    # the diff and would grow without bound; a changed-files scope keeps the
+    # cost proportional to what is being reviewed, which is also where a
+    # hollow test is most likely to have just been written. `changes.source`
+    # is what makes it skip entirely on a docs-only pull request.
     #
-    # What is given up while it is off, stated plainly because it is the
-    # whole reason the job exists: nothing checks whether a test would
-    # actually fail if the behaviour it names regressed. A test that
-    # asserts nothing passes the ordinary suite, reads as coverage in a
-    # diff, and survived both a green run and a human review here before —
-    # that is what this was built to catch. The exposure is largest during
-    # exactly the kind of push that motivated pausing it, because that is
-    # when the most tests are written with the least attention per line.
+    # **Gated on `build-and-test` already being green.** Mutation testing
+    # against a build that does not pass its own tests spends the slowest job
+    # in the pipeline restating what the fastest one already said — every
+    # mutant "survives" a suite that was failing anyway, so the result is
+    # noise rather than a weaker signal.
     #
-    # Re-enable when the parallel push settles, and see the milestone row
-    # that tracks turning it back on.
-    #
-    # Scoped to source changes and gated on the ordinary suite already
-    # being green — running mutation testing against a build that doesn't
-    # even pass its own tests wastes the slowest job in the pipeline
-    # telling us something the fast one already said.
-    if: false && needs.changes.outputs.source == 'true' && needs.build-and-test.result == 'success'
+    # **It is the slowest job here by a wide margin — 22-57 minutes** against
+    # single-digit minutes for everything else, and pipeline latency is what
+    # decides how fast work merges. That cost is the reason for both scopes
+    # above; it is worth paying because the thing it catches is invisible to
+    # every cheaper check, and a hollow test is worse than a missing one — it
+    # is a missing test with a green tick beside it.
+    if: needs.changes.outputs.source == 'true' && needs.build-and-test.result == 'success'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -415,28 +414,27 @@ jobs:
       # `skipped` and `failure` are different facts and this gate has to tell
       # them apart, because only one of them is a statement about the code.
       #
-      # A `skipped` result means the job never ran — which, while the job
-      # above is paused, is what happens on every pull request that touches
-      # source. Treating that as a failure makes the pause unusable: the
-      # slow job stops running and the required gate blocks every source
-      # change anyway, so the pipeline gets the pause's loss of coverage
-      # *and* keeps a red check. That is the shape this hits in practice —
-      # a pull request whose own suite is green, whose Docker build passes,
-      # and which cannot merge because a job that was deliberately switched
-      # off did not report success.
+      # A `skipped` result on a source change means the mutation job's own
+      # `if:` did not hold — and with `changes.source == 'true'` already
+      # established here, the only remaining way for that to happen is
+      # `build-and-test` not having succeeded. That case is already red on
+      # `Build & test`, which is itself required, so failing here as well
+      # would add a second red check reporting the same fact while telling
+      # whoever reads it to look in the wrong place. It is passed here on the
+      # strength of that other gate, not forgiven.
       #
-      # A `failure` result still fails, unconditionally and with no
-      # reference to the pause. That is the case where mutation testing ran
-      # and found surviving mutants, and it must never be softened — a gate
-      # that forgave a real failure because some *other* run had been paused
-      # would be worse than not having the gate.
+      # A `failure` result still fails, unconditionally. That is the case
+      # where mutation testing ran and found surviving mutants, and it must
+      # never be softened — the whole value of the job is that it fails on
+      # something no cheaper check can see.
       #
-      # Re-enabling the job needs no change here: it will then report
-      # `success` or `failure`, and `skipped` stops occurring on source
-      # changes at all.
-      - name: Pass — mutation testing is paused, so it did not run
+      # The branch is also what keeps the two jobs independently editable: any
+      # future narrowing of the mutation job's `if:` shows up here as a pass
+      # with a stated reason rather than as a required check nothing in the
+      # pull request can clear.
+      - name: Pass — mutation testing did not run, and the suite it follows is already red
         if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result == 'skipped'
-        run: echo "Mutation testing did not run (the job is paused). See the milestone row that tracks switching it back on."
+        run: echo "Mutation testing did not run. It follows 'Build & test', which is required and reports that failure itself."
       - name: Fail — mutation testing ran and did not pass
         if: >-
           needs.changes.outputs.source == 'true' &&

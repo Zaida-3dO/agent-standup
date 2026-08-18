@@ -1,9 +1,10 @@
 # Production deploy. The image is PULLED from GHCR, never built here — no
 # `build:` block, no local Dockerfile context, no bind mounts. This file is
-# deliberately generic — a single service expecting a reachable Postgres via
-# DATABASE_URL — so it works wherever it's dropped. On a host that groups
-# several apps under one shared compose file, fold this service block (and a
-# Postgres block alongside it) into that file instead of running this one
+# deliberately generic — the app expecting a reachable Postgres via
+# DATABASE_URL, plus the scheduler that drives the liveness sweep — so it
+# works wherever it's dropped. On a host that groups
+# several apps under one shared compose file, fold these service blocks (and a
+# Postgres block alongside them) into that file instead of running this one
 # standalone; the shape is the same either way, only the file it lives in
 # changes. See README.md's Deployment section for the details that matter
 # either way (host port, DB readiness ordering, health check).
@@ -72,3 +73,58 @@ services:
       # otherwise report as unhealthy while it's actually still booting
       # correctly.
       start_period: 240s
+
+  # The liveness sweep needs something to run it on a schedule, and that
+  # something belongs to the deployment rather than to the application —
+  # `src/lib/service/operations/sweep.ts` argues the case in full, and this
+  # service is what honours it. In short: a timer inside the bundle runs once
+  # per replica, so it fires at a multiple of the intended rate on a scaled
+  # deployment and at zero times if the replica holding it restarts, and
+  # neither failure produces any output to notice. A separate process running
+  # the ordinary endpoint has exactly one of it, wherever the deployment
+  # decides to put it.
+  #
+  # **It is not optional plumbing.** Without a schedule the sweep is a
+  # reclamation policy the system describes but never performs: a claim held
+  # by a session that crashed is refused to everyone else, permanently, and
+  # the only symptom is an item nobody can take. What it costs to leave off
+  # was measured — a first manual sweep on an installation running without
+  # one released 174 stale claims that had been sitting for three days, every
+  # one of them blocking ownership of its item.
+  #
+  # It runs the SAME image as the app — no second thing to build, version or
+  # pull, and the script it runs is already in there — with the server
+  # entrypoint replaced by the scheduler. It talks to the app over HTTP
+  # rather than to Postgres directly, so it needs no database credential and
+  # inherits every guard, event and audit row the operation already writes.
+  #
+  # Drop this whole service if your host already has a scheduler you would
+  # rather use; README.md's Deployment section gives the cron equivalent. The
+  # application does not know which one is calling it.
+  sweep-scheduler:
+    container_name: agent-standup-sweep
+    image: ${GHCR_IMAGE:?Set GHCR_IMAGE in .env.production, e.g. ghcr.io/OWNER/agent-standup:latest}
+    restart: unless-stopped
+    command: ["node", "scripts/sweep-schedule.mjs"]
+    depends_on:
+      app:
+        # The scheduler survives the app being down — a failed sweep is logged
+        # and retried on the next tick — so this orders startup for tidiness
+        # rather than correctness, and deliberately waits for `healthy` rather
+        # than `started` so the first tick is not spent on a certain failure
+        # while the app is still applying migrations.
+        condition: service_healthy
+    environment:
+      # The app's address on the compose network, not the published host port
+      # — the two differ whenever APP_PORT is remapped, and the container port
+      # is the one that is always 3000.
+      STANDUP_URL: ${SWEEP_STANDUP_URL:-http://app:3000}
+      # How often to sweep, and how long one sweep may take. Given numeric
+      # defaults here rather than `${VAR:-}` for the same reason the app's
+      # DB_WAIT_* knobs are: scripts/lib/sweep-schedule.mjs treats an
+      # explicitly-set-but-invalid value (including "") as a configuration
+      # error and refuses to start, so an unset variable must resolve to a
+      # real number here, never to "".
+      SWEEP_INTERVAL_SECONDS: ${SWEEP_INTERVAL_SECONDS:-300}
+      SWEEP_TIMEOUT_SECONDS: ${SWEEP_TIMEOUT_SECONDS:-60}
+      TZ: ${TZ:-UTC}
