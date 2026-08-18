@@ -1190,6 +1190,63 @@ Two things do **not** need revisiting, whatever #128 decides:
 - **An unreadable payload allows.** That is a client failure, and refusing every call because the
   agent tool changed its payload shape is the same all-cost trade in a different disguise.
 
+## 17. A follow-up is a sibling, not a child (2026-08-15)
+
+**The rule:** an item becomes a **subtask** only if the parent genuinely cannot close until it is
+done. Everything else discovered by finished work — including every follow-up a review raises — is a
+**sibling** under the same project.
+
+The owner's phrasing, which is the specification: *"the task should only be added as a subtask if it
+is considered a blocker for the parent — the parent cannot and should not be closed until the subtask
+is done. Otherwise, even if it is a follow-up, it should be added as a sibling, not a subtask. That
+way, since it is a fairly separate task, it is not really considered a blocker to the first task; you
+can drive the first task all the way to completion and then still have a follow-up task committed, so
+that we do not accidentally drop the follow-ups."*
+
+**This is not a guard change, and that is the point.** Two orchestrator sessions reached for
+`parentId` on the same day, independently, and one of them deadlocked five merged PRs with it:
+`hierarchy.no_finish_with_actionable_child` says the parent cannot finish while the child is open,
+and `merge.requires_linked_followup` says the review's linked follow-up must *be* open. One item
+cannot satisfy both. It read as two guards in irreconcilable conflict and it was nothing of the kind
+— both guards were enforcing something true, and the deadlock was entirely a consequence of the
+parenting choice. Made siblings, both stay satisfied permanently, with no reopening and no ordering
+games.
+
+**Why the sibling is the honest shape, not merely the working one.** Parenting a follow-up under the
+merged task asserts a containment that is false: the PR is genuinely complete without it. There is a
+second, independent reason — as children, follow-ups are invisible in a top-level board view and sit
+permanently open under a permanently open parent, whereas as siblings they are real queue items that
+can be prioritised, scheduled and closed on their own. **`followUpItemId` is a link, not a
+hierarchy**, and conflating the two is what produced the deadlock.
+
+**What this decision does not settle, and deliberately leaves open.** A sibling records that the
+follow-up exists; it does not record **where it came from**. The two items sit under one project with
+nothing saying one produced the other, so the provenance is as absent as it would be in a brand-new
+unrelated item — and six weeks later the row exists and nobody can say why. The proposal on the table
+is a **`references` relation**: many-to-many, no state derivation, no effect on the parent's
+completion, so a follow-up can point at its origin without inheriting its lifecycle. **Sibling is the
+fix; a reference is the missing half**, and anything built there should make the sibling arrangement
+what it looks like when it works.
+
+**It also gives I5 somewhere to point.** That entry — a reviewer returned `lgtm_with_followups`, a
+merge was requested, and no item was ever minted — is catalogued as the most expensive situation in
+`INTERVENTIONS.md`, because the work was already understood and then dropped. Without this rule the
+honest instruction it could offer was *"mint an item, but not as a child, and accept that its origin
+is now only in a note"*. Now it can say *sibling under the same project* and mean it. Whether
+`lgtm_with_followups` should mint them **automatically** from the review artifact is worth deciding
+alongside the reference relation: the verdict already names them, and a human or an orchestrator
+re-typing them into new items is precisely the step where they get lost.
+
+**The measurement that made this worth settling rather than leaving to judgement:** nine PRs merged
+in one day produced roughly fifteen follow-ups, which went into one orchestrator's context and then
+into GitHub issues via a sweep crew dispatched specifically to stop them evaporating. That worked
+because someone remembered to dispatch it — and the whole argument for this system over a markdown
+file is that it does not depend on someone remembering.
+
+From `feedback/2026-08-15-followups-need-a-reference-not-a-parent.md`,
+`feedback/2026-08-15-complete-item-follow-up-guard-has-no-satisfiable-path.md` and
+`feedback/interventions.md`.
+
 ## 14. Still open
 
 1. **Exact band numbers** beyond the starting values above.
