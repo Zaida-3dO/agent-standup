@@ -167,3 +167,22 @@
   background: var(--surface-raised);
   color: var(--text-primary);
 }
+
+/* Saved board views — the reader's own destinations, below the fixed ones.
+   Separated by a rule rather than a gap alone, because the distinction being
+   drawn is "these are yours, those are the app's" and a gap reads as
+   spacing. */
+.savedViews {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-strong);
+}
+
+.savedViewsHeading {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

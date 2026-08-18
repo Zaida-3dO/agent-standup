@@ -24,6 +24,7 @@ import type { Profile } from "@/lib/profile/types";
 import { ProfilePicker } from "@/components/profile-picker/ProfilePicker";
 import { TopBar } from "@/components/top-bar/TopBar";
 import { SidebarView } from "@/components/sidebar/SidebarView";
+import type { SavedViewLink } from "@/components/sidebar/SavedViewLinks";
 import { allowsWithoutProfile } from "@/lib/settings-page/first-run";
 import { crumbsFor } from "@/lib/nav/breadcrumb";
 import { emptyCounts, type NavCounts } from "@/lib/nav/counts";
@@ -57,6 +58,14 @@ export interface AppShellViewProps {
   readonly onCreateSubmit: () => void;
   /** The sidebar's live badge numbers. Defaults to zeroes, which render as no badges at all. */
   readonly counts?: NavCounts;
+  /**
+   * The reader's pinned board views (MILESTONES.md #75). Passed straight
+   * through to the sidebar, which renders them as ordinary links — the shell
+   * never learns what a filter is.
+   */
+  readonly savedViews?: readonly SavedViewLink[];
+  /** The full path and query being rendered, so a pinned view can mark itself current. */
+  readonly currentHref?: string | null;
   readonly navOpen?: boolean;
   readonly onOpenNav?: () => void;
   readonly onCloseNav?: () => void;
@@ -82,6 +91,8 @@ export function AppShellView({
   onCreateDraftChange,
   onCreateSubmit,
   counts,
+  savedViews,
+  currentHref,
   navOpen = false,
   onOpenNav,
   onCloseNav,
@@ -149,6 +160,8 @@ export function AppShellView({
         counts={counts ?? emptyCounts()}
         sheetOpen={navOpen}
         onCloseSheet={onCloseNav ?? (() => {})}
+        savedViews={savedViews}
+        currentHref={currentHref}
       />
       <div className={styles.column}>
         <TopBar

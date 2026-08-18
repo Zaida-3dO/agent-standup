@@ -12,6 +12,7 @@
 import { X } from "lucide-react";
 import type { NavCounts } from "@/lib/nav/counts";
 import { SidebarNav } from "./SidebarNav";
+import { SavedViewLinks, type SavedViewLink } from "./SavedViewLinks";
 import styles from "./Sidebar.module.css";
 
 export interface SidebarViewProps {
@@ -20,9 +21,25 @@ export interface SidebarViewProps {
   /** Whether the mobile sheet is open. Ignored above the breakpoint, where the rail is always visible. */
   readonly sheetOpen: boolean;
   readonly onCloseSheet: () => void;
+  /**
+   * The reader's pinned board views (MILESTONES.md #75), rendered below the
+   * fixed destinations. Optional and defaulting to none, so a shell rendered
+   * without them — a test, or a build where the setting is unset — is the
+   * sidebar exactly as it was rather than a section reading "no views".
+   */
+  readonly savedViews?: readonly SavedViewLink[];
+  /** The full path AND query being rendered, so a pinned view can mark itself current. */
+  readonly currentHref?: string | null;
 }
 
-export function SidebarView({ pathname, counts, sheetOpen, onCloseSheet }: SidebarViewProps) {
+export function SidebarView({
+  pathname,
+  counts,
+  sheetOpen,
+  onCloseSheet,
+  savedViews = [],
+  currentHref,
+}: SidebarViewProps) {
   return (
     <>
       {/* The rail. CSS hides it under the breakpoint rather than a JS
@@ -33,6 +50,7 @@ export function SidebarView({ pathname, counts, sheetOpen, onCloseSheet }: Sideb
       <aside className={styles.rail} aria-label="Main navigation">
         <div className={styles.brand}>Agent Standup</div>
         <SidebarNav pathname={pathname} counts={counts} />
+        <SavedViewLinks views={savedViews} currentHref={currentHref} />
       </aside>
 
       {sheetOpen && (
@@ -62,6 +80,11 @@ export function SidebarView({ pathname, counts, sheetOpen, onCloseSheet }: Sideb
                 it just navigated to, so leaving it open would hide the
                 result of the reader's own action. */}
             <SidebarNav pathname={pathname} counts={counts} onNavigate={onCloseSheet} />
+            <SavedViewLinks
+              views={savedViews}
+              currentHref={currentHref}
+              onNavigate={onCloseSheet}
+            />
           </div>
         </div>
       )}

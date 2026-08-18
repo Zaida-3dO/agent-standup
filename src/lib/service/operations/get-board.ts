@@ -40,9 +40,36 @@
 // for a project too — an orchestrator can hold a project — so no kind
 // exclusion applies here.
 //
+// **`actor` — "whose idea it was" (#75).** An equality check on
+// `originPersonId`, the person an item was raised on behalf of. A separate
+// axis from `assignee` rather than a synonym: `assignee` moves every time a
+// claim changes hands and is absent entirely on unheld work, while an
+// origin is fixed at mint and always present on a person-originated item.
+// Both are meaningful for a project, so neither excludes a kind.
+//
 // **`search` — free text over `title`/`body` (#75).** A case-insensitive
 // substring match (`ILIKE`), `%`/`_`/`\` escaped so a literal percent sign
 // in the search text doesn't act as a wildcard.
+//
+// ⚠️ **Be precise about what this box is.** `ILIKE '%term%'` is unanchored,
+// so no B-tree can serve it; a trigram GIN index
+// (`Item_title_trgm_idx`/`Item_body_trgm_idx`, added with this filter's UI)
+// is what keeps it off a sequential scan of every body in the table.
+//
+// That makes it *fast*. It does not make it *ranked*. There is no relevance
+// ordering, no stemming and no phrase handling: matches come back in
+// whatever sort the caller asked for, which is a sort over matches rather
+// than by how well each one matches. Ranked search is its own row and wants
+// a `tsvector` column with `ts_rank` — a different index answering a
+// different question, not a tuning of this one. Said plainly here because a
+// reader who finds a GIN index on `body` could reasonably assume full-text
+// search already exists.
+//
+// **`sort`/`direction` (#75).** Four keys — priority, name, created,
+// updated — in either direction. The ordering AND the keyset cursor's
+// comparison both come from `../board/sort`, because they are one decision:
+// a cursor compared on a column the page is not ordered by draws each page
+// from a different sequence, silently skipping and repeating rows.
 //
 // **`includeTerminal` — finished work is off by default (#103).** The
 // completed column is the majority of a store that has been used for a
@@ -177,6 +204,15 @@ import {
   buildSliceNotice,
 } from "../board/slice";
 import { isItemState } from "../state-machine/states";
+import {
+  BOARD_SORT_KEYS,
+  BOARD_SORT_DIRECTIONS,
+  DEFAULT_BOARD_SORT,
+  DEFAULT_BOARD_SORT_DIRECTION,
+  cursorCondition,
+  cursorSelectColumn,
+  orderByClause,
+} from "../board/sort";
 import { areaFilterCondition } from "../items/area-filter";
 import {
   LIVE_BOARD_ASSIGNMENTS_SQL,
@@ -253,8 +289,39 @@ const inputSchema = z
     column: z.enum(BOARD_COLUMNS).optional(),
     /** "Who's on it" — matches a live assignment's `holderId` (person or agent crew name). */
     assignee: z.string().min(1).optional(),
+    /**
+     * "Whose idea it was" — matches `originPersonId`, the person an item was
+     * raised on behalf of (SCHEMA.md §1 `originType`/`originPersonId`).
+     *
+     * **Deliberately a different axis from `assignee`, not a synonym for
+     * it.** `assignee` answers "who is working on this now" and moves every
+     * time a claim changes hands; `actor` answers "who asked for this" and
+     * never changes. A board filtered to one person's requests and a board
+     * filtered to one person's current work are different boards, and
+     * collapsing them would leave the more stable of the two unreachable —
+     * an item nobody holds has no assignee at all, but it still has an
+     * origin.
+     */
+    actor: z.string().min(1).optional(),
     /** Free-text, case-insensitive substring match over `title` and `body`. */
     search: z.string().min(1).optional(),
+    /**
+     * What to order a page by (MILESTONES.md #75). Defaults to `created`,
+     * the order every board page was served in before this existed — a
+     * changed default would silently re-order every caller that never asked
+     * for a sort, including the CLI and the MCP adapter.
+     *
+     * The key and its direction are also what the keyset cursor compares
+     * on, so a caller paging a sorted column must pass the SAME sort with
+     * the cursor. Passing a cursor from one sort into another draws page
+     * two from a different sequence than page one — see `../board/sort`.
+     */
+    sort: z.enum(BOARD_SORT_KEYS).default(DEFAULT_BOARD_SORT),
+    /**
+     * Which way. **For `priority` this is read as a reader means it, not as
+     * the enum is stored**: `desc` puts P0 at the top. See `sqlDirection`.
+     */
+    direction: z.enum(BOARD_SORT_DIRECTIONS).default(DEFAULT_BOARD_SORT_DIRECTION),
     /**
      * Include the completed column — finished work. Off by default; see
      * the module header. Has no effect when `state` names a terminal state
@@ -377,7 +444,7 @@ export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "One paginated page of one board column, with that column's true total, and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee and search; pass full for whole records.",
+    "One paginated page of one board column, with that column's true total, and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee, actor and search; sortable by priority, name, created or updated in either direction; pass full for whole records.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
@@ -469,6 +536,14 @@ export const getBoard = defineOperation({
       sharedValues.push(input.assignee);
       paramIndex++;
     }
+    if (input.actor !== undefined) {
+      // A plain column comparison rather than an `EXISTS`, because origin is
+      // a single field on the row itself — unlike `assignee`, which has to
+      // reach into `Assignment` to find the live holder.
+      shared.push(`"originPersonId" = $${paramIndex}`);
+      sharedValues.push(input.actor);
+      paramIndex++;
+    }
     if (input.search !== undefined) {
       shared.push(
         `("title" ILIKE $${paramIndex} ESCAPE '\\' OR "body" ILIKE $${paramIndex} ESCAPE '\\')`,
@@ -504,9 +579,15 @@ export const getBoard = defineOperation({
     const projectEntries = new Map<BoardColumn, BoardEntry[]>();
     if (!projectsExcluded) {
       const projectWhere = [...shared, `"kind" = 'project'::"ItemKind"`];
+      // Sorted by the same key as the task pages, even though projects are
+      // read whole and prepended rather than merged into the cursor's
+      // sequence. They are still rows on the reader's screen: a board sorted
+      // by priority whose project block stayed in creation order would show
+      // an unsorted band above a sorted one, which reads as the sort having
+      // half-failed rather than as a deliberate split.
       const projectRows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
         `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" WHERE ${projectWhere.join(" AND ")}
-         ORDER BY "createdAt" DESC, "id" DESC`,
+         ${orderByClause(input.sort, input.direction)}`,
         ...sharedValues,
       );
       const projects: (BoardItemSummaryRecord | ItemRecord)[] = input.full
@@ -623,21 +704,26 @@ export const getBoard = defineOperation({
         ];
 
         if (input.cursor !== undefined) {
-          // Keyset pagination on `("createdAt", "id")`, both descending —
-          // the same key and tie-break `list_items` uses, so the two reads
-          // page identically and a reader of one is not surprised by the
-          // other. `id` breaks ties between rows created in the same
-          // millisecond, which `createdAt` alone cannot: without it, two
-          // items created together could interleave across pages or repeat
-          // depending on scan order.
-          const cursorRows = await ctx.db.$queryRawUnsafe<{ createdAt: Date | string }[]>(
-            `SELECT "createdAt" FROM "Item" WHERE "id" = $1`,
+          // Keyset pagination on `(<sort key>, "id")`, both in the sort's
+          // own direction — `id` breaks ties between rows sharing a sort
+          // value, which the sort column alone cannot. Without it, two items
+          // with the same priority (or the same title, or the same
+          // millisecond) could interleave across pages or repeat depending
+          // on scan order.
+          //
+          // **The cursor reads whichever column the sort orders by**, not
+          // `createdAt` always. Comparing on a column the page is not
+          // ordered by draws page two from a different sequence than page
+          // one, which skips and duplicates rows while every individual
+          // query stays perfectly valid — see `../board/sort`.
+          const cursorRows = await ctx.db.$queryRawUnsafe<{ sortValue: unknown }[]>(
+            `SELECT ${cursorSelectColumn(input.sort)} AS "sortValue" FROM "Item" WHERE "id" = $1`,
             input.cursor,
           );
           const cursorRow = cursorRows[0];
           if (cursorRow) {
-            pageWhere.push(`("createdAt", "id") < ($${pageIndex}::timestamptz, $${pageIndex + 1})`);
-            pageValues.push(cursorRow.createdAt, input.cursor);
+            pageWhere.push(cursorCondition(input.sort, input.direction, pageIndex));
+            pageValues.push(cursorRow.sortValue, input.cursor);
             pageIndex += 2;
           }
         }
@@ -647,7 +733,7 @@ export const getBoard = defineOperation({
         pageValues.push(limit + 1);
         const rows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
           `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" WHERE ${pageWhere.join(" AND ")}
-           ORDER BY "createdAt" DESC, "id" DESC
+           ${orderByClause(input.sort, input.direction)}
            LIMIT $${pageIndex}`,
           ...pageValues,
         );

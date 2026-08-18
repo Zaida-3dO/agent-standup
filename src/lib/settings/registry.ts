@@ -12,6 +12,7 @@ import { z } from "zod";
 import { budgetWindowsSchema } from "./budget-windows";
 import { capabilityDocSchema } from "./capability-doc";
 import { modelPricesSchema } from "@/lib/telemetry/pricing";
+import { savedViewsSchema } from "@/lib/board/saved-views";
 
 /**
  * The categories a setting can be filed under. Closed rather than free
@@ -466,6 +467,29 @@ export const SETTINGS_REGISTRY = {
     default: "standup",
     label: "Default landing page",
     help: "Which screen the root of the app shows. Standup is an overnight digest, Projects is the project list, Board is the kanban, and Needs you is the narrow list of items blocked on you. Every one of them is also reachable from the sidebar, so this only decides what you see first.",
+    category: "Interface",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  // The named board filters a reader has pinned (MILESTONES.md #75). A
+  // setting rather than browser storage, deliberately: a view is a way of
+  // looking at *this installation's* work — "my P0s", "everything blocked in
+  // the web area" — and it is worth the same on the laptop it was made on
+  // and the desktop it wasn't. Browser storage would make it a property of a
+  // machine, which is the wrong noun.
+  //
+  // Not `sensitive`: it relaxes no enforcement and gates nothing. The worst
+  // a malformed value does is drop a chip from the sidebar, because a stored
+  // query string this build cannot parse degrades to the filters it does
+  // recognise rather than failing (see `@/lib/board/saved-views`).
+  "ui.saved_views": define({
+    schema: savedViewsSchema,
+    default: [],
+    label: "Saved board views",
+    help: "Named filter and sort combinations pinned beside the board and in the sidebar. Each one stores the board's query string, so applying a view is the same as opening its link — and a view saved before a filter existed keeps working, ignoring the parts it does not know.",
     category: "Interface",
     appliesWhen: "next-call",
     sensitive: false,
