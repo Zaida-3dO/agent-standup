@@ -3,9 +3,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1.25rem;
-  border-bottom: 1px solid #27272a;
-  background: #16161a;
-  color: #f4f4f5;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-panel);
+  color: var(--text-primary);
 }
 
 .title {
@@ -27,7 +27,7 @@
 
 .switcher:hover,
 .switcher:focus-visible {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-raised);
 }
 
 .avatar {
@@ -37,7 +37,7 @@
   width: 1.75rem;
   height: 1.75rem;
   border-radius: 999px;
-  background: #3f3f46;
+  background: var(--border-strong);
   font-size: 0.875rem;
 }
 

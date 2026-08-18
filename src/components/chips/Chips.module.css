@@ -1,0 +1,98 @@
+/* The chip primitives. Every colour here is a token — see
+   `src/app/globals.css` — and nothing in this file picks one.
+
+   The shared geometry lives in `.chip`, and the two variants differ in
+   FILL, not in size or position. That is the whole point: priority and
+   state occupy the same corner of a card, so the difference between them
+   has to be a property the eye sorts pre-attentively, or they read as one
+   vocabulary. Filled-vs-outlined is such a property; two different colours
+   of small text is not. */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* A state: OUTLINED. The surface shows through, so a column of state chips
+   reads as annotation on the cards rather than as objects sitting on them. */
+.outlined {
+  background: transparent;
+}
+
+/* A priority: FILLED. Heavier than a state chip by construction, which is
+   correct — priority is the thing you scan a backlog by. */
+.filled {
+  border-color: transparent;
+}
+
+/* The shape that carries the state when colour cannot (WCAG 1.4.1 — see
+   `src/lib/design/tokens.ts`). Sized to stay legible in silhouette at the
+   chip's own font size, and `flex: none` so a long label cannot squeeze it
+   into ambiguity. */
+.icon {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+/* A chip whose label has been dropped for space. The icon is then the ONLY
+   visual channel, which is exactly why the icon exists; the accessible name
+   still carries the full label via `aria-label` on the chip. */
+.iconOnly {
+  padding: 2px;
+}
+
+/* ── Staleness ──────────────────────────────────────────────────────────
+
+   A bare dot, deliberately not a chip: staleness is a property of the
+   whole card rather than a value on it, and giving it chip geometry would
+   put it in the same reading class as state and priority, which are things
+   someone chose. Nobody chooses staleness; it accrues. */
+.staleDot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+}
+
+/* The age text that appears only in the `abandoned` band. Past three days
+   the number IS the message — "5d" says more than a red dot does — so this
+   is the one band where the indicator grows a label. */
+.staleAge {
+  font-size: var(--text-3xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--stale-alert);
+}
+
+.staleRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ── Presence ───────────────────────────────────────────────────────────
+
+   A ring rather than a filled disc for `dead`: a solid grey dot at 8px is
+   hard to tell from a shadow or a bullet, whereas a hollow one reads as
+   "there is a slot here and nobody is in it", which is what it means. */
+.presenceDot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+}
+
+.presenceDead {
+  background: transparent;
+  border: 1.5px solid var(--presence-dead);
+}

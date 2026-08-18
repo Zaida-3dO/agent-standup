@@ -5,8 +5,8 @@
 .detail {
   padding: 1.25rem;
   min-height: 100%;
-  background: #0e0e11;
-  color: #f4f4f5;
+  background: var(--surface-app);
+  color: var(--text-primary);
 }
 
 /* Same surface as `.detail` — loading and error are the view before it has
@@ -17,14 +17,14 @@
   justify-content: center;
   min-height: 12rem;
   padding: 1.25rem;
-  background: #0e0e11;
-  color: #a1a1aa;
+  background: var(--surface-app);
+  color: var(--text-muted);
 }
 
 .header {
   margin-bottom: 1.5rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid #27272a;
+  border-bottom: 1px solid var(--border-default);
 }
 
 .headerTop {
@@ -45,8 +45,8 @@
   align-items: center;
   padding: 0.1rem 0.4rem;
   border-radius: 0.25rem;
-  background: #27272a;
-  color: #d4d4d8;
+  background: var(--border-default);
+  color: var(--text-secondary);
   font-size: 0.75rem;
   font-weight: 700;
 }
@@ -54,8 +54,8 @@
 .kind {
   padding: 0.1rem 0.45rem;
   border-radius: 0.25rem;
-  background: #1e293b;
-  color: #93c5fd;
+  background: var(--accent-bg);
+  color: var(--state-in_review-fg);
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -64,16 +64,16 @@
 .column {
   padding: 0.1rem 0.45rem;
   border-radius: 0.25rem;
-  background: #052e2b;
-  color: #5eead4;
+  background: var(--state-research_done-bg);
+  color: var(--state-research_done-fg);
   font-size: 0.75rem;
 }
 
 .state {
   padding: 0.1rem 0.45rem;
   border-radius: 0.25rem;
-  background: #27272a;
-  color: #a1a1aa;
+  background: var(--border-default);
+  color: var(--text-muted);
   font-size: 0.75rem;
 }
 
@@ -81,19 +81,19 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.8rem;
 }
 
 .reason {
   margin: 0.5rem 0 0;
-  color: #fca5a5;
+  color: var(--state-blocked-fg);
   font-size: 0.85rem;
 }
 
 .body {
   margin: 0.75rem 0 0;
-  color: #d4d4d8;
+  color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -113,17 +113,17 @@
 .sectionTitle {
   margin: 0;
   font-size: 1rem;
-  color: #e4e4e7;
+  color: var(--text-secondary);
 }
 
 .progress {
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
 .empty {
   margin: 0;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.85rem;
 }
 
@@ -138,7 +138,7 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid #1c1c1f;
+  border-bottom: 1px solid var(--surface-card);
   font-size: 0.88rem;
 }
 
@@ -154,7 +154,7 @@
    the whole piece of work, so removing what is done would make a completed
    project look empty. */
 .treeDone .treeTitle {
-  color: #71717a;
+  color: var(--text-faint);
   text-decoration: line-through;
 }
 
@@ -170,7 +170,7 @@
 
 .roundTitle {
   margin: 0 0 0.35rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -184,7 +184,7 @@
 
 .artifact {
   padding: 0.5rem;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-radius: 0.35rem;
   margin-bottom: 0.4rem;
   font-size: 0.85rem;
@@ -199,15 +199,15 @@
 }
 
 .artifactKind {
-  color: #e4e4e7;
+  color: var(--text-secondary);
   font-weight: 600;
 }
 
 .verdict {
   padding: 0.1rem 0.4rem;
   border-radius: 0.25rem;
-  background: #27272a;
-  color: #d4d4d8;
+  background: var(--border-default);
+  color: var(--text-secondary);
   font-size: 0.75rem;
 }
 
@@ -215,24 +215,24 @@
    Two colours rather than one per verdict — the distinction that matters at
    a glance is "is this cleared or not". */
 .verdictPass {
-  background: #052e16;
-  color: #86efac;
+  background: var(--state-merged-bg);
+  color: var(--state-merged-fg);
 }
 
 .verdictBlocked {
-  background: #2a1215;
-  color: #fecaca;
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
 }
 
 .sha {
-  color: #71717a;
+  color: var(--text-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
 }
 
 .artifactBody {
   margin: 0;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.82rem;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -248,33 +248,33 @@
   display: flex;
   gap: 0.6rem;
   padding: 0.4rem 0;
-  border-bottom: 1px solid #1c1c1f;
+  border-bottom: 1px solid var(--surface-card);
   font-size: 0.85rem;
 }
 
 .historyTs {
   flex: none;
   width: 11rem;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.78rem;
 }
 
 .historyType {
   flex: none;
-  color: #93c5fd;
+  color: var(--state-in_review-fg);
 }
 
 .historyBody {
   flex: 1;
   min-width: 0;
-  color: #a1a1aa;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .truncated {
   margin: 0.5rem 0 0;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.8rem;
   font-style: italic;
 }
@@ -285,7 +285,7 @@
 
 .summaryLabel {
   margin: 0 0 0.25rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -294,7 +294,7 @@
 .summaryList {
   margin: 0;
   padding-left: 1.1rem;
-  color: #d4d4d8;
+  color: var(--text-secondary);
   font-size: 0.88rem;
   line-height: 1.5;
 }

@@ -5,8 +5,8 @@
 .panel {
   padding: 1.25rem;
   min-height: 100%;
-  background: #0e0e11;
-  color: #f4f4f5;
+  background: var(--surface-app);
+  color: var(--text-primary);
 }
 
 .centered {
@@ -15,8 +15,8 @@
   justify-content: center;
   min-height: 8rem;
   padding: 1.25rem;
-  background: #0e0e11;
-  color: #a1a1aa;
+  background: var(--surface-app);
+  color: var(--text-muted);
 }
 
 .head {
@@ -44,8 +44,8 @@
   min-width: 1.6rem;
   padding: 0.1rem 0.45rem;
   border-radius: 999px;
-  background: #1e3a5f;
-  color: #bfdbfe;
+  background: var(--accent-bg);
+  color: var(--accent-fg);
   font-size: 0.8rem;
   font-weight: 600;
 }
@@ -53,10 +53,10 @@
 .markAll {
   margin-left: auto;
   padding: 0.4rem 0.8rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.4rem;
-  background: #18181b;
-  color: #e4e4e7;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
   font-size: 0.85rem;
   cursor: pointer;
 }
@@ -76,9 +76,9 @@
 }
 
 .group {
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-radius: 0.5rem;
-  background: #131316;
+  background: var(--surface-sunken);
   padding: 0.75rem 0.9rem;
 }
 
@@ -107,51 +107,51 @@
   flex-wrap: wrap;
   padding: 0.35rem 0;
   font-size: 0.88rem;
-  color: #d4d4d8;
+  color: var(--text-secondary);
 }
 
 /* An unseen row is marked structurally (a left rule) as well as by weight,
    so the distinction survives for a reader who cannot easily tell two
    greys apart. */
 .unseen {
-  border-left: 2px solid #3b82f6;
+  border-left: 2px solid var(--accent);
   padding-left: 0.5rem;
-  color: #f4f4f5;
+  color: var(--text-primary);
 }
 
 .actor {
   font-weight: 600;
-  color: #e4e4e7;
+  color: var(--text-secondary);
 }
 
 .summary {
-  color: #d4d4d8;
+  color: var(--text-secondary);
 }
 
 .timestamp {
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.8rem;
 }
 
 .body {
   width: 100%;
   margin: 0.15rem 0 0;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
 .seenByOther {
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.75rem;
 }
 
 .markOne {
   margin-left: auto;
   padding: 0.15rem 0.5rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.3rem;
   background: transparent;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.75rem;
   cursor: pointer;
 }

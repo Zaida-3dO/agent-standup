@@ -1,0 +1,591 @@
+/* The design system — every colour, size and spacing step the product uses.
+ *
+ * ── Why this file exists ────────────────────────────────────────────────
+ *
+ * Before it, each component's CSS module carried its own hex literals: the
+ * board painted `#0e0e11`, the settings page painted `#0e0e11` again, and
+ * nothing connected the two beyond someone having typed the same six
+ * characters twice. That is fine until a colour has to change, at which
+ * point it is eight files and a grep, and it is fatal for anything
+ * *semantic* — `blocked` being red is a rule (SCHEMA.md §1.1), not a
+ * preference, and a rule that lives in eight places is a rule that will be
+ * broken in one of them.
+ *
+ * So: one layer, named by meaning rather than by appearance. A component
+ * asks for `var(--state-blocked-fg)`, never for a red.
+ *
+ * ── Why oklch ───────────────────────────────────────────────────────────
+ *
+ * Perceptual lightness. In hex or hsl, two colours with the same nominal
+ * lightness look nothing alike — `hsl(60 100% 50%)` (yellow) is far
+ * brighter than `hsl(240 100% 50%)` (blue) — so a palette built by holding
+ * a number constant produces a set whose members do not read as siblings.
+ * The L in oklch really is what the eye reports, so `oklch(0.8 0.12 H)`
+ * across twelve hues is twelve colours of genuinely equal weight, which is
+ * what makes the state palette below coherent rather than merely colourful.
+ *
+ * It also makes the contrast work tractable: nudging a state's L moves its
+ * ratio against the card surface predictably, instead of by trial.
+ *
+ * ── Neutrals are not grey ───────────────────────────────────────────────
+ *
+ * Every surface and border carries hue 275 (blue-violet) at chroma
+ * 0.008–0.012 — far too little to read as "blue", enough that the greys
+ * have a temperature. Pure-neutral greys (chroma 0) look like an absence of
+ * a decision; a consistent slight cast reads as a designed surface. The
+ * chroma is deliberately at the bottom of the usable range: raise it much
+ * past 0.015 and the app starts looking tinted rather than neutral.
+ *
+ * ── Elevation is borders, not shadows ───────────────────────────────────
+ *
+ * On a dark surface a drop shadow has nothing to darken — it composites
+ * black onto near-black and reads as smudge, not lift. Depth here comes
+ * from *surface lightness* (each level up is lighter) plus a border. The
+ * one exception is an overlay, which floats above arbitrary content and
+ * needs to detach from it; `--shadow-overlay` is the only shadow token and
+ * should stay the only one.
+ */
+
+@import "tailwindcss";
+
+/* Tailwind v4 generates `dark:` variants from a media query by default.
+   This app puts the mode on `<html>` instead, so the class is the source of
+   truth and a future toggle has something to toggle. */
+@custom-variant dark (&:is(.dark *));
+
+/* ══════════════════════════════════════════════════════════════════════
+   1. Primitives — the raw ramps. Nothing outside this file should use
+   these directly; they exist to be assigned to the semantic names below.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Neutral ramp, hue 275, chroma tapering to 0 at the extremes (pure
+     black and pure white have no hue to carry). Named by position on the
+     ramp, light → dark, so the light and dark themes can each pick from
+     the same ladder from opposite ends. */
+  --n-0: oklch(1 0 0);
+  --n-25: oklch(0.985 0.002 275);
+  --n-50: oklch(0.97 0.004 275);
+  --n-100: oklch(0.94 0.006 275);
+  --n-200: oklch(0.89 0.008 275);
+  --n-300: oklch(0.81 0.01 275);
+  --n-400: oklch(0.68 0.012 275);
+  --n-500: oklch(0.56 0.012 275);
+  --n-600: oklch(0.46 0.012 275);
+  --n-700: oklch(0.36 0.011 275);
+  --n-750: oklch(0.3 0.01 275);
+  --n-800: oklch(0.25 0.01 275);
+  --n-850: oklch(0.21 0.009 275);
+  --n-900: oklch(0.17 0.008 275);
+  --n-950: oklch(0.14 0.008 275);
+  --n-975: oklch(0.115 0.008 275);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2. Semantic surfaces, text and borders — DARK (the default).
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Four elevation levels. Each is lighter than the one below it; that
+     lightness step IS the elevation, per the header. */
+  --surface-app: var(--n-975); /* the page behind everything */
+  --surface-sunken: var(--n-950); /* wells, column troughs, code blocks */
+  --surface-panel: var(--n-900); /* columns, sidebars, the top bar */
+  --surface-card: var(--n-850); /* cards, rows — the contrast reference */
+  --surface-raised: var(--n-800); /* hover, popovers, menus */
+  --surface-overlay: var(--n-850); /* dialogs; the one thing with a shadow */
+  --surface-scrim: oklch(0.115 0.008 275 / 0.8);
+
+  /* Text. Four weights of emphasis, not four greys — `--text-muted` is
+     "supporting detail", not "a lighter primary", and swapping them
+     changes meaning. */
+  --text-primary: var(--n-50);
+  --text-secondary: var(--n-300);
+  --text-muted: var(--n-400);
+  --text-faint: var(--n-500);
+  --text-inverse: var(--n-950);
+
+  /* Borders. `--border-subtle` divides things that belong together;
+     `--border-default` bounds a component; `--border-strong` is for a
+     control that must look interactive. */
+  --border-subtle: var(--n-850);
+  --border-default: var(--n-800);
+  --border-strong: var(--n-700);
+
+  /* Interaction. Focus is deliberately loud — this app is keyboard-heavy
+     and a subtle focus ring is an accessibility failure with good taste. */
+  --accent: oklch(0.65 0.17 265);
+  --accent-fg: oklch(0.97 0.01 265);
+  --accent-bg: oklch(0.35 0.09 265);
+  --accent-border: oklch(0.5 0.13 265);
+  --focus-ring: oklch(0.75 0.15 265);
+
+  /* The only shadow in the system. See the header. */
+  --shadow-overlay: 0 16px 48px oklch(0 0 0 / 0.6);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   3. State colours — all twelve `ItemState` values (SCHEMA.md §1.1).
+   ══════════════════════════════════════════════════════════════════════
+
+   Each state carries a TRIPLET, and this is the load-bearing part of the
+   whole file:
+
+     --state-<s>-fg      text and icon on a card surface
+     --state-<s>-bg      a filled chip's background
+     --state-<s>-border  a chip outline, or a card's left border
+
+   One source, three uses. The alternative is each surface picking its own:
+   a card's left border chosen in `Board.module.css`, the same state's text
+   colour chosen in `ItemDetail.module.css`, and nothing but discipline
+   keeping the two the same. Discipline is not a mechanism, and a state
+   that means amber on one screen and something else on another is worse
+   than a state with no colour at all.
+
+   ── Two rules the palette must not break ──────────────────────────────
+
+   1. **`cancelled` is NOT red.** It is a decision someone made, not a
+      failure. Red is reserved for "this needs action" — `blocked`, and
+      `P0`. A cancelled item needing nothing from anyone must not compete
+      for attention with a blocked one that does. Both `wont_do` and
+      `cancelled` are zinc: deliberately the quietest thing on the board.
+
+   2. **Hue is never the only signal (WCAG 1.4.1).** Every state chip
+      renders its label as text and, where space forces the label out, a
+      distinct icon *shape*. This matters more here than in most products
+      because red and green carry OPPOSITE meanings — `blocked` (bad, act
+      now) against `merged` (good, done) — so a red/green colour-blind
+      reader looking at hue alone would not merely lose information, they
+      would read the board backwards. The shape and the label are the
+      actual channel; colour is reinforcement.
+
+   `-fg` values sit high enough on the L ramp against `--surface-card` to
+   clear 4.5:1, and `-border` values high enough to clear 3:1. The numbers
+   are verified in `tests/design-tokens-contrast.test.ts`, which recomputes
+   them from these declarations rather than trusting this note. */
+
+:root {
+  /* Backlog — nothing is happening yet, and that is fine. Cool and quiet. */
+  --state-someday-fg: oklch(0.78 0.045 255);
+  --state-someday-bg: oklch(0.3 0.035 255);
+  --state-someday-border: oklch(0.55 0.055 255);
+
+  --state-on_deck-fg: oklch(0.8 0.11 210);
+  --state-on_deck-bg: oklch(0.3 0.07 210);
+  --state-on_deck-border: oklch(0.56 0.1 210);
+
+  /* In progress — planning and review-of-plan share violet because they
+     are one activity in two phases; the chip label distinguishes them. */
+  --state-planning-fg: oklch(0.79 0.12 295);
+  --state-planning-bg: oklch(0.31 0.09 295);
+  --state-planning-border: oklch(0.56 0.14 295);
+
+  --state-plan_review-fg: oklch(0.79 0.12 295);
+  --state-plan_review-bg: oklch(0.31 0.09 295);
+  --state-plan_review-border: oklch(0.56 0.14 295);
+
+  --state-executing-fg: oklch(0.8 0.15 145);
+  --state-executing-bg: oklch(0.3 0.08 145);
+  --state-executing-border: oklch(0.56 0.12 145);
+
+  --state-in_review-fg: oklch(0.79 0.12 240);
+  --state-in_review-bg: oklch(0.31 0.09 240);
+  --state-in_review-border: oklch(0.56 0.13 240);
+
+  /* Waiting — amber for paused, red for blocked. MANDATED by SCHEMA.md
+     §1.1: these two share a column and colour is what the schema says
+     separates them, so these two triplets are not free to be restyled. */
+  --state-paused-fg: oklch(0.82 0.13 75);
+  --state-paused-bg: oklch(0.32 0.075 75);
+  --state-paused-border: oklch(0.58 0.11 75);
+
+  --state-blocked-fg: oklch(0.75 0.15 25);
+  --state-blocked-bg: oklch(0.32 0.11 25);
+  --state-blocked-border: oklch(0.56 0.16 25);
+
+  /* Completed. `merged` is the one genuinely good outcome, so it is the
+     only saturated green-teal down here; the rest recede. */
+  --state-merged-fg: oklch(0.8 0.14 160);
+  --state-merged-bg: oklch(0.3 0.08 160);
+  --state-merged-border: oklch(0.56 0.12 160);
+
+  --state-research_done-fg: oklch(0.8 0.1 190);
+  --state-research_done-bg: oklch(0.3 0.06 190);
+  --state-research_done-border: oklch(0.56 0.09 190);
+
+  /* Not red. See rule 1 above. */
+  --state-wont_do-fg: oklch(0.72 0.012 275);
+  --state-wont_do-bg: oklch(0.3 0.01 275);
+  --state-wont_do-border: oklch(0.52 0.012 275);
+
+  --state-cancelled-fg: oklch(0.72 0.012 275);
+  --state-cancelled-bg: oklch(0.3 0.01 275);
+  --state-cancelled-border: oklch(0.52 0.012 275);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   4. Priority.
+   ══════════════════════════════════════════════════════════════════════
+
+   Priority and state must not read as the same category. They occupy the
+   same corner of a card, so rendering both as small coloured text makes
+   "P0" and "blocked" look like two members of one vocabulary — an urgency
+   someone assigned and a status the system derived, presented identically.
+   The separation is SHAPE, not colour: a priority is a FILLED chip, a
+   state is an OUTLINED one. That distinction survives greyscale, survives
+   colour blindness, and survives a 16px card; two shades of small text
+   survive none of them.
+
+   P2 and P3 are deliberately colourless. Most items are P2; if the default
+   carries a colour, the board is a wall of colour and P0 stops meaning
+   anything. */
+
+:root {
+  --priority-p0-fg: oklch(0.97 0.02 25);
+  --priority-p0-bg: oklch(0.5 0.19 25);
+  --priority-p0-border: oklch(0.6 0.2 25);
+
+  --priority-p1-fg: oklch(0.98 0.02 75);
+  --priority-p1-bg: oklch(0.52 0.13 75);
+  --priority-p1-border: oklch(0.62 0.15 75);
+
+  --priority-p2-fg: var(--n-200);
+  --priority-p2-bg: var(--n-700);
+  --priority-p2-border: var(--n-600);
+
+  --priority-p3-fg: var(--n-400);
+  --priority-p3-bg: var(--n-800);
+  --priority-p3-border: var(--n-700);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   5. Areas — hash to hue.
+   ══════════════════════════════════════════════════════════════════════
+
+   Areas are created by agents at will and are unbounded, so a hand-written
+   `area → colour` map is a map that goes stale the first time someone mints
+   a new one. Instead an area name is hashed to one of twelve fixed hues
+   (`src/lib/design/area-colour.ts`), holding chroma and lightness constant
+   so no area can accidentally be louder than another.
+
+   Twelve, not more: past a dozen, adjacent hues stop being distinguishable
+   at chip size and the extra precision is a lie. Collisions are accepted —
+   the colour is a recognition aid beside a text label, never the label. */
+
+:root {
+  --area-hue-0: 25;
+  --area-hue-1: 55;
+  --area-hue-2: 85;
+  --area-hue-3: 115;
+  --area-hue-4: 145;
+  --area-hue-5: 175;
+  --area-hue-6: 205;
+  --area-hue-7: 235;
+  --area-hue-8: 265;
+  --area-hue-9: 295;
+  --area-hue-10: 325;
+  --area-hue-11: 355;
+
+  /* The fixed L/C every area shares. A chip built from these differs from
+     its neighbours ONLY in hue, which is the property being encoded. */
+  --area-fg-l: 0.8;
+  --area-fg-c: 0.09;
+  --area-bg-l: 0.3;
+  --area-bg-c: 0.055;
+  --area-border-l: 0.55;
+  --area-border-c: 0.08;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   6. Staleness, trust, presence.
+   ══════════════════════════════════════════════════════════════════════
+
+   Staleness escalates in FOUR steps, and the first one is "render nothing".
+   An indicator on every card is an indicator on no card: if fresh items
+   carry a dot too, the eye cannot find the stale ones, which is the entire
+   job. So: under 4h shows nothing at all, 4–24h is a barely-there neutral,
+   1–3d earns amber, and past 3d earns red *and the age in text* — because
+   at that point the number is the point.
+
+   Trust: the imported rows whose stored `state` is known to misreport them
+   must not render identically to rows anyone verified. `--trust-unverified`
+   is that marking (a later task consumes it); it is neutral-warm rather
+   than a severity colour, because an unverified row is not *wrong*, it is
+   unconfirmed, and painting it red would put it in the same visual class as
+   `blocked`. */
+
+:root {
+  --stale-none: transparent;
+  --stale-subtle: var(--n-600);
+  --stale-warn: oklch(0.75 0.13 75);
+  --stale-alert: oklch(0.7 0.16 25);
+
+  --trust-unverified: oklch(0.72 0.07 85);
+  --trust-unverified-bg: oklch(0.28 0.045 85);
+  --trust-unverified-border: oklch(0.5 0.07 85);
+
+  /* Agent liveness. Grey for dead is deliberate — a dead agent is not an
+     error, it is an absence, and it should not shout like `blocked` does. */
+  --presence-live: oklch(0.78 0.16 145);
+  --presence-stalled: oklch(0.8 0.13 75);
+  --presence-dead: var(--n-600);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   7. LIGHT theme.
+   ══════════════════════════════════════════════════════════════════════
+
+   Dark stays the default — this is a tool read on a dark screen at night —
+   but "default" must now mean "the tokens happen to be dark", not "the only
+   thing that exists". Everything below re-points the SAME semantic names;
+   no component knows which theme is active.
+
+   The state triplets flip roles rather than being re-picked: on light, the
+   `-fg` must be DARK to pass 4.5:1 against a near-white card, and the `-bg`
+   must be light. Hue and the ordering are preserved so a state means the
+   same colour-family in both themes. */
+
+.light {
+  --surface-app: var(--n-50);
+  --surface-sunken: var(--n-100);
+  --surface-panel: var(--n-25);
+  --surface-card: var(--n-0);
+  --surface-raised: var(--n-0);
+  --surface-overlay: var(--n-0);
+  --surface-scrim: oklch(0.17 0.008 275 / 0.5);
+
+  --text-primary: var(--n-950);
+  --text-secondary: var(--n-700);
+  --text-muted: var(--n-600);
+  --text-faint: var(--n-500);
+  --text-inverse: var(--n-0);
+
+  --border-subtle: var(--n-100);
+  --border-default: var(--n-200);
+  --border-strong: var(--n-300);
+
+  --accent: oklch(0.5 0.18 265);
+  --accent-fg: oklch(0.99 0.005 265);
+  --accent-bg: oklch(0.93 0.04 265);
+  --accent-border: oklch(0.7 0.12 265);
+  --focus-ring: oklch(0.55 0.18 265);
+
+  --shadow-overlay: 0 16px 48px oklch(0.17 0.008 275 / 0.18);
+
+  --state-someday-fg: oklch(0.48 0.06 255);
+  --state-someday-bg: oklch(0.95 0.02 255);
+  --state-someday-border: oklch(0.6 0.06 255);
+
+  --state-on_deck-fg: oklch(0.47 0.12 210);
+  --state-on_deck-bg: oklch(0.95 0.03 210);
+  --state-on_deck-border: oklch(0.6 0.11 210);
+
+  --state-planning-fg: oklch(0.45 0.17 295);
+  --state-planning-bg: oklch(0.95 0.035 295);
+  --state-planning-border: oklch(0.58 0.17 295);
+
+  --state-plan_review-fg: oklch(0.45 0.17 295);
+  --state-plan_review-bg: oklch(0.95 0.035 295);
+  --state-plan_review-border: oklch(0.58 0.17 295);
+
+  --state-executing-fg: oklch(0.46 0.13 145);
+  --state-executing-bg: oklch(0.95 0.04 145);
+  --state-executing-border: oklch(0.58 0.13 145);
+
+  --state-in_review-fg: oklch(0.46 0.16 240);
+  --state-in_review-bg: oklch(0.95 0.03 240);
+  --state-in_review-border: oklch(0.58 0.16 240);
+
+  --state-paused-fg: oklch(0.48 0.12 75);
+  --state-paused-bg: oklch(0.95 0.045 75);
+  --state-paused-border: oklch(0.62 0.13 75);
+
+  --state-blocked-fg: oklch(0.47 0.19 25);
+  --state-blocked-bg: oklch(0.95 0.035 25);
+  --state-blocked-border: oklch(0.58 0.2 25);
+
+  --state-merged-fg: oklch(0.46 0.13 160);
+  --state-merged-bg: oklch(0.95 0.04 160);
+  --state-merged-border: oklch(0.58 0.12 160);
+
+  --state-research_done-fg: oklch(0.46 0.1 190);
+  --state-research_done-bg: oklch(0.95 0.03 190);
+  --state-research_done-border: oklch(0.58 0.09 190);
+
+  --state-wont_do-fg: oklch(0.5 0.012 275);
+  --state-wont_do-bg: oklch(0.95 0.005 275);
+  --state-wont_do-border: oklch(0.65 0.012 275);
+
+  --state-cancelled-fg: oklch(0.5 0.012 275);
+  --state-cancelled-bg: oklch(0.95 0.005 275);
+  --state-cancelled-border: oklch(0.65 0.012 275);
+
+  --priority-p0-fg: oklch(0.99 0.01 25);
+  --priority-p0-bg: oklch(0.53 0.2 25);
+  --priority-p0-border: oklch(0.47 0.2 25);
+
+  --priority-p1-fg: oklch(0.99 0.01 75);
+  --priority-p1-bg: oklch(0.56 0.14 75);
+  --priority-p1-border: oklch(0.5 0.14 75);
+
+  --priority-p2-fg: var(--n-800);
+  --priority-p2-bg: var(--n-100);
+  --priority-p2-border: var(--n-200);
+
+  --priority-p3-fg: var(--n-600);
+  --priority-p3-bg: var(--n-50);
+  --priority-p3-border: var(--n-100);
+
+  --area-fg-l: 0.45;
+  --area-fg-c: 0.11;
+  --area-bg-l: 0.95;
+  --area-bg-c: 0.035;
+  --area-border-l: 0.6;
+  --area-border-c: 0.1;
+
+  --stale-subtle: var(--n-300);
+  --stale-warn: oklch(0.6 0.13 75);
+  --stale-alert: oklch(0.55 0.2 25);
+
+  --trust-unverified: oklch(0.5 0.08 85);
+  --trust-unverified-bg: oklch(0.95 0.03 85);
+  --trust-unverified-border: oklch(0.68 0.09 85);
+
+  --presence-live: oklch(0.55 0.15 145);
+  --presence-stalled: oklch(0.6 0.13 75);
+  --presence-dead: var(--n-300);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   8. Type.
+   ══════════════════════════════════════════════════════════════════════
+
+   Seven steps and no more. A scale with a step for every occasion is a
+   scale nobody follows; seven forces a decision about which of these a new
+   thing IS, which is the point of having one.
+
+   Three weights: 400 body, 500 for a label that must separate from body,
+   600 for a heading. No 700 — bold-on-dark blooms, and the emphasis it is
+   reached for is nearly always better served by colour or spacing.
+
+   `tabular-nums` is applied by `.tabular` and is NOT optional on counts,
+   ages and costs: proportional digits change width as a number ticks, so a
+   live count jitters its whole row, and a column of costs will not align on
+   the decimal point.
+
+   Geist Mono is for exactly four things — commit SHAs, branch names, item
+   ids, machine names — that is, strings which are IDENTIFIERS, where
+   character ambiguity is a correctness problem rather than a stylistic one.
+   Prose never gets mono, and a number is not an identifier: counts and
+   costs are tabular sans. */
+
+:root {
+  --text-3xs: 11px;
+  --text-2xs: 12px;
+  --text-xs: 13px;
+  --text-sm: 15px;
+  --text-md: 18px;
+  --text-lg: 22px;
+  --text-xl: 28px;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.45;
+  --leading-relaxed: 1.6;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* 4px grid. Every margin, padding and gap in the app is one of these. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius: 8px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+}
+
+/* Exposes the tokens to the utility generator, so `bg-surface-card` and
+   `text-text-muted` exist as classes alongside the raw `var(--…)` the CSS
+   modules use. Both spellings resolve to the same custom property — there
+   is still one definition. */
+@theme inline {
+  --color-surface-app: var(--surface-app);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-card: var(--surface-card);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-default: var(--border-default);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   9. Base.
+   ══════════════════════════════════════════════════════════════════════ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--surface-app);
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+html.light {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-app);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  font-weight: var(--weight-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One focus treatment for the whole app, on `:focus-visible` only so a
+   mouse click does not leave a ring behind. Loud on purpose — see §2. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Counts, ages and costs. See §8 for why this is not optional. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The four identifier kinds, and nothing else. */
+.mono {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-ligatures: none;
+}

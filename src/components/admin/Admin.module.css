@@ -5,8 +5,8 @@
 .page {
   padding: 1.25rem;
   min-height: 100%;
-  background: #0e0e11;
-  color: #f4f4f5;
+  background: var(--surface-app);
+  color: var(--text-primary);
 }
 
 .centered {
@@ -15,8 +15,8 @@
   justify-content: center;
   min-height: 12rem;
   padding: 1.25rem;
-  background: #0e0e11;
-  color: #a1a1aa;
+  background: var(--surface-app);
+  color: var(--text-muted);
 }
 
 .heading {
@@ -27,7 +27,7 @@
 .blurb {
   margin: 0 0 1.25rem;
   max-width: 60rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.85rem;
   line-height: 1.5;
 }
@@ -45,26 +45,26 @@
 .tab {
   display: inline-block;
   padding: 0.4rem 0.8rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.4rem;
-  background: #1c1c21;
-  color: #e4e4e7;
+  background: var(--surface-card);
+  color: var(--text-secondary);
   font-size: 0.85rem;
   text-decoration: none;
 }
 
 .tabActive {
-  border-color: #3b82f6;
-  background: #1e3a5f;
-  color: #dbeafe;
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent-fg);
 }
 
 .section {
   margin: 0 0 1.5rem;
   padding: 1rem;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-radius: 0.6rem;
-  background: #16161a;
+  background: var(--surface-panel);
 }
 
 .sectionTitle {
@@ -86,9 +86,9 @@
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.75rem;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-radius: 0.45rem;
-  background: #1c1c21;
+  background: var(--surface-card);
 }
 
 /* An archived row stays visible and legible but is plainly set apart — the
@@ -116,21 +116,21 @@
 .badge {
   padding: 0.12rem 0.45rem;
   border-radius: 999px;
-  background: #27272a;
-  color: #a1a1aa;
+  background: var(--border-default);
+  color: var(--text-muted);
   font-size: 0.68rem;
   font-weight: 700;
 }
 
 .badgeArchived {
-  background: #422006;
-  color: #fed7aa;
+  background: var(--state-paused-bg);
+  color: var(--state-paused-fg);
 }
 
 /* Override vs inheriting — SCHEMA.md §23.2 wants each row to say which. */
 .badgeOverride {
-  background: #1e3a5f;
-  color: #bfdbfe;
+  background: var(--accent-bg);
+  color: var(--accent-fg);
 }
 
 .cells {
@@ -138,15 +138,15 @@
   flex-wrap: wrap;
   gap: 0.75rem;
   font-size: 0.76rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
 }
 
 .cellLabel {
-  color: #71717a;
+  color: var(--text-faint);
 }
 
 .cellValue {
-  color: #e4e4e7;
+  color: var(--text-secondary);
 }
 
 .fields {
@@ -171,7 +171,7 @@
 
 .help {
   margin: 0;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.74rem;
   line-height: 1.45;
 }
@@ -180,10 +180,10 @@
 .textarea,
 .select {
   padding: 0.35rem 0.5rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.35rem;
-  background: #0e0e11;
-  color: #f4f4f5;
+  background: var(--surface-app);
+  color: var(--text-primary);
   font-size: 0.85rem;
   min-width: 14rem;
 }
@@ -196,9 +196,9 @@
 
 .readOnlyValue {
   padding: 0.35rem 0.5rem;
-  border: 1px dashed #3f3f46;
+  border: 1px dashed var(--border-strong);
   border-radius: 0.35rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
 }
@@ -212,42 +212,42 @@
 
 .button {
   padding: 0.35rem 0.7rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.35rem;
-  background: #27272a;
-  color: #e4e4e7;
+  background: var(--border-default);
+  color: var(--text-secondary);
   font-size: 0.8rem;
   cursor: pointer;
 }
 
 .buttonPrimary {
-  border-color: #1d4ed8;
-  background: #1e3a5f;
-  color: #dbeafe;
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent-fg);
 }
 
 .buttonWarn {
-  border-color: #92400e;
-  background: #422006;
-  color: #fed7aa;
+  border-color: var(--state-paused-border);
+  background: var(--state-paused-bg);
+  color: var(--state-paused-fg);
 }
 
 .error {
   margin: 0.3rem 0 0;
-  color: #fca5a5;
+  color: var(--state-blocked-fg);
   font-size: 0.75rem;
   line-height: 1.4;
 }
 
 .empty {
   margin: 0;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.85rem;
 }
 
 .note {
   margin: 0 0 0.75rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.78rem;
   line-height: 1.45;
 }
