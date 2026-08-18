@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const entryPath = "dist/bin/standup.js"; // the literal contract: package.json "bin.standup"
+const hookEntryPath = "dist/bin/standup-hook.js"; // likewise, "bin.standup-hook"
 
 function runBuiltCli(args: string[], env: Record<string, string> = {}) {
   try {
@@ -37,8 +38,15 @@ function runBuiltCli(args: string[], env: Record<string, string> = {}) {
 describe("package.json publish contract", () => {
   const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
-  it("publishes the standup binary at the literal built path", () => {
-    expect(pkg.bin).toEqual({ standup: entryPath });
+  it("publishes both binaries at their literal built paths", () => {
+    // Two entries, and the second is not an afterthought. `standup-hook` is
+    // the entry point an agent tool is wired to (MILESTONES.md #48), and a
+    // bare command name is the only address that resolves on a machine whose
+    // layout the wiring does not choose. It cannot be served by `standup`
+    // instead: that entry point supplies no stdin (`src/bin/standup.ts`), so
+    // a hook routed through it reads an empty payload and allows — an
+    // install that reports healthy and enforces nothing.
+    expect(pkg.bin).toEqual({ standup: entryPath, "standup-hook": hookEntryPath });
   });
 
   it("is publishable (not marked private)", () => {

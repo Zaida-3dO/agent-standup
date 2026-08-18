@@ -62,12 +62,25 @@ export const ENTRY_POINT = "src/bin/standup.ts";
  * artefact than building them apart, and guarantees they cannot be compiled
  * against different versions of the code they share.
  *
- * **It is deliberately not added to `package.json`'s `bin`.** A hook is not
- * a command a person runs; it is a path an agent tool is configured to
- * execute, and row #48 is what writes that configuration. Putting it on the
- * PATH as `standup-hook` would invite it to be run by hand, where it reads
- * an empty stdin and — correctly, per its own fail-closed rule — denies,
- * which looks exactly like a broken install.
+ * **It is published under `package.json`'s `bin` as `standup-hook`, and it
+ * has to be.** A hook is a path an agent tool is configured to execute, and
+ * row #48 writes that configuration into a plugin installed on a machine
+ * whose layout it does not choose and cannot know. A name on the PATH is
+ * the only address that resolves there: a path into `node_modules` assumes
+ * a hoisting, store or workspace layout that differs per package manager.
+ *
+ * It cannot be reached through the `standup` binary instead, and the reason
+ * is in `src/bin/standup.ts` — that entry point supplies no stdin, because
+ * reading stdin unconditionally would make every `standup` command wait for
+ * input that never comes. A hook invoked there sees an empty payload and
+ * allows, so wiring an agent tool to it produces an installation that looks
+ * healthy and enforces nothing.
+ *
+ * The cost of a name on the PATH is that it can be run by hand with no
+ * payload. That resolves through the fail-open path: an empty stdin allows
+ * and exits 0 (`tests/hook-built-script.test.ts`, "exits 0 on empty
+ * stdin"), so a person who runs it out of curiosity gets silence rather
+ * than a refusal that would read as a broken install.
  */
 export const HOOK_ENTRY_POINT = "src/bin/standup-hook.ts";
 export const OUT_DIR = "dist";

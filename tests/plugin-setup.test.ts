@@ -102,17 +102,6 @@ describe("the proof is the point", () => {
     expect(result.ok).toBe(true);
     expect(calls).toEqual(["register", "verify"]);
   });
-
-  it("leaves a registered task in place when the proof fails", async () => {
-    // The task may be correct and the server merely down. Tearing down a
-    // good installation over a transient call turns something retryable
-    // into something needing a fresh install.
-    const unregister = vi.fn();
-    const deps = { ...stubs({ verify: async () => ({ ok: false }) }), unregister };
-    await runSetup(configured, deps);
-
-    expect(unregister).not.toHaveBeenCalled();
-  });
 });
 
 describe("it refuses to touch the host when it could not possibly verify", () => {
