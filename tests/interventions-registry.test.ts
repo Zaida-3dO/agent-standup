@@ -648,6 +648,33 @@ describe("I15 — a checkout another crew already holds", () => {
     expect(verdict?.message).toContain("30s ago");
   });
 
+  it("does not fire inside a linked worktree", async () => {
+    // `(machine, repo)` cannot distinguish two crews sharing one working
+    // tree from two crews each in their own — and the second is the
+    // intended arrangement, not a collision. Firing on it would refuse the
+    // healthy case on every file edit, which is how a guard teaches a
+    // session to distrust it.
+    const verdict = await entry?.predicate({
+      sessionId: "s1",
+      tool: "Write",
+      isLinkedWorktree: true,
+      occupyingCrew: { rootSessionId: "root-theirs", itemId: "item-b" },
+    });
+    expect(verdict?.triggered).toBe(false);
+  });
+
+  it("fires when the working tree is unknown", async () => {
+    // Strictly `true` suppresses. An absent field means the claim recorded
+    // no worktree, and an unknown working tree is not a known-separate one
+    // — the same reading of absence the rest of the catalogue uses.
+    const verdict = await entry?.predicate({
+      sessionId: "s1",
+      tool: "Write",
+      occupyingCrew: { rootSessionId: "root-theirs", itemId: "item-b" },
+    });
+    expect(verdict?.triggered).toBe(true);
+  });
+
   it("still names the holder when the branch and activity are unknown", async () => {
     const verdict = await entry?.predicate({
       sessionId: "s1",

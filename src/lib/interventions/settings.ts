@@ -19,7 +19,7 @@
 // `unknown`.
 //
 // The catalogue is the opposite kind of set. It is explicitly a growing
-// list that new findings are appended to, each entry has six overridable
+// list that new findings are appended to, each entry has five overridable
 // fields, and an entry can be retired. Declaring the cross product as
 // literals would mean six hand-written entries per catalogue entry, all
 // but identical, and — the part that actually decides it — **a retired
@@ -204,7 +204,7 @@ export interface ResolvedInterventionSettings {
  * A field with no row is left off the returned object entirely. It is not
  * set to the entry's current default, and the distinction is the whole of
  * rule 1 above: `{level: "nudge"}` and `{}` produce identical behaviour
- * identical behaviour until a release retunes the default, and opposite
+ * until a release retunes the default, and opposite
  * behaviour from that release onwards.
  * Writing the resolved default here would convert every installation into
  * one that had expressed an opinion about everything, permanently, on the
@@ -239,6 +239,17 @@ export function resolveInterventionSettings(options: {
     // legitimately be handed every settings row there is.
     if (parsed === null) continue;
 
+    // Recorded **before** validation, because the two fields answer
+    // different questions and a row can be the subject of both. `rejected`
+    // says *this value is invalid*; `unknownIds` says *an entry absent from
+    // this build's catalogue still has configuration here*. Ordering the
+    // unknown check second would lose the second fact whenever the value
+    // also went stale — which is precisely the case that produces it, since
+    // a release that narrows a field's schema is the same kind of release
+    // that retires an entry. That would defeat the purpose of `unknownIds`:
+    // preserving the record that the installation ever made a decision.
+    if (!known.has(parsed.id)) unknownIds.add(parsed.id);
+
     const checked = FIELD_SCHEMAS[parsed.field].safeParse(row.value);
     if (!checked.success) {
       rejected.push({
@@ -248,10 +259,6 @@ export function resolveInterventionSettings(options: {
       });
       continue;
     }
-
-    // Recorded *after* validation, so a malformed row for an unknown id is
-    // reported once as the malformed row it is, rather than twice.
-    if (!known.has(parsed.id)) unknownIds.add(parsed.id);
 
     const target = (overrides[parsed.id] ??= {});
     switch (parsed.field) {
@@ -278,6 +285,37 @@ export function resolveInterventionSettings(options: {
     rejected,
     unknownIds: [...unknownIds],
   };
+}
+
+/** The narrow query interface this module needs; a transaction handle satisfies it. */
+export interface SettingsRowQuery {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
+}
+
+/**
+ * Reads the stored intervention rows, and only those.
+ *
+ * **Prefix-scoped rather than a full read of `settings`.** The caller is on
+ * the highest-volume path in the system, and the whole shape of context
+ * assembly is built around not paying for state a call cannot need — so a
+ * read that pulled every setting row in order to use the handful under one
+ * namespace would be spending exactly the budget the gate protects. The
+ * `LIKE` is anchored at the start and the prefix is a module constant, never
+ * caller input, so it is a range scan over the primary key rather than a
+ * pattern match over the table.
+ *
+ * The caller is responsible for asking only when a finding is possible at
+ * all; this function does not gate itself, because "is this call worth a
+ * query" is a question about the call rather than about the settings.
+ */
+export async function readInterventionSettingRows(
+  db: SettingsRowQuery,
+): Promise<readonly StoredInterventionSetting[]> {
+  const rows = await db.$queryRawUnsafe<{ key: string; value: unknown }[]>(
+    `SELECT "key", "value" FROM "settings" WHERE "key" LIKE $1`,
+    `${INTERVENTION_SETTING_PREFIX}.%`,
+  );
+  return rows.map((row) => ({ key: row.key, value: row.value }));
 }
 
 /** One entry rendered with its defaults and whatever is overridden. */

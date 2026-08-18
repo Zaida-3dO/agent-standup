@@ -298,7 +298,13 @@ describe("occupancy — who else holds this checkout (I15)", () => {
     const db = sequencedHandle([[claimRow], []]);
     await assembleContext({ db, sessionId: "s1", tool: "Write" });
     const occupancyQuery = db.queries[1] ?? "";
-    expect(occupancyQuery).toContain(`s."machine" = $1`);
+    // The machine is read off the assignment, which is the row that owns
+    // it: `claim` stores it there and creates no session row, so resolving
+    // it through a session answers null for an ordinary claim and disables
+    // the entry silently. The semantics of this query are pinned by
+    // execution in `interventions-occupancy-db.test.ts`; these assertions
+    // only guard the shape.
+    expect(occupancyQuery).toContain(`a."machine" = $1`);
     expect(occupancyQuery).toContain(`i."repo" = $2`);
     expect(occupancyQuery).not.toContain(`"worktree"`);
   });
@@ -313,15 +319,14 @@ describe("occupancy — who else holds this checkout (I15)", () => {
     expect(occupancyQuery).toContain(`a."releasedAt" IS NULL`);
   });
 
-  it("asks nothing when the machine or the repo is unknown", async () => {
-    // Either being null makes the pair unanswerable, and a query that
-    // dropped the null half would compare every checkout on every machine
-    // against this one.
-    for (const partial of [{ machine: null }, { repo: null }]) {
-      const db = sequencedHandle([[{ ...claimRow, ...partial }], []]);
-      const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
-      expect(db.queries).toHaveLength(1);
-      expect(context.occupyingCrew).toBeUndefined();
-    }
+  it("asks nothing when the repository is unknown", async () => {
+    // Half the pair being absent makes it unanswerable, and a query that
+    // dropped that half would compare every checkout on the machine against
+    // this one. Only the repository can be absent — `Assignment.machine` is
+    // NOT NULL and `claim` requires it — so this is the whole of the case.
+    const db = sequencedHandle([[{ ...claimRow, repo: null }], []]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(db.queries).toHaveLength(1);
+    expect(context.occupyingCrew).toBeUndefined();
   });
 });

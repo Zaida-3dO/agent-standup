@@ -327,6 +327,20 @@ const checkoutHeldByAnotherCrew: Intervention = {
       "and work there. If you genuinely need this checkout, say why: the reason is recorded.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
+    // A linked worktree is a *separate working tree* on the same machine and
+    // the same repository, which is exactly what `(machine, repo)` cannot
+    // distinguish. Two crews each in their own worktree are the healthy,
+    // intended arrangement — the working practice this repository is built
+    // around — so firing on them would refuse the normal case on every file
+    // edit, which is the failure that teaches a session to distrust a guard.
+    //
+    // Strictly `true`: `undefined` means the claim recorded no worktree, and
+    // an unknown working tree is not a known-separate one. That direction
+    // keeps the entry cautious about *suppressing* itself while staying
+    // cautious about firing, and it is the same reading of absence the rest
+    // of this file uses.
+    if (context.isLinkedWorktree === true) return { triggered: false };
+
     const holder = context.occupyingCrew;
     // Absent means nobody else holds it *or* the server could not tell, and
     // the two are read the same way. Blocking on an unanswered question is

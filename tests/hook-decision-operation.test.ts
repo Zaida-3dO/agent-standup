@@ -58,6 +58,36 @@ async function call(input: Record<string, unknown>): Promise<Answer> {
 }
 
 /**
+ * Calls the operation with a handle that answers **only** the intervention
+ * settings read, and still throws on anything else.
+ *
+ * Deliberately not a permissive handle. The point of `untouchableHandle` is
+ * that a query nobody intended fails loudly, and a stub that answered every
+ * query would give that up for the cases below — which are precisely the
+ * cases where "it reads its configuration" and "it reads item state" must
+ * stay distinguishable.
+ */
+async function callWithSettings(
+  input: Record<string, unknown>,
+  rows: readonly { key: string; value: unknown }[],
+): Promise<Answer> {
+  const handle: TransactionHandle = {
+    $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+      if (query.includes(`FROM "settings"`)) return rows as T;
+      throw new Error(`hook_decision must not touch the database: ${query}`);
+    },
+    $executeRawUnsafe: async () => {
+      throw new Error("hook_decision must not write");
+    },
+  };
+  const service = new ServiceRuntime({
+    transaction: (body) => body(handle),
+    resolveSnapshot: async () => defaultSnapshot(),
+  });
+  return (await service.call("hook_decision", input)) as unknown as Answer;
+}
+
+/**
  * A handle that answers the three queries context assembly makes, from a
  * described world rather than from Postgres.
  *
@@ -317,18 +347,48 @@ describe("the operation touches no table on the ordinary path", () => {
     ).rejects.toThrow();
   });
 
-  it("completes for a broad process kill, which blocks on shape alone", async () => {
-    // I12 needs no state by design — it was settled as a prompt to think
-    // rather than an ownership check. So it must reach a block without a
-    // single query, and this asserts that it does.
-    const answer = await call({
-      eventType: "PreToolUse",
-      sessionId: "s1",
-      tool: "Bash",
-      command: "taskkill /F /IM node.exe",
-    });
+  it("blocks a broad process kill, reading only the configuration", async () => {
+    // I12 needs no *item* state by design — it was settled as a prompt to
+    // think rather than an ownership check — so no claim, item or artifact
+    // is looked up for it, and the handle above would throw if one were.
+    //
+    // It does read the installation's intervention configuration, and that
+    // is the point rather than a leak: an entry nobody can switch off is
+    // not configurable, and this is the entry most likely to need it — it
+    // blocks on the shape of a command alone, so an installation that finds
+    // it too eager has no other remedy. One indexed range scan on a call
+    // already being refused is the cheapest place in the system to pay for
+    // that, and this case is what pins the distinction between "reads no
+    // state" and "reads no configuration".
+    const answer = await callWithSettings(
+      {
+        eventType: "PreToolUse",
+        sessionId: "s1",
+        tool: "Bash",
+        command: "taskkill /F /IM node.exe",
+      },
+      [],
+    );
 
     expect(answer.decision).toBe("block");
+  });
+
+  it("lets an installation switch a shape-only entry off", async () => {
+    // The other half, and the reason the query above is worth its cost: a
+    // stored override has to actually reach `evaluate`, or the settings
+    // surface is a display that changes nothing.
+    const answer = await callWithSettings(
+      {
+        eventType: "PreToolUse",
+        sessionId: "s1",
+        tool: "Bash",
+        command: "taskkill /F /IM node.exe",
+      },
+      [{ key: "interventions.broad-process-kill.enabled", value: false }],
+    );
+
+    expect(answer.decision).toBe("allow");
+    expect(answer.findings).toEqual([]);
   });
 
   it("completes for a Stop, which is advisory and asks the registry nothing", async () => {

@@ -70,9 +70,19 @@ import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { BUILTIN_INTERVENTIONS } from "@/lib/interventions/builtins";
-import { assembleContext } from "@/lib/interventions/context";
+import { isBroadProcessKill } from "@/lib/interventions/commands";
+import { assembleContext, needs } from "@/lib/interventions/context";
 import { evaluate, strongestLevel } from "@/lib/interventions/registry";
-import { isBlockingLevel, type InterventionFinding } from "@/lib/interventions/types";
+import {
+  readInterventionSettingRows,
+  resolveInterventionSettings,
+} from "@/lib/interventions/settings";
+import {
+  isBlockingLevel,
+  type InterventionContext,
+  type InterventionFinding,
+  type InterventionOverride,
+} from "@/lib/interventions/types";
 
 const EVENT_TYPES = ["PreToolUse", "PostToolUse", "Stop"] as const;
 
@@ -165,8 +175,17 @@ export const hookDecision = defineOperation({
       ...(input.command === undefined ? {} : { command: input.command }),
     });
 
+    // The installation's own configuration, read only when a finding is
+    // possible at all. `assembleContext` leaves every item-shaped field
+    // absent for a call that could not be the subject of one, and such a
+    // call cannot produce a finding for an override to apply to — so
+    // reading the rows for it would put a query on the highest-volume path
+    // to configure a verdict that is not going to be reached.
+    const overrides = await readOverridesIfUseful(ctx, context);
+
     const findings = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
+      overrides,
       // The phase is read off the event, never off the entry. That is what
       // makes "a post entry cannot block" structural here: on a
       // `PostToolUse` the registry is only ever asked for `post` entries,
@@ -217,4 +236,49 @@ function reasonFor(findings: readonly InterventionFinding[]): string | null {
   const speaking = findings.filter((finding) => finding.level !== "nothing");
   if (speaking.length === 0) return null;
   return speaking.map((finding) => finding.messages.plain).join(" ");
+}
+
+/**
+ * Reads the installation's intervention overrides, when they could matter.
+ *
+ * ── Why this is gated at all ───────────────────────────────────────────
+ *
+ * An override changes the level, timing, message or enabled-ness of an
+ * entry that *triggers*. A call whose context carries nothing an entry
+ * could turn on cannot produce a finding, so its overrides can change
+ * nothing — and reading them would be a query on the path that is
+ * deliberately query-free for the overwhelming majority of calls.
+ *
+ * The gate reuses `needs` — the same function `assembleContext` gates its
+ * own queries on — rather than re-deriving the question. That matters more
+ * than it looks: a second, independently written test for "could this call
+ * matter" would drift from the first, and the drift would show up as a
+ * settings read on the very calls the first one exists to keep free. The
+ * one entry needing no state at all is a broad process kill, which is why
+ * it is named here explicitly rather than inferred.
+ *
+ * A wrong "yes" costs one indexed range scan on a call that was already
+ * paying for a lookup. A wrong "no" would silently ignore an installation's
+ * configuration, so the gate errs towards reading.
+ */
+function couldTrigger(context: InterventionContext): boolean {
+  const wanted = needs(context.command, context.tool);
+  if (wanted.assignment || wanted.approval || wanted.occupancy) return true;
+  // I12 turns purely on the command's shape and reaches no state, so it is
+  // the one entry that can fire on a call `needs` reports nothing for.
+  return context.command !== undefined && isBroadProcessKill(context.command);
+}
+async function readOverridesIfUseful(
+  ctx: ServiceContext,
+  context: InterventionContext,
+): Promise<Readonly<Record<string, InterventionOverride>>> {
+  if (!couldTrigger(context)) return {};
+
+  const stored = await readInterventionSettingRows(ctx.db);
+  // Nothing stored is the common case and must not cost anything further:
+  // an installation that has never configured an entry gets an empty map,
+  // and every entry tracks the product exactly as it shipped.
+  if (stored.length === 0) return {};
+
+  return resolveInterventionSettings({ stored, entries: BUILTIN_INTERVENTIONS }).overrides;
 }
