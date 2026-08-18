@@ -30,10 +30,17 @@ const inputSchema = z
 
 export type NoteOperationInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const note = defineOperation({
   name: "note",
   kind: "write",
   summary: "Leaves a timestamped remark on an item.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: NoteOperationInput): Promise<AppendedEvent> {
     const itemRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(

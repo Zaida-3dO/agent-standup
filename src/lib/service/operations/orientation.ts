@@ -177,11 +177,18 @@ const NON_ACTIONABLE_STATES: ReadonlySet<string> = new Set([
   "cancelled",
 ]);
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const orientation = defineOperation({
   name: "orientation",
   kind: "read",
   summary:
     "Catch me up: latest checkpoint, current state, what changed since, open loops, and crew.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: OrientationInput): Promise<OrientationOutput> {
     const itemRows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(

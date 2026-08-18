@@ -202,6 +202,12 @@ jobs:
       # structural check it resembles rather than with the database tests.
       - name: Check every declared event type has an emitter
         run: npm run check:event-emitters
+      # Source-text only, like the two checks above it — no Stryker, no test
+      # run. It belongs here rather than in the mutation job because it exists
+      # to fail *before* a pull request pays nine minutes to be told the same
+      # thing in a form that takes an afternoon to diagnose.
+      - name: Check operation metadata is annotated for mutation testing
+        run: npm run check:operation-metadata
       - name: Lint
         run: npm run lint
       - name: Format check

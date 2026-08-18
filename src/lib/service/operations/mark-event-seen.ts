@@ -75,11 +75,18 @@ interface RawSeenRow {
   seenAt: Date;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const markEventSeen = defineOperation({
   name: "mark_event_seen",
   kind: "write",
   summary:
     "Marks one event read for one profile. Idempotent — marking it again succeeds and does not move the original seen-at.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: MarkEventSeenInput): Promise<MarkEventSeenOutput> {
     const eventId = BigInt(input.eventId);

@@ -117,11 +117,18 @@ interface StuckRow {
   state: string;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const repairStuckProjects = defineOperation({
   name: "repair_stuck_projects",
   kind: "write",
   summary:
     'Finds parentless, childless, non-terminal items — which can neither be transitioned (a project has no state of its own) nor resolved by a child completing — and files each under a project so it becomes a transitionable task. Reports without writing unless apply is true. Idempotent: a repaired item has a parent, so it falls outside the scan. Pass projectId as a project id or the literal "inbox"; no parent is ever guessed.',
+  // Stryker restore all
   input: inputSchema,
   contract: {
     rules: [

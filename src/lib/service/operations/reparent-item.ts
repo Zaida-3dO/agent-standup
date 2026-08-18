@@ -57,11 +57,18 @@ const inputSchema = z
 
 export type ReparentItemInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const reparentItem = defineOperation({
   name: "reparent_item",
   kind: "write",
   summary:
     'Moves an item to a different parent, re-deriving its kind and depth (and its descendants\' kinds) from where it lands. Pass parentId as an item id, the literal "inbox", or null to make it a top-level project. Refuses a cycle, a parent that does not exist or is in an archived area, and a move that would push the subtree past items.max_depth.',
+  // Stryker restore all
   input: inputSchema,
   contract: {
     rules: [

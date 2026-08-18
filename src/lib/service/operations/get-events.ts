@@ -154,11 +154,18 @@ interface RawTitleRow {
   title: string;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const getEvents = defineOperation({
   name: "get_events",
   kind: "read",
   summary:
     "Since your last visit: a bounded slice of the events ledger with per-profile read state. Pass since to page, personId to resolve whose read state, unseenOnly for just what is new.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetEventsInput): Promise<GetEventsOutput> {
     const since = input.since !== undefined ? BigInt(input.since) : 0n;

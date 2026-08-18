@@ -52,11 +52,18 @@ const inputSchema = z
 
 export type TakeoverOperationInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const takeover = defineOperation({
   name: "takeover",
   kind: "write",
   summary:
     "Takes an item from another session. Free if that session is dead; requires force plus a written reason if it may be alive.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: TakeoverOperationInput): Promise<TakeoverResult> {
     // Checked ahead of the assignment read for the same reason `claim` checks

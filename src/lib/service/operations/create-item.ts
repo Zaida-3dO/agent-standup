@@ -97,12 +97,19 @@ const contract = {
   },
 } as const;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const createItem = defineOperation({
   name: "create_item",
   kind: "write",
   summary:
     "Deprecated — use create_project, create_task or create_subtask instead. Creates an item whose kind is inferred from whether parentId was supplied, so a caller cannot state which kind it wants.",
   contract,
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CreateItemInput): Promise<ItemRecord> {
     const { parentId, ...common } = input;

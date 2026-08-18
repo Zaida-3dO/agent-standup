@@ -130,10 +130,17 @@ export interface HookDecisionOperationOutput {
   readonly findings: readonly InterventionFinding[];
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const hookDecision = defineOperation({
   name: "hook_decision",
   kind: "read",
   summary: "Answers one hook event with allow or block, and any advisory text to surface.",
+  // Stryker restore all
   input: inputSchema,
   async handler(
     ctx: ServiceContext,

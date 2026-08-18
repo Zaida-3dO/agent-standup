@@ -50,11 +50,18 @@ const inputSchema = z
 
 export type CreateSubtaskInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const createSubtask = defineOperation({
   name: "create_subtask",
   kind: "write",
   summary:
     "Creates a subtask under a task. taskId is required and must name a task or a deeper subtask, never a project. A subtask has its own state and can be transitioned.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CreateSubtaskInput): Promise<ItemRecord> {
     const { taskId, ...common } = input;

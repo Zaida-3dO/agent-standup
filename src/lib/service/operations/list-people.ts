@@ -34,10 +34,17 @@ export interface ListPeopleOutput {
   readonly people: readonly PersonRecord[];
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const listPeople = defineOperation({
   name: "list_people",
   kind: "read",
   summary: "Reads every non-archived profile, for the profile picker.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext): Promise<ListPeopleOutput> {
     // Ordered by createdAt then id: stable and deterministic across calls,

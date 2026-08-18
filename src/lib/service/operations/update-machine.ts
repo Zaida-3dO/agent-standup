@@ -39,10 +39,17 @@ const inputSchema = z
 
 export type UpdateMachineInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const updateMachine = defineOperation({
   name: "update_machine",
   kind: "write",
   summary: "Sets or clears a machine's source-globs override, creating the machine if it is new.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: UpdateMachineInput): Promise<MachineRecord> {
     const provided = input.sourceGlobs !== undefined;

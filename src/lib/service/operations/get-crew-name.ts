@@ -42,10 +42,17 @@ const inputSchema = z
 
 export type GetCrewNameInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const getCrewName = defineOperation({
   name: "get_crew_name",
   kind: "write",
   summary: "Requests a name for a new agent. Hands out one available name, atomically.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetCrewNameInput): Promise<AgentNameRow> {
     const name = await handOutName(ctx.db, input.sessionId);

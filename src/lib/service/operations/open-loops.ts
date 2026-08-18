@@ -141,10 +141,17 @@ export interface LoopAdded {
   readonly event: AppendedEvent;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const loopAdd = defineOperation({
   name: "loop_add",
   kind: "write",
   summary: "Records a loose end on an item — something unresolved that is not itself a work item.",
+  // Stryker restore all
   input: addInput,
   async handler(ctx: ServiceContext, input: LoopAddInput): Promise<LoopAdded> {
     await requireItem(ctx, input.itemId);
@@ -218,10 +225,17 @@ const closeInput = z
 
 export type LoopCloseInput = z.infer<typeof closeInput>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const loopClose = defineOperation({
   name: "loop_close",
   kind: "write",
   summary: "Closes an open loop on an item.",
+  // Stryker restore all
   input: closeInput,
   async handler(ctx: ServiceContext, input: LoopCloseInput): Promise<AppendedEvent> {
     await requireItem(ctx, input.itemId);

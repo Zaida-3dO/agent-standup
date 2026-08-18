@@ -85,11 +85,18 @@ interface LiveRow {
   description: string | null;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const killGuard = defineOperation({
   name: "kill_guard",
   kind: "read",
   summary:
     "Decides whether a kill command would end only processes the asking session's crew registered.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: KillGuardInput): Promise<KillGuardOutput> {
     const parsed = parseKillCommand(input.command);

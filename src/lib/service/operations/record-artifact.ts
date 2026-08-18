@@ -229,10 +229,17 @@ async function resolveReviewRound(
   return currentReviewRound(ctx.db, input.itemId);
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const recordArtifact = defineOperation({
   name: "record_artifact",
   kind: "write",
   summary: "Records an artifact — a plan, a review, a commit, a screenshot — against an item.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RecordArtifactInput): Promise<RecordedArtifact> {
     const itemRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
@@ -406,10 +413,17 @@ export type RequestReviewInput = z.infer<typeof requestReviewInput>;
  * Folding it into `record_artifact` would have meant recording a review in
  * order to ask for one, which inverts the direction of the whole thing.
  */
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const requestReview = defineOperation({
   name: "request_review",
   kind: "write",
   summary: "Requests a review of an item, recording that one was asked for.",
+  // Stryker restore all
   input: requestReviewInput,
   async handler(ctx: ServiceContext, input: RequestReviewInput) {
     const itemRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(

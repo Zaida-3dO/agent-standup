@@ -277,12 +277,19 @@ async function loadItemRecord(ctx: ServiceContext, id: string): Promise<ItemReco
   return toItemRecord(row);
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const completeItem = defineOperation({
   name: "complete_item",
   kind: "write",
   summary:
     "Finishes an item: moves it into a completed state and records the closing summary that state requires.",
   contract,
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CompleteItemInput): Promise<CompleteItemResult> {
     const candidate = toCandidate(input.summary);

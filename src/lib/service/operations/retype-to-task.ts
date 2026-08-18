@@ -87,11 +87,18 @@ interface ChildRow {
   title: string;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const retypeToTask = defineOperation({
   name: "retype_to_task",
   kind: "write",
   summary:
     'Turns a childless project into a task under a project, so it has a state that can be transitioned. Pass projectId as a project id or the literal "inbox". The item keeps the state already on its row — nothing is invented. Refuses an item that is not a project, and refuses a project that still has children.',
+  // Stryker restore all
   input: inputSchema,
   contract: {
     rules: [

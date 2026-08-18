@@ -56,6 +56,28 @@ export interface MyWorkEntry {
 export interface MyWorkOutput {
   readonly sessionId: string;
   readonly items: readonly MyWorkEntry[];
+  /**
+   * Whether a hook has ever reported a protocol version for this session.
+   *
+   * A session with no hook can claim and do work — the version being
+   * unreported is information, not a reason to refuse ownership. What that
+   * leaves is a reader unable to tell **"no rule could have fired here,
+   * because nothing was watching"** from **"a rule fired and found nothing
+   * wrong"**, and the two look identical in a session's history. It matters
+   * most at review: trusting that policy was enforced on a session that ran
+   * no hook at all is trusting something that was never true.
+   *
+   * `false` is therefore the honest answer for a session that has never
+   * registered at all, not just one that registered without a version.
+   * Neither has a hook this installation has heard from, and a reader asking
+   * "was anything watching" is owed the same answer for both.
+   *
+   * It says nothing about whether a rule *did* fire — only whether one
+   * could have. That is deliberately the narrower claim: what fired is in
+   * the ledger, and a summary field that implied otherwise would be a new
+   * way of being wrong about the same question.
+   */
+  readonly hooked: boolean;
 }
 
 interface RawSessionAssignmentRow extends RawItemRow {
@@ -81,10 +103,17 @@ export function isoOrString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const myWork = defineOperation({
   name: "my_work",
   kind: "read",
   summary: "What this session holds right now, and in what role, per SCHEMA.md §18.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: MyWorkInput): Promise<MyWorkOutput> {
     // One statement: every item this session holds a *live* assignment on
@@ -122,6 +151,23 @@ export const myWork = defineOperation({
       input.sessionId,
     );
 
+    // A second statement rather than a join onto the first: this answers a
+    // question about the *session*, and there is exactly one answer to it
+    // however many assignments come back — including **none**, which is
+    // precisely the case a join would lose. A session holding nothing still
+    // has a hook, or still does not, and that is worth knowing about the
+    // session a reviewer is looking at, held work or not.
+    const sessionRows = await ctx.db.$queryRawUnsafe<{ hookVersion: number | null }[]>(
+      `SELECT "hookVersion" FROM "Session" WHERE "id" = $1`,
+      input.sessionId,
+    );
+
+    // No row and a null version collapse to the same answer on purpose —
+    // see `hooked`'s own comment. `?? null` rather than optional chaining
+    // alone so an absent row and a present-but-null column take the same
+    // path instead of one being `undefined` and the other `null`.
+    const hooked = (sessionRows[0]?.hookVersion ?? null) !== null;
+
     const items: MyWorkEntry[] = rows.map((row) => ({
       item: toItemRecord(row),
       assignment: {
@@ -136,6 +182,6 @@ export const myWork = defineOperation({
       },
     }));
 
-    return { sessionId: input.sessionId, items };
+    return { sessionId: input.sessionId, items, hooked };
   },
 });
