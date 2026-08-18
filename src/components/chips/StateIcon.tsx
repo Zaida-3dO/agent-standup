@@ -84,6 +84,30 @@ function paths(shape: StateShape, colour: string) {
           <circle cx="5" cy="5" r="1.4" fill={colour} />
         </>
       );
+    // A page with a tick on it — a plan waiting to be signed off. Shares
+    // no outline with `eye`, which is the point: the two "someone is
+    // looking at this" states must not collapse into one silhouette, and
+    // their colours are two violets a reader cannot tell apart.
+    case "stamp":
+      return (
+        <>
+          <path
+            d="M2 1.4 H6.4 L8.4 3.4 V8.6 H2 Z"
+            fill="none"
+            stroke={colour}
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M3.6 5.6 L4.8 6.8 L7 4.2"
+            fill="none"
+            stroke={colour}
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </>
+      );
     // A triangle pointing right — running.
     case "play":
       return <path d="M2.4 1.4 L8.6 5 L2.4 8.6 Z" fill={colour} />;

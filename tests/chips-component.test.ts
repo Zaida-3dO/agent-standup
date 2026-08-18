@@ -81,12 +81,106 @@ describe("StateChip", () => {
     expect(propsOf(element)["aria-label"]).toBe("State: Blocked");
   });
 
-  it("gives blocked and merged different icon shapes — opposite meanings", () => {
-    const shapeOf = (element: ReactNode) =>
-      [...walk(element)].find((el) => el.type === StateIcon)?.props as { shape?: string };
-    expect(shapeOf(StateChip({ state: "blocked" })).shape).not.toBe(
-      shapeOf(StateChip({ state: "merged" })).shape,
-    );
+  it("renders a StateIcon for every state, carrying that state's mapped shape", () => {
+    // The wiring, asserted separately from the distinctness property below
+    // so a failure says which of the two broke.
+    for (const state of ITEM_STATES) {
+      const icon = [...walk(StateChip({ state }))].find((el) => el.type === StateIcon);
+      expect((icon?.props as { shape?: string })?.shape).toBe(STATE_SHAPES[state]);
+    }
+  });
+});
+
+describe("state icons are pairwise distinguishable — the WCAG 1.4.1 channel", () => {
+  // ── Why this compares GEOMETRY and not shape names ────────────────────
+  //
+  // The obvious test — assert all twelve `STATE_SHAPES` values are unique —
+  // is not enough, and the gap is not hypothetical. Two shape names can map
+  // to identical drawings (a copy-pasted `case` in `StateIcon`), and a
+  // name-only test passes while six states render the same icon.
+  //
+  // So this renders each shape and fingerprints what actually comes out.
+  // A state's icon is its LAST line of defence: `blocked` and `merged`
+  // carry opposite meanings on red and green, and `plan_review`/`in_review`
+  // are two violets about 1.05:1 apart — on an `iconOnly` chip the outline
+  // is the only channel left. A shape map is exactly the kind of table
+  // where a duplicate hides, because the chip still renders and still has
+  // a colour.
+  //
+  // ── What breaks this ──────────────────────────────────────────────────
+  //
+  //   - Pointing any two states at the same shape name.
+  //   - Giving two DIFFERENT shape names the same drawing in `StateIcon`.
+  //   - Deleting a `case` so a shape renders an empty <svg>.
+
+  /**
+   * A structural fingerprint of what a shape draws.
+   *
+   * Every SVG child's element type plus its geometry attributes, in order.
+   * Deliberately EXCLUDES `colour`-derived props: two states drawing the
+   * same outline in different colours must still count as a collision,
+   * since colour is precisely the channel that cannot be relied on here.
+   */
+  function geometryOf(shape: string): string {
+    const element = StateIcon({ shape: shape as never, colour: "#000" });
+    const parts: string[] = [];
+    for (const el of walk(element)) {
+      if (el.type === "svg") continue;
+      const props = el.props as Record<string, unknown>;
+      const geometry = ["d", "cx", "cy", "r", "x", "y", "width", "height", "points"]
+        .map((key) => (props[key] === undefined ? "" : `${key}=${String(props[key])}`))
+        .filter((entry) => entry !== "")
+        .join(",");
+      parts.push(`${String(el.type)}(${geometry})`);
+    }
+    return parts.join("|");
+  }
+
+  it("draws something for every shape — no state renders an empty icon", () => {
+    // Guards the distinctness test below from passing vacuously: two empty
+    // fingerprints would be equal, so this must fail first and loudly.
+    for (const state of ITEM_STATES) {
+      expect(geometryOf(STATE_SHAPES[state])).not.toBe("");
+    }
+  });
+
+  it("gives every PAIR of the twelve states a distinguishable outline", () => {
+    const collisions: string[] = [];
+    for (let i = 0; i < ITEM_STATES.length; i += 1) {
+      for (let j = i + 1; j < ITEM_STATES.length; j += 1) {
+        const a = ITEM_STATES[i]!;
+        const b = ITEM_STATES[j]!;
+        // `wont_do` and `cancelled` share the `slash` on purpose — they are
+        // the same outcome to a reader (closed, nothing built), and the
+        // chip's label carries the distinction where it matters. This is
+        // the ONLY sanctioned collision, named explicitly so adding a
+        // second one is a deliberate act rather than an oversight.
+        const sanctioned =
+          (a === "wont_do" && b === "cancelled") || (a === "cancelled" && b === "wont_do");
+        if (sanctioned) continue;
+        if (geometryOf(STATE_SHAPES[a]) === geometryOf(STATE_SHAPES[b])) {
+          collisions.push(`${a} and ${b} both render ${STATE_SHAPES[a]}`);
+        }
+      }
+    }
+    expect(collisions).toEqual([]);
+  });
+
+  it("keeps the two pairs whose confusion is most costly apart", () => {
+    // Named individually as well as covered by the sweep above, because
+    // these two are WHY the property matters and a future edit relaxing
+    // the sweep should still trip on them.
+    //
+    // blocked/merged: opposite meanings, red and green — the classic
+    // confusion, where reading by hue inverts the board rather than
+    // merely losing detail.
+    expect(geometryOf(STATE_SHAPES.blocked)).not.toBe(geometryOf(STATE_SHAPES.merged));
+    // plan_review/in_review: two violets ~1.05:1 apart, i.e. effectively
+    // indistinguishable by colour at any size.
+    expect(geometryOf(STATE_SHAPES.plan_review)).not.toBe(geometryOf(STATE_SHAPES.in_review));
+    // paused/blocked: share a column (SCHEMA.md §1.1), where the schema
+    // names colour as the thing separating them.
+    expect(geometryOf(STATE_SHAPES.paused)).not.toBe(geometryOf(STATE_SHAPES.blocked));
   });
 });
 

@@ -111,10 +111,24 @@
   --border-subtle: var(--n-850);
   --border-default: var(--n-800);
   --border-strong: var(--n-700);
+  /* The boundary of an INPUT or a button — an affordance, not decoration.
+     WCAG 1.4.11 exempts a purely decorative border but not this one: it is
+     the thing that says "you can type here", so it is held to 3:1 against
+     the surface it sits on and is verified in
+     `tests/design-tokens-contrast.test.ts` alongside the state colours.
+     `--border-strong` is deliberately NOT reused: it divides and bounds
+     regions, where being quiet is correct, and raising it to clear 3:1
+     would make every panel edge shout. */
+  --border-control: oklch(0.52 0.012 275);
 
   /* Interaction. Focus is deliberately loud — this app is keyboard-heavy
      and a subtle focus ring is an accessibility failure with good taste. */
-  --accent: oklch(0.65 0.17 265);
+  /* A filled control's fill, dark enough that its own near-white label
+     clears 4.5:1 ON IT (the pairing a reader actually sees). A lighter,
+     prettier accent fails that: its label is the first thing to become
+     unreadable, and a primary button nobody can read is the worst place
+     to spend contrast. */
+  --accent: oklch(0.5 0.17 265);
   --accent-fg: oklch(0.97 0.01 265);
   --accent-bg: oklch(0.35 0.09 265);
   --accent-border: oklch(0.5 0.13 265);
@@ -363,6 +377,10 @@
   --border-subtle: var(--n-100);
   --border-default: var(--n-200);
   --border-strong: var(--n-300);
+  /* Darker than `--border-strong`, because a control on light must clear
+     3:1 against a WHITE card (`--surface-card` is `--n-0` here), and the
+     neutral ramp's own 300 step is nowhere near that. */
+  --border-control: oklch(0.6 0.012 275);
 
   --accent: oklch(0.5 0.18 265);
   --accent-fg: oklch(0.99 0.005 265);

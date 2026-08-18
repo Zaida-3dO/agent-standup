@@ -157,6 +157,32 @@ describe.each(["dark", "light"] as const)("contrast — %s theme", (scope) => {
     expect(failures).toEqual([]);
   });
 
+  it("a control's border passes AA for UI (3:1) on every surface it sits on", () => {
+    // `--border-control` is the boundary of an input or a button — the
+    // thing that says "you can type here". WCAG 1.4.11 exempts a
+    // decorative border but not an affordance, and a control whose edge
+    // you cannot find is the failure this token exists to prevent.
+    //
+    // Checked against the OVERLAY surface too, not just the card: the
+    // profile create form lives in a dialog, and on the light theme
+    // `--surface-overlay` is pure white — the hardest background for a
+    // neutral border to clear, and the one a card-only check would miss.
+    const failures: string[] = [];
+    for (const surface of ["surface-card", "surface-overlay", "surface-panel"]) {
+      const ratio = contrastRatio(oklchOf("border-control", scope), oklchOf(surface, scope));
+      if (ratio < AA_UI) failures.push(`border-control on ${surface}: ${ratio.toFixed(2)}`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("a filled accent control's own label passes AA against its fill", () => {
+    // The pairing a reader actually sees on a primary button. Checking
+    // `--accent-fg` against the page instead would pass a button whose
+    // label is illegible on the button.
+    const ratio = contrastRatio(oklchOf("accent-fg", scope), oklchOf("accent", scope));
+    expect(ratio).toBeGreaterThanOrEqual(AA_TEXT);
+  });
+
   it("live and stalled presence dots pass AA for UI (3:1)", () => {
     const failures: string[] = [];
     for (const token of ["presence-live", "presence-stalled"]) {
