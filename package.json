@@ -31,6 +31,8 @@
     "check:external-refs": "node scripts/check-external-refs.mjs",
     "check:db-imports": "node scripts/check-db-import-allowlist.mjs",
     "check:event-emitters": "node scripts/check-event-emitters.mjs",
+    "check:db-gated": "node scripts/check-db-gated-suites.mjs",
+    "check:db-gated:require": "node scripts/check-db-gated-suites.mjs --require-db",
     "version:from-tag": "node scripts/version-from-tag.mjs",
     "db:up": "docker compose up -d db",
     "db:migrate": "prisma migrate dev",

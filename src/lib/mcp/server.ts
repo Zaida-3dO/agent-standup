@@ -54,6 +54,20 @@ export type ServiceCall = (
   },
 ) => Promise<unknown>;
 
+/**
+ * The caller identity a transport resolved, if it could.
+ *
+ * Both fields are optional and independent: a transport may know the session
+ * and not the actor, or neither. Nothing is invented to fill a gap — an
+ * absent field is threaded through as absent, so the service layer's own
+ * fallback decides what a missing actor means rather than this adapter
+ * guessing on its behalf.
+ */
+export interface McpCallerIdentity {
+  readonly sessionId?: string;
+  readonly actor?: string;
+}
+
 export interface McpServerOptions {
   /** How this core reaches the rules. The only capability it is given. */
   readonly call: ServiceCall;
@@ -77,6 +91,31 @@ export interface McpServerOptions {
    * honour would be a waiver in name only.
    */
   readonly adapter: AdapterName;
+  /**
+   * Who is calling, when the transport was able to tell.
+   *
+   * MCP is stateless (`./http.ts`), so nothing about the protocol carries a
+   * caller identity between requests — the transport has to resolve it from
+   * whatever its own carrier offers, and hand it in here. Without it every
+   * write made over MCP attributes to `system`, because
+   * `callerEventActor` reads `ctx.caller.sessionId` and there was never
+   * anything to read: the primary surface every agent uses was the one
+   * surface that could not say who it was.
+   *
+   * Optional, and absent means exactly what it meant before — an
+   * unattributed call, not a refused one. A caller that does not identify
+   * itself is not doing anything wrong, and refusing it would turn a
+   * missing courtesy into an outage on a tool surface agents depend on.
+   *
+   * **It is a self-report, and the fields it can populate are chosen on that
+   * basis.** Nothing downstream reads `sessionId` to decide what a caller
+   * *may* do — every guard that gates on a session takes it as an explicit
+   * input field it validates for itself — so this only affects which session
+   * an event is credited to. That is the same standing the transport header
+   * already has (`session-transport-header.ts`), and the reason it is safe
+   * to believe here and would not be if a permission hung on it.
+   */
+  readonly identity?: McpCallerIdentity;
   /** The operations to expose. Defaults to every registered one this adapter has not waived. */
   readonly operations?: readonly AnyOperation[];
   /** Reported on `initialize`. */
@@ -104,6 +143,7 @@ export function createMcpServer({
   call,
   transport,
   adapter,
+  identity,
   operations = exposedOperations(adapter, listOperations()),
   serverInfo = MCP_SERVER_INFO,
 }: McpServerOptions): McpServer {
@@ -126,7 +166,8 @@ export function createMcpServer({
         inputSchema: advertisedSchema(tool.inputSchema),
         annotations: { readOnlyHint: tool.readOnly },
       },
-      async (args: unknown): Promise<ToolResult> => callTool(call, transport, tool.name, args),
+      async (args: unknown): Promise<ToolResult> =>
+        callTool(call, transport, tool.name, args, identity),
     );
   }
 
@@ -164,10 +205,25 @@ export async function callTool(
   transport: string,
   name: string,
   args: unknown,
+  identity: McpCallerIdentity = {},
 ): Promise<ToolResult> {
   const requestId = newRequestId();
   try {
-    return toolSuccess(await call(name, args, { caller: { transport, requestId } }));
+    return toolSuccess(
+      await call(name, args, {
+        // Spread conditionally rather than assigned unconditionally: an
+        // explicit `sessionId: undefined` is a different value from an
+        // absent key to anything reading the object with `in` or
+        // `Object.keys`, and the whole point of an unidentified call is
+        // that it carries no claim about who made it.
+        caller: {
+          transport,
+          requestId,
+          ...(identity.sessionId === undefined ? {} : { sessionId: identity.sessionId }),
+          ...(identity.actor === undefined ? {} : { actor: identity.actor }),
+        },
+      }),
+    );
   } catch (error) {
     const serviceError = toServiceError(error);
     if (serviceError.code === "internal") {

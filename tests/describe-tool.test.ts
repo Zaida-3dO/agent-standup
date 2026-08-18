@@ -35,6 +35,7 @@ import {
   type TransactionHandle,
 } from "@/lib/service";
 import { OPERATION_NAMES } from "@/lib/service/registry";
+import { SHIPPED_CHAR_CAP, SHIPPED_MAX, SHIPPED_MIN } from "@/lib/service/summaries/validate";
 import { invocationFor, invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
 import { assessVersion } from "@/lib/sessions";
 import { defaultSnapshot } from "@/lib/settings";
@@ -104,10 +105,19 @@ describe("describe_tool returns one tool's full contract", () => {
     const contract = await contractFor("complete_item");
     const text = ruleText(contract);
 
-    // `shipped` is 1-5. The numbers come from the validator's own constants,
-    // so this also fails if the interpolation is dropped and the sentence is
-    // hardcoded wrong.
-    expect(text).toMatch(/shipped[\s\S]*1[–-]5/);
+    // `shipped`'s cap, read from the validator's own constants rather than
+    // retyped. A literal `1[–-]5` here survives the pair of edits that
+    // hardcodes the generated sentence *and* raises the validator's cap —
+    // mutation testing finds exactly that pair, leaving documentation that
+    // states a limit the validator does not enforce. Building the
+    // expectation from the constants means the test fails if the
+    // interpolation is dropped, and fails again if the constants move
+    // without this file noticing, which is the drift `describe_tool` exists
+    // to prevent.
+    expect(text).toMatch(new RegExp(`shipped[\\s\\S]*${SHIPPED_MIN}[–-]${SHIPPED_MAX}`));
+    // The character cap travels in the same sentence and is derived the same
+    // way — it is the other number a caller is refused by.
+    expect(text).toContain(String(SHIPPED_CHAR_CAP));
 
     // The conditional half, which is the part that is genuinely invisible:
     // `how_verified` is required when `user_facing` is FALSE, and
@@ -240,6 +250,53 @@ describe("the field walker reads what the schema says", () => {
     // still worth returning if the field walk finds nothing.
     expect(describeFields(z.string())).toEqual([]);
     expect(describeFields(undefined)).toEqual([]);
+  });
+
+  it("reads a z.nativeEnum's members instead of throwing on them", () => {
+    // Zod stores `z.enum`'s members as an array and `z.nativeEnum`'s as the
+    // enum *object*, which is not iterable. An unguarded spread of
+    // `_def.values` therefore throws a TypeError for the second shape — out
+    // of the one tool a caller reaches for *after* being refused, which is
+    // the worst possible moment for it. No registered operation is typed
+    // `nativeEnum`, so this asserts against a schema built here rather than
+    // a real one; the point is that the walker survives the first that is.
+    const fields = describeFields(z.object({ colour: z.nativeEnum({ Red: "red", Blue: "blue" }) }));
+    const colour = fields.find((field) => field.name === "colour");
+    expect(colour?.enumValues).toEqual(["red", "blue"]);
+    // The type name still falls through to `unknown`, which is this module's
+    // documented answer for a node kind it does not model. Reporting the
+    // members without claiming to have modelled the kind is the honest pair.
+    expect(colour?.type).toBe("unknown");
+  });
+
+  it("omits a numeric enum's reverse-mapping keys, which the schema rejects", () => {
+    // A numeric TypeScript enum compiles to an object carrying both
+    // directions — `{ A: 0, B: 1, 0: "A", 1: "B" }` — and Zod accepts only
+    // `0` and `1`. A walker that reported every `Object.values` entry would
+    // document `"A"` and `"B"` as permitted, and a caller who believed it
+    // would be refused by the very schema they had just read. The list shown
+    // and the list checked against have to be the same list.
+    // Written as the object literal a numeric TypeScript enum actually
+    // compiles to, rather than declared with `enum`, because the two are the
+    // same value at runtime and a literal keeps the fixture readable as the
+    // shape under test.
+    const numeric = { A: 0, B: 1, 0: "A", 1: "B" };
+    const schema = z.nativeEnum(numeric);
+    expect(schema.safeParse(0).success).toBe(true);
+    expect(schema.safeParse("A").success).toBe(false);
+
+    const fields = describeFields(z.object({ level: schema }));
+    const level = fields.find((field) => field.name === "level");
+    expect(level?.enumValues).toEqual(["0", "1"]);
+    expect(level?.enumValues).not.toContain("A");
+  });
+
+  it("adds no enumValues key at all for a field that is not an enum", () => {
+    // `enumValues: []` would be a claim — an enum permitting nothing — where
+    // the truth is that the question does not apply. Kills the mutant that
+    // returns an empty array instead of omitting the key.
+    const fields = describeFields(z.object({ name: z.string() }));
+    expect(fields[0]).not.toHaveProperty("enumValues");
   });
 });
 

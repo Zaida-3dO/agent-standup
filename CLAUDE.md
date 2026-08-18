@@ -230,6 +230,30 @@ nothing to install or branch on per platform.
 **Bypass in an emergency:** `git push --no-verify`. CI still runs the full check list regardless,
 so a bypass costs a slower feedback loop, not correctness.
 
+### A local run without a database is quieter than it looks
+
+Most test files self-gate on `TEST_DATABASE_URL` — `const describeIfDb = testDatabaseUrl ? describe
+: describe.skip` — so with no database set, every assertion in them is **skipped**. A skip is not a
+failure, so `npm test` goes green having checked none of them, and nothing in the summary says which
+claims went untested. That is a comfortable green with a hole in it, and the hole has cost real time:
+a change once deleted a body of behaviour and left tests still asserting the deleted version, and
+every local run skipped the file and reported nothing until somebody stood up Postgres by hand.
+
+```bash
+npm run check:db-gated     # which files gate on a database, and whether this run will skip them
+npm run db:up              # a local Postgres, then export TEST_DATABASE_URL to run them
+```
+
+CI runs both halves: `Static checks & build` has no database and *reports* what it is skipping, while
+`Database tests` runs `check:db-gated:require`, which **fails** if `TEST_DATABASE_URL` is missing —
+otherwise a service container that quietly stopped starting would skip every gated suite and pass,
+which looks identical to a healthy run.
+
+**What that check does not tell you:** it reads source text and one environment variable, and never
+runs a test. A green `--require-db` means a URL was offered, not that a database answered on it, and
+it recognises the gate by the shape written above — a file inventing a different spelling is invisible
+to it.
+
 ## Standing authorisation — keep the queue moving
 
 **Merging is pre-authorised. Do not stop to ask.** Once a change has been through review and its

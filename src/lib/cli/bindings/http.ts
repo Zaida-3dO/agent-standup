@@ -23,7 +23,7 @@ import { BACKFILL_HTTP_ROUTES } from "./http-routes-backfill";
 import { ARTIFACT_HTTP_ROUTES } from "./http-routes-artifacts"; // row #98 — artifact writes
 import { LOOP_HTTP_ROUTES } from "./http-routes-loops"; // row #100 - open-loop writes
 import { SESSION_HTTP_ROUTES } from "./http-routes-sessions";
-import { CLI_TRANSPORT_HEADER } from "@/lib/session-transport-header";
+import { ACTOR_HEADER, CLI_TRANSPORT_HEADER, SESSION_HEADER } from "@/lib/session-transport-header";
 import { REQUEST_ID_HEADER } from "@/lib/request-id-header";
 
 /** How one operation is expressed as an HTTP request. */
@@ -304,8 +304,8 @@ export function createHttpBinding({
       const { path, body } = route.request(asRecord(input));
       const headers: Record<string, string> = { Accept: "application/json" };
       if (body !== undefined) headers["Content-Type"] = "application/json";
-      if (sessionId !== undefined) headers["X-Standup-Session"] = sessionId;
-      if (actor !== undefined) headers["X-Standup-Actor"] = actor;
+      if (sessionId !== undefined) headers[SESSION_HEADER] = sessionId;
+      if (actor !== undefined) headers[ACTOR_HEADER] = actor;
       // SCHEMA.md §21's five transports include `cli-http` — the command
       // line talking to a server — and from the server's side that request
       // is indistinguishable from any other HTTP call. This header is how
