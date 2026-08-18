@@ -61,6 +61,7 @@ export type StateShape =
   | "dot-filled" /* ● — queued, ready */
   | "pencil" /* ✎ — being written */
   | "eye" /* ◉ — under someone's review */
+  | "stamp" /* ⊞ — a plan waiting to be signed off */
   | "play" /* ▶ — running now */
   | "pause" /* ‖ — deliberately stopped */
   | "alert" /* △ — needs action */
@@ -70,6 +71,22 @@ export type StateShape =
 
 /**
  * State → shape.
+ *
+ * **Every state that can appear beside another must be distinguishable
+ * from it by outline alone.** `tests/chips-component.test.ts` enforces
+ * that as a pairwise property over all twelve, rather than by sampling a
+ * couple of pairs — a shape map is exactly the kind of table where a
+ * copy-paste collapses two entries onto one value and nothing notices,
+ * because the chips still render and still have colour.
+ *
+ * `plan_review` and `in_review` are the pair that most wants collapsing —
+ * both are "someone is looking at this" — and they are deliberately kept
+ * apart. Their colours are two violets differing in hue with a contrast
+ * ratio of about 1.05 between them, so on an `iconOnly` chip the shape is
+ * not merely the primary channel, it is the ONLY one. A plan awaiting
+ * sign-off (`stamp`) and work under review (`eye`) are also different
+ * questions being asked of the reader: one wants a decision, the other
+ * wants patience.
  *
  * `paused` (pause bars) and `blocked` (alert triangle) get maximally
  * different outlines on purpose: they share a column (SCHEMA.md §1.1) and
@@ -87,7 +104,7 @@ export const STATE_SHAPES: Record<ItemState, StateShape> = {
   someday: "dot",
   on_deck: "dot-filled",
   planning: "pencil",
-  plan_review: "eye",
+  plan_review: "stamp",
   executing: "play",
   in_review: "eye",
   paused: "pause",
