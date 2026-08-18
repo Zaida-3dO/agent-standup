@@ -132,8 +132,10 @@ describe("fetchProjectDetail", () => {
   it("encodes the id, so an id with a slash cannot reach a different path", async () => {
     const { impl, calls } = stubFetch({ body: { detail: { project: minimalProject } } });
     await fetchProjectDetail("a/b", impl);
-    // Dropping `encodeURIComponent` sends `GET /api/projects/a/b`.
-    expect(calls[0]!.url).toBe("/api/projects/a%2Fb");
+    // Dropping `encodeURIComponent` sends `GET /api/ui/projects/a/b`. The
+    // `/api/ui/` prefix is the proxy the browser reaches the API through —
+    // a bare `/api/` path arrives with no credential and is refused.
+    expect(calls[0]!.url).toBe("/api/ui/projects/a%2Fb");
   });
 });
 
@@ -141,7 +143,7 @@ describe("retypeToTask", () => {
   it("posts the target project and reports what changed AND what did not", async () => {
     const { impl, calls } = stubFetch({ body: { item: { id: "p-1" } } });
     const outcome = await retypeToTask("p-1", "inbox", impl);
-    expect(calls[0]!.url).toBe("/api/items/p-1/retype");
+    expect(calls[0]!.url).toBe("/api/ui/items/p-1/retype");
     expect(calls[0]!.init?.method).toBe("POST");
     expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ projectId: "inbox" });
     expect(outcome.status).toBe("done");

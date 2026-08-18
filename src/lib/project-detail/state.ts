@@ -6,6 +6,7 @@
 // with no DOM, so the fetch shaping and the loading/error/loaded branching
 // are only directly testable outside a component. The container is thin
 // wiring over what is here.
+import { uiApiPath } from "@/lib/ui-proxy/path";
 import type { ProjectDetail } from "./types";
 
 export type ProjectDetailLoadState =
@@ -35,7 +36,7 @@ export async function fetchProjectDetail(
   id: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ProjectDetail> {
-  const response = await fetchImpl(`/api/projects/${encodeURIComponent(id)}`);
+  const response = await fetchImpl(uiApiPath(`/api/projects/${encodeURIComponent(id)}`));
   if (!response.ok) {
     if (response.status === 404) {
       throw new Error(`No such project: ${id}.`);
@@ -140,7 +141,7 @@ export async function retypeToTask(
   projectId: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<RepairOutcome> {
-  const response = await fetchImpl(`/api/items/${encodeURIComponent(id)}/retype`, {
+  const response = await fetchImpl(uiApiPath(`/api/items/${encodeURIComponent(id)}/retype`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ projectId }),
@@ -171,7 +172,7 @@ export async function reparentItem(
   parentId: string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<RepairOutcome> {
-  const response = await fetchImpl(`/api/items/${encodeURIComponent(id)}/reparent`, {
+  const response = await fetchImpl(uiApiPath(`/api/items/${encodeURIComponent(id)}/reparent`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ parentId }),

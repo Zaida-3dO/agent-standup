@@ -13,8 +13,16 @@
 // `area=web` still works even when the select that would have offered it
 // came back empty.
 //
+// Every request goes through `uiApiPath`, like every other front-end read:
+// a call from the browser carries no credential and the API refuses it, so
+// the front end talks to the forwarding route that attaches the server's own
+// token. `tests/ui-proxy-paths.test.ts` enforces that no module here writes a
+// bare `/api/` literal.
+//
 // Pure fetch shaping, no hooks — testable against a stub `fetch` in a
 // DOM-free harness.
+
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 /** One choosable value: what goes in the URL, and what the reader reads. */
 export interface FilterOption {
@@ -33,7 +41,15 @@ export function emptyFilterOptions(): FilterOptions {
   return { areas: [], repos: [], people: [] };
 }
 
-/** Reads one collection endpoint, resolving any failure to an empty list. */
+/**
+ * Reads one collection endpoint, resolving any failure to an empty list.
+ *
+ * Takes an already-proxied path rather than applying `uiApiPath` itself, so
+ * the `/api/…` literal and the call that rewrites it sit on the same line at
+ * each call site — which is what `tests/ui-proxy-paths.test.ts` reads, and
+ * is the more honest arrangement anyway: a helper that silently rewrote its
+ * argument would make the address a caller passes not the address it gets.
+ */
 async function fetchOptions(
   fetchImpl: typeof fetch,
   path: string,
@@ -84,15 +100,15 @@ function labelOf(row: Record<string, unknown>, id: string, ...fields: readonly s
  */
 export async function fetchFilterOptions(fetchImpl: typeof fetch = fetch): Promise<FilterOptions> {
   const [areas, repos, people] = await Promise.all([
-    fetchOptions(fetchImpl, "/api/areas", "areas", (row) => {
+    fetchOptions(fetchImpl, uiApiPath("/api/areas"), "areas", (row) => {
       const id = idOf(row);
       return id === null ? null : { value: id, label: labelOf(row, id, "displayName", "name") };
     }),
-    fetchOptions(fetchImpl, "/api/repos", "repos", (row) => {
+    fetchOptions(fetchImpl, uiApiPath("/api/repos"), "repos", (row) => {
       const id = idOf(row);
       return id === null ? null : { value: id, label: labelOf(row, id, "displayName", "name") };
     }),
-    fetchOptions(fetchImpl, "/api/people", "people", (row) => {
+    fetchOptions(fetchImpl, uiApiPath("/api/people"), "people", (row) => {
       const id = idOf(row);
       return id === null ? null : { value: id, label: labelOf(row, id, "displayName", "name") };
     }),

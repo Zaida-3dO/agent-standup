@@ -9,6 +9,7 @@
 // because a reader who pressed "save" and was told nothing would believe the
 // view exists until they came back and it did not.
 
+import { uiApiPath } from "@/lib/ui-proxy/path";
 import { SAVED_VIEWS_KEY, savedViewsSchema, type SavedViews } from "./saved-views";
 
 /** The outcome of a write — a message when it failed, so the surface can say why. */
@@ -36,7 +37,9 @@ async function messageFromResponse(response: Response): Promise<string> {
  */
 export async function fetchSavedViews(fetchImpl: typeof fetch = fetch): Promise<SavedViews> {
   try {
-    const response = await fetchImpl(`/api/settings/${encodeURIComponent(SAVED_VIEWS_KEY)}`);
+    const response = await fetchImpl(
+      uiApiPath(`/api/settings/${encodeURIComponent(SAVED_VIEWS_KEY)}`),
+    );
     if (!response.ok) return [];
     const body = (await response.json()) as { value?: unknown };
     if (body.value === undefined || body.value === null) return [];
@@ -70,11 +73,14 @@ export async function writeSavedViews(
     return { ok: false, message: first?.message ?? "The views are not valid." };
   }
 
-  const response = await fetchImpl(`/api/settings/${encodeURIComponent(SAVED_VIEWS_KEY)}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ value: parsed.data }),
-  });
+  const response = await fetchImpl(
+    uiApiPath(`/api/settings/${encodeURIComponent(SAVED_VIEWS_KEY)}`),
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: parsed.data }),
+    },
+  );
   if (!response.ok) return { ok: false, message: await messageFromResponse(response) };
   return { ok: true };
 }
