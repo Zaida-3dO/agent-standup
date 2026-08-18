@@ -109,11 +109,16 @@ import { endProcess } from "./operations/end-process";
 import { listProcesses } from "./operations/list-processes";
 import { killGuard } from "./operations/kill-guard";
 // Telemetry (MILESTONES.md #50): the hook's tool-call ingest, and the
-// foundation every later M7 row reads.
+// foundation every later M7 row reads. The ingest also maintains `runs`
+// (#51) and their recomputed cost (#52); `get_costs` (#53) is the read over
+// what it writes.
 import { recordToolCalls } from "./operations/record-tool-calls";
 // Session shape (MILESTONES.md #54): the read side of the same rows — how a
 // session's recent work is going, as opposed to what it cost.
 import { getSessionShape } from "./operations/get-session-shape";
+// Cost (MILESTONES.md #53): the other read over those rows — what the work
+// cost, totalled per item, per session and per stage.
+import { getCosts } from "./operations/get-costs";
 // The registration handshake (MILESTONES.md #43, SCHEMA.md §21). Registered
 // like any other operation, so every adapter reaches it through the same
 // door and stamps its own transport on the way in.
@@ -193,6 +198,7 @@ export const OPERATION_REGISTRY = {
   [killGuard.name]: killGuard,
   [recordToolCalls.name]: recordToolCalls,
   [getSessionShape.name]: getSessionShape,
+  [getCosts.name]: getCosts,
   [registerSession.name]: registerSession,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;

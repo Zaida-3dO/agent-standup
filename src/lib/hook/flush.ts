@@ -59,23 +59,27 @@ export type { ToolCallBatch, ToolCallRecord } from "@/lib/telemetry/contract";
 /**
  * Reduces one spooled record to what the ingest accepts.
  *
- * Three fields are dropped, for two different reasons, and neither is an
- * omission:
+ * **One field is dropped: `sessionId`, which moves to the envelope.** It is
+ * on every spooled record because one local file interleaves every session
+ * on the machine, but the request carries it once — so leaving it on the
+ * call would be an unrecognised key, and a redundant one.
  *
- *   - **`sessionId`** moves to the envelope. It is on every spooled record
- *     because one local file interleaves every session on the machine, but
- *     the request carries it once — so leaving it on the call would be an
- *     unrecognised key, and a redundant one.
- *   - **`model` and `effort`** have no receiver yet. §11 requires the hook
- *     to report them and row **#51** is what will consume them; until that
- *     lands there is no column to put them in, and sending them would fail
- *     the whole batch rather than being ignored. They stay on the spool
- *     (see `SpooledToolCall`), so #51 begins with history rather than with
- *     the day it shipped — capture is the half that cannot be backfilled.
+ * `model` and `effort` are forwarded. §11 requires the hook to report them
+ * on every call, because without them a mid-session model switch is
+ * invisible and one run silently spans two models, attributing its score to
+ * a blend. The ingest consumes them to decide where one run ends and the
+ * next begins; it does not store them per call, which is why they are
+ * absent from the table and present on the wire.
  *
- * **When #51 lands, this function is the one place that changes.** That is
- * why the dropping happens here, in a named function on the wire boundary,
- * rather than being spread across the record builder and the sender.
+ * Forwarding them is why the spool kept them from the start: a record
+ * spooled before the ingest could receive them still carries the fields, so
+ * the first flush after that arrives attributes history rather than
+ * starting from the day it shipped. Capture is the half that cannot be
+ * backfilled.
+ *
+ * The narrowing is a named function on the wire boundary rather than being
+ * spread across the record builder and the sender, so the one place that
+ * decides what leaves the machine is one place.
  */
 export function toWireCall(record: SpooledToolCall): ToolCallRecord {
   return {
@@ -87,6 +91,8 @@ export function toWireCall(record: SpooledToolCall): ToolCallRecord {
     outputTokens: record.outputTokens,
     cacheWriteTokens: record.cacheWriteTokens,
     cacheReadTokens: record.cacheReadTokens,
+    ...(record.model === undefined ? {} : { model: record.model }),
+    ...(record.effort === undefined ? {} : { effort: record.effort }),
     ...(record.usage5h === undefined ? {} : { usage5h: record.usage5h }),
     ...(record.usageWeekly === undefined ? {} : { usageWeekly: record.usageWeekly }),
   };

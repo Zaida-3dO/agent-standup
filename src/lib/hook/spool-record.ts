@@ -108,19 +108,21 @@ export interface SpooledToolCall {
   /**
    * The exact vendor model ID, when the tool reported one.
    *
-   * **Captured but not yet sent** — there is no column for it and no
-   * receiver until row **#51** (runs), which is what will consume it: §11
-   * requires the hook to report model and effort on every call, because
-   * without them a mid-session `/model` switch is invisible and a run
-   * silently spans two models, attributing its score to a blend.
+   * §11 requires the hook to report model and effort on every call, because
+   * without them a mid-session model switch is invisible and one run
+   * silently spans two models, attributing its score to a blend. The ingest
+   * reads the pair to decide where a run ends and the next begins (row
+   * **#51**); it is not stored per call, which is why no column on
+   * `tool_calls` corresponds to it.
    *
-   * It is spooled now regardless, because #51 cannot be backfilled from
-   * data nobody captured — the same argument M7 makes for the whole
-   * milestone. The cost of capturing early is a few bytes per record; the
-   * cost of capturing late is every run before the switch being ungradeable.
+   * Spooling it is what makes the run boundary a *measurement* rather than
+   * an assumption. The cost of carrying it is a few bytes per record; the
+   * cost of not carrying it is every run before a switch being ungradeable,
+   * and unlike a rollup that can be recomputed, this is capture — the half
+   * M7 warns cannot be backfilled.
    */
   readonly model?: string;
-  /** The literal effort value, when reported. Captured but not yet sent — see `model`. */
+  /** The literal effort value, when reported. Carried for the same reason as `model`. */
   readonly effort?: string;
   readonly usage5h?: number;
   readonly usageWeekly?: number;

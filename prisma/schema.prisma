@@ -528,30 +528,49 @@ enum SelectionReason {
 }
 
 model Run {
-  id                     String          @id @default(uuid())
-  itemId                 String
-  item                   Item            @relation(fields: [itemId], references: [id])
-  assignmentId           String
-  assignment             Assignment      @relation(fields: [assignmentId], references: [id])
-  startedAt              DateTime        @default(now()) @db.Timestamptz(3)
-  endedAt                DateTime?       @db.Timestamptz(3)
-  model                  String
-  effort                 String
-  selectionReason        SelectionReason
+  id           String     @id @default(uuid())
+  itemId       String
+  item         Item       @relation(fields: [itemId], references: [id])
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id])
+  // The session whose calls this run rolls up. Denormalised off the
+  // assignment because the per-session rollup (MILESTONES.md #53) must not
+  // depend on a join that omits work with no assignment behind it.
+  sessionId    String?
+  // The item state these calls were attributed to, carried up from
+  // `ToolCall.stateAt` so the per-stage rollup is an indexed read rather
+  // than a scan of the highest-volume table in the schema.
+  stateAt      ItemState?
+
+  startedAt DateTime  @default(now()) @db.Timestamptz(3)
+  endedAt   DateTime? @db.Timestamptz(3)
+  model     String
+  effort    String
+  // Nullable: every value of this enum is a fact about a dispatch decision,
+  // and a run cut from telemetry has none behind it. The hook reports which
+  // model served a call and cannot report why it was chosen. Null means "no
+  // decision was recorded", which is excludable from the picker's comparison
+  // group; a defaulted `recommended` would be indistinguishable from a real
+  // recommendation and would poison it.
+  selectionReason        SelectionReason?
   recommendationStrength Decimal?
-  inputTokens            BigInt          @default(0)
-  outputTokens           BigInt          @default(0)
-  cacheWriteTokens       BigInt          @default(0)
-  cacheReadTokens        BigInt          @default(0)
+  inputTokens            BigInt           @default(0)
+  outputTokens           BigInt           @default(0)
+  cacheWriteTokens       BigInt           @default(0)
+  cacheReadTokens        BigInt           @default(0)
   cost                   Decimal?
-  toolCallCount          Int             @default(0)
-  turnCount              Int             @default(0)
+  toolCallCount          Int              @default(0)
+  turnCount              Int              @default(0)
   outcome                RunOutcome?
-  reworkRequired         Boolean         @default(false)
-  blockingFindings       Int             @default(0)
-  steeringInterventions  Int             @default(0)
+  reworkRequired         Boolean          @default(false)
+  blockingFindings       Int              @default(0)
+  steeringInterventions  Int              @default(0)
 
   scores RunScore[]
+
+  @@index([itemId, startedAt])
+  @@index([sessionId, startedAt])
+  @@index([stateAt])
 }
 
 model RunScore {
