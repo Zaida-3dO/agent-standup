@@ -383,3 +383,466 @@
 .panel > .section:last-child {
   margin-bottom: 0;
 }
+
+/* ── Verdict tiers ──────────────────────────────────────────────────────
+   Four treatments, not two. The tier is what a reviewer is communicating —
+   whether the change merges on its own, merges once something is addressed
+   against it, or merges while separate work is owed — and painting all
+   three passes one colour flattens exactly the distinction the tiering
+   exists to carry.
+
+   Every one pairs a hue with a word (the badge always prints its label),
+   because hue alone is not a signal a reader who cannot separate the greens
+   receives at all — the same reasoning the state chips give. */
+
+.verdictGroup {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.verdictMeaning {
+  margin: var(--space-1) 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+/* Cleared, nothing owed. */
+.verdictPass {
+  background: var(--state-merged-bg);
+  color: var(--state-merged-fg);
+  border: 1px solid var(--state-merged-border);
+}
+
+/* Cleared, and something else is still outstanding. Reads as a pass — it is
+   one — but not as the SAME pass: a warmer hue and a dashed edge, so the
+   "there is more to do" half survives both a glance and a greyscale print. */
+.verdictPassWithWork {
+  background: var(--state-paused-bg);
+  color: var(--state-paused-fg);
+  border: 1px dashed var(--state-paused-border);
+}
+
+.verdictBlocked {
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
+  border: 1px solid var(--state-blocked-border);
+}
+
+/* The "not applicable" tier — no claim in either direction. Neither a
+   refusal nobody made nor an approval nobody gave. */
+.verdictNeutral {
+  background: var(--state-wont_do-bg);
+  color: var(--state-wont_do-fg);
+  border: 1px solid var(--state-wont_do-border);
+}
+
+/* ── Findings ───────────────────────────────────────────────────────────
+   Grouped by severity, most severe first. */
+
+.findings {
+  margin-top: var(--space-3);
+}
+
+.findingsLead {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.findingGroup {
+  margin-bottom: var(--space-3);
+  padding-left: var(--space-3);
+  /* A left rule in the severity colour of that group, set per group below.
+     A rule rather than a fill: the findings inside are prose and need the
+     page's own text contrast, which a tinted background erodes. */
+  border-left: 3px solid var(--border-default);
+}
+
+.findingGroup[data-severity="critical"],
+.findingGroup[data-severity="high"] {
+  border-left-color: var(--state-blocked-border);
+}
+
+.findingGroup[data-severity="medium"] {
+  border-left-color: var(--state-paused-border);
+}
+
+.findingGroup[data-severity="low"],
+.findingGroup[data-severity="info"] {
+  border-left-color: var(--state-in_review-border);
+}
+
+.findingGroup[data-severity="ungraded"] {
+  border-left-color: var(--border-strong);
+  border-left-style: dashed;
+}
+
+.findingGroupTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.findingGroupCount {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-normal);
+}
+
+.findingSeverity {
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.findingSeverity[data-severity="critical"],
+.findingSeverity[data-severity="high"] {
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
+}
+
+.findingSeverity[data-severity="medium"] {
+  background: var(--state-paused-bg);
+  color: var(--state-paused-fg);
+}
+
+.findingSeverity[data-severity="low"] {
+  background: var(--state-in_review-bg);
+  color: var(--state-in_review-fg);
+}
+
+.findingSeverity[data-severity="info"] {
+  background: var(--state-someday-bg);
+  color: var(--state-someday-fg);
+}
+
+.findingItems {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.findingItem {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.findingItem:last-child {
+  border-bottom: 0;
+}
+
+.findingWhere {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-3xs);
+}
+
+.findingMalformed {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--state-paused-fg);
+  font-size: var(--text-3xs);
+  font-style: italic;
+}
+
+/* ── Reviews ────────────────────────────────────────────────────────────*/
+
+.review {
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  font-size: var(--text-xs);
+}
+
+.reviewHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.roundCurrent {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-medium);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.followUp {
+  margin: var(--space-1) 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.followUpLink {
+  color: var(--accent-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-decoration: underline;
+}
+
+.reviewNotes {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* The shared affordance for every collapsed block on this page — a
+   superseded plan snapshot, the prose a reviewer wrote, the raw payload.
+   One class so all three open the same way and a reader learns the control
+   once. */
+.disclosureSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.disclosureSummary:hover {
+  color: var(--text-primary);
+}
+
+/* ── Plan timeline ──────────────────────────────────────────────────────
+   A BLUF, the live plan, then history — ranked rather than stacked. */
+
+.bluf {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border-left: 3px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+}
+
+.blufLabel {
+  margin: 0 0 var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.blufText {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.planHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.planTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.planMeta {
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+}
+
+.planCount {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-normal);
+}
+
+/* The plan in force gets the page: a card, full width, expanded. The
+   superseded ones get a line each. That difference in weight is what makes
+   the tab legible at a glance — equal treatment leaves a reader unable to
+   tell which plan the work is being done against. */
+.planCurrent {
+  padding: var(--space-4);
+  margin-bottom: var(--space-5);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+
+.planHistory,
+.planReviews {
+  margin-bottom: var(--space-5);
+}
+
+.planSnapshot {
+  padding: var(--space-2) var(--space-3);
+  margin-top: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.planSuperseded {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Agent view ─────────────────────────────────────────────────────────*/
+
+.agentLead {
+  margin: 0 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.agentError {
+  margin: 0 0 var(--space-3);
+  color: var(--state-blocked-fg);
+  font-size: var(--text-xs);
+}
+
+.agentAction {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.agentAction:hover {
+  background: var(--accent);
+}
+
+.agentGroup {
+  margin-bottom: var(--space-4);
+}
+
+.agentGroupTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.agentFields {
+  display: grid;
+  grid-template-columns: minmax(5rem, max-content) 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.agentKey {
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-3xs);
+}
+
+.agentValue {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.agentList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agentRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.agentRow:last-child {
+  border-bottom: 0;
+}
+
+.agentRowDetail {
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+}
+
+/* Bounded text is already short before it reaches the DOM — this only stops
+   a long unbroken token (a path, a URL) from widening the page. It is NOT
+   what does the bounding; see the AgentPanel header for why a CSS clip
+   would not be. */
+.agentPre {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-3xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agentRawBlock {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-default);
+}
+
+/* What a shortened value says about being shortened. Italic and faint: it is
+   an annotation on the content, not part of it — but it is always present,
+   never a hover, because a clipped value that does not announce itself
+   cannot be told from a complete one. */
+.clipped {
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  font-style: italic;
+}

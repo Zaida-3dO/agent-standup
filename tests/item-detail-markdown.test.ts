@@ -300,8 +300,16 @@ describe("Markdown — what it renders", () => {
 });
 
 describe("the tab model", () => {
-  it("has the six tabs the page is built from, in order", () => {
-    expect([...TABS]).toEqual(["overview", "plan", "reviews", "subtasks", "activity", "summary"]);
+  it("has the tabs the page is built from, in order", () => {
+    expect([...TABS]).toEqual([
+      "overview",
+      "plan",
+      "reviews",
+      "subtasks",
+      "activity",
+      "summary",
+      "agent",
+    ]);
   });
 
   it("gives every tab a label, so none can ship showing its id", () => {
@@ -358,6 +366,7 @@ function artifact(overrides: Partial<DetailArtifact> = {}): DetailArtifact {
     ref: null,
     body: null,
     findings: null,
+    followUpItemId: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
