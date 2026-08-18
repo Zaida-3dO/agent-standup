@@ -23,8 +23,18 @@ describe("describeBoundary — constant", () => {
 
 describe("describeBoundary — linear", () => {
   it("reads as a rate and a starting point", () => {
+    expect(describeBoundary({ kind: "linear", slope: 15, offset: 20, per: "day" })).toBe(
+      "15% per day, starting at 20%",
+    );
+  });
+
+  // §17.4's own example of a linear is `15 × days − 5`, so a negative
+  // offset is the shape this has to say well. The sign becomes a word: a
+  // minus sign in front of a number is something a reader decodes, and the
+  // decoding is where a misread rule survives review.
+  it("says a negative starting point in words rather than as a minus sign", () => {
     expect(describeBoundary({ kind: "linear", slope: 15, offset: -5, per: "day" })).toBe(
-      "15% per day, starting at -5%",
+      "15% per day, starting 5% below zero",
     );
   });
 

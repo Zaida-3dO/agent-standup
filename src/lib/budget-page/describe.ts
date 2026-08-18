@@ -33,8 +33,13 @@ function unit(per: "hour" | "day", count: number): string {
 function describeLinear(slope: number, offset: number, per: "hour" | "day"): string {
   const rate = `${number(slope)}% per ${per}`;
   if (offset === 0) return rate;
-  const direction = offset > 0 ? "starting at" : "starting at";
-  return `${rate}, ${direction} ${number(offset)}%`;
+  // The sign becomes a word rather than a minus sign in front of a number.
+  // `starting 5% below zero` is a sentence a reader checks against their
+  // intent; `starting at -5%` is one they have to decode first, and the
+  // decoding is where a misread rule survives review.
+  return offset > 0
+    ? `${rate}, starting at ${number(offset)}%`
+    : `${rate}, starting ${number(Math.abs(offset))}% below zero`;
 }
 
 /** Where a schedule entry sits, said from whichever end it was written from. */
