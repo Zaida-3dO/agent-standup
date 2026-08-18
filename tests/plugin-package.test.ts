@@ -65,9 +65,12 @@ describe("it consumes the published package rather than carrying a copy", () => 
     // this row copied the built binary in as `standup.bin` — 85KB of
     // verbatim JavaScript under an extension no list included — and an
     // extension check passed it. Asserting the complete file list instead
-    // means any file that is not one of these three fails, whatever it is
-    // called, which is the only form of this check that cannot be walked
-    // around by choosing a different name.
+    // means any file not named below fails, whatever it is called, which is
+    // the only form of this check that cannot be walked around by choosing
+    // a different name. Adding a legitimate file to the plugin therefore
+    // costs an edit here — a deliberate confirmation step, which is the
+    // right price for a directory whose whole contract is "configuration
+    // only, never a vendored binary".
     const built = await buildTo("no-copies");
     const files = await listFiles(built);
 

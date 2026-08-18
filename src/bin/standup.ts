@@ -24,12 +24,20 @@ const file = readConfigFile();
 // the network, so the spool and the sender are constructed at the one
 // boundary that is allowed to know they are real.
 //
-// `hook run` is served by the dedicated hook entry point rather than by
-// this binary — it needs stdin, and reading stdin unconditionally here
-// would make every `standup` command wait for input that never comes. So
-// no `stdin` is supplied: the verbs reachable through this binary are
-// `flush` and `status`, and `run` refuses for want of a payload, which is
-// the honest answer when it was invoked without one.
+// `hook run` is served by the dedicated hook entry point (`standup-hook`)
+// rather than by this binary — it needs stdin, and reading stdin
+// unconditionally here would make every `standup` command wait for input
+// that never comes. So no `stdin` is supplied, and the verbs usefully
+// reachable through this binary are `flush` and `status`.
+//
+// **`run` invoked here does not refuse — it allows, and exits 0.** With no
+// payload to read it takes `runHook`'s unreadable-payload branch, which
+// allows by design (DECISIONS.md §16: a hook that examined nothing must not
+// refuse on behalf of rules it never consulted). Worth stating precisely,
+// because the plausible-sounding opposite is what makes this binary look
+// like a viable thing to wire an agent tool to: anything wired here reports
+// healthy, spools nothing and gates nothing. `src/lib/plugin/manifest.ts`
+// wires `standup-hook` for exactly this reason.
 const baseUrl = process.env.STANDUP_URL?.trim();
 const exitCode = await main(process.argv.slice(2), {
   env: process.env,
