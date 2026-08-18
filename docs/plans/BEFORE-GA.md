@@ -21,11 +21,9 @@ Status: blank = still open · `closed` = decided and done.
 
 **State:** off on every branch, `main` included. `workflow_dispatch` runs it on demand.
 
-**How it got here.** The job was paused behind `false &&` long before today, so it was configured but
-never ran. Milestone row #106 removed the pause on 2026-08-18, which turned it on for every push, and
-the owner's call the same day was to switch it back off. **So this is the status quo restored, not a
-new restriction** — the only thing that changed is that the reason is now written down and the job is
-still reachable by hand.
+**How it got here.** The owner's call, 2026-08-18: the job runs only when dispatched by hand, and the
+reasoning belongs beside the switch rather than in anyone's memory. It stays configured and runnable
+so that turning it on is a decision someone makes, not a job someone has to rebuild.
 
 **Why off.** Two reasons, and the second decided it:
 

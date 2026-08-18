@@ -352,10 +352,12 @@ jobs:
     # re-report a tool limitation on each new operation is not a trade worth
     # making while the product is still being built. See issue #166.
     #
-    # **This is deliberately not the `false &&` pause it replaces.** That
-    # switched the job off while leaving it configured to look like it ran.
-    # This states the decision, names what would change it, and keeps the job
-    # runnable — `workflow_dispatch` still triggers it on demand.
+    # **Off is not the same as absent, and the difference is deliberate.** A
+    # job switched off in a way that still reads as running is worse than no
+    # job at all, because a green pipeline then asserts something nobody
+    # checked. So the condition below is explicit about what it waits for,
+    # the reasoning sits here beside it, and `workflow_dispatch` keeps the
+    # job runnable on demand rather than only in principle.
     #
     # Turning it back on is a **pre-GA gate**, tracked in
     # `docs/plans/BEFORE-GA.md` rather than as a milestone row: the milestone
