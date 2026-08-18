@@ -223,8 +223,17 @@ discovered at 3am.
 
 **It is called delete and it never deletes.** Nothing leaves the database; the row stops being
 *served*. No ordinary read returns it, no board column counts it, no parent derives its state from
-it — unlike `cancelled`, which is a real outcome and correctly still appears. Every inbound link and
-every attribution keeps resolving, which is the whole reason the row is kept.
+it, and no repair pass will move it — unlike `cancelled`, which is a real outcome and correctly still
+appears. Every inbound link and every attribution keeps resolving, which is the whole reason the row
+is kept.
+
+**Three reads still reach it, each on purpose.** `get_item` and `get_item_detail` resolve one **by
+id**, which is what a stale link needs in order to land somewhere real and find its replacement;
+`get_events` reads the append-only ledger, because the row is withheld from item reads rather than
+erased from history, and the archive event carrying the reason is the most useful row in it. There is
+no single predicate every item read passes through, so that guarantee is held by a *set* of call
+sites agreeing — and a test enumerates the reads from the operation registry and drives each one, so
+a read added later that serves an archived row fails on the day it is written.
 
 **What it is for, and why `cancelled` does not cover it.** A cancellation records work that was
 wanted, considered, and deliberately not done. A duplicate is not that, and neither is a row created
@@ -642,6 +651,14 @@ alternative satisfier is that the same non-qualification refused the merge outri
 clause by another route removes the backstop. So the verification path re-checks the bargain at its
 own source and refuses while it is unhonoured. An inspection may stand in for a review that was never
 possible; it may not discharge a promise a review that *did* happen made.
+
+**The check asks whether an unhonoured bargain exists anywhere on the item, not whether the newest
+approving review carries one** — and the difference is reachable with one ordinary call. Recording a
+review does not check its `commit_sha` against the tip, so a *deliberately stale* plain approval can
+be written: too stale to satisfy any merge clause itself, but newest by creation time, and therefore
+able to answer "nothing deferred here" on behalf of an unhonoured bargain recorded before it. An
+obligation may only be retired by a review with standing to retire it — strictly newer, approving,
+and qualifying at the current round and tip, which is the same bar the merge rests on.
 
 **Scoped to the tip commit, not to the review round.** The artifact must name the item's current tip,
 so an inspection cannot silently carry across to later code — the claim is "I read what is actually

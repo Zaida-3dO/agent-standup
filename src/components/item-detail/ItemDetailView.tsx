@@ -18,7 +18,7 @@
 //
 // Tabs fix both at once. Only the active section occupies vertical space,
 // and the reader chooses which question they are asking rather than
-// scrolling past the answers to the other five. The header stays outside
+// scrolling past the answers to the others. The header stays outside
 // the tabs, because the identity of the item is the one thing that is true
 // on every tab.
 //
@@ -38,10 +38,13 @@ import {
 import { columnTitle } from "@/lib/board/view";
 import { DEFAULT_TAB, type DetailTab } from "@/lib/item-detail/tabs";
 import { SubtaskTree } from "./SubtaskTree";
-import { ArtifactList } from "./ArtifactList";
 import { HistoryList } from "./HistoryList";
+import { PlanPanel } from "./PlanPanel";
+import { ReviewsPanel } from "./ReviewsPanel";
+import { AgentPanel, type AgentPanelState } from "./AgentPanel";
 import { SummaryPanel } from "./SummaryPanel";
 import { Markdown } from "./Markdown";
+import { VerdictBadge } from "./VerdictBadge";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
 import styles from "./ItemDetail.module.css";
 
@@ -51,6 +54,15 @@ export interface ItemDetailViewProps {
   readonly activeTab?: DetailTab;
   /** Called when a reader picks a tab. Absent leaves the strip's anchors to navigate on their own. */
   readonly onTabChange?: (tab: DetailTab) => void;
+  /**
+   * The agent view's own load state — separate from `loadState` because
+   * `orientation` is a second, much more expensive read that is only made
+   * when a reader asks for it. Defaults to idle so a caller that does not
+   * wire it still renders every tab.
+   */
+  readonly agentState?: AgentPanelState;
+  /** Fetches the agent view. Absent renders that panel read-only. */
+  readonly onLoadAgentView?: () => void;
 }
 
 /**
@@ -87,6 +99,8 @@ export function ItemDetailView({
   loadState,
   activeTab = DEFAULT_TAB,
   onTabChange,
+  agentState = { status: "idle" },
+  onLoadAgentView,
 }: ItemDetailViewProps) {
   if (loadState.status === "error") {
     return (
@@ -132,9 +146,14 @@ export function ItemDetailView({
               {humanState(item.state)}
             </span>
           )}
+          {/* The LATEST verdict, as its tier rather than as an
+              underscore-stripped string — the difference between "merge it"
+              and "merge it, and something else must still happen" is the
+              substance of what a reviewer said, and it was being flattened
+              here in exactly the place a reader glances at first. */}
           {verdict !== null && (
-            <span className={styles.verdict} data-latest-verdict={verdict}>
-              {verdict.replace(/_/g, " ")}
+            <span data-latest-verdict={verdict}>
+              <VerdictBadge verdict={verdict} />
             </span>
           )}
         </div>
@@ -171,12 +190,16 @@ export function ItemDetailView({
         ),
       )}
 
-      {/* Plan and Reviews are both artifact-derived. Each shows the
-          artifacts, filtered to the kinds that answer its own question, so
-          a reader reaches a plan or a review body from the tab that names
-          it. `ArtifactList` renders each body as markdown. */}
-      {panel("plan", activeTab === "plan", <ArtifactList artifacts={planArtifacts} />)}
-      {panel("reviews", activeTab === "reviews", <ArtifactList artifacts={reviewArtifacts} />)}
+      {/* Plan and Reviews are both artifact-derived, filtered to the kinds
+          that answer each tab's own question — but they are NOT the same
+          rendering. A plan is a document with a history, so it is ranked:
+          a bottom line, the live snapshot, the superseded ones collapsed. A
+          review is an assessment, so it leads with its verdict tier and its
+          graded findings. Rendering both as one generic artifact list was
+          what buried the live plan under three dead ones and flattened
+          every verdict into "this passed". */}
+      {panel("plan", activeTab === "plan", <PlanPanel artifacts={planArtifacts} />)}
+      {panel("reviews", activeTab === "reviews", <ReviewsPanel artifacts={reviewArtifacts} />)}
 
       {panel("subtasks", activeTab === "subtasks", <SubtaskTree subtasks={subtasks} />)}
 
@@ -201,6 +224,16 @@ export function ItemDetailView({
         ) : (
           <SummaryPanel summary={summary} />
         ),
+      )}
+
+      {/* Agent view — `orientation` for this item, which is what the fleet
+          reads when it picks the work up. Its own load state, because it is
+          a second and far more expensive read than the detail; see
+          `AgentPanel` for why it is not fetched on arrival. */}
+      {panel(
+        "agent",
+        activeTab === "agent",
+        <AgentPanel state={agentState} onLoad={onLoadAgentView} />,
       )}
     </article>
   );

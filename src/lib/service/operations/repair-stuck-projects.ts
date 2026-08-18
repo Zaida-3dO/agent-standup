@@ -60,6 +60,7 @@ import {
   subtreeOf,
 } from "../items/reparent-core";
 import { resolveInboxProject } from "../items/inbox-project";
+import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import { INBOX_PROJECT_ID } from "./create-task";
 
 /**
@@ -162,6 +163,20 @@ export const repairStuckProjects = defineOperation({
     // a join and a count, so a project with a thousand children costs the
     // same as one with a single child — the query stops at the first.
     //
+    // Archived rows are excluded, and this is the one place in the archive
+    // work where the exclusion protects a *write* rather than a read. An
+    // archived item is parentless and childless as often as any other, so it
+    // matches this predicate exactly — and a scan running with `apply` would
+    // then reparent it into a live project, re-filing a row that was
+    // deliberately taken out of circulation and mutating one the operation
+    // is not supposed to be able to see.
+    //
+    // The `NOT EXISTS` childless test is deliberately NOT filtered the same
+    // way. "Has no children" is a fact about the tree, and an archived child
+    // is still a row hanging off its parent; treating a project with only
+    // archived children as childless would offer to reparent a container
+    // that still has something under it.
+    //
     // The destination is excluded explicitly. It is itself a parentless
     // item, and if it happens to be childless and non-terminal it matches
     // this predicate — a scan that then tried to file it under itself would
@@ -170,6 +185,7 @@ export const repairStuckProjects = defineOperation({
       `SELECT i."id", i."title", i."area", i."state"::text AS "state"
        FROM "Item" i
        WHERE i."parentId" IS NULL
+         AND i.${NOT_ARCHIVED_CONDITION}
          AND i."id" <> $1
          AND NOT EXISTS (SELECT 1 FROM "Item" c WHERE c."parentId" = i."id")
          AND i."state"::text <> ALL($2::text[])

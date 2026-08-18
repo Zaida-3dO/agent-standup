@@ -4,7 +4,10 @@
 // ── It is called delete and it never deletes ────────────────────────────
 //
 // Nothing leaves the database. The row stops being *served*: no ordinary
-// read returns it, no column counts it, no parent derives its state from it.
+// read returns it, no column counts it, no parent derives its state from it,
+// and no repair pass will move it. Three reads still reach it deliberately —
+// `get_item` and `get_item_detail` by id, so a stale link lands somewhere
+// real, and `get_events`, because history is not rewritten.
 // Every inbound link and every attribution therefore keeps resolving, which
 // is the whole reason the row is kept — an event pointing at a deleted row,
 // a review deferring findings into it, a summary naming it, all still land
@@ -163,7 +166,7 @@ export type DeleteItemInput = z.infer<typeof inputSchema>;
 /** What points at an item, as the refusal reports it. */
 export interface InboundReference {
   /** What kind of thing is pointing here. */
-  readonly kind: "child" | "follow_up_artifact" | "superseded_by";
+  readonly kind: "child" | "follow_up_artifact" | "superseded_by" | "live_claim";
   /** The pointing row's id. */
   readonly id: string;
   /** Enough to recognise it without a second read. */
@@ -173,13 +176,12 @@ export interface InboundReference {
 /**
  * Everything pointing at this item, in one read per relationship.
  *
- * Only relationships that would be left dangling in *meaning* are counted.
- * Events, assignments and summaries all point here too and are deliberately
- * absent: they are history *about* this row, they resolve fine against an
- * archived one, and listing them would make every archive report references
- * — which would train callers to pass `acknowledgeReferences` reflexively
- * and turn the refusal into a formality. What is listed is the set where
- * something *live* depends on this row remaining visible.
+ * Only relationships where something *live* depends on this row remaining
+ * visible are counted. Events, summaries and *released* assignments all
+ * point here too and are deliberately absent: they are history about this
+ * row, they resolve fine against an archived one, and listing them would
+ * make every archive report references — which would train callers to pass
+ * `acknowledgeReferences` reflexively and turn the refusal into a formality.
  */
 async function inboundReferences(ctx: ServiceContext, itemId: string): Promise<InboundReference[]> {
   const references: InboundReference[] = [];
@@ -213,6 +215,24 @@ async function inboundReferences(ctx: ServiceContext, itemId: string): Promise<I
       kind: "follow_up_artifact",
       id: row.id,
       detail: `a review on item ${row.itemId} deferred findings into this item`,
+    });
+  }
+
+  // Sessions still holding this item. A claim is not released here — it is
+  // a record of who took the row, and rewriting it to tidy up would falsify
+  // that history — so the honest treatment is to make the holder visible
+  // before the row goes quiet underneath them, rather than after. Somebody
+  // is working on this right now is also the single strongest signal that
+  // "this should never have existed" is the wrong call.
+  const claimRows = await ctx.db.$queryRawUnsafe<{ id: string; holderId: string }[]>(
+    `SELECT "id", "holderId" FROM "Assignment" WHERE "itemId" = $1 AND "releasedAt" IS NULL`,
+    itemId,
+  );
+  for (const row of claimRows) {
+    references.push({
+      kind: "live_claim",
+      id: row.id,
+      detail: `${row.holderId} is holding this item`,
     });
   }
 
@@ -265,7 +285,7 @@ export const deleteItem = defineOperation({
       },
       {
         fields: ["acknowledgeReferences"],
-        rule: "An item with live children, or that a review deferred findings into, is refused until acknowledgeReferences is true. The refusal lists what points at it.",
+        rule: "An item with live children, a session still holding it, or a review that deferred findings into it, is refused until acknowledgeReferences is true. The refusal lists what points at it.",
       },
       {
         fields: ["supersededById"],
