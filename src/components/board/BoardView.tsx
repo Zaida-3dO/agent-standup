@@ -7,9 +7,14 @@
 // function and its returned tree inspected, which is what actually proves
 // these branches. `Board.tsx` is the thin client container that fetches and
 // hands this component its props.
+//
+// The load, error and empty states come from `@/components/states` rather
+// than being written here, so the board reports a failure in the same words
+// and the same shape as every other region — see that directory's header.
 import type { BoardLoadState } from "@/lib/board/state";
 import type { BoardColumnId } from "@/lib/board/types";
 import { BOARD_COLUMNS, needsYouCount, waitingSplit } from "@/lib/board/view";
+import { ErrorState } from "@/components/states/ErrorState";
 import { BoardColumn } from "./BoardColumn";
 import { NeedsYouBadge } from "./NeedsYouBadge";
 import styles from "./Board.module.css";
@@ -20,6 +25,14 @@ export interface BoardViewProps {
   readonly personId: string | null;
   /** The drag wiring (#73). Absent on a board rendered without it — every handler is optional. */
   readonly drag?: BoardDragProps;
+  /** The per-column paging wiring. Absent leaves every column unpaged. */
+  readonly paging?: BoardPagingProps;
+  /** Retries the initial board load, offered by the error state. */
+  readonly onRetry?: () => void;
+  /** True when a filter is narrowing the board — lets an empty column say the filter did it. */
+  readonly filtered?: boolean;
+  /** Clears that filter. */
+  readonly onClearFilter?: () => void;
 }
 
 /** Everything the drag interaction needs, grouped so `BoardView` threads one prop rather than seven. */
@@ -41,19 +54,61 @@ export interface BoardDragProps {
   readonly onDismissRefusal: () => void;
 }
 
-export function BoardView({ loadState, personId, drag }: BoardViewProps) {
+/**
+ * The paging wiring, grouped for the same reason as the drag props.
+ *
+ * Keyed by column rather than a single flag, because the columns page
+ * independently: pressing "show more" on Backlog must not put Completed into
+ * a loading state, and a page request that fails on one column says nothing
+ * about the other three.
+ */
+export interface BoardPagingProps {
+  /** Fetches one column's next page. */
+  readonly onShowMore: (column: BoardColumnId) => void;
+  /** Which columns have a page in flight. */
+  readonly loadingColumns: Readonly<Partial<Record<BoardColumnId, boolean>>>;
+  /** Why each column's last page request failed, where one did. */
+  readonly errors: Readonly<Partial<Record<BoardColumnId, string>>>;
+}
+
+export function BoardView({
+  loadState,
+  personId,
+  drag,
+  paging,
+  onRetry,
+  filtered,
+  onClearFilter,
+}: BoardViewProps) {
   if (loadState.status === "error") {
     return (
       <div className={styles.centered}>
-        <p>{loadState.message}</p>
+        {/* The message already names the failing call — `fetchBoardColumn`
+            throws "Could not load the board (GET /api/board returned 500)."
+            — so it is passed whole rather than split, and the retry is
+            offered rather than leaving a dead end. */}
+        <ErrorState message={loadState.message} onRetry={onRetry} centered />
       </div>
     );
   }
 
   if (loadState.status === "loading") {
+    // Skeleton columns, not a sentence: the board's shape is known before
+    // its contents are, so the frame can be drawn immediately and the page
+    // does not jump when the data lands.
     return (
-      <div className={styles.centered}>
-        <p>Loading the board…</p>
+      <div className={styles.board}>
+        <div className={styles.columns}>
+          {BOARD_COLUMNS.map((column) => (
+            <BoardColumn
+              key={column}
+              column={column}
+              section={{ entries: [], total: 0, nextCursor: null, withheld: false }}
+              personId={personId}
+              loading
+            />
+          ))}
+        </div>
       </div>
     );
   }
@@ -93,6 +148,11 @@ export function BoardView({ loadState, personId, drag }: BoardViewProps) {
             onCardDragStart={drag?.onCardDragStart}
             onCardDragEnd={drag?.onCardDragEnd}
             pendingItemId={drag?.pendingItemId ?? null}
+            onShowMore={paging?.onShowMore}
+            loadingMore={paging?.loadingColumns[column] === true}
+            pageError={paging?.errors[column] ?? null}
+            filtered={filtered}
+            onClearFilter={onClearFilter}
           />
         ))}
       </div>

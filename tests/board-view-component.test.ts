@@ -7,6 +7,8 @@ import { BoardView } from "@/components/board/BoardView";
 import { BoardColumn } from "@/components/board/BoardColumn";
 import { ItemCard } from "@/components/board/ItemCard";
 import { NeedsYouBadge } from "@/components/board/NeedsYouBadge";
+import { EmptyState } from "@/components/states/EmptyState";
+import { ErrorState } from "@/components/states/ErrorState";
 import { emptyBoard } from "@/lib/board/view";
 import type { Board, BoardColumnId, BoardEntry, BoardItem } from "@/lib/board/types";
 import { boardOf, section } from "./helpers/board-sections";
@@ -67,19 +69,45 @@ function textOf(root: ReactNode): string {
 }
 
 describe("BoardView", () => {
-  it("shows the error message and no columns when the load failed", () => {
+  // The error and loading branches delegate to the shared state components
+  // (`@/components/states`), so what is asserted here is that the branch
+  // reaches the right component and hands it the right props — the components'
+  // own rendering is proved in `tests/shared-states-component.test.ts`.
+  it("hands the failing read's message to the shared error state, and renders no columns", () => {
     const element = BoardView({
       loadState: { status: "error", message: "Could not load the board (500)." },
       personId: "user-a",
     });
-    expect(textOf(element)).toContain("Could not load the board (500).");
+    const error = findOneByType(element, ErrorState);
+    // The message is passed through UNCHANGED — it is the one that names the
+    // failing call, and a component that rewrote it would be reintroducing
+    // "something went wrong" one layer down.
+    expect((error.props as { message: string }).message).toBe("Could not load the board (500).");
     expect(findAllByType(element, BoardColumn).length).toBe(0);
   });
 
-  it("shows a loading state before the board arrives", () => {
+  it("offers a retry on the error state when the caller gave one", () => {
+    let retried = 0;
+    const element = BoardView({
+      loadState: { status: "error", message: "Could not load the board (500)." },
+      personId: "user-a",
+      onRetry: () => {
+        retried++;
+      },
+    });
+    const error = findOneByType(element, ErrorState);
+    (error.props as { onRetry?: () => void }).onRetry?.();
+    expect(retried).toBe(1);
+  });
+
+  it("shows skeleton columns, not a sentence, before the board arrives", () => {
     const element = BoardView({ loadState: { status: "loading" }, personId: "user-a" });
-    expect(textOf(element)).toContain("Loading the board");
-    expect(findAllByType(element, BoardColumn).length).toBe(0);
+    // All four columns are drawn while loading — the board's shape is known
+    // before its contents are, which is what stops the page jumping when the
+    // data lands. Every one of them is in its loading state.
+    const columns = findAllByType(element, BoardColumn);
+    expect(columns.length).toBe(4);
+    expect(columns.every((c) => (c.props as { loading?: boolean }).loading === true)).toBe(true);
   });
 
   it("renders all four columns once loaded, in board order", () => {
@@ -226,9 +254,12 @@ describe("BoardColumn", () => {
     expect(text).toContain("2");
   });
 
-  it("shows an empty state, and no card list, when the column has nothing", () => {
+  it("shows the shared empty state, and no card list, when the column has nothing", () => {
     const element = BoardColumn({ column: "completed", section: section([]), personId: null });
-    expect(textOf(element)).toContain("Nothing here.");
+    // `empty` specifically, not merely "an empty state" — a column with
+    // nothing in it and a column that was not fetched both have zero
+    // entries, and #123 is what happens when they render the same.
+    expect((findOneByType(element, EmptyState).props as { kind: string }).kind).toBe("empty");
     expect(findAllByType(element, ItemCard).length).toBe(0);
   });
 

@@ -6,9 +6,66 @@
    `tests/design-tokens-contrast.test.ts` holds them to it. A component
    painting its own background to guarantee its own text stays legible is
    solving that problem locally and re-solving it on every surface. */
+/* The full-height chain the bounded board needs.
+
+   A percentage height resolves against the parent's height, and by default
+   every ancestor of the board — `<main>`, `<body>`, `<html>` — is
+   auto-height. So a board asking for `height: 100%` gets `auto`, grows to
+   its tallest column, and the page scrolls: measured against the real store,
+   a 146-item backlog produced a 5,481px column.
+
+   Subtracting the chrome's height instead is the tempting fix and it is a
+   guess. It was wrong by 5px against a top bar that measures 61px, and that
+   5px left the entire page scrollable — the exact failure the bounded board
+   exists to remove. A constant here would also go stale the moment the top
+   bar's padding changed, silently and in the same way.
+
+   Establishing the chain is what removes the guess: the frame becomes a
+   flex column that fills the viewport, and the board takes the space the
+   chrome leaves. No number is written down, so any chrome height is correct,
+   including none.
+
+   These three selectors are `:global` because the elements belong to the app
+   frame rather than to this component, and they are deliberately narrow:
+   `display`/`height` only, nothing about how the frame looks. `min-height:
+   0` on `main` is the one that is easy to miss — without it a flex child's
+   min-content height wins and the board grows to fit its cards rather than
+   scrolling them. */
+:global(html),
+:global(body) {
+  height: 100%;
+}
+
+:global(body) {
+  display: flex;
+  flex-direction: column;
+}
+
+:global(body) > :global(main) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .board {
+  display: flex;
+  flex-direction: column;
   padding: 1.25rem;
-  min-height: 100%;
+  /* Takes the space the chrome leaves, and no more. The columns row below
+     takes the remaining height and each column scrolls inside it, so four
+     columns of wildly different lengths occupy the same height and a short
+     column costs only its own width rather than a screenful of blank space
+     beside the longest one.
+
+     `max-height: 100dvh` is a floor under the whole arrangement rather than
+     the mechanism: if this board is ever rendered outside the frame above,
+     it still cannot grow past the viewport. The dynamic unit rather than
+     `vh` so a mobile browser's retracting toolbar does not leave the last
+     column clipped underneath it. */
+  flex: 1;
+  max-height: 100dvh;
+  min-height: 0;
   background: var(--surface-app);
   color: var(--text-primary);
 }
@@ -61,22 +118,38 @@
   font-size: 0.85rem;
 }
 
+/* The columns row. `align-items: stretch` (the default, stated by not
+   overriding it) rather than `start`, so every column is the same height and
+   an empty one still reads as a column rather than collapsing to its
+   heading. `min-height: 0` is what actually permits a grid child to scroll:
+   without it a child's min-content height wins and the column grows to fit
+   its cards instead of scrolling them. */
 .columns {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
-  align-items: start;
+  flex: 1;
+  min-height: 0;
 }
 
+/* One column. The padding moves off this element and onto the scrolling
+   trough inside it, so a card scrolling away disappears under the sticky
+   heading rather than beside it. */
 .column {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.75rem;
+  padding: 0;
   border: 1px solid var(--border-default);
   border-radius: 0.6rem;
   background: var(--surface-panel);
-  min-height: 8rem;
+  /* The floor: an empty column is still a column. Without it the four
+     columns would be the height of whichever is shortest — usually the
+     empty one, which would collapse to a heading and stop reading as a
+     drop target at all. */
+  min-height: 12rem;
+  /* The ceiling is the row's height (the grid stretches this element), and
+     `min-height: 0` lets the trough below scroll instead of this growing. */
+  overflow: hidden;
 }
 
 /* The column a dragged card is being held over. A visible target matters
@@ -87,11 +160,78 @@
   background: var(--accent-bg);
 }
 
+/* The heading stays put while the cards scroll under it — the column's
+   identity and its count are exactly what a reader needs while scrolling,
+   so they are the last thing that should scroll away.
+
+   Opaque background, not transparent: a sticky element with no background
+   lets the scrolling content show through it, so the count would render on
+   top of a card mid-scroll. */
 .columnHead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  flex: none;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+}
+
+/* The scrolling trough — the column's own scroll region, so one column
+   scrolling leaves the board header and the other three columns exactly
+   where they were. */
+.columnBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.75rem;
+}
+
+/* The "show more" control, pinned to the bottom of the column so it is
+   reachable without scrolling to the end of a 146-item list. */
+.columnFoot {
+  flex: none;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+}
+
+.showMore {
+  width: 100%;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.showMore:hover {
+  background: var(--surface-raised);
+}
+
+.showMore:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* How far through the column the reader is. Shown beside the control
+   because "show more" alone does not say more of how many. */
+.pageStatus {
+  margin: 0 0 0.35rem;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  text-align: center;
 }
 
 .columnTitle {
