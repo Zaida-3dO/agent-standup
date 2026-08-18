@@ -18,7 +18,9 @@
 //      implementation — count duplicates — passes every test that only
 //      looks at a session going in circles, and fires constantly on the most
 //      normal thing an agent does. So the retry-loop case is asserted as
-//      hard as the circling case.
+//      hard as the circling case, and asserted over calls shaped the way
+//      ingest really writes them (see `touch`) — a fixture that models rows
+//      the pipeline never produces cannot see a file-path comparison at all.
 //   2. **`Bash` is neither a read nor a write here.** `@/lib/hook/nudge`
 //      classifies it as write-shaped for a different question, and reusing
 //      that would be the obvious economy. A test that only used `Read` and
@@ -48,6 +50,22 @@ function bash(command: string): ShapeCall {
 /** A call by tool name alone, for the read-to-write cases. */
 function call(tool: string, paths?: readonly string[]): ShapeCall {
   return paths === undefined ? { tool } : { tool, paths };
+}
+
+/**
+ * A non-shell call **as ingest actually writes it** — with its file path in
+ * `command`.
+ *
+ * A repeat case built from a bare `call("Read")` — no `command` at all —
+ * models a row `@/lib/hook/payload` never produces: `COMMAND_FIELDS` fills
+ * `command` from `file_path`/`path`/`pattern`/`url`, so a `Read` arrives
+ * carrying `"src/a.ts"`. A suite that only uses command-less non-shell calls
+ * is not weak about the logic, it is wrong about the data, and it cannot see
+ * a `countRepeats` that compares file paths as if they were commands. Hence
+ * this fixture, and the cases below that use it.
+ */
+function touch(tool: string, path: string): ShapeCall {
+  return { tool, command: path, paths: [path] };
 }
 
 /**
@@ -101,11 +119,70 @@ describe("countRepeats — a retry loop is not circling", () => {
     expect(countRepeats([bash("a"), bash("b"), bash("a"), bash("b")])).toBe(2);
   });
 
-  it("treats a call with no command as work in between", () => {
-    // A Read between two runs of one command is exactly the "went and did
-    // something else" that separates circling from a retry loop, so it must
-    // break the consecutive run rather than being skipped over.
-    expect(countRepeats([bash("npm test"), call("Read"), bash("npm test")])).toBe(1);
+  it("does not let a read between two runs break the retry loop", () => {
+    // The canonical loop the row exempts is "npm test, fix, npm test" — and
+    // a fix is an Edit. If a non-shell call broke the run, that loop would
+    // score a return on every iteration and the exemption would be empty.
+    expect(countRepeats([bash("npm test"), call("Read"), bash("npm test")])).toBe(0);
+  });
+
+  it("counts nothing for a ten-iteration edit-and-test loop, as ingest writes it", () => {
+    // The regression case, built from `touch` so every Read and Edit carries
+    // a file path in `command` exactly as the hook stores it. This is a
+    // session working hard, and it must score zero: `npm test` never has
+    // another *command* between two of its runs.
+    const calls: ShapeCall[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      calls.push(touch("Read", "src/a.ts"), touch("Edit", "src/a.ts"), bash("npm test"));
+    }
+    expect(countRepeats(calls)).toBe(0);
+  });
+
+  it("never compares a file path as if it were a command", () => {
+    // Re-touching one file is not returning to a command. Compared naively
+    // this scores a return per revisit and swamps the signal.
+    const calls = [
+      touch("Read", "src/a.ts"),
+      touch("Edit", "src/b.ts"),
+      touch("Read", "src/a.ts"),
+      touch("Edit", "src/b.ts"),
+    ];
+    expect(countRepeats(calls)).toBe(0);
+  });
+
+  it("still sees a real return when another command separates the runs", () => {
+    // The restriction must not disable the signal: with `git diff` between
+    // them, the two `npm test` runs are a genuine departure and return, and
+    // the reads around them change nothing.
+    const calls = [
+      bash("npm test"),
+      touch("Read", "src/a.ts"),
+      bash("git diff"),
+      touch("Edit", "src/a.ts"),
+      bash("npm test"),
+    ];
+    expect(countRepeats(calls)).toBe(1);
+  });
+
+  it("discriminates a working session from a stuck one at the shipped default", () => {
+    // The property that actually matters, and the one the defect destroyed:
+    // with `shape.repeat_threshold` at 3, a working session must sit below
+    // it and a stuck session above. Asserted against the real default rather
+    // than a test-local number, so a change to that default has to face this.
+    const working: ShapeCall[] = [];
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"];
+    for (let i = 0; i < 5; i += 1) {
+      const file = files[i % files.length]!;
+      working.push(touch("Read", file), touch("Edit", file), bash("npm test"), touch("Read", file));
+    }
+
+    const stuck: ShapeCall[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      stuck.push(bash("npm run build"), bash("npm test"));
+    }
+
+    expect(countRepeats(working)).toBeLessThan(3);
+    expect(countRepeats(stuck)).toBeGreaterThanOrEqual(3);
   });
 
   it("reads calls in the order given rather than sorting them", () => {
@@ -128,6 +205,16 @@ describe("countRepeats — what is not comparable", () => {
     // missed one for a signal whose job is to say a session is stuck.
     const truncated = `npm run something-very-long${TRUNCATION_MARKER}`;
     expect(countRepeats([bash(truncated), bash("git diff"), bash(truncated)])).toBe(0);
+  });
+
+  it("breaks a run on a truncated shell call without comparing its text", () => {
+    // A truncated Bash call really did run something, so the session went
+    // and did other work and a return across it is a genuine return — even
+    // though its text is never compared. The non-shell rule must not
+    // swallow this case: passing over a truncated command the way a Read is
+    // passed over would score this 0.
+    const truncated = `npm run something-long${TRUNCATION_MARKER}`;
+    expect(countRepeats([bash("npm test"), bash(truncated), bash("npm test")])).toBe(1);
   });
 
   it("still counts repeats of untruncated commands in the same session", () => {

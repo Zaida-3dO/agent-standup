@@ -424,7 +424,7 @@ export const SETTINGS_REGISTRY = {
     schema: z.number().int().positive(),
     default: 3,
     label: "Repeat-command threshold",
-    help: "How many times a session must return to a command it already ran — with other work in between — before that reads as going in circles. A command run and immediately re-run is a retry loop and counts once however long it runs, so this counts returns rather than attempts.",
+    help: "How many times a session must return to a shell command it already ran — with another command in between — before that reads as going in circles. A command run and immediately re-run is a retry loop and counts once however long it runs, so this counts returns rather than attempts, and reading or editing between two runs does not break the run. Only Bash calls are compared, because every other tool reports a file path rather than a command.",
     category: "Telemetry",
     appliesWhen: "next-call",
     sensitive: false,

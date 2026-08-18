@@ -47,9 +47,15 @@ import { TRUNCATION_MARKER } from "./contract";
  * shape signal that read a token count would be measuring cost, which is
  * the cost chain's row (#51–#53) and not this one.
  *
- * `ts` is here because ordering matters to repeat detection and nothing
- * else, and it is the caller's ordering that decides what "consecutive"
- * means — see `countRepeats`.
+ * `ts` is **carried, not read**. Nothing in this module consults it: the
+ * signals are taken over the sequence as handed in, and it is the caller's
+ * ordering — not this field — that decides what "consecutive" means (see
+ * `countRepeats`). It stays on the projection because the rows are handed
+ * over in the order they happened and a consumer that wants to show *when*
+ * a session was circling should not have to re-query for the timestamps it
+ * already paid to read. A field this module ignores is worth saying so
+ * about, rather than leaving a reader to infer an ordering dependency that
+ * does not exist.
  */
 export interface ShapeCall {
   readonly tool: string;
@@ -151,6 +157,15 @@ const READ_TOOLS: ReadonlySet<string> = new Set([
 /** Tool names that change something. See `READ_TOOLS` for why `Bash` is in neither. */
 const WRITE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "NotebookEdit", "MultiEdit"]);
 
+/**
+ * The one tool whose `command` is actually a command.
+ *
+ * Every other tool's `command` is a path or a pattern that
+ * `../hook/payload.ts` put there — see `comparableCommand`, which is the
+ * only reader and carries the reasoning.
+ */
+const SHELL_TOOL = "Bash";
+
 /** Whether a tool only looks. */
 export function isReadTool(tool: string): boolean {
   return READ_TOOLS.has(tool);
@@ -191,6 +206,10 @@ export function isWriteTool(tool: string): boolean {
  * happen, and a wrong repeat is worse than a missed one for a signal whose
  * whole purpose is to say a session is stuck.
  *
+ * **Only shell calls are compared**, and that restriction is what keeps the
+ * signal honest — see `comparableCommand` for why an unrestricted reading
+ * cannot discriminate at all.
+ *
  * Calls are read in the order given. The caller orders by `ts`; this
  * function does not sort, because a caller that has already ordered by an
  * index should not pay for a second sort and a caller that has not needs to
@@ -207,10 +226,20 @@ export function countRepeats(calls: readonly ShapeCall[]): number {
   for (const call of calls) {
     const command = comparableCommand(call);
     if (command === undefined) {
-      // A call carrying no comparable command breaks the consecutive run:
-      // whatever comes next followed something else, which is exactly the
-      // "went and did something in between" this counts.
-      previous = undefined;
+      // Two different cases, and they must not be conflated.
+      //
+      // A **non-shell** call is passed over without disturbing `previous`,
+      // so it cannot split a consecutive run. Clearing it would score the
+      // canonical retry loop — `npm test`, fix, `npm test` — as a return on
+      // every iteration, because the fix is an `Edit`. "Other work in
+      // between" means another *command*; see `comparableCommand`.
+      //
+      // A **truncated shell** call did run a command: the session really did
+      // go and do something else, and only its *text* is unusable. So it
+      // breaks the run — a return across it is a real return — while still
+      // never being compared to anything, which is what stops a shared long
+      // prefix reporting a repeat that did not happen.
+      if (call.tool === SHELL_TOOL) previous = undefined;
       continue;
     }
 
@@ -228,10 +257,47 @@ export function countRepeats(calls: readonly ShapeCall[]): number {
  * The command text to compare on, or `undefined` when this call has none
  * worth comparing.
  *
+ * ── Only `Bash` carries a comparable command ───────────────────────────
+ *
+ * **`command` being populated does not mean the call ran a command.**
+ * `../hook/payload.ts` fills it from the first of `command`, `file_path`,
+ * `filePath`, `path`, `pattern`, `url` — so a `Read` of `src/a.ts` arrives
+ * here with `command: "src/a.ts"`. That is right for the question the hook
+ * asks (a `Write` to `/etc/hosts` must be matchable against the pattern
+ * lists, and `tests/hook-payload.test.ts` pins it), but it is a *file path*
+ * wearing a command's field name, and this module asks a different question.
+ *
+ * Comparing on it anyway makes "touched this file again" indistinguishable
+ * from "returned to this command", and the signal then stops discriminating
+ * altogether. Measured against the shipped defaults (`minimum_sample` 20,
+ * `repeat_threshold` 3): an ordinary 20-call session — read, edit, test,
+ * re-read, across four files — scores 10, while a genuinely stuck session
+ * doing the same two things ten times scores 18. Both read `elevated`, so
+ * the reading fires on a session that is working perfectly well. That is
+ * exactly the noise #54 exists to prevent, and #65 turns this into a nudge,
+ * so the cost is interrupting a working agent to tell it that it is stuck.
+ *
+ * Restricting to `Bash` is a judgement about *which calls have a command at
+ * all*, not a second opinion on `READ_TOOLS`/`WRITE_TOOLS` (those classify
+ * reading versus changing, and deliberately leave `Bash` out of both). It is
+ * derived from a column already stored, so it also reads correctly over rows
+ * ingested before this restriction existed — where a new "is shell" flag on
+ * the record would have left every historical row unclassifiable and needed
+ * a migration and a wire-contract change to answer a question `tool` already
+ * answers.
+ *
+ * A non-shell call is passed over rather than treated as a break in the run
+ * — see `countRepeats` — because reading and editing are what a retry loop
+ * is *made of*: the canonical loop is `npm test`, fix, `npm test`, and a fix
+ * is an `Edit`. A *truncated shell* call is different: it did run something,
+ * so `countRepeats` breaks the run on it even though its text is refused
+ * here.
+ *
  * Truncated text is refused here rather than at the call site so that every
  * consumer of a command comparison in this module refuses it the same way.
  */
 function comparableCommand(call: ShapeCall): string | undefined {
+  if (call.tool !== SHELL_TOOL) return undefined;
   const command = call.command;
   if (command === undefined || command === null) return undefined;
   const trimmed = command.trim();
