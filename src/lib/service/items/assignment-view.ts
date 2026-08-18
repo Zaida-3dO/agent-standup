@@ -180,9 +180,9 @@ const ITEM_DETAIL_ASSIGNMENT_COLUMNS = `${BOARD_ASSIGNMENT_COLUMNS},
  * **One** statement for a whole page of items, keyed on `itemId = ANY(...)`.
  *
  * The N+1 this exists to not be: a board page of sixty-eight cards, each
- * fetching its own holder, is sixty-eight round trips added to a read that
- * previously made a fixed handful. `ANY($1::text[])` is a single query
- * whose cost does not grow with the page, and `Assignment_itemId_role_idx`
+ * fetching its own holder, is sixty-eight round trips on a read whose other
+ * queries number a fixed handful. `ANY($1::text[])` is a single query whose
+ * cost does not grow with the page, and `Assignment_itemId_role_idx`
  * (schema.prisma) is the index it lands on.
  *
  * Ordered by `claimedAt` so an item held by two holders at once — an
