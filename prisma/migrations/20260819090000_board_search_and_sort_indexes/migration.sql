@@ -28,6 +28,11 @@
 -- reader finding a GIN index on `body` could reasonably assume full-text
 -- search already exists.
 --
+-- The extension itself is NOT in the datamodel — `schema.prisma` can declare
+-- an index that USES `gin_trgm_ops` but has no way to say the operator class
+-- must exist first, so the `CREATE EXTENSION` has to live here and only here.
+-- `IF NOT EXISTS` because an installation may already have it.
+--
 -- ── Cost ────────────────────────────────────────────────────────────────
 --
 -- A trigram index is larger and slower to update than a B-tree, and `body`
@@ -36,15 +41,15 @@
 -- an agent, never a bulk load.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
-CREATE INDEX IF NOT EXISTS "Item_title_trgm_idx" ON "Item" USING GIN ("title" gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS "Item_body_trgm_idx" ON "Item" USING GIN ("body" gin_trgm_ops);
+CREATE INDEX "Item_title_trgm_idx" ON "Item" USING GIN ("title" gin_trgm_ops);
+CREATE INDEX "Item_body_trgm_idx" ON "Item" USING GIN ("body" gin_trgm_ops);
 
 -- The `actor` filter — an equality check on `originPersonId`, which had no
 -- index of its own. `area` and `repo` already carry one for exactly the same
 -- reason (SCHEMA.md §1: "(repo) is there because listing filters on it
 -- exactly as it filters on area"), and origin is now a third axis a reader
 -- can narrow the whole board by.
-CREATE INDEX IF NOT EXISTS "Item_originPersonId_idx" ON "Item" ("originPersonId");
+CREATE INDEX "Item_originPersonId_idx" ON "Item" ("originPersonId");
 
 -- The sort keys' composite indexes, each including `id` because `id` is the
 -- tie-break every board page orders by and every keyset cursor compares on.
@@ -55,5 +60,5 @@ CREATE INDEX IF NOT EXISTS "Item_originPersonId_idx" ON "Item" ("originPersonId"
 -- `createdAt` gets no entry here: the existing `Item_state_priority_idx` and
 -- the primary key already cover the default ordering, and the board's
 -- pre-existing pages were served acceptably without one.
-CREATE INDEX IF NOT EXISTS "Item_updatedAt_id_idx" ON "Item" ("updatedAt", "id");
-CREATE INDEX IF NOT EXISTS "Item_title_id_idx" ON "Item" ("title", "id");
+CREATE INDEX "Item_updatedAt_id_idx" ON "Item" ("updatedAt", "id");
+CREATE INDEX "Item_title_id_idx" ON "Item" ("title", "id");

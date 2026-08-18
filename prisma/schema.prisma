@@ -146,15 +146,6 @@ model Item {
   // "which reviews are relying on this item existing".
   followUpFor Artifact[]   @relation("ArtifactFollowUp")
   areaLinks   ItemArea[]
-  // The two trigram indexes (`Item_title_trgm_idx`, `Item_body_trgm_idx`) are
-  // deliberately absent here and live only in the migration SQL, for the same
-  // reason as the partial index below: they are GIN indexes using the
-  // `gin_trgm_ops` operator class, which this schema language cannot express
-  // at all. They are what make the board's unanchored `ILIKE` search
-  // indexable rather than a sequential scan — see the migration for why a
-  // B-tree cannot serve that pattern, and for what a trigram index still does
-  // NOT provide (ranking).
-  //
   // `Item_archivedAt_idx` is deliberately absent here and lives only in the
   // migration SQL. It is a PARTIAL index — `WHERE "archivedAt" IS NOT NULL`
   // — which this schema language cannot express, and declaring the full
@@ -188,6 +179,20 @@ model Item {
   // index nothing needs still taxes every write.
   @@index([updatedAt, id])
   @@index([title, id])
+  // The board's search (MILESTONES.md #75). GIN + `gin_trgm_ops`, because
+  // the predicate is an UNANCHORED `ILIKE '%term%'` and no B-tree can serve
+  // one — a leading `%` means the match may begin anywhere, which leaves
+  // Postgres a sequential scan of every body in the table as its only plan.
+  // A trigram index decomposes each value into three-character substrings so
+  // that pattern becomes a lookup plus a recheck on a much smaller set.
+  //
+  // Fast is not ranked: this gives substring matching no relevance ordering,
+  // no stemming and no phrase handling. Ranked search wants a `tsvector`
+  // column with `ts_rank` — a different index answering a different
+  // question. Said here because a reader finding a GIN index on `body` could
+  // reasonably assume full-text search already exists.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, name: "Item_title_trgm_idx")
+  @@index([body(ops: raw("gin_trgm_ops"))], type: Gin, name: "Item_body_trgm_idx")
 }
 
 // Installation-owned reference data (SCHEMA.md §23) — not build-owned
