@@ -47,8 +47,9 @@
 // `historical_verification` asserts something weaker and different: "someone
 // read the merged code and this is what they checked". An item closed this
 // way is permanently marked as closed-on-inspection, in its own artifact
-// list, in its closing summary's `final_state`, and in the `merge` event's
-// payload. The cheap path leaves a trace, which is precisely what an
+// list, in its closing summary's `final_state`, and by the absence of the
+// `review` event a real review would have emitted. The cheap path leaves a
+// trace, which is precisely what an
 // approving verdict recorded on the review path does not.
 //
 // **3. The claim has to be checkable.** A verdict is a judgement and cannot
@@ -79,6 +80,7 @@
 import type { TransactionHandle } from "../context";
 import { currentTipCommitSha } from "./artifact-tip";
 import { isHistoricalVerificationEnabled } from "./historical-verification-enabled";
+import { APPROVING_VERDICTS, requiresLinkedFollowUp } from "../../verdicts";
 
 /** The artifact kind that records work verified by inspection against already-merged code. */
 export const HISTORICAL_VERIFICATION_KIND = "historical_verification";
@@ -103,6 +105,12 @@ export interface HistoricalVerificationOutcome {
   readonly satisfied: boolean;
   /** Whether the window is open at all — what decides if a refusal should mention this path. */
   readonly offerAlternative: boolean;
+  /**
+   * Set when a qualifying verification exists but an unhonoured
+   * `lgtm_with_followups` bargain blocks it — the phrase naming which
+   * obligation, for the refusal message.
+   */
+  readonly blockedByFollowUp?: string;
 }
 
 /**
@@ -169,5 +177,100 @@ export async function historicalVerificationSatisfies(
     tip,
   );
 
-  return { satisfied: rows.length > 0, offerAlternative: true };
+  if (rows.length === 0) {
+    return { satisfied: false, offerAlternative: true };
+  }
+
+  // An inspection may stand in for a review that was never possible. It must
+  // never dissolve an obligation a review that DID happen created.
+  //
+  // `merge.requires_linked_followup` enforces the `lgtm_with_followups`
+  // bargain — merge now, without a further round, because the findings are
+  // recorded as separate live work. That guard resolves the approval it
+  // reasons about through `approvingArtifactAtCurrentRoundAndTip`, which
+  // qualifies on **round and tip**, so an honest `lgtm_with_followups` stops
+  // qualifying the moment either moves. Absent this check that is a silent
+  // bypass rather than a theoretical one: `currentReviewRound` is
+  // `MAX(review_round)` across *every* artifact kind, so recording a
+  // verification at a higher round demotes the review out of qualification by
+  // itself — and `record_artifact` takes `reviewRound` from the caller. The
+  // follow-up guard then finds no qualifying approval, correctly says nothing,
+  // and the bargain evaporates.
+  //
+  // What made that safe before an alternative satisfier existed was that the
+  // same non-qualification also refused the merge outright at
+  // `merge.requires_approving_code_review`. Satisfying that clause by another
+  // route removes the backstop, so the obligation has to be re-checked here
+  // rather than assumed to be someone else's job.
+  //
+  // Deliberately scoped to the item, not to a round or a tip: the question is
+  // "does an unhonoured bargain exist anywhere on this item", and a bargain
+  // that fell out of qualification is exactly the one at risk of being
+  // forgotten. `LIMIT 1` on the newest, because a later clean review is the
+  // most recent word on the change.
+  const unhonoured = await unhonouredFollowUpBargain(db, itemId);
+  if (unhonoured) {
+    return { satisfied: false, offerAlternative: true, blockedByFollowUp: unhonoured };
+  }
+
+  return { satisfied: true, offerAlternative: true };
+}
+
+interface FollowUpBargainRow {
+  verdict: string | null;
+  followUpItemId: string | null;
+  followUpState: string | null;
+}
+
+/**
+ * The states in which a linked follow-up has stopped being live work — the same
+ * set, and the same reasoning, `merge.requires_linked_followup` applies
+ * (`./merge.ts`'s `CLOSED_ITEM_STATES`). Work that has already stopped cannot
+ * absorb findings raised before it stopped.
+ */
+const CLOSED_FOLLOW_UP_STATES: ReadonlySet<string> = new Set([
+  "merged",
+  "research_done",
+  "wont_do",
+  "cancelled",
+]);
+
+/**
+ * A description of this item's newest `lgtm_with_followups` approval when its
+ * bargain is **not** honoured — no link, or a link to something already
+ * closed — or `null` when there is no such approval or its follow-up is live.
+ *
+ * Returns a sentence rather than a boolean because the caller turns it into a
+ * refusal, and a refusal that cannot say which obligation it is enforcing
+ * sends the reader hunting through an artifact list.
+ */
+async function unhonouredFollowUpBargain(
+  db: TransactionHandle,
+  itemId: string,
+): Promise<string | null> {
+  const rows = await db.$queryRawUnsafe<FollowUpBargainRow[]>(
+    `SELECT a."verdict"::text AS "verdict", a."followUpItemId", i."state"::text AS "followUpState"
+       FROM "Artifact" a
+       LEFT JOIN "Item" i ON i."id" = a."followUpItemId"
+      WHERE a."itemId" = $1 AND a."kind" = 'code_review'::"ArtifactKind"
+        AND a."verdict" = ANY($2::"Verdict"[])
+      ORDER BY a."createdAt" DESC, a."id" DESC
+      LIMIT 1`,
+    itemId,
+    APPROVING_VERDICTS,
+  );
+  const approval = rows[0];
+  if (!approval || !requiresLinkedFollowUp(approval.verdict)) {
+    return null;
+  }
+  if (!approval.followUpItemId) {
+    return "it links no follow-up item";
+  }
+  if (approval.followUpState === null) {
+    return `its follow-up item ${approval.followUpItemId} does not exist`;
+  }
+  if (CLOSED_FOLLOW_UP_STATES.has(approval.followUpState)) {
+    return `its follow-up item ${approval.followUpItemId} is already ${approval.followUpState}`;
+  }
+  return null;
 }

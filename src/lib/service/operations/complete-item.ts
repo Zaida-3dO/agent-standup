@@ -233,10 +233,18 @@ async function checkNotDoneProofs(
  * artifacts, never authored by the caller (SCHEMA.md §5, "derived, never
  * authored").
  *
- * Records **how** the completion satisfied the merge gate. `closed_on` is
- * `historical_verification` when the item is being closed on a recorded
- * inspection of already-merged code rather than on a review that approved a
- * proposed change, and `review` in the ordinary case. The two are genuinely
+ * Records that an inspection of already-merged code is part of this item's
+ * evidence: `closed_on` is `historical_verification` when such an artifact
+ * exists, alongside the commit it was checked against.
+ *
+ * **Deliberately "an inspection was recorded", not "the merge rested on
+ * one".** Which clause a guard was ultimately satisfied by is not a fact the
+ * item carries — the gate is a conjunction evaluated at transition time, and
+ * an item can hold both a verification and an approving review. Reporting the
+ * weaker provenance whenever an inspection exists errs toward disclosure: the
+ * failure it must not have is an inspection-closed item that reads as
+ * review-closed, and over-reporting cannot produce that. Under-reporting
+ * could. The two are genuinely
  * different claims (SCHEMA.md §6b), and the value of keeping them distinct
  * evaporates if the distinction is only visible to a guard: this puts it on
  * the closing record a person actually reads, alongside the commit it was
@@ -365,8 +373,8 @@ export const completeItem = defineOperation({
       // branch and merged_at are owned by rows this milestone has not yet
       // built (#29's checkpoint/note path, the merge guard's artifact).
       // Derived here, never taken from the caller, which is what makes it
-      // trustworthy: `closed_on` records HOW this completion satisfied the
-      // merge gate, read back from the artifacts that actually satisfied it.
+      // trustworthy: `closed_on` is read back from the item's own artifacts,
+      // never asserted by whoever is closing it.
       //
       // Why it belongs on the summary rather than only on the artifact: the
       // summary is the closing record a person reads, and an item closed on

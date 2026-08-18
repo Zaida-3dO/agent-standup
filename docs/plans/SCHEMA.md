@@ -631,6 +631,17 @@ argument alone:
 4. **It never satisfies authorisation.** `merge_authority` of `needs_approval` is enforced by a
    separate clause reading `kind = 'code_review' AND created_by_type = 'person'`, untouched by this.
    The window widens what counts as review **evidence**, never what counts as **authorisation**.
+   Defended twice: a verdict is refused on this kind at the write, so the clause's approving-verdict
+   filter excludes it even before the kind scope applies.
+
+**It also cannot dissolve an obligation a review already created.** `merge.requires_linked_followup`
+resolves the approval it reasons about by **round and tip**, so an honest `lgtm_with_followups` stops
+qualifying when either moves — and `max(review_round)` spans every artifact kind, so a verification
+recorded at a higher round demotes that review by itself. What made this harmless without an
+alternative satisfier is that the same non-qualification refused the merge outright; satisfying that
+clause by another route removes the backstop. So the verification path re-checks the bargain at its
+own source and refuses while it is unhonoured. An inspection may stand in for a review that was never
+possible; it may not discharge a promise a review that *did* happen made.
 
 **Scoped to the tip commit, not to the review round.** The artifact must name the item's current tip,
 so an inspection cannot silently carry across to later code — the claim is "I read what is actually
