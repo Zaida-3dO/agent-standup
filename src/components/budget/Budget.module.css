@@ -1,0 +1,260 @@
+/* `/budget` paints its own surface for the same reason `/settings` and the
+   board do: every colour here is chosen for a dark background, so the page
+   sets the background those colours assume rather than depending on a
+   page-level one it does not control. */
+.page {
+  padding: 1.25rem;
+  min-height: 100%;
+  background: #0e0e11;
+  color: #f4f4f5;
+}
+
+.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  padding: 1.25rem;
+  background: #0e0e11;
+  color: #a1a1aa;
+}
+
+.heading {
+  margin: 0 0 0.35rem;
+  font-size: 1.4rem;
+}
+
+.subheading {
+  margin: 0 0 1.5rem;
+  color: #a1a1aa;
+  font-size: 0.85rem;
+}
+
+/* One card per window. A window is a self-contained thing with its own
+   length, its own boundaries and its own validity, so it gets its own
+   bounded surface rather than being a row in a longer list. */
+.card {
+  margin: 0 0 1.5rem;
+  padding: 1rem;
+  border: 1px solid #27272a;
+  border-radius: 0.6rem;
+  background: #16161a;
+}
+
+/* A window whose boundaries cross or leave 0–100. Bordered rather than
+   merely annotated, because the fault is a property of the whole window and
+   not of any one field in it. */
+.cardInvalid {
+  border-color: #7f1d1d;
+  background: #1b1214;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 0.5rem;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.cardMeta {
+  color: #a1a1aa;
+  font-size: 0.8rem;
+}
+
+.disabled {
+  color: #a1a1aa;
+  font-size: 0.8rem;
+}
+
+/* The boundary list — three rows, one per band, each said in plain words
+   as well as shown on the chart. The words are what a reader checks; the
+   chart is what they scan. */
+.boundaries {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.boundary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.35rem 0;
+  border-top: 1px solid #27272a;
+}
+
+.boundaryLabel {
+  min-width: 6.5rem;
+  font-size: 0.85rem;
+}
+
+.boundaryKind {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.4rem;
+  color: #a1a1aa;
+  font-size: 0.75rem;
+}
+
+.boundaryWords {
+  color: #e4e4e7;
+  font-size: 0.85rem;
+}
+
+.kindHelp {
+  margin: 0.15rem 0 0;
+  color: #a1a1aa;
+  font-size: 0.75rem;
+}
+
+/* The chart. A fixed aspect via the viewBox rather than a fixed pixel size,
+   so it scales with the card without the geometry module needing to know
+   anything about layout. */
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0.75rem 0 0;
+  border: 1px solid #27272a;
+  border-radius: 0.4rem;
+  background: #101014;
+}
+
+/* The four bands, lightest at the bottom. Fills are translucent so a
+   boundary line stays readable where two bands meet. */
+.bandFree {
+  fill: rgba(34, 197, 94, 0.16);
+}
+
+.bandSelective {
+  fill: rgba(234, 179, 8, 0.16);
+}
+
+.bandWindDown {
+  fill: rgba(249, 115, 22, 0.18);
+}
+
+.bandStop {
+  fill: rgba(220, 38, 38, 0.2);
+}
+
+.line {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.lineSelective {
+  stroke: #eab308;
+}
+
+.lineWindDown {
+  stroke: #f97316;
+}
+
+.lineStop {
+  stroke: #dc2626;
+}
+
+.axis {
+  stroke: #3f3f46;
+  stroke-width: 1;
+}
+
+.axisLabel {
+  fill: #a1a1aa;
+  font-size: 10px;
+}
+
+/* A crossing, drawn where it happens. The chart is the only place the
+   *moment* of a fault is expressible — a message can say "at 3h", but only
+   the mark puts it where the reader is already looking. */
+.crossingMark {
+  stroke: #f87171;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+.scrubberLine {
+  stroke: #e4e4e7;
+  stroke-width: 1;
+}
+
+.scrubber {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.75rem 0 0;
+}
+
+.scrubberInput {
+  flex: 1;
+}
+
+.scrubberMoment {
+  min-width: 8rem;
+  color: #a1a1aa;
+  font-size: 0.8rem;
+}
+
+.readings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reading {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.4rem;
+  background: #1c1c21;
+  font-size: 0.8rem;
+}
+
+.readingAbsent {
+  color: #a1a1aa;
+}
+
+/* Validation errors, listed as well as drawn. The list is what a screen
+   reader reaches and what a reader copies into a bug report; the marks on
+   the chart are what makes the shape of the fault obvious. */
+.problems {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #7f1d1d;
+  border-radius: 0.4rem;
+  background: #2a1215;
+}
+
+.problemsTitle {
+  margin: 0 0 0.3rem;
+  color: #fecaca;
+  font-size: 0.85rem;
+}
+
+.problemList {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #fecaca;
+  font-size: 0.8rem;
+}
+
+.empty {
+  margin: 0;
+  color: #a1a1aa;
+  font-size: 0.85rem;
+}
+
+.error {
+  margin: 0.5rem 0 0;
+  color: #fecaca;
+  font-size: 0.8rem;
+}
