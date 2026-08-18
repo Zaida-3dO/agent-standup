@@ -8,6 +8,10 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
+import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
@@ -17,6 +21,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("item detail HTTP route against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("item_detail_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -38,7 +46,7 @@ describeIfDb("item detail HTTP route against Postgres", () => {
 
   async function createItem(overrides: Record<string, unknown>): Promise<{ id: string }> {
     const response = await itemsRoute.POST(
-      new Request("http://localhost/api/items", {
+      authenticatedRequest("http://localhost/api/items", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -55,7 +63,7 @@ describeIfDb("item detail HTTP route against Postgres", () => {
   }
 
   async function get(id: string, query = ""): Promise<Response> {
-    return detailRoute.GET(new Request(`http://localhost/api/items/${id}/detail${query}`), {
+    return detailRoute.GET(authenticatedRequest(`http://localhost/api/items/${id}/detail${query}`), {
       params: Promise.resolve({ id }),
     });
   }

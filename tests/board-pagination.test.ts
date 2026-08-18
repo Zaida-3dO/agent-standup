@@ -13,6 +13,10 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import type { BoardOutput } from "@/lib/service/operations/get-board";
@@ -26,6 +30,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("the board pages one column at a time", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("board_pagination");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -254,7 +262,7 @@ describeIfDb("the board pages one column at a time", () => {
   describe("the HTTP adapter carries the same controls", () => {
     async function get(query: string): Promise<{ board: BoardOutput }> {
       const response = await boardRoute.GET(
-        new Request(`http://localhost/api/board?area=${AREA}&${query}`),
+        authenticatedRequest(`http://localhost/api/board?area=${AREA}&${query}`),
       );
       return (await response.json()) as { board: BoardOutput };
     }

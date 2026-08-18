@@ -19,6 +19,10 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
+import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
@@ -28,6 +32,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("POST /hook route against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("hook_route");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -49,7 +57,7 @@ describeIfDb("POST /hook route against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -125,7 +133,7 @@ describeIfDb("POST /hook route against Postgres", () => {
 
   it("POST /hook with malformed JSON returns 400, not a 500", async () => {
     const response = await hookRoute.POST(
-      new Request("http://localhost/api/hook", {
+      authenticatedRequest("http://localhost/api/hook", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{not json",

@@ -11,6 +11,10 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
+import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
@@ -20,6 +24,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("items HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("items_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -45,7 +53,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -69,7 +77,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
 
   it("POST with malformed JSON returns 400, not a 500", async () => {
     const response = await collectionRoute.POST(
-      new Request("http://localhost/api/items", {
+      authenticatedRequest("http://localhost/api/items", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{not json",
@@ -105,7 +113,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
       .then((r) => r.json() as Promise<{ item: { id: string } }>);
 
     const response = await itemRoute.GET(
-      new Request(`http://localhost/api/items/${created.item.id}`),
+      authenticatedRequest(`http://localhost/api/items/${created.item.id}`),
       {
         params: Promise.resolve({ id: created.item.id }),
       },
@@ -116,7 +124,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
   });
 
   it("GET /items/{id} returns 404 for an id that does not exist", async () => {
-    const response = await itemRoute.GET(new Request("http://localhost/api/items/nope"), {
+    const response = await itemRoute.GET(authenticatedRequest("http://localhost/api/items/nope"), {
       params: Promise.resolve({ id: "nope" }),
     });
     expect(response.status).toBe(404);
@@ -151,7 +159,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
     // it the parameter would be dropped in the adapter and the assertion
     // would fail on `undefined`.
     const reread = await itemRoute
-      .GET(new Request(`http://localhost/api/items/${created.item.id}?full=true`), {
+      .GET(authenticatedRequest(`http://localhost/api/items/${created.item.id}?full=true`), {
         params: Promise.resolve({ id: created.item.id }),
       })
       .then((r) => r.json() as Promise<{ item: { priority: string } }>);
@@ -187,7 +195,7 @@ describeIfDb("items HTTP routes against Postgres", () => {
     // Same as above: `area` is only in the full record, so this asserts the
     // filter and the collection route's `?full=` threading together.
     const response = await collectionRoute.GET(
-      new Request("http://localhost/api/items?area=route-filter-target&full=true"),
+      authenticatedRequest("http://localhost/api/items?area=route-filter-target&full=true"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { items: { title: string; area: string }[] };

@@ -8,6 +8,10 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
+import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
@@ -17,6 +21,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("board HTTP route against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("board_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -37,7 +45,7 @@ describeIfDb("board HTTP route against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -59,7 +67,7 @@ describeIfDb("board HTTP route against Postgres", () => {
   }
 
   it("GET /board returns 200 with all four columns present", async () => {
-    const response = await boardRoute.GET(new Request("http://localhost/api/board"));
+    const response = await boardRoute.GET(authenticatedRequest("http://localhost/api/board"));
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
       board: { columns: Record<string, unknown> };
@@ -79,7 +87,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     // `column=backlog` because #109's default read answers "what is being
     // worked on" and withholds backlog — reaching it is an explicit ask.
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-backlog&column=backlog"),
+      authenticatedRequest("http://localhost/api/board?area=board-route-backlog&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -95,7 +103,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-filter-other" });
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-filter-target&column=backlog"),
+      authenticatedRequest("http://localhost/api/board?area=board-route-filter-target&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -118,7 +126,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-repo", repo: "board-route-repo-b" });
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?repo=board-route-repo-a&column=backlog"),
+      authenticatedRequest("http://localhost/api/board?repo=board-route-repo-a&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -135,7 +143,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-kind", parentId: project.id });
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-kind&kind=project&column=backlog"),
+      authenticatedRequest("http://localhost/api/board?area=board-route-kind&kind=project&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -149,7 +157,7 @@ describeIfDb("board HTTP route against Postgres", () => {
 
   it("an invalid priority value is rejected as 400, not a 500", async () => {
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?priority=not-a-real-priority"),
+      authenticatedRequest("http://localhost/api/board?priority=not-a-real-priority"),
     );
     expect(response.status).toBe(400);
     const payload = (await response.json()) as { error: { code: string } };
@@ -158,7 +166,7 @@ describeIfDb("board HTTP route against Postgres", () => {
 
   it("an invalid state value is rejected as 400, not a 500", async () => {
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?state=not-a-real-state"),
+      authenticatedRequest("http://localhost/api/board?state=not-a-real-state"),
     );
     expect(response.status).toBe(400);
     const payload = (await response.json()) as { error: { code: string } };
@@ -178,7 +186,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-state", parentId: project.id }); // stays on_deck
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-state&state=blocked"),
+      authenticatedRequest("http://localhost/api/board?area=board-route-state&state=blocked"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -199,7 +207,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-search", title: "Something else", body: "x" });
 
     const response = await boardRoute.GET(
-      new Request(
+      authenticatedRequest(
         "http://localhost/api/board?area=board-route-search&search=routing&column=backlog",
       ),
     );
@@ -237,7 +245,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     );
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-compose&state=paused&priority=P1"),
+      authenticatedRequest("http://localhost/api/board?area=board-route-compose&state=paused&priority=P1"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {

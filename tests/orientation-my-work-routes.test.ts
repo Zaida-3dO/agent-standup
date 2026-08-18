@@ -8,6 +8,10 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
 import { claimItem, type ClaimInput } from "@/lib/claims";
 import {
   createMigratedScratchDatabase,
@@ -19,6 +23,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("orient_mywork_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -41,7 +49,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -81,7 +89,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
     // Same ~30s budget as orientationUntilChanged, and for the same reason.
     for (let attempt = 0; attempt < 150; attempt++) {
       const payload = await orientationRoute
-        .GET(new Request(`http://localhost/api/items/${itemId}/orientation`), {
+        .GET(authenticatedRequest(`http://localhost/api/items/${itemId}/orientation`), {
           params: Promise.resolve({ id: itemId }),
         })
         .then((r) => r.json() as Promise<{ whatChanged: readonly { id: string }[] }>);
@@ -97,7 +105,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
     it("returns 200 with checkpoint, state, whatChanged, openLoops and crew", async () => {
       const created = await createItemViaRoute({ title: "Orientation via route" });
       const response = await orientationRoute.GET(
-        new Request(`http://localhost/api/items/${created.item.id}/orientation`),
+        authenticatedRequest(`http://localhost/api/items/${created.item.id}/orientation`),
         { params: Promise.resolve({ id: created.item.id }) },
       );
       expect(response.status).toBe(200);
@@ -121,7 +129,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
 
     it("returns 404 for an id that does not exist — not a 500", async () => {
       const response = await orientationRoute.GET(
-        new Request("http://localhost/api/items/does-not-exist/orientation"),
+        authenticatedRequest("http://localhost/api/items/does-not-exist/orientation"),
         { params: Promise.resolve({ id: "does-not-exist" }) },
       );
       expect(response.status).toBe(404);
@@ -136,7 +144,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
       expect(createEventId).toBeDefined();
 
       const response = await orientationRoute.GET(
-        new Request(
+        authenticatedRequest(
           `http://localhost/api/items/${created.item.id}/orientation?since=${createEventId}`,
         ),
         { params: Promise.resolve({ id: created.item.id }) },
@@ -151,7 +159,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
   describe("GET /my-work", () => {
     it("returns 200 with an empty list for a session holding nothing", async () => {
       const response = await myWorkRoute.GET(
-        new Request("http://localhost/api/my-work?sessionId=route-session-empty"),
+        authenticatedRequest("http://localhost/api/my-work?sessionId=route-session-empty"),
       );
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { items: unknown[] };
@@ -159,7 +167,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
     });
 
     it("returns 400 invalid_input when sessionId is missing from the query string", async () => {
-      const response = await myWorkRoute.GET(new Request("http://localhost/api/my-work"));
+      const response = await myWorkRoute.GET(authenticatedRequest("http://localhost/api/my-work"));
       expect(response.status).toBe(400);
       const payload = (await response.json()) as { error: { code: string; fields: string[] } };
       expect(payload.error.code).toBe("invalid_input");
@@ -178,7 +186,7 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
       });
 
       const response = await myWorkRoute.GET(
-        new Request("http://localhost/api/my-work?sessionId=route-session-holder"),
+        authenticatedRequest("http://localhost/api/my-work?sessionId=route-session-holder"),
       );
       expect(response.status).toBe(200);
       const payload = (await response.json()) as {

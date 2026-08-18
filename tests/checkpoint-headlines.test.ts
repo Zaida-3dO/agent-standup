@@ -18,6 +18,10 @@
 // file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import {
@@ -36,6 +40,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describe("deriving a headline from checkpoint prose", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   it("takes the first non-empty line, trimmed", () => {
     expect(deriveHeadlineFromBody("  Migration is applied.  \nRoutes next.")).toBe(
       "Migration is applied.",
@@ -339,7 +347,7 @@ describeIfDb("a checkpoint headline over HTTP", () => {
   });
 
   function post(url: string, body: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

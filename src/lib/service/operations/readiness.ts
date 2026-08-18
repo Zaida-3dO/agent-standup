@@ -53,8 +53,8 @@ export interface ReadinessOutput {
    *
    * A separate count rather than folded into the one above, because a
    * partially-applied migration is the state most worth naming: the schema
-   * is neither the old one nor the new one, and a deploy that continues
-   * into it fails in ways that look like application bugs.
+   * matches no migration in the ledger completely, and a deploy that
+   * continues into it fails in ways that look like application bugs.
    */
   readonly migrationsPending: number;
 }

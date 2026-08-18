@@ -8,6 +8,10 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
 import { randomUUID } from "node:crypto";
 import {
   createMigratedScratchDatabase,
@@ -30,6 +34,10 @@ function validSummary(overrides: Record<string, unknown> = {}) {
 }
 
 describeIfDb("transition and complete HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("transition_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -52,7 +60,7 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -176,7 +184,7 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
     it("malformed JSON returns 400, not a 500", async () => {
       const id = await createItemViaRoute();
       const response = await transitionRoute.POST(
-        new Request(`http://localhost/api/items/${id}/transition`, {
+        authenticatedRequest(`http://localhost/api/items/${id}/transition`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{not json",

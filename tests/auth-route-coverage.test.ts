@@ -59,10 +59,6 @@ const UNAUTHENTICATED: ReadonlyMap<string, string> = new Map([
       "REST route, so it calls `authenticate` directly and passes the proven machine into " +
       "the MCP identity. Asserted separately below.",
   ],
-  [
-    "sessions/[id]/register/route.ts",
-    "Reads only a request id from `httpCaller` and authenticates separately — asserted below.",
-  ],
 ]);
 
 /** Every `route.ts` under the API tree, as a path relative to it. */
@@ -89,10 +85,10 @@ function read(relative: string): string {
 /**
  * Blanks out comments, preserving every byte's position.
  *
- * Replacing rather than deleting keeps the offsets of the surviving code
- * unchanged, which matters because the ordering assertion below compares
- * two indices into this string. Characters are swapped for spaces (and
- * newlines kept) so the result is the same length as the input.
+ * Every comment character becomes a space and newlines are kept, so the
+ * result is byte-for-byte the same length as the input. That matters
+ * because the ordering assertion below compares two indices into this
+ * string, and any change in length would shift them apart.
  */
 function withoutComments(source: string): string {
   return source
@@ -148,24 +144,12 @@ describe("every API route passes through the authentication gate", () => {
     );
   });
 
-  it("the session registration route authenticates", () => {
-    const source = read("sessions/[id]/register/route.ts");
-
-    expect(source).toContain("authenticate");
-  });
-
   it("holds the unauthenticated list to exactly the routes argued for", () => {
     // The assertion that keeps the allowlist from absorbing a new route.
     // If this fails, a route was added to the map above — which is allowed,
     // but only deliberately, with a reason, in a diff someone reads.
     expect([...UNAUTHENTICATED.keys()].sort()).toEqual(
-      [
-        "health/route.ts",
-        "hook/script/route.ts",
-        "mcp/route.ts",
-        "ready/route.ts",
-        "sessions/[id]/register/route.ts",
-      ].sort(),
+      ["health/route.ts", "hook/script/route.ts", "mcp/route.ts", "ready/route.ts"].sort(),
     );
   });
 

@@ -23,6 +23,10 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
+import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
@@ -32,6 +36,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("a settings write is visible to the next read, with no sleep", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("settings_cache_invalidation");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -57,7 +65,7 @@ describeIfDb("a settings write is visible to the next read, with no sleep", () =
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -71,7 +79,7 @@ describeIfDb("a settings write is visible to the next read, with no sleep", () =
   }
 
   async function readSetting(key: string): Promise<unknown> {
-    const response = await keyRoute.GET(new Request(`http://localhost/api/settings/${key}`), {
+    const response = await keyRoute.GET(authenticatedRequest(`http://localhost/api/settings/${key}`), {
       params: Promise.resolve({ key }),
     });
     return ((await response.json()) as { value: unknown }).value;
@@ -112,7 +120,7 @@ describeIfDb("a settings write is visible to the next read, with no sleep", () =
     await warmCache();
 
     const response = await keyRoute.DELETE(
-      new Request("http://localhost/api/settings/budget.enabled", { method: "DELETE" }),
+      authenticatedRequest("http://localhost/api/settings/budget.enabled", { method: "DELETE" }),
       { params: Promise.resolve({ key: "budget.enabled" }) },
     );
     expect(response.status).toBe(200);
@@ -158,7 +166,7 @@ describeIfDb("a settings write is visible to the next read, with no sleep", () =
     const held = live.settingsCache.peek();
 
     await readSetting("budget.enabled");
-    await collectionRoute.GET(new Request("http://localhost/api/settings"));
+    await collectionRoute.GET(authenticatedRequest("http://localhost/api/settings"));
 
     // The complement that stops "invalidate on every call" from passing the
     // tests above. A read is not a change, and discarding the snapshot on

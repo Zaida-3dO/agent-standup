@@ -80,8 +80,8 @@ describe("the readiness operation", () => {
   });
 
   it("is NOT ready when a migration is applied but unfinished", async () => {
-    // The deploy worth stopping: connected, but the schema is neither the
-    // old one nor the new one.
+    // The deploy worth stopping: connected, but the schema matches no
+    // migration in the ledger completely.
     const { ctx } = contextWith({ migrationRows: [{ applied: 10n, pending: 2n }] });
 
     const result = await readiness.handler(ctx, {});

@@ -23,6 +23,10 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
+import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
   scratchDatabaseName,
@@ -32,6 +36,10 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("admin entity HTTP routes against Postgres", () => {
+  // Every route these cases call authenticates; this configures the
+  // token the request helper presents.
+  beforeAll(stubAuthEnvironment);
+
   const dbName = scratchDatabaseName("admin_routes");
   let scratchUrl: string;
   let prisma: PrismaClient;
@@ -71,7 +79,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
   });
 
   function jsonRequest(url: string, method: string, body?: unknown): Request {
-    return new Request(url, {
+    return authenticatedRequest(url, {
       method,
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -98,7 +106,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
 
     it("POST with malformed JSON returns 400 with the invalid_input envelope, not a 500", async () => {
       const response = await reposCollection.POST(
-        new Request("http://localhost/api/repos", {
+        authenticatedRequest("http://localhost/api/repos", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{not json",
@@ -140,7 +148,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
         }),
       );
       const response = await repoItem.GET(
-        new Request("http://localhost/api/repos/route-repo-get"),
+        authenticatedRequest("http://localhost/api/repos/route-repo-get"),
         {
           params: Promise.resolve({ id: "route-repo-get" }),
         },
@@ -151,7 +159,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /repos/{id} returns 404 for an id that does not exist", async () => {
-      const response = await repoItem.GET(new Request("http://localhost/api/repos/no-such-repo"), {
+      const response = await repoItem.GET(authenticatedRequest("http://localhost/api/repos/no-such-repo"), {
         params: Promise.resolve({ id: "no-such-repo" }),
       });
       expect(response.status).toBe(404);
@@ -176,12 +184,12 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       const archivedPayload = (await archived.json()) as { repo: { archivedAt: string | null } };
       expect(archivedPayload.repo.archivedAt).not.toBeNull();
 
-      const list = await reposCollection.GET(new Request("http://localhost/api/repos"));
+      const list = await reposCollection.GET(authenticatedRequest("http://localhost/api/repos"));
       const listPayload = (await list.json()) as { repos: { id: string }[] };
       expect(listPayload.repos.some((r) => r.id === "route-repo-archive")).toBe(false);
 
       const listAll = await reposCollection.GET(
-        new Request("http://localhost/api/repos?includeArchived=true"),
+        authenticatedRequest("http://localhost/api/repos?includeArchived=true"),
       );
       const listAllPayload = (await listAll.json()) as { repos: { id: string }[] };
       expect(listAllPayload.repos.some((r) => r.id === "route-repo-archive")).toBe(true);
@@ -208,7 +216,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /areas/{id} returns 404 for an id that does not exist", async () => {
-      const response = await areaItem.GET(new Request("http://localhost/api/areas/no-such-area"), {
+      const response = await areaItem.GET(authenticatedRequest("http://localhost/api/areas/no-such-area"), {
         params: Promise.resolve({ id: "no-such-area" }),
       });
       expect(response.status).toBe(404);
@@ -246,7 +254,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
   describe("machines", () => {
     it("GET /machines/{name} returns 404 for a name that has never been touched", async () => {
       const response = await machineItem.GET(
-        new Request("http://localhost/api/machines/never-touched"),
+        authenticatedRequest("http://localhost/api/machines/never-touched"),
         { params: Promise.resolve({ name: "never-touched" }) },
       );
       expect(response.status).toBe(404);
@@ -279,7 +287,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
 
       // And GET now finds it — proving the PATCH really created a durable row.
       const getResponse = await machineItem.GET(
-        new Request("http://localhost/api/machines/route-desktop"),
+        authenticatedRequest("http://localhost/api/machines/route-desktop"),
         { params: Promise.resolve({ name: "route-desktop" }) },
       );
       expect(getResponse.status).toBe(200);
@@ -316,7 +324,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
 
     it("PATCH with malformed JSON returns 400, not a 500", async () => {
       const response = await machineItem.PATCH(
-        new Request("http://localhost/api/machines/route-malformed", {
+        authenticatedRequest("http://localhost/api/machines/route-malformed", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: "{not json",
@@ -327,7 +335,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /machines lists every machine PATCH has created so far", async () => {
-      const response = await machinesCollection.GET(new Request("http://localhost/api/machines"));
+      const response = await machinesCollection.GET(authenticatedRequest("http://localhost/api/machines"));
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { machines: { name: string }[] };
       expect(payload.machines.some((m) => m.name === "route-desktop")).toBe(true);
@@ -356,7 +364,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       });
 
       const getResponse = await accountItem.GET(
-        new Request("http://localhost/api/accounts/route-account-new"),
+        authenticatedRequest("http://localhost/api/accounts/route-account-new"),
         { params: Promise.resolve({ id: "route-account-new" }) },
       );
       expect(getResponse.status).toBe(200);
@@ -409,7 +417,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       expect(rejected.status).toBe(400);
 
       const getResponse = await accountItem.GET(
-        new Request("http://localhost/api/accounts/route-account-switch"),
+        authenticatedRequest("http://localhost/api/accounts/route-account-switch"),
         { params: Promise.resolve({ id: "route-account-switch" }) },
       );
       const payload = (await getResponse.json()) as { account: { vendor: string } };
@@ -444,14 +452,14 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
 
     it("GET /accounts/{id} returns 404 for an id that does not exist", async () => {
       const response = await accountItem.GET(
-        new Request("http://localhost/api/accounts/no-such-account"),
+        authenticatedRequest("http://localhost/api/accounts/no-such-account"),
         { params: Promise.resolve({ id: "no-such-account" }) },
       );
       expect(response.status).toBe(404);
     });
 
     it("GET /accounts lists every account PATCH has created so far", async () => {
-      const response = await accountsCollection.GET(new Request("http://localhost/api/accounts"));
+      const response = await accountsCollection.GET(authenticatedRequest("http://localhost/api/accounts"));
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { accounts: { id: string }[] };
       expect(payload.accounts.some((a) => a.id === "route-account-new")).toBe(true);
@@ -531,7 +539,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       // The sibling entities all carry this case: a body that is not JSON is
       // the caller's mistake, and a 500 would report it as ours.
       const response = await personItem.PATCH(
-        new Request("http://localhost/api/people/route-person-bad-json", {
+        authenticatedRequest("http://localhost/api/people/route-person-bad-json", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: "{not json",
@@ -562,7 +570,7 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /people lists every person PATCH has created so far", async () => {
-      const response = await peopleCollection.GET(new Request("http://localhost/api/people"));
+      const response = await peopleCollection.GET(authenticatedRequest("http://localhost/api/people"));
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { people: { id: string }[] };
       expect(payload.people.some((p) => p.id === "route-person-new")).toBe(true);
