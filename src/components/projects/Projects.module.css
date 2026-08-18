@@ -259,6 +259,16 @@
   line-height: 1.4;
 }
 
+/* Underlined by default rather than only on hover: this sits inside a
+   paragraph of the same size and colour, and an affordance a reader has to
+   discover by hovering is one a reader on a touch screen never discovers. */
+.suspectLink {
+  color: var(--trust-unverified);
+  font-weight: 600;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;

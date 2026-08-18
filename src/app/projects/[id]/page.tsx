@@ -1,17 +1,16 @@
-// `/projects/{id}` — one project. A later task owns it; this is the route
-// resolving with an honest placeholder.
+// `/projects/{id}` — one project in full (MILESTONES.md #75).
 //
-// The id is read and shown, so a link into this route can be seen to have
-// carried its parameter — a placeholder that ignored the segment would
-// look identical whether routing worked or not.
-import { Placeholder } from "@/components/placeholder/Placeholder";
+// No wrapping <main> here — AppShell (src/components/app-shell) already
+// supplies the one for the whole app. `ProjectDetailContainer` is a client
+// component because it fetches on mount; this page stays a server component
+// that simply resolves the route parameter and places it.
+import { ProjectDetailContainer } from "@/components/project-detail/ProjectDetailContainer";
 
-export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return (
-    <Placeholder
-      title="Project"
-      summary={`The items in project ${id}, its progress over time, and who is working on it.`}
-    />
-  );
+  // `key` so navigating between two projects remounts the container rather
+  // than reusing it — the same reason the item page does it: a reused
+  // container would show the previous project's data while the new read is
+  // in flight.
+  return <ProjectDetailContainer key={id} projectId={id} />;
 }
