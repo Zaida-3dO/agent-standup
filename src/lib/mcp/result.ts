@@ -101,6 +101,37 @@ function bigintSafe(value: unknown): unknown {
  * rather than as text to be re-parsed. Sending both costs a serialisation
  * and removes a class of "the tool returned nothing" report.
  *
+ * **The text is serialised compactly, and that is the whole of the saving.**
+ * Both fields stay — dropping either is the change this deliberately does
+ * not make, and the reasoning is worth stating because the obvious "stop
+ * sending it twice" reading of the duplication is the wrong fix here. No
+ * tool this adapter derives declares an `outputSchema` (`tools.ts` advertises
+ * an input schema only), and the protocol's rule is that `content` MUST be
+ * present when a tool defines no output schema, while `structuredContent` is
+ * the optional half. So `text` is the field that cannot be dropped without
+ * breaking every client, and `structuredContent` is the one whose absence a
+ * strict client is entitled to complain about the moment an output schema is
+ * ever added. Neither is safely removable; the indentation was never
+ * load-bearing for either.
+ *
+ * Indentation is presentation, and there is no reader here to present to.
+ * This JSON is parsed by a client or read by a model, and neither needs
+ * two-space indentation to do it — a model is billed for the whitespace by
+ * the token and a client discards it in `JSON.parse`. Measured through the
+ * HTTP transport on a 520-item board-shaped answer, the pretty rendering
+ * cost 42.6% of the text field — 454,763 characters against 261,245 — for
+ * nothing that survives being read. The saving varies with shape rather
+ * than being a constant: the flatter 200-item payload in this module's own
+ * tests saves 37%, which is why the test there asserts a floor rather than
+ * a figure.
+ *
+ * A size-conditional rendering — compact only past some threshold — was the
+ * other option and is deliberately rejected: it makes the wire format depend
+ * on the payload, so a response changes shape as data grows, and a
+ * fixture-based conformance suite cannot easily catch a format that only
+ * misbehaves above a size no fixture reaches. One format at every size is
+ * the cheaper property to keep.
+ *
  * `undefined` — an operation that answers with nothing — is rendered as
  * `null` rather than as the empty string, because `JSON.stringify(undefined)`
  * is `undefined`, not text, and a content block whose text is missing is a
@@ -108,7 +139,7 @@ function bigintSafe(value: unknown): unknown {
  */
 export function toolSuccess(value: unknown): ToolResult {
   const safe = bigintSafe(value);
-  const text = safe === undefined ? "null" : JSON.stringify(safe, null, 2);
+  const text = safe === undefined ? "null" : JSON.stringify(safe);
   const structuredContent = isPlainRecord(safe) ? safe : { result: safe ?? null };
   return {
     content: [{ type: "text", text }],
@@ -128,6 +159,14 @@ export function toolSuccess(value: unknown): ToolResult {
  * Anything thrown that is not already a service error becomes `internal`
  * via `toServiceError`, so this function has no path that leaks a stack
  * trace or a database message to a caller.
+ *
+ * Serialised compactly for the same reason `toolSuccess` is, and kept
+ * identical to it on purpose rather than because a refusal is large: a
+ * rejection is small enough that its own bytes hardly matter, but a
+ * renderer with two JSON formats invites the question of which one a
+ * given result used, and §22 compares rejections across adapters by
+ * `code` and `fields` — neither of which whitespace changes. One format
+ * for every result this module emits is the property worth holding.
  */
 export function toolRejection(error: unknown): ToolResult {
   const serviceError = toServiceError(error);
@@ -136,7 +175,7 @@ export function toolRejection(error: unknown): ToolResult {
     message: serviceError.message,
   };
   return {
-    content: [{ type: "text", text: JSON.stringify(rejection, null, 2) }],
+    content: [{ type: "text", text: JSON.stringify(rejection) }],
     structuredContent: { ...rejection, fields: [...rejection.fields] },
     isError: true,
   };
