@@ -1,10 +1,11 @@
 // MILESTONES.md #128 — the intervention registry's shape
 // (`src/lib/interventions/`).
 //
-// This is a skeleton, so what is worth testing is the *contract* the
-// eventual catalogue and the eventual custom entries will be held to, not
-// the two example entries' detections. Four properties, each with the change
-// that breaks it:
+// Most of what is worth testing here is the *contract* the catalogue and
+// the eventual custom entries are held to, rather than any one entry's
+// detection — the entries' own detections are proved against the assembled
+// context in `hook-decision-operation.test.ts`, which is where they meet
+// real state. Four properties, each with the change that breaks it:
 //
 //   1. **A `post` entry cannot block.** Enforced at three separate points
 //      — registration, override, and the predicate's own returned level —
@@ -19,6 +20,7 @@
 //      long after the call it was meant to stop.
 //   4. **A throwing predicate costs its own finding and nothing else.**
 //      Removing the `try` fails the tool call that happened to run it.
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   InterventionRegistryError,
@@ -28,7 +30,11 @@ import {
   resolveTiming,
   strongestLevel,
 } from "@/lib/interventions/registry";
-import { BUILTIN_INTERVENTIONS, isBroadGitAdd } from "@/lib/interventions/builtins";
+import {
+  BUILTIN_INTERVENTIONS,
+  UNIMPLEMENTED_CATALOGUE_ENTRIES,
+  isBroadGitAdd,
+} from "@/lib/interventions/builtins";
 import {
   isBlockingLevel,
   type Intervention,
@@ -507,14 +513,19 @@ describe("the example built-ins", () => {
     const findings = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
       phase: "post",
-      context: { itemState: "in_review", hasApprovalAtTip: false, itemId: 42 },
+      context: { itemState: "in_review", hasApprovalAtTip: false, itemId: "item-42" },
       // Configured as strongly as the settings page allows. It is still a nudge.
       overrides: { "review-without-approval-at-tip": { level: "hard-block" } },
     });
 
-    expect(findings).toHaveLength(1);
-    expect(findings[0]?.level).toBe("nudge");
-    expect(findings[0]?.data).toEqual({ itemId: 42 });
+    // Two `post` entries answer this context — I1 ("nothing is reviewing
+    // this") and I7 ("nothing has approved it at tip"). They are genuinely
+    // different findings addressed to the same reader, and the assertion
+    // that matters is the invariant: neither blocks, however configured.
+    const clamped = findings.find((finding) => finding.id === "review-without-approval-at-tip");
+    expect(clamped?.level).toBe("nudge");
+    expect(clamped?.data).toEqual({ itemId: "item-42" });
+    expect(findings.every((finding) => finding.level === "nudge")).toBe(true);
   });
 
   it("says nothing about an item that has an approval at tip", async () => {
@@ -525,5 +536,133 @@ describe("the example built-ins", () => {
     });
 
     expect(findings).toEqual([]);
+  });
+});
+
+describe("the correctness entries that block", () => {
+  // I10 and I12 — the two the catalogue files under "the ones that should
+  // block", and the reason this mechanism exists rather than a pattern
+  // list. Each is asserted both ways round: it fires on the situation, and
+  // it declines on the near-miss a command matcher could not tell apart.
+
+  it("I10 blocks a merge only when an approval is known to be absent", async () => {
+    const merging = { command: "git merge feature", itemId: "i1" };
+
+    const unapproved = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { ...merging, hasApprovalAtTip: false },
+    });
+    expect(unapproved.map((finding) => finding.id)).toContain("merge-without-approval-at-tip");
+    expect(strongestLevel(unapproved)).toBe("block-overridable");
+
+    // Approved at tip — the same command, refused or allowed on state
+    // alone, which is the whole thesis.
+    const approved = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { ...merging, hasApprovalAtTip: true },
+    });
+    expect(approved).toEqual([]);
+
+    // Unknown. Absent is not `false`: blocking a merge on a question the
+    // server could not answer is how a guard becomes an obstacle.
+    const unknown = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: merging,
+    });
+    expect(unknown).toEqual([]);
+  });
+
+  it("I12 blocks a broad kill and allows a scoped one, needing no state", async () => {
+    // Note the contexts carry nothing but a command. I12 was settled as a
+    // prompt to think rather than an ownership check, so it must reach a
+    // verdict with no item, no claim and no registry.
+    const broad = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "taskkill /F /IM node.exe" },
+    });
+    expect(broad.map((finding) => finding.id)).toContain("broad-process-kill");
+    expect(strongestLevel(broad)).toBe("block-overridable");
+
+    const scoped = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "kill -9 1234" },
+    });
+    expect(scoped).toEqual([]);
+  });
+
+  it("every blocking builtin is overridable rather than a hard block", async () => {
+    // The catalogue's own rule: the value is the recorded reason, not the
+    // friction. A `hard-block` here would be a decision to refuse work with
+    // no route through it, which nothing on this list has earned.
+    for (const entry of BUILTIN_INTERVENTIONS) {
+      if (entry.defaultLevel === "hard-block") {
+        throw new Error(`${entry.id} defaults to hard-block; the catalogue calls for overridable`);
+      }
+    }
+  });
+});
+
+describe("the catalogue entries that are deliberately not built", () => {
+  it("records a reason for every unimplemented entry", () => {
+    // The catalogue's instruction is to say so and stop when a situation
+    // needs something the server cannot see. A bare id with no reason would
+    // be the stopping without the saying.
+    for (const entry of UNIMPLEMENTED_CATALOGUE_ENTRIES) {
+      expect(entry.id, "id").toMatch(/^I\d+$/);
+      expect(entry.missing.trim().length, entry.id).toBeGreaterThan(20);
+    }
+  });
+
+  it("names each unimplemented entry exactly once", () => {
+    // The failure this catches is a real one: an entry gets implemented and
+    // its "why it is missing" line is left behind, so the file documents a
+    // gap that closed. Both halves would look correct read on their own.
+    const ids = UNIMPLEMENTED_CATALOGUE_ENTRIES.map((entry) => entry.id);
+    expect(new Set(ids).size, "duplicate ids").toBe(ids.length);
+  });
+
+  it("accounts for every entry the catalogue document lists", () => {
+    // Derived from `INTERVENTIONS.md` rather than compared against a
+    // hardcoded count, because the catalogue is explicitly a growing list —
+    // "new findings are appended here". A fixed number would fail on the
+    // next appended entry and say only "expected 12, got 13", which reads
+    // as this suite being stale rather than as the real finding: an entry
+    // was catalogued and is in neither the registry nor the record of what
+    // is deliberately unbuilt.
+    const doc = readFileSync(new URL("../docs/plans/INTERVENTIONS.md", import.meta.url), "utf8");
+    const catalogued = [...doc.matchAll(/^\| \*\*(I\d+)\*\* \|/gm)].flatMap((match) =>
+      match[1] === undefined ? [] : [match[1]],
+    );
+    expect(catalogued.length, "no catalogue rows parsed").toBeGreaterThan(0);
+
+    const accountedFor = new Set(UNIMPLEMENTED_CATALOGUE_ENTRIES.map((entry) => entry.id));
+    // The built entries name themselves in their own summaries by id only in
+    // the doc, so the mapping from a catalogue id to a shipped entry lives
+    // here — the one place it can be checked rather than assumed.
+    const BUILT_AS: Readonly<Record<string, string>> = {
+      I1: "finished-with-no-reviewer",
+      I7: "review-without-approval-at-tip",
+      I10: "merge-without-approval-at-tip",
+      I11: "broad-git-add-on-shared-checkout",
+      I12: "broad-process-kill",
+    };
+    const shipped = new Set(BUILTIN_INTERVENTIONS.map((entry) => entry.id));
+
+    for (const id of catalogued) {
+      const builtId = BUILT_AS[id];
+      if (builtId !== undefined) {
+        expect(shipped, `${id} claims to be built`).toContain(builtId);
+        expect(accountedFor.has(id), `${id} is both built and listed unbuilt`).toBe(false);
+        continue;
+      }
+      expect(accountedFor.has(id), `${id} is catalogued but unaccounted for`).toBe(true);
+    }
+
+    expect(Object.keys(BUILT_AS).length + accountedFor.size).toBe(catalogued.length);
   });
 });

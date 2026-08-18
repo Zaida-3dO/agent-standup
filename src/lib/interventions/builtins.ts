@@ -1,21 +1,32 @@
-// Two built-in interventions — deliberately two, not the catalogue.
+// The built-in interventions — the implemented part of the catalogue in
+// `docs/plans/INTERVENTIONS.md`, which is the document of record for what
+// is worth detecting and grows independently of this file.
 //
-// `docs/plans/INTERVENTIONS.md` holds a growing list of situations worth
-// detecting. **Building that list is not this row's work.** What is wanted
-// here is proof that the shape in `./types.ts` and `./registry.ts` can carry
-// a real entry, so the two chosen are the two that exercise opposite ends of
-// it:
+// **Not every catalogued entry is here, and the gaps are deliberate.** The
+// catalogue's own rule for writing an entry is the rule applied to
+// implementing one: *"state the situation in terms the server can actually
+// evaluate … if it needs something the server cannot see, say so and stop;
+// that is a finding about the schema, not an intervention."* An entry whose
+// signal this build genuinely cannot observe is therefore left unbuilt with
+// its reason recorded, rather than shipped as a predicate that quietly
+// never fires. A registry entry that cannot trigger is worse than an absent
+// one: it reads as coverage on the settings page and provides none.
 //
-//   - **I11** is `pre`, blocks, and is conditional on context rather than on
-//     the command text — the exact shape a pattern list structurally could
-//     not express, which is why this mechanism exists at all.
-//   - **I7** is `post`, nudges, and could not block even if someone
-//     configured it to. It proves the invariant has a real subject.
+// What is here, and why each earns its place:
 //
-// Both obey the contract the eventual custom entries will need: they read
-// only the context handed to them, they return a verdict, and they emit
-// nothing.
+//   - **I10** and **I12** are the two blocking correctness entries — the
+//     conditional rules a pattern list structurally cannot express, which
+//     is the whole case for this mechanism existing.
+//   - **I11** is `pre`, blocks, and turns on context rather than on the
+//     command text.
+//   - **I1** and **I7** are `post` nudges that ride the digest, and could
+//     not block even if someone configured them to.
+//
+// Every one obeys the contract the eventual custom entries will need: they
+// read only the context handed to them, they return a verdict, and they
+// emit nothing.
 
+import { isBroadProcessKill, isMergeAttempt } from "./commands";
 import type { Intervention, InterventionContext, InterventionVerdict } from "./types";
 
 /**
@@ -112,13 +123,282 @@ const reviewWithoutApprovalAtTip: Intervention = {
 };
 
 /**
+ * **I10** — a merge with no approving review at the current tip.
+ *
+ * The catalogue calls this file's thesis stated before the file existed:
+ * the rule is *not* "never run `git merge`" — it is "not without an
+ * approval", and no command matcher can express that because the approval
+ * is not in the command. `./commands.ts` recognises that a merge is being
+ * attempted and this decides whether it may proceed, which is the split
+ * exactly.
+ *
+ * ── Three ways this declines to fire, all of them the point ────────────
+ *
+ * The condition is `hasApprovalAtTip === false` — **strictly false, never
+ * merely falsy** — and the two absent cases are distinct situations that
+ * would both be wrong to block:
+ *
+ *   1. **No claim, so no item.** A session merging in a repository it holds
+ *      no work on is not a session dodging review; it is very often the
+ *      operator. There is nothing here to approve.
+ *   2. **A claim, but no commit artifact at all.** Nothing has been
+ *      committed, so there is no tip for an approval to be at, and
+ *      `assembleContext` leaves the field absent rather than answering
+ *      `false` to a question with no subject.
+ *
+ * Only the third case — an item with a real tip and no approval standing at
+ * it — is the situation this exists for, and it is the one where blocking
+ * costs a session thirty seconds and saves an unreviewed merge.
+ *
+ * **`block-overridable`, not `hard-block`**, per the catalogue: the value
+ * is the recorded reason on a reviewable event, not the friction. A merge
+ * that genuinely should proceed without an approval at tip — resolving a
+ * conflict, landing a revert — proceeds, and says why.
+ */
+const mergeWithoutApprovalAtTip: Intervention = {
+  id: "merge-without-approval-at-tip",
+  source: "builtin",
+  summary: "A merge attempted while no approving review stands at the item's current tip commit.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "block-overridable",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This merges work that has no approving review at its current tip commit. Request a review " +
+      "and land it against this commit, or proceed with a written reason saying why it should go " +
+      "without one.",
+    prominent:
+      "⚠️ Do not proceed until you have read this. This would merge a change that nothing has " +
+      "approved at the commit being merged — either it was never reviewed, or it was reviewed and " +
+      "then changed. Request a review against the current tip. If it genuinely should land " +
+      "anyway, say so in writing: the reason is recorded and read.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!isMergeAttempt(context.command)) return { triggered: false };
+    // Strictly `false`. `undefined` means the server could not answer the
+    // question — no claim, or no commit to be at the tip of — and blocking
+    // a merge on an unanswered question is how a guard becomes an obstacle.
+    if (context.hasApprovalAtTip !== false) return { triggered: false };
+    return {
+      triggered: true,
+      data: {
+        command: context.command,
+        ...(context.itemId === undefined ? {} : { itemId: context.itemId }),
+      },
+    };
+  },
+};
+
+/**
+ * **I12** — a process kill that names no specific process.
+ *
+ * **Settled as a prompt to think, not an ownership check** (the catalogue
+ * records the decision and the date). The ownership route needs a live
+ * process registry, correct PID attribution and an accurate crew root, and
+ * its failure mode is *silently wrong in both directions* — refusing a kill
+ * that was fine, or waving through the exact one it exists to stop. A
+ * prompt costs none of that and catches the same mistake, because the
+ * honest answer to "would a narrower kill do?" is almost always yes.
+ *
+ * Note this entry needs **no state at all** — it is the one blocking entry
+ * that turns purely on the shape of the command, which is why
+ * `./context.ts` deliberately has no branch for it. That is not an
+ * inconsistency with the argument for putting judgement server-side: the
+ * breadth of a kill genuinely is readable from the command, and the entry
+ * is server-side because that is where the response ladder, the override
+ * and the recorded reason live, not because the detection needed it.
+ */
+const broadProcessKill: Intervention = {
+  id: "broad-process-kill",
+  source: "builtin",
+  summary: "A kill that ends processes by image name rather than naming which processes to end.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "block-overridable",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This ends every process matching a name, including ones other sessions are relying on. " +
+      "Kill by process id instead, or proceed with a written reason if the broad kill is really " +
+      "what you want.",
+    prominent:
+      "⚠️ Do not proceed until you have read this. This kill is not scoped to a specific process " +
+      "— it ends everything matching the name, and other sessions on this machine are very " +
+      "likely running something that matches. Find the process id and kill that. If you truly " +
+      "need the broad form, say why: the reason is recorded.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!isBroadProcessKill(context.command)) return { triggered: false };
+    return { triggered: true, data: { command: context.command } };
+  },
+};
+
+/**
+ * **I1** — coding is finished and no reviewer exists.
+ *
+ * The catalogue's first flow entry, and the cheapest failure on the list:
+ * the work is done, and it sits because the one call that would move it was
+ * never made. Addressed to the `orchestrator`, because spawning a reviewer
+ * is not something the builder can do for itself — telling the builder
+ * would be asking it to act outside its remit, which the catalogue names as
+ * a way of being ignored.
+ *
+ * Rides the digest. Nothing about it is urgent to the second, and the whole
+ * argument for the digest is that a batch arriving at a natural juncture
+ * gets acted on while a trickle gets skipped.
+ *
+ * **The signal is the item's own state, not a guess about activity.**
+ * `in_review` is the state a builder moves to when it is finished and
+ * waiting; combined with no approval standing at the tip, that is the
+ * situation stated in terms the server can actually evaluate.
+ */
+const finishedWithNoReviewer: Intervention = {
+  id: "finished-with-no-reviewer",
+  source: "builtin",
+  summary: "An item whose builder has finished, with no approving review at its tip.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "digest",
+  messages: {
+    plain:
+      "This item is finished and waiting on a review that nothing has started. Spawn a reviewer.",
+    prominent:
+      "⚠️ This item's builder has finished and nothing is reviewing it. It will not move on its " +
+      "own: spawn a reviewer now, or record plainly what it is waiting on.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.itemState !== "in_review") return { triggered: false };
+    if (context.hasApprovalAtTip !== false) return { triggered: false };
+    return {
+      triggered: true,
+      ...(context.itemId === undefined ? {} : { data: { itemId: context.itemId } }),
+    };
+  },
+};
+
+/**
  * The built-in entries, in a fixed order.
  *
  * Fixed rather than incidental so that findings come back in the same order
  * for the same context — an evaluation whose output order depends on object
  * iteration is one whose digests are not diffable.
+ *
+ * Ordered by phase then by strength: the `pre` blocks first, because on a
+ * `pre` event the strongest finding decides the call and reading the list
+ * in the order it is evaluated is what makes a log of it legible.
  */
 export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
+  mergeWithoutApprovalAtTip,
   broadGitAddOnSharedCheckout,
+  broadProcessKill,
+  finishedWithNoReviewer,
   reviewWithoutApprovalAtTip,
+];
+
+/**
+ * The catalogued entries this build does **not** implement, and why.
+ *
+ * Exported as a value rather than left as prose, because the reason an
+ * entry is missing is exactly the kind of thing that decays into folklore:
+ * six months from now "why is there no I2?" is answerable from here, and a
+ * later row that adds the missing signal can delete its line as part of the
+ * same change. The catalogue's own instruction is to *say so and stop* when
+ * a situation needs something the server cannot see, and this is where that
+ * saying-so lives.
+ *
+ * Each `missing` names the signal, not the feature — a schema finding is
+ * more useful stated as the fact no part of this system can observe.
+ */
+export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
+  readonly id: string;
+  readonly missing: string;
+}[] = [
+  {
+    id: "I2",
+    missing:
+      "whether a row is unblocked. The dependency graph that decides it is prose in a milestone " +
+      "document, not a relation between items, so 'the graph says this is available' is not a " +
+      "question this schema can be asked.",
+  },
+  {
+    id: "I3",
+    missing:
+      "whether a claim-holding session is working elsewhere. `lastActive` distinguishes a live " +
+      "session from a dead one, which is the liveness sweep's question; this entry needs the " +
+      "different fact that a live session is spending its calls on something other than the item " +
+      "it holds, and nothing attributes a tool call to an item.",
+  },
+  {
+    id: "I4",
+    missing:
+      "whether a subagent reported complete. A session's own completion is reported by its " +
+      "release or its summary, but neither is attributable to a *parent* awaiting a handoff — " +
+      "`Assignment.parentSessionId` names the parent, and nothing records that the parent was " +
+      "told, so 'the orchestrator has not picked this up' cannot be told apart from 'the " +
+      "orchestrator picked it up half a second ago'.",
+  },
+  {
+    id: "I5",
+    missing:
+      "nothing — the signal exists (`Artifact.followUpItemId` is null on an `lgtm_with_followups` " +
+      "review), and the merge gate already refuses that combination outright " +
+      "(`merge.requires_linked_followup`). An intervention would fire only where the guard " +
+      "already blocks, so it would be a second voice on a decision that is already made.",
+  },
+  {
+    id: "I6",
+    missing:
+      "whether a worktree still exists on disk after a merge. The claim records a worktree path, " +
+      "but only the machine can say whether that path is still there, and no call reports it.",
+  },
+  {
+    id: "I8",
+    missing: "a spend signal. It waits on what M7's telemetry exposes, which is not built yet.",
+  },
+  {
+    id: "I13",
+    missing:
+      "nothing structural — a claim or artifact appearing for a session holding no item is " +
+      "answerable from the assignment table. It is unbuilt because the near-match half of the " +
+      "entry (an artifact recorded against a similarly-titled item) needs a similarity threshold " +
+      "nobody has chosen, and a guess would refuse correct calls.",
+  },
+  {
+    id: "I14",
+    missing:
+      "a cumulative view of a session's own tool calls. The rows exist, but reaching them from a " +
+      "predicate means the context assembler carrying a windowed count on every call — which is " +
+      "the per-call cost the assembly gate exists to avoid, and it needs a cheaper shape first.",
+  },
+  {
+    id: "I15",
+    missing:
+      "nothing — the assignment table carries every field, and this is the entry closest to " +
+      "buildable. It is unbuilt only because it fires on `claim` rather than on a tool call, and " +
+      "the intervention payload on the ordinary service responses is not wired.",
+  },
+  {
+    id: "I16",
+    missing:
+      "the size of the directory a search is rooted at. The server cannot see the caller's " +
+      "filesystem, so the hook would have to carry a scope and a size signal with the call, and " +
+      "the hook reports no such field.",
+  },
+  {
+    id: "I17",
+    missing:
+      "whether a commit is signed, and whose signature counts. A signature is a property of the " +
+      "commit object rather than of any row here, and the trusted-key question the entry itself " +
+      "flags as unsettled has to be answered before a rule could mean anything.",
+  },
+  {
+    id: "I9",
+    missing:
+      "whether an unblocked row is sitting idle — the same absent dependency graph I2 needs. The " +
+      "`sleep` half is readable from the command; the half that makes it worth saying is not.",
+  },
 ];

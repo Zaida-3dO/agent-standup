@@ -117,12 +117,32 @@ export interface InterventionContext {
   readonly cwd?: string;
   /** Whether that directory is a linked git worktree with its own index. */
   readonly isLinkedWorktree?: boolean;
-  /** The item this session holds a claim on, when it holds one. */
-  readonly itemId?: number;
+  /**
+   * The item this session holds a claim on, when it holds one.
+   *
+   * A string, matching `Item.id` in the schema. It was declared `number`
+   * when nothing assembled a context and no predicate had ever been handed
+   * a real one — an id typed against no data, which typechecked precisely
+   * because no caller existed to disagree with it. The first assembler
+   * found it immediately.
+   */
+  readonly itemId?: string;
   /** The item's state, when an item is in play. */
   readonly itemState?: string;
   /** Whether an approving review artifact exists at the current tip. */
   readonly hasApprovalAtTip?: boolean;
+  /**
+   * The default branch of the repository the claimed item belongs to.
+   *
+   * Absent means **unknown**, and it is unknown far more often than one
+   * would expect: `Repo.defaultBranch` is deliberately nullable
+   * (MILESTONES.md #124) so that a repository nobody could inspect records
+   * "unknown" rather than a guessed constant. An entry that needs to know
+   * which branch is protected must treat absence as "cannot tell" — a
+   * check that assumed a name here would silently be guarding the wrong
+   * branch on every repository that never recorded one.
+   */
+  readonly defaultBranch?: string;
 }
 
 /**
