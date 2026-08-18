@@ -13,7 +13,7 @@
 // three are properties of the *types* rather than conventions to remember:
 //
 //   1. **A predicate declares the context it needs; it does not go and get
-//      it.** `IntervnetionContext` is handed in. There is no database client
+//      it.** `InterventionContext` is handed in. There is no database client
 //      reachable from a predicate, because the type it is given does not
 //      carry one — which is what makes "the built-ins obey a contract they
 //      do not strictly need yet" enforceable rather than aspirational. An
