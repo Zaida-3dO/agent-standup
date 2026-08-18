@@ -278,7 +278,7 @@ function findingsFrom(issues: readonly z.ZodIssue[]): readonly ShapeFinding[] {
  *   - **It names the call that would have prevented it.** A caller needs the
  *     contract exactly when a call fails, and that is the moment nothing
  *     otherwise points at it. Worded for the surface the caller is actually
- *     on (`describe/surface.ts`) — telling an MCP caller to run a terminal
+ *     on (`surfaces.ts`) — telling an MCP caller to run a terminal
  *     command is the defect, not the fix.
  *
  * The pointer is appended for every operation, including those declaring no

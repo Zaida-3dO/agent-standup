@@ -16,7 +16,13 @@ import { ServiceRuntime, type TransactionHandle } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceCall } from "@/lib/mcp";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { MCP_HTTP_TRANSPORT, createStatelessTransport, handleMcpRequest } from "@/lib/mcp/http";
+import {
+  MCP_HTTP_TRANSPORT,
+  createStatelessTransport,
+  handleMcpRequest,
+  identityFromHeaders,
+} from "@/lib/mcp/http";
+import { ACTOR_HEADER, SESSION_HEADER } from "@/lib/session-transport-header";
 
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -253,5 +259,85 @@ describe("nothing is left running after a request", () => {
     } finally {
       WebStandardStreamableHTTPServerTransport.prototype.close = originalClose;
     }
+  });
+});
+
+/**
+ * A `Headers`-shaped object that returns values **exactly** as given.
+ *
+ * A real `Headers` strips surrounding whitespace in its own constructor, so a
+ * test that built one could never reach this module's trimming at all — it
+ * would assert the platform's normalisation and pass just as happily with the
+ * trim deleted, which is the hollow-test shape this suite exists to avoid.
+ * Feeding un-normalised values is the only way to put the assertion on the
+ * code under test rather than on undici.
+ */
+function rawHeaders(values: Record<string, string>): Headers {
+  return { get: (name: string) => values[name] ?? null } as Headers;
+}
+
+describe("a stateless request says who is calling in its headers", () => {
+  // Statelessness is exactly why this has to be a header: the transport mints
+  // no session id and remembers nothing between requests, so a caller that
+  // wants its writes attributed has to re-declare itself on every call. Before
+  // this, nothing carried it — `ctx.caller.sessionId` was never populated over
+  // MCP, so the four item-mutating operations credited every MCP write to
+  // `system` while crediting the identical call made another way correctly.
+
+  it("threads the session and actor headers into the service call", async () => {
+    const callers: (Record<string, unknown> | undefined)[] = [];
+    await rpc(
+      async (_name, _input, options) => {
+        callers.push(options?.caller as Record<string, unknown>);
+        return {};
+      },
+      callToolMessage("service_info", {}, 40),
+      { [SESSION_HEADER]: "session-http", [ACTOR_HEADER]: "agent-http" },
+    );
+    expect(callers[0]).toMatchObject({
+      sessionId: "session-http",
+      actor: "agent-http",
+      transport: MCP_HTTP_TRANSPORT,
+    });
+  });
+
+  it("leaves the caller unidentified when the headers are absent", async () => {
+    // The unattributed call must keep working. Refusing it would turn a
+    // missing courtesy into an outage on the surface every agent depends on,
+    // and an identity is not a permission here — it decides only how a call is
+    // described.
+    const callers: (Record<string, unknown> | undefined)[] = [];
+    const { body } = await rpc(
+      async (_name, _input, options) => {
+        callers.push(options?.caller as Record<string, unknown>);
+        return {};
+      },
+      callToolMessage("service_info", {}, 41),
+    );
+    expect(body.error).toBeUndefined();
+    expect(Object.keys(callers[0]!)).not.toContain("sessionId");
+    expect(Object.keys(callers[0]!)).not.toContain("actor");
+  });
+
+  it("reads a blank or whitespace-only header as no identity at all", () => {
+    // A header sent empty is a client that meant to identify itself and had
+    // nothing — the unidentified case. Passing `""` through would put an empty
+    // string where a real id belongs, where it would compare unequal to every
+    // assignment rather than falling back to the attribution that honestly
+    // describes it.
+    expect(
+      identityFromHeaders(rawHeaders({ [SESSION_HEADER]: "", [ACTOR_HEADER]: "   " })),
+    ).toEqual({});
+  });
+
+  it("trims a header rather than carrying its surrounding whitespace", () => {
+    expect(identityFromHeaders(rawHeaders({ [SESSION_HEADER]: "  session-c  " }))).toEqual({
+      sessionId: "session-c",
+    });
+  });
+
+  it("reads each half independently", () => {
+    expect(identityFromHeaders(new Headers({ [SESSION_HEADER]: "s" }))).toEqual({ sessionId: "s" });
+    expect(identityFromHeaders(new Headers({ [ACTOR_HEADER]: "a" }))).toEqual({ actor: "a" });
   });
 });

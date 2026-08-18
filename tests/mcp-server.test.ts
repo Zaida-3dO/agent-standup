@@ -25,7 +25,7 @@ import {
 } from "@/lib/service";
 import { exposedOperations, isWaived } from "@/lib/adapters/waivers";
 import { defaultSnapshot } from "@/lib/settings";
-import { callTool, createMcpServer, type ServiceCall } from "@/lib/mcp";
+import { callTool, createMcpServer, type McpCallerIdentity, type ServiceCall } from "@/lib/mcp";
 
 /** A transaction handle that answers nothing — no test here issues a query. */
 const inertHandle: TransactionHandle = {
@@ -45,11 +45,16 @@ function realRuntimeCall(): ServiceCall {
 /** Connects a client to a server built over `call`, and returns the client. */
 async function connect(
   call: ServiceCall,
-  options: { transport?: string; operations?: ReturnType<typeof listOperations> } = {},
+  options: {
+    transport?: string;
+    operations?: ReturnType<typeof listOperations>;
+    identity?: McpCallerIdentity;
+  } = {},
 ): Promise<Client> {
   const server = createMcpServer({
     adapter: "mcp_http",
     call,
+    ...(options.identity === undefined ? {} : { identity: options.identity }),
     transport: options.transport ?? "mcp-test",
     ...(options.operations ? { operations: options.operations } : {}),
   });
@@ -160,6 +165,63 @@ describe("a tool call is a service call", () => {
     );
     await client.callTool({ name: "service_info", arguments: {} });
     expect(stamped).toEqual(["mcp-stdio"]);
+  });
+
+  it("stamps the caller identity the wiring resolved, so a write is attributable", async () => {
+    // The gap this closes: `callerEventActor` reads `ctx.caller.sessionId`,
+    // and MCP never populated it — so every `create_item`, `update_item`,
+    // `transition_item` and `complete_item` made over the tool surface every
+    // agent actually uses was credited to `system`, while the same call made
+    // any other way was credited correctly. The session was real and
+    // registered the whole time; nothing carried it across the boundary.
+    const callers: ({ sessionId?: string; actor?: string } | undefined)[] = [];
+    const client = await connect(
+      async (_name, _input, options) => {
+        callers.push(options?.caller);
+        return {};
+      },
+      { identity: { sessionId: "session-a", actor: "agent-a" } },
+    );
+    await client.callTool({ name: "service_info", arguments: {} });
+    expect(callers[0]).toMatchObject({ sessionId: "session-a", actor: "agent-a" });
+  });
+
+  it("carries no identity keys at all when the wiring resolved none", async () => {
+    // Absent must stay absent rather than becoming `undefined`: the two read
+    // differently to anything using `in` or `Object.keys`, and an
+    // unidentified call is one making no claim about who sent it — not one
+    // claiming an empty identity. Kills the mutant that assigns the fields
+    // unconditionally.
+    const callers: (Record<string, unknown> | undefined)[] = [];
+    const client = await connect(async (_name, _input, options) => {
+      callers.push(options?.caller as Record<string, unknown>);
+      return {};
+    });
+    await client.callTool({ name: "service_info", arguments: {} });
+    expect(callers[0]).toBeDefined();
+    expect(Object.keys(callers[0]!)).not.toContain("sessionId");
+    expect(Object.keys(callers[0]!)).not.toContain("actor");
+  });
+
+  it("passes each half of an identity independently", async () => {
+    // A transport may know one and not the other, and inventing the missing
+    // half — or dropping the known one because its partner is absent — would
+    // both be worse than reporting what is actually known.
+    const callers: (Record<string, unknown> | undefined)[] = [];
+    const record: ServiceCall = async (_name, _input, options) => {
+      callers.push(options?.caller as Record<string, unknown>);
+      return {};
+    };
+
+    const sessionOnly = await connect(record, { identity: { sessionId: "session-b" } });
+    await sessionOnly.callTool({ name: "service_info", arguments: {} });
+    expect(callers[0]).toMatchObject({ sessionId: "session-b" });
+    expect(Object.keys(callers[0]!)).not.toContain("actor");
+
+    const actorOnly = await connect(record, { identity: { actor: "agent-b" } });
+    await actorOnly.callTool({ name: "service_info", arguments: {} });
+    expect(callers[1]).toMatchObject({ actor: "agent-b" });
+    expect(Object.keys(callers[1]!)).not.toContain("sessionId");
   });
 });
 

@@ -206,6 +206,12 @@ jobs:
         run: npm run lint
       - name: Format check
         run: npm run format:check
+      # Reports which suites this job's environment will skip, so the count
+      # is in the log beside the green tick rather than nowhere. Deliberately
+      # the reporting mode: this job has no Postgres by design, so failing on
+      # a skip here would fail the split the two jobs exist to make.
+      - name: Report which suites are database-gated
+        run: npm run check:db-gated
       - name: Test
         run: npm test
       - name: Build
@@ -259,6 +265,13 @@ jobs:
         run: npm run db:check-drift
         env:
           SHADOW_DATABASE_URL: postgresql://standup:standup@localhost:5432/standup_shadow
+      # The assertion half. This is the job whose whole purpose is running the
+      # database suites, so it must fail rather than pass if its environment
+      # stopped handing one over — otherwise every gated file skips, `npm test`
+      # goes green having checked none of them, and the result is
+      # indistinguishable from a healthy run.
+      - name: Assert the database suites will actually run
+        run: npm run check:db-gated:require
       - name: Test
         run: npm test
 

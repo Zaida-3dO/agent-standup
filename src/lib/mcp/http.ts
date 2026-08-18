@@ -42,7 +42,8 @@
 // puts that outside MCP: `wait_for_crew` is a command-line call, "because
 // only a shell call can be backgrounded".
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { createMcpServer, type ServiceCall } from "./server";
+import { createMcpServer, type McpCallerIdentity, type ServiceCall } from "./server";
+import { SESSION_HEADER, ACTOR_HEADER } from "@/lib/session-transport-header";
 
 /** The transport name stamped on every call arriving this way (SCHEMA.md §21). */
 export const MCP_HTTP_TRANSPORT = "mcp-http";
@@ -69,6 +70,37 @@ export function createStatelessTransport(): WebStandardStreamableHTTPServerTrans
 }
 
 /**
+ * The caller identity a streamable-HTTP request declares about itself.
+ *
+ * Statelessness is what makes a header the only place this can come from.
+ * The transport mints no session id and remembers nothing between requests
+ * (see this file's header), so a caller that wants its writes attributed has
+ * to say who it is on every call — and a header is where "who is calling"
+ * travels here, the same way it already does for the command line's own HTTP
+ * binding, which stamps these exact two names on every request.
+ *
+ * **Blank is absent.** A header present but empty is a client that meant to
+ * send an identity and had none, which is the unidentified case and not a
+ * zero-length session id — passing `""` through would put an empty string
+ * where the service expects a real id, and it would compare unequal to every
+ * assignment rather than falling back to the `system` attribution that
+ * honestly describes it.
+ *
+ * Nothing is validated beyond that, on purpose. Whether a session id names a
+ * real registered session is the service layer's question, asked against the
+ * table this adapter is forbidden to touch; checking it here would either
+ * duplicate that check or invent a weaker one.
+ */
+export function identityFromHeaders(headers: Headers): McpCallerIdentity {
+  const sessionId = headers.get(SESSION_HEADER)?.trim();
+  const actor = headers.get(ACTOR_HEADER)?.trim();
+  return {
+    ...(sessionId ? { sessionId } : {}),
+    ...(actor ? { actor } : {}),
+  };
+}
+
+/**
  * Serves one MCP request over streamable HTTP.
  *
  * A server and a transport per request, both closed before returning. That
@@ -83,7 +115,12 @@ export function createStatelessTransport(): WebStandardStreamableHTTPServerTrans
  * request's state; there is no session to end.
  */
 export async function handleMcpRequest(request: Request, call: ServiceCall): Promise<Response> {
-  const server = createMcpServer({ call, transport: MCP_HTTP_TRANSPORT, adapter: "mcp_http" });
+  const server = createMcpServer({
+    call,
+    transport: MCP_HTTP_TRANSPORT,
+    adapter: "mcp_http",
+    identity: identityFromHeaders(request.headers),
+  });
   const transport = createStatelessTransport();
   try {
     await server.connect(transport);

@@ -9,6 +9,7 @@ export {
   MCP_SERVER_INFO,
   callTool,
   createMcpServer,
+  type McpCallerIdentity,
   type McpServerOptions,
   type ServiceCall,
 } from "./server";

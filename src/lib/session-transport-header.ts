@@ -42,6 +42,22 @@ import { isSessionTransport, type SessionTransport } from "./sessions";
 export const CLI_TRANSPORT_HEADER = "X-Standup-Transport";
 
 /**
+ * The header a caller names its session on, and the one it names its actor
+ * on.
+ *
+ * Named here rather than at either end because they now have two ends: the
+ * command line's `http` binding writes them and the MCP mount reads them, and
+ * a literal spelled out in each is a pair that can silently stop matching —
+ * a typo in one produces no error anywhere, just an identity that quietly
+ * stops arriving. They sit beside `CLI_TRANSPORT_HEADER` because all three
+ * answer the same question — what a request says about its own origin — and
+ * are read under the same standing: a self-report that decides how a call is
+ * *described*, never what it is *permitted*.
+ */
+export const SESSION_HEADER = "X-Standup-Session";
+export const ACTOR_HEADER = "X-Standup-Actor";
+
+/**
  * The transports a request arriving over HTTP is allowed to declare itself
  * as.
  *

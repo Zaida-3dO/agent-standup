@@ -37,7 +37,11 @@ interface ZodNode {
     readonly innerType?: ZodNode;
     readonly schema?: ZodNode;
     readonly type?: ZodNode;
-    readonly values?: readonly string[];
+    // `z.enum` stores an array here; `z.nativeEnum` stores the enum *object*
+    // (`{ A: "a" }`). Typing it as only an array is what let an unguarded
+    // spread past the type checker, so the declaration now admits both and
+    // `enumValuesOf` is the one place that resolves the difference.
+    readonly values?: readonly string[] | Readonly<Record<string, string | number>>;
     readonly defaultValue?: () => unknown;
     readonly options?: readonly ZodNode[];
     readonly valueType?: ZodNode;
@@ -159,6 +163,53 @@ function typeNameOf(node: ZodNode): string {
 }
 
 /**
+ * The permitted values of an enum node, whichever way Zod stored them.
+ *
+ * `z.enum(["a", "b"])` puts an array on `_def.values`; `z.nativeEnum(E)` puts
+ * the enum *object* there (`{ A: "a", B: "b" }`), which is not iterable. A
+ * spread that assumed the array threw a `TypeError` for the second shape —
+ * and threw it from the one tool a caller reaches for *after* being refused,
+ * so the failure landed on somebody already stuck.
+ *
+ * Reading both is the smaller claim than teaching `typeNameOf` about
+ * `ZodNativeEnum`: the type name still falls through to `unknown`, which is
+ * this module's documented answer for a node kind it does not model, and
+ * the values are reported because they are genuinely there to report. A
+ * caller is better served by `unknown` plus the real member list than by
+ * either half alone.
+ *
+ * Returns `undefined` — not an empty array — whenever there is nothing to
+ * report, so the spread at the call site adds no key at all. That covers
+ * both the node with no `values` and the one whose values resolve to an
+ * empty list: `enumValues: []` would claim an enum permitting nothing, which
+ * is a different and wrong statement from "this field is not an enum".
+ */
+function enumValuesOf(node: ZodNode): readonly string[] | undefined {
+  const values = node._def.values;
+  if (!values) return undefined;
+  if (Array.isArray(values)) return values as readonly string[];
+  // A numeric TypeScript enum compiles to an object carrying its own reverse
+  // mapping — `{ A: 0, B: 1, 0: "A", 1: "B" }` — and Zod accepts only the
+  // forward half (`0`, not `"A"`). Taking every `Object.values` entry would
+  // therefore document two members the schema rejects, which is worse than
+  // documenting none. The reverse keys are dropped by the same test Zod's
+  // own validator uses: a key `k` is a reverse mapping when `obj[obj[k]]` is
+  // a number. Mirroring the validator is deliberate — the list a caller is
+  // shown and the list they are checked against have to be the same list.
+  const object = values as Record<string, string | number>;
+  const members = Object.keys(object)
+    .filter((key) => typeof object[object[key] as unknown as string] !== "number")
+    .map((key) => String(object[key]));
+  return members.length > 0 ? members : undefined;
+}
+
+/** The `enumValues` half of a descriptor, present only when there are values. */
+function enumValuesEntry(node: ZodNode): { enumValues?: readonly string[] } {
+  const enumValues = enumValuesOf(node);
+  return enumValues ? { enumValues } : {};
+}
+
+/**
  * Every field of an operation's input schema.
  *
  * Returns an empty list rather than throwing for a schema with no object
@@ -182,7 +233,7 @@ export function describeFields(schema: unknown): readonly FieldDescriptor[] {
       // "required with a suggestion" would tell a caller to send a value
       // they do not need to send.
       required: !optional && !hasDefault,
-      ...(node._def.values ? { enumValues: [...node._def.values] } : {}),
+      ...enumValuesEntry(node),
       ...(hasDefault ? { defaultValue } : {}),
       ...(nullable ? { nullable: true } : {}),
     };
