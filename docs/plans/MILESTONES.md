@@ -285,7 +285,7 @@ the client is the handful of checks that cannot run anywhere else.
 | **51** | Runs: a new run whenever the model or effort changes; the hook reports the model per call | 50 | |
 | **52** | Price table and cost, always recomputable from the token counts | 51 | |
 | **53** | Aggregation: cost per item, per session, **per stage** | 52 | |
-| **54** | Repeat-command detection, how wide the file spread is, read-to-write ratio | 50 | |
+| **54** | Repeat-command detection, how wide the file spread is, read-to-write ratio | 50 | `done` |
 
 > ⚠️ **This milestone must not slip behind M8 or M9.** Facet and cost history **cannot be
 > backfilled** — every month it isn't collecting is a month the model picker can't learn from. It is

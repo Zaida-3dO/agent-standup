@@ -202,6 +202,17 @@ export {
   type RecordToolCallsOutput,
 } from "./operations/record-tool-calls";
 
+// Session shape (MILESTONES.md #54): the read side of the rows above. The
+// judgement is in `@/lib/telemetry/shape`, which is pure and knows nothing
+// about a database — this exports the operation that feeds it rows.
+export {
+  getSessionShape,
+  DEFAULT_SHAPE_WINDOW,
+  MAX_SHAPE_WINDOW,
+  type GetSessionShapeInput,
+  type GetSessionShapeOutput,
+} from "./operations/get-session-shape";
+
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
 // (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,

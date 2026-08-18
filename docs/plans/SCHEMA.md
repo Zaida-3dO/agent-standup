@@ -626,6 +626,25 @@ The highest-volume table and the foundation for everything measured. Written by 
 
 **Retention** configurable, off by default. Volume is small — tens of thousands of rows per busy week.
 
+**Shape, as distinct from cost.** `runs` and the aggregation over it answer what a session *spent*.
+The same rows also answer what it is *doing* — whether it keeps returning to a command, how many
+distinct files it has touched, and how much of its work is reading rather than changing. A session can
+be cheap and stuck or expensive and going fine, and no token count separates those two, which is why
+this read exists beside the cost rollup rather than inside it.
+
+It is exposed as a **judgement with the number attached** (`unknown` · `normal` · `elevated`, plus what
+was counted) rather than as raw figures, because its consumers act rather than display: acting on a
+number means knowing what is normal for it, and every consumer left to decide that separately decides
+it differently. The thresholds are `shape.*` in §17. `unknown` is a real answer, not a failure — it is
+what too little evidence returns, and it is distinct from `normal` so that a consumer treating them
+alike has chosen to.
+
+**Repeat detection counts returns, not attempts.** A command run and immediately re-run is a retry
+loop — a session working, and the most ordinary thing an agent does — so a consecutive run counts once
+however long it is. Only a command returned to *after other work happened in between* counts again.
+A truncated command (§10's caps) is never compared: two different long commands sharing a prefix are
+stored byte-identically, and a repeat reported from that did not happen.
+
 ---
 
 ## 11. `runs` — one agent's turn on one item
@@ -916,6 +935,10 @@ typed.
 | `minting.backlog_low_threshold` | int, `3` | Minting | On-deck count below this triggers a mint request. |
 | `minting.source_globs` | list of globs, `[]` | Minting | Where minting looks. The default; a machine that carries its own `source_globs` overrides it, because filesystem layouts differ per machine. See §17.7. |
 | `retention.tool_calls_days` | int or null, `null` | Retention | Null = keep. Applies to `tool_calls` only. |
+| `shape.minimum_sample` | int, `20` | Telemetry | Tool calls a session must have made before its shape is reported as anything but `unknown`. Below it the reading is withheld rather than guessed. |
+| `shape.repeat_threshold` | int, `3` | Telemetry | Returns to a command — with other work in between — before that reads as circling. Counts **returns, not attempts**: a command run and immediately re-run is a retry loop and counts once however long it runs. |
+| `shape.spread_threshold` | int, `25` | Telemetry | Distinct files touched before the spread reads as wide. Distinct files, not calls. |
+| `shape.read_share_threshold` | 0–1, `0.9` | Telemetry | Share of *classifiable* calls that must be reads before a session reads as mostly-looking. Shell calls are classifiable as neither, so they neither raise nor lower it. |
 
 **`settings` — the table.**
 
