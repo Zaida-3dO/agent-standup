@@ -214,3 +214,61 @@ export function emptyDetailFor(item: ItemDetail["item"]): ItemDetail {
     previousHolders: [],
   };
 }
+
+/**
+ * The artifact kinds each of the two artifact-backed tabs shows.
+ *
+ * The Plan tab answers *"what was this work going to be, and was that
+ * agreed"*, which is the plan and the review OF the plan — a plan review is
+ * on the plan's side of the conversation, not the code's, and filing it
+ * under Reviews would separate an approval from the thing it approved.
+ *
+ * The Reviews tab answers *"what did someone find in the work"*: the
+ * reviews of the code and of what it looks like, and the verification of
+ * work checked after it shipped. `test_run` sits here too — it is evidence
+ * about the change, produced by the same round, and it is read alongside
+ * the review that cites it.
+ *
+ * **Kinds appear on at most one of the two.** An artifact shown under both
+ * would be counted twice by the tab counts, and a reader who saw it on Plan
+ * would have no way to tell whether the copy under Reviews was the same row
+ * or a second one.
+ */
+const PLAN_KINDS: ReadonlySet<string> = new Set(["plan", "plan_review"]);
+
+const REVIEW_KINDS: ReadonlySet<string> = new Set([
+  "code_review",
+  "visual_review",
+  "historical_verification",
+  "test_run",
+]);
+
+/**
+ * The tab an artifact belongs to, or `null` for one that belongs to
+ * neither.
+ *
+ * `commit`, `screenshot` and `other` are deliberately `null` rather than
+ * being swept into Reviews. A commit is the work itself and a screenshot is
+ * an attachment; neither is a finding, and putting them under a heading
+ * that means "someone assessed this" would let an unreviewed item look
+ * reviewed — which is the one misreading this page must not produce.
+ *
+ * An unrecognised kind is also `null`, for the same reason `PASSING_VERDICTS`
+ * treats an unknown verdict as not-yet-cleared: a kind this code has never
+ * seen makes no claim it is safe to assume, and the failure mode of hiding
+ * it from a tab is milder than the failure mode of filing it under a
+ * heading it may contradict.
+ */
+export function artifactTab(kind: string): "plan" | "reviews" | null {
+  if (PLAN_KINDS.has(kind)) return "plan";
+  if (REVIEW_KINDS.has(kind)) return "reviews";
+  return null;
+}
+
+/** The artifacts belonging to one of the two artifact-backed tabs, in the order given. */
+export function artifactsForTab(
+  artifacts: readonly DetailArtifact[],
+  tab: "plan" | "reviews",
+): readonly DetailArtifact[] {
+  return artifacts.filter((artifact) => artifactTab(artifact.kind) === tab);
+}
