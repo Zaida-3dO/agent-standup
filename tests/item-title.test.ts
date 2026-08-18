@@ -28,8 +28,8 @@ function rulesFor(title: string): string[] {
 }
 
 describe("findTitleFindings — the shapes that make a board unreadable", () => {
-  // The row's own quoted example, kept verbatim. If this stops firing, the
-  // feature no longer addresses the case it was filed for.
+  // The row's own quoted example, kept verbatim. This firing is what makes
+  // the feature address the case it was filed for.
   it("fires on the imported work-order shape the row quotes", () => {
     const rules = rulesFor(
       "agent-standup #102 - route the four raw event writes through appendEvent",

@@ -77,6 +77,9 @@ import { recordArtifact, requestReview } from "./operations/record-artifact";
 import { loopAdd, loopClose } from "./operations/open-loops";
 import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
+// The progress report (MILESTONES.md #136) — session-scoped, and shaped by
+// the server so two reports a week apart can be read side by side.
+import { progressReport } from "./operations/progress-report";
 import { transitionItem } from "./operations/transition-item";
 import { completeItem } from "./operations/complete-item";
 // Admin — installation-owned entities (MILESTONES.md #92, SCHEMA.md §23).
@@ -164,6 +167,7 @@ export const OPERATION_REGISTRY = {
   [loopClose.name]: loopClose,
   [orientation.name]: orientation,
   [myWork.name]: myWork,
+  [progressReport.name]: progressReport,
   [transitionItem.name]: transitionItem,
   [completeItem.name]: completeItem,
   [listRepos.name]: listRepos,

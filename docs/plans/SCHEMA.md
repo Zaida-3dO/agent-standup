@@ -1142,6 +1142,7 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 | `get_item` | Fetch one item plus a summary of its children. |
 | `list_items` | Filter by state, area, parent, assignee, repo, priority. **Finished work is excluded by default** — `includeTerminal` asks for it, and filtering on a terminal state directly still returns it. |
 | `my_work` | What you hold right this moment, and in what role. |
+| `progress_report` | **How is it going.** A numbered row per item this session holds — its branch, a human title, its state and what is blocking it — with two bullets on what is done and what is left, and open loops as sub-bullets. Computed and shaped by the server, so two reports a week apart are comparable. Finished work is counted in the summary and listed only on `includeCompleted`. |
 | `orientation` | **Catch me up.** Latest checkpoint, current state, events since that checkpoint, open loops, crew and worktree state. What a fresh session reads instead of being resumed. |
 | `create_item` | Create a project, task or subtask. `parent_id` optional. |
 | `update_item` | Change non-state fields. |

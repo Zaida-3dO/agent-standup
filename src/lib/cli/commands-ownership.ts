@@ -175,6 +175,20 @@ function buildMyWorkInput(_rest: readonly string[], flags: ParsedArgs["flags"]):
   return withSessionId(passthrough.input, flags);
 }
 
+/**
+ * `progress_report` takes the same session flag `my_work` does, so it builds
+ * its input the same way — the difference between the two is what the server
+ * does with the session, not how a caller names it.
+ */
+function buildProgressReportInput(
+  _rest: readonly string[],
+  flags: ParsedArgs["flags"],
+): InputResult {
+  const passthrough = passThroughFlags(flags);
+  if (!passthrough.ok) return passthrough;
+  return withSessionId(passthrough.input, flags);
+}
+
 function buildNoteInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
   const idResult = itemIdPositional(rest, "item note <item-id>");
   if (!idResult.ok) return idResult;
@@ -257,6 +271,14 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "my_work",
     summary: "What this session holds right now, and in what role.",
     buildInput: buildMyWorkInput,
+  },
+  {
+    noun: "session",
+    verb: "progress",
+    operation: "progress_report",
+    summary:
+      "A progress report on everything this session holds, in one fixed shape every time it is asked.",
+    buildInput: buildProgressReportInput,
   },
   {
     noun: "item",
