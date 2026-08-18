@@ -133,7 +133,7 @@ describe("fetchPeople", () => {
     });
     const result = await fetchPeople(fakeFetch as unknown as typeof fetch);
     expect(result).toEqual([userA]);
-    expect(fakeFetch).toHaveBeenCalledWith("/api/people");
+    expect(fakeFetch).toHaveBeenCalledWith("/api/ui/people");
   });
 
   it("throws with the response status when the response is not ok", async () => {

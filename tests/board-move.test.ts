@@ -54,7 +54,7 @@ describe("requestMove", () => {
     const impl = stubFetch(200, { item: anItem });
     return requestMove("a", "in_progress", impl).then(() => {
       expect(impl.calls).toHaveLength(1);
-      expect(impl.calls[0]!.url).toBe("/api/items/a/transition");
+      expect(impl.calls[0]!.url).toBe("/api/ui/items/a/transition");
       expect(impl.calls[0]!.method).toBe("POST");
       expect(impl.calls[0]!.body).toEqual({ to: TARGET_STATE.in_progress });
     });
@@ -73,7 +73,7 @@ describe("requestMove", () => {
   it("percent-encodes the id so a slash cannot address a different route", async () => {
     const impl = stubFetch(200, { item: anItem });
     await requestMove("a/b", "backlog", impl);
-    expect(impl.calls[0]!.url).toBe("/api/items/a%2Fb/transition");
+    expect(impl.calls[0]!.url).toBe("/api/ui/items/a%2Fb/transition");
   });
 
   it("returns the SERVER's item on success, not the one that was asked for", async () => {

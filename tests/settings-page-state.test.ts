@@ -36,7 +36,7 @@ describe("loading", () => {
       }),
     );
     const response = await fetchSettings(fetchImpl as unknown as typeof fetch);
-    expect(fetchImpl).toHaveBeenCalledWith("/api/settings");
+    expect(fetchImpl).toHaveBeenCalledWith("/api/ui/settings");
     expect(response.revision).toBe("9");
     expect(response.unrecognised).toHaveLength(1);
     expect(response.constants).toHaveLength(1);
@@ -115,7 +115,7 @@ describe("what the write actually sends", () => {
       fetchImpl as unknown as typeof fetch,
     );
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe(`/api/settings/${encodeURIComponent(PLAIN_KEY)}`);
+    expect(url).toBe(`/api/ui/settings/${encodeURIComponent(PLAIN_KEY)}`);
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body as string)).toEqual({ value: 5 });
   });
@@ -142,7 +142,7 @@ describe("what the write actually sends", () => {
       fetchImpl as unknown as typeof fetch,
     );
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe(`/api/settings/${encodeURIComponent(PLAIN_KEY)}`);
+    expect(url).toBe(`/api/ui/settings/${encodeURIComponent(PLAIN_KEY)}`);
     expect(init.method).toBe("DELETE");
     expect(init.body).toBeUndefined();
   });
@@ -154,7 +154,7 @@ describe("what the write actually sends", () => {
       fetchImpl as unknown as typeof fetch,
     );
     const [url] = fetchImpl.mock.calls[0] as unknown as [string];
-    expect(url).toBe("/api/settings/a%2Fb");
+    expect(url).toBe("/api/ui/settings/a%2Fb");
   });
 });
 
@@ -208,7 +208,7 @@ describe("removing an unrecognised row", () => {
     const outcome = await removeUnrecognised("old.key", fetchImpl as unknown as typeof fetch);
     expect(outcome.ok).toBe(true);
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("/api/settings/unrecognised/old.key");
+    expect(url).toBe("/api/ui/settings/unrecognised/old.key");
     expect(init.method).toBe("DELETE");
   });
 

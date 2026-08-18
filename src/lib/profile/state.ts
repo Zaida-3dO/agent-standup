@@ -5,6 +5,7 @@
 // the same reasoning `./resolve.ts` and `./storage.ts` are already split
 // out for.
 import type { Profile } from "./types";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type LoadState =
   | { status: "loading" }
@@ -66,7 +67,7 @@ export function deriveProfileContextValue(
 
 /** Every profile from `GET /api/people`. Throws a message fit to show directly — never a raw Response or a JSON-parse error. */
 export async function fetchPeople(fetchImpl: typeof fetch = fetch): Promise<readonly Profile[]> {
-  const response = await fetchImpl("/api/people");
+  const response = await fetchImpl(uiApiPath("/api/people"));
   if (!response.ok) {
     throw new Error(`Could not load profiles (GET /api/people returned ${response.status}).`);
   }

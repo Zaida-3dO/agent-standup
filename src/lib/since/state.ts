@@ -6,6 +6,7 @@
 // component is thin wiring over these.
 import type { SinceFeed } from "./types";
 import { emptyFeed } from "./view";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type SinceLoadState =
   | { status: "loading" }
@@ -44,7 +45,7 @@ export function buildFeedQuery(options: FetchFeedOptions = {}): string {
   if (options.since !== undefined) params.set("since", options.since);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const query = params.toString();
-  return query === "" ? "/api/events" : `/api/events?${query}`;
+  return query === "" ? uiApiPath("/api/events") : uiApiPath(`/api/events?${query}`);
 }
 
 /**
@@ -83,7 +84,7 @@ export async function markSeen(
   personId: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
-  const response = await fetchImpl(`/api/events/${encodeURIComponent(eventId)}/seen`, {
+  const response = await fetchImpl(uiApiPath(`/api/events/${encodeURIComponent(eventId)}/seen`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ personId }),

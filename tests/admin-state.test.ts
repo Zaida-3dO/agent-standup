@@ -37,7 +37,7 @@ describe("loading a kind's rows", () => {
   it("reads the array out of the collection the kind names", () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ repos: [{ id: "web" }] }));
     return fetchRows(repos, {}, fetchImpl as unknown as typeof fetch).then((rows) => {
-      expect(fetchImpl).toHaveBeenCalledWith("/api/repos");
+      expect(fetchImpl).toHaveBeenCalledWith("/api/ui/repos");
       expect(rows).toEqual([{ id: "web" }]);
     });
   });
@@ -45,11 +45,11 @@ describe("loading a kind's rows", () => {
   it("asks for archived rows only when told to", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ repos: [] }));
     await fetchRows(repos, {}, fetchImpl as unknown as typeof fetch);
-    expect(fetchImpl).toHaveBeenCalledWith("/api/repos");
+    expect(fetchImpl).toHaveBeenCalledWith("/api/ui/repos");
 
     fetchImpl.mockClear();
     await fetchRows(repos, { includeArchived: true }, fetchImpl as unknown as typeof fetch);
-    expect(fetchImpl).toHaveBeenCalledWith("/api/repos?includeArchived=true");
+    expect(fetchImpl).toHaveBeenCalledWith("/api/ui/repos?includeArchived=true");
   });
 
   it("yields an empty list when the body does not carry the collection", async () => {
@@ -163,7 +163,7 @@ describe("writing", () => {
     );
     expect(outcome.ok).toBe(true);
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("/api/repos");
+    expect(url).toBe("/api/ui/repos");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({
       id: "web",
@@ -185,12 +185,12 @@ describe("writing", () => {
     const fetchImpl = vi.fn(async () => jsonResponse({}));
     await updateRow(repos, "web", { displayName: "Web" }, fetchImpl as unknown as typeof fetch);
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("/api/repos/web");
+    expect(url).toBe("/api/ui/repos/web");
     expect(init.method).toBe("PATCH");
   });
 
   it("escapes an id that would otherwise change the path", () => {
-    expect(rowPath(repos, "a/b")).toBe("/api/repos/a%2Fb");
+    expect(rowPath(repos, "a/b")).toBe("/api/ui/repos/a%2Fb");
   });
 
   it("archives by PATCHing archived, never by deleting", async () => {

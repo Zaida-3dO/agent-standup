@@ -32,7 +32,7 @@ describe("fetchWindows", () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ value: { main: validWindow } }));
     const windows = await fetchWindows(fetchImpl as unknown as typeof fetch);
     expect(fetchImpl).toHaveBeenCalledWith(
-      `/api/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`,
+      `/api/ui/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`,
     );
     expect(windows).toEqual({ main: validWindow });
   });
@@ -78,7 +78,7 @@ describe("writeWindows", () => {
     expect(outcome).toEqual({ ok: true });
 
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe(`/api/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`);
+    expect(url).toBe(`/api/ui/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`);
     expect(init.method).toBe("PUT");
     expect(JSON.parse(String(init.body))).toEqual({ value: { main: validWindow } });
   });

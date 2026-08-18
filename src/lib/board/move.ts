@@ -13,6 +13,7 @@
 // forgot the catch would leave a card showing a move the server rejected.
 import type { BoardColumnId, BoardEntry, BoardItem } from "./types";
 import { TARGET_STATE, networkRefusalMessage, refusalMessage } from "./drag";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type MoveResult =
   | { readonly ok: true; readonly entry: BoardEntry }
@@ -52,7 +53,7 @@ export async function requestMove(
 
   let response: Response;
   try {
-    response = await fetchImpl(`/api/items/${encodeURIComponent(itemId)}/transition`, {
+    response = await fetchImpl(uiApiPath(`/api/items/${encodeURIComponent(itemId)}/transition`), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ to }),

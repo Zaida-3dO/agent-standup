@@ -54,6 +54,15 @@ const UNAUTHENTICATED: ReadonlyMap<string, string> = new Map([
       "no installation state.",
   ],
   [
+    "ui/[...path]/route.ts",
+    "The front end's forwarding route. It does not authenticate its caller — a browser holds " +
+      "no credential and is deliberately never given one, because anything shipped to a page is " +
+      "readable by whoever opens the developer tools, which would make per-machine revocation " +
+      "meaningless. It presents the server's own token for a configured machine and forwards to " +
+      "these same handlers, so the call it produces is authenticated by the ordinary gate rather " +
+      "than exempted from it. With no token configured it refuses instead of forwarding.",
+  ],
+  [
     "mcp/route.ts",
     "Authenticates, but not through `authenticatedCaller`: it is an MCP mount rather than a " +
       "REST route, so it calls `authenticate` directly and passes the proven machine into " +
@@ -149,7 +158,13 @@ describe("every API route passes through the authentication gate", () => {
     // If this fails, a route was added to the map above — which is allowed,
     // but only deliberately, with a reason, in a diff someone reads.
     expect([...UNAUTHENTICATED.keys()].sort()).toEqual(
-      ["health/route.ts", "hook/script/route.ts", "mcp/route.ts", "ready/route.ts"].sort(),
+      [
+        "health/route.ts",
+        "hook/script/route.ts",
+        "mcp/route.ts",
+        "ready/route.ts",
+        "ui/[...path]/route.ts",
+      ].sort(),
     );
   });
 

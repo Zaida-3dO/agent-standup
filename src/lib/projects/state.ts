@@ -6,6 +6,7 @@
 // are only directly testable outside a component. `Projects.tsx` is thin
 // wiring over what is here.
 import type { ProjectRollup, ProjectsPayload } from "./types";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type ProjectsLoadState =
   | { status: "loading" }
@@ -38,7 +39,7 @@ export async function fetchProjects(
   if (options.includeCompleted === true) query.set("includeCompleted", "true");
   const suffix = query.toString() === "" ? "" : `?${query.toString()}`;
 
-  const response = await fetchImpl(`/api/projects${suffix}`);
+  const response = await fetchImpl(uiApiPath(`/api/projects${suffix}`));
   if (!response.ok) {
     throw new Error(`Could not load projects (GET /api/projects returned ${response.status}).`);
   }

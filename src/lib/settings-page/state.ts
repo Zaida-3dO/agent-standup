@@ -10,6 +10,7 @@
 // database client.
 import type { SettingsResponse } from "./model";
 import { confirmWrite, type WriteVerb } from "./confirmation";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type SettingsLoadState =
   | { status: "loading" }
@@ -27,7 +28,7 @@ export type SettingsLoadState =
  * and an empty panel is a far better failure than a blank screen.
  */
 export async function fetchSettings(fetchImpl: typeof fetch = fetch): Promise<SettingsResponse> {
-  const response = await fetchImpl("/api/settings");
+  const response = await fetchImpl(uiApiPath("/api/settings"));
   if (!response.ok) {
     throw new Error(`Could not load settings (GET /api/settings returned ${response.status}).`);
   }
@@ -97,7 +98,7 @@ export async function writeSetting(
   const decision = confirmWrite({ key: args.key, verb: args.verb, typed: args.typed });
   if (!decision.allowed) return { ok: false, message: decision.reason };
 
-  const url = `/api/settings/${encodeURIComponent(args.key)}`;
+  const url = uiApiPath(`/api/settings/${encodeURIComponent(args.key)}`);
   const response =
     args.verb === "reset"
       ? await fetchImpl(url, { method: "DELETE" })
@@ -131,9 +132,12 @@ export async function removeUnrecognised(
   key: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<WriteOutcome> {
-  const response = await fetchImpl(`/api/settings/unrecognised/${encodeURIComponent(key)}`, {
-    method: "DELETE",
-  });
+  const response = await fetchImpl(
+    uiApiPath(`/api/settings/unrecognised/${encodeURIComponent(key)}`),
+    {
+      method: "DELETE",
+    },
+  );
   if (!response.ok) return { ok: false, message: await messageFromResponse(response) };
   return { ok: true };
 }
