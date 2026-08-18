@@ -20,6 +20,7 @@ import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
   httpCaller,
+  withRequestId,
   invalidJsonResponse,
   readJsonBody,
   serviceErrorResponse,
@@ -29,11 +30,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse();
+  if (body === null) return invalidJsonResponse(requestId);
 
   try {
     const person = await service.call("update_person", { ...body, id }, { caller });
-    return NextResponse.json({ person });
+    return withRequestId(NextResponse.json({ person }), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

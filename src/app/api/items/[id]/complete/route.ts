@@ -3,7 +3,7 @@
 // as every route in this directory.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, serviceErrorResponse } from "../../respond";
+import { httpCaller, withRequestId, serviceErrorResponse } from "../../respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { requestId, caller } = httpCaller(request);
@@ -14,15 +14,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const parsed = (await request.json()) as unknown;
     body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return NextResponse.json(
-      { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
-      { status: 400 },
+    return withRequestId(
+      NextResponse.json(
+        {
+          error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] },
+        },
+        { status: 400 },
+      ),
+      requestId,
     );
   }
 
   try {
     const result = await service.call("complete_item", { ...body, id }, { caller });
-    return NextResponse.json(result);
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

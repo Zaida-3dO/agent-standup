@@ -36,4 +36,4 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
   );
 }
 
-export { httpCaller };
+export { httpCaller, withRequestId };

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
   httpCaller,
+  withRequestId,
   invalidJsonResponse,
   readJsonBody,
   serviceErrorResponse,
@@ -14,7 +15,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const { id } = await params;
   try {
     const area = await service.call("get_area", { id }, { caller });
-    return NextResponse.json({ area });
+    return withRequestId(NextResponse.json({ area }), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }
@@ -24,11 +25,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { requestId, caller } = httpCaller(request);
   const { id } = await params;
   const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse();
+  if (body === null) return invalidJsonResponse(requestId);
 
   try {
     const area = await service.call("update_area", { ...body, id }, { caller });
-    return NextResponse.json({ area });
+    return withRequestId(NextResponse.json({ area }), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

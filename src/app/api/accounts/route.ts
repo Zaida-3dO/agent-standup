@@ -3,13 +3,13 @@
 // header for why creation happens through `PATCH /accounts/{id}` instead.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, serviceErrorResponse } from "../admin-respond";
+import { httpCaller, withRequestId, serviceErrorResponse } from "../admin-respond";
 
 export async function GET(request: Request) {
   const { requestId, caller } = httpCaller(request);
   try {
     const result = await service.call("list_accounts", {}, { caller });
-    return NextResponse.json(result);
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

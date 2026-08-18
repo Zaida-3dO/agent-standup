@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
   httpCaller,
+  withRequestId,
   invalidJsonResponse,
   serializeAppendedEvent,
   serviceErrorResponse,
@@ -15,12 +16,15 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
     const event = await service.call("checkpoint", body, { caller });
-    return NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 });
+    return withRequestId(
+      NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 }),
+      requestId,
+    );
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

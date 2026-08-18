@@ -95,11 +95,20 @@ export function withRequestId(response: NextResponse, requestId?: string): NextR
   return response;
 }
 
-/** Renders a malformed-JSON body as the same 400 envelope every route uses for it. */
-export function invalidJsonResponse(): NextResponse {
-  return NextResponse.json(
-    { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
-    { status: 400 },
+/**
+ * Renders a malformed-JSON body as the same 400 envelope every route uses for it.
+ *
+ * Carries the request id like every other response: a caller whose body was
+ * rejected is exactly the one likely to be asking why, and an id is the
+ * thing that finds the attempt in the log.
+ */
+export function invalidJsonResponse(requestId?: string): NextResponse {
+  return withRequestId(
+    NextResponse.json(
+      { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
+      { status: 400 },
+    ),
+    requestId,
   );
 }
 

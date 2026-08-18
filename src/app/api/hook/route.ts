@@ -9,7 +9,12 @@
 // entirely in `hookDecision` (`src/lib/service/operations/hook-decision.ts`).
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse, httpCaller } from "../_shared/respond";
+import {
+  invalidJsonResponse,
+  serviceErrorResponse,
+  httpCaller,
+  withRequestId,
+} from "../_shared/respond";
 
 export async function POST(request: Request) {
   const { requestId, caller } = httpCaller(request);
@@ -17,12 +22,12 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
     const result = await service.call("hook_decision", body, { caller });
-    return NextResponse.json(result);
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

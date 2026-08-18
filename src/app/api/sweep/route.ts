@@ -12,7 +12,12 @@
 // with no reader to serve.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse, httpCaller } from "../_shared/respond";
+import {
+  invalidJsonResponse,
+  serviceErrorResponse,
+  httpCaller,
+  withRequestId,
+} from "../_shared/respond";
 
 export async function POST(request: Request) {
   const { requestId, caller } = httpCaller(request);
@@ -23,12 +28,12 @@ export async function POST(request: Request) {
   } catch {
     // A body that is present but not JSON is still an input error — it is
     // the caller sending something, badly, rather than sending nothing.
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
     const result = await service.call("sweep", body, { caller });
-    return NextResponse.json(result);
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

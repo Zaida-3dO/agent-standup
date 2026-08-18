@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
   httpCaller,
+  withRequestId,
   invalidJsonResponse,
   serializeAppendedEvent,
   serviceErrorResponse,
@@ -30,12 +31,15 @@ export async function POST(
     const parsed = (await request.json()) as unknown;
     body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
     const event = await service.call("loop_close", { ...body, itemId: id, loopId }, { caller });
-    return NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 });
+    return withRequestId(
+      NextResponse.json({ event: serializeAppendedEvent(event) }, { status: 201 }),
+      requestId,
+    );
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

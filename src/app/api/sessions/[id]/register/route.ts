@@ -19,7 +19,12 @@
 // signal rather than a self-report (§21).
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, invalidJsonResponse, serviceErrorResponse } from "../../../_shared/respond";
+import {
+  httpCaller,
+  withRequestId,
+  invalidJsonResponse,
+  serviceErrorResponse,
+} from "../../../_shared/respond";
 import { CLI_TRANSPORT_HEADER, transportForHttpRequest } from "@/lib/session-transport-header";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -30,7 +35,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     body = await request.json();
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
@@ -48,7 +53,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         },
       },
     );
-    return NextResponse.json({ registration });
+    return withRequestId(NextResponse.json({ registration }), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

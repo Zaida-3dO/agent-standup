@@ -10,7 +10,7 @@
 // A thin shell over `service.call` (SCHEMA.md §22).
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, serviceErrorResponse } from "../items/respond";
+import { httpCaller, withRequestId, serviceErrorResponse } from "../items/respond";
 
 export async function POST(request: Request) {
   const { requestId, caller } = httpCaller(request);
@@ -18,15 +18,20 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
-      { status: 400 },
+    return withRequestId(
+      NextResponse.json(
+        {
+          error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] },
+        },
+        { status: 400 },
+      ),
+      requestId,
     );
   }
 
   try {
     const item = await service.call("create_subtask", body, { caller });
-    return NextResponse.json({ item }, { status: 201 });
+    return withRequestId(NextResponse.json({ item }, { status: 201 }), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

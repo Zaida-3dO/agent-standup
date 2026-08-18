@@ -59,4 +59,4 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
 // module it already imports, rather than reaching across directories for a
 // second. The helper itself lives in `_shared` because resolving an inbound
 // request id is common to every route, not something this row owns.
-export { httpCaller };
+export { httpCaller, withRequestId };

@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
   httpCaller,
+  withRequestId,
   invalidJsonResponse,
   readJsonBody,
   serviceErrorResponse,
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
 
   try {
     const result = await service.call("list_repos", input, { caller });
-    return NextResponse.json(result);
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }
@@ -31,11 +32,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const { requestId, caller } = httpCaller(request);
   const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse();
+  if (body === null) return invalidJsonResponse(requestId);
 
   try {
     const repo = await service.call("create_repo", body, { caller });
-    return NextResponse.json({ repo }, { status: 201 });
+    return withRequestId(NextResponse.json({ repo }, { status: 201 }), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

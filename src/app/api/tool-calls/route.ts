@@ -14,7 +14,12 @@
 // after release) and completely silent otherwise.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { invalidJsonResponse, serviceErrorResponse, httpCaller } from "../_shared/respond";
+import {
+  invalidJsonResponse,
+  serviceErrorResponse,
+  httpCaller,
+  withRequestId,
+} from "../_shared/respond";
 
 export async function POST(request: Request) {
   const { requestId, caller } = httpCaller(request);
@@ -22,14 +27,14 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
     const result = await service.call("record_tool_calls", body, {
       caller,
     });
-    return NextResponse.json(result, { status: 201 });
+    return withRequestId(NextResponse.json(result, { status: 201 }), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

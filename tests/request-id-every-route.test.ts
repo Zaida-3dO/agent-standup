@@ -79,6 +79,24 @@ describe("every route that calls the service correlates its request id", () => {
     expect(offenders.map(repoRelative)).toEqual([]);
   });
 
+  it("stamps the id on its success responses, not only its failures", () => {
+    // The gap this file exists to close, and one that got past a green unit
+    // suite once: `serviceErrorResponse` threading the id made every *error*
+    // carry it while every `return NextResponse.json(...)` on the success
+    // path returned bare. An id present only on failures is missing exactly
+    // when someone is reporting that a *successful* call returned the wrong
+    // thing — which is most of "I called X and got Y".
+    const offenders = routes.filter((file) => {
+      const relative = repoRelative(file);
+      if (EXEMPT.has(relative)) return false;
+      const source = readFileSync(file, "utf-8");
+      // A bare `return NextResponse.json(` is one that was not wrapped.
+      return /return\s+NextResponse\.json\(/.test(source);
+    });
+
+    expect(offenders.map(repoRelative)).toEqual([]);
+  });
+
   it("hands the resolved caller to the service rather than a bare transport", () => {
     // The failure this catches is subtler than a missing resolver: a route
     // that resolves an id and then passes `{ transport: "http" }` anyway

@@ -16,7 +16,12 @@
 // original `seenAt`.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, invalidJsonResponse, serviceErrorResponse } from "../../../_shared/respond";
+import {
+  httpCaller,
+  withRequestId,
+  invalidJsonResponse,
+  serviceErrorResponse,
+} from "../../../_shared/respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { requestId, caller } = httpCaller(request);
@@ -32,12 +37,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const parsed = text.trim() === "" ? {} : (JSON.parse(text) as unknown);
     body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return invalidJsonResponse();
+    return invalidJsonResponse(requestId);
   }
 
   try {
     const result = await service.call("mark_event_seen", { ...body, eventId: id }, { caller });
-    return NextResponse.json(result);
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

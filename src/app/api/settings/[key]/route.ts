@@ -3,14 +3,14 @@
 // Thin shell over `service.call` — see ../route.ts.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, serviceErrorResponse } from "../respond";
+import { httpCaller, withRequestId, serviceErrorResponse } from "../respond";
 
 export async function GET(request: Request, { params }: { params: Promise<{ key: string }> }) {
   const { requestId, caller } = httpCaller(request);
   const { key } = await params;
   try {
     const setting = await service.call("get_setting", { key }, { caller });
-    return NextResponse.json(setting);
+    return withRequestId(NextResponse.json(setting), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }
@@ -24,15 +24,20 @@ export async function PUT(request: Request, { params }: { params: Promise<{ key:
     const parsed = (await request.json()) as unknown;
     body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return NextResponse.json(
-      { error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] } },
-      { status: 400 },
+    return withRequestId(
+      NextResponse.json(
+        {
+          error: { code: "invalid_input", message: "Request body must be valid JSON.", fields: [] },
+        },
+        { status: 400 },
+      ),
+      requestId,
     );
   }
 
   try {
     const setting = await service.call("put_setting", { ...body, key }, { caller });
-    return NextResponse.json(setting);
+    return withRequestId(NextResponse.json(setting), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }
@@ -43,7 +48,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ k
   const { key } = await params;
   try {
     const setting = await service.call("delete_setting", { key }, { caller });
-    return NextResponse.json(setting);
+    return withRequestId(NextResponse.json(setting), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }
