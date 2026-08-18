@@ -1,0 +1,148 @@
+/* The shared empty / withheld / filtered / loading / error states.
+
+   Every colour here is a token role from `src/app/globals.css`, never a raw
+   value — these components render inside a column, a panel and a page, and a
+   hardcoded colour would be right on whichever surface it was picked against
+   and wrong on the other two. */
+
+/* The common frame. Quiet by construction: a region reporting that it holds
+   nothing should not draw more attention than the regions that hold
+   something. */
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.85rem 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* Centred variant, for a state that owns a whole panel rather than sitting
+   inside a column. */
+.centered {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 8rem;
+}
+
+.title {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.detail {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+
+/* A withheld region is bounded so it reads as a region that exists and was
+   not filled — as opposed to blank space, which is what an empty region
+   correctly looks like. `--border-strong` is the "bounds a quiet region"
+   role; `--border-control` is deliberately not used, because none of this
+   is an input. */
+.withheld {
+  border: 1px dashed var(--border-strong);
+  border-radius: 0.5rem;
+  background: var(--surface-sunken);
+}
+
+/* The error state. It takes the blocked triplet because a failed read is
+   the one state here that genuinely demands action — the same colour the
+   board already uses for a refused move, so the two read as the same class
+   of event rather than two unrelated vocabularies. */
+.error {
+  border: 1px solid var(--state-blocked-border);
+  border-radius: 0.5rem;
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
+}
+
+.errorTitle {
+  margin: 0;
+  color: var(--state-blocked-fg);
+  font-weight: 600;
+}
+
+/* The failed call, named. Monospace because it is an identifier — the
+   reader is meant to be able to repeat it, and a proportional font makes a
+   URL harder to read back accurately. */
+.call {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+/* Actions — "show more", "clear filter", "retry". A control, so this one
+   takes `--border-control`: it is the role held to 3:1 precisely because it
+   is what says "you can press this". */
+.action {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--surface-raised);
+}
+
+.action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The skeleton — shapes in the place the content will occupy, not a
+   spinner. A spinner says "something is happening somewhere"; a skeleton
+   says "this is what is coming and roughly how much of it", which is the
+   difference between a wait that feels indefinite and one that does not.
+
+   The shimmer is animated, so it is gated on `prefers-reduced-motion`
+   below: a permanently-moving element is a vestibular trigger, and the
+   skeleton still does its whole job as a static block. */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.skeletonCard {
+  height: 3.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.45rem;
+  background: linear-gradient(
+    90deg,
+    var(--surface-card) 0%,
+    var(--surface-raised) 50%,
+    var(--surface-card) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonCard {
+    animation: none;
+    background: var(--surface-card);
+  }
+}

@@ -16,10 +16,22 @@
 // refusal, revert — is testable as a sequence of calls without a DOM. What
 // is left in this component is the part that genuinely needs React: holding
 // the state and making the request.
+//
+// **Paging follows the same split.** The merge rule a "show more" applies —
+// append rather than replace, take the cursor and the total from the new
+// page, never re-add an entry already shown — is `@/lib/board/paging`'s
+// `boardWithPage`, so it is provable without a renderer. What is here is the
+// request and the per-column in-flight/error bookkeeping.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useProfile } from "@/lib/profile/ProfileProvider";
-import { fetchBoard, boardErrorMessageFrom, type BoardLoadState } from "@/lib/board/state";
+import {
+  fetchBoard,
+  fetchBoardColumn,
+  boardErrorMessageFrom,
+  type BoardLoadState,
+} from "@/lib/board/state";
 import { emptyBoard } from "@/lib/board/view";
+import { boardWithPage } from "@/lib/board/paging";
 import type { BoardColumnId } from "@/lib/board/types";
 import { requestMove } from "@/lib/board/move";
 import { handleDrop } from "@/lib/board/drop-handler";
@@ -39,6 +51,14 @@ export function Board() {
   const [status, setStatus] = useState<"loading" | "error" | "loaded">("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [drag, setDrag] = useState<DragState>(() => initialDragState(emptyBoard()));
+  // Per column, not per board: the columns page independently, so one
+  // column's request in flight must not disable another's control, and one
+  // column's failure must not be reported on all four.
+  const [loadingColumns, setLoadingColumns] = useState<Partial<Record<BoardColumnId, boolean>>>({});
+  const [pageErrors, setPageErrors] = useState<Partial<Record<BoardColumnId, string>>>({});
+  // Bumped to re-run the load effect — how the error state's retry works
+  // without duplicating the fetch itself.
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   // **The ref is the authoritative copy; `drag` is what renders.**
   //
@@ -57,6 +77,14 @@ export function Board() {
     setDrag(next);
   }, []);
 
+  // **`status` is not reset here.** A retry sets it back to `loading` in the
+  // handler that bumps `reloadNonce` (see `onRetry` below), rather than in
+  // this effect body: a synchronous `setState` during an effect schedules a
+  // second render pass for a value the event that triggered it already knew,
+  // which is what `react-hooks/set-state-in-effect` is pointing at. Setting
+  // it at the source also makes the transition atomic with the decision to
+  // reload, so there is no render in between showing the stale error beside
+  // a load that has already started.
   useEffect(() => {
     let cancelled = false;
     fetchBoard()
@@ -73,7 +101,44 @@ export function Board() {
     return () => {
       cancelled = true;
     };
-  }, [applyDrag]);
+  }, [applyDrag, reloadNonce]);
+
+  /**
+   * Fetch one column's next page and append it.
+   *
+   * **The cursor is read synchronously from the ref, not from `drag`**, for
+   * the same reason `onDrop` does: this is an event handler, and a cursor
+   * read from a render-time copy would be the previous page's on a second
+   * press before the first render had committed — which re-requests the page
+   * already shown and makes the control appear to do nothing.
+   */
+  const onShowMore = useCallback(
+    (column: BoardColumnId) => {
+      const section = stateRef.current.board[column];
+      // A withheld column has no cursor and has never been read, so its
+      // "load" is a first page rather than a next one — `undefined` asks for
+      // exactly that, and is why this is not guarded on `nextCursor`.
+      const cursor = section.nextCursor ?? undefined;
+      setLoadingColumns((current) => ({ ...current, [column]: true }));
+      // Cleared on the attempt, not on its success: leaving the previous
+      // failure on screen while a retry is in flight reports a stale failure
+      // as a current one.
+      setPageErrors((current) => ({ ...current, [column]: undefined }));
+      void fetchBoardColumn(column, cursor === undefined ? {} : { cursor })
+        .then((page) => {
+          applyDrag((current) =>
+            boardReplaced(current, boardWithPage(current.board, column, page)),
+          );
+        })
+        .catch((err: unknown) => {
+          setPageErrors((current) => ({ ...current, [column]: boardErrorMessageFrom(err) }));
+        })
+        .finally(() => {
+          setLoadingColumns((current) => ({ ...current, [column]: false }));
+        });
+    },
+    [applyDrag],
+  );
 
   const onDrop = useCallback(
     (column: BoardColumnId) => {
@@ -128,6 +193,18 @@ export function Board() {
     <BoardView
       loadState={loadState}
       personId={activeProfile?.id ?? null}
+      onRetry={() => {
+        // Both writes together: the board shows its loading state from this
+        // press, and the nonce re-runs the load effect.
+        setStatus("loading");
+        setErrorMessage("");
+        setReloadNonce((n) => n + 1);
+      }}
+      paging={{
+        onShowMore,
+        loadingColumns,
+        errors: pageErrors,
+      }}
       drag={{
         onCardDragStart: (itemId) => applyDrag((current) => dragStarted(current, itemId)),
         onCardDragEnd: () => applyDrag((current) => dragEnded(current)),

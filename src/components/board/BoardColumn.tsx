@@ -1,16 +1,26 @@
-// One of the four columns — MILESTONES.md #37.
+// One of the four columns — MILESTONES.md #37, bounded and paged.
+//
+// The column is three fixed pieces: a sticky heading carrying the column's
+// **true** count, a scrolling trough holding the cards, and a footer holding
+// the "show more" control. Only the middle one scrolls, which is what lets a
+// 146-item backlog sit beside a 2-item column without either dictating the
+// height of the page.
+//
+// The empty/withheld/filtered states are NOT written here — they come from
+// `@/components/states`, shared with every other region in the app, because
+// the distinction between them is one a region gets wrong silently and a
+// per-region copy is a per-region chance to get it wrong (#123).
 //
 // Hook-free and prop-driven so it can be called directly in a test; see
 // `TopBar.tsx`'s header.
 import type { BoardColumnId, BoardSection } from "@/lib/board/types";
-import {
-  columnCount,
-  columnTitle,
-  isGenuinelyEmpty,
-  needsYou,
-  type WaitingSplit,
-} from "@/lib/board/view";
+import { columnCount, columnTitle, needsYou, type WaitingSplit } from "@/lib/board/view";
+import { hasMore } from "@/lib/board/paging";
 import { acceptsDrop } from "@/lib/board/drag";
+import { emptinessOf } from "@/lib/states/empty";
+import { EmptyState } from "@/components/states/EmptyState";
+import { ErrorState } from "@/components/states/ErrorState";
+import { LoadingState } from "@/components/states/LoadingState";
 import { ItemCard } from "./ItemCard";
 import styles from "./Board.module.css";
 
@@ -43,7 +53,22 @@ export interface BoardColumnProps {
   readonly onCardDragEnd?: () => void;
   /** The item whose move is in flight, if it is in this column. */
   readonly pendingItemId?: string | null;
+  /** Fetches this column's next page — the "show more" control. Absent leaves the column unpaged. */
+  readonly onShowMore?: (column: BoardColumnId) => void;
+  /** True while this column's next page is in flight. */
+  readonly loadingMore?: boolean;
+  /** Why this column's last page request failed, or `null`. Rendered by the shared error state, which names the call. */
+  readonly pageError?: string | null;
+  /** True while the column's FIRST page is loading — the skeleton, rather than an empty column. */
+  readonly loading?: boolean;
+  /** True when a filter is narrowing the board, so an empty column can say the filter did it. */
+  readonly filtered?: boolean;
+  /** Clears that filter — offered by the filtered-to-nothing state. */
+  readonly onClearFilter?: () => void;
 }
+
+/** The singular noun a column's states talk about. */
+const COLUMN_NOUN = "item";
 
 export function BoardColumn({
   column,
@@ -56,6 +81,12 @@ export function BoardColumn({
   onCardDragStart,
   onCardDragEnd,
   pendingItemId,
+  onShowMore,
+  loadingMore,
+  pageError,
+  loading,
+  filtered,
+  onClearFilter,
 }: BoardColumnProps) {
   const entries = section.entries;
   // Waiting accepts no drops at all — both its states need fields a drag
@@ -66,6 +97,16 @@ export function BoardColumn({
   // Never highlight a column that cannot be dropped on — the highlight is a
   // promise that letting go here will do something.
   const highlighted = droppable && isDropTarget === true;
+  // Which "nothing to show" answer this column is giving, or `null` when it
+  // has cards. The decision is `emptinessOf`'s, shared with every other
+  // region, rather than a chain of conditionals rebuilt here.
+  const emptiness = emptinessOf({
+    shown: entries.length,
+    total: section.total,
+    withheld: section.withheld,
+    filtered: filtered === true,
+  });
+  const more = hasMore(section);
 
   return (
     <section
@@ -102,48 +143,77 @@ export function BoardColumn({
             while the store holds 175 finished items. */}
         <span className={styles.count}>{columnCount(section)}</span>
       </header>
-      {split && (
-        <p className={styles.split}>
-          <span className={styles.splitAmber}>{split.amber} paused</span>
-          <span className={styles.splitRed}>{split.red} blocked</span>
-          {/* `waitingSplit` counts a third bucket — a project in Waiting,
-              or a state that should not be in this column — and rendering
-              only the first two let a card exist in the header count while
-              appearing in neither tallied number, which is the exact
-              "silently goes missing from the count" failure `waitingSplit`
-              says it exists to prevent. Shown only when non-zero: a
-              permanent "0 other" would be noise on the common board. */}
-          {split.other > 0 && <span className={styles.splitOther}>{split.other} other</span>}
-        </p>
-      )}
-      {/* Three states, not two — #123: "an empty state and a hidden state
-          must not render identically". A column with nothing in it says so;
-          a column that simply was not fetched says that instead, so a
-          reader is never told there is no work when there is. */}
-      {entries.length === 0 ? (
-        isGenuinelyEmpty(section) ? (
-          <p className={styles.empty}>Nothing here.</p>
+      <div className={styles.columnBody}>
+        {split && (
+          <p className={styles.split}>
+            <span className={styles.splitAmber}>{split.amber} paused</span>
+            <span className={styles.splitRed}>{split.red} blocked</span>
+            {/* `waitingSplit` counts a third bucket — a project in Waiting,
+                or a state that should not be in this column — and rendering
+                only the first two let a card exist in the header count while
+                appearing in neither tallied number, which is the exact
+                "silently goes missing from the count" failure `waitingSplit`
+                says it exists to prevent. Shown only when non-zero: a
+                permanent "0 other" would be noise on the common board. */}
+            {split.other > 0 && <span className={styles.splitOther}>{split.other} other</span>}
+          </p>
+        )}
+        {/* The first load shows skeletons in the shape of the cards, rather
+            than an empty column — a column rendering nothing while it loads
+            is indistinguishable from one that came back empty, which is the
+            same confusion the states below exist to prevent. */}
+        {loading === true ? (
+          <LoadingState rows={3} label={`${columnTitle(column)} column`} />
+        ) : emptiness !== null ? (
+          <EmptyState
+            kind={emptiness}
+            noun={COLUMN_NOUN}
+            total={columnCount(section)}
+            onClearFilter={onClearFilter}
+            onLoad={emptiness === "withheld" && onShowMore ? () => onShowMore(column) : undefined}
+          />
         ) : (
-          <p className={styles.empty}>Not loaded — {columnCount(section)} here.</p>
-        )
-      ) : (
-        <ul className={styles.cards}>
-          {entries.map((entry) => (
-            <ItemCard
-              key={entry.item.id}
-              entry={entry}
-              needsYou={needsYou(entry, personId)}
-              onDragStart={onCardDragStart}
-              onDragEnd={onCardDragEnd}
-              pending={pendingItemId === entry.item.id}
-            />
-          ))}
-        </ul>
-      )}
-      {section.nextCursor !== null && (
-        <p className={styles.empty}>
-          Showing {entries.length} of {columnCount(section)}.
-        </p>
+          <ul className={styles.cards}>
+            {entries.map((entry) => (
+              <ItemCard
+                key={entry.item.id}
+                entry={entry}
+                needsYou={needsYou(entry, personId)}
+                onDragStart={onCardDragStart}
+                onDragEnd={onCardDragEnd}
+                pending={pendingItemId === entry.item.id}
+              />
+            ))}
+          </ul>
+        )}
+        {/* A failed *page* request, not a failed board load — the column
+            already has cards, so this reports beneath them and names the
+            call, leaving what the reader is looking at in place. */}
+        {pageError != null && (
+          <ErrorState
+            message={pageError}
+            onRetry={onShowMore ? () => onShowMore(column) : undefined}
+            retrying={loadingMore === true}
+          />
+        )}
+      </div>
+      {/* The consumer for `nextCursor` (MILESTONES.md #109), which the board
+          read has returned since that row shipped and nothing has ever
+          read back. */}
+      {more && onShowMore && (
+        <div className={styles.columnFoot}>
+          <p className={styles.pageStatus}>
+            Showing {entries.length} of {columnCount(section)}
+          </p>
+          <button
+            type="button"
+            className={styles.showMore}
+            onClick={() => onShowMore(column)}
+            disabled={loadingMore === true}
+          >
+            {loadingMore === true ? "Loading…" : "Show more"}
+          </button>
+        </div>
       )}
     </section>
   );
