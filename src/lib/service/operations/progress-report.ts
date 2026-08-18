@@ -41,6 +41,7 @@ import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { checkpointHeadline } from "../items/checkpoint-headline";
+import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import { deriveOpenLoops, type LoopEventLike } from "@/lib/open-loops";
 import {
   DONE_STATES,
@@ -199,8 +200,12 @@ export const progressReport = defineOperation({
          i."id", i."title", i."state", i."branch",
          i."blockedReason", i."blockedOnType", i."pauseReason", i."resumeCondition"
        FROM "Assignment" a
+       -- Archived rows never appear in a report (MILESTONES.md #137), and
+       -- this is the read where it matters most: a progress report's whole
+       -- value is being trusted without audit, so one row in it that the
+       -- reader cannot open costs the credibility of every other row.
        JOIN "Item" i ON i."id" = a."itemId"
-       WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL
+       WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL AND i.${NOT_ARCHIVED_CONDITION}
        ORDER BY a."claimedAt" ASC`,
       input.sessionId,
     );
@@ -249,6 +254,9 @@ export const progressReport = defineOperation({
         `SELECT "parentId", COUNT(*) AS "openChildren"
            FROM "Item"
           WHERE "parentId" = ANY($1)
+            -- "What is left" counts work somebody still has to do, so an
+            -- archived child is not one of them.
+            AND ${NOT_ARCHIVED_CONDITION}
             AND "state" NOT IN ('merged', 'research_done', 'wont_do', 'cancelled')
           GROUP BY "parentId"`,
         itemIds,

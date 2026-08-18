@@ -11,7 +11,13 @@ import { z } from "zod";
 import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  ITEM_COLUMNS,
+  NOT_ARCHIVED_CONDITION,
+  toItemRecord,
+  type ItemRecord,
+  type RawItemRow,
+} from "../items/row";
 import { checkpointHeadline } from "../items/checkpoint-headline";
 import { readSinceBounded, type EventRow } from "../../events";
 import { liveAssignments, type Assignment } from "../../claims";
@@ -270,7 +276,16 @@ export const orientation = defineOperation({
     // read here rather than imported because a guard module exports guard
     // objects, not a reusable query.
     const childRows = await ctx.db.$queryRawUnsafe<RawChildRow[]>(
-      `SELECT "id", "title", "state" FROM "Item" WHERE "parentId" = $1 ORDER BY "createdAt" ASC`,
+      // Archived children are excluded for the same reason
+      // `hierarchy.no_finish_with_actionable_child` excludes them: this is
+      // the same question asked of the same relationship, one file over. An
+      // archived row will never be transitioned again, because no ordinary
+      // read can reach it to transition — so reporting it as an actionable
+      // open loop points a session at work it cannot open, cannot move, and
+      // cannot close.
+      `SELECT "id", "title", "state" FROM "Item"
+       WHERE "parentId" = $1 AND ${NOT_ARCHIVED_CONDITION}
+       ORDER BY "createdAt" ASC`,
       input.itemId,
     );
     const children: OpenLoopChild[] = childRows.map((child) => ({

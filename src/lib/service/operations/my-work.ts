@@ -27,7 +27,12 @@
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  NOT_ARCHIVED_CONDITION,
+  toItemRecord,
+  type ItemRecord,
+  type RawItemRow,
+} from "../items/row";
 import type { HolderType, Liveness, Role } from "../../claims";
 
 const inputSchema = z
@@ -145,8 +150,14 @@ export const myWork = defineOperation({
          a."claimedAt" AS "assignmentClaimedAt",
          a."lastActive" AS "assignmentLastActive"
        FROM "Assignment" a
+       -- An archived item is not work in hand, even while an assignment on
+       -- it is still open (MILESTONES.md #137). Archiving does not release
+       -- claims — a claim is a fact about who took the row, and rewriting it
+       -- would falsify that history — so without this condition a session
+       -- would be shown holding a row that every other read denies it, with
+       -- nothing in the response to explain the contradiction.
        JOIN "Item" i ON i."id" = a."itemId"
-       WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL
+       WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL AND i.${NOT_ARCHIVED_CONDITION}
        ORDER BY a."claimedAt" ASC`,
       input.sessionId,
     );

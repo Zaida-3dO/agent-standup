@@ -27,7 +27,7 @@ import { setItemAreas } from "./item-areas";
 import { assertOriginResolved } from "./create-core";
 import { resolveSessionDefaults } from "./session-defaults";
 import { appendEvent } from "@/lib/events";
-import { InternalError } from "../errors";
+import { InternalError, NotFoundError } from "../errors";
 
 /**
  * The id of the inbox project, creating it if this is the first task to ask.
@@ -55,6 +55,8 @@ export async function resolveInboxProject(
     readonly areas?: readonly string[];
     readonly originType?: "person" | "source" | "auto";
     readonly originPersonId?: string;
+    /** The filed task's drive mode, so the container matches what it contains. */
+    readonly driveMode?: "autonomous" | "supervised" | "manual";
   },
 ): Promise<string> {
   const title = ctx.settings.values["items.inbox_project"];
@@ -73,6 +75,25 @@ export async function resolveInboxProject(
   // nothing on the overwhelmingly common path where it already exists.
   const resolvedOrigin = await resolveSessionDefaults(ctx, origin);
   assertOriginResolved(resolvedOrigin);
+
+  // The same existence check `insertItem` runs, for the same reason: a
+  // person is validated whether it was typed into the call or inherited from
+  // the session, so a declaration cannot write a reference the database will
+  // not accept. Without it the foreign key still refuses — nothing dangling
+  // is ever stored — but it surfaces as an opaque internal error rather than
+  // as a `not_found` naming the field, which is a materially worse answer
+  // for the same fault.
+  if (resolvedOrigin.originType === "person" && resolvedOrigin.originPersonId) {
+    const personRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT "id" FROM "Person" WHERE "id" = $1`,
+      resolvedOrigin.originPersonId,
+    );
+    if (personRows.length === 0) {
+      throw new NotFoundError(`No such person: ${resolvedOrigin.originPersonId}.`, {
+        fields: ["originPersonId"],
+      });
+    }
+  }
 
   // The inbox inherits the filed task's area rather than inventing one. An
   // area is required on every item (SCHEMA.md §1) and there is no sensible
@@ -104,7 +125,7 @@ export async function resolveInboxProject(
      ) VALUES (
        $1, NULL, 'project'::"ItemKind", $2, '', 'on_deck'::"ItemState", 'P2'::"Priority",
        $3::"OriginType", $4, $5, false,
-       'autonomous'::"DriveMode", $6::"MergeAuthority", CURRENT_TIMESTAMP
+       $6::"DriveMode", $7::"MergeAuthority", CURRENT_TIMESTAMP
      )
      RETURNING "id"`,
     id,
@@ -112,6 +133,12 @@ export async function resolveInboxProject(
     resolvedOrigin.originType,
     resolvedOrigin.originPersonId ?? null,
     area,
+    // The same fallback `insertItem` applies, from the same resolution. A
+    // constant here would put the inbox project on a different drive mode
+    // from the very task being filed into it — the identical mismatch this
+    // function already resolves `originType` to avoid, on the field that
+    // decides how much the system may act unattended.
+    resolvedOrigin.driveMode ?? "autonomous",
     ctx.settings.values["items.default_merge_authority"].replace(/-/g, "_"),
   );
   const row = rows[0];
