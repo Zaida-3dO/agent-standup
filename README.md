@@ -182,9 +182,36 @@ in changes. In that setup:
 - Keep real secrets (the generated `DATABASE_URL` password, etc.) only in
   that host's own `.env` — never copied into this repo.
 
-## Status
+## What is built
 
-The boilerplate is in place: app skeleton, CI, Dockerfile, and compose files. The
-database schema has its initial migration, but nothing queries it yet — the API
-surface described in `SCHEMA.md` isn't built. See
-[`MILESTONES.md`](docs/plans/MILESTONES.md) for the build order.
+The service layer holds **62 registered operations** (`src/lib/service/registry.ts`), and every
+one of them is reachable from each of the four adapters the application mounts. Ask a running
+instance what it exposes rather than taking this list on trust:
+
+```bash
+standup service info --json      # the operation catalogue, and the limits a caller must respect
+standup --help                   # every noun and verb, built from the command table itself
+```
+
+| Surface          | What it is                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Web API**      | 46 JSON routes under `src/app/api` — items, claims, transitions, artifacts, events, settings, admin entities                                                                    |
+| **MCP**          | The agent-facing surface, over streamable HTTP (`/api/mcp`) and over stdio. Tools are derived from the operation registry, so there is no second list to forget an operation in |
+| **Command line** | `standup <noun> <verb>`, on either of two bindings — over HTTP against a server, or `--direct` against `DATABASE_URL` in-process                                                |
+| **Front end**    | The board, an item detail view, a since-your-last-visit ledger, a settings editor and an admin section                                                                          |
+
+An item minted through the product walks the full state machine on service calls alone —
+`plan_review → executing → in_review → merged` — because the artifacts each transition guard reads
+are writable through the service. The rules are enforced in the service layer, so a refusal is the
+same refusal on every surface: a missing approving review at tip, a claim already held, or a
+completion with no structured summary is rejected identically whether it arrived from an agent, a
+terminal or the API.
+
+The schema ships as one baseline migration, and a one-time bulk import (`docs/plans/BACKFILL.md`)
+loads a backlog held in an external file-based store.
+
+**Where the edges are.** [`MILESTONES.md`](docs/plans/MILESTONES.md) is the honest inventory: it
+carries every row with its status, and the queue is worked in dependency order rather than
+front-to-back. Two limits are worth knowing before deploying: the HTTP transport carries no
+authentication, so it expects a trusted network (`DECISIONS.md` records the reasoning), and the
+liveness sweep needs a schedule the deployment provides — see above, because claims leak without one.
