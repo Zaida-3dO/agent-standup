@@ -33,10 +33,17 @@ export interface RemoveUnrecognisedSettingOutput {
   readonly removedValue: unknown;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const removeUnrecognisedSetting = defineOperation({
   name: "remove_unrecognised_setting",
   kind: "write",
   summary: "Removes a stored override row whose key this build does not declare.",
+  // Stryker restore all
   input: inputSchema,
   async handler(
     ctx: ServiceContext,

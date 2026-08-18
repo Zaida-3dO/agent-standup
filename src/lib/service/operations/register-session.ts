@@ -188,11 +188,18 @@ function fetchInstructionsFor(variant: string): RegisterSessionOutput["fetch"] {
   };
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const registerSession = defineOperation({
   name: "register_session",
   kind: "write",
   summary:
     "Registers a session and reports which hook variant it should run, and whether it may claim (governed by `hook.require_registration_to_claim`, off by default — not the protocol version alone).",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RegisterSessionInput): Promise<RegisterSessionOutput> {
     const stamped = ctx.caller.transport;

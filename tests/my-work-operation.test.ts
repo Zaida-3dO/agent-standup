@@ -18,6 +18,7 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { registerSessions } from "./helpers/register-sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -89,6 +90,67 @@ describeIfDb("my_work against Postgres", () => {
       sessionId: "session-holds-nothing",
     })) as { items: readonly unknown[] };
     expect(result.items).toEqual([]);
+  });
+
+  it("reports a session that has never registered as unhooked", async () => {
+    // The gap this closes: a session with no hook can claim and do work, and
+    // nothing downstream could tell "no rule could have fired here, because
+    // nothing was watching" from "a rule fired and found nothing wrong". A
+    // reviewer trusting that policy was enforced on such a session is
+    // trusting something that was never true.
+    const result = (await runtime.call("my_work", {
+      sessionId: "session-never-registered",
+    })) as { hooked: boolean };
+    expect(result.hooked).toBe(false);
+  });
+
+  it("reports a session registered without a version as unhooked too", async () => {
+    // A registered session that reported no version has no hook this
+    // installation has heard from, exactly as an unregistered one does. A
+    // reader asking "was anything watching" is owed the same answer for
+    // both, so the absent row and the null column collapse deliberately.
+    await prisma.session.upsert({
+      where: { id: "session-registered-no-version" },
+      create: {
+        id: "session-registered-no-version",
+        machine: "laptop",
+        transport: "http",
+        hookVariant: "http",
+        hookVersion: null,
+      },
+      update: { hookVersion: null },
+    });
+
+    const result = (await runtime.call("my_work", {
+      sessionId: "session-registered-no-version",
+    })) as { hooked: boolean };
+    expect(result.hooked).toBe(false);
+  });
+
+  it("reports a session that reported a hook version as hooked", async () => {
+    // The other direction, which is what stops the field being a constant.
+    // A mutant hardcoding `false` passes both tests above and fails here.
+    await registerSessions(prisma, ["session-with-hook"]);
+
+    const result = (await runtime.call("my_work", { sessionId: "session-with-hook" })) as {
+      hooked: boolean;
+    };
+    expect(result.hooked).toBe(true);
+  });
+
+  it("answers whether the session is hooked even when it holds nothing", async () => {
+    // The case a join onto the assignments would have lost. A session
+    // holding no work still has a hook or still does not, and that is
+    // exactly the session a reviewer may be looking at — an empty item list
+    // must not silently take the field with it.
+    await registerSessions(prisma, ["session-hooked-idle"]);
+
+    const result = (await runtime.call("my_work", { sessionId: "session-hooked-idle" })) as {
+      items: readonly unknown[];
+      hooked: boolean;
+    };
+    expect(result.items).toEqual([]);
+    expect(result.hooked).toBe(true);
   });
 
   it("carries roleCustom through for a role:'custom' assignment", async () => {

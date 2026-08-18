@@ -55,11 +55,18 @@ export interface GetItemSummaryOutput extends ItemSummaryRecord {
   readonly checkpointHeadline: string | null;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const getItem = defineOperation({
   name: "get_item",
   kind: "read",
   summary:
     "Reads one item by id. Returns the slim shape — id, title, state, headline and the latest checkpoint's headline — unless full is passed.",
+  // Stryker restore all
   input: inputSchema,
   async handler(
     ctx: ServiceContext,

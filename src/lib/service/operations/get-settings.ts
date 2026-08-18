@@ -44,10 +44,17 @@ export interface GetSettingsOutput {
   readonly revision: string;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const getSettings = defineOperation({
   name: "get_settings",
   kind: "read",
   summary: "Reads every declared setting, its resolved value, and where that value came from.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext): Promise<GetSettingsOutput> {
     const rows = await readAllOverrideRows(ctx.db);

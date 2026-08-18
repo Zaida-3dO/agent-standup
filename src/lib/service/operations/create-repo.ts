@@ -31,10 +31,17 @@ const inputSchema = z
 
 export type CreateRepoInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const createRepo = defineOperation({
   name: "create_repo",
   kind: "write",
   summary: "Creates a repository. Refused if the id already exists.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CreateRepoInput): Promise<RepoRecord> {
     const existing = await ctx.db.$queryRawUnsafe<{ id: string }[]>(

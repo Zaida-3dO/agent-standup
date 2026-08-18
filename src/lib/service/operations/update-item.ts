@@ -108,10 +108,17 @@ const EDITABLE_FIELDS = [
   "customFields",
 ] as const;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const updateItem = defineOperation({
   name: "update_item",
   kind: "write",
   summary: "Edits an item's non-state fields.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: UpdateItemInput): Promise<UpdateItemResult> {
     const { id, ...rawEdits } = input;

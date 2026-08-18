@@ -68,10 +68,17 @@ export interface ClaimResult extends Assignment {
   readonly crewName: string | null;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const claim = defineOperation({
   name: "claim",
   kind: "write",
   summary: "Takes ownership of an item in a role. Atomic — two agents can't both win.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ClaimOperationInput): Promise<ClaimResult> {
     // Checked explicitly, ahead of the insert: `Assignment.itemId` carries a

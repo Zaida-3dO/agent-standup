@@ -44,11 +44,18 @@ const inputSchema = z
 
 export type CheckpointOperationInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const checkpoint = defineOperation({
   name: "checkpoint",
   kind: "write",
   summary:
     "Records what you tried, what you ruled out, what's next. A headline gives it a one-line BLUF that reads pick up without the prose.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CheckpointOperationInput): Promise<AppendedEvent> {
     // A checkpoint is per AGENT, not just per item (§4) — it needs the

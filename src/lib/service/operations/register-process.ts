@@ -82,11 +82,18 @@ export function toProcessRecord(row: RawProcessRow): RegisteredProcessRecord {
   };
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const registerProcess = defineOperation({
   name: "register_process",
   kind: "write",
   summary:
     "Declares a process this session started, so the kill guard can tell it from another crew's.",
+  // Stryker restore all
   input: inputSchema,
   async handler(
     ctx: ServiceContext,

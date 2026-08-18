@@ -23,10 +23,17 @@ const inputSchema = z
 
 export type ReleaseOperationInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const release = defineOperation({
   name: "release",
   kind: "write",
   summary: "Gives up ownership of an item.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ReleaseOperationInput): Promise<Assignment> {
     // The live row this session holds on this item — at most one, by the

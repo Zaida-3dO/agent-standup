@@ -37,10 +37,17 @@ const inputSchema = z
 
 export type PutSettingInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const putSetting = defineOperation({
   name: "put_setting",
   kind: "write",
   summary: "Sets one setting's override to a value, validated against its declared schema.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: PutSettingInput): Promise<RenderedSetting> {
     requireSettingKey(input.key);

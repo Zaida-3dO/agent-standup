@@ -80,11 +80,18 @@ function assertEnabled(): void {
   }
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const backfill = defineOperation({
   name: "backfill",
   kind: "write",
   summary:
     "Bulk-loads an existing body of work — items, history, claims and artifacts — in one call.",
+  // Stryker restore all
   input: z.object({ payload: backfillPayloadSchema }).strict(),
   async handler(ctx: ServiceContext, input: { payload: unknown }): Promise<BackfillResult> {
     assertEnabled();

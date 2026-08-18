@@ -277,10 +277,17 @@ async function liveAssignment(
   return rows[0] ?? null;
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const recordToolCalls = defineOperation({
   name: "record_tool_calls",
   kind: "write",
   summary: "Records a batch of tool calls as telemetry, with the item's state at the time.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RecordToolCallsInput): Promise<RecordToolCallsOutput> {
     // Capped before it is used, not merely before it is stored. This is an

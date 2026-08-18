@@ -95,6 +95,12 @@ const inputSchema = z
 
 export type DescribeToolInput = z.infer<typeof inputSchema>;
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const describeTool = defineOperation({
   name: "describe_tool",
   kind: "read",
@@ -103,6 +109,7 @@ export const describeTool = defineOperation({
   // tool list as much as to any other.
   summary:
     "The full contract for one tool: its fields, and the conditional rules its schema cannot state.",
+  // Stryker restore all
   input: inputSchema,
   async handler(_ctx: ServiceContext, input: DescribeToolInput): Promise<ToolContract> {
     if (!lookup || !names) {

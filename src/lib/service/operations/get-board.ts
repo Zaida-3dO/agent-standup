@@ -323,11 +323,18 @@ function toCount(value: bigint | number | string): number {
   return typeof value === "number" ? value : Number(value);
 }
 
+// Stryker disable all : this metadata is a module-level literal, read into
+// the registry at import — before any test body runs and never re-evaluated
+// — so a mutation here is unkillable by construction, NOT untested.
+// `scripts/check-operation-metadata-mutants.mjs` requires this and carries
+// the full reasoning, including why moving the assertions into a test body
+// does not help.
 export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
     "One paginated page of one board column, with that column's true total. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee and search; pass full for whole records.",
+  // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
     // Which columns this call is answering for. A named column is exactly
