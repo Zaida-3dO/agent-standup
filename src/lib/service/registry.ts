@@ -59,6 +59,10 @@ import { listItems } from "./operations/list-items";
 // read can answer for a caller that knows a phrase rather than an id.
 import { search } from "./operations/search";
 import { getBoard } from "./operations/get-board";
+// Projects with their subtrees rolled up (MILESTONES.md #74) — the grouping
+// a store outgrows one flat column of cards, and the only level at which
+// progress is a meaningful ratio.
+import { getProjects } from "./operations/get-projects";
 // Since your last visit (MILESTONES.md #38): the ledger slice, and the
 // per-profile read state that decides what in it is new to you.
 import { getEvents } from "./operations/get-events";
@@ -164,6 +168,7 @@ export const OPERATION_REGISTRY = {
   [listItems.name]: listItems,
   [search.name]: search,
   [getBoard.name]: getBoard,
+  [getProjects.name]: getProjects,
   [getEvents.name]: getEvents,
   [markEventSeen.name]: markEventSeen,
   [getItemDetail.name]: getItemDetail,

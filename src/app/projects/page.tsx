@@ -1,13 +1,11 @@
-// `/projects` — the organising view. A later task owns it; this is the
-// route resolving with an honest placeholder so the sidebar's link works
-// and the screen's crew has an address to build at.
-import { Placeholder } from "@/components/placeholder/Placeholder";
+// `/projects` — the organising view (MILESTONES.md #74).
+//
+// No wrapping <main> here — AppShell (src/components/app-shell) already
+// supplies the one for the whole app. `Projects` is a client component
+// because it fetches on mount; this page stays a server component that
+// simply places it.
+import { Projects } from "@/components/projects/Projects";
 
 export default function ProjectsPage() {
-  return (
-    <Placeholder
-      title="Projects"
-      summary="Every project, with its progress, who is on it and what it is waiting for."
-    />
-  );
+  return <Projects />;
 }
