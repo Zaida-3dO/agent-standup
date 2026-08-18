@@ -53,7 +53,7 @@
 // `run_scores` grades against the pair.
 
 /**
- * What an open run currently believes it was served by.
+ * What an open run holds as the pair it was served by.
  *
  * Both fields are nullable because a run can legitimately exist having
  * never been told either — see rule 3 above. They are read together and
@@ -72,7 +72,7 @@ export interface ReportedFacets {
 }
 
 /**
- * What the ingest should do with one call, given the run currently open.
+ * What the ingest should do with one call, given the open run it belongs to.
  *
  * Three outcomes rather than a boolean, because "keep the run as it is" and
  * "keep the run and record what it just learned" are different writes and

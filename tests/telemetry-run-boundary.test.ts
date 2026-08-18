@@ -136,7 +136,8 @@ describe("decideRun — adoption, one-way and only from unknown", () => {
   });
 
   it("cuts once a run holds a model and a different one arrives", () => {
-    // Adoption is one-way: it fills an unknown, it never replaces a known.
+    // Adoption is one-way: it fills an unknown facet only, so a run that
+    // already holds a model is cut by a differing one rather than amended.
     const adopted = decideRun(unknown, { model: "vendor-model-a" });
     expect(adopted.action).toBe("adopt");
     expect(

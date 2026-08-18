@@ -28,8 +28,9 @@
 // configured at the moment the run was last written, so a total over a
 // month spanning a price change is a sum of figures from two different
 // tables — a number that corresponds to no price list that has ever
-// existed. Worse, it cannot be corrected: fixing a mistyped rate would
-// leave every historical total still carrying the old one.
+// existed. Worse, it cannot be corrected: fixing a mistyped rate reaches
+// none of the totals already summed from it, because each addend was frozen
+// at whatever rate applied when it was written.
 //
 // Recomputing from the four accumulated token counts and the current table
 // gives a figure that is reproducible by anyone holding the same counts and
