@@ -8,6 +8,7 @@
 // reasoning `NeedsYouBadge` gives for rendering nothing at zero.
 import type { DetailSummary } from "@/lib/item-detail/types";
 import { summaryEntries } from "@/lib/item-detail/view";
+import { Markdown } from "./Markdown";
 import styles from "./ItemDetail.module.css";
 
 export interface SummaryPanelProps {
@@ -32,7 +33,13 @@ function entryGroup(label: string, value: unknown) {
       <p className={styles.summaryLabel}>{label}</p>
       <ul className={styles.summaryList}>
         {entries.map((entry, index) => (
-          <li key={`${label}-${index}`}>{entry}</li>
+          <li key={`${label}-${index}`}>
+            {/* A summary entry is one line of markdown — an inline
+                `code` span or a link is common, a heading is not — so it
+                renders without the block margins that would open a gap
+                between this bullet and the next. */}
+            <Markdown source={entry} density="inline" />
+          </li>
         ))}
       </ul>
     </div>
@@ -61,7 +68,7 @@ export function SummaryPanel({ summary }: SummaryPanelProps) {
       {summary.howVerified !== null && (
         <div className={styles.summaryGroup} data-group="How verified">
           <p className={styles.summaryLabel}>How verified</p>
-          <p className={styles.artifactBody}>{summary.howVerified}</p>
+          <Markdown source={summary.howVerified} density="compact" />
         </div>
       )}
     </section>

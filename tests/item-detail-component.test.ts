@@ -10,6 +10,9 @@ import { SubtaskTree } from "@/components/item-detail/SubtaskTree";
 import { ArtifactList } from "@/components/item-detail/ArtifactList";
 import { HistoryList } from "@/components/item-detail/HistoryList";
 import { SummaryPanel } from "@/components/item-detail/SummaryPanel";
+import { Markdown } from "@/components/item-detail/Markdown";
+import { TabStrip } from "@/components/item-detail/TabStrip";
+import { TABS } from "@/lib/item-detail/tabs";
 import type {
   DetailArtifact,
   DetailHistoryEntry,
@@ -20,10 +23,26 @@ import type {
 import { findAllByType, walk } from "./helpers/react-element";
 import type { ReactNode } from "react";
 
-/** Every string of text anywhere in the tree, flattened — handles arrays of children. */
+/**
+ * Every string of text anywhere in the tree, flattened — handles arrays of
+ * children, and reads a `<Markdown>`'s source.
+ *
+ * The `Markdown` case is load-bearing rather than a convenience. This
+ * harness does not render: it walks the element tree a component RETURNED,
+ * so a nested component appears as an unrendered reference and its output
+ * does not exist yet. A body handed to `<Markdown source={…} />` therefore
+ * sits in a prop, not in children, and a `textOf` that only read children
+ * would report every rendered body as absent — turning "the text is on the
+ * screen" into an assertion that quietly stopped checking anything the
+ * moment the body became markdown.
+ */
 function textOf(root: ReactNode): string {
   const parts: string[] = [];
   for (const el of walk(root)) {
+    if (el.type === Markdown) {
+      const source = (el.props as { source?: unknown }).source;
+      if (typeof source === "string") parts.push(source);
+    }
     const children = (el.props as { children?: unknown }).children;
     const list = Array.isArray(children) ? children : [children];
     for (const child of list) {
@@ -146,12 +165,57 @@ describe("ItemDetailView", () => {
     expect(findAllByType(element, SubtaskTree).length).toBe(0);
   });
 
-  it("renders all four sections once loaded", () => {
-    const element = ItemDetailView({ loadState: { status: "loaded", detail: detail() } });
-    expect(findAllByType(element, SubtaskTree).length).toBe(1);
-    expect(findAllByType(element, ArtifactList).length).toBe(1);
-    expect(findAllByType(element, HistoryList).length).toBe(1);
-    expect(findAllByType(element, SummaryPanel).length).toBe(1);
+  it("renders ONLY the active tab's section, not all of them at once", () => {
+    // The point of the tabs: one section occupies the page at a time. If
+    // every section rendered and the inactive ones were merely hidden, the
+    // page would still pay for the whole history and the whole subtree on
+    // every visit — which is the cost the tabs exist to remove.
+    const loadState = { status: "loaded", detail: detail() } as const;
+
+    const subtasks = ItemDetailView({ loadState, activeTab: "subtasks" });
+    expect(findAllByType(subtasks, SubtaskTree).length).toBe(1);
+    expect(findAllByType(subtasks, HistoryList).length).toBe(0);
+    expect(findAllByType(subtasks, ArtifactList).length).toBe(0);
+
+    const activity = ItemDetailView({ loadState, activeTab: "activity" });
+    expect(findAllByType(activity, HistoryList).length).toBe(1);
+    expect(findAllByType(activity, SubtaskTree).length).toBe(0);
+  });
+
+  it("shows Overview when no tab is asked for", () => {
+    const element = ItemDetailView({
+      loadState: { status: "loaded", detail: detail({ item: detailItem({ body: "the brief" }) }) },
+    });
+    expect(textOf(element)).toContain("the brief");
+    expect(findAllByType(element, SubtaskTree).length).toBe(0);
+  });
+
+  it("renders every tab without throwing, so no tab is a dead end", () => {
+    // A tab that renders nothing is indistinguishable from a broken one,
+    // and these are filled by separate pieces of work — this is what keeps
+    // the page whole while that happens.
+    const loadState = { status: "loaded", detail: detail() } as const;
+    for (const tab of TABS) {
+      const element = ItemDetailView({ loadState, activeTab: tab });
+      expect(findAllByType(element, TabStrip).length).toBe(1);
+      const panels = elementsWithProp(element, "data-panel");
+      expect(panels.map((el) => (el.props as Record<string, unknown>)["data-panel"])).toEqual([
+        tab,
+      ]);
+      expect(textOf(element).trim()).not.toBe("");
+    }
+  });
+
+  it("renders the item body as markdown rather than as text", () => {
+    // Row #120's complaint: a brief's `##` and pipe tables were reaching
+    // the screen as literal characters.
+    const body = ["## Heading", "", "| a | b |", "|---|---|", "| 1 | 2 |"].join("\n");
+    const element = ItemDetailView({
+      loadState: { status: "loaded", detail: detail({ item: detailItem({ body }) }) },
+    });
+    const rendered = findAllByType(element, Markdown);
+    expect(rendered).toHaveLength(1);
+    expect((rendered[0]!.props as Record<string, unknown>).source).toBe(body);
   });
 
   it("shows the server's column, not one it recomputed", () => {

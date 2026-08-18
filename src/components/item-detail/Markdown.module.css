@@ -1,0 +1,300 @@
+/* Typography for rendered markdown.
+ *
+ * `react-markdown` emits plain semantic tags with no classes of its own, so
+ * everything here is a descendant selector under one wrapper class. That is
+ * the intended shape for this renderer — the alternative (a `components`
+ * map assigning a class per tag) would put a dozen one-line components in
+ * the TSX to express what CSS already expresses in one place.
+ *
+ * Every value is a token. Sizes step down from the block's own font size
+ * rather than restating the type scale, so a `compact` block scales as a
+ * unit. */
+
+.markdown {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  /* A long brief must not push the page sideways. `min-width: 0` lets this
+     block shrink inside a flex/grid parent, which is what actually allows
+     the overflow rules below to take effect rather than being overridden by
+     a min-content floor. */
+  min-width: 0;
+}
+
+/* Collapses the outer margins so a block sits flush in its container: a
+   rendered body's first heading should align with the row above it, not
+   float half a line below. */
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* ── Headings ───────────────────────────────────────────────────────────
+   A brief's headings are structure, not decoration, so they get weight and
+   colour rather than large sizes. This block is nested inside a page that
+   already has an `h1` (the item's title); a body heading rendering at
+   title size would compete with it, and the reader would lose the one
+   piece of hierarchy the page actually guarantees. */
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: var(--space-5) 0 var(--space-2);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.markdown h1 {
+  font-size: var(--text-md);
+}
+
+.markdown h2 {
+  font-size: var(--text-sm);
+}
+
+/* h3 and below share body size and separate by weight and colour alone.
+   Past the third level a brief's nesting is finer than the eye tracks by
+   size, and inventing three more sizes below body size makes them
+   unreadable rather than more precise. */
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: var(--text-xs);
+}
+
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  color: var(--text-secondary);
+}
+
+/* A rule under the top two levels, which is where a brief's major sections
+   break. Borrowed from how the headings read in source, where a `##` is
+   visibly a new part. */
+.markdown h1,
+.markdown h2 {
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.markdown p {
+  margin: var(--space-3) 0;
+}
+
+.markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  /* A URL in a brief is frequently long and unbreakable; without this it
+     sets the block's min-width and pushes the whole page wide. */
+  overflow-wrap: anywhere;
+}
+
+.markdown a:hover {
+  color: var(--text-primary);
+}
+
+/* ── Lists ─────────────────────────────────────────────────────────────── */
+
+.markdown ul,
+.markdown ol {
+  margin: var(--space-3) 0;
+  padding-left: var(--space-5);
+}
+
+.markdown li {
+  margin: var(--space-1) 0;
+}
+
+/* A nested list is a continuation of its parent item, so it loses the gap
+   that separates two sibling paragraphs. */
+.markdown li > ul,
+.markdown li > ol {
+  margin: var(--space-1) 0;
+}
+
+/* A task-list item from GFM (`- [ ]`) renders a checkbox; the marker would
+   sit beside it and read as a second bullet. */
+.markdown li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: calc(-1 * var(--space-4));
+}
+
+.markdown input[type="checkbox"] {
+  margin-right: var(--space-2);
+  accent-color: var(--accent);
+}
+
+/* ── Code ───────────────────────────────────────────────────────────────
+   Mono is for identifiers and code, per the type scale's own rule. */
+
+.markdown code {
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  font-variant-ligatures: none;
+}
+
+.markdown pre {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  /* A code block scrolls itself rather than wrapping: wrapping a line of
+     code changes what it appears to say, and a block that widens the page
+     breaks every other column on it. */
+  overflow-x: auto;
+}
+
+/* Inside a block the padding and background belong to the `pre`; the inner
+   `code` would otherwise paint a second, inset panel. */
+.markdown pre code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────
+   The visible half of the complaint that started this: a pipe table read as
+   text is unreadable, and a table is the shape briefs use for exactly the
+   dense reference material a reader scans rather than reads. */
+
+/* Wraps the table so a wide one scrolls within the block instead of
+   widening the page. `display: block` on a scroll container is the one
+   place a table's own display is overridden deliberately. */
+.markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: var(--space-4) 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--text-2xs);
+}
+
+.markdown th,
+.markdown td {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+/* Zebra striping, because these tables are scanned across a row and a wide
+   one loses its row on the way. Uses the raised surface rather than an
+   opacity trick so it composes the same way in both themes. */
+.markdown tbody tr:nth-child(even) {
+  background: var(--surface-raised);
+}
+
+/* ── Everything else ───────────────────────────────────────────────────── */
+
+.markdown blockquote {
+  margin: var(--space-3) 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.markdown hr {
+  margin: var(--space-5) 0;
+  border: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.markdown strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+/* ── Compact ────────────────────────────────────────────────────────────
+   For a body nested in a row (an artifact, a history entry), where the
+   block is a detail within a line rather than the page's main content.
+   Only spacing and the top heading sizes change; colour and structure are
+   the same rendering. */
+
+.compact {
+  font-size: var(--text-2xs);
+}
+
+.compact p,
+.compact ul,
+.compact ol,
+.compact table,
+.compact pre {
+  margin: var(--space-2) 0;
+}
+
+.compact h1,
+.compact h2,
+.compact h3,
+.compact h4,
+.compact h5,
+.compact h6 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-xs);
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* ── Inline ─────────────────────────────────────────────────────────────
+   For a one-line body sitting inside someone else's line — a summary
+   bullet in an `<li>`. Only the outer spacing goes: a block that is
+   genuinely multi-block still renders as blocks, because silently
+   flattening one would misrepresent what the author wrote. */
+
+.inline {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  /* So the rendered paragraph sits on the bullet's own line rather than
+     starting a new block below the marker. */
+  display: inline;
+}
+
+.inline p {
+  display: inline;
+  margin: 0;
+}
+
+/* A second paragraph in a source that claimed to be one line still needs to
+   be visible as separate; a space is the least disruptive separator inside
+   a list item. */
+.inline p + p::before {
+  content: " ";
+}
+
+.inline ul,
+.inline ol,
+.inline pre,
+.inline table,
+.inline blockquote {
+  margin: var(--space-1) 0;
+}

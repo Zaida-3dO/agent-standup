@@ -298,3 +298,88 @@
   font-size: 0.88rem;
   line-height: 1.5;
 }
+
+/* ── Tabs ───────────────────────────────────────────────────────────────
+   The six sections. A strip of links rather than buttons — see
+   `TabStrip.tsx` for why — sitting directly under the header, so the
+   header's identity block stays true across every tab. */
+
+.tabStrip {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border-default);
+  /* On a narrow viewport six tabs do not fit; they scroll sideways rather
+     than wrapping to a second row, which would move the content down by a
+     line at exactly the widths that have the least room for it. */
+  overflow-x: auto;
+  /* Leaves room for the active tab's underline, which sits on the strip's
+     own bottom border and would otherwise be clipped by the scroll box. */
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  /* Sits ON the strip's bottom border, so the active tab shows one line in
+     its own colour rather than two stacked lines. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+
+/* The active tab is marked by BOTH colour and an underline. The underline
+   is the part that survives a reader who cannot separate the accent from
+   the muted text — the same reasoning the state chips give for carrying a
+   shape as well as a hue. */
+.tabActive {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.tabActive:hover {
+  background: none;
+}
+
+.tabCount {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-normal);
+}
+
+.tabActive .tabCount {
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+}
+
+/* The panel a tab's content sits in. No padding of its own — each section
+   below already carries its own spacing, and adding a second layer here
+   would indent the whole page relative to the header above it. */
+.panel {
+  min-width: 0;
+}
+
+/* A section is the only thing in its panel now, so the margin that
+   separated it from the next section is dead space at the bottom of the
+   page. */
+.panel > .section:last-child {
+  margin-bottom: 0;
+}

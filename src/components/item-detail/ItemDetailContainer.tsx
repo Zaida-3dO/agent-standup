@@ -1,21 +1,43 @@
 "use client";
 
-// The thin container: fetches `GET /api/items/{id}/detail` once and hands
-// the result to `ItemDetailView` as plain props. Kept deliberately empty of
-// branching — see `ItemDetailView.tsx`'s header for why the conditionals
-// live there instead, where they're directly testable.
+// The thin container: fetches `GET /api/items/{id}/detail` once, tracks
+// which tab is showing, and hands both to `ItemDetailView` as plain props.
+// Kept deliberately empty of branching — see `ItemDetailView.tsx`'s header
+// for why the conditionals live there instead, where they're directly
+// testable.
 //
 // **No database access, and none possible.** This calls the HTTP adapter,
 // which is itself a thin shell over one `service.call("get_item_detail", …)`
 // (CLAUDE.md: "Every adapter is a thin shell over a service call"). Nothing
 // under `src/components/` imports the service layer or the database client;
 // `npm run check:db-imports` enforces that independently of lint.
-import { useEffect, useState } from "react";
+//
+// ── The tab lives in the URL hash ──────────────────────────────────────
+//
+// Both halves of that matter and they are separate:
+//
+// **Reading it** is what makes a link to a section work. Arriving at
+// `/items/x#activity` must show Activity, so the initial tab is read from
+// the hash rather than defaulting to Overview and waiting to be clicked.
+//
+// **Writing it** is what makes the section linkable once you are there —
+// the reader who found the thing worth pointing at can copy the address
+// bar. It uses `history.replaceState` rather than assigning
+// `location.hash`, because assigning the hash makes the browser scroll to
+// whatever element has that id, and here the ids belong to the panels; the
+// page would jump on every tab click. `replaceState` also keeps a tab
+// switch out of the back stack, so Back returns to wherever the reader came
+// from rather than walking every tab they looked at.
+//
+// The rule that turns a hash into a tab is `tabFromHash`, a plain function
+// in `@/lib/item-detail/tabs` so it is tested without a browser.
+import { useCallback, useEffect, useState } from "react";
 import {
   fetchItemDetail,
   detailErrorMessageFrom,
   type DetailLoadState,
 } from "@/lib/item-detail/state";
+import { DEFAULT_TAB, hashForTab, tabFromHash, type DetailTab } from "@/lib/item-detail/tabs";
 import { ItemDetailView } from "./ItemDetailView";
 
 export interface ItemDetailContainerProps {
@@ -33,6 +55,14 @@ export interface ItemDetailContainerProps {
 export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   const [loadState, setLoadState] = useState<DetailLoadState>({ status: "loading" });
 
+  // Starts at the default rather than reading `location.hash` in the
+  // initialiser, because this component renders on the server first, where
+  // there is no `location` — and a first client render that disagreed with
+  // the server's HTML is a hydration mismatch. The effect below applies the
+  // hash immediately after mount, which is the earliest point the hash is
+  // knowable at all.
+  const [activeTab, setActiveTab] = useState<DetailTab>(DEFAULT_TAB);
+
   useEffect(() => {
     let cancelled = false;
     fetchItemDetail(itemId)
@@ -49,5 +79,28 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
     };
   }, [itemId]);
 
-  return <ItemDetailView loadState={loadState} />;
+  useEffect(() => {
+    // The hash as it is on arrival, then on every subsequent change.
+    // `hashchange` covers the reader following a link to another tab on the
+    // page they are already on, and the Back button moving between hashes —
+    // neither of which remounts anything, so without this listener the URL
+    // would say one tab and the page would show another.
+    const applyHash = () => {
+      setActiveTab(tabFromHash(window.location.hash));
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => {
+      window.removeEventListener("hashchange", applyHash);
+    };
+  }, []);
+
+  const onTabChange = useCallback((tab: DetailTab) => {
+    setActiveTab(tab);
+    // See the header: `replaceState` rather than `location.hash` so the
+    // page does not scroll to the panel and the back stack stays clean.
+    window.history.replaceState(null, "", hashForTab(tab));
+  }, []);
+
+  return <ItemDetailView loadState={loadState} activeTab={activeTab} onTabChange={onTabChange} />;
 }

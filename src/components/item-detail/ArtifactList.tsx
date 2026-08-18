@@ -8,6 +8,7 @@
 // DOM; this component only places the result.
 import type { DetailArtifact } from "@/lib/item-detail/types";
 import { artifactsByRound } from "@/lib/item-detail/view";
+import { Markdown } from "./Markdown";
 import styles from "./ItemDetail.module.css";
 
 export interface ArtifactListProps {
@@ -76,8 +77,12 @@ export function ArtifactList({ artifacts }: ArtifactListProps) {
                         <span className={styles.sha}>{shortSha(artifact.commitSha)}</span>
                       )}
                     </div>
+                    {/* A review body is markdown — headings per finding,
+                        tables of severities, fenced code quoting the line
+                        it is about. `compact` because it sits inside a row
+                        that is already small text. */}
                     {artifact.body !== null && (
-                      <p className={styles.artifactBody}>{artifact.body}</p>
+                      <Markdown source={artifact.body} density="compact" />
                     )}
                   </li>
                 ))}
