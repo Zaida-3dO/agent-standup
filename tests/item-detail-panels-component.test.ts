@@ -289,6 +289,59 @@ describe("the plan panel", () => {
     ]);
   });
 
+  it("does not print the BLUF's own paragraph twice", () => {
+    // The BLUF is drawn from the plan's opening paragraph, so on a plan that
+    // opens with its bottom line — the shape a good plan has — the lead
+    // block and the first line of the card below it would be the same
+    // sentence a few centimetres apart. A summary that only repeats the text
+    // beneath it earns nothing for the space it takes.
+    const element = PlanPanel({
+      artifacts: [plan({ body: "Rank the tab rather than stacking it.\n\n## Why\n\nBecause." })],
+    });
+    const rendered = textOf(element);
+    const occurrences = rendered.split("Rank the tab rather than stacking it.").length - 1;
+    expect(occurrences).toBe(1);
+    // And the rest of the body survives — the paragraph is un-repeated, not
+    // the card truncated.
+    expect(rendered).toContain("Because.");
+  });
+
+  it("keeps the body whole when the BLUF did not come from its opening paragraph", () => {
+    // A BLUF taken from a list item is saying something the card's own
+    // opening does not, so there is nothing being repeated and nothing to
+    // drop. Dropping unconditionally would silently eat the first paragraph
+    // of every plan.
+    const element = PlanPanel({
+      artifacts: [plan({ body: "# Steps\n\n- Bound the reads\n- Then the writes" })],
+    });
+    expect(textOf(element)).toContain("Bound the reads");
+    expect(textOf(element)).toContain("Then the writes");
+  });
+
+  it("keeps the body whole when the BLUF was truncated", () => {
+    // A truncated BLUF summarises a paragraph too long to be one, so the
+    // paragraph still carries more than the lead does.
+    const long = `${"word ".repeat(400)}end`;
+    const element = PlanPanel({ artifacts: [plan({ body: long })] });
+    expect(textOf(element)).toContain("end");
+  });
+
+  it("gives every collapsed snapshot a visible disclosure affordance", () => {
+    // A row that renders identically open and closed reads as inert metadata,
+    // and the history behind it is then reachable only by a reader who clicks
+    // on spec. Removing the hint or the marker fails this.
+    const element = PlanPanel({
+      artifacts: [
+        plan({ id: "p1", reviewRound: 1, body: "Superseded." }),
+        plan({ id: "p2", reviewRound: 2, body: "Current." }),
+      ],
+    });
+    const [details] = withProp(element, "data-superseded");
+    const summaryText = textOf(details);
+    expect(summaryText).toContain("Show");
+    expect(summaryText).toContain("superseded");
+  });
+
   it("omits the BLUF rather than rendering an empty one", () => {
     // An empty lead block reads as a rendering fault; its absence reads as
     // nothing to say.

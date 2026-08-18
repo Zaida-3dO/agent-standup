@@ -73,6 +73,61 @@ function snapshotBody(artifact: DetailArtifact) {
   );
 }
 
+/**
+ * The live plan's body with its opening paragraph removed, when the BLUF was
+ * drawn from that paragraph.
+ *
+ * **Why this exists.** The BLUF is derived from the plan's first prose
+ * paragraph, so on a plan that opens with its bottom line — which is the
+ * shape a good plan has — the lead block and the first line of the card
+ * below it are the same sentence, twice, a few centimetres apart. A summary
+ * that only repeats the text immediately beneath it earns nothing for the
+ * space it takes, and it makes the reader check whether they missed
+ * something.
+ *
+ * So when the BLUF came from the body's own opening paragraph, that
+ * paragraph is dropped from the card and the BLUF stands in for it. When the
+ * BLUF came from somewhere the reader will not immediately re-read — a list
+ * item, or a paragraph that was truncated — the body is left whole, because
+ * then the lead is genuinely saying something the card does not.
+ *
+ * Matching is on the paragraph, not on the rendered BLUF: the BLUF has had
+ * its markdown marks stripped and may be ellipsised, so comparing the two
+ * strings directly would fail on exactly the plans where they *are* the same
+ * sentence.
+ */
+function bodyWithoutLead(body: string | null, bluf: string | null): string | null {
+  if (body === null || bluf === null) return body;
+  // A truncated BLUF is a summary of a paragraph too long to be one, so the
+  // paragraph still carries more than the lead does and stays.
+  if (bluf.endsWith("…")) return body;
+
+  const lines = body.split(/\r?\n/);
+  let start = 0;
+  // Skip the same leading non-prose the BLUF derivation skips: blank lines
+  // and headings. Anything else means the BLUF came from further in, and the
+  // opening of the body is not what it repeated.
+  while (start < lines.length) {
+    const line = lines[start]?.trim() ?? "";
+    if (line === "" || /^#{1,6}\s/.test(line)) {
+      start++;
+      continue;
+    }
+    break;
+  }
+  let end = start;
+  while (end < lines.length && (lines[end]?.trim() ?? "") !== "") end++;
+  if (end === start) return body;
+
+  const paragraph = lines.slice(start, end).join(" ").trim();
+  // Compare through the same normalisation the BLUF went through, so
+  // emphasis and inline code in the source do not defeat the match.
+  if (planBluf(paragraph) !== bluf) return body;
+
+  const remainder = lines.slice(end).join("\n").trim();
+  return remainder === "" ? null : remainder;
+}
+
 export function PlanPanel({ artifacts }: PlanPanelProps) {
   const { latest, superseded, reviews } = planTimeline(artifacts);
   const bluf = latest === null ? null : planBluf(latest.body);
@@ -107,7 +162,10 @@ export function PlanPanel({ artifacts }: PlanPanelProps) {
             <span className={styles.planMeta}>{stamp(latest.createdAt)}</span>
             {latest.verdict !== null && <VerdictBadge verdict={latest.verdict} />}
           </div>
-          {snapshotBody(latest)}
+          {/* The opening paragraph is dropped when the BLUF above already
+              IS it — see `bodyWithoutLead`. The card keeps everything else,
+              so nothing is lost, only un-repeated. */}
+          {snapshotBody({ ...latest, body: bodyWithoutLead(latest.body, bluf) })}
         </div>
       )}
 
@@ -127,10 +185,22 @@ export function PlanPanel({ artifacts }: PlanPanelProps) {
               data-snapshot={snapshot.id}
               data-superseded=""
             >
+              {/* A marker and the word "Show" carry the affordance. Without
+                  them the row renders identically open and closed — the same
+                  weight, the same layout, nothing on either edge — so it
+                  reads as an inert metadata line and the history is
+                  reachable only by a reader who clicks it on spec. The
+                  marker rotates on open, and the label swaps to "Hide", so
+                  the row names the action available rather than only
+                  signalling that it has two states. */}
               <summary className={styles.disclosureSummary}>
+                <span className={styles.disclosureMarker} aria-hidden="true">
+                  ▶
+                </span>
                 <span className={styles.planMeta}>Round {snapshot.reviewRound}</span>
                 <span className={styles.planMeta}>{stamp(snapshot.createdAt)}</span>
                 <span className={styles.planSuperseded}>superseded</span>
+                <span className={styles.disclosureHint}>Show</span>
               </summary>
               {snapshotBody(snapshot)}
             </details>
