@@ -117,6 +117,87 @@ describe("rendering a successful answer", () => {
   });
 });
 
+// The text block is serialised compactly (MILESTONES.md #110). Every
+// assertion here fails if `JSON.stringify(value, null, 2)` comes back:
+// each names a character sequence only an indented rendering produces.
+describe("serialising the text block compactly", () => {
+  it("emits no indentation for a nested object", () => {
+    const text = toolSuccess({ nested: { deep: true } }).content[0]?.text ?? "";
+    expect(text).toBe('{"nested":{"deep":true}}');
+    expect(text).not.toContain("\n");
+    expect(text).not.toContain("  ");
+  });
+
+  it("emits no indentation for an array-valued field", () => {
+    // Arrays are where the pretty renderer is most expensive — one line
+    // and one indent per element — so a board answer is mostly this shape.
+    const text = toolSuccess({ items: [{ id: 1 }, { id: 2 }] }).content[0]?.text ?? "";
+    expect(text).toBe('{"items":[{"id":1},{"id":2}]}');
+    expect(text).not.toMatch(/\n\s+/);
+  });
+
+  it("renders a refusal compactly too, so one format covers every result", () => {
+    const rejection = toolRejection(new NotFoundError("No such item.", { fields: ["itemId"] }));
+    const text = rejection.content[0]?.text ?? "";
+    // Exact, not a shape check: an indented rendering of this same value
+    // differs from it only in whitespace, so anything looser passes
+    // against both formats and proves nothing about which one was used.
+    expect(text).toBe('{"code":"not_found","fields":["itemId"],"message":"No such item."}');
+    expect(JSON.parse(text)).toMatchObject({ code: "not_found", fields: ["itemId"] });
+  });
+
+  it("is materially smaller than the indented rendering on a realistic payload", () => {
+    // The row exists because of a measurement, so the test carries one:
+    // a board-shaped answer, compared against what the indented renderer
+    // would have produced for the identical value.
+    const value = {
+      items: Array.from({ length: 200 }, (_, i) => ({
+        id: "itm_" + i,
+        title: "a task title of ordinary length",
+        state: "executing",
+        assigneeId: i % 2 ? "person_" + i : null,
+        labels: ["mcp", "payload"],
+      })),
+    };
+    const compact = toolSuccess(value).content[0]?.text ?? "";
+    const indented = JSON.stringify(value, null, 2);
+    expect(compact.length).toBeLessThan(indented.length * 0.7);
+    expect(JSON.parse(compact)).toEqual(value);
+  });
+
+  it("still parses back to exactly the value, so no client loses data to the saving", () => {
+    // The compatibility claim in one assertion: a client that reads only
+    // `text` recovers the same object a client reading `structuredContent`
+    // gets. Whitespace was the only difference, and it was never data.
+    const value = { id: "itm_1", nested: { list: [1, 2, 3], flag: false }, nothing: null };
+    const result = toolSuccess(value);
+    expect(JSON.parse(result.content[0]?.text ?? "")).toEqual(result.structuredContent);
+  });
+
+  it("keeps both fields — neither half of the dual emission is dropped", () => {
+    // #110 is a serialisation change, explicitly not a removal: no tool
+    // declares an `outputSchema`, so the protocol requires `content`, and
+    // `structuredContent` is what a client reading data rather than text
+    // consumes. A "saving" that dropped either would break real clients.
+    const result = toolSuccess({ id: "itm_1" });
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.structuredContent).toEqual({ id: "itm_1" });
+  });
+
+  it("renders the same format regardless of size, rather than switching past a threshold", () => {
+    // The rejected alternative was a size-conditional rendering. A tiny and
+    // a large payload must serialise the same way, or the wire format
+    // becomes a function of how much data happens to exist.
+    const small = toolSuccess({ items: [{ id: 0 }] }).content[0]?.text ?? "";
+    const large =
+      toolSuccess({ items: Array.from({ length: 500 }, (_, i) => ({ id: i })) }).content[0]?.text ??
+      "";
+    expect(small).not.toContain("\n");
+    expect(large).not.toContain("\n");
+  });
+});
+
 describe("rendering a refusal", () => {
   it("carries the code and fields into structured content and into the text", () => {
     const result = toolRejection(new NotFoundError("No such item.", { fields: ["itemId"] }));
