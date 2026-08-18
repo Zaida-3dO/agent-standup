@@ -339,6 +339,68 @@ since M7.
 
 *Feature: somewhere you'd actually choose to work.*
 
+> ## ⚠️ RESCOPED 2026-08-18 — the board is the source of truth for M10, not this table
+>
+> M10 was re-planned by combining three sources and deduping: a **senior-designer pass** (60 features
+> across 12 themes, briefed to go past the filed feedback to real workflows and industry practice), a
+> **scout sweep of the whole feedback corpus** for anything with a display dimension, and **the rows
+> below**. The result is **20 PR-sized tasks**, live in Agent Standup under the project
+> **`M10 — The full front end`** (`f5a40975-3785-419a-82b3-a71ddb5efdf1`).
+>
+> **The rows below are NOT deleted and NOT stale as descriptions** — the new tasks cite them by number and
+> carry their text forward. Treat this table as the *provenance* of M10 and the board as its *state*.
+> Row-to-task mapping is in each task's `Provenance:` line.
+>
+> ### What the re-plan found in the code (verified, not inferred)
+>
+> 1. **There is no design system.** No `globals.css`, no token file, no theme; `src/app/layout.tsx` imports
+>    zero stylesheets and every colour is a hardcoded hex in a CSS module. So #122 ("the board is worth
+>    looking at") **cannot be done as a paint job** — there is no layer to paint into. That layer is now
+>    task T1, and it blocks every other M10 task.
+> 2. **Zero UI dependencies.** No component library, icon set, markdown renderer, drag library or charts.
+>    Every row saying "render markdown" or "show a chart" was also an unmade dependency decision.
+> 3. **The front end is 2,855 lines across 32 files.** Not a mature UI to refactor — a thin proof. M10 is
+>    the first real build, so structural decisions are cheap now and expensive shortly.
+> 4. **The multiplayer data is entirely unexposed.** `get_board` takes `assignee` as a filter input and
+>    **never returns it**; `get_item_detail` returns no assignment data at all. The product knows which
+>    agent, machine, branch and last-active for every claim, and no screen can say so.
+> 5. **The pattern behind #75 repeats four times, not once.** Also: the `assignee` filter with no display,
+>    `historyLimit` with no pagination control, and `Artifact.findings` with a GIN index that — per the
+>    schema's own comment — nothing queries.
+>
+> ### Decisions taken (Ope, 2026-08-18)
+>
+> - **Landing page: a Standup digest at `/`**, projects at `/projects`, the choice stored as a setting.
+>   Ope originally asked for projects-only; the designer argued that serves the *weekly* job (steering) and
+>   not the *daily* ones (overnight triage, what needs me), costing a navigation every day. **Projects-first
+>   as the organising principle, Standup-first as the entry point.**
+> - **Stack: Tailwind v4 + shadcn/ui + Radix + Geist + lucide**, matching fynance — the reference Ope named.
+>   This settles the open decision *"Front-end framework beyond the first board view"* listed below.
+>   Constraint: tests run `environment: "node"` with no DOM and components are hook-free/prop-driven, so
+>   **Radix lives only in thin interactive shells** and pure `*View.tsx` stay callable as functions.
+> - **Fleet visibility is P1**, after board and detail — but the **API half lands in wave 1** regardless,
+>   because presence sits in row 1 of the card and adding it later is a re-layout, not an addition.
+> - **Scope: everything.** All 60 designer features, the feedback gaps and the rows below.
+>
+> ### Dependency edges that were missing and are now drawn
+>
+> Four rows specify front-end behaviour but live **outside** M10, and no M10 row listed them in `Needs`:
+> **#109** (per-column paginated fetch and *show more* — consumed by T4) · **#136** (progress-report shape —
+> T14) · **#137** (delete as a UI-only affordance — T20) · **#128** (intervention prominence and the
+> settings surface — tracked on T13; **#128 keeps that work**, M10 only depends on it). This is the same
+> failure mode the footnote below names about #75.
+>
+> ### Promoted OUT of M10
+>
+> **The dependency graph as a schema relation.** `INTERVENTIONS.md` says plainly for I2 and I9 that the
+> graph *"is prose in this document rather than a relation between items — so it is not a question the
+> schema can be asked."* A graph view over data that does not exist would be a beautiful lie. It needs a
+> SCHEMA row, not a front-end one.
+>
+> ### The acceptance criterion for every M10 task
+>
+> *A row is done when someone can use it, not when the service call exists.*
+
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **72** | Item detail: subtask tree, artifacts, history, summary | 37 | `done` |
@@ -422,7 +484,7 @@ Three things get sequenced wrong more often than anything else:
 |---|---|
 | The band numbers, beyond the starting values | 57 |
 | Does Codex need the blocking wait-for-crew fallback? | 64 |
-| Front-end framework beyond the first board view | 73 |
+| ~~Front-end framework beyond the first board view~~ **SETTLED 2026-08-18** — Tailwind v4 + shadcn/ui + Radix + Geist + lucide, matching fynance (the reference Ope named). Radix confined to thin interactive shells so the hook-free `*View` test split survives. See the M10 rescope note | 73 |
 
 ## Not scheduled, deliberately
 
