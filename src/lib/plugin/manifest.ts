@@ -50,15 +50,20 @@ export const PLUGIN_NAME = "agent-standup";
 /**
  * The command the hook events are wired to.
  *
- * **`standup hook run`, not the hook script's own path.** The built
- * `standup-hook.js` is deliberately absent from the package's `bin`
- * (`scripts/build-cli.mjs` says why: it is a path a tool executes, not a
- * command a person runs), so it has no name on the PATH to call. `standup
- * hook run` is the published entry point for exactly this — it reads the
- * event from stdin and answers in the agent tool's own JSON shape and exit
- * code — and going through the package's real binary is what keeps the
- * wiring pointed at the installed version rather than at a file path only
- * this repository's layout would produce.
+ * **`standup-hook`, the dedicated entry point — not `standup hook run`.**
+ * The distinction is the difference between a hook that enforces and one
+ * that only appears to. `src/bin/standup.ts` supplies no stdin, because
+ * reading it unconditionally would make every `standup` command wait for
+ * input that never comes; a hook invoked through that binary therefore sees
+ * an empty payload, takes the unreadable-payload branch, and **allows**.
+ * The result is an installation that reports healthy, spools no telemetry
+ * and gates nothing — the exact failure the plugin exists to close. Only
+ * `standup-hook` reads the event from stdin and answers in the agent tool's
+ * own JSON shape and exit code.
+ *
+ * It names the package's binary rather than a path into `node_modules`,
+ * because a path assumes a hoisting, store or workspace layout that differs
+ * per package manager and is not the plugin's to predict.
  *
  * `npx --no-install` rather than a bare `npx`: the flag refuses to reach the
  * network. If the package is missing the hook fails immediately and
@@ -66,7 +71,7 @@ export const PLUGIN_NAME = "agent-standup";
  * download the first time one fires — and a hook that hangs is worse than a
  * hook that is absent, because the session stalls without saying why.
  */
-export const HOOK_COMMAND = `npx --no-install -p ${PACKAGE_NAME} standup hook run`;
+export const HOOK_COMMAND = `npx --no-install -p ${PACKAGE_NAME} standup-hook`;
 
 /**
  * The events the hook is wired to, and the ones it deliberately is not.

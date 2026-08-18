@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "standup": "dist/bin/standup.js"
+    "standup": "dist/bin/standup.js",
+    "standup-hook": "dist/bin/standup-hook.js"
   },
   "files": [
     "dist"

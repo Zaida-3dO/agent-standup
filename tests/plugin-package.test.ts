@@ -8,9 +8,13 @@
 // vendored copy of the binary quietly drifting from the published one — is a
 // property of what got written, and cannot be seen by reading the values
 // that were supposed to be written.
+import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { describe, expect, it, beforeAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildPlugin, PLUGIN_DIR } from "../scripts/build-plugin.mjs";
 import {
   HOOK_COMMAND,
@@ -54,17 +58,25 @@ describe("it consumes the published package rather than carrying a copy", () => 
     expect(manifest.dependencies).toEqual({ [PACKAGE_NAME]: "9.9.9" });
   });
 
-  it("ships no JavaScript at all — a copy of the binary would be JavaScript", async () => {
-    // The load-bearing assertion, and the reason it is stated as "no .js"
-    // rather than "no file named standup.js": a vendored copy could be
-    // called anything, and a test naming one filename would pass the moment
-    // someone copied it under another. The plugin is configuration; any
-    // executable in it is the failure.
+  it("ships exactly the configuration files, and nothing else whatsoever", async () => {
+    // The load-bearing assertion, and it is deliberately an **allowlist of
+    // the whole output** rather than a denylist of executable extensions.
+    // A denylist only catches the copies it thought to name: a review of
+    // this row copied the built binary in as `standup.bin` — 85KB of
+    // verbatim JavaScript under an extension no list included — and an
+    // extension check passed it. Asserting the complete file list instead
+    // means any file that is not one of these three fails, whatever it is
+    // called, which is the only form of this check that cannot be walked
+    // around by choosing a different name.
     const built = await buildTo("no-copies");
     const files = await listFiles(built);
 
-    const executables = files.filter((f) => /\.(js|mjs|cjs|ts)$/.test(f));
-    expect(executables).toEqual([]);
+    expect(files).toEqual([
+      ".claude-plugin/plugin.json",
+      ".mcp.json",
+      "hooks/hooks.json",
+      "skills/setup-agent-standup/SKILL.md",
+    ]);
   });
 
   it("reaches the hook through the installed package's own binary, not a path into this repository", () => {
@@ -72,10 +84,11 @@ describe("it consumes the published package rather than carrying a copy", () => 
 
     // Names the package, so resolution is the package manager's job.
     expect(command).toContain(PACKAGE_NAME);
-    // `standup hook run`, because the built hook script is deliberately not
-    // on the PATH (scripts/build-cli.mjs). A command wired to the script's
-    // own filename would be wired to something no install provides.
-    expect(command).toContain("standup hook run");
+    // `standup-hook`, the dedicated entry point — the only one that reads
+    // the event from stdin. Wiring `standup hook run` instead resolves and
+    // exits zero while enforcing nothing, which the process-level test at
+    // the bottom of this file is what actually catches.
+    expect(command).toContain("standup-hook");
     // No path into a build tree. `dist/` here would mean the plugin only
     // works on a machine laid out like this repository's checkout.
     expect(command).not.toContain("dist");
@@ -220,3 +233,87 @@ async function listFiles(root: string): Promise<string[]> {
   await walk(root);
   return out.sort();
 }
+
+// ── The wired command, as a process ────────────────────────────────────
+
+/**
+ * The hook wiring, proven by running it rather than by matching its text.
+ *
+ * Everything above asserts what `HOOK_COMMAND` *says*, and a string
+ * assertion cannot tell a working entry point from one that parses,
+ * resolves, exits zero and enforces nothing. That distinction is not
+ * hypothetical: the `standup` binary deliberately supplies no stdin (see
+ * `src/bin/standup.ts`), so a hook routed through it reads an empty
+ * payload, takes the unreadable-payload branch and **allows** — an
+ * installation that reports healthy and gates nothing, which is the one
+ * outcome this plugin exists to prevent. A test that matched the command
+ * string would have been equally happy with either.
+ *
+ * So this runs the entry point the plugin actually wires, feeds it a real
+ * `PreToolUse` payload, and points it at a server that blocks. The exit
+ * code is the assertion: only a script that read stdin, called the server
+ * and rendered the verdict can produce a 2.
+ */
+describe("the wired hook command actually enforces", () => {
+  const repoRoot = path.resolve(import.meta.dirname, "..");
+  let server: Server;
+  let url: string;
+
+  beforeAll(async () => {
+    server = createServer((request, result) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        result.writeHead(200, { "content-type": "application/json" });
+        result.end(JSON.stringify({ decision: "block", reason: "no approving review at tip" }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("names an entry point the package actually publishes", () => {
+    // The wiring is a bare command name, so it resolves through the
+    // package's `bin`. A name absent from it resolves to nothing on a real
+    // install — and `npx --no-install` would then fail rather than fall
+    // back, which is the correct failure but only if the name is right.
+    const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+    const invoked = HOOK_COMMAND.split(" ").at(-1);
+
+    expect(Object.keys(pkg.bin)).toContain(invoked);
+  });
+
+  it("blocks a pre-tool call when the server says block", async () => {
+    // The load-bearing assertion of the whole file. Routed through an entry
+    // point that does not read stdin, this exits 0 with empty output.
+    const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+    const entry = pkg.bin[HOOK_COMMAND.split(" ").at(-1) as string] as string;
+
+    const result = await new Promise<{ status: number; stdout: string }>((resolve) => {
+      const child = execFile(
+        process.execPath,
+        [entry],
+        { cwd: repoRoot, encoding: "utf8", env: { ...process.env, STANDUP_URL: url } },
+        (error, stdout) => {
+          const failed = error as { code?: number } | null;
+          resolve({ status: failed?.code ?? 0, stdout: stdout ?? "" });
+        },
+      );
+      child.stdin?.end(
+        JSON.stringify({
+          hook_event_name: "PreToolUse",
+          session_id: "s-1",
+          tool_name: "Bash",
+          tool_input: { command: "git merge main" },
+        }),
+      );
+    });
+
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stdout).decision).toBe("deny");
+  });
+});
