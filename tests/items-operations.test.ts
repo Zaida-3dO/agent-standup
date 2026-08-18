@@ -393,12 +393,21 @@ describeIfDb("item service operations against Postgres", () => {
   describe("get_item", () => {
     it("reads back exactly what create_item wrote", async () => {
       const created = (await runtime.call("create_item", {
-        title: "Readable",
+        // A title that satisfies the convention (MILESTONES.md #131), so this
+        // case stays about the create/read agreement it is named for. A
+        // one-word title would attach `titleAdvice` and fail here for a
+        // reason that has nothing to do with reading a row back.
+        title: "A readable item title",
         body: "Body text",
         area: "reading",
         originType: "auto",
         priority: "P1",
-      })) as { id: string };
+      })) as { id: string; titleAdvice?: string };
+      // The advice is a fact about the *call*, not about the row, so a create
+      // that earns none must carry no key at all — otherwise every read would
+      // have to explain a field it can never return. Asserted here because
+      // this is the one case that compares the two shapes directly.
+      expect(created.titleAdvice).toBeUndefined();
       // `full: true` — `create_item` returns the whole record, and the slim
       // default (MILESTONES.md #107) is by construction not equal to it.
       // What this asserts is unchanged: a create and a get of the same row

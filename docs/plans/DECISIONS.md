@@ -1259,6 +1259,43 @@ From `feedback/2026-08-15-followups-need-a-reference-not-a-parent.md`,
 `feedback/2026-08-15-complete-item-follow-up-guard-has-no-satisfiable-path.md` and
 `feedback/interventions.md`.
 
+## 18. A title is advised, never refused — and stored titles are left alone
+
+Titles are written for a person scanning a board, so the detail that belongs to the mechanism — an
+identifier, a file path, an issue number — belongs in `body`. That is a convention about authorship,
+and settling how strictly to hold callers to it turned on one question: **is there a predicate that
+is right about every string?**
+
+There is not. "Reads well to a person" is a judgement, and every signal that correlates with a bad
+title has honest counter-examples. `Inbox` is a one-word title the system creates for itself. A title
+naming a real product surface can legitimately contain the characters an identifier does. So the
+check reports **findings**, the create attaches them to a response that **succeeded**, and nothing is
+refused. The asymmetry decides it: a wrong refusal costs a caller a mint it cannot complete except by
+writing a worse title, while a wrong nudge costs a sentence nobody must act on. Where a rule is a
+matter of judgement rather than validity, the cheap error is the one to prefer.
+
+The signals are matched as **shapes**, never as a list of real values — the same posture, for the
+same reason, as the enumerated prefixes in `summaries/validate.ts`, which replaced a blanket regex
+that fired on legitimate technical prose. A widened pattern is worse than no pattern: it trains
+callers to ignore the advice, and then the honest findings go unread too.
+
+**Where the convention is stated.** Beside the check that applies it, and served from there — the
+rule is one exported string, carried into every create's `contract.rules`. Two channels then reach a
+caller without either of them being written twice: `describe_tool` serves it on demand, and every
+`invalid_input` refusal already appends a `describe_tool` pointer, so a caller refused on any other
+field can read the title rule in the same breath. Putting it in each tool's `summary` was rejected on
+the cost `describe_tool` exists to avoid — a description is charged to every session on every turn,
+whether or not it is ever read.
+
+**The stored titles are left as they are, deliberately.** Titles are live data: they are what every
+existing link, notification and person's memory refers to, and a bulk rewrite of imported titles
+would be a large, hard-to-review change to the one field whose value is that it is recognisable.
+Nothing is lost by leaving them — `headline` (#107) already carries a readable one-line BLUF beside
+the title on every read, so an item with a work-order title is legible without that title changing,
+and a title can be corrected one at a time through `update_item` by whoever is already looking at it.
+The convention therefore applies where it is cheap and reversible — at authorship, on new work —
+rather than as a migration whose blast radius exceeds the problem it solves.
+
 ## 14. Still open
 
 1. **Exact band numbers** beyond the starting values above.

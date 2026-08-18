@@ -33,6 +33,8 @@ interface Created {
   state: string;
   area: string;
   title: string;
+  /** Present only when the title departs from the convention (MILESTONES.md #131). */
+  titleAdvice?: string;
 }
 
 interface Rejection {
@@ -697,6 +699,71 @@ describeIfDb("explicit create operations", () => {
       const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
       expect(OPERATION_REGISTRY.create_item.summary.toLowerCase()).toContain("deprecated");
       expect(OPERATION_REGISTRY.create_item.summary).toContain("create_task");
+    });
+  });
+  // ── The title convention, on the way out (MILESTONES.md #131) ──────────
+  //
+  // The advice rides on a create that SUCCEEDED, which is the design
+  // decision worth pinning: `item-title.ts` argues at length that no
+  // predicate is right about every title, so the convention advises rather
+  // than refuses. A test that asserted a rejection here would be asserting
+  // the opposite feature.
+  describe("the title convention", () => {
+    // Fails if `insertItem` stops attaching the advice — the whole feature
+    // reduces to a pure function nothing calls.
+    it("answers a work-order title with a note, on every create surface", async () => {
+      const project = await call(
+        "create_project",
+        base("agent-standup #102 - route writes", "titles"),
+      );
+      expect(project.titleAdvice).toBeDefined();
+      expect(project.titleAdvice).toContain("body");
+
+      const task = await call("create_task", {
+        ...base("fix appendEvent for #102", "titles"),
+        projectId: project.id,
+      });
+      expect(task.titleAdvice).toBeDefined();
+
+      const subtask = await call("create_subtask", {
+        ...base("patch src/lib/events", "titles"),
+        taskId: task.id,
+      });
+      expect(subtask.titleAdvice).toBeDefined();
+    });
+
+    // The other half, and the one that keeps the feature tolerable: a good
+    // title gets no key at all. Fails if the advice is attached
+    // unconditionally, which would put a note on every create ever made.
+    it("says nothing at all about a title that reads well", async () => {
+      const item = await call(
+        "create_project",
+        base("Let people reset a forgotten password", "titles"),
+      );
+      expect(item.titleAdvice).toBeUndefined();
+    });
+
+    // The item is created either way — the advisory posture, asserted as
+    // behaviour rather than as prose. Fails if the convention is ever
+    // promoted to a refusal.
+    it("creates the item regardless, because the judgement is the author's", async () => {
+      const item = await call("create_project", base("#42", "titles"));
+      expect(item.id).toBeTruthy();
+      expect(item.state).toBe("on_deck");
+      expect(item.title).toBe("#42");
+    });
+
+    // The convention has to be reachable by a caller, not merely enforced.
+    // Fails if the rule is dropped from a create's contract, which is what
+    // `describe_tool` and every refusal's pointer serve.
+    it("states the convention in every create's contract", async () => {
+      const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
+      for (const name of ["create_project", "create_task", "create_subtask", "create_item"]) {
+        const rules = OPERATION_REGISTRY[name as "create_project"].contract?.rules ?? [];
+        const titleRule = rules.find((rule) => rule.fields.includes("title"));
+        expect(titleRule, `${name} states the title convention`).toBeDefined();
+        expect(titleRule?.rule).toContain("body");
+      }
     });
   });
 });

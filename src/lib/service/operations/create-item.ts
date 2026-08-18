@@ -34,8 +34,9 @@ import {
   originPersonCheck,
   originPersonMessage,
   type CommonCreateInput,
+  type CreatedItem,
+  TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
-import type { ItemRecord } from "../items/row";
 
 const inputSchema = z
   .object({
@@ -88,6 +89,7 @@ const contract = {
         "implicitly by naming one here. `area`, by contrast, is a free label and is created on " +
         "first use, so the two fields behave differently despite looking alike.",
     },
+    TITLE_CONVENTION_CONTRACT_RULE,
   ],
   example: {
     title: "Add a rate limit to the public endpoint",
@@ -111,7 +113,7 @@ export const createItem = defineOperation({
   contract,
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: CreateItemInput): Promise<ItemRecord> {
+  async handler(ctx: ServiceContext, input: CreateItemInput): Promise<CreatedItem> {
     const { parentId, ...common } = input;
 
     if (parentId === undefined) {

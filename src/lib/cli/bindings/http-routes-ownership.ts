@@ -89,6 +89,11 @@ export const OWNERSHIP_HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object
     request: (input) => ({ path: `/api/my-work${queryString(input)}` }),
     unwrap: (body) => body,
   },
+  progress_report: {
+    method: "GET",
+    request: (input) => ({ path: `/api/progress-report${queryString(input)}` }),
+    unwrap: (body) => body,
+  },
   get_crew_name: {
     method: "POST",
     request: (input) => ({ path: "/api/crew/name", body: input }),

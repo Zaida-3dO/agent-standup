@@ -22,8 +22,9 @@ import {
   originPersonCheck,
   originPersonMessage,
   type CommonCreateInput,
+  type CreatedItem,
+  TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
-import type { ItemRecord } from "../items/row";
 
 const inputSchema = z
   .object(commonCreateShape)
@@ -44,9 +45,23 @@ export const createProject = defineOperation({
   kind: "write",
   summary:
     "Creates a project — a root container for tasks. A project has no state of its own; its column is derived from its children, and it cannot be transitioned.",
+  contract: {
+    // The title convention (MILESTONES.md #131). Declared here so a
+    // caller reaches it the moment it is refused on any other field —
+    // `runtime.ts` appends a `describe_tool` pointer to every
+    // `invalid_input` refusal — and so `describe_tool` can state it on
+    // demand rather than it being charged to every turn in `summary`.
+    rules: [TITLE_CONVENTION_CONTRACT_RULE],
+    example: {
+      title: "Let people reset a forgotten password",
+      body: "The reset link expires too fast.",
+      area: "web",
+      originType: "auto",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: CreateProjectInput): Promise<ItemRecord> {
+  async handler(ctx: ServiceContext, input: CreateProjectInput): Promise<CreatedItem> {
     return insertItem(ctx, input as CommonCreateInput, { id: null, depth: 0 });
   },
 });

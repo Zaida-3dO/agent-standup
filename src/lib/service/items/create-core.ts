@@ -23,6 +23,7 @@ import { resolveAreasRaw, setItemAreas } from "./item-areas";
 import { callerEventActor } from "./event-attribution";
 import { appendEvent } from "@/lib/events";
 import { normalizeEmDash } from "@/lib/text-normalize";
+import { titleAdviceFor, TITLE_CONVENTION_RULE } from "@/lib/item-title";
 import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
@@ -183,6 +184,45 @@ export function kindForDepth(depth: number): "project" | "task" | "subtask" {
 }
 
 /**
+ * The title convention as a contract rule, shared by every create (#131).
+ *
+ * One constant rather than the same sentence written into four operations,
+ * for the reason `complete_item`'s contract interpolates its caps instead of
+ * retyping them: a rule that exists in four places is a rule three of them
+ * will eventually disagree about, and the disagreement is silent because
+ * nothing fails when documentation is wrong.
+ *
+ * The prose itself comes from `item-title.ts`, beside the check that applies
+ * it — so the convention a caller reads and the convention the server acts on
+ * are the same string.
+ */
+export const TITLE_CONVENTION_CONTRACT_RULE = {
+  fields: ["title"],
+  rule: TITLE_CONVENTION_RULE,
+} as const;
+
+/**
+ * A created item, plus anything the create resolved that the caller did not
+ * state (MILESTONES.md #126's third part, generalised).
+ *
+ * A distinct type from `ItemRecord` rather than a widening of it, because
+ * the extra field is true of *this call* and not of the row: re-read the item
+ * tomorrow and there is no advice, because nothing was authored. Putting it
+ * on `ItemRecord` would oblige every read on every surface to carry a key
+ * that is always absent, and would invite a reader to treat it as stored
+ * state.
+ */
+export interface CreatedItem extends ItemRecord {
+  /**
+   * A note on the title, when it departs from the convention (#131).
+   *
+   * Absent when there is nothing to say. Advisory in full: the item is
+   * created either way, and nothing downstream reads this.
+   */
+  readonly titleAdvice?: string;
+}
+
+/**
  * Inserts the item and appends its create event.
  *
  * `parentId` and the depth it resolved to arrive already validated by the
@@ -195,7 +235,7 @@ export async function insertItem(
   ctx: ServiceContext,
   input: CommonCreateInput,
   parent: { id: string | null; depth: number },
-): Promise<ItemRecord> {
+): Promise<CreatedItem> {
   // items.max_depth (SCHEMA.md §17.2): "A runaway guard on the item tree:
   // a create that would exceed this depth is refused rather than allowed
   // to grow without bound."
@@ -335,5 +375,20 @@ export async function insertItem(
     payload: { field: "state", from: null, to: "on_deck" },
   });
 
-  return toItemRecord(row);
+  // The title convention (MILESTONES.md #131), answered on the way out.
+  //
+  // Attached to a create that **succeeded** rather than refusing one: the
+  // convention is a matter of authorship, and `item-title.ts` carries the
+  // full argument for why no predicate can decide it for every string. The
+  // note reaches the one caller positioned to act on it, at the one moment
+  // the title is cheap to change — a create's response, before anything
+  // links to the item.
+  //
+  // Spread conditionally so an item whose title is already fine carries no
+  // key at all, rather than a `null` every read of every create has to
+  // explain. Same posture as `example` on a tool contract: absent is a
+  // cleaner "nothing to say" than a present empty value.
+  const record = toItemRecord(row);
+  const advice = titleAdviceFor(record.title);
+  return advice === null ? record : { ...record, titleAdvice: advice };
 }
