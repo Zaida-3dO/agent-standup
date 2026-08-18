@@ -92,6 +92,8 @@ export interface ItemDetailArtifact {
   readonly ref: string | null;
   readonly body: string | null;
   readonly findings: unknown;
+  /** `person` or `agent` — who produced this artifact. See the select in the handler for why it is surfaced. */
+  readonly createdByType: string;
   readonly createdAt: string;
 }
 
@@ -157,6 +159,7 @@ interface RawArtifactRow {
   ref: string | null;
   body: string | null;
   findings: unknown;
+  createdByType: string;
   createdAt: Date;
 }
 
@@ -270,8 +273,16 @@ export const getItemDetail = defineOperation({
         : columnForState(item.state as ItemStateValue);
 
     const artifactRows = await ctx.db.$queryRawUnsafe<RawArtifactRow[]>(
+      // `createdByType` is selected because it is the difference between a
+      // review a person signed and one an agent wrote, which is the exact
+      // question `merge.requires_authorisation` decides a merge on. It was
+      // written by one operation and read by one guard, and surfaced to
+      // nobody — so the fact that decides whether a merge gate means anything
+      // was invisible to every human and agent reading the item back. A
+      // record that cannot be read is not an audit trail.
       `SELECT "id", "kind"::text AS "kind", "verdict"::text AS "verdict", "reviewRound",
-              "commitSha", "ref", "body", "findings", "createdAt"
+              "commitSha", "ref", "body", "findings", "createdByType"::text AS "createdByType",
+              "createdAt"
        FROM "Artifact" WHERE "itemId" = $1
        ORDER BY "reviewRound" ASC, "createdAt" ASC`,
       input.id,
@@ -285,6 +296,7 @@ export const getItemDetail = defineOperation({
       ref: row.ref,
       body: row.body,
       findings: row.findings ?? null,
+      createdByType: row.createdByType,
       createdAt: row.createdAt.toISOString(),
     }));
 

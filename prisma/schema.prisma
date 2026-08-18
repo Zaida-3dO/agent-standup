@@ -360,6 +360,14 @@ enum ArtifactKind {
   visual_review
   test_run
   commit
+  // Work verified by INSPECTION against code that is already merged, as
+  // distinct from a review that approved a change before it shipped
+  // (SCHEMA.md §6b). Deliberately its own label rather than a `code_review`
+  // carrying a flag: the two make different claims, and the entire value of
+  // this kind is that its claim cannot be read as the other one by anything
+  // looking at the row later. A flag would be a distinction every existing
+  // reader ignores by default; a kind is one they cannot.
+  historical_verification
   screenshot
   other
 }

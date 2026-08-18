@@ -7,7 +7,7 @@
 // present (or absent) in `Artifact`, which an in-memory model cannot settle.
 // Skips without TEST_DATABASE_URL.
 import { PrismaClient } from "@prisma/client";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { GuardRegistry, applyTransition, rehearseTransition } from "@/lib/service/state-machine";
 import {
@@ -108,6 +108,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     createdAt?: Date;
     followUpItemId?: string | null;
     findings?: unknown;
+    body?: string | null;
   }) {
     await prisma.artifact.create({
       data: {
@@ -116,6 +117,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         kind: overrides.kind as never,
         verdict: (overrides.verdict ?? null) as never,
         commitSha: overrides.commitSha ?? null,
+        body: overrides.body ?? null,
         reviewRound: overrides.reviewRound ?? 1,
         createdByType: (overrides.createdByType ?? "agent") as never,
         createdById: "test-actor",
@@ -1243,6 +1245,236 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
       expect(isServiceError(error)).toBe(true);
       expect(await readState(id)).toBe("in_review");
+    });
+  });
+
+  // #138 — closing work that finished before this installation existed.
+  // The clause under test is the historical-verification alternative inside
+  // `merge.requires_approving_code_review`. Every case here is about the
+  // shape of that alternative: what it accepts, what it refuses, and — the
+  // load-bearing half — what it leaves untouched.
+  describe("criterion 2b — historical_verification as an alternative to an approving code_review", () => {
+    const ENV_VAR = "ENABLE_HISTORICAL_VERIFICATION";
+    let savedEnv: string | undefined;
+
+    beforeEach(() => {
+      savedEnv = process.env[ENV_VAR];
+    });
+
+    afterEach(() => {
+      if (savedEnv === undefined) delete process.env[ENV_VAR];
+      else process.env[ENV_VAR] = savedEnv;
+    });
+
+    function openWindow() {
+      process.env[ENV_VAR] = "true";
+    }
+
+    function reviewClauseOnly() {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      return reg;
+    }
+
+    it("REFUSES while the window is CLOSED, even with a perfectly-formed artifact — the default posture is unchanged", async () => {
+      // The most important case in this block. With the window shut, this
+      // path does not exist and the guard must behave exactly as it did
+      // before the alternative was added.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "Read src/app at abc123: the routes named in the brief are absent.",
+      });
+      delete process.env[ENV_VAR];
+
+      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("REFUSES for every near-miss spelling of the flag — the window fails closed", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected",
+      });
+
+      for (const value of ["1", "yes", "on", "TRUE", "True", "true ", " true", "", "false"]) {
+        process.env[ENV_VAR] = value;
+        const error = await callTransition(id, "merged", reviewClauseOnly()).catch(
+          (e: unknown) => e,
+        );
+        expect((error as { code?: string }).code).toBe("guard_rejected");
+        expect(await readState(id)).toBe("in_review");
+      }
+    });
+
+    it("ALLOWS with the window open and an artifact naming the tip commit — the case the whole row exists for", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "Verified against merged code at abc123; the routes are gone and no links remain.",
+      });
+
+      await callTransition(id, "merged", reviewClauseOnly());
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES when the verification names a commit the tip has moved past — an inspection of superseded code proves nothing about what ships", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "old111",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "old111",
+        body: "inspected at commit old111",
+      });
+      // A newer commit moves the tip; the inspection is now about code that
+      // is not what would ship.
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "new222" });
+
+      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("REFUSES a verification with no body — the evidence IS the difference from an unfalsifiable approval", async () => {
+      // `record_artifact` refuses to write this row; the guard asserts it
+      // independently, because this is the clause that decides a merge and
+      // it must not rest on an upstream validator staying correct.
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: null,
+      });
+
+      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("does NOT satisfy merge_authority needs_approval — a person's sign-off is still required", async () => {
+      // The narrowest and most important boundary: this path widens what
+      // counts as review EVIDENCE, never what counts as AUTHORISATION.
+      openWindow();
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+      });
+
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { message?: string }).message).toContain("needs_approval");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("does NOT satisfy the visual-review clause — an unrelated requirement stays unrelated", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review", needsVisualReview: true });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+      });
+
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresVisualReviewGuard);
+      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("leaves the lgtm_with_followups obligation intact where such an approval actually exists", async () => {
+      // The reading worth disproving: because the historical path can
+      // satisfy the code-review clause without a `code_review`, one might
+      // expect `merge.requires_linked_followup` to go quiet and let an
+      // unhonoured lgtm_with_followups bargain through. It cannot — where a
+      // qualifying approval carrying that verdict exists, that guard reads
+      // it and fires exactly as before.
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "abc123",
+        followUpItemId: null,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected at abc123",
+      });
+
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresLinkedFollowUpGuard);
+      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect((error as { guard?: string }).guard).toBe("merge.requires_linked_followup");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("still REFUSES with no commit artifact at all — there is no tip to have inspected", async () => {
+      openWindow();
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "abc123",
+        body: "inspected something",
+      });
+
+      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe("guard_rejected");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("the refusal names the alternative while the window is open, and stays silent about it while closed", async () => {
+      // A path nobody is told about is a path nobody takes — and the one
+      // they take instead is recording a code_review that nothing can check.
+      // Equally, advertising a shut door would be worse than saying nothing.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
+
+      delete process.env[ENV_VAR];
+      const closed = await callTransition(id, "merged", reviewClauseOnly()).catch(
+        (e: unknown) => e,
+      );
+      expect((closed as { message?: string }).message).not.toContain("historical_verification");
+
+      openWindow();
+      const open = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
+      expect((open as { message?: string }).message).toContain("historical_verification");
     });
   });
 

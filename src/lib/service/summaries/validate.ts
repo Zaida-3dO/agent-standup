@@ -33,7 +33,56 @@ export const NOT_DONE_MAX = 5; // SCHEMA.md §5: "0-5 typed entries."
 // concrete to enforce on this field too. Flagged in the PR/handoff; a future
 // row should replace it the moment the real cap is confirmed or restored.
 export const NOT_DONE_TEXT_CHAR_CAP = 240;
-export const NOT_DONE_REASONS = ["follow-up", "needs-approval", "descoped"] as const;
+/**
+ * The closed set of typed reasons a `not_done` entry may carry — SCHEMA.md
+ * §5a. Each one names a *different claim about the world*, and each is paired
+ * with a proof obligation that only holds when that claim is true
+ * (`guards/deferral.ts`). That pairing is the whole mechanism: the standard
+ * "the explanation must be good enough" is ungradeable as prose, so §5a
+ * inverts it into something a query can check.
+ *
+ *   - `follow-up`           — deferred because something is in the way. Proved
+ *                             by a linked item that is genuinely `blocked` or
+ *                             `paused`.
+ *   - `follow-up-scheduled` — NOT deferred: separate work, already committed
+ *                             to as its own queue row. Proved by a linked item
+ *                             that is open, actionable, and a **sibling**
+ *                             rather than a descendant (DECISIONS.md §17).
+ *   - `needs-approval`      — waiting on a person. Proved by a linked item
+ *                             `blocked` with `blocked_on_type = person`.
+ *   - `descoped`            — a decision not to do it. No work is deferred, so
+ *                             there is nothing to point at.
+ *
+ * **What adding a fourth reason costs, stated as a trade rather than as a
+ * free win.** §5a's load-bearing property is that *"ran out of time"*, *"too
+ * hard"* and *"will do later"* have no reason code and therefore cannot be
+ * said. Mutual exclusivity between the two follow-up reasons is not by itself
+ * enough to preserve that: the question is not whether they overlap but
+ * whether their *union* now covers "later". So the price is charged
+ * explicitly. `follow-up` charges it by requiring the linked item to be
+ * `blocked` or `paused` — and `blocked` demands a reason and a
+ * `blocked_on_type`, so faking one makes the work MORE visible.
+ * `follow-up-scheduled` charges it by requiring the linked item to be
+ * genuinely scheduled: `someday` is refused (`guards/deferral.ts`'s
+ * `UNSCHEDULED_ITEM_STATES`), because a row on the someday pile is exactly the
+ * costless parking space that would let "later" through.
+ *
+ * **The honest comparison is not against a perfect §5a, though.** The shape
+ * this reason exists for — a review's non-blocking finding, recorded as an
+ * open sibling — had no representation at all, and the observed response was
+ * to drop `not_done` and put the deferral in `watch_for` as prose. That path
+ * costs nothing and requires no false statement either, and it destroys the
+ * machine-readable link. Measured against that, a priced, checkable,
+ * *linked* path is a gain. Measured against the ideal, it is a widening, and
+ * it is written down here as one so the next reader is not told a property
+ * holds more completely than it does.
+ */
+export const NOT_DONE_REASONS = [
+  "follow-up",
+  "follow-up-scheduled",
+  "needs-approval",
+  "descoped",
+] as const;
 export type NotDoneReason = (typeof NOT_DONE_REASONS)[number];
 
 export const WHAT_TO_TEST_MIN = 1;

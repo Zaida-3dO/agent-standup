@@ -1,0 +1,20 @@
+-- A distinct artifact kind for work verified by inspection against merged
+-- code, rather than approved by a review of a proposed change.
+--
+-- Additive: one new label on "ArtifactKind". No existing column, constraint
+-- or row is altered, so this migration has nothing to back-fill and nothing
+-- to lose.
+--
+-- `ADD VALUE IF NOT EXISTS` rather than a bare `ADD VALUE`, for the reason
+-- the review-tiering migration records: a bare `ADD VALUE` on a label that
+-- already exists is an error, and an error here would leave the migration
+-- half-applied. Postgres 12+ permits `ALTER TYPE ... ADD VALUE` inside a
+-- transaction block (how Prisma runs this file) as long as the new label is
+-- not USED in the same transaction — nothing below writes one.
+--
+-- Why a new label rather than reusing `code_review` with a distinguishing
+-- field: the two make different claims, and the whole value of this kind is
+-- that the claim it makes cannot be mistaken for the other one by anything
+-- reading the row afterwards. A flag on `code_review` would be a claim that
+-- every existing reader silently ignores.
+ALTER TYPE "ArtifactKind" ADD VALUE IF NOT EXISTS 'historical_verification';

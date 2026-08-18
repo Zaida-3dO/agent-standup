@@ -65,6 +65,17 @@ export {
   BLOCKED_PAUSED_GUARDS,
 } from "./blocked-paused";
 export { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
+export {
+  HISTORICAL_VERIFICATION_KIND,
+  historicalVerificationSatisfies,
+  type HistoricalVerificationOutcome,
+} from "./historical-verification";
+export {
+  HISTORICAL_VERIFICATION_ENABLED_VALUE,
+  HISTORICAL_VERIFICATION_ENV_VAR,
+  historicalVerificationStartupWarning,
+  isHistoricalVerificationEnabled,
+} from "./historical-verification-enabled";
 export { evidenceAtTipGuard } from "./evidence-at-tip";
 export { hierarchyGuard } from "./hierarchy";
 export {
@@ -88,4 +99,6 @@ export {
   DEFERRAL_FOLLOW_UP_GUARD_ID,
   DEFERRAL_REASONS_REQUIRING_ITEM,
   deferralFollowUpGuard,
+  findNotDoneProofIssues,
+  type NotDoneProofIssue,
 } from "./deferral";

@@ -1203,7 +1203,19 @@ way, since it is a fairly separate task, it is not really considered a blocker t
 can drive the first task all the way to completion and then still have a follow-up task committed, so
 that we do not accidentally drop the follow-ups."*
 
-**This is not a guard change, and that is the point.** Two orchestrator sessions reached for
+**This began as a rule about judgement rather than a guard, and that framing was the point** — the
+deadlock it diagnosed was caused by a parenting choice, not by a guard being wrong, and no guard
+needed to change for the sibling shape to work. **It is now also enforced**, and the reason for the
+addition is worth recording rather than leaving the next reader to find a guard contradicting the
+sentence above. The sibling rule was correct and was still not *reachable*: `not_done`'s `follow-up`
+reason demands a linked item that is blocked or paused, and an open sibling is neither, so the shape
+this decision endorses was the one shape the completion path refused. Making the endorsed shape
+recordable meant giving it a reason of its own (`follow-up-scheduled`, SCHEMA.md §5a), and a reason
+that names a claim about the world is checked — that is the whole mechanism §5a rests on. So the
+sibling requirement is enforced where the follow-up is *recorded*, while the choice of how to parent
+work in general remains judgement, exactly as below.
+
+**The original diagnosis, unchanged.** Two orchestrator sessions reached for
 `parentId` on the same day, independently, and one of them deadlocked five merged PRs with it:
 `hierarchy.no_finish_with_actionable_child` says the parent cannot finish while the child is open,
 and `merge.requires_linked_followup` says the review's linked follow-up must *be* open. One item
