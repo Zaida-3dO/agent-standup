@@ -7,10 +7,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -63,9 +60,12 @@ describeIfDb("item detail HTTP route against Postgres", () => {
   }
 
   async function get(id: string, query = ""): Promise<Response> {
-    return detailRoute.GET(authenticatedRequest(`http://localhost/api/items/${id}/detail${query}`), {
-      params: Promise.resolve({ id }),
-    });
+    return detailRoute.GET(
+      authenticatedRequest(`http://localhost/api/items/${id}/detail${query}`),
+      {
+        params: Promise.resolve({ id }),
+      },
+    );
   }
 
   it("returns the detail under a `detail` key", async () => {

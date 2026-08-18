@@ -23,10 +23,7 @@
 // real Postgres, the same shape as `tests/hook-route.test.ts` — the service
 // call has to genuinely execute for the runtime to log anything at all.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { REQUEST_ID_HEADER } from "@/lib/request-id-header";
 import { LOG_LEVEL_ENV_VAR } from "@/lib/log";
 import { captureLogs, type CapturedLogs } from "./helpers/capture-logs";

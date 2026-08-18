@@ -18,10 +18,7 @@
 // file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import {

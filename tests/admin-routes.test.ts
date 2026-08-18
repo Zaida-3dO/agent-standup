@@ -22,10 +22,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -159,9 +156,12 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /repos/{id} returns 404 for an id that does not exist", async () => {
-      const response = await repoItem.GET(authenticatedRequest("http://localhost/api/repos/no-such-repo"), {
-        params: Promise.resolve({ id: "no-such-repo" }),
-      });
+      const response = await repoItem.GET(
+        authenticatedRequest("http://localhost/api/repos/no-such-repo"),
+        {
+          params: Promise.resolve({ id: "no-such-repo" }),
+        },
+      );
       expect(response.status).toBe(404);
       const payload = (await response.json()) as { error: { code: string } };
       expect(payload.error.code).toBe("not_found");
@@ -216,9 +216,12 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /areas/{id} returns 404 for an id that does not exist", async () => {
-      const response = await areaItem.GET(authenticatedRequest("http://localhost/api/areas/no-such-area"), {
-        params: Promise.resolve({ id: "no-such-area" }),
-      });
+      const response = await areaItem.GET(
+        authenticatedRequest("http://localhost/api/areas/no-such-area"),
+        {
+          params: Promise.resolve({ id: "no-such-area" }),
+        },
+      );
       expect(response.status).toBe(404);
       const payload = (await response.json()) as { error: { code: string } };
       expect(payload.error.code).toBe("not_found");
@@ -335,7 +338,9 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /machines lists every machine PATCH has created so far", async () => {
-      const response = await machinesCollection.GET(authenticatedRequest("http://localhost/api/machines"));
+      const response = await machinesCollection.GET(
+        authenticatedRequest("http://localhost/api/machines"),
+      );
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { machines: { name: string }[] };
       expect(payload.machines.some((m) => m.name === "route-desktop")).toBe(true);
@@ -459,7 +464,9 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /accounts lists every account PATCH has created so far", async () => {
-      const response = await accountsCollection.GET(authenticatedRequest("http://localhost/api/accounts"));
+      const response = await accountsCollection.GET(
+        authenticatedRequest("http://localhost/api/accounts"),
+      );
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { accounts: { id: string }[] };
       expect(payload.accounts.some((a) => a.id === "route-account-new")).toBe(true);
@@ -570,7 +577,9 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
     });
 
     it("GET /people lists every person PATCH has created so far", async () => {
-      const response = await peopleCollection.GET(authenticatedRequest("http://localhost/api/people"));
+      const response = await peopleCollection.GET(
+        authenticatedRequest("http://localhost/api/people"),
+      );
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { people: { id: string }[] };
       expect(payload.people.some((p) => p.id === "route-person-new")).toBe(true);

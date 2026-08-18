@@ -13,10 +13,7 @@
 // without TEST_DATABASE_URL like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { TERMINAL_STATES, isTerminalState } from "@/lib/service/board/columns";

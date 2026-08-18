@@ -7,10 +7,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -103,7 +100,9 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-filter-other" });
 
     const response = await boardRoute.GET(
-      authenticatedRequest("http://localhost/api/board?area=board-route-filter-target&column=backlog"),
+      authenticatedRequest(
+        "http://localhost/api/board?area=board-route-filter-target&column=backlog",
+      ),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -143,7 +142,9 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-kind", parentId: project.id });
 
     const response = await boardRoute.GET(
-      authenticatedRequest("http://localhost/api/board?area=board-route-kind&kind=project&column=backlog"),
+      authenticatedRequest(
+        "http://localhost/api/board?area=board-route-kind&kind=project&column=backlog",
+      ),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -245,7 +246,9 @@ describeIfDb("board HTTP route against Postgres", () => {
     );
 
     const response = await boardRoute.GET(
-      authenticatedRequest("http://localhost/api/board?area=board-route-compose&state=paused&priority=P1"),
+      authenticatedRequest(
+        "http://localhost/api/board?area=board-route-compose&state=paused&priority=P1",
+      ),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {

@@ -48,9 +48,7 @@ export const AUTH_HEADER: Readonly<Record<string, string>> = Object.freeze({
  * and converting would make the call sites longer than the thing they are
  * spreading.
  */
-export function withAuth(
-  headers: Record<string, string> = {},
-): Record<string, string> {
+export function withAuth(headers: Record<string, string> = {}): Record<string, string> {
   return { ...headers, ...AUTH_HEADER };
 }
 

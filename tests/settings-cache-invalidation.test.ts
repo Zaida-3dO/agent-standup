@@ -22,10 +22,7 @@
 // as every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -79,9 +76,12 @@ describeIfDb("a settings write is visible to the next read, with no sleep", () =
   }
 
   async function readSetting(key: string): Promise<unknown> {
-    const response = await keyRoute.GET(authenticatedRequest(`http://localhost/api/settings/${key}`), {
-      params: Promise.resolve({ key }),
-    });
+    const response = await keyRoute.GET(
+      authenticatedRequest(`http://localhost/api/settings/${key}`),
+      {
+        params: Promise.resolve({ key }),
+      },
+    );
     return ((await response.json()) as { value: unknown }).value;
   }
 

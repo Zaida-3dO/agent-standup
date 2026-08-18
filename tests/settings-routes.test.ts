@@ -6,10 +6,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  authenticatedRequest,
-  stubAuthEnvironment,
-} from "./helpers/authenticated-requests";
+import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -55,7 +52,9 @@ describeIfDb("settings HTTP routes against Postgres", () => {
   }
 
   it("GET /settings returns every declared setting with a revision — AC1", async () => {
-    const response = await collectionRoute.GET(authenticatedRequest("http://localhost/api/settings"));
+    const response = await collectionRoute.GET(
+      authenticatedRequest("http://localhost/api/settings"),
+    );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
       settings: { key: string; value: unknown }[];
@@ -80,9 +79,12 @@ describeIfDb("settings HTTP routes against Postgres", () => {
   });
 
   it("GET /settings/{key} returns 404 for a key this build does not declare", async () => {
-    const response = await keyRoute.GET(authenticatedRequest("http://localhost/api/settings/nope"), {
-      params: Promise.resolve({ key: "nope" }),
-    });
+    const response = await keyRoute.GET(
+      authenticatedRequest("http://localhost/api/settings/nope"),
+      {
+        params: Promise.resolve({ key: "nope" }),
+      },
+    );
     expect(response.status).toBe(404);
     const payload = (await response.json()) as { error: { code: string } };
     expect(payload.error.code).toBe("not_found");

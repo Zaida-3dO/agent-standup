@@ -14,7 +14,7 @@
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stubAuthEnvironment, withAuth } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
@@ -26,7 +26,6 @@ import {
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
-
 
 interface Created {
   id: string;
