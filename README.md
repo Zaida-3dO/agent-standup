@@ -184,21 +184,28 @@ in changes. In that setup:
 
 ## What is built
 
-The service layer holds **62 registered operations** (`src/lib/service/registry.ts`), and every
-one of them is reachable from each of the four adapters the application mounts. Ask a running
-instance what it exposes rather than taking this list on trust:
+The service layer holds **66 registered operations** (`src/lib/service/registry.ts`). Every rule
+lives there, so an adapter is a thin shell over one service call and adds no rule of its own —
+which is what makes a refusal the same refusal whichever way in you came.
+
+**The four adapters do not all expose the same set, and the difference is worth knowing before you
+pick one.** MCP derives its tools from the registry and so carries 64 of the 66, declining two by
+written waiver (`src/lib/adapters/waivers.ts`). The command line routes 46 and the web API 45,
+because each maps operations through its own table and those tables lag the registry — `service_info`
+and `describe_tool`, for instance, are reachable from MCP and the command line but have no HTTP
+route. Ask a running instance rather than taking any of this on trust:
 
 ```bash
 standup service info --json      # the operation catalogue, and the limits a caller must respect
 standup --help                   # every noun and verb, built from the command table itself
 ```
 
-| Surface          | What it is                                                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Web API**      | 46 JSON routes under `src/app/api` — items, claims, transitions, artifacts, events, settings, admin entities                                                                    |
-| **MCP**          | The agent-facing surface, over streamable HTTP (`/api/mcp`) and over stdio. Tools are derived from the operation registry, so there is no second list to forget an operation in |
-| **Command line** | `standup <noun> <verb>`, on either of two bindings — over HTTP against a server, or `--direct` against `DATABASE_URL` in-process                                                |
-| **Front end**    | The board, an item detail view, a since-your-last-visit ledger, a settings editor and an admin section                                                                          |
+| Surface          | What it is                                                                                                                                                                                                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Web API**      | 45 operations over JSON routes under `src/app/api` — items, claims, transitions, artifacts, events, settings, admin entities. Three further routes are not part of that surface: a liveness check, the MCP transport below, and one that serves the hook script itself |
+| **MCP**          | The agent-facing surface, over streamable HTTP (`/api/mcp`) and over stdio. Tools are derived from the operation registry, so there is no second list to forget an operation in                                                                                        |
+| **Command line** | `standup <noun> <verb>`, 46 operations, on either of two bindings — over HTTP against a server, or `--direct` against `DATABASE_URL` in-process                                                                                                                        |
+| **Front end**    | The board, an item detail view, a since-your-last-visit ledger, a settings editor and an admin section                                                                                                                                                                 |
 
 An item minted through the product walks the full state machine on service calls alone —
 `plan_review → executing → in_review → merged` — because the artifacts each transition guard reads
