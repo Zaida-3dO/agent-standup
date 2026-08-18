@@ -148,6 +148,20 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     seededItemId = seeded.id;
     expect(seededItemId).not.toBe("");
 
+    // A task under it, because the guarded cases transition and a project's
+    // state is derived from its children — `evaluate()` refuses a
+    // transition against a project outright, which is a different refusal
+    // than the guard the case is trying to reach.
+    const seededTask = await runtime.call("create_task", {
+      title: "conformance task",
+      body: "",
+      areas: ["web"],
+      originType: "auto",
+      projectId: seededItemId,
+    });
+    seededTaskId = seededTask.id;
+    expect(seededTaskId).not.toBe("");
+
     // The web API driver and the command-line driver both go through a
     // `Binding`, which is the interface the command line already puts its
     // two transports behind. The `http` binding's `fetch` is wired to the
@@ -218,6 +232,10 @@ describeIfDb("adapter conformance — every way in agrees", () => {
   // latter would compare outcomes that were never the same question.
   let seededItemId = "";
 
+  // A task, for the cases that transition — a project's state derives from
+  // its children and cannot be moved directly.
+  let seededTaskId = "";
+
   const cases: readonly ConformanceCase[] = [
     {
       name: "service_info accepts an empty request",
@@ -274,11 +292,10 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       expect: "accepted",
     },
     {
-      // The guarded case. An empty area list is refused by
-      // `items.area.required` rather than by the schema — every item must
-      // have an area and there is no sensible one to invent for a caller
-      // who named none — so this reaches a real guard and gives assertion 3
-      // something the service, not the case, named.
+      // Refused by the schema, not by `items.area.required` — the array is
+      // declared non-empty, so the guard behind it never runs. Kept as a
+      // rejecting case for `create_project` rather than as a guarded one;
+      // the guarded cases are the transitions below.
       name: "create_project refuses a project with no area",
       operation: "create_project",
       input: () => ({
@@ -288,6 +305,40 @@ describeIfDb("adapter conformance — every way in agrees", () => {
         originType: "auto",
       }),
       expect: "rejected",
+    },
+    {
+      // The two guarded cases. These are what make assertion 3 a claim
+      // rather than a shape: both refuse with `guard_rejected` and a guard
+      // identifier the *service* chose, so coverage is computed from what
+      // actually fired.
+      //
+      // **Not a dry run, deliberately.** `dry_run=true` evaluates and
+      // *reports* rather than raising (§16), so a rehearsal of a refused
+      // move is a successful call carrying a rejection in its payload —
+      // which would leave the `guard` column empty and assertion 3 vacuous,
+      // the exact failure this case exists to close. A real move raises,
+      // and a refused move writes nothing, so running it once per driver
+      // against the same row is safe: each driver sees the same starting
+      // state because the refusal left it unchanged.
+      name: "transition_item refuses blocked with no reason",
+      operation: "transition_item",
+      input: () => ({ id: seededTaskId, to: "blocked" }),
+      expect: "rejected",
+    },
+    {
+      name: "transition_item refuses a merge with no commit",
+      operation: "transition_item",
+      input: () => ({ id: seededTaskId, to: "merged" }),
+      expect: "rejected",
+    },
+    {
+      // The accepting half, as a rehearsal — this one *would* succeed, and
+      // a real move would change the state the two refusing cases above are
+      // asserted against on the next driver's turn.
+      name: "transition_item accepts a move the guards allow",
+      operation: "transition_item",
+      input: () => ({ id: seededTaskId, to: "executing", dryRun: true }),
+      expect: "accepted",
     },
   ];
 
@@ -360,45 +411,20 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     // these fails this assertion — which is the whole behaviour being
     // bought. Add a guard here when a case that reaches it is added.
     //
-    // **The list is empty, and that is a finding rather than an omission.**
-    // The obvious first candidate was `items.area.required`, and it turns
-    // out not to be reachable through any adapter: `create_project`'s
-    // schema requires a non-empty `areas` array whose entries are non-empty
-    // strings, so both `[]` and `["   "]` are refused as `invalid_input`
-    // with the guard never running. That guard sits behind the schema as
-    // defence in depth for callers inside the service layer, which is a
-    // sound place for it and *not* something an adapter can provoke. Both
-    // inputs were tried against a real database before this comment was
-    // written, rather than assumed.
-    //
-    // The mechanism is proven regardless: the negative controls assert this
-    // function reports an uncovered guard and refuses an empty set, so the
-    // guarantee is live the moment a case reaches a guard. What a green run
-    // here claims is only that no guard *named in this list* went
-    // unobserved — which is exactly why the list, not the assertion, is the
-    // thing to grow.
-    const GUARDS_THE_CASES_REACH: readonly string[] = [];
+    // **One candidate was tried and is genuinely unreachable**, recorded so
+    // it is not attempted again: `items.area.required` sits behind a schema
+    // that requires a non-empty `areas` array of non-empty strings, so both
+    // `[]` and `["   "]` are refused as `invalid_input` with the guard never
+    // running. It is defence in depth for callers inside the service layer,
+    // which is a sound place for it and not something an adapter can
+    // provoke. Both inputs were tried against a real database rather than
+    // assumed.
+    const GUARDS_THE_CASES_REACH: readonly string[] = [
+      "state-machine.blocked_required_fields",
+      "merge.requires_commit",
+    ];
 
-    // Every guard in the list was observed. Vacuous while the list is empty
-    // — stated rather than hidden, since a silently vacuous assertion is
-    // the thing §22 warns about, and the check below is what keeps it from
-    // passing for the wrong reason.
-    const uncovered = checkGuardCoverage(GUARDS_THE_CASES_REACH, observations).filter(
-      (finding) => !finding.message.includes("expected-guard set is empty"),
-    );
-    expect(uncovered).toEqual([]);
-
-    // And the mechanism is live against this run's real observations: a
-    // guard nothing here refused on is reported. This is what makes the
-    // empty list above safe to grow — the assertion fires the moment a name
-    // is added that no case provokes.
-    expect(checkGuardCoverage(["merge.requires_commit"], observations)).toEqual([
-      {
-        assertion: "guard-coverage",
-        message:
-          "merge.requires_commit: registered but never observed refusing anything — it needs a case that provokes it",
-      },
-    ]);
+    expect(checkGuardCoverage(GUARDS_THE_CASES_REACH, observations)).toEqual([]);
   });
 
   it("assertion 4 — every adapter's surface maps to registered operations, or carries a waiver", () => {
