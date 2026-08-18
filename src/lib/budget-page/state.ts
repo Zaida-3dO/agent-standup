@@ -11,6 +11,7 @@
 // like any other typed setting, and the schema in `settings/budget-windows.ts`
 // stays the single arbiter of what is legal.
 import { budgetWindowsSchema, type BudgetWindows } from "../settings/budget-windows";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 /** The key this page edits. Named once, so a typo is a compile error at every use. */
 export const BUDGET_WINDOWS_KEY = "budget.windows";
@@ -50,7 +51,9 @@ async function messageFromResponse(response: Response): Promise<string> {
  * repair.
  */
 export async function fetchWindows(fetchImpl: typeof fetch = fetch): Promise<BudgetWindows> {
-  const response = await fetchImpl(`/api/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`);
+  const response = await fetchImpl(
+    uiApiPath(`/api/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`),
+  );
   if (!response.ok) throw new Error(await messageFromResponse(response));
 
   const body = (await response.json()) as { value?: unknown };
@@ -99,11 +102,14 @@ export async function writeWindows(
     return { ok: false, message: where === "" ? detail : `${where}: ${detail}` };
   }
 
-  const response = await fetchImpl(`/api/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ value: parsed.data }),
-  });
+  const response = await fetchImpl(
+    uiApiPath(`/api/settings/${encodeURIComponent(BUDGET_WINDOWS_KEY)}`),
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: parsed.data }),
+    },
+  );
   if (!response.ok) return { ok: false, message: await messageFromResponse(response) };
   return { ok: true };
 }

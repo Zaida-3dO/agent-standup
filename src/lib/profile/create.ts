@@ -18,6 +18,7 @@
 // Pure and DOM-free like `./state.ts`'s `fetchPeople`, for the same reason:
 // this repo's test harness runs `environment: "node"` (`vitest.config.ts`).
 import type { Profile } from "./types";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 /** Generates a fresh person id. Exported so a test can assert the PATCH targets exactly what this returns, without depending on `crypto.randomUUID()`'s own format. */
 export function generatePersonId(): string {
@@ -35,7 +36,7 @@ export async function createPerson(
   idImpl: () => string = generatePersonId,
 ): Promise<Profile> {
   const id = idImpl();
-  const response = await fetchImpl(`/api/people/${encodeURIComponent(id)}`, {
+  const response = await fetchImpl(uiApiPath(`/api/people/${encodeURIComponent(id)}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ displayName }),

@@ -107,7 +107,7 @@ beforeEach(() => {
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : String(input);
-      if (url.includes("/api/board")) {
+      if (url.includes("/api/ui/board")) {
         const column = new URL(url, "http://localhost").searchParams.get("column") ?? "backlog";
         const board = boardWithOneCard();
         return Promise.resolve({
@@ -225,7 +225,7 @@ describe("Board, mounted in real React", () => {
     await dragCardTo("in_progress");
 
     expect(transitionCalls).toHaveLength(1);
-    expect(transitionCalls[0]?.url).toContain("/api/items/item-a/transition");
+    expect(transitionCalls[0]?.url).toContain("/api/ui/items/item-a/transition");
     expect(transitionCalls[0]?.body).toEqual({ to: "executing" });
   });
 

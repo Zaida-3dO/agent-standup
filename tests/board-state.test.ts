@@ -45,7 +45,7 @@ describe("fetchBoardColumn", () => {
       return { ok: true, status: 200, json: async () => ({ board: {} }) } as unknown as Response;
     }) as unknown as typeof fetch;
     await fetchBoardColumn("completed", { fetchImpl: spy });
-    expect(requested).toBe("/api/board?column=completed");
+    expect(requested).toBe("/api/ui/board?column=completed");
   });
 
   it("passes a cursor through when paging further", async () => {

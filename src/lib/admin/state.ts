@@ -10,6 +10,7 @@
 // `service.call` (CLAUDE.md: "Every adapter is a thin shell over a service
 // call"). Nothing here imports the service layer or the database client.
 import type { AdminField, AdminKind } from "./kinds";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 /** One row, as the API returns it: a bag of named values whose shape the kind describes. */
 export type AdminRow = Readonly<Record<string, unknown>>;
@@ -35,7 +36,7 @@ export async function fetchRows(
   fetchImpl: typeof fetch = fetch,
 ): Promise<readonly AdminRow[]> {
   const query = options.includeArchived ? "?includeArchived=true" : "";
-  const response = await fetchImpl(`${kind.listPath}${query}`);
+  const response = await fetchImpl(uiApiPath(`${kind.listPath}${query}`));
   if (!response.ok) {
     throw new Error(`Could not load ${kind.title.toLowerCase()} (${response.status}).`);
   }
@@ -72,7 +73,7 @@ async function messageFromResponse(response: Response): Promise<string> {
 
 /** The path of one row. */
 export function rowPath(kind: AdminKind, id: string): string {
-  return `${kind.listPath}/${encodeURIComponent(id)}`;
+  return uiApiPath(`${kind.listPath}/${encodeURIComponent(id)}`);
 }
 
 /** Creates a row — `POST` to the collection. */
@@ -87,7 +88,7 @@ export async function createRow(
     // about why this kind has no create.
     return { ok: false, message: `A ${kind.singular} cannot be created here.` };
   }
-  const response = await fetchImpl(kind.listPath, {
+  const response = await fetchImpl(uiApiPath(kind.listPath), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

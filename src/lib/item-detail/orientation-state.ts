@@ -2,6 +2,7 @@
 // loading, split out for the same reason `state.ts` is: this repo's harness
 // runs `environment: "node"` with no DOM, so the fetch shaping and the
 // error messages are only directly testable as plain functions.
+import { uiApiPath } from "@/lib/ui-proxy/path";
 import { agentViewFrom, type AgentView } from "./orientation";
 
 /**
@@ -21,7 +22,7 @@ export async function fetchAgentView(
   id: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<AgentView> {
-  const response = await fetchImpl(`/api/items/${encodeURIComponent(id)}/orientation`);
+  const response = await fetchImpl(uiApiPath(`/api/items/${encodeURIComponent(id)}/orientation`));
   if (!response.ok) {
     if (response.status === 404) {
       throw new Error(`No such item: ${id}.`);

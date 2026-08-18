@@ -5,6 +5,7 @@
 // functions. The client component is thin wiring over these.
 import { BOARD_COLUMNS, type Board, type BoardColumnId, type BoardSection } from "./types";
 import { emptyBoard, emptySection } from "./view";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type BoardLoadState =
   { status: "loading" } | { status: "error"; message: string } | { status: "loaded"; board: Board };
@@ -32,7 +33,7 @@ export async function fetchBoardColumn(
   const fetchImpl = options.fetchImpl ?? fetch;
   const query = new URLSearchParams({ column });
   if (options.cursor !== undefined) query.set("cursor", options.cursor);
-  const response = await fetchImpl(`/api/board?${query.toString()}`);
+  const response = await fetchImpl(uiApiPath(`/api/board?${query.toString()}`));
   if (!response.ok) {
     throw new Error(`Could not load the board (GET /api/board returned ${response.status}).`);
   }

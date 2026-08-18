@@ -119,7 +119,7 @@ describe("fetchUnseenCount", () => {
 describe("fetchNavCounts", () => {
   it("returns both numbers together", async () => {
     const fetchImpl = ((url: string) => {
-      const body = url.startsWith("/api/events")
+      const body = url.startsWith("/api/ui/events")
         ? { events: [], cursor: "", horizon: "", unseenCount: 5, firstVisit: false }
         : boardBody([entry(), entry({ id: "i2" }), entry({ id: "i3", blockedOnPersonId: "them" })]);
       return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
@@ -133,7 +133,7 @@ describe("fetchNavCounts", () => {
     // loaded fine, to report that a number is unavailable. Zero renders as
     // no badge, which is honest — it is not a badge showing a wrong number.
     const fetchImpl = ((url: string) => {
-      if (url.startsWith("/api/events")) return Promise.reject(new Error("events down"));
+      if (url.startsWith("/api/ui/events")) return Promise.reject(new Error("events down"));
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(boardBody([entry()])),

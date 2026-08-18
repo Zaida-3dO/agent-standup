@@ -42,6 +42,13 @@ const EXEMPT: ReadonlyMap<string, "no-service-call" | "own-request-identity"> = 
   // request can carry several. Resolving a second id at this route would
   // label the envelope rather than the calls, which is the wrong grain.
   ["mcp/route.ts", "own-request-identity"],
+  // Forwards the browser's call to another route, which resolves and stamps
+  // the id itself. The forwarded request carries `X-Request-Id` through
+  // untouched and the response's copy is relayed back, so one id already
+  // labels both halves. Minting a second here would put a different id on
+  // the envelope from the one on the service line it names — two ids for
+  // one call, neither findable from the other.
+  ["ui/[...path]/route.ts", "own-request-identity"],
 ]);
 
 function routeFilesUnder(dir: string): string[] {
@@ -129,11 +136,24 @@ describe("every route that calls the service correlates its request id", () => {
           `${relative} now calls the service and cannot claim it does not`,
         ).toBe(false);
       } else {
-        // The MCP mount is exempt because the transport it forwards to owns
-        // request identity — not because it touches nothing. The exemption
-        // is earned only while it actually forwards.
+        // An `own-request-identity` route is exempt because whatever it
+        // hands the request to owns request identity — not because it
+        // touches nothing. The exemption is earned only while it actually
+        // forwards, so each entry names the call that does the forwarding
+        // and the check requires that call to still be there. Listed per
+        // route rather than matched loosely: "forwards somewhere" is the
+        // claim being audited, so the audit should know where.
+        const FORWARDING_CALL: Readonly<Record<string, string>> = {
+          "mcp/route.ts": "handleMcpRequest",
+          "ui/[...path]/route.ts": "forwardTargetUrl",
+        };
+        const forwardingCall = FORWARDING_CALL[relative];
         expect(
-          source.includes("handleMcpRequest"),
+          forwardingCall,
+          `${relative} claims own-request-identity but names no forwarding call`,
+        ).toBeDefined();
+        expect(
+          source.includes(forwardingCall as string),
           `${relative} must forward to a transport that mints its own id to stay exempt`,
         ).toBe(true);
       }

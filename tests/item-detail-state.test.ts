@@ -44,7 +44,7 @@ describe("fetchItemDetail", () => {
   it("requests the detail endpoint for the given id", async () => {
     const impl = stubFetch(200, { detail: { item: detailItem() } });
     await fetchItemDetail("item-1", impl);
-    expect(impl.calls).toEqual(["/api/items/item-1/detail"]);
+    expect(impl.calls).toEqual(["/api/ui/items/item-1/detail"]);
   });
 
   it("percent-encodes an id so a slash in it cannot reach a different route", async () => {
@@ -53,7 +53,7 @@ describe("fetchItemDetail", () => {
     // rather than fail, which is the worst shape of this bug.
     const impl = stubFetch(200, { detail: { item: detailItem() } });
     await fetchItemDetail("a/b", impl);
-    expect(impl.calls).toEqual(["/api/items/a%2Fb/detail"]);
+    expect(impl.calls).toEqual(["/api/ui/items/a%2Fb/detail"]);
   });
 
   it("fills in every missing collection so a partial response renders empty, not blank", async () => {

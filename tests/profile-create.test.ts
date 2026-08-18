@@ -35,7 +35,7 @@ describe("createPerson", () => {
     );
 
     expect(fakeFetch).toHaveBeenCalledWith(
-      "/api/people/fixed-id",
+      "/api/ui/people/fixed-id",
       expect.objectContaining({ method: "PATCH" }),
     );
     const [, init] = fakeFetch.mock.calls[0] as unknown as [string, RequestInit];
@@ -48,7 +48,7 @@ describe("createPerson", () => {
       .fn()
       .mockResolvedValue({ ok: true, json: async () => ({ person: created }) });
     await createPerson("Ope", fakeFetch as unknown as typeof fetch, () => "id with spaces");
-    expect(fakeFetch).toHaveBeenCalledWith("/api/people/id%20with%20spaces", expect.anything());
+    expect(fakeFetch).toHaveBeenCalledWith("/api/ui/people/id%20with%20spaces", expect.anything());
   });
 
   it("uses a fresh generated id each call when idImpl is not overridden", async () => {

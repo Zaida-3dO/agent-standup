@@ -24,7 +24,7 @@ describe("fetchProjects", () => {
     // query string and this fails.
     const { impl, calls } = stubFetch({ projects: [], childlessCount: 0 });
     return fetchProjects({ fetchImpl: impl }).then(() => {
-      expect(calls).toEqual(["/api/projects"]);
+      expect(calls).toEqual(["/api/ui/projects"]);
     });
   });
 
@@ -34,7 +34,7 @@ describe("fetchProjects", () => {
     const { impl, calls } = stubFetch({ projects: [], childlessCount: 0 });
     await fetchProjects({ includeCompleted: true, fetchImpl: impl });
 
-    expect(calls).toEqual(["/api/projects?includeCompleted=true"]);
+    expect(calls).toEqual(["/api/ui/projects?includeCompleted=true"]);
   });
 
   it("throws a message fit to show, not a raw Response, on a non-2xx", async () => {

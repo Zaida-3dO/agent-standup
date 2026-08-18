@@ -64,36 +64,36 @@ function feed(overrides: Partial<SinceFeed> = {}): SinceFeed {
 
 describe("buildFeedQuery", () => {
   it("asks for the bare endpoint when nothing is specified", () => {
-    expect(buildFeedQuery()).toBe("/api/events");
-    expect(buildFeedQuery({})).toBe("/api/events");
+    expect(buildFeedQuery()).toBe("/api/ui/events");
+    expect(buildFeedQuery({})).toBe("/api/ui/events");
   });
 
   it("carries the profile whose read state is wanted", () => {
-    expect(buildFeedQuery({ personId: "user-a" })).toBe("/api/events?personId=user-a");
+    expect(buildFeedQuery({ personId: "user-a" })).toBe("/api/ui/events?personId=user-a");
   });
 
   it("omits personId entirely when no profile is chosen", () => {
     // `?personId=` would be an invalid_input rejection, where "nobody is
     // signed in" is a legal read that returns everything unseen.
-    expect(buildFeedQuery({ personId: null })).toBe("/api/events");
-    expect(buildFeedQuery({ personId: undefined })).toBe("/api/events");
+    expect(buildFeedQuery({ personId: null })).toBe("/api/ui/events");
+    expect(buildFeedQuery({ personId: undefined })).toBe("/api/ui/events");
   });
 
   it("omits unseenOnly when false rather than spelling out the default", () => {
-    expect(buildFeedQuery({ unseenOnly: false })).toBe("/api/events");
-    expect(buildFeedQuery({ unseenOnly: true })).toBe("/api/events?unseenOnly=true");
+    expect(buildFeedQuery({ unseenOnly: false })).toBe("/api/ui/events");
+    expect(buildFeedQuery({ unseenOnly: true })).toBe("/api/ui/events?unseenOnly=true");
   });
 
   it("carries the cursor and the page size when given", () => {
-    expect(buildFeedQuery({ since: "42", limit: 10 })).toBe("/api/events?since=42&limit=10");
+    expect(buildFeedQuery({ since: "42", limit: 10 })).toBe("/api/ui/events?since=42&limit=10");
   });
 
   it("sends since=0 rather than dropping it — zero is a real cursor, not an absence", () => {
-    expect(buildFeedQuery({ since: "0" })).toBe("/api/events?since=0");
+    expect(buildFeedQuery({ since: "0" })).toBe("/api/ui/events?since=0");
   });
 
   it("escapes a profile id that would otherwise break the query string", () => {
-    expect(buildFeedQuery({ personId: "a&b=c" })).toBe("/api/events?personId=a%26b%3Dc");
+    expect(buildFeedQuery({ personId: "a&b=c" })).toBe("/api/ui/events?personId=a%26b%3Dc");
   });
 });
 
@@ -117,7 +117,7 @@ describe("fetchFeed", () => {
   it("requests the URL the query builder produced", async () => {
     const recorder = recordingFetch();
     await fetchFeed({ personId: "user-a", unseenOnly: true }, recorder.fetch);
-    expect(recorder.calls[0]!.url).toBe("/api/events?personId=user-a&unseenOnly=true");
+    expect(recorder.calls[0]!.url).toBe("/api/ui/events?personId=user-a&unseenOnly=true");
   });
 
   it("fills in any field the response omitted, so a component never maps undefined", async () => {
@@ -148,7 +148,7 @@ describe("markSeen", () => {
     const recorder = recordingFetch();
     await markSeen("42", "user-a", recorder.fetch);
     const call = recorder.calls[0]!;
-    expect(call.url).toBe("/api/events/42/seen");
+    expect(call.url).toBe("/api/ui/events/42/seen");
     expect(call.init?.method).toBe("POST");
     expect(JSON.parse(String(call.init?.body))).toEqual({ personId: "user-a" });
   });
@@ -156,7 +156,7 @@ describe("markSeen", () => {
   it("escapes an event id rather than injecting it raw into the path", async () => {
     const recorder = recordingFetch();
     await markSeen("a/b", "user-a", recorder.fetch);
-    expect(recorder.calls[0]!.url).toBe("/api/events/a%2Fb/seen");
+    expect(recorder.calls[0]!.url).toBe("/api/ui/events/a%2Fb/seen");
   });
 
   it("throws a message naming the status when the write fails", async () => {
@@ -170,9 +170,9 @@ describe("markManySeen", () => {
     const recorder = recordingFetch();
     await markManySeen(["1", "2", "3"], "user-a", recorder.fetch);
     expect(recorder.calls.map((c) => c.url)).toEqual([
-      "/api/events/1/seen",
-      "/api/events/2/seen",
-      "/api/events/3/seen",
+      "/api/ui/events/1/seen",
+      "/api/ui/events/2/seen",
+      "/api/ui/events/3/seen",
     ]);
   });
 

@@ -4,6 +4,7 @@
 // shaping and the loading/error/loaded branching are only directly testable
 // as plain functions. The client component is thin wiring over these.
 import type { ItemDetail } from "./types";
+import { uiApiPath } from "@/lib/ui-proxy/path";
 
 export type DetailLoadState =
   | { status: "loading" }
@@ -26,7 +27,7 @@ export async function fetchItemDetail(
   id: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ItemDetail> {
-  const response = await fetchImpl(`/api/items/${encodeURIComponent(id)}/detail`);
+  const response = await fetchImpl(uiApiPath(`/api/items/${encodeURIComponent(id)}/detail`));
   if (!response.ok) {
     if (response.status === 404) {
       throw new Error(`No such item: ${id}.`);
