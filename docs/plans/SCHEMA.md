@@ -44,6 +44,9 @@ One table for projects, tasks and subtasks. **Hierarchy is a parent pointer**, n
 | `created_at` | `timestamptz` | Set once. |
 | `updated_at` | `timestamptz` | Bumped by **every** mutation, in the same transaction that appends the corresponding `events` row — so the two can never drift. Stored rather than computed from `max(events.ts)`: it's an index for "changed since I looked" and board sorting, and a subquery per row on every board render is the wrong trade. |
 | `completed_at` | `timestamptz` null | Set on entry to a `completed` state. |
+| `archived_at` | `timestamptz` null | Set by `delete_item` (§1.4). **Not a state**, and deliberately outside the state machine: a state is a fact about the work, and this is a fact about the row. Non-null means no ordinary read serves it. |
+| `archived_reason` | `text` null | Required by the operation that sets `archived_at`, so "why is this row invisible" is answerable from the row rather than only from history. |
+| `superseded_by` | `text` null → `items.id` | The item this one was removed in favour of — most often the surviving half of a duplicate. A pointer, so a reader arriving by a stale link can be sent somewhere live. |
 
 **No `review_round` column** — it's `max(artifacts.review_round)` for the item. Artifacts are the truth;
 a second copy here would drift.
@@ -215,6 +218,36 @@ discovered at 3am.
 | `pre-approved` | Merge when done, don't ask. |
 | `needs-approval` | Always block on a human. |
 | `agent-judgement` | Agent decides at the gate — could this break something? Yes → block on you; no → merge. **Requires a recorded one-line rationale.** |
+
+### 1.4 Removing an item — `delete_item`
+
+**It is called delete and it never deletes.** Nothing leaves the database; the row stops being
+*served*. No ordinary read returns it, no board column counts it, no parent derives its state from
+it — unlike `cancelled`, which is a real outcome and correctly still appears. Every inbound link and
+every attribution keeps resolving, which is the whole reason the row is kept.
+
+**What it is for, and why `cancelled` does not cover it.** A cancellation records work that was
+wanted, considered, and deliberately not done. A duplicate is not that, and neither is a row created
+by accident: cancelling one records a decision nobody made, which leaves the record *wrong* rather
+than merely cluttered. This fills that gap and nothing wider.
+
+**Break-glass, and shaped to stay that way.** The steering lives in the refusals rather than in
+documentation, because a caller reaching past `cancelled` is not reading the documentation:
+
+- A **reason is required**, and one too short to name which duplicate or which accident is refused.
+- Reasons **describing a cancellation** are refused by name, with `cancelled` named as the call to
+  make instead. This is the refusal that actually fires.
+- **Inbound references are surfaced first** — live children, and reviews that deferred findings into
+  this item — rather than silently orphaned. Proceeding takes a second, explicit acknowledgement.
+- `superseded_by` **should name the replacement** whenever there is one, because the common case has
+  a survivor.
+
+**It is exposed on every surface, including MCP.** Restricting it to one surface was considered and
+is not available: §22 bounds waivers to operations no guard can reject, and this one refuses four
+ways. It is also the weaker protection — the same caller holds a command line and an HTTP client, so
+hiding one door relocates the call rather than preventing it, and costs the property that every
+adapter refuses identically. The restrictions that survive being routed around are the refusals
+above.
 
 ---
 
@@ -1498,12 +1531,41 @@ response that cannot go stale.
 | `hook_variant_overridden` | `boolean` | Whether the variant came from the payload rather than the transport. Without it an override and a derivation are indistinguishable afterwards, and *"why is this session on the cli hook when it registered over HTTP?"* has no answer. An override naming what the transport would have chosen anyway is **not** recorded as one — it changed nothing. |
 | `hook_version` | `text` null | What the session reported. Null = never reported one. |
 | `client` | `text` null | What kind of agent tool it is, as it describes itself. |
-| `person_id` | `text` null → `people.id` | Who it acts as, where known. |
+| `person_id` | `text` null → `people.id` | Who it acts as, where known. Half of the declaration later calls inherit — see *Defaults that carry* below. |
+| `drive_mode` | enum null | `autonomous` · `manual` · `supervised`. How work this session creates is driven, absent a per-item decision. **Null is meaningful**: it is "declared nothing", which is a different fact from declaring the value that happens to be the item-level default, and only the first falls through. |
 | `registered_at` · `last_seen_at` | `timestamptz` | |
 
 **Nothing references this table by foreign key.** A session that never registered still writes tool
 calls — that is what makes it a ghost — so a constraint would either reject those rows or force a
 phantom registration. This is a registry, not a constraint.
+
+### Defaults that carry
+
+A session that acts for a person acts for that person for its whole life, and one running unattended
+runs unattended for its whole life. Neither fact changes between two creates a minute apart, so
+**they are declared once at registration and inherited** rather than restated on every call.
+`person_id` and `drive_mode` above are that declaration; `create_project`, `create_task` and
+`create_subtask` resolve them for any field the call omitted.
+
+Four rules bound it, and the last two matter more than the first two:
+
+1. **An explicit value always wins**, including one equal to the declaration — the call stays on the
+   record either way.
+2. **A declared person implies a person origin.** `origin_type` is `person` and `origin_person` is
+   that person, because declaring a person is what "the work I create comes from this person"
+   *means*.
+3. **The reverse inference is never made.** A session with no declared person does **not** get
+   `origin_type: auto` — creating work on somebody's behalf from an autonomous session is ordinary,
+   and defaulting the field would silently relabel it as machine-originated. `origin_type` stays
+   required unless a declaration answers it.
+4. **A declaration is validated on every use, not trusted because it was made.** An inherited person
+   goes through the same existence check as a typed one, so a declaration can never write a dangling
+   reference.
+
+A re-registration that does not restate the declaration **refreshes rather than retracts it** — the
+ordinary reconnect sends neither field, and clearing them there would silently un-declare a session
+mid-run. The cost is that a declaration cannot be cleared by omission: changing one means sending
+the new value.
 
 ### Versions, and what each answer does
 

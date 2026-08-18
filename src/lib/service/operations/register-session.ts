@@ -64,7 +64,26 @@ const inputSchema = z
     hookVersion: z.number().int().min(0).optional(),
     /** What kind of agent tool it is, as it describes itself. */
     client: z.string().min(1).optional(),
+    /**
+     * The person this session acts for, when it is person-driven. Omitted
+     * by an autonomous session, which acts for nobody.
+     *
+     * Declared once here and inherited by later calls (MILESTONES.md #111)
+     * — see `resolveSessionDefaults` (`../items/session-defaults.ts`) for
+     * what inherits it and what a creation call has to do to override it.
+     */
     personId: z.string().min(1).optional(),
+    /**
+     * How work this session creates is driven, absent a per-item decision
+     * — SCHEMA.md §1.2's spectrum of how much the system may act on a task.
+     *
+     * Omitted means the session declares nothing, which is deliberately not
+     * the same as declaring `autonomous`: only the first falls through to
+     * the item-level default, and keeping them distinct is what makes a
+     * later `supervised` declaration a fact about the session rather than
+     * an indistinguishable re-statement of a default.
+     */
+    driveMode: z.enum(["autonomous", "supervised", "manual"]).optional(),
   })
   .strict();
 
@@ -223,8 +242,8 @@ export const registerSession = defineOperation({
     await ctx.db.$executeRawUnsafe(
       `INSERT INTO "Session" (
          "id", "machine", "transport", "hookVariant", "hookVariantOverridden",
-         "hookVersion", "client", "personId", "registeredAt", "lastSeenAt"
-       ) VALUES ($1, $2, $3::"SessionTransport", $4::"HookVariant", $5, $6, $7, $8, NOW(), NOW())
+         "hookVersion", "client", "personId", "driveMode", "registeredAt", "lastSeenAt"
+       ) VALUES ($1, $2, $3::"SessionTransport", $4::"HookVariant", $5, $6, $7, $8, $9::"DriveMode", NOW(), NOW())
        ON CONFLICT ("id") DO UPDATE SET
          "machine" = EXCLUDED."machine",
          "transport" = EXCLUDED."transport",
@@ -232,7 +251,23 @@ export const registerSession = defineOperation({
          "hookVariantOverridden" = EXCLUDED."hookVariantOverridden",
          "hookVersion" = EXCLUDED."hookVersion",
          "client" = EXCLUDED."client",
-         "personId" = EXCLUDED."personId",
+         -- COALESCE rather than a plain overwrite, unlike every field above
+         -- it. Those describe the session's *current* connection and a
+         -- refresh genuinely restates them; these two are a declaration made
+         -- once, and a re-registration is a refresh rather than a
+         -- retraction. An ordinary re-register — after a reconnect, or
+         -- because the launcher re-runs the handshake — sends neither field,
+         -- and overwriting with the absent value would silently un-declare a
+         -- session mid-run, turning its later creates back into the
+         -- restate-everything calls this exists to remove.
+         --
+         -- The cost, stated rather than discovered: a declaration cannot be
+         -- cleared by omitting it. Changing one means sending the new value,
+         -- which is the same act as making it, and there is no path to
+         -- "declare nothing again". That is the right trade for a field
+         -- whose whole purpose is to survive calls that do not mention it.
+         "personId" = COALESCE(EXCLUDED."personId", "Session"."personId"),
+         "driveMode" = COALESCE(EXCLUDED."driveMode", "Session"."driveMode"),
          "lastSeenAt" = NOW()`,
       input.sessionId,
       input.machine,
@@ -242,6 +277,7 @@ export const registerSession = defineOperation({
       hookVersion,
       input.client ?? null,
       input.personId ?? null,
+      input.driveMode ?? null,
     );
 
     // `stamped` rather than `ctx.caller.transport`: this operation has

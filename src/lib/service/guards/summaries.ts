@@ -145,8 +145,24 @@ export const summaryRequiredGuard: Guard = {
   async check(input: GuardInput) {
     const candidate = readCandidate(input.fields);
     if (!candidate) {
+      // The message spells the conditional out — which field `user_facing`
+      // selects, in both directions — rather than referring to it as a
+      // branch.
+      //
+      // That is a deliberate avoidance, not verbosity. The word "branch"
+      // cannot be used neutrally in this particular refusal: `branch` is a
+      // real column on the very item being completed, and a summary is
+      // written at precisely the moment a caller is thinking about the git
+      // branch it is merging. A refusal mentioning "the branch" is therefore
+      // read as asking for that column by callers who are not being careless
+      // — the ambiguity is genuinely in the sentence — and it sends them to
+      // supply the wrong field, costing the round trip a good refusal
+      // exists to save. Naming `what_to_test` and `how_verified` outright
+      // is longer and has exactly one reading.
       return guardRejected(
-        "A summary is required to complete this item — supply shipped, not_done, user_facing and the branch it forces.",
+        "A summary is required to complete this item — supply shipped, not_done and user_facing, " +
+          "plus what user_facing then requires: what_to_test when it is true, how_verified when " +
+          "it is false.",
         { fields: ["summary"] },
       );
     }

@@ -1,0 +1,15 @@
+-- A session declares once how its work is driven (SCHEMA.md §21, §1.2;
+-- MILESTONES.md #111).
+--
+-- `Session.personId` already records *who* a session acts for. This records
+-- the other half of the same declaration — whether the work is running
+-- unattended or with someone watching — so that a creation call can inherit
+-- both instead of restating them.
+--
+-- Nullable, and that is the meaningful part rather than a concession to
+-- existing rows: null means the session declared nothing, which is a
+-- different fact from declaring `autonomous`. Only the first falls through
+-- to the item default; the second is a decision on the record. A NOT NULL
+-- column with a default would erase that distinction on every session that
+-- never said anything.
+ALTER TABLE "Session" ADD COLUMN "driveMode" "DriveMode";

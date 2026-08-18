@@ -148,6 +148,28 @@ describeIfDb("the summaries guard, against Postgres", () => {
       expect(await readState(id)).toBe("executing");
     });
 
+    // The refusal a caller reads when they supplied nothing has to name the
+    // fields, and specifically must not describe the `user_facing`
+    // conditional as "the branch it forces": `branch` is a real column on
+    // this same item, and a caller completing an item is thinking about the
+    // git branch it merged — so that phrasing is read as a request for that
+    // column and sends them to supply the wrong field.
+    //
+    // Fails if the message reverts to naming a branch rather than naming
+    // `what_to_test` and `how_verified` outright.
+    it("names the conditional fields rather than calling them a branch", async () => {
+      const reg = registryWithSummaryGuard();
+      const id = await createTask("executing");
+      const error = (await callTransition("apply", id, "merged", reg).catch((e: unknown) => e)) as {
+        message?: string;
+      };
+      expect(error.message).toContain("what_to_test");
+      expect(error.message).toContain("how_verified");
+      // The ambiguous word must not appear at all — it is the only reading
+      // that costs the caller a wasted round trip.
+      expect(error.message).not.toContain("branch");
+    });
+
     it("allows entering 'merged' with a valid summary supplied", async () => {
       const reg = registryWithSummaryGuard();
       const id = await createTask("executing");

@@ -17,9 +17,10 @@
 // they then require; everything else — validation, area resolution, the
 // insert, the event — is this module, once.
 import { z } from "zod";
-import { GuardRejectedError, NotFoundError } from "../errors";
+import { GuardRejectedError, InvalidInputError, NotFoundError } from "../errors";
 import type { ServiceContext } from "../context";
 import { resolveAreasRaw, setItemAreas } from "./item-areas";
+import { resolveSessionDefaults } from "./session-defaults";
 import { callerEventActor } from "./event-attribution";
 import { appendEvent } from "@/lib/events";
 import { normalizeEmDash } from "@/lib/text-normalize";
@@ -75,9 +76,31 @@ export const commonCreateShape = {
   /** An existing `repos.id`. Repos are deliberate-create only (SCHEMA.md §23.1) — never auto-created here. */
   repo: z.string().min(1).optional(),
   priority: z.enum(["P0", "P1", "P2", "P3"]).default("P2"),
-  originType: z.enum(["person", "source", "auto"]),
+  /**
+   * Where this item came from. Optional in the schema, still required in
+   * practice — a session that declared a person at registration supplies it
+   * (MILESTONES.md #111, `session-defaults.ts`), and a call that neither
+   * names it nor inherits it is refused by `assertOriginResolved` below.
+   *
+   * Optional here rather than required because Zod validates before the
+   * transaction opens, and what a session declared is a database fact this
+   * schema cannot see. Made required, the field could never be inherited:
+   * the parse would refuse the call before anything could resolve it.
+   */
+  originType: z.enum(["person", "source", "auto"]).optional(),
   originPersonId: z.string().min(1).optional(),
-  driveMode: z.enum(["autonomous", "supervised", "manual"]).default("autonomous"),
+  /**
+   * How much the system may act on this item (SCHEMA.md §1.2).
+   *
+   * `.optional()` rather than `.default("autonomous")`, for the reason
+   * `needsVisualReview` above is: a `.default()` resolves before the handler
+   * runs, so an omitted field and an explicitly-autonomous one would arrive
+   * indistinguishable — and a session that declared `supervised` would find
+   * its declaration silently outranked by a default nobody chose. The
+   * fallback to `autonomous` still happens, in `insertItem`, after the
+   * session's declaration has had its chance.
+   */
+  driveMode: z.enum(["autonomous", "supervised", "manual"]).optional(),
   /** Omitted = `items.default_merge_authority` (SCHEMA.md §17.2). */
   mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
   /**
@@ -106,9 +129,19 @@ export const commonCreateShape = {
  * `ZodEffects`, which has no `.extend()` — and the ordering matters for more
  * than convenience: `.strict()` has to sit on the object that already has
  * every field, or the operation's own parent field is the unrecognised key.
+ *
+ * **It passes when `originType` is absent**, and that is the half worth
+ * stating. An omitted origin is not a violation of *this* rule — it is a
+ * field that may still be resolved from the session's declaration
+ * (`session-defaults.ts`), and refusing it here would refuse it before the
+ * resolution that answers it. What this rule still catches at parse time is
+ * the genuine contradiction: a caller that says `person` and names nobody,
+ * where no declaration is involved. The remaining case — nothing named and
+ * nothing declared — is refused by `assertOriginResolved`, after the
+ * resolution has had its chance.
  */
 export const originPersonCheck = (value: {
-  originType: string;
+  originType?: string;
   originPersonId?: string;
 }): boolean => value.originType !== "person" || value.originPersonId !== undefined;
 
@@ -138,8 +171,84 @@ export const areaSpellingMessage = {
   path: ["areas"],
 };
 
+/**
+ * The rules every create enforces that its schema cannot state — what
+ * `describe_tool` hands a caller (MILESTONES.md #111).
+ *
+ * Shared by `create_project`, `create_task` and `create_subtask` because the
+ * rules are genuinely the same rules: all three resolve the session's
+ * declaration through this module's `insertItem`, so three copies would be
+ * three chances for one to drift from the behaviour all three share. Each
+ * operation adds the rule about its own parent field on top, because that is
+ * the part that really does differ per operation.
+ *
+ * Declared beside the checks it describes rather than in a catalogue of
+ * every operation's rules: a rule and its enforcement changing together is
+ * the only arrangement in which they cannot disagree. The `fields` on each
+ * entry are the paths the corresponding refusal carries, so a caller that
+ * has been refused can match the rule to the rejection without reading prose.
+ */
+export const COMMON_CREATE_RULES = [
+  {
+    fields: ["originType", "originPersonId", "driveMode"],
+    rule:
+      "`originType` reads as optional in the schema and is required in practice: a session " +
+      "that registered with a `personId` declares a person origin once and inherits it — " +
+      "`originType`, `originPersonId` and `driveMode` — on every later create, while a " +
+      "session that declared nothing must name `originType` per call. An explicit value " +
+      "always wins over the declaration. JSON Schema can express neither the inheritance " +
+      "nor the requirement, so neither appears in the advertised schema.",
+  },
+  {
+    fields: ["originPersonId"],
+    rule:
+      "`originPersonId` is required when `originType` resolves to `person`, and must name an " +
+      "existing person — including when the person was inherited from the session rather than " +
+      "named in the call.",
+  },
+  {
+    fields: ["area", "areas"],
+    rule:
+      "Exactly one of `area` and `areas` is required. Supplying both is refused rather than " +
+      "resolved by precedence, so two different values are never silently reconciled.",
+  },
+] as const;
+
 /** The parsed common fields, as every create operation's handler receives them. */
 export type CommonCreateInput = z.infer<z.ZodObject<typeof commonCreateShape>>;
+
+/**
+ * Refuses a create whose `originType` neither the caller named nor the
+ * session's declaration answered — MILESTONES.md #111.
+ *
+ * The one refusal that moved out of the schema. It has to run after
+ * `resolveSessionDefaults`, because before that a missing `originType` is
+ * not yet knowably missing: a session with a declared person supplies it,
+ * and refusing at parse time would refuse exactly the callers the row exists
+ * to relieve.
+ *
+ * `invalid_input` rather than a guard rejection, deliberately. The field is
+ * missing from the call — the same class of problem as any other absent
+ * required field, and the same class the schema would have reported had it
+ * been able to see the answer. A caller matching on `invalid_input` for
+ * "I left something out" should not have to learn a second code for the one
+ * required field whose answer arrives late.
+ *
+ * The message names the way out that costs nothing per call, because the
+ * caller most likely to hit this is one making many creates in a row.
+ */
+export function assertOriginResolved(input: {
+  originType?: string;
+  originPersonId?: string;
+}): asserts input is { originType: string; originPersonId?: string } {
+  if (input.originType !== undefined) return;
+  throw new InvalidInputError(
+    "originType is required — pass person, source or auto. A session that registers with a " +
+      "personId declares a person origin once and inherits it on every later create; a session " +
+      "that registers with no personId names originType per call.",
+    { fields: ["originType"] },
+  );
+}
 
 const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | "agent_judgement"> =
   {
@@ -247,6 +356,22 @@ export async function insertItem(
     );
   }
 
+  // Session-declared defaults (MILESTONES.md #111), resolved here rather
+  // than in each of the four creates. This function is the one funnel every
+  // creation path passes through, so resolving here makes "every create
+  // inherits identically" true by construction — where four call sites
+  // would make it true by four operations continuing to agree, and a fifth
+  // create added later would inherit nothing until somebody noticed.
+  //
+  // Ordering matters and is the whole subtlety: the declaration is applied
+  // first, then what it could not answer is refused or defaulted. An
+  // `originType` still absent after this is genuinely absent, and a
+  // `driveMode` still absent means neither the caller nor the session had an
+  // opinion — which is the only case the item-level default should decide.
+  const resolved = await resolveSessionDefaults(ctx, input);
+  assertOriginResolved(resolved);
+  const driveMode = resolved.driveMode ?? "autonomous";
+
   const kind = kindForDepth(parent.depth);
 
   // `ensureArea` (areas.ts) takes a Prisma client's `.area` delegate,
@@ -289,21 +414,40 @@ export async function insertItem(
   // value, and to `false` when there is no repo at all.
   const needsVisualReview = input.needsVisualReview ?? repoNeedsVisualReview;
 
-  if (input.originType === "person" && input.originPersonId) {
+  // Checked against the resolved values, so a person inherited from the
+  // session is validated exactly as a person named in the call is. A
+  // declaration pointing at a person who has since been removed is a real
+  // possibility, and it should refuse here rather than write a dangling
+  // reference on the strength of having been declared rather than typed.
+  if (resolved.originType === "person" && resolved.originPersonId) {
     const personRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
       `SELECT "id" FROM "Person" WHERE "id" = $1`,
-      input.originPersonId,
+      resolved.originPersonId,
     );
     if (personRows.length === 0) {
-      throw new NotFoundError(`No such person: ${input.originPersonId}.`, {
+      throw new NotFoundError(`No such person: ${resolved.originPersonId}.`, {
         fields: ["originPersonId"],
       });
     }
   }
 
+  // The other half of `originPersonCheck`, re-asked after resolution. The
+  // parse-time refinement can only see what the caller sent, so a call that
+  // named `person` and left the session to supply who is legal at parse and
+  // must still be refused if the session declared nobody — otherwise it
+  // would insert a person-origin row with a null person, which is the exact
+  // state the refinement exists to make unrepresentable.
+  if (resolved.originType === "person" && resolved.originPersonId === undefined) {
+    throw new InvalidInputError(
+      "originPersonId is required when originType is person — this session declared no personId " +
+        "at registration, so there is none to inherit.",
+      { fields: ["originPersonId"] },
+    );
+  }
+
   const mergeAuthority =
     MERGE_AUTHORITY_TO_DB[
-      input.mergeAuthority ?? ctx.settings.values["items.default_merge_authority"]
+      resolved.mergeAuthority ?? ctx.settings.values["items.default_merge_authority"]
     ];
 
   const id = crypto.randomUUID();
@@ -327,12 +471,12 @@ export async function insertItem(
     input.headline ?? null,
     input.body,
     input.priority,
-    input.originType,
-    input.originPersonId ?? null,
+    resolved.originType,
+    resolved.originPersonId ?? null,
     resolvedArea,
     input.repo ?? null,
     needsVisualReview,
-    input.driveMode,
+    driveMode,
     mergeAuthority,
     input.difficulty ? JSON.stringify(input.difficulty) : null,
     input.customFields ? JSON.stringify(input.customFields) : null,

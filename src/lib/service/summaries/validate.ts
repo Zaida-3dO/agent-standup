@@ -225,8 +225,9 @@ function pushIfTooLong(
 
 /**
  * Validates shape, counts and per-field caps (SCHEMA.md §5's static
- * validator 1) plus the `user_facing` branch it forces (§5, `what_to_test` /
- * `how_verified` rule) and the jargon denylist on human-facing fields
+ * validator 1) plus the conditional `user_facing` selects between (§5 —
+ * `what_to_test` when true, `how_verified` when false) and the jargon
+ * denylist on human-facing fields
  * (static validator 3) and the `how_verified`-not-CI-only rule (static
  * validator 4).
  *
@@ -276,7 +277,7 @@ export function validateSummaryShape(candidate: SummaryCandidate): SummaryValida
     }
   });
 
-  // --- user_facing forces the what_to_test / how_verified branch (SCHEMA.md §5) ---
+  // --- user_facing selects between what_to_test and how_verified (SCHEMA.md §5) ---
   if (candidate.user_facing) {
     const steps = candidate.what_to_test ?? [];
     if (steps.length < WHAT_TO_TEST_MIN || steps.length > WHAT_TO_TEST_MAX) {

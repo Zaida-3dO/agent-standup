@@ -30,6 +30,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import {
   itemColumnsFor,
+  NOT_ARCHIVED_CONDITION,
   toItemRecord,
   toItemSummaryRecord,
   type ItemRecord,
@@ -106,7 +107,15 @@ export const listItems = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ListItemsInput): Promise<ListItemsOutput> {
-    const conditions: string[] = [];
+    // Archived rows are served by no ordinary read (MILESTONES.md #137).
+    // Unconditional and first, with no `includeArchived` counterpart on this
+    // operation: an archive is the installation saying a row should never
+    // have existed, so "list everything including the mistakes" is not a
+    // variant of the ordinary list — it is a different question, and
+    // `list_items` answering it behind a flag would put the rows back in
+    // front of every caller that passes filters generously. Reaching an
+    // archived item is `get_item` by id, which still resolves it.
+    const conditions: string[] = [NOT_ARCHIVED_CONDITION];
     const values: unknown[] = [];
     let paramIndex = 1;
 
@@ -166,6 +175,9 @@ export const listItems = defineOperation({
       }
     }
 
+    // Never empty — `NOT_ARCHIVED_CONDITION` is always present — but built
+    // the same way regardless, so removing a filter above cannot produce a
+    // dangling `WHERE`.
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     // Fetch one extra row to know whether a further page exists without a
     // separate COUNT query.

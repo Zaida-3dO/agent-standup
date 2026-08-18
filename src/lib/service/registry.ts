@@ -49,6 +49,10 @@ import { updateItem } from "./operations/update-item";
 import { reparentItem } from "./operations/reparent-item";
 import { retypeToTask } from "./operations/retype-to-task";
 import { repairStuckProjects } from "./operations/repair-stuck-projects";
+// Removing an item from every read (MILESTONES.md #137). Registered like any
+// other write, and deliberately not waived on any adapter: §22 bounds
+// waivers to operations no guard can reject, and this one refuses four ways.
+import { deleteItem } from "./operations/delete-item";
 import { listItems } from "./operations/list-items";
 // Finding one item by what it is about (MILESTONES.md #105) — the call the
 // bounded reads' notices name for "a specific item", which no filtered list
@@ -155,6 +159,7 @@ export const OPERATION_REGISTRY = {
   [reparentItem.name]: reparentItem,
   [retypeToTask.name]: retypeToTask,
   [repairStuckProjects.name]: repairStuckProjects,
+  [deleteItem.name]: deleteItem,
   [listItems.name]: listItems,
   [search.name]: search,
   [getBoard.name]: getBoard,

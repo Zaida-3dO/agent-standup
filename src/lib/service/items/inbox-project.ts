@@ -24,6 +24,8 @@ import type { ServiceContext } from "../context";
 import { ensureAreaRaw } from "./ensure-area-raw";
 import { callerEventActor } from "./event-attribution";
 import { setItemAreas } from "./item-areas";
+import { assertOriginResolved } from "./create-core";
+import { resolveSessionDefaults } from "./session-defaults";
 import { appendEvent } from "@/lib/events";
 import { InternalError } from "../errors";
 
@@ -35,6 +37,14 @@ import { InternalError } from "../errors";
  * source sweep captured something is a `source` project, not an `auto` one,
  * and `origin_person` is required whenever `origin_type` is `person`
  * (SCHEMA.md §1) so it cannot simply be dropped.
+ *
+ * `originType` is optional on the way in and resolved here, because this
+ * runs *before* `insertItem` does its own resolution (MILESTONES.md #111):
+ * `create_task` has to know which project it is filing under before it can
+ * insert the task. Resolving the session's declaration in both places is not
+ * duplication of a decision — it is the same decision asked at the only two
+ * moments an item is written, and the alternative is an inbox project
+ * attributed `auto` while the task inside it is attributed to a person.
  */
 export async function resolveInboxProject(
   ctx: ServiceContext,
@@ -43,7 +53,7 @@ export async function resolveInboxProject(
     readonly area?: string;
     /** The filed task's `areas` spelling. The inbox inherits the PRIMARY area only — see below. */
     readonly areas?: readonly string[];
-    readonly originType: "person" | "source" | "auto";
+    readonly originType?: "person" | "source" | "auto";
     readonly originPersonId?: string;
   },
 ): Promise<string> {
@@ -58,6 +68,11 @@ export async function resolveInboxProject(
   );
   const found = existing[0];
   if (found) return found.id;
+
+  // Only reached when the inbox has to be minted, so the session read costs
+  // nothing on the overwhelmingly common path where it already exists.
+  const resolvedOrigin = await resolveSessionDefaults(ctx, origin);
+  assertOriginResolved(resolvedOrigin);
 
   // The inbox inherits the filed task's area rather than inventing one. An
   // area is required on every item (SCHEMA.md §1) and there is no sensible
@@ -94,8 +109,8 @@ export async function resolveInboxProject(
      RETURNING "id"`,
     id,
     title,
-    origin.originType,
-    origin.originPersonId ?? null,
+    resolvedOrigin.originType,
+    resolvedOrigin.originPersonId ?? null,
     area,
     ctx.settings.values["items.default_merge_authority"].replace(/-/g, "_"),
   );

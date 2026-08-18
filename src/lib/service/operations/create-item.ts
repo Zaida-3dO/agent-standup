@@ -69,6 +69,16 @@ export type CreateItemInput = z.infer<typeof inputSchema>;
 const contract = {
   rules: [
     {
+      fields: ["originType", "originPersonId", "driveMode"],
+      rule:
+        "`originType` reads as optional in the schema and is required in practice: a session " +
+        "that registered with a `personId` declares a person origin once and inherits it — " +
+        "`originType`, `originPersonId` and `driveMode` — on every later create, while a " +
+        "session that declared nothing must name `originType` per call. An explicit value " +
+        "always wins over the declaration. JSON Schema can express neither the inheritance " +
+        "nor the requirement, so neither appears in the advertised schema.",
+    },
+    {
       fields: ["originPersonId", "originType"],
       rule:
         "`originPersonId` is required when `originType` is `person`, and must name an existing " +

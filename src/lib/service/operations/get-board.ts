@@ -154,6 +154,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import {
   itemColumnsFor,
+  NOT_ARCHIVED_CONDITION,
   toBoardItemSummaryRecord,
   toItemRecord,
   type BoardItemSummaryRecord,
@@ -396,7 +397,18 @@ export const getBoard = defineOperation({
     // finished work would be permanently empty — which is the defect.
     const wantsTerminal = input.includeTerminal || input.column === "completed";
 
-    const shared: string[] = [];
+    // Archived rows are served by no ordinary read (MILESTONES.md #137), and
+    // this is a shared condition where #103's terminal-state exclusion
+    // deliberately is not. The two look alike and are opposite cases. A
+    // terminal item is real, finished work, so a column's `total` counting
+    // it is truthful and which terminal work a caller sees is decided by
+    // which columns they read. An archived item is a row the installation
+    // has said should never have existed — counting it would make a column
+    // report a number larger than anything it can ever show, which is the
+    // one way a `total` becomes a lie rather than a truth about a wider set.
+    // Shared, so the project read, the per-column `COUNT(*)` and the page
+    // query all exclude it together and cannot disagree.
+    const shared: string[] = [NOT_ARCHIVED_CONDITION];
     const sharedValues: unknown[] = [];
     let paramIndex = 1;
 
@@ -507,6 +519,13 @@ export const getBoard = defineOperation({
       // make a project's column depend on which filter happened to be
       // applied rather than on the state of its work. One recursive query
       // answers "state of every non-project descendant of every project".
+      //
+      // Archived descendants are the exception, and for the reason the rest
+      // of the sentence gives: they are not real work sitting under the
+      // project. An archived duplicate left in this walk would hold its
+      // parent in `in_flight` forever on the strength of a row nobody can
+      // see and nobody will ever move — a project stuck on a ghost, with no
+      // visible child explaining why.
       const projectIds = projects.map((item) => item.id);
       const descendantStatesByProject = new Map<string, string[]>();
       if (projectIds.length > 0) {
@@ -517,7 +536,8 @@ export const getBoard = defineOperation({
              SELECT i."id", s."rootId"
              FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
            )
-           SELECT s."rootId", i."state" FROM subtree s JOIN "Item" i ON i."id" = s."id"`,
+           SELECT s."rootId", i."state" FROM subtree s JOIN "Item" i ON i."id" = s."id"
+           WHERE i.${NOT_ARCHIVED_CONDITION}`,
           projectIds,
         );
         for (const row of descendantRows) {

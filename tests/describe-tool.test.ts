@@ -148,10 +148,20 @@ describe("describe_tool returns one tool's full contract", () => {
     // A defaulted field may be omitted — the distinction a caller acts on.
     expect(byName.get("priority")?.required).toBe(false);
 
-    // `originType` is the field whose absence started this row. It is
-    // genuinely required and the schema has always said so.
-    expect(byName.get("originType")?.required).toBe(true);
+    // `originType` is optional *in the schema* and required *in practice*,
+    // which is the exact shape this call exists to describe: a session that
+    // declared a person at registration inherits it, and one that did not is
+    // refused for omitting it (MILESTONES.md #111). JSON Schema can express
+    // neither half, so the schema says "optional" and the rule below says
+    // what a caller actually has to do — and asserting the two together is
+    // what pins the claim, because either alone reads as a plain optional
+    // field.
+    expect(byName.get("originType")?.required).toBe(false);
     expect(byName.get("originType")?.enumValues).toEqual(["person", "source", "auto"]);
+
+    const originRule = contract.rules.find((entry) => entry.fields.includes("originType"));
+    expect(originRule).toBeDefined();
+    expect(originRule!.rule).toMatch(/session/i);
 
     // `originPersonId` is optional *in the schema* — which is exactly why
     // the rule above has to exist. Asserting both together is what pins the

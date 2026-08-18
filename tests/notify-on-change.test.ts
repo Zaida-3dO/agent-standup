@@ -71,6 +71,13 @@ function itemRecord(overrides: Partial<ItemRecord> = {}): ItemRecord {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     completedAt: null,
+    // Archive fields (MILESTONES.md #137). No notification rule may ask
+    // about them — an archived item is served by no read that could carry a
+    // notification — so null is the honest default, matching `headline`
+    // above rather than implying they are part of what a rule sees.
+    archivedAt: null,
+    archivedReason: null,
+    supersededById: null,
     ...overrides,
   };
 }
