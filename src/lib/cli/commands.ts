@@ -139,6 +139,46 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   },
   {
     noun: "item",
+    verb: "search",
+    operation: "search",
+    summary:
+      "Find items by text in their title, headline or body, best match first. Searches every state including finished work — --open-only excludes it.",
+    /**
+     * The query is a positional argument rather than a flag, because it is
+     * the whole point of the command and `standup item search hook script`
+     * is how anyone would type it. The words are rejoined with single
+     * spaces: a shell splits an unquoted phrase into several arguments, and
+     * refusing everything past the first would make the quoting mandatory
+     * for the most ordinary use of the verb.
+     */
+    buildInput: (rest, flags) => {
+      const query = rest.join(" ").trim();
+      if (query === "") {
+        return {
+          ok: false,
+          envelope: malformed("`standup item search` needs something to search for.", ["query"]),
+        };
+      }
+      // `--open-only` is the command line's spelling of `openOnly` — a bare
+      // switch, for the same reason `--all` is on `item list`, and declared
+      // consumed so it does not also arrive as a valueless flag that
+      // `flagsToInput` would refuse.
+      const openOnly = booleanFlag(flags, "open-only");
+      if (!openOnly.ok) return openOnly;
+      const built = flagsToInput(flags, ["open-only"]);
+      if (!built.ok) return built;
+      return {
+        ok: true,
+        input: {
+          ...(built.input as Record<string, unknown>),
+          query,
+          openOnly: openOnly.value,
+        },
+      };
+    },
+  },
+  {
+    noun: "item",
     verb: "list",
     operation: "list_items",
     summary:

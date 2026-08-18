@@ -50,6 +50,10 @@ import { reparentItem } from "./operations/reparent-item";
 import { retypeToTask } from "./operations/retype-to-task";
 import { repairStuckProjects } from "./operations/repair-stuck-projects";
 import { listItems } from "./operations/list-items";
+// Finding one item by what it is about (MILESTONES.md #105) — the call the
+// bounded reads' notices name for "a specific item", which no filtered list
+// read can answer for a caller that knows a phrase rather than an id.
+import { search } from "./operations/search";
 import { getBoard } from "./operations/get-board";
 // Since your last visit (MILESTONES.md #38): the ledger slice, and the
 // per-profile read state that decides what in it is new to you.
@@ -144,6 +148,7 @@ export const OPERATION_REGISTRY = {
   [retypeToTask.name]: retypeToTask,
   [repairStuckProjects.name]: repairStuckProjects,
   [listItems.name]: listItems,
+  [search.name]: search,
   [getBoard.name]: getBoard,
   [getEvents.name]: getEvents,
   [markEventSeen.name]: markEventSeen,
