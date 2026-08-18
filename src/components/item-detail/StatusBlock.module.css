@@ -1,0 +1,279 @@
+/* The status block — the part of the detail page that answers "why is this
+   stuck" before any prose.
+
+   Every colour here is a token role, never a literal: the states, the
+   staleness bands and the presence dots are painted from the same custom
+   properties as the board, so an item that is amber on a card is amber
+   here. `globals.css` is the only place a raw colour is written. */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.5rem;
+  background: var(--surface-raised);
+}
+
+/* The chip row — state, priority, column, kind, staleness. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.column {
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  background: var(--state-research_done-bg);
+  color: var(--state-research_done-fg);
+  font-size: 0.75rem;
+}
+
+.kind {
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  background: var(--accent-bg);
+  color: var(--state-in_review-fg);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Each labelled row inside the block: "Held by", "Blocked", "Where it is". */
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.rowLabel {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Ownership ─────────────────────────────────────────────────────── */
+
+.holders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.holder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.holderName {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.role {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+/* Machine, branch, model — the facts that say where the work is happening.
+   Monospaced because they are identifiers a reader copies, not prose. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.7rem;
+}
+
+/* Previous holders sit dimmer than live ones — they are history, and the
+   eye must not have to read them to find the current holder. */
+.previous {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.previousList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ── Liveness ──────────────────────────────────────────────────────── */
+
+/* Four values, four SHAPES — colour is the second channel, never the only
+   one. `stalled` and `dead` are the pair most likely to be confused in
+   greyscale, and their difference is what decides whether anyone steps in. */
+.livenessDot {
+  display: inline-block;
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+/* running — solid, the only filled disc. */
+.shapeFilled {
+  background: var(--presence-live);
+}
+
+/* stalled — half-filled: present, but not reporting. */
+.shapeHalf {
+  border: 1.5px solid var(--presence-stalled);
+  background: linear-gradient(to right, var(--presence-stalled) 0 50%, transparent 50% 100%);
+}
+
+/* dead — a hollow ring in grey: an EMPTY SLOT, a hole in the fleet.
+   Grey and not red deliberately, matching the board: a dead agent is an
+   absence, not an error. Red belongs to blocked, which a person must act
+   on. */
+.shapeHollow {
+  border: 1.5px solid var(--presence-dead);
+  background: transparent;
+}
+
+/* superseded — a ring with a centre: replaced, not lost. Distinct from
+   `dead` because a takeover is a handover that WORKED, and rendering the
+   two alike would report every normal handover as a failure. */
+.shapeRing {
+  border: 1.5px solid var(--text-muted);
+  background: radial-gradient(circle, var(--text-muted) 0 30%, transparent 30% 100%);
+}
+
+.livenessWord {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+/* ── Blocked-on ────────────────────────────────────────────────────── */
+
+/* The three kinds are three different situations with three different
+   readers, so they get three treatments rather than one "blocked" banner.
+   The border colour is the pre-attentive channel and the label is the
+   explicit one — neither alone. */
+.blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid var(--border-default);
+  border-radius: 0.25rem;
+  background: var(--surface-app);
+  font-size: 0.8rem;
+}
+
+/* Somebody's to unblock — the only one that belongs in a person's queue,
+   so the only one painted in the alert role. */
+.blockedPerson {
+  border-left-color: var(--stale-alert);
+  color: var(--text-primary);
+}
+
+/* Nobody's to unblock; it resolves when something outside answers. */
+.blockedExternal {
+  border-left-color: var(--stale-warn);
+  color: var(--text-secondary);
+}
+
+/* Resolves on its own at `unblockAt` — needs no action from anybody, so it
+   is the quietest of the three. */
+.blockedTime {
+  border-left-color: var(--stale-subtle);
+  color: var(--text-secondary);
+}
+
+/* Blocked, but on what was never recorded. Deliberately NOT painted as one
+   of the three — guessing would route it into somebody's queue on no
+   evidence. */
+.blockedUnspecified {
+  border-left-color: var(--text-muted);
+  border-left-style: dashed;
+  color: var(--text-secondary);
+}
+
+.blockedKind {
+  font-weight: 600;
+}
+
+.blockedReason {
+  color: var(--text-secondary);
+}
+
+/* ── Checkpoint ────────────────────────────────────────────────────── */
+
+.checkpoint {
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid var(--accent-bg);
+  border-radius: 0.25rem;
+  background: var(--surface-app);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.checkpointWhen {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+/* ── Open loops ────────────────────────────────────────────────────── */
+
+.loops {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.loop {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+
+/* An open loop is an unfinished thought, so it is marked with an open ring
+   rather than a bullet — a filled dot reads as a completed list item. */
+.loopMark {
+  flex: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  border: 1.5px solid var(--stale-warn);
+  border-radius: 50%;
+}
+
+.loopWhen {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+/* The sentence an empty region says instead of rendering blank — a blank
+   region is indistinguishable from one that failed to load. */
+.none {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}

@@ -58,6 +58,7 @@ function historyEntry(overrides: Partial<DetailHistoryEntry> = {}): DetailHistor
     sessionId: null,
     body: null,
     payload: null,
+    headline: null,
     ...overrides,
   };
 }

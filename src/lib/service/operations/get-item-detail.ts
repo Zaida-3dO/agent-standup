@@ -137,6 +137,19 @@ export interface ItemDetailHistoryEntry {
   readonly sessionId: string | null;
   readonly body: string | null;
   readonly payload: unknown;
+  /**
+   * The event's stored one-line BLUF, where it has one — the column
+   * `checkpoint` writes (MILESTONES.md #108). Null on every event type that
+   * does not carry one, which is most of them.
+   *
+   * Selected here so a reader holding this payload can reduce the newest
+   * checkpoint to a line **by the same precedence rule the server uses**:
+   * stored wins, prose is the floor. Without the column a client could only
+   * ever derive from `body`, which silently answers with the derivation even
+   * where a writer supplied a line — the exact failure
+   * `checkpointHeadline`'s own header calls out as caught by one test.
+   */
+  readonly headline: string | null;
 }
 
 /** The summary an item was completed with (SCHEMA.md §5a). Null until it has been completed. */
@@ -219,6 +232,7 @@ interface RawHistoryRow {
   sessionId: string | null;
   body: string | null;
   payload: unknown;
+  headline: string | null;
 }
 
 interface RawSummaryRow {
@@ -362,7 +376,7 @@ export const getItemDetail = defineOperation({
     // ambiguous otherwise.
     const historyRows = await ctx.db.$queryRawUnsafe<RawHistoryRow[]>(
       `SELECT "id", "ts", "type"::text AS "type", "actorType"::text AS "actorType",
-              "actorId", "sessionId", "body", "payload"
+              "actorId", "sessionId", "body", "payload", "headline"
        FROM "Event" WHERE "itemId" = $1
        ORDER BY "id" DESC LIMIT $2`,
       input.id,
@@ -383,6 +397,7 @@ export const getItemDetail = defineOperation({
         sessionId: row.sessionId,
         body: row.body,
         payload: row.payload ?? null,
+        headline: row.headline,
       }));
 
     const summaryRows = await ctx.db.$queryRawUnsafe<RawSummaryRow[]>(

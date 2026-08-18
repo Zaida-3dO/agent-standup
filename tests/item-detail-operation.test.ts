@@ -316,6 +316,41 @@ describeIfDb("get_item_detail against Postgres", () => {
       expect(bodies.indexOf("second note")).toBeLessThan(bodies.indexOf("first note"));
     });
 
+    it("returns a checkpoint's stored headline, so a reader need not re-derive it", async () => {
+      // The status block reduces the newest checkpoint to one line, and the
+      // rule is that a STORED headline wins over one derived from the prose
+      // (`checkpointHeadline`). A payload without this column leaves a
+      // client able only to derive, which silently answers with the
+      // derivation everywhere a writer supplied a line — so the column has
+      // to cross the wire, not just exist in the table.
+      const project = await createItem({ area: "detail-history-headline" });
+      const task = await createItem({ area: "detail-history-headline", parentId: project.id });
+      await runtime.call("checkpoint", {
+        itemId: task.id,
+        body: "a first line that is NOT the headline\nmore prose",
+        headline: "the stored headline",
+      });
+
+      const detail = await detailOf(task.id);
+      const checkpoint = detail.history.find((h) => h.type === "checkpoint");
+      expect(checkpoint?.headline).toBe("the stored headline");
+    });
+
+    it("returns a null headline on an event that has none, rather than omitting the field", async () => {
+      // Most event types never carry one, so its absence must read as
+      // ordinary — a missing key would make every consumer treat a normal
+      // note as a malformed row.
+      const project = await createItem({ area: "detail-history-no-headline" });
+      const task = await createItem({ area: "detail-history-no-headline", parentId: project.id });
+      await runtime.call("note", { itemId: task.id, body: "a note" });
+
+      const detail = await detailOf(task.id);
+      const note = detail.history.find((h) => h.type === "note");
+      expect(note).toBeDefined();
+      expect(note).toHaveProperty("headline");
+      expect(note?.headline).toBeNull();
+    });
+
     it("stringifies the event id — a bigint cannot cross a JSON boundary", async () => {
       // `JSON.stringify` throws on a bigint outright, so an unmapped id
       // would fail the HTTP route on its very first call.
