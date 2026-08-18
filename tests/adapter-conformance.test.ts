@@ -31,7 +31,7 @@
 // A gate that has only ever been observed to pass has never been run against
 // the thing it is for.
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { guardRegistry } from "@/lib/service/state-machine/guard";
@@ -66,6 +66,32 @@ import { routeFetch } from "./helpers/conformance-routes";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
+
+/**
+ * The runtime the route handlers reach, behind a mutable holder.
+ *
+ * A route imports the composition root at module scope, and the real one
+ * opens a connection from `DATABASE_URL` — which in a test run is either
+ * absent or points somewhere this suite has not migrated. Without this the
+ * `http` driver reports `internal` for every case while the other three
+ * answer correctly, which reads as an adapter divergence and is really the
+ * harness talking to a different service.
+ *
+ * The holder is needed because `vi.mock` is hoisted above `beforeAll`,
+ * where the runtime is built: the factory closes over the holder and reads
+ * it per call, so it sees the instance assigned later.
+ */
+const serviceHolder: { current: ServiceRuntime | undefined } = { current: undefined };
+
+vi.mock("@/lib/service/live", () => ({
+  service: {
+    call: (name: string, input: unknown, options?: unknown) => {
+      const runtime = serviceHolder.current;
+      if (runtime === undefined) throw new Error("the conformance runtime was not built yet");
+      return runtime.call(name, input, options as never);
+    },
+  },
+}));
 
 /**
  * One case, authored once and run against every driver that exposes its
@@ -107,6 +133,20 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
     });
+    // What the mocked composition root hands the route handlers, so all
+    // four drivers are demonstrably on one service instance.
+    serviceHolder.current = runtime;
+
+    // Seeded through the service rather than through Prisma, so the row is
+    // shaped by the same code path a caller would have used.
+    const seeded = await runtime.call("create_project", {
+      title: "conformance fixture",
+      body: "",
+      areas: ["web"],
+      originType: "auto",
+    });
+    seededItemId = seeded.id;
+    expect(seededItemId).not.toBe("");
 
     // The web API driver and the command-line driver both go through a
     // `Binding`, which is the interface the command line already puts its
@@ -173,6 +213,11 @@ describeIfDb("adapter conformance — every way in agrees", () => {
   // not the same row.
   let counter = 0;
 
+  // One row every driver reads, so `get_item`'s accepting case is the same
+  // read four times rather than four reads of four different rows — the
+  // latter would compare outcomes that were never the same question.
+  let seededItemId = "";
+
   const cases: readonly ConformanceCase[] = [
     {
       name: "service_info accepts an empty request",
@@ -187,6 +232,12 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       expect: "rejected",
     },
     {
+      name: "get_item accepts an id that exists",
+      operation: "get_item",
+      input: () => ({ id: seededItemId }),
+      expect: "accepted",
+    },
+    {
       name: "get_item refuses an id nothing holds",
       operation: "get_item",
       input: () => ({ id: "no-such-item" }),
@@ -199,15 +250,27 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       expect: "accepted",
     },
     {
-      name: "list_items refuses an unknown field",
+      // A value outside the `priority` enum rather than an unknown field.
+      // An unknown field is not a divergence over HTTP but an
+      // unrepresentable input: `list_items` is a GET whose route reads
+      // named query parameters, so a field the route does not name never
+      // reaches the service and the call succeeds — correctly. A bad value
+      // in a field every adapter carries is the input that actually
+      // compares the four rejections.
+      name: "list_items refuses a priority outside the enum",
       operation: "list_items",
-      input: () => ({ nonsense: true }),
+      input: () => ({ priority: "P9" }),
       expect: "rejected",
     },
     {
       name: "create_project accepts a project with an area",
       operation: "create_project",
-      input: () => ({ title: `conformance ${counter++}`, body: "", areas: ["web"] }),
+      input: () => ({
+        title: `conformance ${counter++}`,
+        body: "",
+        areas: ["web"],
+        originType: "auto",
+      }),
       expect: "accepted",
     },
     {
@@ -218,7 +281,12 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       // something the service, not the case, named.
       name: "create_project refuses a project with no area",
       operation: "create_project",
-      input: () => ({ title: `conformance ${counter++}`, body: "", areas: [] }),
+      input: () => ({
+        title: `conformance ${counter++}`,
+        body: "",
+        areas: [],
+        originType: "auto",
+      }),
       expect: "rejected",
     },
   ];
@@ -291,9 +359,46 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     // were deleted. Written out, deleting the case that provokes one of
     // these fails this assertion — which is the whole behaviour being
     // bought. Add a guard here when a case that reaches it is added.
-    const GUARDS_THE_CASES_REACH: readonly string[] = ["items.area.required"];
+    //
+    // **The list is empty, and that is a finding rather than an omission.**
+    // The obvious first candidate was `items.area.required`, and it turns
+    // out not to be reachable through any adapter: `create_project`'s
+    // schema requires a non-empty `areas` array whose entries are non-empty
+    // strings, so both `[]` and `["   "]` are refused as `invalid_input`
+    // with the guard never running. That guard sits behind the schema as
+    // defence in depth for callers inside the service layer, which is a
+    // sound place for it and *not* something an adapter can provoke. Both
+    // inputs were tried against a real database before this comment was
+    // written, rather than assumed.
+    //
+    // The mechanism is proven regardless: the negative controls assert this
+    // function reports an uncovered guard and refuses an empty set, so the
+    // guarantee is live the moment a case reaches a guard. What a green run
+    // here claims is only that no guard *named in this list* went
+    // unobserved — which is exactly why the list, not the assertion, is the
+    // thing to grow.
+    const GUARDS_THE_CASES_REACH: readonly string[] = [];
 
-    expect(checkGuardCoverage(GUARDS_THE_CASES_REACH, observations)).toEqual([]);
+    // Every guard in the list was observed. Vacuous while the list is empty
+    // — stated rather than hidden, since a silently vacuous assertion is
+    // the thing §22 warns about, and the check below is what keeps it from
+    // passing for the wrong reason.
+    const uncovered = checkGuardCoverage(GUARDS_THE_CASES_REACH, observations).filter(
+      (finding) => !finding.message.includes("expected-guard set is empty"),
+    );
+    expect(uncovered).toEqual([]);
+
+    // And the mechanism is live against this run's real observations: a
+    // guard nothing here refused on is reported. This is what makes the
+    // empty list above safe to grow — the assertion fires the moment a name
+    // is added that no case provokes.
+    expect(checkGuardCoverage(["merge.requires_commit"], observations)).toEqual([
+      {
+        assertion: "guard-coverage",
+        message:
+          "merge.requires_commit: registered but never observed refusing anything — it needs a case that provokes it",
+      },
+    ]);
   });
 
   it("assertion 4 — every adapter's surface maps to registered operations, or carries a waiver", () => {

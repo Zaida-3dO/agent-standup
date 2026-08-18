@@ -54,6 +54,7 @@ async function loadRoutes(): Promise<readonly RouteEntry[]> {
 
   const items = (await import("@/app/api/items/route")) as unknown as Record<string, unknown>;
   const item = (await import("@/app/api/items/[id]/route")) as unknown as Record<string, unknown>;
+  const projects = (await import("@/app/api/projects/route")) as unknown as Record<string, unknown>;
 
   const built: readonly RouteEntry[] = [
     {
@@ -62,6 +63,10 @@ async function loadRoutes(): Promise<readonly RouteEntry[]> {
         GET: handlerFrom(items, "GET", "/api/items"),
         POST: handlerFrom(items, "POST", "/api/items"),
       },
+    },
+    {
+      pattern: /^\/api\/projects$/,
+      handlers: { POST: handlerFrom(projects, "POST", "/api/projects") },
     },
     {
       pattern: /^\/api\/items\/([^/]+)$/,
