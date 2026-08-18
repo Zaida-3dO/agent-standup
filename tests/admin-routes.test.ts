@@ -567,5 +567,39 @@ describeIfDb("admin entity HTTP routes against Postgres", () => {
       const payload = (await response.json()) as { people: { id: string }[] };
       expect(payload.people.some((p) => p.id === "route-person-new")).toBe(true);
     });
+
+    // T13 — `/admin/people` (canArchive: true) needs to see and toggle
+    // archived rows, mirroring the repos/areas admin grids.
+    it("GET /people excludes an archived person by default", async () => {
+      await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-archived", "PATCH", {
+          displayName: "To Be Archived",
+        }),
+        { params: Promise.resolve({ id: "route-person-archived" }) },
+      );
+      await personItem.PATCH(
+        jsonRequest("http://localhost/api/people/route-person-archived", "PATCH", {
+          archived: true,
+        }),
+        { params: Promise.resolve({ id: "route-person-archived" }) },
+      );
+
+      const response = await peopleCollection.GET(new Request("http://localhost/api/people"));
+      const payload = (await response.json()) as { people: { id: string }[] };
+      expect(payload.people.some((p) => p.id === "route-person-archived")).toBe(false);
+    });
+
+    it("GET /people?includeArchived=true includes an archived person, with archivedAt set", async () => {
+      const response = await peopleCollection.GET(
+        new Request("http://localhost/api/people?includeArchived=true"),
+      );
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        people: { id: string; archivedAt: string | null }[];
+      };
+      const found = payload.people.find((p) => p.id === "route-person-archived");
+      expect(found).toBeDefined();
+      expect(found?.archivedAt).not.toBeNull();
+    });
   });
 });

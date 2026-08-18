@@ -22,6 +22,13 @@ function baseProps(overrides: Partial<AppShellViewProps> = {}): AppShellViewProp
     choose: () => {},
     closePicker: () => {},
     openPicker: () => {},
+    createOpen: false,
+    createDraft: "",
+    creating: false,
+    createError: null,
+    onToggleCreate: () => {},
+    onCreateDraftChange: () => {},
+    onCreateSubmit: () => {},
     children: "page content",
     ...overrides,
   };

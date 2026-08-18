@@ -106,6 +106,32 @@ describe("the load branches", () => {
   });
 });
 
+// T13: the non-first-run entry to profile management — extends #86's
+// existing first-run entry rather than duplicating a second profile UI.
+describe("the profile management link", () => {
+  function findAdminPeopleLink(element: unknown) {
+    return [...walk(element as never)].find((el) => {
+      const href = (el.props as { href?: string }).href;
+      return href === "/admin/people";
+    });
+  }
+
+  it("links to /admin/people once settings have loaded", () => {
+    const element = SettingsView(baseProps());
+    expect(findAdminPeopleLink(element)).toBeTruthy();
+  });
+
+  it("is absent on the error branch", () => {
+    const element = SettingsView(baseProps({ loadState: { status: "error", message: "boom" } }));
+    expect(findAdminPeopleLink(element)).toBeUndefined();
+  });
+
+  it("is absent on the loading branch", () => {
+    const element = SettingsView(baseProps({ loadState: { status: "loading" } }));
+    expect(findAdminPeopleLink(element)).toBeUndefined();
+  });
+});
+
 describe("the guarded section", () => {
   it("carries the heading SCHEMA.md §17.8 specifies", () => {
     expect(textOf(SettingsView(baseProps()))).toContain("These change what the system enforces");

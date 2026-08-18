@@ -50,14 +50,24 @@ describeIfDb("people HTTP route against Postgres", () => {
     const response = await peopleRoute.GET(new Request("http://localhost/api/people"));
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      people: { id: string; displayName: string; avatar: string | null; colour: string | null }[];
+      people: {
+        id: string;
+        displayName: string;
+        avatar: string | null;
+        colour: string | null;
+        archivedAt: string | null;
+      }[];
     };
     const found = payload.people.find((p) => p.id === "people-route-a");
+    // T13: `archivedAt` joined the shape (always present, null when active)
+    // so `/admin/people` can render the same record the picker reads — see
+    // list-people.ts's header.
     expect(found).toEqual({
       id: "people-route-a",
       displayName: "Route Person",
       avatar: null,
       colour: "#abcdef",
+      archivedAt: null,
     });
   });
 
@@ -68,6 +78,27 @@ describeIfDb("people HTTP route against Postgres", () => {
     );
 
     const response = await peopleRoute.GET(new Request("http://localhost/api/people"));
+    const payload = (await response.json()) as { people: { id: string }[] };
+    expect(payload.people.some((p) => p.id === "people-route-archived")).toBe(false);
+  });
+
+  it("GET /people?includeArchived=true includes an archived profile, with archivedAt set", async () => {
+    const response = await peopleRoute.GET(
+      new Request("http://localhost/api/people?includeArchived=true"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      people: { id: string; archivedAt: string | null }[];
+    };
+    const found = payload.people.find((p) => p.id === "people-route-archived");
+    expect(found).toBeDefined();
+    expect(found?.archivedAt).not.toBeNull();
+  });
+
+  it("GET /people?includeArchived=false behaves exactly like the default (no query param)", async () => {
+    const response = await peopleRoute.GET(
+      new Request("http://localhost/api/people?includeArchived=false"),
+    );
     const payload = (await response.json()) as { people: { id: string }[] };
     expect(payload.people.some((p) => p.id === "people-route-archived")).toBe(false);
   });

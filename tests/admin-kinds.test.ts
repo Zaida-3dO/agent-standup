@@ -158,19 +158,29 @@ describe("what each kind allows", () => {
     expect(adminKindBySlug("machines")?.canCreate).toBe(false);
   });
 
-  it("does not offer to create or edit a person through this API", () => {
+  it("does not offer to create a person through this API — T13's picker owns creation", () => {
+    // `update_person` (#116) upserts, so a `POST`-based create here would be
+    // a second path to the same write; the profile picker's own inline form
+    // (T13) is where a new person is created, generating its own id.
     const people = adminKindBySlug("people")!;
     expect(people.canCreate).toBe(false);
-    // Every field read-only: the #92 API exposes no person edit, so a
-    // control here would be one that cannot work.
-    expect(editableFields(people)).toEqual([]);
   });
 
-  it("archives repositories and areas, and never offers a delete", () => {
+  it("DOES offer to edit an existing person, now that update_person (#116) exists — T13", () => {
+    const people = adminKindBySlug("people")!;
+    const names = editableFields(people).map((field) => field.name);
+    expect(names).toEqual(["displayName", "avatar", "colour"]);
+    expect(names).not.toContain("id");
+  });
+
+  it("archives repositories, areas and people, and never offers a delete", () => {
     // §23.1: "Archive, never delete — attribution and history point at
     // these rows."
     expect(adminKindBySlug("repos")?.canArchive).toBe(true);
     expect(adminKindBySlug("areas")?.canArchive).toBe(true);
+    // T13: a person can now be archived from the admin grid too, backed by
+    // `update_person`'s `archived` flag (#116).
+    expect(adminKindBySlug("people")?.canArchive).toBe(true);
   });
 
   it("does not offer to archive a machine or an account, which carry no archived column", () => {

@@ -281,22 +281,26 @@ const ACCOUNTS: AdminKind = {
 };
 
 /**
- * People — read-only here. A profile is an attribution claim rather than a
- * credential (SCHEMA.md §17.8), and the picker is where one is chosen; the
- * #92 API exposes no create or edit for a person, so offering a form would
- * be a control that cannot work.
+ * People — edit and archive, no create. A profile is an attribution claim
+ * rather than a credential (SCHEMA.md §17.8), and `update_person` (#116)
+ * upserts it the same way `update_machine`/`update_account` do — so this
+ * kind is edit-and-archive-only here, like `MACHINES`, rather than offering
+ * a `POST`-based create through the generic form: creating a profile is the
+ * profile picker's job (T13, its own inline form on the empty state), the
+ * one place §8a actually asks for a "who's working?" prompt. This is where
+ * an *existing* profile is corrected or retired.
  */
 const PEOPLE: AdminKind = {
   slug: "people",
   title: "People",
   singular: "person",
   blurb:
-    "The profiles work is attributed to. Listed here for reference; a profile is chosen in the picker, and this build's API exposes no edit for one.",
+    "The profiles work is attributed to. New profiles are created from the picker; this is where an existing one is renamed, recoloured, or archived.",
   listPath: "/api/people",
   collection: "people",
   idField: "id",
   canCreate: false,
-  canArchive: false,
+  canArchive: true,
   fields: [
     {
       name: "id",
@@ -310,7 +314,18 @@ const PEOPLE: AdminKind = {
       label: "Display name",
       help: "What they are called on screen.",
       kind: "text",
-      readOnly: true,
+    },
+    {
+      name: "avatar",
+      label: "Avatar",
+      help: "A short symbol shown on their tile — an emoji works well. Leave blank to fall back to the first letter of the display name.",
+      kind: "text",
+    },
+    {
+      name: "colour",
+      label: "Colour",
+      help: "The tile's border colour, e.g. #6366f1. Leave blank for the default.",
+      kind: "text",
     },
   ],
 };

@@ -67,6 +67,7 @@ describeIfDb("what the people write path unblocks", () => {
       displayName: "User A",
       avatar: "🙂",
       colour: "#336699",
+      archivedAt: null,
     });
   });
 
