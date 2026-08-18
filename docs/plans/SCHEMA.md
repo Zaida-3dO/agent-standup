@@ -496,9 +496,15 @@ sets of linked states, so neither is a route around the other.
 demanding the linked item be `blocked` or `paused` — and `blocked` demands a reason and a
 `blocked_on_type`, so faking it lands the work on somebody's needs-you list and makes it *more*
 visible. `follow-up-scheduled` charges by demanding the linked item be genuinely **scheduled**:
-`someday` is refused. Without that, minting a row and parking it on the someday pile would let *"I
-ran out of time"* complete cleanly with no false statement anywhere — the exact class this section
-exists to keep unsayable, arriving through the front door.
+`someday` is refused, because it is the one state whose meaning is *unscheduled*, and accepting it
+would let *"I will get to it"* complete cleanly while making the reason's own name false.
+
+**The two prices are not equal.** A false `blocked` costs a reason, a `blocked_on_type`, and a place
+on somebody's needs-you list. Refusing `someday` costs a positive assertion that the work is queued —
+which is real, because it is a claim someone can disagree with and it lands in a permanent record,
+but lighter, since a newly minted item already sits in an accepted state and `someday` and `on_deck`
+render in the same board column. Recorded here rather than smoothed over: a design that claimed
+parity would be claiming more than it delivers.
 
 **This is a widening, and it is recorded as one.** Mutual exclusivity between the two follow-up
 reasons is not on its own a guarantee; the question is whether their *union* covers "later", and the

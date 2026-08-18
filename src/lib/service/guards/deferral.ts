@@ -87,15 +87,25 @@ const CLOSED_ITEM_STATES = new Set(["merged", "research_done", "wont_do", "cance
  * The states in which a linked item is not **scheduled** — the claim
  * `follow-up-scheduled` actually makes, as against merely existing.
  *
- * `someday` is the whole reason this set exists. Without it there is a path
- * that costs nothing and requires no false statement: mint a row, leave it in
- * `someday`, and *"I ran out of time"* completes cleanly — which is precisely
- * the class SCHEMA.md §5a exists to keep unsayable. Contrast the price
- * `follow-up` charges for the same evasion: it needs the linked item
- * `blocked`, and `blocked` demands a reason and a `blocked_on_type`, so a
- * false block lands on somebody's needs-you list and makes the work MORE
- * visible. Each reason has to carry a cost of that kind or it becomes the
- * cheap way out, and *"it is on the someday pile"* is not a schedule.
+ * `someday` is the whole reason this set exists, and the reason is semantic
+ * rather than procedural. `someday` is the one state whose meaning is
+ * literally *"not scheduled"*, so accepting it would make this reason's own
+ * name false and let *"I will get to it"* complete cleanly — the class
+ * SCHEMA.md §5a exists to keep unsayable. Refusing it forces the closer to
+ * make a positive claim about the work being real and queued, which is a
+ * claim someone can disagree with.
+ *
+ * **The honest limit of this, stated because overstating it would be worse
+ * than the gap.** The remaining accepted states are `on_deck`, `planning`,
+ * `plan_review`, `executing` and `in_review`, and a freshly minted item lands
+ * in `on_deck` with no extra step — so the price is a positive assertion, not
+ * a laborious one, and `someday` and `on_deck` both render in the same board
+ * column. This is a weaker cost than the one `follow-up` charges, where a
+ * false `blocked` needs a reason and a `blocked_on_type` and lands the item
+ * on somebody's needs-you list. It is not nothing — a determined evader has
+ * to state that unscheduled work is scheduled, in a permanent record, rather
+ * than merely selecting the state that says otherwise — but a design that
+ * claimed parity here would be claiming more than it delivers.
  *
  * Also excluded are the two states that say the work is stopped. They are
  * `follow-up`'s territory — a linked item that is `blocked` or `paused` is

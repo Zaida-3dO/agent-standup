@@ -64,8 +64,16 @@ export const NOT_DONE_TEXT_CHAR_CAP = 240;
  * `blocked_on_type`, so faking one makes the work MORE visible.
  * `follow-up-scheduled` charges it by requiring the linked item to be
  * genuinely scheduled: `someday` is refused (`guards/deferral.ts`'s
- * `UNSCHEDULED_ITEM_STATES`), because a row on the someday pile is exactly the
- * costless parking space that would let "later" through.
+ * `UNSCHEDULED_ITEM_STATES`), because it is the one state that means
+ * *unscheduled* — accepting it would make the reason's own name false.
+ *
+ * **The two prices are not equal, and the difference is recorded rather than
+ * smoothed over.** A false `blocked` costs a reason, a `blocked_on_type`, and
+ * a place on somebody's needs-you list. Refusing `someday` costs a positive
+ * assertion that the work is queued — real, because it is a claim someone can
+ * disagree with and it sits in a permanent record, but lighter, since a
+ * freshly minted item is already in an accepted state. See
+ * `UNSCHEDULED_ITEM_STATES` for the full accounting.
  *
  * **The honest comparison is not against a perfect §5a, though.** The shape
  * this reason exists for — a review's non-blocking finding, recorded as an
