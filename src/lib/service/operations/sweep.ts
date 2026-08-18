@@ -65,11 +65,24 @@ export interface SweepOperationOutput {
   readonly capabilityChecks: LivenessSweepResult["capabilityChecks"];
 }
 
+// Stryker disable all : this object is evaluated once at import, before any
+// mutant is activated. Stryker switches a mutant at RUNTIME, by checking
+// `global.activeMutant` where the mutated expression evaluates; an operation's
+// metadata is read into the registry (`registry.ts` keys it by `sweep.name`)
+// as the module loads, which happens before the first test body runs and is
+// never re-evaluated per mutant. So a mutation here changes nothing any test
+// can observe, and reports Survived however thoroughly the metadata is
+// asserted — `tests/service-registry.test.ts` and
+// `tests/sweep-takeover-operations.test.ts` both assert `name`, `kind` and
+// `summary`, and both genuinely fail when the source is edited. Disabled
+// because these mutants are unkillable by construction, NOT because the
+// behaviour is untested. See issue #166 — this applies to every operation.
 export const sweep = defineOperation({
   name: "sweep",
   kind: "write",
   summary:
     "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items.",
+  // Stryker restore all
   input: inputSchema,
   // The input is declared and parsed (`.strict()` is what refuses a caller's
   // stray field) but never read — the operation takes nothing, deliberately.
