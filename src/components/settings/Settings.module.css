@@ -5,8 +5,8 @@
 .page {
   padding: 1.25rem;
   min-height: 100%;
-  background: #0e0e11;
-  color: #f4f4f5;
+  background: var(--surface-app);
+  color: var(--text-primary);
 }
 
 .centered {
@@ -15,8 +15,8 @@
   justify-content: center;
   min-height: 12rem;
   padding: 1.25rem;
-  background: #0e0e11;
-  color: #a1a1aa;
+  background: var(--surface-app);
+  color: var(--text-muted);
 }
 
 .heading {
@@ -26,7 +26,7 @@
 
 .subheading {
   margin: 0 0 1.5rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
@@ -38,10 +38,10 @@
 
 .link {
   padding: 0.4rem 0.75rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.4rem;
-  background: #1c1c21;
-  color: #e4e4e7;
+  background: var(--surface-card);
+  color: var(--text-secondary);
   font-size: 0.85rem;
   text-decoration: none;
 }
@@ -49,17 +49,17 @@
 .section {
   margin: 0 0 1.5rem;
   padding: 1rem;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-radius: 0.6rem;
-  background: #16161a;
+  background: var(--surface-panel);
 }
 
 /* The `sensitive` section — SCHEMA.md §17.8 puts these behind their own
    heading because they change what the system enforces, so the section is
    visually separated rather than merely titled. */
 .guardedSection {
-  border-color: #7f1d1d;
-  background: #1b1214;
+  border-color: var(--state-blocked-border);
+  background: var(--state-blocked-bg);
 }
 
 .sectionTitle {
@@ -69,7 +69,7 @@
 
 .sectionNote {
   margin: 0 0 1rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.8rem;
   line-height: 1.4;
 }
@@ -88,9 +88,9 @@
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.75rem;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-radius: 0.45rem;
-  background: #1c1c21;
+  background: var(--surface-card);
 }
 
 .fieldHead {
@@ -107,7 +107,7 @@
 }
 
 .key {
-  color: #71717a;
+  color: var(--text-faint);
   font-family: ui-monospace, monospace;
   font-size: 0.72rem;
 }
@@ -120,29 +120,29 @@
   border-radius: 999px;
   font-size: 0.68rem;
   font-weight: 700;
-  background: #27272a;
-  color: #a1a1aa;
+  background: var(--border-default);
+  color: var(--text-muted);
 }
 
 .badgeOverride {
-  background: #1e3a5f;
-  color: #bfdbfe;
+  background: var(--accent-bg);
+  color: var(--accent-fg);
 }
 
 .badgeInvalid {
-  background: #7f1d1d;
-  color: #fecaca;
+  background: var(--state-blocked-border);
+  color: var(--state-blocked-fg);
 }
 
 .help {
   margin: 0;
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.78rem;
   line-height: 1.45;
 }
 
 .appliesWhen {
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.72rem;
 }
 
@@ -158,10 +158,10 @@
 .textarea,
 .select {
   padding: 0.35rem 0.5rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.35rem;
-  background: #0e0e11;
-  color: #f4f4f5;
+  background: var(--surface-app);
+  color: var(--text-primary);
   font-size: 0.85rem;
   min-width: 14rem;
 }
@@ -174,18 +174,18 @@
 
 .button {
   padding: 0.35rem 0.7rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-strong);
   border-radius: 0.35rem;
-  background: #27272a;
-  color: #e4e4e7;
+  background: var(--border-default);
+  color: var(--text-secondary);
   font-size: 0.8rem;
   cursor: pointer;
 }
 
 .buttonDanger {
-  border-color: #7f1d1d;
-  background: #451a1a;
-  color: #fecaca;
+  border-color: var(--state-blocked-border);
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
 }
 
 /* The confirmation box for a guarded key — its own row, so the field cannot
@@ -196,20 +196,20 @@
   gap: 0.3rem;
   margin-top: 0.4rem;
   padding: 0.5rem;
-  border: 1px dashed #7f1d1d;
+  border: 1px dashed var(--state-blocked-border);
   border-radius: 0.35rem;
 }
 
 .confirmPrompt {
   margin: 0;
-  color: #fecaca;
+  color: var(--state-blocked-fg);
   font-size: 0.75rem;
   line-height: 1.4;
 }
 
 .error {
   margin: 0;
-  color: #fca5a5;
+  color: var(--state-blocked-fg);
   font-size: 0.75rem;
   line-height: 1.4;
 }
@@ -217,10 +217,10 @@
 .invalidOverride {
   margin: 0.3rem 0 0;
   padding: 0.5rem;
-  border: 1px solid #7f1d1d;
+  border: 1px solid var(--state-blocked-border);
   border-radius: 0.35rem;
-  background: #2a1215;
-  color: #fecaca;
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
   font-size: 0.75rem;
   line-height: 1.45;
 }
@@ -243,29 +243,29 @@
 
 .readOnlyName {
   font-family: ui-monospace, monospace;
-  color: #e4e4e7;
+  color: var(--text-secondary);
 }
 
 .readOnlyValue {
   font-family: ui-monospace, monospace;
-  color: #bfdbfe;
+  color: var(--accent-fg);
 }
 
 .readOnlyMeaning {
-  color: #a1a1aa;
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
 .setYes {
-  color: #86efac;
+  color: var(--state-merged-fg);
 }
 
 .setNo {
-  color: #71717a;
+  color: var(--text-faint);
 }
 
 .empty {
   margin: 0;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.8rem;
 }

@@ -1,14 +1,16 @@
-/* The board paints its own surface rather than inheriting one. Every
-   colour in this file is chosen for a dark background, so the board sets
-   the background those colours assume instead of depending on a page-level
-   one it does not control — otherwise its light text washes out against
-   whatever is behind it. Scoped to the board's own container rather than
-   reaching up to a global stylesheet, which is not this row's to change. */
+/* The board's surface, from the token layer (`src/app/globals.css`).
+
+   Both the background and the text colour come from that one layer, which
+   is what makes them safe to state separately here: `--surface-app` and
+   `--text-primary` are contrasted against each other by construction, and
+   `tests/design-tokens-contrast.test.ts` holds them to it. A component
+   painting its own background to guarantee its own text stays legible is
+   solving that problem locally and re-solving it on every surface. */
 .board {
   padding: 1.25rem;
   min-height: 100%;
-  background: #0e0e11;
-  color: #f4f4f5;
+  background: var(--surface-app);
+  color: var(--text-primary);
 }
 
 /* Same surface as `.board` — the loading and error states are the board
@@ -20,8 +22,8 @@
   justify-content: center;
   min-height: 12rem;
   padding: 1.25rem;
-  background: #0e0e11;
-  color: #a1a1aa;
+  background: var(--surface-app);
+  color: var(--text-muted);
 }
 
 /* The needs-you badge — the whole point of row #37's third piece, so it
@@ -38,10 +40,10 @@
   gap: 0.5rem;
   margin: 0 0 1rem;
   padding: 0.5rem 0.85rem;
-  border: 1px solid #7f1d1d;
+  border: 1px solid var(--state-blocked-border);
   border-radius: 0.5rem;
-  background: #2a1215;
-  color: #fecaca;
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
   font-size: 0.9rem;
 }
 
@@ -53,8 +55,8 @@
   height: 1.5rem;
   padding: 0 0.4rem;
   border-radius: 999px;
-  background: #dc2626;
-  color: #fff;
+  background: var(--priority-p0-bg);
+  color: var(--priority-p0-fg);
   font-weight: 700;
   font-size: 0.85rem;
 }
@@ -71,9 +73,9 @@
   flex-direction: column;
   gap: 0.6rem;
   padding: 0.75rem;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-radius: 0.6rem;
-  background: #16161a;
+  background: var(--surface-panel);
   min-height: 8rem;
 }
 
@@ -81,8 +83,8 @@
    more here than usual: the drop decides which state the item moves to, so
    "which column am I about to drop on" is a question with a consequence. */
 .columnDropTarget {
-  border-color: #3b82f6;
-  background: #16192a;
+  border-color: var(--accent);
+  background: var(--accent-bg);
 }
 
 .columnHead {
@@ -106,8 +108,8 @@
   height: 1.4rem;
   padding: 0 0.35rem;
   border-radius: 999px;
-  background: #27272a;
-  color: #d4d4d8;
+  background: var(--border-default);
+  color: var(--text-secondary);
   font-size: 0.8rem;
 }
 
@@ -117,7 +119,7 @@
   gap: 0.75rem;
   margin: 0;
   font-size: 0.78rem;
-  color: #a1a1aa;
+  color: var(--text-muted);
 }
 
 .splitAmber::before,
@@ -133,11 +135,11 @@
 }
 
 .splitAmber::before {
-  background: #f59e0b;
+  background: var(--state-paused-border);
 }
 
 .splitRed::before {
-  background: #ef4444;
+  background: var(--state-blocked-border);
 }
 
 /* Neither amber nor red — a card in Waiting whose tone its own state
@@ -145,12 +147,12 @@
    add up to the header's count. Grey because it is genuinely "no tone",
    not a third severity. */
 .splitOther::before {
-  background: #71717a;
+  background: var(--text-faint);
 }
 
 .empty {
   margin: 0;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 0.85rem;
 }
 
@@ -168,10 +170,10 @@
   flex-direction: column;
   gap: 0.3rem;
   padding: 0.6rem 0.7rem;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border-default);
   border-left: 3px solid transparent;
   border-radius: 0.45rem;
-  background: #1c1c21;
+  background: var(--surface-card);
 }
 
 /* A card whose move is in flight. Deliberately subtle — the move has
@@ -197,10 +199,10 @@
   gap: 0.75rem;
   margin: 0 0 1rem;
   padding: 0.5rem 0.85rem;
-  border: 1px solid #7f1d1d;
+  border: 1px solid var(--state-blocked-border);
   border-radius: 0.5rem;
-  background: #2a1215;
-  color: #fecaca;
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
   font-size: 0.9rem;
 }
 
@@ -212,21 +214,27 @@
 .refusalDismiss {
   flex: none;
   padding: 0.2rem 0.6rem;
-  border: 1px solid #7f1d1d;
+  border: 1px solid var(--state-blocked-border);
   border-radius: 0.3rem;
   background: transparent;
-  color: #fecaca;
+  color: var(--state-blocked-fg);
   font-size: 0.8rem;
   cursor: pointer;
 }
 
-/* Amber for paused, red for blocked — SCHEMA.md §1.1. */
+/* Amber for paused, red for blocked — SCHEMA.md §1.1.
+
+   These take the `-border` role of the two states' triplets, which is the
+   whole reason the triplets exist: this left border, the state chip on the
+   same card, and the Waiting column's tally dots are now three renderings
+   of one declaration, so the schema's mandate cannot be honoured in one
+   place and quietly missed in another. */
 .toneAmber {
-  border-left-color: #f59e0b;
+  border-left-color: var(--state-paused-border);
 }
 
 .toneRed {
-  border-left-color: #ef4444;
+  border-left-color: var(--state-blocked-border);
 }
 
 .cardHead {
@@ -240,22 +248,22 @@
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.03em;
-  color: #a1a1aa;
+  color: var(--text-muted);
 }
 
 .priority[data-priority="P0"] {
-  color: #fca5a5;
+  color: var(--state-blocked-fg);
 }
 
 .priority[data-priority="P1"] {
-  color: #fcd34d;
+  color: var(--state-paused-fg);
 }
 
 .needsYouFlag {
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
-  background: #dc2626;
-  color: #fff;
+  background: var(--priority-p0-bg);
+  color: var(--priority-p0-fg);
   font-size: 0.68rem;
   font-weight: 700;
 }
@@ -281,13 +289,13 @@
 /* The BLUF line (#107) — sits under the title, quieter than it but louder
    than the waiting reason, because it is what the card is *for*. */
 .cardHeadline {
-  color: #c4c4cc;
+  color: var(--text-secondary);
   font-size: 0.78rem;
   line-height: 1.35;
 }
 
 .cardReason {
-  color: #a1a1aa;
+  color: var(--text-muted);
   font-size: 0.76rem;
   line-height: 1.3;
 }
@@ -298,7 +306,7 @@
   gap: 0.4rem;
   margin-top: 0.1rem;
   font-size: 0.7rem;
-  color: #71717a;
+  color: var(--text-faint);
 }
 
 .state {

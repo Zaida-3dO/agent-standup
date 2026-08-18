@@ -5,11 +5,42 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
+      // `next/font/local` is a build-time construct the Next compiler
+      // resolves and rewrites; it is not a resolvable ES module, so Node
+      // reports "Directory import ... is not supported" for it. Nothing
+      // here runs the Next compiler, and `src/app/layout.tsx` reaches it
+      // transitively through `geist/font/sans`.
+      //
+      // Aliasing it keeps `tests/root-layout.test.ts` able to import and
+      // CALL `RootLayout` as a plain function — which is the whole testing
+      // approach this repo is built around (`tests/helpers/react-element.ts`).
+      // The alternative was moving the font out of the layout to suit the
+      // test, which distorts the source for the test's convenience.
+      // See the stub's own header for what this does and does not prove.
+      "next/font/local": path.resolve(
+        import.meta.dirname,
+        "./tests/helpers/next-font-local-stub.ts",
+      ),
     },
   },
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    server: {
+      deps: {
+        // `geist` must be TRANSFORMED, not externalised, or the alias above
+        // never gets a chance to apply.
+        //
+        // Vitest externalises `node_modules` by default and hands them
+        // straight to Node's own resolver — which is exactly the resolver
+        // that cannot resolve `next/font/local`, so the alias was being
+        // bypassed rather than ignored. Inlining routes `geist/font/sans`
+        // through Vite's pipeline, where `resolve.alias` applies and the
+        // stub is substituted. Scoped to this one package: inlining broadly
+        // would slow every run down for no benefit.
+        inline: ["geist"],
+      },
+    },
     // Builds one migrated template database the DB-backed files clone, instead
     // of each of them replaying every migration through its own `npx` spawn.
     // See tests/helpers/global-setup.ts for why that dominated the suite.

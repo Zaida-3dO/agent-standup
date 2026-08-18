@@ -4,18 +4,29 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 10, 12, 0.85);
+  background: var(--surface-scrim);
   z-index: 100;
 }
 
+/* The one legitimate shadow in the app.
+
+   `globals.css` says elevation is borders and surface lightness, not
+   shadows, because a shadow on a dark surface composites black onto
+   near-black and reads as smudge. A modal is the stated exception: it
+   floats above arbitrary content it knows nothing about, so it needs to
+   detach from that content rather than merely be a slightly different
+   shade of it. `--shadow-overlay` is the only shadow token and this is the
+   only place that should use it. */
 .panel {
   position: relative;
   max-width: 32rem;
   width: calc(100% - 2rem);
   padding: 2rem;
-  border-radius: 0.75rem;
-  background: #16161a;
-  color: #f4f4f5;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
   text-align: center;
 }
 
@@ -41,7 +52,7 @@
 }
 
 .close:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-raised);
 }
 
 .grid {
@@ -61,16 +72,16 @@
   gap: 0.5rem;
   width: 7rem;
   padding: 0.75rem 0.5rem;
-  border: 2px solid #3f3f46;
+  border: 2px solid var(--border-strong);
   border-radius: 0.5rem;
-  background: #1f1f24;
+  background: var(--surface-raised);
   color: inherit;
   cursor: pointer;
 }
 
 .tile:hover,
 .tile:focus-visible {
-  border-color: #a1a1aa;
+  border-color: var(--text-muted);
 }
 
 .avatar {
@@ -80,7 +91,7 @@
   width: 3.5rem;
   height: 3.5rem;
   border-radius: 999px;
-  background: #3f3f46;
+  background: var(--border-strong);
   font-size: 1.5rem;
 }
 
@@ -90,7 +101,7 @@
 }
 
 .empty {
-  color: #a1a1aa;
+  color: var(--text-muted);
 }
 
 .tileAdd {

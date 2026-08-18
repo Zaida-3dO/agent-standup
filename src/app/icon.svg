@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Agent Standup">
+  <title>Agent Standup</title>
+  <!--
+    THE MARK: three agents standing in a line, reporting their status.
+
+    A standup is a row of people saying where they are. That is the whole
+    metaphor, and it is drawn as literally as the size allows: three
+    figures side by side, each carrying one of the product's own status
+    colours — running, waiting, done.
+
+    ── Why it is only three shapes ──────────────────────────────────────
+
+    It has to survive 16px, which is the size that actually matters (a tab,
+    a bookmark bar). At 16px this 64-unit viewBox scales by 0.25, so a
+    1-unit detail is a quarter of a pixel and simply disappears into its
+    neighbour. A first draft put a name-bar beside each figure; at 16px
+    those bars were 1.75px tall separated by 0.5px gaps, which is not a row
+    of bars, it is a grey smear. They were cut rather than shrunk, because
+    detail that only resolves at 64px is detail that lies about what the
+    icon is.
+
+    What is left is three columns, 12 units wide with 8 units of clear air
+    between them — 3px and 2px at 16px, which stays legible as three
+    distinct things. The gap is deliberately two thirds of the bar width:
+    at this size the SEPARATION is what makes it read as three agents
+    rather than one striped block, so it is the measurement with the least
+    room to give.
+
+    ── Why the colours are these colours ────────────────────────────────
+
+    Green, amber and blue are `executing`, `paused` and `in_review` from
+    the token layer — the product's own status vocabulary, so the icon is
+    an instance of the design system rather than a separate piece of art
+    with its own palette. Deliberately NOT red: an app icon that shows a
+    red status permanently would read as a persistent error in a tab strip.
+
+    They are written as hex here and not as `var(--state-…)` because an SVG
+    used as a favicon is rendered by the browser chrome, entirely outside
+    the document — no stylesheet, no custom properties, nothing to inherit.
+    The values are the resolved dark-theme tokens; they are copies of a
+    computed output, not a second source of truth.
+
+    ── Why the tile has its own background ──────────────────────────────
+
+    Browser chrome is light in one theme and dark in another and the icon
+    cannot know which. A transparent mark tuned for one disappears against
+    the other. The rounded plate is opaque and dark, so the figures always
+    sit on the surface they were contrasted against — the same reason the
+    board's own badges are opaque rather than translucent.
+  -->
+  <rect width="64" height="64" rx="14" fill="#1d1b26" />
+
+  <!-- Three columns of 12 with 8 between them, centred: 6..18, 26..38,
+       46..58. All three share a baseline at y=52 so they stand in a line;
+       only the tops differ, which is what makes the heights read as
+       "different amounts of progress" rather than as a random arrangement. -->
+
+  <!-- Left: executing. Tallest — the one actually doing something. -->
+  <rect x="6" y="18" width="12" height="34" rx="6" fill="#5ee9a0" />
+  <!-- Centre: paused. Shortest, visibly waiting. -->
+  <rect x="26" y="32" width="12" height="20" rx="6" fill="#fbbf24" />
+  <!-- Right: in review. Mid-height. -->
+  <rect x="46" y="25" width="12" height="27" rx="6" fill="#7dd3fc" />
+</svg>
