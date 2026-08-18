@@ -91,5 +91,9 @@ export async function requestMove(
     return { ok: false, message: "That move could not be confirmed." };
   }
 
-  return { ok: true, entry: { item, column } };
+  // No assignments: the transition response carries the item, not its
+  // ownership, and a settled card re-renders from the next board read.
+  // An empty array is the honest value for "this response did not say" —
+  // the same reason the API never omits the key.
+  return { ok: true, entry: { item, column, assignments: [] } };
 }

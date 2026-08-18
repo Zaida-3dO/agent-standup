@@ -48,7 +48,10 @@ function item(overrides: Partial<BoardItem> = {}): BoardItem {
 }
 
 function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): BoardEntry {
-  return { item: item(overrides), column };
+  // These fixtures are about drag, tone and tallies; ownership is proved
+  // against real data in the operation's own suites. An empty list is what
+  // the API sends for an item nobody holds, so it is the honest default.
+  return { item: item(overrides), column, assignments: [] };
 }
 
 /**
@@ -171,6 +174,7 @@ describe("the server accepts", () => {
     const settled = moveSettled(afterDrop, request!.sequence, {
       item: item({ id: "a", state: "executing" }),
       column: "in_progress",
+      assignments: [],
     });
 
     expect(columnOf(settled.board, "a")).toBe("in_progress");
@@ -188,6 +192,7 @@ describe("the server accepts", () => {
     const settled = moveSettled(afterDrop, request!.sequence, {
       item: item({ id: "a", state: "blocked" }),
       column: "waiting",
+      assignments: [],
     });
 
     expect(columnOf(settled.board, "a")).toBe("waiting");
@@ -265,6 +270,7 @@ describe("two moves in quick succession", () => {
     const after = moveSettled(secondDrop, first!.sequence, {
       item: item({ id: "a", state: "executing" }),
       column: "in_progress",
+      assignments: [],
     });
 
     expect(after).toBe(secondDrop);

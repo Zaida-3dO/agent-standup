@@ -70,6 +70,7 @@ function boardWithOneCard(): BoardData {
           pauseReason: null,
         },
         column: "backlog",
+        assignments: [],
       },
     ]),
   };

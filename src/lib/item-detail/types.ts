@@ -12,9 +12,39 @@
 //
 // Only the fields the view actually renders are modelled; extra keys the
 // response carries are ignored rather than fought with.
-import type { BoardColumnId, ItemState } from "@/lib/board/types";
+import type {
+  AssignmentRole,
+  BoardAssignment,
+  BoardColumnId,
+  HolderType,
+  ItemState,
+  Liveness,
+} from "@/lib/board/types";
 
-export type { BoardColumnId, ItemState };
+export type { AssignmentRole, BoardColumnId, HolderType, ItemState, Liveness };
+
+/**
+ * Who holds — or held — this item, in full: everything the ownership block
+ * answers *"where is this work actually happening"* with.
+ *
+ * Extends the board's slim shape rather than restating it, so the two
+ * cannot drift on the fields they share. The added columns are the ones a
+ * card has no room for and a detail view exists to show.
+ */
+export interface DetailAssignment extends BoardAssignment {
+  readonly id: string;
+  readonly machine: string;
+  readonly branch: string | null;
+  readonly worktree: string | null;
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly sessionId: string;
+  readonly rootSessionId: string;
+  readonly pid: number | null;
+  readonly claimedAt: string;
+  /** Null while the holder still has it; the moment ownership ended otherwise. */
+  readonly releasedAt: string | null;
+}
 
 /** One node of the subtask tree, flat with a depth — see the operation's own note on why flat. */
 export interface DetailSubtask {
@@ -100,4 +130,14 @@ export interface ItemDetail {
   readonly history: readonly DetailHistoryEntry[];
   readonly historyTruncated: boolean;
   readonly summary: DetailSummary | null;
+  /** Who holds it now — live assignments, newest claim first. Empty when nobody does. */
+  readonly assignments: readonly DetailAssignment[];
+  /**
+   * Who held it before — released assignments, most recent first.
+   *
+   * This is the ownership history, and it is what makes *"who was on this
+   * before it stalled"* answerable: nothing else in the payload records a
+   * holder that has let go.
+   */
+  readonly previousHolders: readonly DetailAssignment[];
 }

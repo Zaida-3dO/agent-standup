@@ -62,10 +62,59 @@ export interface BoardItem {
   readonly pauseReason: string | null;
 }
 
+/**
+ * The four liveness values, as the API sends them (SCHEMA.md §2).
+ *
+ * All four are distinct and none is a synonym for another: `running` is a
+ * session still working, `stalled` one that has stopped reporting but may
+ * come back, `dead` one known to be gone, and `superseded` one a takeover
+ * deliberately replaced. A presence dot that mapped `superseded` onto `dead`
+ * would report a normal handover as a failure, so the vocabulary is carried
+ * through to the UI intact rather than collapsed on the way.
+ */
+export type Liveness = "running" | "stalled" | "dead" | "superseded";
+
+/** The roles an assignment can hold, as the API sends them (SCHEMA.md §2). */
+export type AssignmentRole =
+  "orchestrator" | "builder" | "reviewer" | "visual_reviewer" | "scout" | "custom";
+
+export type HolderType = "person" | "agent";
+
+/**
+ * Who holds an item, as a **card** shows it — the slim shape `GET
+ * /api/board` returns per entry.
+ *
+ * Seven scalars, and no `machine`/`branch`/`worktree`/`model`/`session`:
+ * those are on the detail response, which returns one item rather than a
+ * page of them. A card that wanted them would be asking the board read to
+ * carry seven more columns per card.
+ */
+export interface BoardAssignment {
+  readonly holderId: string;
+  readonly holderType: HolderType;
+  /** Already resolved server-side — a person's display name, or an agent's crew name. Safe to render directly. */
+  readonly displayName: string;
+  readonly role: AssignmentRole;
+  /** The free-text role name, set iff `role` is `custom`. */
+  readonly roleCustom: string | null;
+  readonly liveness: Liveness;
+  /** ISO 8601 — what a "last active 40m ago" label is computed from. */
+  readonly lastActive: string;
+}
+
 /** One entry in a column, as `GET /api/board` returns it. */
 export interface BoardEntry {
   readonly item: BoardItem;
   readonly column: BoardColumnId;
+  /**
+   * Who holds this item — live assignments only, in claim order.
+   *
+   * **Empty means nobody holds it**, and the API always sends the key, so a
+   * card can render presence from this alone without a second call. An array
+   * rather than one holder because an item can be held by an orchestrator
+   * and a builder and two reviewers at once (SCHEMA.md §2).
+   */
+  readonly assignments: readonly BoardAssignment[];
 }
 
 /**

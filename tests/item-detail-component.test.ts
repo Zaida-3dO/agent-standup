@@ -68,6 +68,8 @@ function detail(overrides: Partial<ItemDetail> = {}): ItemDetail {
     history: [],
     historyTruncated: false,
     summary: null,
+    assignments: [],
+    previousHolders: [],
     ...overrides,
   };
 }

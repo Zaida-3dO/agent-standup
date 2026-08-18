@@ -45,7 +45,10 @@ function item(overrides: Partial<BoardItem> = {}): BoardItem {
 }
 
 function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): BoardEntry {
-  return { item: item(overrides), column };
+  // These fixtures are about drag, tone and tallies; ownership is proved
+  // against real data in the operation's own suites. An empty list is what
+  // the API sends for an item nobody holds, so it is the honest default.
+  return { item: item(overrides), column, assignments: [] };
 }
 
 /**
@@ -219,6 +222,7 @@ describe("reconcile", () => {
     const settled = reconcile(board, {
       item: item({ id: "a", state: "blocked" }),
       column: "waiting",
+      assignments: [],
     });
     expect(settled.in_progress.entries).toHaveLength(0);
     expect(settled.waiting.entries[0]!.item.state).toBe("blocked");
