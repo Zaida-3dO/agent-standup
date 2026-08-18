@@ -32,17 +32,29 @@ so that turning it on is a decision someone makes, not a job someone has to rebu
    which is what decides how fast work moves through the queue. On `main` nobody waits on it, but
    that is also why it gates nothing there: the merge has already happened, so a survivor is a
    notification rather than a refusal.
-2. **Its first real run against a service operation produced findings no test could act on.**
+2. **Its first run against a service operation produced findings no test could act on.**
    `sweep.ts` scored 33-38 with four survivors, all in the `defineOperation({…})` metadata. That
    object is a module-level literal evaluated once at import, while Stryker activates a mutant at
-   *runtime* — so no test written any way can kill those mutants. It is a property of every operation
-   module rather than of `sweep.ts`, so each new operation entering scope would re-report the same
-   tool limitation at the cost of the slowest job in the pipeline. Tracked as issue **#166**.
+   *runtime*, so no test written any way can kill those mutants — a property of every operation
+   module rather than of one file. Left alone, each new operation entering scope would re-report the
+   same tool limitation at the cost of the slowest job in the pipeline.
+
+   **This one is largely handled.** Issue #166 addressed it across all 60 operation modules with a
+   scoped disable annotation on the metadata literal, plus `scripts/check-operation-metadata-mutants.mjs`
+   to keep the annotations in place, so the four false survivors are reported as `Ignored` rather
+   than as findings. Worth recording that #166's *first* diagnosis was wrong and was corrected by
+   running the tool rather than reasoning about it: the survivors were attributed to coverage
+   attribution, and the fix that followed from that — asserting the metadata inside a test body —
+   left all four alive. The reports showed `coveredBy: 3`, not 0. The mutants are unkillable by
+   construction, which is a different problem with a different answer.
+
+   Reason 1 — the cost — is the one that keeps this gate open.
 
 **What has to be true to turn it back on:**
 
-- Issue #166 resolved, or a documented convention for what mutation testing is expected to reach in
-  an operation module — so a run produces findings someone can act on rather than a known residue.
+- ~~Issue #166 resolved, or a documented convention for what mutation testing is expected to reach in
+  an operation module~~ — **done.** The metadata mutants are annotated across all 60 operation
+  modules and a check keeps them there, so a run reports findings rather than a known residue.
 - A decision on scope and trigger: pull request, `main`-only, or nightly. The changed-files scope
   already exists and keeps cost proportional to the diff; the open question is which event pays it.
 - Agreement on what a survivor obliges. On a pull request it can block; on `main` it can only be
