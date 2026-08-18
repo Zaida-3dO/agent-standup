@@ -33,22 +33,23 @@
 // variable checked fail-closed (`./historical-verification-enabled.ts`), so
 // no caller over HTTP, MCP or the command line can turn it on for itself.
 // While it is closed this path does not exist, and the guard behaves exactly
-// as it did before. This is the property that makes the rest safe to discuss:
-// everything below concerns what an operator has deliberately opened.
+// as it does without it. This is the property that makes the rest safe to
+// discuss: everything below concerns what an operator has deliberately
+// opened.
 //
 // **2. It is not a review and can never be read as one.** This is the part
-// that actually improves on the status quo, and it is worth being precise
-// about the claim. It does NOT make forgery impossible — an agent that will
-// fabricate a review will fabricate an inspection. What it changes is that
-// the fabrication is no longer *invisible*. A forged `code_review` asserts
-// "a reviewer approved this change", which is the same sentence an honest
-// review asserts; there is nothing in the record to notice. A
+// that carries the weight, and it is worth being precise about the claim. It
+// does NOT make forgery impossible — an agent that will fabricate a review
+// will fabricate an inspection. What it buys is that the fabrication is
+// *visible*. A forged `code_review` asserts "a reviewer approved this
+// change", which is the same sentence an honest review asserts; there is
+// nothing in the record to notice. A
 // `historical_verification` asserts something weaker and different: "someone
 // read the merged code and this is what they checked". An item closed this
 // way is permanently marked as closed-on-inspection, in its own artifact
 // list, in its closing summary's `final_state`, and in the `merge` event's
-// payload. The cheap path stops being the one that leaves no trace, which is
-// the specific property that made the old cheap path so corrosive.
+// payload. The cheap path leaves a trace, which is precisely what an
+// approving verdict recorded on the review path does not.
 //
 // **3. The claim has to be checkable.** A verdict is a judgement and cannot
 // be audited after the fact; an inspection is a set of facts and can be.
@@ -131,9 +132,9 @@ export async function historicalVerificationSatisfies(
   env: Record<string, string | undefined> = process.env,
 ): Promise<HistoricalVerificationOutcome> {
   // Checked before the query, not after: while the window is closed this path
-  // does not exist, and the guard must behave precisely as it did before —
-  // including doing no extra work and reaching no conclusion about rows that
-  // may be sitting in the table from a previous window.
+  // does not exist, and the guard must behave precisely as it does without it
+  // — including doing no extra work and reaching no conclusion about rows a
+  // separate window may have left in the table.
   if (!isHistoricalVerificationEnabled(env)) {
     return { satisfied: false, offerAlternative: false };
   }
