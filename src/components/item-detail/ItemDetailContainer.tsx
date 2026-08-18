@@ -65,6 +65,27 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   // knowable at all.
   const [activeTab, setActiveTab] = useState<DetailTab>(DEFAULT_TAB);
 
+  // What the status block measures the item's age against.
+  //
+  // **Zero until the load lands, then the clock read once.** Starting at
+  // `Date.now()` would read the clock during the server render and again on
+  // the client, producing two different ages for the same HTML — a
+  // hydration mismatch, and the same trap the tab-from-hash state above
+  // avoids. Set alongside the loaded detail rather than in its own effect,
+  // so the age and the data it describes are the same render: an age
+  // applied one render later would show every item as zero seconds old for
+  // a frame.
+  //
+  // A `now` of 0 is safe rather than merely unused: `ageMsOf` floors at
+  // zero, so an epoch "now" against any real `updatedAt` yields age 0 —
+  // which is the `fresh` band, and `StalenessDot` renders nothing there.
+  // The pre-load value therefore under-reports staleness for the one render
+  // before the fetch resolves, rather than painting every item as
+  // abandoned. Under-reporting is the correct direction for a default:
+  // a spurious "abandoned" flag on every fresh load would train a reader to
+  // ignore the flag.
+  const [now, setNow] = useState(0);
+
   // The agent view is a SECOND read, and deliberately not made on arrival.
   // `orientation` is the most expensive call this page can issue — it
   // embeds the whole item record and an unbounded event list — and the
@@ -78,6 +99,7 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
     fetchItemDetail(itemId)
       .then((detail) => {
         if (cancelled) return;
+        setNow(Date.now());
         setLoadState({ status: "loaded", detail });
       })
       .catch((err: unknown) => {
@@ -128,6 +150,7 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
       loadState={loadState}
       activeTab={activeTab}
       onTabChange={onTabChange}
+      now={now}
       agentState={agentState}
       onLoadAgentView={onLoadAgentView}
     />

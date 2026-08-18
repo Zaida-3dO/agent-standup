@@ -12,6 +12,7 @@ import { HistoryList } from "@/components/item-detail/HistoryList";
 import { SummaryPanel } from "@/components/item-detail/SummaryPanel";
 import { Markdown } from "@/components/item-detail/Markdown";
 import { TabStrip } from "@/components/item-detail/TabStrip";
+import { StatusBlock } from "@/components/item-detail/StatusBlock";
 import { TABS } from "@/lib/item-detail/tabs";
 import type {
   DetailArtifact,
@@ -20,7 +21,7 @@ import type {
   DetailSummary,
   ItemDetail,
 } from "@/lib/item-detail/types";
-import { findAllByType, walk } from "./helpers/react-element";
+import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 import type { ReactNode } from "react";
 
 /**
@@ -70,6 +71,9 @@ function detailItem(overrides: Partial<ItemDetail["item"]> = {}): ItemDetail["it
     repo: "web",
     branch: null,
     blockedReason: null,
+    blockedOnType: null,
+    blockedOnPersonId: null,
+    unblockAt: null,
     pauseReason: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -133,6 +137,7 @@ function historyEntry(overrides: Partial<DetailHistoryEntry> = {}): DetailHistor
     sessionId: null,
     body: null,
     payload: null,
+    headline: null,
     ...overrides,
   };
 }
@@ -219,31 +224,37 @@ describe("ItemDetailView", () => {
     expect((rendered[0]!.props as Record<string, unknown>).source).toBe(body);
   });
 
-  it("shows the server's column, not one it recomputed", () => {
+  it("hands the status block the server's column, not one it recomputed", () => {
     // The #37 convention: the client reads what the server derived. A
     // project's column comes from a subtree walk the client cannot
     // reproduce, so this must be the value that arrived.
+    //
+    // Asserted on the prop the view passes down rather than on flattened
+    // text, because `StatusBlock` is an unrendered component reference in
+    // this harness — `walk` stops at it, and the column's human title is
+    // produced inside a render this test deliberately does not perform.
+    // `tests/item-detail-status-block.test.ts` calls the block itself and
+    // asserts the title actually reaches the screen.
     const element = ItemDetailView({
       loadState: { status: "loaded", detail: detail({ column: "waiting" }) },
     });
-    const columns = elementsWithProp(element, "data-column");
-    expect(columns.map((el) => (el.props as Record<string, unknown>)["data-column"])).toContain(
-      "waiting",
-    );
-    expect(textOf(element)).toContain("Waiting");
+    const block = findOneByType(element, StatusBlock);
+    expect((block.props as Record<string, unknown>).column).toBe("waiting");
   });
 
-  it("shows a task's own state", () => {
+  it("hands the status block the item, so a task's own state can be shown", () => {
     const element = ItemDetailView({
       loadState: { status: "loaded", detail: detail({ item: detailItem({ state: "in_review" }) }) },
     });
-    expect(textOf(element)).toContain("in review");
+    const block = findOneByType(element, StatusBlock);
+    expect((block.props as { item: { state: string } }).item.state).toBe("in_review");
   });
 
-  it("does NOT show a project's own state — it is a creation leftover", () => {
+  it("does NOT print a project's own state in the header — it is a creation leftover", () => {
     // DECISIONS.md §13c. A project created `on_deck` and long since
     // finished still carries `on_deck` in its row; printing it on the
-    // screen most likely to be read as authoritative is the bug.
+    // screen most likely to be read as authoritative is the bug. The
+    // block's own suppression is asserted where the block is rendered.
     const element = ItemDetailView({
       loadState: {
         status: "loaded",
@@ -253,9 +264,7 @@ describe("ItemDetailView", () => {
         }),
       },
     });
-    const text = textOf(element);
-    expect(text).not.toContain("on deck");
-    expect(text).toContain("Completed");
+    expect(textOf(element)).not.toContain("on deck");
   });
 
   it("shows the blocked reason for a blocked item", () => {

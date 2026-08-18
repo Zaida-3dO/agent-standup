@@ -95,6 +95,12 @@ export interface DetailHistoryEntry {
   readonly sessionId: string | null;
   readonly body: string | null;
   readonly payload: unknown;
+  /**
+   * The event's stored one-line BLUF, where it has one. Null on the event
+   * types that do not carry one — which is most of them, so a reader must
+   * treat its absence as ordinary rather than as a missing field.
+   */
+  readonly headline: string | null;
 }
 
 /** The summary the item was completed with (SCHEMA.md §5a). */
@@ -122,6 +128,27 @@ export interface DetailItem {
   readonly repo: string | null;
   readonly branch: string | null;
   readonly blockedReason: string | null;
+  /**
+   * What KIND of thing this is blocked on — and the reason this is modelled
+   * separately from `blockedReason` rather than left to the prose.
+   *
+   * The three values are three different situations with three different
+   * readers. `person` is somebody's to unblock and belongs in their queue;
+   * `external_process` is nobody's to unblock and only ever resolves when
+   * something outside answers; `time` resolves on its own at `unblockAt`
+   * and needs no action from anybody at all. Collapsing them into one
+   * "blocked" treatment puts the item that needs a decision in the same
+   * bucket as the one that is merely waiting for a clock, which makes a
+   * blocked list unreadable in exactly the case it matters.
+   *
+   * Null when the item is not blocked, and — legitimately — when it is
+   * blocked but nobody recorded which kind.
+   */
+  readonly blockedOnType: "person" | "external_process" | "time" | null;
+  /** Who must act, set iff `blockedOnType` is `person`. */
+  readonly blockedOnPersonId: string | null;
+  /** ISO 8601 — when a `time` block lifts. Null for the other two kinds. */
+  readonly unblockAt: string | null;
   readonly pauseReason: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;

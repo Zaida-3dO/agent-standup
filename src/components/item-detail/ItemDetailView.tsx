@@ -28,14 +28,7 @@
 // from a section that failed to load.
 import type { ReactNode } from "react";
 import type { DetailLoadState } from "@/lib/item-detail/state";
-import {
-  artifactsForTab,
-  humanState,
-  latestVerdict,
-  showsOwnState,
-  waitingReason,
-} from "@/lib/item-detail/view";
-import { columnTitle } from "@/lib/board/view";
+import { artifactsForTab, latestVerdict, waitingReason } from "@/lib/item-detail/view";
 import { DEFAULT_TAB, type DetailTab } from "@/lib/item-detail/tabs";
 import { SubtaskTree } from "./SubtaskTree";
 import { HistoryList } from "./HistoryList";
@@ -46,6 +39,8 @@ import { SummaryPanel } from "./SummaryPanel";
 import { Markdown } from "./Markdown";
 import { VerdictBadge } from "./VerdictBadge";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
+import { StatusBlock } from "./StatusBlock";
+import { statusSummary } from "@/lib/item-detail/status";
 import styles from "./ItemDetail.module.css";
 
 export interface ItemDetailViewProps {
@@ -54,6 +49,18 @@ export interface ItemDetailViewProps {
   readonly activeTab?: DetailTab;
   /** Called when a reader picks a tab. Absent leaves the strip's anchors to navigate on their own. */
   readonly onTabChange?: (tab: DetailTab) => void;
+  /**
+   * What this render means by "now", in epoch ms — what the item's age is
+   * measured against.
+   *
+   * A prop rather than a `Date.now()` call inside the tree, for the reason
+   * `StatusBlock`'s header gives: an age is the one thing on this page that
+   * changes without the data changing, so reading the clock here would make
+   * the component non-deterministic and would mismatch between the server's
+   * HTML and the first client render. Defaulted so a caller that does not
+   * care still renders — the container passes a value it captured once.
+   */
+  readonly now?: number;
   /**
    * The agent view's own load state — separate from `loadState` because
    * `orientation` is a second, much more expensive read that is only made
@@ -99,6 +106,7 @@ export function ItemDetailView({
   loadState,
   activeTab = DEFAULT_TAB,
   onTabChange,
+  now = 0,
   agentState = { status: "idle" },
   onLoadAgentView,
 }: ItemDetailViewProps) {
@@ -120,6 +128,10 @@ export function ItemDetailView({
 
   const { item, column, subtasks, artifacts, history, historyTruncated, summary } =
     loadState.detail;
+  // Everything the status block shows, derived in one pass — see
+  // `@/lib/item-detail/status`. Derived here rather than inside the block so
+  // the block stays a renderer of an already-decided answer.
+  const status = statusSummary(loadState.detail, now);
   const reason = waitingReason(item);
   const verdict = latestVerdict(artifacts);
   const planArtifacts = artifactsForTab(artifacts, "plan");
@@ -128,43 +140,39 @@ export function ItemDetailView({
   return (
     <article className={styles.detail} data-item-id={item.id} data-active-tab={activeTab}>
       <header className={styles.header}>
-        <div className={styles.headerTop}>
-          <span className={styles.priority} data-priority={item.priority}>
-            {item.priority}
-          </span>
-          <span className={styles.kind}>{item.kind}</span>
-          {/* The column is always shown and is the server's answer. For a
-              project it is the ONLY honest position — its own `state` is a
-              creation leftover (DECISIONS.md §13c) — so `showsOwnState`
-              suppresses the raw state there rather than printing something
-              that reads as fact. */}
-          <span className={styles.column} data-column={column}>
-            {columnTitle(column)}
-          </span>
-          {showsOwnState(item.kind) && (
-            <span className={styles.state} data-state={item.state}>
-              {humanState(item.state)}
-            </span>
-          )}
+        {/* The title alone. The item's identity is the one thing true on
+            every tab, so it sits outside them; the state/priority/column
+            chips belong to the status block below, where they are one part
+            of a larger answer rather than a row of their own. Rendering
+            them here as well would show the same three chips twice. */}
+        <h1 className={styles.title}>{item.title}</h1>
+        <div className={styles.meta}>
+          <span>{item.area}</span>
+          {item.repo !== null && <span>{item.repo}</span>}
+          {item.branch !== null && <span className={styles.sha}>{item.branch}</span>}
           {/* The LATEST verdict, as its tier rather than as an
               underscore-stripped string — the difference between "merge it"
               and "merge it, and something else must still happen" is the
               substance of what a reviewer said, and it was being flattened
-              here in exactly the place a reader glances at first. */}
+              in exactly the place a reader glances at first. */}
           {verdict !== null && (
             <span data-latest-verdict={verdict}>
               <VerdictBadge verdict={verdict} />
             </span>
           )}
         </div>
-        <h1 className={styles.title}>{item.title}</h1>
-        <div className={styles.meta}>
-          <span>{item.area}</span>
-          {item.repo !== null && <span>{item.repo}</span>}
-          {item.branch !== null && <span className={styles.sha}>{item.branch}</span>}
-        </div>
+        {/* The one-line reason an item gives for being in Waiting. Kept
+            here as well as in the status block's blocked treatment: this
+            covers `paused`, which is not a block and has no
+            `blockedOnType`. */}
         {reason !== null && <p className={styles.reason}>{reason}</p>}
       </header>
+
+      {/* ABOVE the tabs, deliberately — and this is the point of the whole
+          block. Inside a tab it would answer "why is this stuck" only for
+          the reader who already guessed which tab to open; the question is
+          asked of every item, on arrival, before anything else. */}
+      <StatusBlock item={item} column={column} status={status} now={now} />
 
       <TabStrip
         activeTab={activeTab}
