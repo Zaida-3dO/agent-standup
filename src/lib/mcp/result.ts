@@ -117,9 +117,13 @@ function bigintSafe(value: unknown): unknown {
  * Indentation is presentation, and there is no reader here to present to.
  * This JSON is parsed by a client or read by a model, and neither needs
  * two-space indentation to do it — a model is billed for the whitespace by
- * the token and a client discards it in `JSON.parse`. On a board-sized
- * answer the pretty rendering costs ~43% of the text field for nothing that
- * survives being read.
+ * the token and a client discards it in `JSON.parse`. Measured through the
+ * HTTP transport on a 520-item board-shaped answer, the pretty rendering
+ * cost 42.6% of the text field — 454,763 characters against 261,245 — for
+ * nothing that survives being read. The saving varies with shape rather
+ * than being a constant: the flatter 200-item payload in this module's own
+ * tests saves 37%, which is why the test there asserts a floor rather than
+ * a figure.
  *
  * A size-conditional rendering — compact only past some threshold — was the
  * other option and is deliberately rejected: it makes the wire format depend
