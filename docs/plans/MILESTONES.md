@@ -456,7 +456,7 @@ question is *"is this still switched off?"* rather than *"has this been built?"*
 
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
-| **106** | **Switch mutation testing back on.** The job is paused in `ci.yml` behind a `false &&`, not deleted — re-enabling is removing two characters, and the required gate follows automatically because it reads that job's result. Paused deliberately during a period of heavy parallel work, because at 22–57 minutes it is by a wide margin the slowest job in the pipeline and it runs on any source change. **Restore it once that push settles.** Whatever survived while it was off is found on the first run after, so budget for a batch of failures rather than a green run — and prefer one sweep to fix them together over discovering them one pull request at a time. If it stays off, it needs a scheduled run and somewhere the last result is visible: a check nobody runs and nobody misses is off, whatever the configuration says | 95 | `done` |
+| **106** | **Moved to `BEFORE-GA.md` (G1) — not a milestone row.** Mutation testing is off on every branch, `main` included, and turning it back on is a gate to close before shipping rather than a unit of work to pick up next. Row kept as a pointer so existing references resolve; the reasoning, the conditions for re-enabling, and what must not be done to force a green all live in that file | — | `moved` |
 
 **Milestone done when:** nothing in the tree is disabled, waived or stubbed without a row here saying
 so — and every row here is `done`. The two halves are not the same claim, and only the second is
