@@ -139,6 +139,29 @@ describe("the column's show-more control", () => {
   });
 });
 
+describe("the column's scroll region", () => {
+  it("is reachable from the keyboard, and says what it is", () => {
+    // Bounding the column is what makes this necessary. The page used to
+    // scroll, and page scroll is keyboard-reachable for free; a bounded
+    // column's own scroll region is not, so without a tab stop a
+    // keyboard-only reader reaches the first screenful of a 146-item column
+    // and nothing past it.
+    const element = BoardColumn({
+      column: "backlog",
+      section: section(["a", "b"], { total: 146, nextCursor: "cur-1" }),
+      personId: null,
+    });
+    const focusable = [...walk(element)].filter(
+      (el) => (el.props as { tabIndex?: number }).tabIndex === 0,
+    );
+    expect(focusable.length).toBe(1);
+    // A focusable element with no accessible name is announced as nothing,
+    // which trades one barrier for another.
+    const label = (focusable[0]!.props as { "aria-label"?: string })["aria-label"];
+    expect(label).toContain("Backlog");
+  });
+});
+
 describe("the column's heading count", () => {
   it("is the server's total, never the number of cards rendered", () => {
     // #123 in its original form. The page holds one card; the column holds

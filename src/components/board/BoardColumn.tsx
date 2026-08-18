@@ -143,7 +143,21 @@ export function BoardColumn({
             while the store holds 175 finished items. */}
         <span className={styles.count}>{columnCount(section)}</span>
       </header>
-      <div className={styles.columnBody}>
+      {/* **Focusable on purpose.** Bounding the column is what makes this
+          necessary: the page used to scroll, and page scroll is reachable
+          from the keyboard for free. A scroll region that cannot be focused
+          cannot be scrolled with the arrow keys, so a keyboard-only reader
+          could reach the first screenful of a 146-item column and nothing
+          past it. `tabIndex={0}` is what puts it in the tab order; the role
+          and label are what stop it being an unexplained tab stop, since a
+          focusable element with no accessible name is announced as nothing
+          at all. */}
+      <div
+        className={styles.columnBody}
+        tabIndex={0}
+        role="group"
+        aria-label={`${columnTitle(column)} items`}
+      >
         {split && (
           <p className={styles.split}>
             <span className={styles.splitAmber}>{split.amber} paused</span>
