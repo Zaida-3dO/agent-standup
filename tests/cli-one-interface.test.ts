@@ -134,8 +134,24 @@ function directBinding(): Binding {
   return createDirectBinding({ service: sharedService });
 }
 
+/**
+ * The token this file's routes are configured to accept, presented by the
+ * binding under test.
+ *
+ * The routes authenticate, so a comparison that sent no credential would
+ * compare `direct` against a uniform 401 rather than against the HTTP
+ * adapter — every assertion below would still "pass" in the sense of both
+ * sides differing, while testing nothing. Supplying it keeps the two
+ * bindings comparable and exercises the header the binding stamps.
+ */
+const TEST_TOKEN = "one-interface-token";
+
 function httpBinding(): Binding {
-  return createHttpBinding({ baseUrl: "http://server.invalid", fetch: routeFetch });
+  return createHttpBinding({
+    baseUrl: "http://server.invalid",
+    fetch: routeFetch,
+    token: TEST_TOKEN,
+  });
 }
 
 /** Everything about an outcome that both bindings must agree on. */
@@ -153,6 +169,9 @@ async function bothBindings(argv: readonly string[]) {
 
 beforeEach(() => {
   items.clear();
+  // The routes exercised here authenticate every call, so the environment
+  // has to carry the token the binding above presents.
+  vi.stubEnv("STANDUP_TOKENS", `test-machine:${TEST_TOKEN}`);
 });
 
 describe("both bindings sit behind one interface", () => {

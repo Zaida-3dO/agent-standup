@@ -78,6 +78,22 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     operation: "get_crew_name",
     reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "readiness",
+    reason:
+      "Readiness answers a question infrastructure asks — a deployment gate, a compose " +
+      "condition, a load balancer — and its consumers reach it as an unauthenticated HTTP " +
+      "probe, which is the one shape an MCP tool cannot be. An agent has no use for it: a " +
+      "session is already talking to a server that answered, so the question is settled by " +
+      "the time any tool could ask it. It carries no guard rejection — it runs one query and " +
+      "reports counts — so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "readiness",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

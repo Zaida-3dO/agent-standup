@@ -47,6 +47,16 @@ interface and port the server listens on. `.env.example` lists these and the
 handful of others that are genuinely bootstrap (the local Postgres readiness
 wait, the disposable shadow database the migration drift check uses).
 
+Authentication is the other bootstrap value: `STANDUP_TOKENS` holds one
+bearer token per machine, and clients present theirs as `STANDUP_TOKEN`.
+It has no default — with it unset the server refuses every authenticated
+call, which is deliberate (a gate that switched itself off when its
+configuration was missing would be open exactly when a deployment had gone
+wrong). It is an environment variable rather than a setting for the same
+reason as the rest of this list, plus one specific to it: settings are
+served to the front end and printed by the command line, with no redaction
+path, so a credential cannot live there.
+
 Everything else is a setting: typed, defaulted in code, and readable and
 writable once the app is running, from `/settings` in the front end or
 `standup config set` on the command line. A fresh database boots fully
@@ -93,6 +103,70 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 only ever pulls. It ships a health check on `GET /api/health` (liveness only —
 deliberately doesn't touch the database, so a slow DB doesn't make the process
 report unhealthy).
+
+**Two probes, answering two different questions.** Point each consumer at the
+one it actually needs, because giving either the other's answer is wrong in a
+way that is quiet:
+
+| Endpoint      | Asks                  | Reads the database | For                                                       |
+| ------------- | --------------------- | ------------------ | --------------------------------------------------------- |
+| `/api/health` | Is this process alive | No                 | Restart policies — a container that has stopped serving   |
+| `/api/ready`  | Can I use this yet    | Yes                | Deployment gates, `depends_on` conditions, load balancers |
+
+A process whose Postgres is still starting is **alive and not ready**, which
+is normal and common. Report that as unhealthy and a restart policy kills a
+container that was about to work; report it as ready and a load balancer
+sends traffic to a process that cannot serve it.
+
+`/api/ready` answers `200` when it can query the database and no migration is
+half-applied, and `503` otherwise, with a body carrying the migration counts:
+_connected but two migrations behind_ and _migrated and ready_ are different
+answers, and only one is safe to send traffic to. Both probes are
+unauthenticated — the things that ask them run before an installation is
+configured and hold no credential — and both report only booleans and counts.
+
+### Many machines, one server
+
+The schema is built for a fleet: `machines` is a first-class entity, work is
+claimed per session, and `assignments` records which machine holds what. A
+single-host compose file is the simplest deployment of that design, not the
+limit of it — the usual shape is **one server and its database, and a client
+on every machine doing the work.**
+
+**A remote client talks to the API. It never opens a connection to the
+database.** This is the one deployment rule worth stating outright, because
+the alternative is available and looks equivalent from the outside:
+
+- Every rule this product enforces — a merge needing an approving review at
+  tip, a completion needing a structured summary, a transition needing an
+  approved plan — is **application code in the service layer.** Postgres
+  does not know those rules exist and cannot be taught them: _allowed only
+  with an approving review at tip_ is conditional on state a grant cannot
+  evaluate.
+- So a client on `DATABASE_URL` does not defeat those checks; it never
+  reaches the code that performs them. An item can land in `merged` with no
+  commit, no review and no summary, and nothing in the system is wrong about
+  anything — the rules were simply never consulted.
+- **Database-level permissions are not a substitute.** A restricted role can
+  refuse a write to a table. It cannot express the condition above, which is
+  the one that matters.
+
+Point each machine at the server and give it its own token:
+
+```bash
+STANDUP_URL=https://standup.example.internal
+STANDUP_TOKEN=<this machine's token>
+```
+
+Both the command line and the MCP client use the API when `STANDUP_URL` is
+set. `DATABASE_URL` belongs to the server alone; a client that has one is
+configured as though it were the server.
+
+Tokens are per machine rather than one shared secret, which buys two things:
+a machine can be revoked without rotating every other machine's
+configuration, and the actor a client declares stops being an unverified
+self-report — the server knows which machine presented the token, so an
+attributed write means something.
 
 ### The liveness sweep has to be scheduled
 

@@ -6,10 +6,12 @@
 // transaction opened, no settings resolved, no database client imported.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, withRequestId, serviceErrorResponse } from "../../respond";
+import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../../respond";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { id } = await params;
   const url = new URL(request.url);
   const input: Record<string, unknown> = { id };

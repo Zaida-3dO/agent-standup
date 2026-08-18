@@ -1284,11 +1284,59 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 
 Same service, different consumers.
 
+### Authentication — a bearer token per machine
+
+Every endpoint below presents `Authorization: Bearer <token>`, and so does the MCP mount at `/mcp`.
+The server matches it against `STANDUP_TOKENS` — one `machine:token` pair per machine — and the
+machine it resolves to is carried on the call as `caller.machine`.
+
+**The point is not the header; it is that a remote client has a path at all.** Every rule this
+product enforces lives in the service layer as application code, and Postgres cannot evaluate any of
+them — *allowed only with an approving review at tip* is conditional on state a grant cannot see. A
+client with no authenticated remote path reaches the store the only way left to it, a direct
+connection, and every guard is bypassed by never being reached. §22's rule that only the service
+layer may import the database client is the same invariant one process inward; this is what lets it
+hold across hosts.
+
+**Per machine rather than one shared secret**, because `machines` is already a first-class entity
+with a name: a token per row gives revocation without rotating every other machine, and it turns the
+`X-Standup-Actor` header from an unverified self-report into a claim with an established origin
+beside it. `caller.machine` and `caller.actor` stay separate fields for exactly that reason — one is
+proved, one is declared.
+
+**It fails closed, including when nothing is configured.** With `STANDUP_TOKENS` unset the server
+refuses every authenticated call rather than serving them all. A gate that switches itself off when
+its configuration is missing protects nothing precisely when a deployment has gone wrong, and a loud
+failure at rollout is cheaper than a server that has quietly been open since someone mistyped a
+variable name.
+
+**Three routes are deliberately unauthenticated**, each because its consumers run *before* an
+installation is configured and hold no credential: `GET /health` and `GET /ready` (probes read by
+restart policies, deployment gates and load balancers) and `GET /hook/script` (fetched during the
+registration handshake; it serves a build artefact that ships in the public image). All three report
+only booleans, counts, or a file that carries no installation state.
+
+### Liveness and readiness are separate routes
+
+`GET /health` answers *is this process alive* and touches no database. `GET /ready` answers *can I
+use this yet*: it runs the cheapest real query and reports the migration state with it, answering
+`200` when the database responds and no migration is half-applied, `503` otherwise.
+
+They must not share a route. A restart policy wants the first — a database being down is not a
+reason to kill an application container — while a deployment gate, a `depends_on` condition and a
+load balancer want the second. A process whose Postgres is still initialising is alive and not
+ready, and collapsing the two means one of those consumers is silently given the other's answer.
+
+The migration counts are part of the answer because *connected* and *ready* are different claims: a
+process running against a schema two migrations behind fails at the point of use, as an internal
+error, rather than at the gate meant to catch it.
+
 ### Request ids — `X-Request-Id`, in both directions
 
 Every endpoint below that calls a service operation reads this header and echoes it, so it is stated
 once here rather than repeated per row. Three routes are exempt: `GET /health` and `GET /hook/script`
-run no operation, so there is no server-side line for an id to join; and the MCP mount at `/mcp`
+run no operation, so there is no server-side line for an id to join (`GET /ready` does call one, and
+resolves and echoes an id like the rest); and the MCP mount at `/mcp`
 mints an id per *tool call* rather than per request, because one HTTP request there can carry
 several — labelling the envelope would be the wrong grain.
 

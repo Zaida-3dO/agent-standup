@@ -15,6 +15,8 @@ import { ADAPTER_REGISTRY } from "@/lib/adapters";
 import { handleMcpRequest } from "@/lib/mcp/http";
 import { withRehearsalUnwrapping } from "@/lib/mcp";
 import { service } from "@/lib/service/live";
+import { authenticate } from "@/lib/auth";
+import { unauthenticatedResponse } from "../_shared/respond";
 
 /** The registry entry this route serves. Exported so a test can assert the mount. */
 export const MCP_HTTP_ADAPTER = ADAPTER_REGISTRY.mcp_http;
@@ -37,9 +39,29 @@ export const MCP_HTTP_ADAPTER = ADAPTER_REGISTRY.mcp_http;
  * route rather than in a shared renderer.
  */
 async function serve(request: Request): Promise<Response> {
+  // Authenticated here, not inside the MCP core, for the same reason the
+  // web API authenticates in its own shared responder: this is the mount
+  // point — the place that knows a request arrived over HTTP and carries
+  // headers — and the core below it is transport-agnostic by design. A
+  // token check inside the core would be a check the stdio transport, which
+  // has no headers and no network, would have to be taught to skip.
+  //
+  // **This surface needs the gate at least as much as the routes do.** Every
+  // service operation is reachable through it as a tool, so an unauthenticated
+  // MCP mount is an unauthenticated copy of the entire write surface — and it
+  // is the one an agent is most likely to be pointed at.
+  //
+  // The refusal is the same 401 envelope the rest of the API returns rather
+  // than a JSON-RPC error: the request never reached the protocol layer, so
+  // there is no JSON-RPC exchange to answer within, and a client that failed
+  // to authenticate has a transport problem to fix, not a tool call to retry.
+  const auth = authenticate(request);
+  if (!auth.ok) return unauthenticatedResponse(auth.reason);
+
   return handleMcpRequest(
     request,
     withRehearsalUnwrapping((name, input, options) => service.call(name, input, options)),
+    auth.machine.machine,
   );
 }
 

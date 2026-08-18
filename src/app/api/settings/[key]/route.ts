@@ -3,10 +3,12 @@
 // Thin shell over `service.call` — see ../route.ts.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, withRequestId, serviceErrorResponse } from "../respond";
+import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../respond";
 
 export async function GET(request: Request, { params }: { params: Promise<{ key: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { key } = await params;
   try {
     const setting = await service.call("get_setting", { key }, { caller });
@@ -17,7 +19,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ key:
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ key: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { key } = await params;
   let body: Record<string, unknown>;
   try {
@@ -44,7 +48,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ key:
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ key: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { key } = await params;
   try {
     const setting = await service.call("delete_setting", { key }, { caller });

@@ -44,8 +44,10 @@ describe("the waiver list", () => {
     // operations that are hard to get right and then pass the comparison
     // assertions vacuously. `backfill` refuses with `forbidden` and
     // `invalid_input` only; `get_crew_name` refuses with `invalid_input` and
-    // a plain `conflict` for an exhausted pool. Neither declares a guard.
-    const permitted = new Set(["backfill", "get_crew_name"]);
+    // a plain `conflict` for an exhausted pool; `readiness` takes an empty
+    // input and refuses nothing at all — it runs two reads and reports
+    // counts. None declares a guard.
+    const permitted = new Set(["backfill", "get_crew_name", "readiness"]);
     for (const waiver of ADAPTER_WAIVERS) {
       expect(permitted).toContain(waiver.operation);
     }
@@ -63,6 +65,12 @@ describe("isWaived / waiversFor / exposedOperations", () => {
     expect(isWaived("mcp_stdio", "get_crew_name")).toBe(true);
     expect(isWaived("http", "get_crew_name")).toBe(false);
     expect(isWaived("cli", "get_crew_name")).toBe(false);
+    // Readiness is an infrastructure probe, not an agent tool: waived from
+    // both MCP surfaces, exposed on the two that cost nothing per session.
+    expect(isWaived("mcp_http", "readiness")).toBe(true);
+    expect(isWaived("mcp_stdio", "readiness")).toBe(true);
+    expect(isWaived("http", "readiness")).toBe(false);
+    expect(isWaived("cli", "readiness")).toBe(false);
   });
 
   it("groups waivers by adapter", () => {
@@ -70,7 +78,7 @@ describe("isWaived / waiversFor / exposedOperations", () => {
       waiversFor("mcp_http")
         .map((w) => w.operation)
         .sort(),
-    ).toEqual(["backfill", "get_crew_name"]);
+    ).toEqual(["backfill", "get_crew_name", "readiness"]);
     expect(waiversFor("http")).toEqual([]);
   });
 

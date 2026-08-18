@@ -11,7 +11,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
-  httpCaller,
+  authenticatedCaller,
   withRequestId,
   invalidJsonResponse,
   serializeAppendedEvent,
@@ -19,7 +19,9 @@ import {
 } from "../../../_shared/respond";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { id } = await params;
   let body: Record<string, unknown>;
   try {

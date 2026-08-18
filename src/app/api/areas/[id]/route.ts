@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
-  httpCaller,
+  authenticatedCaller,
   withRequestId,
   invalidJsonResponse,
   readJsonBody,
@@ -11,7 +11,9 @@ import {
 } from "../../admin-respond";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { id } = await params;
   try {
     const area = await service.call("get_area", { id }, { caller });
@@ -22,7 +24,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const { id } = await params;
   const body = await readJsonBody(request);
   if (body === null) return invalidJsonResponse(requestId);

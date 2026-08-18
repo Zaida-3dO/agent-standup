@@ -47,7 +47,7 @@
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { handleMcpRequest } from "@/lib/mcp/http";
@@ -57,6 +57,9 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+
+/** The token the authenticated route in this file is configured to accept. */
+const UTF8_TEST_TOKEN = "utf8-round-trip-token";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -88,6 +91,10 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
   let itemRoute: typeof import("@/app/api/items/[id]/route");
 
   beforeAll(async () => {
+    // One route in this file is reached through its own handler, which
+    // authenticates; the MCP cases below call `handleMcpRequest` directly,
+    // beneath the mount that would.
+    vi.stubEnv("STANDUP_TOKENS", `test-machine:${UTF8_TEST_TOKEN}`);
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     prisma = new PrismaClient({ datasourceUrl: scratchUrl });
@@ -289,6 +296,14 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
 });
 
 describe("undecodable bytes at the HTTP boundary (MILESTONES.md #113, companion)", () => {
+  // The last case in this block reaches a real route handler, which
+  // authenticates before it reads a body — so the token it presents has to
+  // be configured here too. This block runs with no database, hence its own
+  // stub rather than the one in the DB-gated block above.
+  beforeEach(() => {
+    vi.stubEnv("STANDUP_TOKENS", `test-machine:${UTF8_TEST_TOKEN}`);
+  });
+
   // No database, no service call, and no route import: this reproduces the
   // failure mode with nothing but the platform's own `Request`/`TextDecoder`,
   // so it stands as proof the substitution happens before any of this
@@ -341,7 +356,13 @@ describe("undecodable bytes at the HTTP boundary (MILESTONES.md #113, companion)
     const response = await POST(
       new Request("http://localhost/api/items", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        // The route authenticates before it reads the body, so an
+        // unauthenticated call would be refused with a 401 and never reach
+        // the decoding path this case exists to exercise.
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${UTF8_TEST_TOKEN}`,
+        },
         body,
       }),
     );

@@ -14,11 +14,13 @@
 // are refused, with the same `invalid_input` any other adapter would give.
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
-import { httpCaller, withRequestId, serviceErrorResponse } from "../items/respond";
+import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
 import { parseBooleanParam } from "../_shared/query";
 
 export async function GET(request: Request) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const url = new URL(request.url);
   const input: Record<string, unknown> = {};
 

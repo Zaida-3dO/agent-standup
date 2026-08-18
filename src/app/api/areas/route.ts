@@ -4,7 +4,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
-  httpCaller,
+  authenticatedCaller,
   withRequestId,
   invalidJsonResponse,
   readJsonBody,
@@ -12,7 +12,9 @@ import {
 } from "../admin-respond";
 
 export async function GET(request: Request) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const url = new URL(request.url);
   const includeArchived = url.searchParams.get("includeArchived");
   const input: Record<string, unknown> = {};
@@ -27,7 +29,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   const body = await readJsonBody(request);
   if (body === null) return invalidJsonResponse(requestId);
 

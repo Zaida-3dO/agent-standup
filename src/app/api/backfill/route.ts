@@ -6,12 +6,14 @@ import { service } from "@/lib/service/live";
 import {
   invalidJsonResponse,
   serviceErrorResponse,
-  httpCaller,
+  authenticatedCaller,
   withRequestId,
 } from "../_shared/respond";
 
 export async function POST(request: Request) {
-  const { requestId, caller } = httpCaller(request);
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
   let body: unknown;
   try {
     body = await request.json();

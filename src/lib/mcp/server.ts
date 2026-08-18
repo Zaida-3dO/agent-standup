@@ -66,6 +66,16 @@ export type ServiceCall = (
 export interface McpCallerIdentity {
   readonly sessionId?: string;
   readonly actor?: string;
+  /**
+   * The machine the transport authenticated, when it could prove one.
+   *
+   * Unlike the two above it is never read from a header by this core: a
+   * mount that authenticates supplies it, and one that cannot leaves it
+   * absent. That asymmetry is deliberate — `sessionId` and `actor` are
+   * self-reports a caller may set freely, and this is the field that must
+   * only ever hold something the server established for itself.
+   */
+  readonly machine?: string;
 }
 
 export interface McpServerOptions {
@@ -221,6 +231,7 @@ export async function callTool(
           requestId,
           ...(identity.sessionId === undefined ? {} : { sessionId: identity.sessionId }),
           ...(identity.actor === undefined ? {} : { actor: identity.actor }),
+          ...(identity.machine === undefined ? {} : { machine: identity.machine }),
         },
       }),
     );
