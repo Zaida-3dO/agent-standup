@@ -78,6 +78,39 @@
 // `BoardItemSummaryRecord` for why the board's slim shape is wider than the
 // one `get_item` and `list_items` return.
 //
+// **A board is many paginated reads, not one (#109).** Returning every
+// column in one call is the wrong shape even once each column is bounded:
+// the caller pays for sections it is not looking at, and a column that is
+// three items long costs the same first paint as one that is sixty-eight.
+// So a call names a `column` and gets **one page of that column plus that
+// column's true total** — the count renders at the top of the column and a
+// *show more* control pages the rest with the returned `nextCursor`.
+//
+// With no `column`, the read answers "what is being worked on": the open
+// columns only (`board/slice.ts` — `in_progress` and `waiting`), each
+// bounded, with `backlog` and `completed` withheld and a `notice` naming
+// the calls that return them. That is a narrower default than #103's
+// non-terminal one, and the narrowing is the point: backlog is unbounded,
+// never pruned, and nothing in it is being worked on.
+//
+// **Totals are counted, never inferred from the page.** #123 is what
+// happens otherwise: the completed column rendered empty with a count of
+// `0` while 161 `merged` + 14 `cancelled` rows sat in the database, and
+// backlog read `68` against 58 `on_deck`. A count taken from the length of
+// a filtered, defaulted, paginated page is not the column's size and never
+// was — so every column's `total` comes from its own `COUNT(*)` over the
+// same predicate the page is drawn from, and a withheld column reports the
+// true total it is withholding rather than zero. **An empty state and a
+// hidden state must not render identically**, which is only possible if the
+// count is honest when the page is absent.
+//
+// **The completed column opts out of the terminal-state default (#123).**
+// #103's exclusion is right for every other column and exactly wrong for
+// the one column whose entire purpose is terminal work: asking for
+// `column: "completed"` is a caller asking for finished work, so answering
+// it with nothing would be the same class of bug as answering an explicit
+// `state: "merged"` with nothing.
+//
 // **All five dimensions filter server-side, in this one WHERE clause** —
 // not fetched-whole-then-filtered in a client. #36 already established the
 // pattern (priority/area/repo/kind as SQL conditions on the same query that
@@ -105,11 +138,19 @@ import {
   type RawItemRow,
 } from "../items/row";
 import {
-  TERMINAL_STATES,
+  BOARD_COLUMNS,
+  STATES_BY_COLUMN,
   columnForProject,
   columnForState,
   type BoardColumn,
 } from "../board/columns";
+import {
+  MAX_PAGE_LIMIT,
+  defaultLimitFor,
+  OPEN_COLUMNS,
+  WITHHELD_COLUMNS,
+  buildSliceNotice,
+} from "../board/slice";
 import { isItemState } from "../state-machine/states";
 import { areaFilterCondition } from "../items/area-filter";
 
@@ -167,6 +208,18 @@ const inputSchema = z
         "cancelled",
       ])
       .optional(),
+    /**
+     * One section to page through (MILESTONES.md #109). Omitted means the
+     * default open-work slice — `in_progress` and `waiting` — with the
+     * other two columns withheld and named in `notice`.
+     *
+     * Naming a column is what makes `backlog` and `completed` reachable, so
+     * this doubles as the explicit ask both of those require. Asking for
+     * `completed` also opts that column out of the terminal-state exclusion
+     * (#123): a caller naming the completed column is asking for finished
+     * work by definition.
+     */
+    column: z.enum(BOARD_COLUMNS).optional(),
     /** "Who's on it" — matches a live assignment's `holderId` (person or agent crew name). */
     assignee: z.string().min(1).optional(),
     /** Free-text, case-insensitive substring match over `title` and `body`. */
@@ -174,17 +227,37 @@ const inputSchema = z
     /**
      * Include the completed column — finished work. Off by default; see
      * the module header. Has no effect when `state` names a terminal state
-     * explicitly, because that filter is already the caller asking for
-     * exactly one of them.
+     * explicitly, or when `column` is `completed`, because either is
+     * already the caller asking for exactly that.
      */
     includeTerminal: z.boolean().default(false),
     /**
      * Return whole `items` rows rather than the slim board shape. Off by
-     * default — see `BoardItemSummaryRecord`. The board has no `limit` and
-     * no `cursor` at all (MILESTONES.md #109 owns that), so until it does,
-     * the projection is the only thing bounding this response.
+     * default — see `BoardItemSummaryRecord`.
      */
     full: z.boolean().default(false),
+    /**
+     * How many items per column. Applies to **each** returned column, not
+     * to the response as a whole, because a caller pages one column at a
+     * time and a shared budget would make one column's page size depend on
+     * how full another column happened to be.
+     *
+     * **Optional rather than defaulted in the schema**, because the right
+     * default depends on `full`: the same row count is a small response in
+     * the slim projection and an oversized one in the full record (see
+     * `defaultLimitFor`). A schema-level `.default()` cannot read a sibling
+     * field, so the default is resolved in the handler instead — and
+     * `undefined` here means "the caller did not choose", which is exactly
+     * the case that has to be safe.
+     */
+    limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+    /**
+     * Keyset cursor — the `nextCursor` from a previous page of **this same
+     * column**. Meaningless across columns, because each column is its own
+     * ordered sequence; a cursor is only ever paired with the `column` it
+     * came from.
+     */
+    cursor: z.string().min(1).optional(),
   })
   .strict();
 
@@ -202,147 +275,353 @@ export interface BoardEntry {
   readonly column: BoardColumn;
 }
 
-export type BoardOutput = Readonly<Record<BoardColumn, readonly BoardEntry[]>>;
+/**
+ * One column: the page asked for, the column's real size, and where the
+ * rest of it is.
+ *
+ * `total` is a counted fact about the column, **not** `entries.length` —
+ * see the module header on #123. It is populated even when `entries` is
+ * empty because the column was withheld, which is the whole mechanism that
+ * keeps an empty column and a hidden one from rendering identically.
+ */
+export interface BoardSection {
+  readonly entries: readonly BoardEntry[];
+  /** Every item in this column under the current filters, regardless of the page. */
+  readonly total: number;
+  /** Pass back as `cursor` with this same `column` for the next page. Null when this page is the last. */
+  readonly nextCursor: string | null;
+  /**
+   * True when this column was not read because the default slice excludes
+   * it. `total` is still the truth; `entries` is empty because nothing was
+   * fetched, not because there is nothing there.
+   */
+  readonly withheld: boolean;
+}
+
+export interface BoardOutput {
+  readonly columns: Readonly<Record<BoardColumn, BoardSection>>;
+  /**
+   * What this read withheld and the call that returns it (MILESTONES.md
+   * #109 part 3). Null when nothing was withheld — see `buildSliceNotice`
+   * for why a notice that announces nothing is worse than none.
+   */
+  readonly notice: string | null;
+}
+
+/** One column's `COUNT(*)`, as Postgres returns it. */
+interface RawCountRow {
+  count: bigint | number | string;
+}
+
+/**
+ * Postgres `count(*)` arrives as a `bigint`, which cannot cross a JSON
+ * boundary at all — `JSON.stringify` throws on one outright rather than
+ * silently truncating — so every count is narrowed here before it can reach
+ * a response.
+ */
+function toCount(value: bigint | number | string): number {
+  return typeof value === "number" ? value : Number(value);
+}
 
 export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "Items grouped by derived column, filterable by priority, area, repo, kind, state, assignee and search. Each card carries only what it renders, including its headline — pass full for whole records. Finished work is excluded by default — pass includeTerminal to get the completed column.",
+    "One paginated page of one board column, with that column's true total. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee and search; pass full for whole records.",
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
-    const conditions: string[] = [];
-    const values: unknown[] = [];
+    // Which columns this call is answering for. A named column is exactly
+    // that column; no named column is the open-work default (#109 part 2).
+    const requested: readonly BoardColumn[] =
+      input.column !== undefined ? [input.column] : OPEN_COLUMNS;
+
+    // A caller's own limit always wins; otherwise the default is chosen
+    // against the projection, because a row bound is not a size bound
+    // (#107) — see `defaultLimitFor`.
+    const limit = input.limit ?? defaultLimitFor(input.full);
+
+    // Asking for the completed column IS the explicit ask for terminal work
+    // (#123), so it opts out of #103's exclusion the same way an explicit
+    // `state: "merged"` does. Without this, the one column whose purpose is
+    // finished work would be permanently empty — which is the defect.
+    const wantsTerminal = input.includeTerminal || input.column === "completed";
+
+    const shared: string[] = [];
+    const sharedValues: unknown[] = [];
     let paramIndex = 1;
 
     if (input.priority !== undefined) {
-      conditions.push(`"priority" = $${paramIndex}::"Priority"`);
-      values.push(input.priority);
+      shared.push(`"priority" = $${paramIndex}::"Priority"`);
+      sharedValues.push(input.priority);
       paramIndex++;
     }
     if (input.area !== undefined) {
       // Matches ANY of the item's areas, not only its primary one — see
       // `areaFilterCondition` (../items/area-filter.ts) for why.
-      conditions.push(areaFilterCondition(paramIndex));
-      values.push(input.area);
+      shared.push(areaFilterCondition(paramIndex));
+      sharedValues.push(input.area);
       paramIndex++;
     }
     if (input.repo !== undefined) {
-      conditions.push(`"repo" = $${paramIndex}`);
-      values.push(input.repo);
+      shared.push(`"repo" = $${paramIndex}`);
+      sharedValues.push(input.repo);
       paramIndex++;
     }
     if (input.kind !== undefined) {
-      conditions.push(`"kind" = $${paramIndex}::"ItemKind"`);
-      values.push(input.kind);
+      shared.push(`"kind" = $${paramIndex}::"ItemKind"`);
+      sharedValues.push(input.kind);
       paramIndex++;
     }
     if (input.state !== undefined) {
-      conditions.push(`"state" = $${paramIndex}::"ItemState"`);
-      values.push(input.state);
+      shared.push(`"state" = $${paramIndex}::"ItemState"`);
+      sharedValues.push(input.state);
       paramIndex++;
       // See the module header: a project's stored `state` is a leftover
       // creation default, never a fact about it, so it never honestly
       // matches a caller's raw-state filter — exclude it outright rather
       // than let an on_deck filter silently sweep in every untouched
       // project alongside genuinely on-deck tasks.
-      conditions.push(`"kind" != 'project'::"ItemKind"`);
-    } else if (!input.includeTerminal) {
-      // Only when the caller named no state of their own — an explicit
-      // `state: "merged"` is a caller asking for terminal work, and
-      // answering it with nothing would be a worse bug than the payload
-      // this default trims.
-      //
-      // Scoped to non-projects: a project's stored `state` is a leftover
-      // creation default, so excluding on it would drop live projects and
-      // keep finished ones — precisely backwards. Projects are filtered
-      // after their column is derived, below.
-      conditions.push(
-        `("kind" = 'project'::"ItemKind" OR "state" != ALL($${paramIndex}::"ItemState"[]))`,
-      );
-      values.push(TERMINAL_STATES);
-      paramIndex++;
+      shared.push(`"kind" != 'project'::"ItemKind"`);
     }
+    // #103's terminal-state exclusion is deliberately NOT a shared
+    // condition here, and its absence is load-bearing rather than an
+    // oversight.
+    //
+    // Every per-column query below already constrains `state` to exactly
+    // the states of the column it is reading — `STATES_BY_COLUMN[column]`
+    // — and that filter strictly subsumes the exclusion: for the three
+    // non-terminal columns it is implied, and for `completed` the two
+    // directly contradict, which is what made the completed column
+    // unreachable (#123). Which terminal work a *caller* gets is therefore
+    // decided by which columns are read (`requested`), not by a `WHERE`
+    // clause — and a column's `total` stays a truthful count of what
+    // exists rather than of what this call chose to return.
+    //
+    // The exclusion still applies to projects, whose column cannot be
+    // expressed in SQL at all; it is applied to them after their column is
+    // derived, below.
     if (input.assignee !== undefined) {
-      conditions.push(
+      shared.push(
         `EXISTS (SELECT 1 FROM "Assignment" a WHERE a."itemId" = "Item"."id" AND a."releasedAt" IS NULL AND a."holderId" = $${paramIndex})`,
       );
-      values.push(input.assignee);
+      sharedValues.push(input.assignee);
       paramIndex++;
     }
     if (input.search !== undefined) {
-      conditions.push(
+      shared.push(
         `("title" ILIKE $${paramIndex} ESCAPE '\\' OR "body" ILIKE $${paramIndex} ESCAPE '\\')`,
       );
-      values.push(`%${escapeLikePattern(input.search)}%`);
+      sharedValues.push(`%${escapeLikePattern(input.search)}%`);
       paramIndex++;
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
-      `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" ${where} ORDER BY "createdAt" DESC, "id" DESC`,
-      ...values,
-    );
-    const items: (BoardItemSummaryRecord | ItemRecord)[] = input.full
-      ? (rows as RawItemRow[]).map(toItemRecord)
-      : (rows as RawBoardItemSummaryRow[]).map(toBoardItemSummaryRecord);
+    // The parameter position each per-column query appends its own state
+    // array at. Fixed here, after every shared condition has taken its
+    // placeholder, so the count query and the page query agree on it
+    // without either having to know what the other appended.
+    const statesParam = paramIndex;
 
-    // Projects need their *whole* subtree's states, regardless of whether
-    // the filters above kept those descendants in `items` — a filtered-out
-    // descendant is still real work sitting under the project, and leaving
-    // it out of the column derivation would make a project's column depend
-    // on which filter happened to be applied, not on the state of its work.
-    // One recursive query, unfiltered, answers "state of every non-project
-    // descendant of every project" in one round trip rather than one query
-    // per project.
-    const projectIds = items.filter((item) => item.kind === "project").map((item) => item.id);
-    const descendantStatesByProject = new Map<string, string[]>();
-    if (projectIds.length > 0) {
-      const descendantRows = await ctx.db.$queryRawUnsafe<{ rootId: string; state: string }[]>(
-        `WITH RECURSIVE subtree AS (
-           SELECT "id", "parentId" AS "rootId" FROM "Item" WHERE "parentId" = ANY($1::text[])
-           UNION ALL
-           SELECT i."id", s."rootId"
-           FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
-         )
-         SELECT s."rootId", i."state" FROM subtree s JOIN "Item" i ON i."id" = s."id"`,
-        projectIds,
+    // A task or subtask's column is a pure function of its own stored
+    // state, so it can be selected in SQL — which is what makes a bounded
+    // page and an honest `COUNT(*)` possible at all. A project's cannot: it
+    // is derived from a recursive walk of its subtree (DECISIONS.md §13c),
+    // a fact no `WHERE` clause on `Item` can express.
+    //
+    // So the two are read differently and merged. Non-projects are
+    // paginated and counted in the database; projects are read whole, their
+    // columns derived, then bucketed. The asymmetry is stated rather than
+    // hidden: projects number in the tens and tasks in the thousands, so
+    // paginating the large side and walking the small one is where the
+    // payload actually goes. If projects ever outgrow that, the fix is a
+    // stored derived column, not a bigger page.
+    const projectsExcluded = input.kind !== undefined && input.kind !== "project";
+    const projectsOnly = input.kind === "project";
+
+    // Every project, with its derived column — read once and reused for
+    // both the counts and the pages, so no project is walked twice.
+    const projectEntries = new Map<BoardColumn, BoardEntry[]>();
+    if (!projectsExcluded) {
+      const projectWhere = [...shared, `"kind" = 'project'::"ItemKind"`];
+      const projectRows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
+        `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" WHERE ${projectWhere.join(" AND ")}
+         ORDER BY "createdAt" DESC, "id" DESC`,
+        ...sharedValues,
       );
-      for (const row of descendantRows) {
-        const list = descendantStatesByProject.get(row.rootId) ?? [];
-        list.push(row.state);
-        descendantStatesByProject.set(row.rootId, list);
+      const projects: (BoardItemSummaryRecord | ItemRecord)[] = input.full
+        ? (projectRows as RawItemRow[]).map(toItemRecord)
+        : (projectRows as RawBoardItemSummaryRow[]).map(toBoardItemSummaryRecord);
+
+      // Projects need their *whole* subtree's states, regardless of whether
+      // the filters kept those descendants — a filtered-out descendant is
+      // still real work sitting under the project, and leaving it out would
+      // make a project's column depend on which filter happened to be
+      // applied rather than on the state of its work. One recursive query
+      // answers "state of every non-project descendant of every project".
+      const projectIds = projects.map((item) => item.id);
+      const descendantStatesByProject = new Map<string, string[]>();
+      if (projectIds.length > 0) {
+        const descendantRows = await ctx.db.$queryRawUnsafe<{ rootId: string; state: string }[]>(
+          `WITH RECURSIVE subtree AS (
+             SELECT "id", "parentId" AS "rootId" FROM "Item" WHERE "parentId" = ANY($1::text[])
+             UNION ALL
+             SELECT i."id", s."rootId"
+             FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
+           )
+           SELECT s."rootId", i."state" FROM subtree s JOIN "Item" i ON i."id" = s."id"`,
+          projectIds,
+        );
+        for (const row of descendantRows) {
+          const list = descendantStatesByProject.get(row.rootId) ?? [];
+          list.push(row.state);
+          descendantStatesByProject.set(row.rootId, list);
+        }
+      }
+
+      // A project whose derived column is `completed` is dropped unless
+      // terminal work was asked for — by its *derived* column, never by its
+      // stored `state`, which is a creation leftover (DECISIONS.md §13c).
+      // Filtering it in SQL would keep every finished project on the board,
+      // which is exactly the payload #103 exists to remove.
+      const dropCompletedProjects = !wantsTerminal && input.state === undefined;
+      for (const item of projects) {
+        const column = columnForProject(
+          (descendantStatesByProject.get(item.id) ?? []).map((state) =>
+            requireItemState(state, item.id),
+          ),
+        );
+        if (dropCompletedProjects && column === "completed") continue;
+        const list = projectEntries.get(column) ?? [];
+        list.push({ item, column });
+        projectEntries.set(column, list);
       }
     }
 
-    const board: Record<BoardColumn, BoardEntry[]> = {
-      backlog: [],
-      in_progress: [],
-      waiting: [],
-      completed: [],
+    const board: Record<BoardColumn, BoardSection> = {
+      backlog: { entries: [], total: 0, nextCursor: null, withheld: true },
+      in_progress: { entries: [], total: 0, nextCursor: null, withheld: true },
+      waiting: { entries: [], total: 0, nextCursor: null, withheld: true },
+      completed: { entries: [], total: 0, nextCursor: null, withheld: true },
     };
 
-    // A project's column is the only one that cannot be excluded in SQL —
-    // see the module header. Dropping it here, after derivation, is what
-    // keeps `includeTerminal: false` from leaving every finished project
-    // sitting in the completed column it exists to empty. `state` supplied
-    // by the caller already excludes projects outright above, so this
-    // branch cannot double-apply to a state-filtered read.
-    const dropCompletedProjects = !input.includeTerminal && input.state === undefined;
+    // Every column reports a truthful `total` — including the ones this
+    // read is withholding, which is what lets a caller tell "backlog is
+    // empty" from "backlog was not read" (#123). Only the *pages* are
+    // limited to the requested columns.
+    for (const column of BOARD_COLUMNS) {
+      let total = (projectEntries.get(column) ?? []).length;
 
-    for (const item of items) {
-      const column =
-        item.kind === "project"
-          ? columnForProject(
-              (descendantStatesByProject.get(item.id) ?? []).map((state) =>
-                requireItemState(state, item.id),
-              ),
-            )
-          : columnForState(requireItemState(item.state, item.id));
-      if (dropCompletedProjects && item.kind === "project" && column === "completed") continue;
-      board[column].push({ item, column });
+      if (!projectsOnly) {
+        // The non-project half of this column's size, counted over exactly
+        // the predicate its page is drawn from — never derived from the
+        // page, which is the #123 defect itself.
+        //
+        // The completed column is counted even when the read excluded
+        // terminal work: its size is a fact about the store, not about what
+        // this call chose to return, and reporting it as `0` is precisely
+        // the "175 items completed, column says 0" bug.
+        const countWhere = [
+          ...shared,
+          `"kind" != 'project'::"ItemKind"`,
+          `"state" = ANY($${statesParam}::"ItemState"[])`,
+        ];
+        const countRows = await ctx.db.$queryRawUnsafe<RawCountRow[]>(
+          `SELECT COUNT(*)::bigint AS "count" FROM "Item" WHERE ${countWhere.join(" AND ")}`,
+          ...sharedValues,
+          STATES_BY_COLUMN[column],
+        );
+        total += toCount(countRows[0]?.count ?? 0);
+      }
+
+      board[column] = { entries: [], total, nextCursor: null, withheld: true };
     }
 
-    return Object.freeze(board);
+    // Now the pages, for the requested columns only.
+    for (const column of requested) {
+      const projectsInColumn = projectEntries.get(column) ?? [];
+      let entries: BoardEntry[] = [];
+      let nextCursor: string | null = null;
+
+      if (!projectsOnly) {
+        const pageValues: unknown[] = [...sharedValues, STATES_BY_COLUMN[column]];
+        let pageIndex = statesParam + 1;
+        const pageWhere = [
+          ...shared,
+          `"kind" != 'project'::"ItemKind"`,
+          `"state" = ANY($${statesParam}::"ItemState"[])`,
+        ];
+
+        if (input.cursor !== undefined) {
+          // Keyset pagination on `("createdAt", "id")`, both descending —
+          // the same key and tie-break `list_items` uses, so the two reads
+          // page identically and a reader of one is not surprised by the
+          // other. `id` breaks ties between rows created in the same
+          // millisecond, which `createdAt` alone cannot: without it, two
+          // items created together could interleave across pages or repeat
+          // depending on scan order.
+          const cursorRows = await ctx.db.$queryRawUnsafe<{ createdAt: Date | string }[]>(
+            `SELECT "createdAt" FROM "Item" WHERE "id" = $1`,
+            input.cursor,
+          );
+          const cursorRow = cursorRows[0];
+          if (cursorRow) {
+            pageWhere.push(`("createdAt", "id") < ($${pageIndex}::timestamptz, $${pageIndex + 1})`);
+            pageValues.push(cursorRow.createdAt, input.cursor);
+            pageIndex += 2;
+          }
+        }
+
+        // One row more than asked for, to learn whether a further page
+        // exists without a second query.
+        pageValues.push(limit + 1);
+        const rows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
+          `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" WHERE ${pageWhere.join(" AND ")}
+           ORDER BY "createdAt" DESC, "id" DESC
+           LIMIT $${pageIndex}`,
+          ...pageValues,
+        );
+
+        const hasMore = rows.length > limit;
+        const page = hasMore ? rows.slice(0, limit) : rows;
+        const items: (BoardItemSummaryRecord | ItemRecord)[] = input.full
+          ? (page as RawItemRow[]).map(toItemRecord)
+          : (page as RawBoardItemSummaryRow[]).map(toBoardItemSummaryRecord);
+        entries = items.map((item) => ({
+          item,
+          column: columnForState(requireItemState(item.state, item.id)),
+        }));
+        nextCursor = hasMore ? (entries[entries.length - 1]?.item.id ?? null) : null;
+      }
+
+      // Projects are prepended rather than merged by `createdAt`: they were
+      // read whole and sit outside the cursor's sequence, so interleaving
+      // them would make a page's contents depend on how far through the
+      // non-project sequence the cursor had reached. Putting them on the
+      // first page only — a cursor means "continuing", so a continuation
+      // page carries none — keeps every project visible exactly once across
+      // the whole pagination.
+      if (input.cursor === undefined && projectsInColumn.length > 0) {
+        entries = [...projectsInColumn, ...entries];
+      }
+
+      board[column] = {
+        entries,
+        total: board[column].total,
+        nextCursor,
+        withheld: false,
+      };
+    }
+
+    // The notice names only what was actually withheld, with its real
+    // total, so it is never a false lead (see `buildSliceNotice`).
+    const shown = requested.reduce((sum, column) => sum + board[column].entries.length, 0);
+    const notice =
+      input.column === undefined
+        ? buildSliceNotice(
+            shown,
+            WITHHELD_COLUMNS.map((column) => ({ column, total: board[column].total })),
+          )
+        : null;
+
+    return Object.freeze({ columns: Object.freeze(board), notice });
   },
 });

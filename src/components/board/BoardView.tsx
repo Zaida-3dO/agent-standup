@@ -82,7 +82,7 @@ export function BoardView({ loadState, personId, drag }: BoardViewProps) {
           <BoardColumn
             key={column}
             column={column}
-            entries={board[column]}
+            section={board[column]}
             personId={personId}
             // Only Waiting gets the amber/red tally — it is the only column
             // that merges two states (SCHEMA.md §1.1).

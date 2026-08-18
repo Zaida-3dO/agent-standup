@@ -255,6 +255,27 @@ describeIfDb("terminal items are out of the default read", () => {
   });
 
   describe("get_board", () => {
+    /**
+     * One column's entries, read explicitly.
+     *
+     * #109 narrowed the default read to open work only, so a case about
+     * *which column something lands in* has to name the column rather than
+     * rely on a default that now withholds two of them. The terminal-state
+     * behaviour these cases assert is unchanged; only how the column is
+     * reached has moved.
+     */
+    async function columnOf(
+      column: "backlog" | "in_progress" | "waiting" | "completed",
+      input: Record<string, unknown>,
+    ): Promise<readonly { item: { id: string } }[]> {
+      const board = (await runtime.call("get_board", {
+        ...input,
+        column,
+        limit: 200,
+      })) as BoardOutput;
+      return board.columns[column].entries;
+    }
+
     it("leaves the completed column empty by default", async () => {
       const area = "board-default";
       const project = await createItem({ area });
@@ -262,9 +283,11 @@ describeIfDb("terminal items are out of the default read", () => {
       const finished = await createItem({ area, parentId: project.id });
       await setState(finished.id, "merged");
 
+      // The default read (no column named) withholds completed outright —
+      // #109's narrower slice subsumes #103's exclusion here.
       const board = (await runtime.call("get_board", { area })) as BoardOutput;
-      expect(board.completed).toEqual([]);
-      expect(board.backlog.map((e) => e.item.id)).toContain(live.id);
+      expect(board.columns.completed.entries).toEqual([]);
+      expect((await columnOf("backlog", { area })).map((e) => e.item.id)).toContain(live.id);
     });
 
     it("returns the completed column when includeTerminal is true", async () => {
@@ -273,11 +296,8 @@ describeIfDb("terminal items are out of the default read", () => {
       const finished = await createItem({ area, parentId: project.id });
       await setState(finished.id, "merged");
 
-      const board = (await runtime.call("get_board", {
-        area,
-        includeTerminal: true,
-      })) as BoardOutput;
-      expect(board.completed.map((e) => e.item.id)).toContain(finished.id);
+      const entries = await columnOf("completed", { area, includeTerminal: true });
+      expect(entries.map((e) => e.item.id)).toContain(finished.id);
     });
 
     it("drops a project whose whole subtree is finished — its derived column, not its stored state", async () => {
@@ -296,20 +316,19 @@ describeIfDb("terminal items are out of the default read", () => {
       );
       expect(stored[0]?.state).toBe("on_deck");
 
-      const board = (await runtime.call("get_board", { area })) as BoardOutput;
       const everywhere = [
-        ...board.backlog,
-        ...board.in_progress,
-        ...board.waiting,
-        ...board.completed,
+        ...(await columnOf("backlog", { area })),
+        ...(await columnOf("in_progress", { area })),
+        ...(await columnOf("waiting", { area })),
+        // Read WITHOUT the terminal opt-in, so this is the default
+        // treatment of a finished project rather than the opted-in one.
+        ...((await runtime.call("get_board", { area, limit: 200 })) as BoardOutput).columns
+          .completed.entries,
       ];
       expect(everywhere.map((e) => e.item.id)).not.toContain(project.id);
 
-      const withTerminal = (await runtime.call("get_board", {
-        area,
-        includeTerminal: true,
-      })) as BoardOutput;
-      expect(withTerminal.completed.map((e) => e.item.id)).toContain(project.id);
+      const withTerminal = await columnOf("completed", { area, includeTerminal: true });
+      expect(withTerminal.map((e) => e.item.id)).toContain(project.id);
     });
 
     it("keeps a project with one finished child and one live child", async () => {
@@ -323,16 +342,15 @@ describeIfDb("terminal items are out of the default read", () => {
       await setState(live.id, "executing");
       await setState(finished.id, "merged");
 
+      expect((await columnOf("in_progress", { area })).map((e) => e.item.id)).toContain(project.id);
       const board = (await runtime.call("get_board", { area })) as BoardOutput;
-      expect(board.in_progress.map((e) => e.item.id)).toContain(project.id);
-      expect(board.completed).toEqual([]);
+      expect(board.columns.completed.entries).toEqual([]);
     });
 
     it("keeps an empty project, which is backlog rather than completed", async () => {
       const area = "board-empty-project";
       const project = await createItem({ area });
-      const board = (await runtime.call("get_board", { area })) as BoardOutput;
-      expect(board.backlog.map((e) => e.item.id)).toContain(project.id);
+      expect((await columnOf("backlog", { area })).map((e) => e.item.id)).toContain(project.id);
     });
 
     it("honours an explicit terminal state filter even with includeTerminal left off", async () => {
@@ -341,8 +359,8 @@ describeIfDb("terminal items are out of the default read", () => {
       const finished = await createItem({ area, parentId: project.id });
       await setState(finished.id, "merged");
 
-      const board = (await runtime.call("get_board", { area, state: "merged" })) as BoardOutput;
-      expect(board.completed.map((e) => e.item.id)).toEqual([finished.id]);
+      const entries = await columnOf("completed", { area, state: "merged" });
+      expect(entries.map((e) => e.item.id)).toEqual([finished.id]);
     });
   });
 
@@ -403,12 +421,18 @@ describeIfDb("terminal items are out of the default read", () => {
 
       const base = `http://localhost/api/board?area=${area}`;
       const byDefault = await getJson(boardRoute, base);
-      expect((byDefault.body.board as BoardOutput).completed).toEqual([]);
+      expect((byDefault.body.board as BoardOutput).columns.completed.entries).toEqual([]);
 
-      const optedIn = await getJson(boardRoute, `${base}&includeTerminal=true`);
-      expect((optedIn.body.board as BoardOutput).completed.map((e) => e.item.id).sort()).toEqual(
-        [project.id, finished.id].sort(),
+      // Named explicitly, because #109's default withholds the completed
+      // column outright — the flag is what decides whether terminal work
+      // comes back once the column IS read.
+      const optedIn = await getJson(
+        boardRoute,
+        `${base}&column=completed&limit=200&includeTerminal=true`,
       );
+      expect(
+        (optedIn.body.board as BoardOutput).columns.completed.entries.map((e) => e.item.id).sort(),
+      ).toEqual([project.id, finished.id].sort());
     });
 
     it("refuses an uninterpretable includeTerminal rather than guessing", async () => {

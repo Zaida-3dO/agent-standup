@@ -414,12 +414,16 @@ describeIfDb("item areas", () => {
       const listed = (await (runtime.call as any)("list_items", {
         area: "filter-secondary",
       })) as { items: { id: string }[] };
-      // The board's output IS the column map — each column holds entries of
-      // `{ item, column }`, not bare items.
+      // The board answers per column, each holding a page of
+      // `{ item, column }` entries plus that column's total. `backlog` is
+      // named explicitly because an empty project derives to backlog, which
+      // a default read withholds (MILESTONES.md #109) — the subject here is
+      // the area filter, not the default slice.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const board = (await (runtime.call as any)("get_board", {
         area: "filter-secondary",
-      })) as Record<string, { item: { id: string } }[]>;
+        column: "backlog",
+      })) as { columns: Record<string, { entries: { item: { id: string } }[] }> };
 
       // THE read-path decision, and the one most likely to be quietly
       // reverted. Fails the moment either filter goes back to
@@ -427,8 +431,8 @@ describeIfDb("item areas", () => {
       // single-area filter returns nothing and the second area is
       // decorative.
       expect(listed.items.map((i) => i.id)).toContain(item.id);
-      const onBoard = Object.values(board)
-        .flat()
+      const onBoard = Object.values(board.columns)
+        .flatMap((section) => section.entries)
         .map((entry) => entry.item.id);
       expect(onBoard).toContain(item.id);
     });

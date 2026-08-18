@@ -17,7 +17,13 @@
 // recomputes it. What is genuinely client-side is everything below: how a
 // column is titled, which tone a Waiting card carries, and who the
 // needs-you badge is counting for.
-import { BOARD_COLUMNS, type Board, type BoardColumnId, type BoardEntry } from "./types";
+import {
+  BOARD_COLUMNS,
+  type Board,
+  type BoardColumnId,
+  type BoardEntry,
+  type BoardSection,
+} from "./types";
 
 export { BOARD_COLUMNS };
 export type { BoardColumnId };
@@ -114,7 +120,7 @@ export function needsYou(entry: BoardEntry, personId: string | null): boolean {
 export function needsYouCount(board: Board, personId: string | null): number {
   let count = 0;
   for (const column of BOARD_COLUMNS) {
-    for (const entry of board[column]) {
+    for (const entry of board[column].entries) {
       if (needsYou(entry, personId)) count++;
     }
   }
@@ -125,7 +131,7 @@ export function needsYouCount(board: Board, personId: string | null): number {
 export function needsYouEntries(board: Board, personId: string | null): BoardEntry[] {
   const entries: BoardEntry[] = [];
   for (const column of BOARD_COLUMNS) {
-    for (const entry of board[column]) {
+    for (const entry of board[column].entries) {
       if (needsYou(entry, personId)) entries.push(entry);
     }
   }
@@ -151,7 +157,7 @@ export function waitingSplit(board: Board): WaitingSplit {
   let amber = 0;
   let red = 0;
   let other = 0;
-  for (const entry of board.waiting) {
+  for (const entry of board.waiting.entries) {
     const tone = waitingTone(entry);
     if (tone === "amber") amber++;
     else if (tone === "red") red++;
@@ -160,7 +166,43 @@ export function waitingSplit(board: Board): WaitingSplit {
   return { amber, red, other };
 }
 
+/** A column with nothing in it and nothing withheld — the initial render state. */
+export function emptySection(): BoardSection {
+  return { entries: [], total: 0, nextCursor: null, withheld: false };
+}
+
 /** An empty board — every column present and empty. Used as the initial render state and by tests. */
 export function emptyBoard(): Board {
-  return { backlog: [], in_progress: [], waiting: [], completed: [] };
+  return {
+    backlog: emptySection(),
+    in_progress: emptySection(),
+    waiting: emptySection(),
+    completed: emptySection(),
+  };
+}
+
+/**
+ * The number a column heading shows.
+ *
+ * The server's counted `total`, never the length of the page — see
+ * `BoardSection.total`. Kept as a named function rather than inlined at the
+ * one call site so that "the heading count is the server's total" is a
+ * statement a test can make directly, which is what stops #123 quietly
+ * coming back the next time a component reaches for `entries.length`
+ * because it is right there.
+ */
+export function columnCount(section: BoardSection): number {
+  return section.total;
+}
+
+/**
+ * Whether a column is empty because there is nothing in it, as opposed to
+ * empty because it was not fetched.
+ *
+ * #123: "an empty state and a hidden state must not render identically".
+ * The two are indistinguishable from `entries` alone — both are `[]` — so
+ * the distinction has to be drawn from `withheld` and `total` together.
+ */
+export function isGenuinelyEmpty(section: BoardSection): boolean {
+  return !section.withheld && section.total === 0;
 }

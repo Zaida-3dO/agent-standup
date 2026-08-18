@@ -16,9 +16,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleDrop, type DropDeps } from "@/lib/board/drop-handler";
 import { dragStarted, initialDragState, type DragState } from "@/lib/board/drag-state";
-import { emptyBoard } from "@/lib/board/view";
 import type { MoveResult } from "@/lib/board/move";
 import type { Board, BoardColumnId, BoardEntry, BoardItem } from "@/lib/board/types";
+import { boardOf } from "./helpers/board-sections";
 
 function item(overrides: Partial<BoardItem> = {}): BoardItem {
   return {
@@ -45,13 +45,21 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   return { item: item(overrides), column };
 }
 
-function boardWith(overrides: Partial<Board> = {}): Board {
-  return { ...emptyBoard(), ...overrides };
+/**
+ * A board whose named columns hold the given entries.
+ *
+ * Takes bare entry lists rather than whole sections: a column's count and
+ * cursor (MILESTONES.md #109, #123) are proved against real data in
+ * `tests/board-pagination.test.ts`, and restating them at every fixture
+ * site here would bury what these tests are actually about.
+ */
+function boardWith(overrides: Partial<Record<BoardColumnId, readonly BoardEntry[]>> = {}): Board {
+  return boardOf(overrides);
 }
 
 function columnOf(board: Board, itemId: string): BoardColumnId | null {
   for (const column of ["backlog", "in_progress", "waiting", "completed"] as const) {
-    if (board[column].some((e) => e.item.id === itemId)) return column;
+    if (board[column].entries.some((e) => e.item.id === itemId)) return column;
   }
   return null;
 }
@@ -182,7 +190,7 @@ describe("handleDrop — a drop actually reaches the server", () => {
     await handleDrop(h.deps, "completed");
 
     expect(columnOf(h.state().board, "a")).toBe("backlog");
-    expect(h.state().board.backlog[0]!.item.state).toBe("on_deck");
+    expect(h.state().board.backlog.entries[0]!.item.state).toBe("on_deck");
     expect(h.state().refusal).toBe("A summary is required.");
     expect(h.state().pendingItemId).toBeNull();
   });

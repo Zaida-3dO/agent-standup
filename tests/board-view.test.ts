@@ -16,6 +16,7 @@ import {
   waitingTone,
 } from "@/lib/board/view";
 import type { Board, BoardEntry, BoardColumnId, BoardItem } from "@/lib/board/types";
+import { boardOf } from "./helpers/board-sections";
 
 function item(overrides: Partial<BoardItem> = {}): BoardItem {
   return {
@@ -42,8 +43,16 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   return { item: item(overrides), column };
 }
 
-function boardWith(overrides: Partial<Board> = {}): Board {
-  return { ...emptyBoard(), ...overrides };
+/**
+ * A board whose named columns hold the given entries.
+ *
+ * Takes bare entry lists rather than whole sections because these tests are
+ * about tone, badges and tallies — the count and cursor fields are #109/#123
+ * concerns proved against real data in `tests/board-pagination.test.ts`, and
+ * spelling them out at every fixture site here would bury the subject.
+ */
+function boardWith(overrides: Partial<Record<BoardColumnId, readonly BoardEntry[]>> = {}): Board {
+  return boardOf(overrides);
 }
 
 describe("the four columns", () => {
@@ -60,7 +69,7 @@ describe("the four columns", () => {
   it("starts empty in every column, so nothing indexes undefined", () => {
     const board = emptyBoard();
     for (const column of BOARD_COLUMNS) {
-      expect(board[column]).toEqual([]);
+      expect(board[column].entries).toEqual([]);
     }
   });
 });
@@ -276,7 +285,7 @@ describe("waitingSplit — the amber/red tally under the shared column", () => {
     const split = waitingSplit(board);
     expect(split).toEqual({ amber: 0, red: 1, other: 1 });
     // Every card in the column is accounted for by exactly one bucket.
-    expect(split.amber + split.red + split.other).toBe(board.waiting.length);
+    expect(split.amber + split.red + split.other).toBe(board.waiting.entries.length);
   });
 
   it("ignores cards in other columns entirely", () => {

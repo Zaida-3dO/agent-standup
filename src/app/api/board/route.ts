@@ -38,6 +38,18 @@ export async function GET(request: Request) {
   // but a caller wanting whole records has one way in rather than none.
   const full = url.searchParams.get("full");
   if (full !== null) input.full = parseBooleanParam(full);
+  // The pagination controls (MILESTONES.md #109). `column` names the one
+  // section to page; `limit`/`cursor` page it. `limit` is parsed to a number
+  // because every query param arrives as a string and the operation's schema
+  // types it as an integer — passing the string through would be rejected as
+  // invalid input rather than honoured, so the adapter converts and lets the
+  // service refuse anything that is not a number on its own terms.
+  const column = url.searchParams.get("column");
+  if (column !== null) input.column = column;
+  const limit = url.searchParams.get("limit");
+  if (limit !== null) input.limit = Number(limit);
+  const cursor = url.searchParams.get("cursor");
+  if (cursor !== null) input.cursor = cursor;
 
   try {
     const board = await service.call("get_board", input, { caller });

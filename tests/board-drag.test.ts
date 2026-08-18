@@ -18,9 +18,10 @@ import {
   refusalMessage,
   revertMove,
 } from "@/lib/board/drag";
-import { BOARD_COLUMNS, emptyBoard } from "@/lib/board/view";
+import { BOARD_COLUMNS } from "@/lib/board/view";
 import { STATE_TO_COLUMN_FOR_TESTS } from "./helpers/board-states";
 import type { Board, BoardColumnId, BoardEntry, BoardItem } from "@/lib/board/types";
+import { boardOf } from "./helpers/board-sections";
 
 function item(overrides: Partial<BoardItem> = {}): BoardItem {
   return {
@@ -47,8 +48,16 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   return { item: item(overrides), column };
 }
 
-function boardWith(overrides: Partial<Board> = {}): Board {
-  return { ...emptyBoard(), ...overrides };
+/**
+ * A board whose named columns hold the given entries.
+ *
+ * Takes bare entry lists rather than whole sections: a column's count and
+ * cursor (MILESTONES.md #109, #123) are proved against real data in
+ * `tests/board-pagination.test.ts`, and restating them at every fixture
+ * site here would bury what these tests are actually about.
+ */
+function boardWith(overrides: Partial<Record<BoardColumnId, readonly BoardEntry[]>> = {}): Board {
+  return boardOf(overrides);
 }
 
 describe("TARGET_STATE", () => {
@@ -126,8 +135,8 @@ describe("applyOptimisticMove", () => {
   it("moves the card to the target column immediately", () => {
     const board = boardWith({ backlog: [entry("backlog", { id: "a" })] });
     const moved = applyOptimisticMove(board, "a", "in_progress");
-    expect(moved.backlog).toHaveLength(0);
-    expect(moved.in_progress.map((e) => e.item.id)).toEqual(["a"]);
+    expect(moved.backlog.entries).toHaveLength(0);
+    expect(moved.in_progress.entries.map((e) => e.item.id)).toEqual(["a"]);
   });
 
   it("updates the entry's OWN column, not just its position", () => {
@@ -137,20 +146,20 @@ describe("applyOptimisticMove", () => {
     // read from the stale one.
     const board = boardWith({ backlog: [entry("backlog", { id: "a" })] });
     const moved = applyOptimisticMove(board, "a", "completed");
-    expect(moved.completed[0]!.column).toBe("completed");
+    expect(moved.completed.entries[0]!.column).toBe("completed");
   });
 
   it("updates the item's state to the target column's, so the chip is not stale", () => {
     const board = boardWith({ backlog: [entry("backlog", { id: "a", state: "on_deck" })] });
     const moved = applyOptimisticMove(board, "a", "completed");
-    expect(moved.completed[0]!.item.state).toBe("merged");
+    expect(moved.completed.entries[0]!.item.state).toBe("merged");
   });
 
   it("does not mutate the board it was given", () => {
     const board = boardWith({ backlog: [entry("backlog", { id: "a" })] });
     applyOptimisticMove(board, "a", "in_progress");
-    expect(board.backlog).toHaveLength(1);
-    expect(board.in_progress).toHaveLength(0);
+    expect(board.backlog.entries).toHaveLength(1);
+    expect(board.in_progress.entries).toHaveLength(0);
   });
 
   it("leaves the board alone for a drop that is not a move", () => {
@@ -170,8 +179,8 @@ describe("revertMove", () => {
     const original = entry("backlog", { id: "a", state: "on_deck" });
     const moved = applyOptimisticMove(boardWith({ backlog: [original] }), "a", "in_progress");
     const reverted = revertMove(moved, original);
-    expect(reverted.in_progress).toHaveLength(0);
-    expect(reverted.backlog.map((e) => e.item.id)).toEqual(["a"]);
+    expect(reverted.in_progress.entries).toHaveLength(0);
+    expect(reverted.backlog.entries.map((e) => e.item.id)).toEqual(["a"]);
   });
 
   it("restores the item's ORIGINAL state, not the one the drag guessed", () => {
@@ -180,11 +189,11 @@ describe("revertMove", () => {
     // answer than not reverting at all, because it looks correct.
     const original = entry("backlog", { id: "a", state: "on_deck" });
     const moved = applyOptimisticMove(boardWith({ backlog: [original] }), "a", "completed");
-    expect(moved.completed[0]!.item.state).toBe("merged");
+    expect(moved.completed.entries[0]!.item.state).toBe("merged");
 
     const reverted = revertMove(moved, original);
-    expect(reverted.backlog[0]!.item.state).toBe("on_deck");
-    expect(reverted.backlog[0]!.column).toBe("backlog");
+    expect(reverted.backlog.entries[0]!.item.state).toBe("on_deck");
+    expect(reverted.backlog.entries[0]!.column).toBe("backlog");
   });
 
   it("never leaves the card in two columns at once", () => {
@@ -192,7 +201,7 @@ describe("revertMove", () => {
     const moved = applyOptimisticMove(boardWith({ backlog: [original] }), "a", "completed");
     const reverted = revertMove(moved, original);
     const appearances = BOARD_COLUMNS.flatMap((column) =>
-      reverted[column].filter((e) => e.item.id === "a"),
+      reverted[column].entries.filter((e) => e.item.id === "a"),
     );
     expect(appearances).toHaveLength(1);
   });
@@ -211,8 +220,8 @@ describe("reconcile", () => {
       item: item({ id: "a", state: "blocked" }),
       column: "waiting",
     });
-    expect(settled.in_progress).toHaveLength(0);
-    expect(settled.waiting[0]!.item.state).toBe("blocked");
+    expect(settled.in_progress.entries).toHaveLength(0);
+    expect(settled.waiting.entries[0]!.item.state).toBe("blocked");
   });
 });
 

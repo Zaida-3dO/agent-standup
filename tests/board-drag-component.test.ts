@@ -9,8 +9,8 @@ import { describe, expect, it, vi } from "vitest";
 import { BoardView, type BoardDragProps } from "@/components/board/BoardView";
 import { BoardColumn } from "@/components/board/BoardColumn";
 import { ItemCard } from "@/components/board/ItemCard";
-import { emptyBoard } from "@/lib/board/view";
 import type { Board, BoardColumnId, BoardEntry, BoardItem } from "@/lib/board/types";
+import { boardOf, section } from "./helpers/board-sections";
 import { walk } from "./helpers/react-element";
 import type { ReactNode } from "react";
 
@@ -39,8 +39,16 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   return { item: item(overrides), column };
 }
 
-function boardWith(overrides: Partial<Board> = {}): Board {
-  return { ...emptyBoard(), ...overrides };
+/**
+ * A board whose named columns hold the given entries.
+ *
+ * Takes bare entry lists rather than whole sections: a column's count and
+ * cursor (MILESTONES.md #109, #123) are proved against real data in
+ * `tests/board-pagination.test.ts`, and restating them at every fixture
+ * site here would bury what these tests are actually about.
+ */
+function boardWith(overrides: Partial<Record<BoardColumnId, readonly BoardEntry[]>> = {}): Board {
+  return boardOf(overrides);
 }
 
 function dragProps(overrides: Partial<BoardDragProps> = {}): BoardDragProps {
@@ -150,7 +158,12 @@ describe("ItemCard — what can be picked up", () => {
 describe("BoardColumn — what can be dropped on", () => {
   it("reports the column it is when something is dropped on it", () => {
     const onDrop = vi.fn();
-    const column = BoardColumn({ column: "in_progress", entries: [], personId: null, onDrop });
+    const column = BoardColumn({
+      column: "in_progress",
+      section: section([]),
+      personId: null,
+      onDrop,
+    });
     const event = dragEvent();
     (column.props as { onDrop: (e: unknown) => void }).onDrop(event);
     expect(onDrop).toHaveBeenCalledWith("in_progress");
@@ -162,7 +175,7 @@ describe("BoardColumn — what can be dropped on", () => {
     // failure that looks exactly like a rejected move.
     const column = BoardColumn({
       column: "in_progress",
-      entries: [],
+      section: section([]),
       personId: null,
       onDrop: vi.fn(),
     });
@@ -174,7 +187,7 @@ describe("BoardColumn — what can be dropped on", () => {
   it("preventDefaults the drop itself", () => {
     const column = BoardColumn({
       column: "backlog",
-      entries: [],
+      section: section([]),
       personId: null,
       onDrop: vi.fn(),
     });
@@ -188,7 +201,7 @@ describe("BoardColumn — what can be dropped on", () => {
     // a target at all rather than one that always refuses.
     const column = BoardColumn({
       column: "waiting",
-      entries: [],
+      section: section([]),
       personId: null,
       onDrop: vi.fn(),
     });
@@ -201,7 +214,7 @@ describe("BoardColumn — what can be dropped on", () => {
     // The highlight is a promise that letting go here will do something.
     const column = BoardColumn({
       column: "waiting",
-      entries: [],
+      section: section([]),
       personId: null,
       onDrop: vi.fn(),
       isDropTarget: true,
@@ -210,7 +223,7 @@ describe("BoardColumn — what can be dropped on", () => {
   });
 
   it("takes no drop handlers at all when drag is not wired up", () => {
-    const column = BoardColumn({ column: "backlog", entries: [], personId: null });
+    const column = BoardColumn({ column: "backlog", section: section([]), personId: null });
     const props = column.props as Record<string, unknown>;
     expect(props.onDrop).toBeUndefined();
     expect(props.onDragOver).toBeUndefined();
@@ -219,7 +232,7 @@ describe("BoardColumn — what can be dropped on", () => {
   it("marks itself as the drop target while a card is over it", () => {
     const column = BoardColumn({
       column: "in_progress",
-      entries: [],
+      section: section([]),
       personId: null,
       onDrop: vi.fn(),
       isDropTarget: true,
@@ -230,7 +243,7 @@ describe("BoardColumn — what can be dropped on", () => {
   it("passes pending only to the card whose move is in flight", () => {
     const column = BoardColumn({
       column: "backlog",
-      entries: [entry("backlog", { id: "a" }), entry("backlog", { id: "b" })],
+      section: section([entry("backlog", { id: "a" }), entry("backlog", { id: "b" })]),
       personId: null,
       onDrop: vi.fn(),
       onCardDragStart: vi.fn(),
@@ -308,11 +321,11 @@ describe("BoardView — reporting a refusal", () => {
     const columns = [...walk(element)].filter((el) => el.type === BoardColumn);
     expect(columns).toHaveLength(4);
     const backlog = columns[0]!.props as {
-      entries: readonly BoardEntry[];
+      section: { entries: readonly BoardEntry[] };
       onDrop?: unknown;
       onCardDragStart?: unknown;
     };
-    expect(backlog.entries).toHaveLength(1);
+    expect(backlog.section.entries).toHaveLength(1);
     expect(backlog.onDrop).toBeUndefined();
     expect(backlog.onCardDragStart).toBeUndefined();
   });
