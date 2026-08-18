@@ -229,7 +229,8 @@ function toNumber(value: unknown): number {
  * and never from input; there is no path from a caller to this string.
  */
 const STATE_COUNT_COLUMNS = ITEM_STATES.map(
-  (state) => `count(*) FILTER (WHERE d."state" = '${state}'::"ItemState")::bigint AS "count_${state}"`,
+  (state) =>
+    `count(*) FILTER (WHERE d."state" = '${state}'::"ItemState")::bigint AS "count_${state}"`,
 ).join(",\n           ");
 
 /** Reads one state's count off a raw row, defaulting a state with no descendants to zero. */
@@ -336,8 +337,7 @@ export const getProjects = defineOperation({
       // Terminal states are exactly those mapping to the completed column
       // (`board/columns.ts`), summed from the distribution rather than
       // counted again in SQL — one source for both numbers.
-      const finished =
-        counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+      const finished = counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
 
       // Finished means every descendant is over AND there is at least one.
       // The `!childless` half is what keeps a childless project out of this

@@ -1,0 +1,284 @@
+/* The projects grid, painted entirely from the token layer
+   (`src/app/globals.css`). No literal colour appears in this file: a value
+   hardcoded here is one the theme switch cannot reach, and light mode is a
+   token remap rather than a second stylesheet. */
+
+.page {
+  padding: 1.25rem;
+  min-height: 100%;
+  background: var(--surface-app);
+  color: var(--text-primary);
+}
+
+/* Same surface as `.page` — the loading and error states are this screen
+   before it has anything to show, so they must not flash a different
+   colour of page underneath. */
+.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  padding: 1.25rem;
+  background: var(--surface-app);
+  color: var(--text-muted);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.headerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.count {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* The childless tally. Amber rather than red: this is data that needs
+   attention, not work that is blocked — and the board already spends red
+   on the second meaning. */
+.suspectCount {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--trust-unverified-border);
+  border-radius: 999px;
+  background: var(--trust-unverified-bg);
+  color: var(--trust-unverified);
+  font-size: 0.8rem;
+}
+
+.toggle {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.4rem;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.empty {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+/* `auto-fill` with a minimum rather than a fixed column count, so the grid
+   answers the "usable at the real project count" requirement by reflowing
+   instead of scrolling one narrow column. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  gap: 0.85rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.6rem;
+  background: var(--surface-card);
+}
+
+/* A structurally suspect project. The left border is the signal, in the
+   same amber the header tally uses, so the two read as one fact rather
+   than as two unrelated warnings. */
+.cardSuspect {
+  border-left: 3px solid var(--trust-unverified-border);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.cardLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.cardLink:hover {
+  text-decoration: underline;
+}
+
+.cardLink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 0.2rem;
+}
+
+.crew {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.crewDot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--presence-live);
+}
+
+.headline {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.progressBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.progressLabels {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.progressPercent {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.progressTrack {
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+/* Merged work, in the merged state's own colour — so the bar and a merged
+   chip elsewhere on the page cannot disagree about what "done" looks
+   like. */
+.progressFill {
+  height: 100%;
+  background: var(--state-merged-border);
+  border-radius: 999px;
+}
+
+/* The distribution strip. A thin band per state the project has children
+   in, widths proportional to the counts. */
+.strip {
+  display: flex;
+  height: 0.3rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+
+.stripSegment {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.stripLegend {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+/* The childless notice — what stands in for the progress block, not
+   alongside it. */
+.suspect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--trust-unverified-border);
+  border-radius: 0.4rem;
+  background: var(--trust-unverified-bg);
+}
+
+.suspectBadge {
+  align-self: flex-start;
+  color: var(--trust-unverified);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.suspectText {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: auto;
+  padding-top: 0.15rem;
+}
+
+.repo {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.activity {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}

@@ -298,9 +298,9 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
       await makeItem({ kind: "task", state: "merged", parentId: project, label: "x", area });
 
       expect((await projects({ area })).projects.map((p) => p.id)).not.toContain(project);
-      expect((await projects({ area, includeCompleted: true })).projects.map((p) => p.id)).toContain(
-        project,
-      );
+      expect(
+        (await projects({ area, includeCompleted: true })).projects.map((p) => p.id),
+      ).toContain(project);
     });
 
     it("keeps a project with any live child", async () => {
