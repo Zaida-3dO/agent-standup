@@ -48,13 +48,28 @@ import {
 /**
  * The most calls one reading is taken over, and the default.
  *
- * 200 is set against the two signals that need the most evidence. A read
- * share over fewer than a few dozen calls swings on a single tool call, and
- * a repeat count needs enough room for a session to leave a command and
- * come back to it — the very thing it measures. It is also comfortably
- * inside one index range scan on `ToolCall_sessionId_ts_idx`, so the query
- * stays a bounded read of a hot index rather than a scan whose cost grows
- * with how long a session has been running.
+ * 200 is the default, set against the two signals that need the most
+ * evidence. A read share over fewer than a few dozen calls swings on a
+ * single tool call, and a repeat count needs enough room for a session to
+ * leave a command and come back to it — the very thing it measures. It is
+ * also comfortably inside one index range scan on `ToolCall_sessionId_ts_idx`,
+ * so the query stays a bounded read of a hot index rather than a scan whose
+ * cost grows with how long a session has been running.
+ *
+ * **The 500 ceiling is deliberately above the house read cap of 200**
+ * (`get-events.ts`, `list-items.ts`), and the difference is that those are
+ * paginated list reads while this is an aggregate. A caller that wants more
+ * than 200 events pages for them and each page is a payload; a caller that
+ * wants a shape over a longer window cannot page, because a reading split
+ * across two calls is two readings of two different sessions and the repeat
+ * count in particular does not sum. So the ceiling has to be raised to the
+ * widest window worth taking rather than worked around by the caller.
+ *
+ * It is affordable because what crosses the wire does not grow with it: the
+ * rows are folded into three signals inside this operation, so a window of
+ * 500 returns exactly the same handful of numbers as a window of 20. The
+ * bound is on rows read into memory for one index scan, not on response
+ * size, which is the thing the house cap is protecting.
  */
 export const MAX_SHAPE_WINDOW = 500;
 export const DEFAULT_SHAPE_WINDOW = 200;

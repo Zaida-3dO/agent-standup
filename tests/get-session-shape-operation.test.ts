@@ -56,6 +56,8 @@ describeIfDb("get_session_shape against Postgres", () => {
   let scratchUrl: string;
   let prisma: PrismaClient;
   let runtime: ServiceRuntime;
+  /** A second runtime at the **shipped** `shape.*` defaults — see its use below. */
+  let defaultsRuntime: ServiceRuntime;
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
@@ -63,6 +65,10 @@ describeIfDb("get_session_shape against Postgres", () => {
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => snapshotWithLowThresholds(),
+    });
+    defaultsRuntime = new ServiceRuntime({
+      transaction: prismaTransactionRunner(prisma),
+      resolveSnapshot: async () => resolveSettings({ overrides: [], revision: 1n }),
     });
   }, 60_000);
 
@@ -151,6 +157,48 @@ describeIfDb("get_session_shape against Postgres", () => {
     expect(shape.calls).toBe(12);
     expect(shape.repeats.value).toBe(0);
     expect(shape.repeats.level).toBe("normal");
+  });
+
+  it("separates a working session from a stuck one at the shipped defaults", async () => {
+    // The property the whole fix is about, proved end to end: through the
+    // real query, with rows shaped the way `@/lib/hook/payload` writes them
+    // (a Read/Edit stores its file path in `command`), and against the
+    // **shipped** thresholds rather than the low ones the other cases use.
+    //
+    // Before the Bash restriction, both of these scored far above
+    // `repeat_threshold` (3) — an ordinary session 10 and a stuck one 18 —
+    // so `elevated` said nothing about a session at all. Overriding the
+    // thresholds here would hide exactly the regression this guards.
+    const working = "shape-defaults-working";
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"];
+    let t = 0;
+    for (let i = 0; i < 5; i += 1) {
+      const file = files[i % files.length]!;
+      await seed(working, (t += 1), { tool: "Read", command: file, paths: [file] });
+      await seed(working, (t += 1), { tool: "Edit", command: file, paths: [file] });
+      await seed(working, (t += 1), { tool: "Bash", command: "npm test" });
+      await seed(working, (t += 1), { tool: "Read", command: file, paths: [file] });
+    }
+
+    const stuck = "shape-defaults-stuck";
+    t = 0;
+    for (let i = 0; i < 10; i += 1) {
+      await seed(stuck, (t += 1), { tool: "Bash", command: "npm run build" });
+      await seed(stuck, (t += 1), { tool: "Bash", command: "npm test" });
+    }
+
+    const workingShape = (await defaultsRuntime.call("get_session_shape", {
+      sessionId: working,
+    })) as ShapeResult;
+    const stuckShape = (await defaultsRuntime.call("get_session_shape", {
+      sessionId: stuck,
+    })) as ShapeResult;
+
+    // Both clear `minimum_sample` (20), so neither answer is a shrug.
+    expect(workingShape.calls).toBe(20);
+    expect(stuckShape.calls).toBe(20);
+    expect(workingShape.repeats.level).toBe("normal");
+    expect(stuckShape.repeats.level).toBe("elevated");
   });
 
   it("scopes the reading to one session", async () => {

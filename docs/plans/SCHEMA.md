@@ -736,9 +736,18 @@ alike has chosen to.
 
 **Repeat detection counts returns, not attempts.** A command run and immediately re-run is a retry
 loop — a session working, and the most ordinary thing an agent does — so a consecutive run counts once
-however long it is. Only a command returned to *after other work happened in between* counts again.
-A truncated command (§10's caps) is never compared: two different long commands sharing a prefix are
-stored byte-identically, and a repeat reported from that did not happen.
+however long it is. Only a command returned to *after another command ran in between* counts again.
+Reading and editing between two runs do **not** break the run: the canonical retry loop is `npm test`,
+fix, `npm test`, and the fix is an `Edit`, so counting that as a return would fire on the very shape
+this is defined to exempt.
+
+**Only `Bash` calls are compared.** `command` is populated for every tool — the hook fills it from the
+first of `command`, `file_path`, `filePath`, `path`, `pattern`, `url`, so a `Read` stores its file path
+there — which is correct for the hook's own pattern matching but is a path, not a command. Comparing on
+it makes "touched this file again" read as "returned to this command", and the signal stops
+discriminating: against the shipped defaults an ordinary working session and a genuinely stuck one both
+land far above the threshold. A truncated command (§10's caps) is never compared: two different long
+commands sharing a prefix are stored byte-identically, and a repeat reported from that did not happen.
 
 ---
 
@@ -1034,7 +1043,7 @@ typed.
 | `pricing.model_prices` | object, `{}` | Pricing | What each model costs per million tokens, keyed by exact vendor model ID, with a separate rate for input, output, cache writes and cache reads. Run costs are recomputed from these rates and the stored counts, so a corrected rate corrects every figure computed afterwards. Empty by default: a table of figures compiled into the build is current on the day it is written and stale after, and a stale rate yields a confident wrong total where an absent one yields a visible gap. A model with no entry is recorded and left unpriced rather than counted as free. |
 | `retention.tool_calls_days` | int or null, `null` | Retention | Null = keep. Applies to `tool_calls` only. |
 | `shape.minimum_sample` | int, `20` | Telemetry | Tool calls a session must have made before its shape is reported as anything but `unknown`. Below it the reading is withheld rather than guessed. |
-| `shape.repeat_threshold` | int, `3` | Telemetry | Returns to a command — with other work in between — before that reads as circling. Counts **returns, not attempts**: a command run and immediately re-run is a retry loop and counts once however long it runs. |
+| `shape.repeat_threshold` | int, `3` | Telemetry | Returns to a shell command — with another command in between — before that reads as circling. Counts **returns, not attempts**: a command run and immediately re-run is a retry loop and counts once however long it runs, and reads and edits between two runs do not break the run. Only `Bash` calls are compared. |
 | `shape.spread_threshold` | int, `25` | Telemetry | Distinct files touched before the spread reads as wide. Distinct files, not calls. |
 | `shape.read_share_threshold` | 0–1, `0.9` | Telemetry | Share of *classifiable* calls that must be reads before a session reads as mostly-looking. Shell calls are classifiable as neither, so they neither raise nor lower it. |
 
