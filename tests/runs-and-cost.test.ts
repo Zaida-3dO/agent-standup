@@ -124,10 +124,27 @@ describeIfDb("runs and cost — the ingest's rollup against Postgres", () => {
     return { sessionId, itemId };
   }
 
+  /**
+   * One call, one millisecond after the last.
+   *
+   * **The advancing clock is load-bearing, not decoration.** A run's
+   * `startedAt` is the timestamp of the call that opened it, so calls
+   * sharing one instant give the runs they cut identical timestamps — and
+   * `ORDER BY "startedAt"` then leaves those runs in whatever order the
+   * database returns, making any assertion that indexes into the list a coin
+   * flip. That is not hypothetical: it reported working behaviour as broken
+   * once, by reading the first run's stage where the second's was meant.
+   *
+   * Every case still starts from the same fixed `AT`, so the time-window
+   * assertions stay deterministic — the clock advances *within* a case, it
+   * is not a wall clock.
+   */
+  let tick = 0;
   function call(overrides: Record<string, unknown> = {}) {
+    tick += 1;
     return {
       tool: "Bash",
-      ts: AT.toISOString(),
+      ts: new Date(AT.getTime() + tick).toISOString(),
       inputTokens: 1_000_000,
       outputTokens: 0,
       cacheWriteTokens: 0,
@@ -140,6 +157,13 @@ describeIfDb("runs and cost — the ingest's rollup against Postgres", () => {
     return (await runtime.call("record_tool_calls", { sessionId, calls })) as RecordToolCallsOutput;
   }
 
+  /**
+   * One item's runs, oldest first.
+   *
+   * The order is a real chronology rather than a tie broken arbitrarily,
+   * because `call()` advances the clock — see the note there for what went
+   * wrong when every call shared one instant.
+   */
   async function runsFor(itemId: string) {
     return prisma.run.findMany({ where: { itemId }, orderBy: { startedAt: "asc" } });
   }
