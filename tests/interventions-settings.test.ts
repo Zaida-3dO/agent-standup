@@ -25,6 +25,7 @@ import {
   INTERVENTION_SETTING_PREFIX,
   interventionSettingKey,
   parseInterventionSettingKey,
+  readInterventionSettingRows,
   renderInterventionSettings,
   resolveInterventionSettings,
 } from "@/lib/interventions/settings";
@@ -227,6 +228,43 @@ describe("resolving stored rows into overrides", () => {
     expect(resolved.overrides).toEqual({});
     expect(resolved.rejected).toEqual([]);
     expect(resolved.unknownIds).toEqual([]);
+  });
+});
+
+describe("reading the stored rows", () => {
+  /** A handle recording the query and its bound parameters. */
+  function recordingHandle(rows: { key: string; value: unknown }[] = []) {
+    const calls: { query: string; params: unknown[] }[] = [];
+    return {
+      calls,
+      $queryRawUnsafe: async <T = unknown>(query: string, ...params: unknown[]): Promise<T> => {
+        calls.push({ query, params });
+        return rows as T;
+      },
+    };
+  }
+
+  it("scopes the read to the intervention namespace", async () => {
+    // The read sits on the highest-volume path in the system, and its own
+    // reasoning is that a bound prefix makes this a range scan over the
+    // primary key rather than a pattern match over every settings row.
+    // Nothing else checks that: a widened bind would still be *correct*,
+    // because `parseInterventionSettingKey` discards foreign keys anyway —
+    // so the regression would be invisible in behaviour and show up only as
+    // load, which is exactly the class of change that needs a test.
+    const db = recordingHandle();
+    await readInterventionSettingRows(db);
+
+    expect(db.calls).toHaveLength(1);
+    expect(db.calls[0]?.params).toEqual([`${INTERVENTION_SETTING_PREFIX}.%`]);
+    expect(db.calls[0]?.query).toContain(`"key" LIKE $1`);
+  });
+
+  it("hands back the rows it read, unchanged", async () => {
+    const db = recordingHandle([{ key: "interventions.example.level", value: "nudge" }]);
+    await expect(readInterventionSettingRows(db)).resolves.toEqual([
+      { key: "interventions.example.level", value: "nudge" },
+    ]);
   });
 });
 
