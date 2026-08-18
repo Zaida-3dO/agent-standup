@@ -62,30 +62,32 @@ describeIfDb("board HTTP route against Postgres", () => {
     const response = await boardRoute.GET(new Request("http://localhost/api/board"));
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: {
-        backlog: unknown[];
-        in_progress: unknown[];
-        waiting: unknown[];
-        completed: unknown[];
-      };
+      board: { columns: Record<string, unknown> };
     };
-    expect(payload.board).toHaveProperty("backlog");
-    expect(payload.board).toHaveProperty("in_progress");
-    expect(payload.board).toHaveProperty("waiting");
-    expect(payload.board).toHaveProperty("completed");
+    // Every column is present on every response, including the ones a
+    // default read withholds — a withheld column still reports its real
+    // total (MILESTONES.md #123), so it has to be there to report it.
+    expect(payload.board.columns).toHaveProperty("backlog");
+    expect(payload.board.columns).toHaveProperty("in_progress");
+    expect(payload.board.columns).toHaveProperty("waiting");
+    expect(payload.board.columns).toHaveProperty("completed");
   });
 
   it("a newly created item (on_deck) shows up on the board in backlog, over the real HTTP round trip", async () => {
     const created = await createItem({ area: "board-route-backlog" });
 
+    // `column=backlog` because #109's default read answers "what is being
+    // worked on" and withholds backlog — reaching it is an explicit ask.
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-backlog"),
+      new Request("http://localhost/api/board?area=board-route-backlog&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: { backlog: { item: { id: string } }[] };
+      board: { columns: { backlog: { entries: { item: { id: string } }[] } } };
     };
-    expect(payload.board.backlog.some((entry) => entry.item.id === created.id)).toBe(true);
+    expect(
+      payload.board.columns.backlog.entries.some((entry) => entry.item.id === created.id),
+    ).toBe(true);
   });
 
   it("GET /board?area= excludes items in a different area, over the actual query-string parsing", async () => {
@@ -93,14 +95,14 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-filter-other" });
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-filter-target"),
+      new Request("http://localhost/api/board?area=board-route-filter-target&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: Record<string, { item: { id: string } }[]>;
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
     };
-    const allIds = Object.values(payload.board)
-      .flat()
+    const allIds = Object.values(payload.board.columns)
+      .flatMap((section) => section.entries)
       .map((entry) => entry.item.id);
     expect(allIds).toEqual([inArea.id]);
   });
@@ -116,14 +118,14 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-repo", repo: "board-route-repo-b" });
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?repo=board-route-repo-a"),
+      new Request("http://localhost/api/board?repo=board-route-repo-a&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: Record<string, { item: { id: string } }[]>;
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
     };
-    const allIds = Object.values(payload.board)
-      .flat()
+    const allIds = Object.values(payload.board.columns)
+      .flatMap((section) => section.entries)
       .map((entry) => entry.item.id);
     expect(allIds).toEqual([inRepoA.id]);
   });
@@ -133,14 +135,14 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-kind", parentId: project.id });
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-kind&kind=project"),
+      new Request("http://localhost/api/board?area=board-route-kind&kind=project&column=backlog"),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: Record<string, { item: { id: string } }[]>;
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
     };
-    const allIds = Object.values(payload.board)
-      .flat()
+    const allIds = Object.values(payload.board.columns)
+      .flatMap((section) => section.entries)
       .map((entry) => entry.item.id);
     expect(allIds).toEqual([project.id]);
   });
@@ -180,10 +182,10 @@ describeIfDb("board HTTP route against Postgres", () => {
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: Record<string, { item: { id: string } }[]>;
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
     };
-    const allIds = Object.values(payload.board)
-      .flat()
+    const allIds = Object.values(payload.board.columns)
+      .flatMap((section) => section.entries)
       .map((entry) => entry.item.id);
     expect(allIds).toEqual([blocked.id]);
   });
@@ -197,14 +199,16 @@ describeIfDb("board HTTP route against Postgres", () => {
     await createItem({ area: "board-route-search", title: "Something else", body: "x" });
 
     const response = await boardRoute.GET(
-      new Request("http://localhost/api/board?area=board-route-search&search=routing"),
+      new Request(
+        "http://localhost/api/board?area=board-route-search&search=routing&column=backlog",
+      ),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: Record<string, { item: { id: string } }[]>;
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
     };
-    const allIds = Object.values(payload.board)
-      .flat()
+    const allIds = Object.values(payload.board.columns)
+      .flatMap((section) => section.entries)
       .map((entry) => entry.item.id);
     expect(allIds).toEqual([matching.id]);
   });
@@ -237,10 +241,10 @@ describeIfDb("board HTTP route against Postgres", () => {
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      board: Record<string, { item: { id: string } }[]>;
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
     };
-    const allIds = Object.values(payload.board)
-      .flat()
+    const allIds = Object.values(payload.board.columns)
+      .flatMap((section) => section.entries)
       .map((entry) => entry.item.id);
     expect(allIds).toEqual([target.id]);
   });

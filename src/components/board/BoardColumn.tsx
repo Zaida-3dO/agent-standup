@@ -2,15 +2,28 @@
 //
 // Hook-free and prop-driven so it can be called directly in a test; see
 // `TopBar.tsx`'s header.
-import type { BoardColumnId, BoardEntry } from "@/lib/board/types";
-import { columnTitle, needsYou, type WaitingSplit } from "@/lib/board/view";
+import type { BoardColumnId, BoardSection } from "@/lib/board/types";
+import {
+  columnCount,
+  columnTitle,
+  isGenuinelyEmpty,
+  needsYou,
+  type WaitingSplit,
+} from "@/lib/board/view";
 import { acceptsDrop } from "@/lib/board/drag";
 import { ItemCard } from "./ItemCard";
 import styles from "./Board.module.css";
 
 export interface BoardColumnProps {
   readonly column: BoardColumnId;
-  readonly entries: readonly BoardEntry[];
+  /**
+   * This column's page and its true size (MILESTONES.md #123). The whole
+   * section rather than just its entries, because the heading count and the
+   * empty state are both answers the page alone cannot give: a page of zero
+   * means "nothing here" or "not loaded" depending on `withheld`, and the
+   * count is `total`, never the page length.
+   */
+  readonly section: BoardSection;
   /** The active profile's id, or `null` when none is chosen — decides which cards are flagged. */
   readonly personId: string | null;
   /**
@@ -34,7 +47,7 @@ export interface BoardColumnProps {
 
 export function BoardColumn({
   column,
-  entries,
+  section,
   personId,
   split,
   onDrop,
@@ -44,6 +57,7 @@ export function BoardColumn({
   onCardDragEnd,
   pendingItemId,
 }: BoardColumnProps) {
+  const entries = section.entries;
   // Waiting accepts no drops at all — both its states need fields a drag
   // cannot supply, so every drop would be refused (see `TARGET_STATE`). A
   // column that always refuses teaches that the interface is unreliable, so
@@ -82,7 +96,11 @@ export function BoardColumn({
     >
       <header className={styles.columnHead}>
         <h2 className={styles.columnTitle}>{columnTitle(column)}</h2>
-        <span className={styles.count}>{entries.length}</span>
+        {/* The server's counted total, never the page length — see
+            `columnCount`. These differ on every paginated column, and
+            #123 is what the page length renders as: a column showing `0`
+            while the store holds 175 finished items. */}
+        <span className={styles.count}>{columnCount(section)}</span>
       </header>
       {split && (
         <p className={styles.split}>
@@ -98,8 +116,16 @@ export function BoardColumn({
           {split.other > 0 && <span className={styles.splitOther}>{split.other} other</span>}
         </p>
       )}
+      {/* Three states, not two — #123: "an empty state and a hidden state
+          must not render identically". A column with nothing in it says so;
+          a column that simply was not fetched says that instead, so a
+          reader is never told there is no work when there is. */}
       {entries.length === 0 ? (
-        <p className={styles.empty}>Nothing here.</p>
+        isGenuinelyEmpty(section) ? (
+          <p className={styles.empty}>Nothing here.</p>
+        ) : (
+          <p className={styles.empty}>Not loaded — {columnCount(section)} here.</p>
+        )
       ) : (
         <ul className={styles.cards}>
           {entries.map((entry) => (
@@ -113,6 +139,11 @@ export function BoardColumn({
             />
           ))}
         </ul>
+      )}
+      {section.nextCursor !== null && (
+        <p className={styles.empty}>
+          Showing {entries.length} of {columnCount(section)}.
+        </p>
       )}
     </section>
   );

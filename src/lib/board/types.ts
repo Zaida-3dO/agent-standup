@@ -68,5 +68,25 @@ export interface BoardEntry {
   readonly column: BoardColumnId;
 }
 
-/** The whole board: every column, always present, possibly empty. */
-export type Board = Readonly<Record<BoardColumnId, readonly BoardEntry[]>>;
+/**
+ * One column as the API returns it — a page of entries, plus the count of
+ * everything in the column (MILESTONES.md #109, #123).
+ *
+ * `total` is the number the heading renders, and it is emphatically **not**
+ * `entries.length`. The two differ whenever the column is paginated, and
+ * they differ most on exactly the columns where the count matters: a
+ * withheld column has no entries and a real total, and rendering the length
+ * there is #123's "completed reads 0 while 175 items are completed".
+ */
+export interface BoardSection {
+  readonly entries: readonly BoardEntry[];
+  /** Every item in this column, not just the ones on this page. */
+  readonly total: number;
+  /** Pass back to page this column further; null when there is no more. */
+  readonly nextCursor: string | null;
+  /** True when this column was not fetched — `entries` is empty by omission, not by absence. */
+  readonly withheld: boolean;
+}
+
+/** The whole board: every column, always present, possibly empty or withheld. */
+export type Board = Readonly<Record<BoardColumnId, BoardSection>>;

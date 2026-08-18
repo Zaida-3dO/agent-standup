@@ -391,12 +391,17 @@ describeIfDb("the slim read against Postgres", () => {
   describe("get_board", () => {
     it("gives each card what it draws — including the headline — and nothing heavy", async () => {
       const created = await makeHeavyItem({ area: "slim-board", title: "Board card" });
-      const board = (await runtime.call("get_board", { area: "slim-board" })) as unknown as Record<
-        string,
-        { item: Record<string, unknown> }[]
-      >;
-      const entry = Object.values(board)
-        .flat()
+      // `column: "backlog"` because an empty project derives to backlog,
+      // which a default read withholds (MILESTONES.md #109). The subject
+      // here is the projection, not the default slice.
+      const board = (await runtime.call("get_board", {
+        area: "slim-board",
+        column: "backlog",
+      })) as unknown as {
+        columns: Record<string, { entries: { item: Record<string, unknown> }[] }>;
+      };
+      const entry = Object.values(board.columns)
+        .flatMap((section) => section.entries)
         .find((e) => e.item.id === created.id);
       expect(entry).toBeDefined();
 
@@ -417,9 +422,12 @@ describeIfDb("the slim read against Postgres", () => {
       const board = (await runtime.call("get_board", {
         area: "slim-board-full",
         full: true,
-      })) as unknown as Record<string, { item: Record<string, unknown> }[]>;
-      const entry = Object.values(board)
-        .flat()
+        column: "backlog",
+      })) as unknown as {
+        columns: Record<string, { entries: { item: Record<string, unknown> }[] }>;
+      };
+      const entry = Object.values(board.columns)
+        .flatMap((section) => section.entries)
         .find((e) => e.item.id === created.id);
       expect(entry?.item).toHaveProperty("body");
       expect(entry?.item).toHaveProperty("customFields");
@@ -442,9 +450,21 @@ describeIfDb("the slim read against Postgres", () => {
 
       const board = (await runtime.call("get_board", {
         area: "slim-board-tree",
-      })) as unknown as Record<string, { item: { id: string } }[]>;
-      expect((board.in_progress ?? []).map((e) => e.item.id)).toContain(project.id);
-      expect((board.backlog ?? []).map((e) => e.item.id)).not.toContain(project.id);
+      })) as unknown as { columns: Record<string, { entries: { item: { id: string } }[] }> };
+      expect((board.columns.in_progress?.entries ?? []).map((e) => e.item.id)).toContain(
+        project.id,
+      );
+      // Read backlog explicitly: a default read withholds it, so asserting
+      // absence against the default would pass whether or not the project
+      // was misfiled there — the exact vacuous assertion this case exists
+      // to avoid.
+      const backlog = (await runtime.call("get_board", {
+        area: "slim-board-tree",
+        column: "backlog",
+      })) as unknown as { columns: Record<string, { entries: { item: { id: string } }[] }> };
+      expect((backlog.columns.backlog?.entries ?? []).map((e) => e.item.id)).not.toContain(
+        project.id,
+      );
     });
   });
 

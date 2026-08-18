@@ -9,6 +9,7 @@ import { ItemCard } from "@/components/board/ItemCard";
 import { NeedsYouBadge } from "@/components/board/NeedsYouBadge";
 import { emptyBoard } from "@/lib/board/view";
 import type { Board, BoardColumnId, BoardEntry, BoardItem } from "@/lib/board/types";
+import { boardOf, section } from "./helpers/board-sections";
 import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 import type { ReactNode } from "react";
 
@@ -37,8 +38,16 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   return { item: item(overrides), column };
 }
 
-function boardWith(overrides: Partial<Board> = {}): Board {
-  return { ...emptyBoard(), ...overrides };
+/**
+ * A board whose named columns hold the given entries.
+ *
+ * Takes bare entry lists rather than whole sections: a column's count and
+ * cursor (MILESTONES.md #109, #123) are proved against real data in
+ * `tests/board-pagination.test.ts`, and restating them at every fixture
+ * site here would bury what these tests are actually about.
+ */
+function boardWith(overrides: Partial<Record<BoardColumnId, readonly BoardEntry[]>> = {}): Board {
+  return boardOf(overrides);
 }
 
 /** Every string of text anywhere in the tree, flattened — handles arrays of children. */
@@ -128,8 +137,8 @@ describe("BoardView", () => {
     });
     const byColumn = new Map(
       findAllByType(element, BoardColumn).map((c) => {
-        const props = c.props as { column: string; entries: readonly BoardEntry[] };
-        return [props.column, props.entries];
+        const props = c.props as { column: string; section: { entries: readonly BoardEntry[] } };
+        return [props.column, props.section.entries];
       }),
     );
     expect(byColumn.get("backlog")!.map((e) => e.item.id)).toEqual(["b1"]);
@@ -206,7 +215,7 @@ describe("BoardColumn", () => {
   it("shows the column's heading and its card count", () => {
     const element = BoardColumn({
       column: "backlog",
-      entries: [entry("backlog", { id: "1" }), entry("backlog", { id: "2" })],
+      section: section([entry("backlog", { id: "1" }), entry("backlog", { id: "2" })]),
       personId: null,
     });
     const text = textOf(element);
@@ -215,7 +224,7 @@ describe("BoardColumn", () => {
   });
 
   it("shows an empty state, and no card list, when the column has nothing", () => {
-    const element = BoardColumn({ column: "completed", entries: [], personId: null });
+    const element = BoardColumn({ column: "completed", section: section([]), personId: null });
     expect(textOf(element)).toContain("Nothing here.");
     expect(findAllByType(element, ItemCard).length).toBe(0);
   });
@@ -223,7 +232,7 @@ describe("BoardColumn", () => {
   it("renders one card per entry", () => {
     const element = BoardColumn({
       column: "backlog",
-      entries: [entry("backlog", { id: "1" }), entry("backlog", { id: "2" })],
+      section: section([entry("backlog", { id: "1" }), entry("backlog", { id: "2" })]),
       personId: null,
     });
     expect(findAllByType(element, ItemCard).length).toBe(2);
@@ -232,7 +241,7 @@ describe("BoardColumn", () => {
   it("renders the amber/red tally only when a split is given", () => {
     const withSplit = BoardColumn({
       column: "waiting",
-      entries: [],
+      section: section([]),
       personId: null,
       split: { amber: 2, red: 5, other: 0 },
     });
@@ -244,7 +253,7 @@ describe("BoardColumn", () => {
     expect(text).toMatch(/2\s+paused/);
     expect(text).toMatch(/5\s+blocked/);
 
-    const without = BoardColumn({ column: "backlog", entries: [], personId: null });
+    const without = BoardColumn({ column: "backlog", section: section([]), personId: null });
     expect(textOf(without)).not.toContain("paused");
   });
 
@@ -256,11 +265,11 @@ describe("BoardColumn", () => {
     // `waitingSplit` says it exists to prevent.
     const element = BoardColumn({
       column: "waiting",
-      entries: [
+      section: section([
         entry("waiting", { id: "p", kind: "project" }),
         entry("waiting", { id: "a", state: "paused" }),
         entry("waiting", { id: "b", state: "blocked" }),
-      ],
+      ]),
       personId: null,
       split: { amber: 1, red: 1, other: 1 },
     });
@@ -273,7 +282,7 @@ describe("BoardColumn", () => {
   it("hides the `other` tally at zero rather than showing a permanent '0 other'", () => {
     const element = BoardColumn({
       column: "waiting",
-      entries: [],
+      section: section([]),
       personId: null,
       split: { amber: 1, red: 1, other: 0 },
     });
@@ -283,7 +292,7 @@ describe("BoardColumn", () => {
   it("flags exactly the cards blocked on the active person", () => {
     const element = BoardColumn({
       column: "waiting",
-      entries: [
+      section: section([
         entry("waiting", {
           id: "mine",
           state: "blocked",
@@ -296,7 +305,7 @@ describe("BoardColumn", () => {
           blockedOnType: "person",
           blockedOnPersonId: "user-b",
         }),
-      ],
+      ]),
       personId: "user-a",
     });
     const flags = findAllByType(element, ItemCard).map((c) => {

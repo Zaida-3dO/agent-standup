@@ -40,6 +40,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "@/components/board/Board";
 import { emptyBoard } from "@/lib/board/view";
 import type { Board as BoardData } from "@/lib/board/types";
+import { section } from "./helpers/board-sections";
 
 // `Board` reads the active profile from context. The drag handlers are wired
 // regardless of who is active, so a fixed stub keeps this file about
@@ -52,7 +53,7 @@ vi.mock("@/lib/profile/ProfileProvider", () => ({
 function boardWithOneCard(): BoardData {
   return {
     ...emptyBoard(),
-    backlog: [
+    backlog: section([
       {
         item: {
           id: "item-a",
@@ -70,13 +71,18 @@ function boardWithOneCard(): BoardData {
         },
         column: "backlog",
       },
-    ],
+    ]),
   };
 }
 
 /**
- * Stubs `fetch` for both calls the component makes: the mount-time
- * `GET /api/board`, and the `POST /api/items/:id/transition` a drop issues.
+ * Stubs `fetch` for both kinds of call the component makes: the mount-time
+ * board reads, and the `POST /api/items/:id/transition` a drop issues.
+ *
+ * The board is fetched **one column per request** (MILESTONES.md #109), so
+ * the stub answers whichever column the URL names rather than returning a
+ * whole board to every caller — returning all four columns to each of four
+ * requests would render every card four times.
  *
  * Stubbed at `fetch` rather than by mocking `@/lib/board/move`, deliberately:
  * the assertion is that a **transition request reaches the network**, and
@@ -101,10 +107,15 @@ beforeEach(() => {
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : String(input);
       if (url.includes("/api/board")) {
+        const column = new URL(url, "http://localhost").searchParams.get("column") ?? "backlog";
+        const board = boardWithOneCard();
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ board: boardWithOneCard() }),
+          json: () =>
+            Promise.resolve({
+              board: { columns: { [column]: board[column as keyof typeof board] } },
+            }),
         } as Response);
       }
       if (url.includes("/transition")) {
@@ -121,7 +132,7 @@ beforeEach(() => {
           status: 200,
           json: () =>
             Promise.resolve({
-              item: { ...boardWithOneCard().backlog[0]?.item, state: "executing" },
+              item: { ...boardWithOneCard().backlog.entries[0]?.item, state: "executing" },
             }),
         } as Response);
       }

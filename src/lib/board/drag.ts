@@ -11,7 +11,13 @@
 // §1.1), so a drop has to choose *which* state in the target column to move
 // to — see `TARGET_STATE` below for which, and why the others are
 // deliberately unreachable by drag.
-import { BOARD_COLUMNS, type Board, type BoardColumnId, type BoardEntry } from "./types";
+import {
+  BOARD_COLUMNS,
+  type Board,
+  type BoardColumnId,
+  type BoardEntry,
+  type BoardSection,
+} from "./types";
 
 /**
  * The state a drop on each column moves an item to, or `null` for a column
@@ -112,6 +118,37 @@ export function isMove(entry: BoardEntry, column: BoardColumnId): boolean {
  *
  * Returns the board unchanged when the move is not one.
  */
+/**
+ * The board with one entry removed from wherever it sits and placed in
+ * `column` — the single relocation every optimistic move, revert and
+ * reconcile is built from.
+ *
+ * **Each column's `total` moves with the card.** A count is the number
+ * under the column heading (`BoardSection.total`), so a card that visibly
+ * moves while the two headings keep their old numbers is #123's defect
+ * reappearing one interaction later: the count and the cards disagree, and
+ * the count is the half people trust. The totals are adjusted by exactly
+ * the number of entries added or removed, so they stay correct against a
+ * *paginated* column too — where the card that moved may be one of many the
+ * page does not hold, and recomputing `total` from `entries.length` would
+ * throw away everything off-page.
+ */
+function relocate(board: Board, itemId: string, column: BoardColumnId, entry: BoardEntry): Board {
+  const next = {} as Record<BoardColumnId, BoardSection>;
+  for (const id of BOARD_COLUMNS) {
+    const section = board[id];
+    const without = section.entries.filter((candidate) => candidate.item.id !== itemId);
+    const removed = section.entries.length - without.length;
+    const entries = id === column ? [...without, entry] : without;
+    next[id] = {
+      ...section,
+      entries,
+      total: section.total - removed + (id === column ? 1 : 0),
+    };
+  }
+  return next;
+}
+
 export function applyOptimisticMove(board: Board, itemId: string, column: BoardColumnId): Board {
   const entry = findEntry(board, itemId);
   if (entry === null || !isMove(entry, column)) return board;
@@ -128,12 +165,7 @@ export function applyOptimisticMove(board: Board, itemId: string, column: BoardC
     item: { ...entry.item, state: target },
   };
 
-  const next = {} as Record<BoardColumnId, BoardEntry[]>;
-  for (const id of BOARD_COLUMNS) {
-    const without = board[id].filter((candidate) => candidate.item.id !== itemId);
-    next[id] = id === column ? [...without, moved] : without;
-  }
-  return next;
+  return relocate(board, itemId, column, moved);
 }
 
 /**
@@ -147,12 +179,7 @@ export function applyOptimisticMove(board: Board, itemId: string, column: BoardC
  * answer than not reverting at all — it looks correct.
  */
 export function revertMove(board: Board, original: BoardEntry): Board {
-  const next = {} as Record<BoardColumnId, BoardEntry[]>;
-  for (const id of BOARD_COLUMNS) {
-    const without = board[id].filter((candidate) => candidate.item.id !== original.item.id);
-    next[id] = id === original.column ? [...without, original] : without;
-  }
-  return next;
+  return relocate(board, original.item.id, original.column, original);
 }
 
 /**
@@ -167,18 +194,13 @@ export function revertMove(board: Board, original: BoardEntry): Board {
  * the next full reload.
  */
 export function reconcile(board: Board, entry: BoardEntry): Board {
-  const next = {} as Record<BoardColumnId, BoardEntry[]>;
-  for (const id of BOARD_COLUMNS) {
-    const without = board[id].filter((candidate) => candidate.item.id !== entry.item.id);
-    next[id] = id === entry.column ? [...without, entry] : without;
-  }
-  return next;
+  return relocate(board, entry.item.id, entry.column, entry);
 }
 
 /** The entry for an item, wherever it sits, or `null` if the board does not hold it. */
 export function findEntry(board: Board, itemId: string): BoardEntry | null {
   for (const column of BOARD_COLUMNS) {
-    for (const entry of board[column]) {
+    for (const entry of board[column].entries) {
       if (entry.item.id === itemId) return entry;
     }
   }

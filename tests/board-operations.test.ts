@@ -15,7 +15,10 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { registerSessions } from "./helpers/register-sessions";
-import type { BoardOutput } from "@/lib/service/operations/get-board";
+import type { BoardEntry, BoardOutput } from "@/lib/service/operations/get-board";
+
+/** One column's entries, as `wholeBoard` below hands them to a case. */
+type BoardEntries = readonly BoardEntry[];
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -69,13 +72,53 @@ describeIfDb("get_board against Postgres", () => {
     );
   }
 
+  /**
+   * Every column's entries in one object — the shape these grouping and
+   * filter cases assert against.
+   *
+   * `get_board` now answers for one column at a time and withholds backlog
+   * and completed by default (MILESTONES.md #109), so a whole board is four
+   * calls. These tests are about *which column an item lands in* and *which
+   * filters exclude it* — both of which are still exactly what they were —
+   * so the reads are issued explicitly here and flattened, keeping each case
+   * about its own subject. Pagination and counts have their own file,
+   * `tests/board-pagination.test.ts`.
+   *
+   * A generous `limit` so no fixture is lost off the end of a page: a case
+   * asserting an item is absent must not pass because it fell off page one.
+   */
+  async function wholeBoard(input: Record<string, unknown> = {}): Promise<{
+    backlog: BoardEntries;
+    in_progress: BoardEntries;
+    waiting: BoardEntries;
+    completed: BoardEntries;
+  }> {
+    const columns = ["backlog", "in_progress", "waiting", "completed"] as const;
+    const results = await Promise.all(
+      columns.map(
+        (column) =>
+          runtime.call("get_board", {
+            ...input,
+            column,
+            limit: 200,
+          }) as Promise<BoardOutput>,
+      ),
+    );
+    return {
+      backlog: results[0]!.columns.backlog.entries,
+      in_progress: results[1]!.columns.in_progress.entries,
+      waiting: results[2]!.columns.waiting.entries,
+      completed: results[3]!.columns.completed.entries,
+    };
+  }
+
   describe("column grouping — tasks and subtasks (real, stored state)", () => {
     it("places a task in backlog when its state is on_deck (default at creation)", async () => {
       const project = await createItem({ area: "board-grouping" });
       const task = await createItem({ area: "board-grouping", parentId: project.id });
       expect(task.state).toBe("on_deck");
 
-      const board = (await runtime.call("get_board", { area: "board-grouping" })) as BoardOutput;
+      const board = await wholeBoard({ area: "board-grouping" });
       expect(board.backlog.some((entry) => entry.item.id === task.id)).toBe(true);
     });
 
@@ -84,9 +127,9 @@ describeIfDb("get_board against Postgres", () => {
       const task = await createItem({ area: "board-in-progress", parentId: project.id });
       await setState(task.id, "executing");
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-in-progress",
-      })) as BoardOutput;
+      });
       expect(board.in_progress.some((entry) => entry.item.id === task.id)).toBe(true);
       // Genuine exclusion, not just "also present": a task must appear in
       // exactly one column, never leak into the others.
@@ -102,7 +145,7 @@ describeIfDb("get_board against Postgres", () => {
       const blockedTask = await createItem({ area: "board-waiting", parentId: project.id });
       await setState(blockedTask.id, "blocked");
 
-      const board = (await runtime.call("get_board", { area: "board-waiting" })) as BoardOutput;
+      const board = await wholeBoard({ area: "board-waiting" });
       const waitingIds = board.waiting.map((entry) => entry.item.id);
       expect(waitingIds).toContain(pausedTask.id);
       expect(waitingIds).toContain(blockedTask.id);
@@ -117,10 +160,10 @@ describeIfDb("get_board against Postgres", () => {
       // that `merged` maps to `completed` — and finished work is out of the
       // default read (MILESTONES.md #103), which is a separate behaviour
       // proved in tests/terminal-items-default.test.ts.
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-completed",
         includeTerminal: true,
-      })) as BoardOutput;
+      });
       expect(board.completed.some((entry) => entry.item.id === task.id)).toBe(true);
     });
   });
@@ -128,9 +171,9 @@ describeIfDb("get_board against Postgres", () => {
   describe("projects — DECISIONS.md §13c: derived from children, never items.state", () => {
     it("an empty project (no children) reads as backlog", async () => {
       const project = await createItem({ area: "board-project-empty" });
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-project-empty",
-      })) as BoardOutput;
+      });
       expect(board.backlog.some((entry) => entry.item.id === project.id)).toBe(true);
     });
 
@@ -140,9 +183,9 @@ describeIfDb("get_board against Postgres", () => {
       const task = await createItem({ area: "board-project-live", parentId: project.id });
       await setState(task.id, "executing");
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-project-live",
-      })) as BoardOutput;
+      });
       expect(board.in_progress.some((entry) => entry.item.id === project.id)).toBe(true);
       // The genuine-exclusion half: reading items.state directly (on_deck)
       // would wrongly place it in backlog instead — prove it is NOT there.
@@ -156,9 +199,9 @@ describeIfDb("get_board against Postgres", () => {
       const live = await createItem({ area: "board-project-mixed", parentId: project.id });
       await setState(live.id, "planning");
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-project-mixed",
-      })) as BoardOutput;
+      });
       expect(board.completed.some((entry) => entry.item.id === project.id)).toBe(false);
       expect(board.in_progress.some((entry) => entry.item.id === project.id)).toBe(true);
     });
@@ -173,10 +216,10 @@ describeIfDb("get_board against Postgres", () => {
       // `includeTerminal` for the same reason as "places a merged task in
       // completed" above: the assertion is about derivation, not about the
       // default filter #103 put in front of it.
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-project-done",
         includeTerminal: true,
-      })) as BoardOutput;
+      });
       expect(board.completed.some((entry) => entry.item.id === project.id)).toBe(true);
     });
 
@@ -190,9 +233,9 @@ describeIfDb("get_board against Postgres", () => {
       });
       await setState(subtask.id, "executing");
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-project-grandchild",
-      })) as BoardOutput;
+      });
       // If the query only looked one level down (direct children of the
       // project), it would see only the merged task and misreport
       // completed — this is the exact off-by-one this test guards against.
@@ -214,10 +257,10 @@ describeIfDb("get_board against Postgres", () => {
       });
       await setState(child.id, "executing");
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-project-filtered",
         priority: "P0",
-      })) as BoardOutput;
+      });
       // The child (P2) is excluded from every column's item list...
       const anyColumnHasChild = [
         ...board.backlog,
@@ -239,10 +282,10 @@ describeIfDb("get_board against Postgres", () => {
       const p0 = await createItem({ area: "board-filter-priority", priority: "P0" });
       await createItem({ area: "board-filter-priority", priority: "P3" });
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-priority",
         priority: "P0",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -256,9 +299,9 @@ describeIfDb("get_board against Postgres", () => {
       const inArea = await createItem({ area: "board-filter-area-a" });
       await createItem({ area: "board-filter-area-b" });
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-area-a",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -272,10 +315,10 @@ describeIfDb("get_board against Postgres", () => {
       const project = await createItem({ area: "board-filter-kind" });
       await createItem({ area: "board-filter-kind", parentId: project.id });
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-kind",
         kind: "project",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -293,10 +336,10 @@ describeIfDb("get_board against Postgres", () => {
       const project = await createItem({ area: "board-filter-kind-task" });
       const task = await createItem({ area: "board-filter-kind-task", parentId: project.id });
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-kind-task",
         kind: "task",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -316,10 +359,10 @@ describeIfDb("get_board against Postgres", () => {
       const inRepoA = await createItem({ area: "board-filter-repo", repo: "board-repo-a" });
       await createItem({ area: "board-filter-repo", repo: "board-repo-b" });
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-repo",
         repo: "board-repo-a",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -348,11 +391,11 @@ describeIfDb("get_board against Postgres", () => {
         parentId: project.id,
       });
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-combo",
         repo: "board-repo-combo",
         kind: "project",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -374,17 +417,17 @@ describeIfDb("get_board against Postgres", () => {
         root.id,
       );
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-no-projects",
         kind: "task",
-      })) as BoardOutput;
+      });
       expect(board.in_progress.some((entry) => entry.item.id === root.id)).toBe(true);
     });
 
     it("empty result when the filter matches nothing — every column present but empty", async () => {
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "an-area-nothing-uses",
-      })) as BoardOutput;
+      });
       expect(board.backlog).toEqual([]);
       expect(board.in_progress).toEqual([]);
       expect(board.waiting).toEqual([]);
@@ -398,7 +441,7 @@ describeIfDb("get_board against Postgres", () => {
       // asked for and either error or wrongly exclude every item —
       // including this one, which no filter here should ever touch.
       const item = await createItem({ area: "board-no-filters-at-all" });
-      const board = (await runtime.call("get_board", {})) as BoardOutput;
+      const board = await wholeBoard({});
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -419,10 +462,10 @@ describeIfDb("get_board against Postgres", () => {
       const blocked = await createItem({ area: "board-filter-state", parentId: project.id });
       await setState(blocked.id, "blocked");
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-state",
         state: "executing",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -447,10 +490,10 @@ describeIfDb("get_board against Postgres", () => {
       });
       expect(onDeckTask.state).toBe("on_deck");
 
-      const board = (await runtime.call("get_board", {
+      const board = await wholeBoard({
         area: "board-filter-state-project",
         state: "on_deck",
-      })) as BoardOutput;
+      });
       const allIds = [
         ...board.backlog,
         ...board.in_progress,
@@ -479,10 +522,10 @@ describeIfDb("get_board against Postgres", () => {
         const unheld = await createItem({ area: "board-filter-assignee" });
         await claimAs(unheld.id, "crew-beta", "session-beta");
 
-        const board = (await runtime.call("get_board", {
+        const board = await wholeBoard({
           area: "board-filter-assignee",
           assignee: "crew-alpha",
-        })) as BoardOutput;
+        });
         const allIds = [
           ...board.backlog,
           ...board.in_progress,
@@ -497,10 +540,10 @@ describeIfDb("get_board against Postgres", () => {
         await claimAs(item.id, "crew-gamma", "session-gamma");
         await runtime.call("release", { itemId: item.id, sessionId: "session-gamma" });
 
-        const board = (await runtime.call("get_board", {
+        const board = await wholeBoard({
           area: "board-filter-assignee-released",
           assignee: "crew-gamma",
-        })) as BoardOutput;
+        });
         const allIds = [
           ...board.backlog,
           ...board.in_progress,
@@ -512,10 +555,10 @@ describeIfDb("get_board against Postgres", () => {
 
       it("an unclaimed item never matches any assignee filter", async () => {
         await createItem({ area: "board-filter-assignee-none" });
-        const board = (await runtime.call("get_board", {
+        const board = await wholeBoard({
           area: "board-filter-assignee-none",
           assignee: "nobody-in-particular",
-        })) as BoardOutput;
+        });
         const allIds = [
           ...board.backlog,
           ...board.in_progress,
@@ -539,10 +582,10 @@ describeIfDb("get_board against Postgres", () => {
           body: "irrelevant",
         });
 
-        const board = (await runtime.call("get_board", {
+        const board = await wholeBoard({
           area: "board-filter-search-title",
           search: "onboard",
-        })) as BoardOutput;
+        });
         const allIds = [
           ...board.backlog,
           ...board.in_progress,
@@ -564,10 +607,10 @@ describeIfDb("get_board against Postgres", () => {
           body: "Nothing to do with that at all.",
         });
 
-        const board = (await runtime.call("get_board", {
+        const board = await wholeBoard({
           area: "board-filter-search-body",
           search: "payments",
-        })) as BoardOutput;
+        });
         const allIds = [
           ...board.backlog,
           ...board.in_progress,
@@ -603,10 +646,10 @@ describeIfDb("get_board against Postgres", () => {
             body: "x",
           });
 
-          const board = (await runtime.call("get_board", {
+          const board = await wholeBoard({
             area: "board-search-literal-percent",
             search: "100% this quarter",
-          })) as BoardOutput;
+          });
           const allIds = [
             ...board.backlog,
             ...board.in_progress,
@@ -632,10 +675,10 @@ describeIfDb("get_board against Postgres", () => {
             body: "x",
           });
 
-          const board = (await runtime.call("get_board", {
+          const board = await wholeBoard({
             area: "board-search-literal-underscore",
             search: "foo_bar",
-          })) as BoardOutput;
+          });
           const allIds = [
             ...board.backlog,
             ...board.in_progress,
@@ -673,10 +716,10 @@ describeIfDb("get_board against Postgres", () => {
             body: "x",
           });
 
-          const board = (await runtime.call("get_board", {
+          const board = await wholeBoard({
             area: "board-search-literal-backslash",
             search: "src\\lib",
-          })) as BoardOutput;
+          });
           const allIds = [
             ...board.backlog,
             ...board.in_progress,
@@ -730,11 +773,11 @@ describeIfDb("get_board against Postgres", () => {
         });
         await setState(wrongArea.id, "blocked");
 
-        const board = (await runtime.call("get_board", {
+        const board = await wholeBoard({
           area: "board-compose-target",
           priority: "P0",
           state: "blocked",
-        })) as BoardOutput;
+        });
         const allIds = [
           ...board.backlog,
           ...board.in_progress,
@@ -762,11 +805,11 @@ describeIfDb("get_board against Postgres", () => {
           machine: "board-tests-machine",
         });
 
-        const board = (await runtime.call("get_board", {
+        const board = await wholeBoard({
           area: "board-compose-empty",
           assignee: "crew-delta",
           search: "onboarding",
-        })) as BoardOutput;
+        });
         expect(board.backlog).toEqual([]);
         expect(board.in_progress).toEqual([]);
         expect(board.waiting).toEqual([]);
