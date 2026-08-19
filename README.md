@@ -309,6 +309,5 @@ loads a backlog held in an external file-based store.
 
 **Where the edges are.** [`MILESTONES.md`](docs/plans/MILESTONES.md) is the honest inventory: it
 carries every row with its status, and the queue is worked in dependency order rather than
-front-to-back. Two limits are worth knowing before deploying: the HTTP transport carries no
-authentication, so it expects a trusted network (`DECISIONS.md` records the reasoning), and the
-liveness sweep needs a schedule the deployment provides — see above, because claims leak without one.
+front-to-back. One limit is worth knowing before deploying: the liveness sweep only runs when
+something invokes it — see above, because claims leak while nothing does.
