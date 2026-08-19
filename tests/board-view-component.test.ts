@@ -8,10 +8,17 @@ import { BoardColumn } from "@/components/board/BoardColumn";
 import { ItemCard } from "@/components/board/ItemCard";
 import { NeedsYouBadge } from "@/components/board/NeedsYouBadge";
 import { TrustBadge } from "@/components/chips/TrustBadge";
+import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
 import { emptyBoard } from "@/lib/board/view";
-import type { Board, BoardColumnId, BoardEntry, BoardItem } from "@/lib/board/types";
+import type {
+  Board,
+  BoardAssignment,
+  BoardColumnId,
+  BoardEntry,
+  BoardItem,
+} from "@/lib/board/types";
 import { boardOf, section } from "./helpers/board-sections";
 import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 import type { ReactNode } from "react";
@@ -50,6 +57,20 @@ function entry(
   return { item: item(overrides), column, assignments: [], trust };
 }
 
+/** A `BoardAssignment` fixture — presence tests below build their own list of these. */
+function assignment(overrides: Partial<BoardAssignment> = {}): BoardAssignment {
+  return {
+    holderId: "gary",
+    holderType: "agent",
+    displayName: "Gary",
+    role: "builder",
+    roleCustom: null,
+    liveness: "running",
+    lastActive: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 /**
  * A board whose named columns hold the given entries.
  *
@@ -84,6 +105,7 @@ describe("BoardView", () => {
     const element = BoardView({
       loadState: { status: "error", message: "Could not load the board (500)." },
       personId: "user-a",
+      now: 0,
     });
     const error = findOneByType(element, ErrorState);
     // The message is passed through UNCHANGED — it is the one that names the
@@ -98,6 +120,7 @@ describe("BoardView", () => {
     const element = BoardView({
       loadState: { status: "error", message: "Could not load the board (500)." },
       personId: "user-a",
+      now: 0,
       onRetry: () => {
         retried++;
       },
@@ -108,7 +131,7 @@ describe("BoardView", () => {
   });
 
   it("shows skeleton columns, not a sentence, before the board arrives", () => {
-    const element = BoardView({ loadState: { status: "loading" }, personId: "user-a" });
+    const element = BoardView({ loadState: { status: "loading" }, personId: "user-a", now: 0 });
     // All four columns are drawn while loading — the board's shape is known
     // before its contents are, which is what stops the page jumping when the
     // data lands. Every one of them is in its loading state.
@@ -121,6 +144,7 @@ describe("BoardView", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: emptyBoard() },
       personId: null,
+      now: 0,
     });
     const columns = findAllByType(element, BoardColumn);
     expect(columns.map((c) => (c.props as { column: string }).column)).toEqual([
@@ -135,6 +159,7 @@ describe("BoardView", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: emptyBoard() },
       personId: null,
+      now: 0,
     });
     expect(findAllByType(element, BoardColumn).length).toBe(4);
   });
@@ -151,6 +176,7 @@ describe("BoardView", () => {
         }),
       },
       personId: null,
+      now: 0,
     });
     for (const column of findAllByType(element, BoardColumn)) {
       const props = column.props as { column: string; split?: unknown };
@@ -172,6 +198,7 @@ describe("BoardView", () => {
         }),
       },
       personId: null,
+      now: 0,
     });
     const byColumn = new Map(
       findAllByType(element, BoardColumn).map((c) => {
@@ -200,6 +227,7 @@ describe("BoardView", () => {
         }),
       },
       personId: "user-a",
+      now: 0,
     });
     expect((findOneByType(element, NeedsYouBadge).props as { count: number }).count).toBe(1);
   });
@@ -215,7 +243,11 @@ describe("BoardView", () => {
         }),
       ],
     });
-    const element = BoardView({ loadState: { status: "loaded", board }, personId: "user-b" });
+    const element = BoardView({
+      loadState: { status: "loaded", board },
+      personId: "user-b",
+      now: 0,
+    });
     expect((findOneByType(element, NeedsYouBadge).props as { count: number }).count).toBe(0);
   });
 
@@ -223,6 +255,7 @@ describe("BoardView", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: emptyBoard() },
       personId: "user-a",
+      now: 0,
     });
     for (const column of findAllByType(element, BoardColumn)) {
       expect((column.props as { personId: string | null }).personId).toBe("user-a");
@@ -255,6 +288,7 @@ describe("BoardColumn", () => {
       column: "backlog",
       section: section([entry("backlog", { id: "1" }), entry("backlog", { id: "2" })]),
       personId: null,
+      now: 0,
     });
     const text = textOf(element);
     expect(text).toContain("Backlog");
@@ -262,7 +296,12 @@ describe("BoardColumn", () => {
   });
 
   it("shows the shared empty state, and no card list, when the column has nothing", () => {
-    const element = BoardColumn({ column: "completed", section: section([]), personId: null });
+    const element = BoardColumn({
+      column: "completed",
+      section: section([]),
+      personId: null,
+      now: 0,
+    });
     // `empty` specifically, not merely "an empty state" — a column with
     // nothing in it and a column that was not fetched both have zero
     // entries, and #123 is what happens when they render the same.
@@ -275,6 +314,7 @@ describe("BoardColumn", () => {
       column: "backlog",
       section: section([entry("backlog", { id: "1" }), entry("backlog", { id: "2" })]),
       personId: null,
+      now: 0,
     });
     expect(findAllByType(element, ItemCard).length).toBe(2);
   });
@@ -284,6 +324,7 @@ describe("BoardColumn", () => {
       column: "waiting",
       section: section([]),
       personId: null,
+      now: 0,
       split: { amber: 2, red: 5, other: 0 },
     });
     // `textOf` joins each element's children with a space, so the count and
@@ -294,7 +335,12 @@ describe("BoardColumn", () => {
     expect(text).toMatch(/2\s+paused/);
     expect(text).toMatch(/5\s+blocked/);
 
-    const without = BoardColumn({ column: "backlog", section: section([]), personId: null });
+    const without = BoardColumn({
+      column: "backlog",
+      section: section([]),
+      personId: null,
+      now: 0,
+    });
     expect(textOf(without)).not.toContain("paused");
   });
 
@@ -312,6 +358,7 @@ describe("BoardColumn", () => {
         entry("waiting", { id: "b", state: "blocked" }),
       ]),
       personId: null,
+      now: 0,
       split: { amber: 1, red: 1, other: 1 },
     });
     const text = textOf(element);
@@ -325,6 +372,7 @@ describe("BoardColumn", () => {
       column: "waiting",
       section: section([]),
       personId: null,
+      now: 0,
       split: { amber: 1, red: 1, other: 0 },
     });
     expect(textOf(element)).not.toContain("other");
@@ -348,6 +396,7 @@ describe("BoardColumn", () => {
         }),
       ]),
       personId: "user-a",
+      now: 0,
     });
     const flags = findAllByType(element, ItemCard).map((c) => {
       const props = c.props as { entry: BoardEntry; needsYou: boolean };
@@ -362,15 +411,27 @@ describe("BoardColumn", () => {
 
 describe("ItemCard", () => {
   it("carries the amber tone for a paused card and the red tone for a blocked one", () => {
-    const paused = ItemCard({ entry: entry("waiting", { state: "paused" }), needsYou: false });
+    const paused = ItemCard({
+      entry: entry("waiting", { state: "paused" }),
+      needsYou: false,
+      now: 0,
+    });
     expect((paused.props as { "data-tone"?: string })["data-tone"]).toBe("amber");
 
-    const blocked = ItemCard({ entry: entry("waiting", { state: "blocked" }), needsYou: false });
+    const blocked = ItemCard({
+      entry: entry("waiting", { state: "blocked" }),
+      needsYou: false,
+      now: 0,
+    });
     expect((blocked.props as { "data-tone"?: string })["data-tone"]).toBe("red");
   });
 
   it("carries no tone for a card outside Waiting", () => {
-    const card = ItemCard({ entry: entry("in_progress", { state: "executing" }), needsYou: false });
+    const card = ItemCard({
+      entry: entry("in_progress", { state: "executing" }),
+      needsYou: false,
+      now: 0,
+    });
     expect((card.props as { "data-tone"?: string })["data-tone"]).toBeUndefined();
   });
 
@@ -378,6 +439,7 @@ describe("ItemCard", () => {
     const card = ItemCard({
       entry: entry("backlog", { title: "Ship the board", priority: "P0" }),
       needsYou: false,
+      now: 0,
     });
     const text = textOf(card);
     expect(text).toContain("Ship the board");
@@ -392,6 +454,7 @@ describe("ItemCard", () => {
         headline: "Route event writes through appendEvent",
       }),
       needsYou: false,
+      now: 0,
     });
     const link = [...walk(card)].find((el) => (el.props as { href?: unknown }).href !== undefined);
     expect(textOf(link!)).toBe("Route event writes through appendEvent");
@@ -406,6 +469,7 @@ describe("ItemCard", () => {
         headline: "Route event writes through appendEvent",
       }),
       needsYou: false,
+      now: 0,
     });
     expect(textOf(card)).toContain("agent-standup #102 - route the four raw event writes");
   });
@@ -415,6 +479,7 @@ describe("ItemCard", () => {
     const card = ItemCard({
       entry: entry("backlog", { title: "Ship the board", headline: null }),
       needsYou: false,
+      now: 0,
     });
     const text = textOf(card);
     expect(text.match(/Ship the board/g)).toHaveLength(1);
@@ -423,7 +488,7 @@ describe("ItemCard", () => {
   it("links the title to that item's detail view (#72)", () => {
     // A real link rather than a click handler, so it is middle-clickable,
     // openable in a new tab and reachable by keyboard.
-    const card = ItemCard({ entry: entry("backlog", { id: "item-42" }), needsYou: false });
+    const card = ItemCard({ entry: entry("backlog", { id: "item-42" }), needsYou: false, now: 0 });
     const links = [...walk(card)].filter(
       (el) => (el.props as { href?: unknown }).href !== undefined,
     );
@@ -432,10 +497,18 @@ describe("ItemCard", () => {
   });
 
   it("shows the needs-you flag only when the card needs you", () => {
-    const flagged = ItemCard({ entry: entry("waiting", { state: "blocked" }), needsYou: true });
+    const flagged = ItemCard({
+      entry: entry("waiting", { state: "blocked" }),
+      needsYou: true,
+      now: 0,
+    });
     expect(textOf(flagged)).toContain("Needs you");
 
-    const plain = ItemCard({ entry: entry("waiting", { state: "blocked" }), needsYou: false });
+    const plain = ItemCard({
+      entry: entry("waiting", { state: "blocked" }),
+      needsYou: false,
+      now: 0,
+    });
     expect(textOf(plain)).not.toContain("Needs you");
   });
 
@@ -443,12 +516,14 @@ describe("ItemCard", () => {
     const paused = ItemCard({
       entry: entry("waiting", { state: "paused", pauseReason: "waiting on the rebuild" }),
       needsYou: false,
+      now: 0,
     });
     expect(textOf(paused)).toContain("waiting on the rebuild");
 
     const blocked = ItemCard({
       entry: entry("waiting", { state: "blocked", blockedReason: "needs a decision" }),
       needsYou: false,
+      now: 0,
     });
     expect(textOf(blocked)).toContain("needs a decision");
   });
@@ -463,6 +538,7 @@ describe("ItemCard", () => {
         blockedReason: "the wrong one",
       }),
       needsYou: false,
+      now: 0,
     });
     const text = textOf(paused);
     expect(text).toContain("the right one");
@@ -470,16 +546,22 @@ describe("ItemCard", () => {
   });
 
   it("renders no reason line when neither reason is set", () => {
-    const card = ItemCard({ entry: entry("backlog", { state: "on_deck" }), needsYou: false });
+    const card = ItemCard({
+      entry: entry("backlog", { state: "on_deck" }),
+      needsYou: false,
+      now: 0,
+    });
     expect(textOf(card)).not.toContain("undefined");
     expect(textOf(card)).not.toContain("null");
   });
 
   it("shows the repo when there is one, and omits it cleanly when there isn't", () => {
     expect(
-      textOf(ItemCard({ entry: entry("backlog", { repo: "infra" }), needsYou: false })),
+      textOf(ItemCard({ entry: entry("backlog", { repo: "infra" }), needsYou: false, now: 0 })),
     ).toContain("infra");
-    const noRepo = textOf(ItemCard({ entry: entry("backlog", { repo: null }), needsYou: false }));
+    const noRepo = textOf(
+      ItemCard({ entry: entry("backlog", { repo: null }), needsYou: false, now: 0 }),
+    );
     expect(noRepo).not.toContain("null");
   });
 
@@ -487,6 +569,7 @@ describe("ItemCard", () => {
     const card = ItemCard({
       entry: entry("in_progress", { state: "plan_review" }),
       needsYou: false,
+      now: 0,
     });
     const text = textOf(card);
     expect(text).toContain("plan review");
@@ -496,7 +579,7 @@ describe("ItemCard", () => {
   // MILESTONES.md #131 — the trust marker.
   describe("trust marker", () => {
     it("shows no trust badge for a project (trust: null)", () => {
-      const card = ItemCard({ entry: entry("backlog", {}, null), needsYou: false });
+      const card = ItemCard({ entry: entry("backlog", {}, null), needsYou: false, now: 0 });
       expect(findAllByType(card, TrustBadge)).toHaveLength(0);
     });
 
@@ -511,6 +594,7 @@ describe("ItemCard", () => {
       const card = ItemCard({
         entry: entry("backlog", {}, { unverifiedOrigin: true, verification: null }),
         needsYou: false,
+        now: 0,
       });
       const badge = findOneByType(card, TrustBadge);
       expect((badge.props as { verified: boolean }).verified).toBe(false);
@@ -533,6 +617,7 @@ describe("ItemCard", () => {
           },
         ),
         needsYou: false,
+        now: 0,
       });
       const badge = findOneByType(card, TrustBadge);
       expect((badge.props as { verified: boolean }).verified).toBe(true);
@@ -543,6 +628,7 @@ describe("ItemCard", () => {
       const unverified = ItemCard({
         entry: entry("backlog", {}, { unverifiedOrigin: true, verification: null }),
         needsYou: false,
+        now: 0,
       });
       expect((unverified.props as { "data-unverified"?: boolean })["data-unverified"]).toBe(true);
 
@@ -556,10 +642,76 @@ describe("ItemCard", () => {
           },
         ),
         needsYou: false,
+        now: 0,
       });
       expect(
         (verified.props as { "data-unverified"?: boolean })["data-unverified"],
       ).toBeUndefined();
+    });
+  });
+
+  describe("presence — M10 T16", () => {
+    it("shows nothing when nobody holds the card", () => {
+      const card = ItemCard({ entry: entry("backlog"), needsYou: false, now: 0 });
+      expect(findAllByType(card, AgentPresenceDot)).toHaveLength(0);
+    });
+
+    it("shows the holder's name and a presence dot for a live claim", () => {
+      const held: BoardEntry = {
+        ...entry("in_progress"),
+        assignments: [assignment({ displayName: "Gary", liveness: "running" })],
+      };
+      const card = ItemCard({ entry: held, needsYou: false, now: 0 });
+      expect(textOf(card)).toContain("Gary");
+      const dots = findAllByType(card, AgentPresenceDot);
+      expect(dots).toHaveLength(1);
+      expect((dots[0]!.props as { liveness: string }).liveness).toBe("running");
+    });
+
+    it("renders one row per assignment when more than one holder is on it", () => {
+      // SCHEMA.md §2: an item can be held by an orchestrator plus a builder
+      // at once. A card that showed only one holder would silently drop a
+      // fact a reader would otherwise have no way to see.
+      const held: BoardEntry = {
+        ...entry("in_progress"),
+        assignments: [
+          assignment({ holderId: "gary", displayName: "Gary", role: "builder" }),
+          assignment({ holderId: "priya", displayName: "Priya", role: "orchestrator" }),
+        ],
+      };
+      const card = ItemCard({ entry: held, needsYou: false, now: 0 });
+      expect(findAllByType(card, AgentPresenceDot)).toHaveLength(2);
+      const text = textOf(card);
+      expect(text).toContain("Gary");
+      expect(text).toContain("Priya");
+    });
+
+    it("renders all four liveness values distinguishably, none folded into another", () => {
+      const values = ["running", "stalled", "dead", "superseded"] as const;
+      const held: BoardEntry = {
+        ...entry("in_progress"),
+        assignments: values.map((liveness, i) =>
+          assignment({ holderId: `h-${i}`, displayName: `Agent ${i}`, liveness }),
+        ),
+      };
+      const card = ItemCard({ entry: held, needsYou: false, now: 0 });
+      const dots = findAllByType(card, AgentPresenceDot);
+      expect(dots.map((d) => (d.props as { liveness: string }).liveness)).toEqual([
+        "running",
+        "stalled",
+        "dead",
+        "superseded",
+      ]);
+    });
+
+    it("shows how long since the holder last reported", () => {
+      const held: BoardEntry = {
+        ...entry("in_progress"),
+        assignments: [assignment({ lastActive: "2026-01-01T00:00:00.000Z" })],
+      };
+      const now = Date.parse("2026-01-01T02:00:00.000Z");
+      const card = ItemCard({ entry: held, needsYou: false, now });
+      expect(textOf(card)).toContain("2h ago");
     });
   });
 });

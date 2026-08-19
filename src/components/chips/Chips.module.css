@@ -97,6 +97,16 @@
   border: 1.5px solid var(--presence-dead);
 }
 
+/* `superseded` is filled (unlike `dead`'s hollow ring — a superseded row was
+   deliberately handed off, not left empty) but rings itself in a contrasting
+   outline so it is not read as a plain `running`/`stalled` dot at a glance.
+   Silhouette differs from both neighbours: solid disc + ring, vs `dead`'s
+   ring-only and `running`/`stalled`'s disc-only. */
+.presenceSuperseded {
+  border: 1.5px solid var(--surface-card);
+  box-shadow: 0 0 0 1.5px var(--presence-superseded);
+}
+
 /* ── Trust ──────────────────────────────────────────────────────────────
 
    The `unverified`/`verified` badge is a plain outlined chip like a state

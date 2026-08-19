@@ -95,6 +95,7 @@ describe("ItemCard — what can be picked up", () => {
     const card = ItemCard({
       entry: entry("backlog"),
       needsYou: false,
+      now: 0,
       onDragStart: vi.fn(),
     });
     expect((card.props as { draggable?: boolean }).draggable).toBe(true);
@@ -103,7 +104,7 @@ describe("ItemCard — what can be picked up", () => {
   it("is NOT draggable when no drag is wired up", () => {
     // A card that is draggable but tells nobody it moved would drag to
     // nowhere.
-    const card = ItemCard({ entry: entry("backlog"), needsYou: false });
+    const card = ItemCard({ entry: entry("backlog"), needsYou: false, now: 0 });
     expect((card.props as { draggable?: boolean }).draggable).toBe(false);
   });
 
@@ -113,6 +114,7 @@ describe("ItemCard — what can be picked up", () => {
     const card = ItemCard({
       entry: entry("waiting", { kind: "project" }),
       needsYou: false,
+      now: 0,
       onDragStart: vi.fn(),
     });
     expect((card.props as { draggable?: boolean }).draggable).toBe(false);
@@ -124,6 +126,7 @@ describe("ItemCard — what can be picked up", () => {
     const card = ItemCard({
       entry: entry("backlog", { id: "item-42" }),
       needsYou: false,
+      now: 0,
       onDragStart,
     });
     (card.props as { onDragStart: (e: unknown) => void }).onDragStart(dragStartEvent());
@@ -139,6 +142,7 @@ describe("ItemCard — what can be picked up", () => {
     const card = ItemCard({
       entry: entry("backlog", { id: "item-42" }),
       needsYou: false,
+      now: 0,
       onDragStart: vi.fn(),
     });
     (card.props as { onDragStart: (e: unknown) => void }).onDragStart(event);
@@ -151,6 +155,7 @@ describe("ItemCard — what can be picked up", () => {
     const card = ItemCard({
       entry: entry("backlog"),
       needsYou: false,
+      now: 0,
       onDragStart: vi.fn(),
       pending: true,
     });
@@ -165,6 +170,7 @@ describe("BoardColumn — what can be dropped on", () => {
       column: "in_progress",
       section: section([]),
       personId: null,
+      now: 0,
       onDrop,
     });
     const event = dragEvent();
@@ -180,6 +186,7 @@ describe("BoardColumn — what can be dropped on", () => {
       column: "in_progress",
       section: section([]),
       personId: null,
+      now: 0,
       onDrop: vi.fn(),
     });
     const event = dragEvent();
@@ -192,6 +199,7 @@ describe("BoardColumn — what can be dropped on", () => {
       column: "backlog",
       section: section([]),
       personId: null,
+      now: 0,
       onDrop: vi.fn(),
     });
     const event = dragEvent();
@@ -206,6 +214,7 @@ describe("BoardColumn — what can be dropped on", () => {
       column: "waiting",
       section: section([]),
       personId: null,
+      now: 0,
       onDrop: vi.fn(),
     });
     const props = column.props as Record<string, unknown>;
@@ -219,6 +228,7 @@ describe("BoardColumn — what can be dropped on", () => {
       column: "waiting",
       section: section([]),
       personId: null,
+      now: 0,
       onDrop: vi.fn(),
       isDropTarget: true,
     });
@@ -226,7 +236,7 @@ describe("BoardColumn — what can be dropped on", () => {
   });
 
   it("takes no drop handlers at all when drag is not wired up", () => {
-    const column = BoardColumn({ column: "backlog", section: section([]), personId: null });
+    const column = BoardColumn({ column: "backlog", section: section([]), personId: null, now: 0 });
     const props = column.props as Record<string, unknown>;
     expect(props.onDrop).toBeUndefined();
     expect(props.onDragOver).toBeUndefined();
@@ -237,6 +247,7 @@ describe("BoardColumn — what can be dropped on", () => {
       column: "in_progress",
       section: section([]),
       personId: null,
+      now: 0,
       onDrop: vi.fn(),
       isDropTarget: true,
     });
@@ -248,6 +259,7 @@ describe("BoardColumn — what can be dropped on", () => {
       column: "backlog",
       section: section([entry("backlog", { id: "a" }), entry("backlog", { id: "b" })]),
       personId: null,
+      now: 0,
       onDrop: vi.fn(),
       onCardDragStart: vi.fn(),
       pendingItemId: "a",
@@ -271,6 +283,7 @@ describe("BoardView — reporting a refusal", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: boardWith() },
       personId: null,
+      now: 0,
       drag: dragProps({ refusal: "A summary is required." }),
     });
     expect(textOf(element)).toContain("A summary is required.");
@@ -280,6 +293,7 @@ describe("BoardView — reporting a refusal", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: boardWith() },
       personId: null,
+      now: 0,
       drag: dragProps({ refusal: "nope" }),
     });
     const alerts = [...walk(element)].filter(
@@ -292,6 +306,7 @@ describe("BoardView — reporting a refusal", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: boardWith() },
       personId: null,
+      now: 0,
       drag: dragProps({ refusal: null }),
     });
     const alerts = [...walk(element)].filter(
@@ -305,6 +320,7 @@ describe("BoardView — reporting a refusal", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: boardWith() },
       personId: null,
+      now: 0,
       drag: dragProps({ refusal: "nope", onDismissRefusal }),
     });
     const button = [...walk(element)].find((el) => el.type === "button");
@@ -320,6 +336,7 @@ describe("BoardView — reporting a refusal", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: boardWith({ backlog: [entry("backlog")] }) },
       personId: null,
+      now: 0,
     });
     const columns = [...walk(element)].filter((el) => el.type === BoardColumn);
     expect(columns).toHaveLength(4);
@@ -337,6 +354,7 @@ describe("BoardView — reporting a refusal", () => {
     const element = BoardView({
       loadState: { status: "loaded", board: boardWith() },
       personId: null,
+      now: 0,
       drag: dragProps({ overColumn: "in_progress" }),
     });
     const targets = [...walk(element)]

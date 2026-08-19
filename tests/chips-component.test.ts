@@ -298,22 +298,42 @@ describe("StalenessDot", () => {
 
 describe("AgentPresenceDot", () => {
   it("names the liveness in words, not only in colour", () => {
-    expect(propsOf(AgentPresenceDot({ liveness: "live" }))["aria-label"]).toContain("running");
+    expect(propsOf(AgentPresenceDot({ liveness: "running" }))["aria-label"]).toContain("running");
     expect(propsOf(AgentPresenceDot({ liveness: "stalled" }))["aria-label"]).toContain("stalled");
     expect(propsOf(AgentPresenceDot({ liveness: "dead" }))["aria-label"]).toContain("dead");
+    expect(propsOf(AgentPresenceDot({ liveness: "superseded" }))["aria-label"]).toContain(
+      "superseded",
+    );
   });
 
   it("includes the agent's name when given one", () => {
-    expect(propsOf(AgentPresenceDot({ liveness: "live", agentName: "Gary" }))["aria-label"]).toBe(
-      "Gary is running",
-    );
+    expect(
+      propsOf(AgentPresenceDot({ liveness: "running", agentName: "Gary" }))["aria-label"],
+    ).toBe("Gary is running");
   });
 
   it("paints dead as a hollow ring, not a filled disc", () => {
     // The shape says "empty slot" rather than "present but quiet" — and a
     // background fill here would paint over the ring entirely.
     expect(propsOf(AgentPresenceDot({ liveness: "dead" })).style).toBeUndefined();
-    expect(propsOf(AgentPresenceDot({ liveness: "live" })).style).toBeDefined();
+    expect(propsOf(AgentPresenceDot({ liveness: "running" })).style).toBeDefined();
+  });
+
+  it("gives superseded its own class rather than folding it into dead", () => {
+    // A superseded assignment was deliberately handed off, not left empty —
+    // §2's fourth value must not render identically to the third.
+    const supersededProps = propsOf(AgentPresenceDot({ liveness: "superseded" }));
+    const deadProps = propsOf(AgentPresenceDot({ liveness: "dead" }));
+    expect(supersededProps.className).not.toBe(deadProps.className);
+    expect(supersededProps.style).toBeUndefined();
+  });
+
+  it("distinguishes all four liveness values by data-liveness", () => {
+    const values = ["running", "stalled", "dead", "superseded"] as const;
+    const seen = new Set(
+      values.map((liveness) => propsOf(AgentPresenceDot({ liveness }))["data-liveness"]),
+    );
+    expect(seen.size).toBe(4);
   });
 });
 

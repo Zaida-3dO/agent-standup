@@ -1,0 +1,324 @@
+/* The fleet page (M10 T16), painted entirely from the token layer
+   (`src/app/globals.css`). No literal colour appears in this file. */
+
+.page {
+  padding: 1.25rem;
+  min-height: 100%;
+  background: var(--surface-app);
+  color: var(--text-primary);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.count {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* ── Filters ────────────────────────────────────────────────────────── */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.filterLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.filterSelect {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.35rem;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+/* ── Sweep — its GLOBAL scope is the whole point of this panel ────────── */
+
+.sweepPanel {
+  margin-bottom: 1.25rem;
+}
+
+.sweepButton {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.35rem;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.sweepButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The confirm block borrows `blocked`'s red — this is the one control on
+   the page that can release 174 claims in a single click, and the copy
+   inside makes the WHOLE-BOARD scope explicit rather than the border doing
+   the work alone (WCAG 1.4.1: colour is never the only channel here). */
+.sweepConfirm {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--state-blocked-border);
+  border-radius: 0.5rem;
+  background: var(--state-blocked-bg);
+  max-width: 34rem;
+}
+
+.sweepConfirmText {
+  margin: 0 0 0.6rem;
+  color: var(--state-blocked-fg);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.sweepConfirmActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sweepConfirmButton {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--state-blocked-border);
+  border-radius: 0.35rem;
+  background: var(--state-blocked-border);
+  color: var(--surface-app);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sweepConfirmButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sweepCancelButton {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.sweepError {
+  margin-top: 0.5rem;
+  color: var(--state-blocked-fg);
+  font-size: 0.82rem;
+}
+
+.sweepResult {
+  margin-top: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+/* ── Takeover ───────────────────────────────────────────────────────── */
+
+.takeoverDialog {
+  margin-bottom: 1.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.5rem;
+  background: var(--surface-raised);
+  max-width: 34rem;
+}
+
+.takeoverText {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.takeoverReasonLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.takeoverReasonInput {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.35rem;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.takeoverError {
+  margin: 0 0 0.5rem;
+  color: var(--state-blocked-fg);
+  font-size: 0.82rem;
+}
+
+.takeoverActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.takeoverConfirmButton {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.35rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.takeoverConfirmButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.takeoverCancelButton {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* ── Groups + table ─────────────────────────────────────────────────── */
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.groupHeading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.groupCount {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.groupEmpty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.82rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.th {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.row[data-overdue="true"] {
+  background: var(--state-blocked-bg);
+}
+
+.cell {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border-default);
+  vertical-align: middle;
+}
+
+.agentCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.itemLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.itemLink:hover,
+.itemLink:focus-visible {
+  text-decoration: underline;
+}
+
+.overdueFlag {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: var(--state-blocked-border);
+  color: var(--surface-app);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sessionId {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+
+.takeoverButton {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.takeoverButton:hover {
+  background: var(--surface-raised);
+}

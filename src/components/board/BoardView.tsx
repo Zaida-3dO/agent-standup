@@ -23,6 +23,12 @@ export interface BoardViewProps {
   readonly loadState: BoardLoadState;
   /** The active profile's id, or `null` — decides who the needs-you badge counts for. */
   readonly personId: string | null;
+  /**
+   * The clock, sampled once by `Board.tsx` on load — see that component's
+   * header. Threaded down to every card so its presence "last active"
+   * caption can be computed without each card reading `Date.now()` itself.
+   */
+  readonly now: number;
   /** The drag wiring (#73). Absent on a board rendered without it — every handler is optional. */
   readonly drag?: BoardDragProps;
   /** The per-column paging wiring. Absent leaves every column unpaged. */
@@ -74,6 +80,7 @@ export interface BoardPagingProps {
 export function BoardView({
   loadState,
   personId,
+  now,
   drag,
   paging,
   onRetry,
@@ -105,6 +112,7 @@ export function BoardView({
               column={column}
               section={{ entries: [], total: 0, nextCursor: null, withheld: false }}
               personId={personId}
+              now={now}
               loading
             />
           ))}
@@ -139,6 +147,7 @@ export function BoardView({
             column={column}
             section={board[column]}
             personId={personId}
+            now={now}
             // Only Waiting gets the amber/red tally — it is the only column
             // that merges two states (SCHEMA.md §1.1).
             split={column === "waiting" ? split : undefined}

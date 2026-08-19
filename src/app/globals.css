@@ -338,11 +338,18 @@
   --trust-unverified-bg: oklch(0.28 0.045 85);
   --trust-unverified-border: oklch(0.5 0.07 85);
 
-  /* Agent liveness. Grey for dead is deliberate — a dead agent is not an
-     error, it is an absence, and it should not shout like `blocked` does. */
-  --presence-live: oklch(0.78 0.16 145);
+  /* Agent liveness — four values, four tokens (SCHEMA.md §2). Grey for dead
+     is deliberate — a dead agent is not an error, it is an absence, and it
+     should not shout like `blocked` does. `superseded` gets its OWN hue
+     (295, the same violet family as `--state-plan_review`) rather than
+     reusing dead's grey or stalled's amber: a takeover is neither an error
+     nor a session merely gone quiet, it is a deliberate handover, and
+     folding it into either neighbour would report a normal event as one of
+     the two abnormal ones. */
+  --presence-running: oklch(0.78 0.16 145);
   --presence-stalled: oklch(0.8 0.13 75);
   --presence-dead: var(--n-600);
+  --presence-superseded: oklch(0.72 0.12 295);
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -469,9 +476,10 @@
   --trust-unverified-bg: oklch(0.95 0.03 85);
   --trust-unverified-border: oklch(0.68 0.09 85);
 
-  --presence-live: oklch(0.55 0.15 145);
+  --presence-running: oklch(0.55 0.15 145);
   --presence-stalled: oklch(0.6 0.13 75);
   --presence-dead: var(--n-300);
+  --presence-superseded: oklch(0.5 0.14 295);
 }
 
 /* ══════════════════════════════════════════════════════════════════════

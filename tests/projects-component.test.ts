@@ -18,6 +18,7 @@ import { ProjectCard } from "@/components/projects/ProjectCard";
 import { ProjectsView } from "@/components/projects/ProjectsView";
 import type { ProjectRollup, StateCounts } from "@/lib/projects/types";
 import { ITEM_STATES } from "@/lib/design/tokens";
+import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { findAllByType, walk } from "./helpers/react-element";
 
 function noCounts(): StateCounts {
@@ -166,6 +167,62 @@ describe("ProjectCard", () => {
           (element.props as { "data-crew-count"?: number })["data-crew-count"] !== undefined,
       );
       expect(crew).toHaveLength(0);
+    });
+
+    it("shows a presence row per assignment, including a superseded one — M10 T16", () => {
+      // Breaks if: the presence list is filtered to `liveCrewCount`'s
+      // running-or-stalled subset instead of rendering every assignment —
+      // this would drop the superseded row and read 1 dot instead of 2.
+      const tree = ProjectCard({
+        project: makeProject({
+          counts: { ...noCounts(), executing: 2 },
+          assignments: [
+            {
+              holderId: "crew-one",
+              holderType: "agent",
+              displayName: "Crew One",
+              role: "builder",
+              roleCustom: null,
+              liveness: "running",
+              lastActive: "2026-08-18T11:00:00.000Z",
+            },
+            {
+              holderId: "crew-old",
+              holderType: "agent",
+              displayName: "Crew Old",
+              role: "builder",
+              roleCustom: null,
+              liveness: "superseded",
+              lastActive: "2026-08-17T11:00:00.000Z",
+            },
+          ],
+        }),
+        now: NOW,
+      });
+
+      const dots = findAllByType(tree, AgentPresenceDot);
+      expect(dots).toHaveLength(2);
+      expect(dots.map((d) => (d.props as { liveness: string }).liveness)).toEqual([
+        "running",
+        "superseded",
+      ]);
+      const text = [...walk(tree)]
+        .flatMap((el) => {
+          const children = (el.props as { children?: unknown }).children;
+          const list = Array.isArray(children) ? children : [children];
+          return list.filter((c) => typeof c === "string");
+        })
+        .join(" ");
+      expect(text).toContain("Crew One");
+      expect(text).toContain("Crew Old");
+    });
+
+    it("renders no presence rows when nobody holds it", () => {
+      const tree = ProjectCard({
+        project: makeProject({ counts: { ...noCounts(), executing: 1 } }),
+        now: NOW,
+      });
+      expect(findAllByType(tree, AgentPresenceDot)).toHaveLength(0);
     });
   });
 

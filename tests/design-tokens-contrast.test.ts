@@ -183,9 +183,14 @@ describe.each(["dark", "light"] as const)("contrast — %s theme", (scope) => {
     expect(ratio).toBeGreaterThanOrEqual(AA_TEXT);
   });
 
-  it("live and stalled presence dots pass AA for UI (3:1)", () => {
+  it("running, stalled and superseded presence dots pass AA for UI (3:1)", () => {
+    // `dead` is excluded deliberately — it is a hollow ring rendered from
+    // `--presence-dead`, which is the same muted neutral on both themes and
+    // is not held to the 3:1 bar a filled indicator's fill colour is: the
+    // shape (an empty ring), not the contrast of a fill, is what carries
+    // "dead" (see AgentPresenceDot.tsx's header).
     const failures: string[] = [];
-    for (const token of ["presence-live", "presence-stalled"]) {
+    for (const token of ["presence-running", "presence-stalled", "presence-superseded"]) {
       const ratio = contrastRatio(oklchOf(token, scope), surfaceCard());
       if (ratio < AA_UI) failures.push(`${token}: ${ratio.toFixed(2)}`);
     }
