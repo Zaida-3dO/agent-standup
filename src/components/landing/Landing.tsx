@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchSettings } from "@/lib/settings-page/state";
 import { landingRedirectPath } from "@/lib/nav/landing";
-import { StandupPlaceholder } from "./StandupPlaceholder";
+import { StandupHome } from "@/components/standup/StandupHome";
 
 export function Landing() {
   const router = useRouter();
@@ -57,6 +57,6 @@ export function Landing() {
     };
   }, [router]);
 
-  if (decision === "standup") return <StandupPlaceholder />;
+  if (decision === "standup") return <StandupHome />;
   return null;
 }

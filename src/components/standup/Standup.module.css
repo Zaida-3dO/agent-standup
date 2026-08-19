@@ -1,0 +1,242 @@
+.page {
+  padding: var(--space-6);
+  min-height: 100%;
+  background: var(--surface-app);
+  color: var(--text-primary);
+}
+
+.pageTitle {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+
+.blockHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.blockSubtitle {
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+}
+
+.blockCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+.itemLink {
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: var(--text-xs);
+}
+
+.itemLink:hover {
+  text-decoration: underline;
+}
+
+.seeAll {
+  align-self: flex-start;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  text-decoration: none;
+}
+
+.seeAll:hover {
+  text-decoration: underline;
+}
+
+/* Needs you */
+
+.needsYouList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.needsYouRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.needsYouMeta {
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+}
+
+/* In flight */
+
+.inFlightList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inFlightRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.livenessDot {
+  margin-top: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.livenessDot[data-liveness="running"] {
+  background: var(--state-executing-fg);
+}
+
+.livenessDot[data-liveness="stalled"] {
+  background: var(--state-paused-fg);
+}
+
+.livenessDot[data-liveness="dead"] {
+  background: var(--state-blocked-fg);
+}
+
+.livenessDot[data-liveness="superseded"] {
+  background: var(--text-faint);
+}
+
+.inFlightMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.holder {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+}
+
+.role {
+  color: var(--text-faint);
+}
+
+/* Overnight */
+
+.overnightStats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.stat dt {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stat dd {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.overnightNote {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+}
+
+/* Projects strip */
+
+.projectStrip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projectStripItem {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) 4rem 2.5rem;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.projectStripTitle {
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectStripTitle:hover {
+  text-decoration: underline;
+}
+
+.projectStripBar {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.projectStripFill {
+  height: 100%;
+  background: var(--state-merged-fg);
+}
+
+.projectStripPercent {
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  text-align: right;
+}
+
+.projectStripEmpty {
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  font-style: italic;
+}
