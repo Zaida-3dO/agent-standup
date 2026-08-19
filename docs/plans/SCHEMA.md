@@ -315,6 +315,36 @@ appeared. Reject it and name the current holder — that's the supersession path
 
 The call is rejected *with an explanation* — who took over and when — not a bare failure.
 
+**Reclaiming a stranded claim — lazily, at contention.** A claim is an `INSERT ... ON CONFLICT DO
+NOTHING` against the indexes above, so a session that claims an item and then dies holds it forever:
+every later claim conflicts with a row nothing will ever release. Deriving that the holder *looks*
+dead frees nothing on its own — something has to perform the release, and that is the only reason a
+deployment ever needed a scheduler for this. So **`claim` itself evicts**: when it is refused because
+somebody already holds the item, the holder is judged, and if the evidence says it is gone its row is
+released and the claim retries. The check then happens exactly when the answer matters. `sweep` and
+`takeover` both stay reachable and unchanged; the lazy path only covers the unattended case.
+
+> **⚠️ The liveness signal this rests on is weaker than the `last_active` row above claims.** That row
+> says "stamped by the hook on every tool call", and **nothing stamps it except the `heartbeat`
+> operation** — which agents are told is "usually unnecessary, the hook does it". The hook does not. Likewise `liveness.stale_after_seconds` describes itself as the fallback for
+> "when a process check cannot answer", and **there is no process check**: nothing consults the OS
+> about a holder's pid, and `registered_processes` holds processes an agent *started*, not the agent.
+>
+> So a session that claims an item and then legitimately works for half an hour is, on `last_active`
+> alone, indistinguishable from one that crashed immediately. Two things follow, and both are
+> deliberate: eviction reads the session's most recent `tool_calls` row as a **second, independent**
+> liveness signal (written by a different mechanism, and the one that actually moves), and
+> `liveness.evict_after_seconds` defaults to **four hours** rather than reusing
+> `dead_after_seconds`. It is biased towards leaving a stranded claim stranded — that is visible and
+> fixable with `takeover` — over evicting a live builder, which loses uncommitted work silently.
+> **When the hook starts stamping `last_active`, this threshold should come down.** The policy is
+> written once, in `src/lib/claim-eviction.ts`.
+>
+> **Escalation still needs a push.** Everything above is reachable at contention because a *claim*
+> is the thing that wants it. Escalating a blocked item is the opposite case — nobody is reading, by
+> definition — so it has no contention point to hang off and remains a genuine reason to run `sweep`
+> on a schedule.
+
 **Ghost sessions have no assignment**, and that's what makes them ghosts: manual work on a task that
 was never minted has nothing to assign to, so it exists only as `tool_calls` rows with a null
 `item_id`. It still counts toward capacity when the planner allocates — the server just can't say what
@@ -1088,6 +1118,7 @@ typed.
 | `agents.subagent_delegation` | `never` · `allowed` · `required`, default `allowed` | Agents | What an orchestrator may do itself. `never` blocks spawning; `allowed` nudges toward delegating; `required` blocks the orchestrator doing the work. Only fires when an orchestrator role exists, so a single-agent installation is never affected. |
 | `liveness.stale_after_seconds` | int, `900` | Liveness | Quiet → `stalled`. A process check comes first; this is the fallback. |
 | `liveness.dead_after_seconds` | int, `1800` | Liveness | Stalled → `dead`, claim released. |
+| `liveness.evict_after_seconds` | int, `14400` | Liveness | How long a holder must go unseen before a *competing claim* may take the item from it. Checked at contention, not on a timer. Much larger than `dead_after_seconds` on purpose — see the note below. |
 | `dispatch.failed_after_seconds` | int, `180` | Dispatch | No session against a dispatch → the launch failed. |
 | `dispatch.resume_attempts_before_blocked` | int, `3` | Dispatch | Attempts with no durable progress before escalating to a person. |
 | `poll.interval_seconds` | int, `300` | Dispatch | How often each machine asks for work. Takes effect on that machine's next poll. |
