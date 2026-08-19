@@ -38,7 +38,30 @@ import type { ServiceContext } from "../context";
 import { isoOrString, type ItemDetailAssignment } from "../items/assignment-view";
 import type { HolderType, Liveness, Role } from "../../claims";
 
-const inputSchema = z.object({}).strict();
+/**
+ * The page bound — MILESTONES.md #109.
+ *
+ * The fleet is small while a few dozen agents run, and this read carries
+ * the *full* assignment detail shape (the module header says why: machine,
+ * branch, model and session are the reason the page exists). Full rows and
+ * no bound is the combination that overflows, so a ceiling goes on the one
+ * read that deliberately chose the wide projection.
+ *
+ * 50 is well past any live fleet, and it is what fits: a full-detail
+ * assignment row measures ~675 characters, so 100 of them is ~67,000 —
+ * comfortably inside the response guard but past what a caller wants to
+ * read in one go. 500 is the most a caller may ask for.
+ */
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 500;
+
+const inputSchema = z
+  .object({
+    limit: z.number().int().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT),
+    /** The `id` of the last assignment of the previous page — pass back `nextCursor`. */
+    cursor: z.string().min(1).optional(),
+  })
+  .strict();
 
 export type GetFleetInput = z.infer<typeof inputSchema>;
 
@@ -53,6 +76,8 @@ export interface FleetAssignment extends ItemDetailAssignment {
 
 export interface GetFleetOutput {
   readonly assignments: readonly FleetAssignment[];
+  /** The `id` of the last assignment in this page, to pass back as `cursor`. Null when this page is the last. */
+  readonly nextCursor: string | null;
 }
 
 interface RawFleetAssignmentRow {
@@ -115,8 +140,18 @@ export const LIVE_FLEET_ASSIGNMENTS_SQL = `SELECT
    FROM "Assignment" a
    JOIN "Item" i ON i."id" = a."itemId"
    LEFT JOIN "Person" p ON p."id" = a."holderId" AND a."holderType" = 'person'::"HolderType"
-   WHERE a."releasedAt" IS NULL
-   ORDER BY a."claimedAt" ASC, a."id" ASC`;
+   WHERE a."releasedAt" IS NULL`;
+
+/**
+ * The ordering, kept beside the SELECT it belongs to rather than inside it.
+ *
+ * Split out so the handler can insert a keyset condition into the WHERE
+ * before the ORDER BY — a cursor comparison has to be part of the filter,
+ * not appended after the sort. Both halves are exported together so the
+ * pair cannot drift: the cursor's meaning is defined by this ordering, so a
+ * change to one that is not made to the other silently breaks paging.
+ */
+export const LIVE_FLEET_ASSIGNMENTS_ORDER = `ORDER BY a."claimedAt" ASC, a."id" ASC`;
 
 function displayNameFor(row: RawFleetAssignmentRow): string {
   return row.personDisplayName ?? row.holderId;
@@ -162,11 +197,43 @@ export const getFleet = defineOperation({
   name: "get_fleet",
   kind: "read",
   summary:
-    "Every live assignment across the whole installation: who holds what, on which machine and branch, and how long since they last reported.",
+    "Every live assignment across the whole installation: who holds what, on which machine and branch, and how long since they last reported. Paged: pass limit and cursor, and read nextCursor for the following page.",
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext): Promise<GetFleetOutput> {
-    const rows = await ctx.db.$queryRawUnsafe<RawFleetAssignmentRow[]>(LIVE_FLEET_ASSIGNMENTS_SQL);
-    return { assignments: rows.map(toFleetAssignment) };
+  async handler(ctx: ServiceContext, input: GetFleetInput): Promise<GetFleetOutput> {
+    const values: unknown[] = [];
+    let keyset = "";
+    if (input.cursor !== undefined) {
+      // Keyset pagination on `("claimedAt", "id")` ascending — the pair
+      // `LIVE_FLEET_ASSIGNMENTS_ORDER` sorts by, compared in the same
+      // direction it sorts.
+      const cursorRows = await ctx.db.$queryRawUnsafe<{ claimedAt: Date | string }[]>(
+        `SELECT "claimedAt" FROM "Assignment" WHERE "id" = $1`,
+        input.cursor,
+      );
+      const cursorRow = cursorRows[0];
+      if (cursorRow) {
+        values.push(cursorRow.claimedAt, input.cursor);
+        keyset = ` AND (a."claimedAt", a."id") > ($${values.length - 1}::timestamptz, $${values.length})`;
+      }
+    }
+
+    // One extra row, so "is there another page" is established rather than
+    // inferred from the page being full.
+    values.push(input.limit + 1);
+    const rows = await ctx.db.$queryRawUnsafe<RawFleetAssignmentRow[]>(
+      `${LIVE_FLEET_ASSIGNMENTS_SQL}${keyset}
+       ${LIVE_FLEET_ASSIGNMENTS_ORDER}
+       LIMIT $${values.length}`,
+      ...values,
+    );
+
+    const hasMore = rows.length > input.limit;
+    const page = hasMore ? rows.slice(0, input.limit) : rows;
+    const assignments = page.map(toFleetAssignment);
+    return {
+      assignments,
+      nextCursor: hasMore ? (assignments[assignments.length - 1]?.id ?? null) : null,
+    };
   },
 });

@@ -21,9 +21,25 @@ import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 
+/**
+ * The page bound — MILESTONES.md #109.
+ *
+ * A profile row is small and an installation holds few of them, which is
+ * exactly why this read was unbounded: nothing about its size forces the
+ * question. But that is a property of the data, not of the code, and the
+ * row this milestone was filed over is that an unbounded read is a latent
+ * failure whoever adds the hundredth profile discovers. 100 is comfortably
+ * above any realistic picker; 500 is the most a caller may ask for.
+ */
+const DEFAULT_LIMIT = 100;
+const MAX_LIMIT = 500;
+
 const inputSchema = z
   .object({
     includeArchived: z.boolean().default(false),
+    limit: z.number().int().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT),
+    /** The `id` of the last row of the previous page — pass back `nextCursor`. */
+    cursor: z.string().min(1).optional(),
   })
   .strict();
 
@@ -48,6 +64,8 @@ interface RawPersonRow {
 
 export interface ListPeopleOutput {
   readonly people: readonly PersonRecord[];
+  /** The `id` of the last row in this page, to pass back as `cursor`. Null when this page is the last. */
+  readonly nextCursor: string | null;
 }
 
 function isoOrNull(value: Date | string | null): string | null {
@@ -64,7 +82,8 @@ function isoOrNull(value: Date | string | null): string | null {
 export const listPeople = defineOperation({
   name: "list_people",
   kind: "read",
-  summary: "Reads profiles — active only by default, every profile with includeArchived.",
+  summary:
+    "Reads profiles — active only by default, every profile with includeArchived. Paged: pass limit and cursor, and read nextCursor for the following page.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ListPeopleInput): Promise<ListPeopleOutput> {
@@ -72,20 +91,53 @@ export const listPeople = defineOperation({
     // which matters for a picker whose tiles would otherwise reorder
     // themselves between one load and the next for no reason a person
     // watching the screen could explain.
-    const where = input.includeArchived ? "" : `WHERE "archivedAt" IS NULL`;
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    if (!input.includeArchived) conditions.push(`"archivedAt" IS NULL`);
+
+    if (input.cursor !== undefined) {
+      // Keyset pagination on `("createdAt", "id")` — the same pair this read
+      // orders by, and ascending here because the ordering is ascending. A
+      // cursor compared in the wrong direction does not error; it silently
+      // returns the page you already had, which is why the comparison and
+      // the ORDER BY are written next to each other.
+      const cursorRows = await ctx.db.$queryRawUnsafe<{ createdAt: Date | string }[]>(
+        `SELECT "createdAt" FROM "Person" WHERE "id" = $1`,
+        input.cursor,
+      );
+      const cursorRow = cursorRows[0];
+      if (cursorRow) {
+        values.push(cursorRow.createdAt, input.cursor);
+        conditions.push(
+          `("createdAt", "id") > ($${values.length - 1}::timestamptz, $${values.length})`,
+        );
+      }
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    // One extra row, so "is there another page" is a fact this query
+    // establishes rather than an inference from the page being full.
+    values.push(input.limit + 1);
     const rows = await ctx.db.$queryRawUnsafe<RawPersonRow[]>(
       `SELECT "id", "displayName", "avatar", "colour", "archivedAt" FROM "Person"
        ${where}
-       ORDER BY "createdAt" ASC, "id" ASC`,
+       ORDER BY "createdAt" ASC, "id" ASC
+       LIMIT $${values.length}`,
+      ...values,
     );
+
+    const hasMore = rows.length > input.limit;
+    const page = hasMore ? rows.slice(0, input.limit) : rows;
+    const people = page.map((row) => ({
+      id: row.id,
+      displayName: row.displayName,
+      avatar: row.avatar,
+      colour: row.colour,
+      archivedAt: isoOrNull(row.archivedAt),
+    }));
     return {
-      people: rows.map((row) => ({
-        id: row.id,
-        displayName: row.displayName,
-        avatar: row.avatar,
-        colour: row.colour,
-        archivedAt: isoOrNull(row.archivedAt),
-      })),
+      people,
+      nextCursor: hasMore ? (people[people.length - 1]?.id ?? null) : null,
     };
   },
 });

@@ -130,7 +130,17 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   get_board: "a single `column` with a smaller `limit`, or `full: false`",
   list_items: "a smaller `limit`, a `state` or `area` filter, or `full: false`",
   search: "a narrower `query` or a smaller `limit`",
-  get_events: "a smaller `limit`, or a narrower time range",
+  // **Not `limit`, and this is the correction rather than a wording
+  // preference.** The advice here used to read "a smaller `limit`, or a
+  // narrower time range", and neither remedy reaches this operation at any
+  // sensible magnitude: `payload` and `body` are ~95% of an event, so a
+  // page of 20 still measured ~144,000 characters against the 200,000
+  // ceiling — a caller following that advice narrows the page repeatedly
+  // and is refused every time. `full: false` is the control that actually
+  // works, and it is the default, so this fires only for a caller who
+  // opted into the heavy columns. A guard that refuses correctly but
+  // advises wrongly costs the same debugging time as one that only refuses.
+  get_events: "`full: false`, which drops each event's payload and body",
   get_item: "`full: false`, which returns the slim record",
   get_item_detail: "`get_item` with `full: false` for the slim record",
   orientation: "`get_item` for the one item, rather than its whole context",

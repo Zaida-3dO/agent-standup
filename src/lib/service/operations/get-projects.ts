@@ -168,7 +168,13 @@ export interface GetProjectsOutput {
   readonly projects: readonly ProjectRollup[];
   /** How many of `projects` are childless — the flag a caller surfaces without re-counting. */
   readonly childlessCount: number;
+  /** The `id` of the last project in this page, to pass back as `cursor`. Null when this page is the last. */
+  readonly nextCursor: string | null;
 }
+
+/** The page bound — see `limit` in the input schema. */
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
 
 const inputSchema = z
   .object({
@@ -188,6 +194,20 @@ const inputSchema = z
      * hidden" failure this read exists to avoid.
      */
     includeCompleted: z.boolean().default(false),
+    /**
+     * The most projects to return — MILESTONES.md #109.
+     *
+     * This read returns one row per project rather than one per task, so
+     * the grid stays small while a store is young. That is a fact about how
+     * much data a store happens to hold, not a property of the code, and
+     * every project carries a twelve-entry distribution plus its live crew,
+     * so the row is not free either.
+     *
+     * 50 is a full grid; 200 is the most a caller may ask for.
+     */
+    limit: z.number().int().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT),
+    /** The `id` of the last project of the previous page — pass back `nextCursor`. */
+    cursor: z.string().min(1).optional(),
   })
   .strict();
 
@@ -252,7 +272,7 @@ export const getProjects = defineOperation({
   name: "get_projects",
   kind: "read",
   summary:
-    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Computed in one recursive query rather than per project. A project with no children is reported with progress null and childless true, never as zero percent, and is never hidden.",
+    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Computed in one recursive query rather than per project. A project with no children is reported with progress null and childless true, never as zero percent, and is never hidden. Paged: pass limit and cursor, and read nextCursor for the following page.",
   // Stryker restore all
   input: inputSchema,
   contract: {
@@ -283,6 +303,25 @@ export const getProjects = defineOperation({
     if (input.repo !== undefined) {
       values.push(input.repo);
       where.push(`"Item"."repo" = $${values.length}`);
+    }
+
+    if (input.cursor !== undefined) {
+      // Keyset pagination on `("createdAt", "id")` descending — the pair the
+      // final ORDER BY sorts by, compared in the same direction. Applied in
+      // the `roots` CTE so the recursive subtree walk only descends through
+      // the projects this page can actually contain, rather than rolling up
+      // every project in the store and discarding most of the work.
+      const cursorRows = await ctx.db.$queryRawUnsafe<{ createdAt: Date | string }[]>(
+        `SELECT "createdAt" FROM "Item" WHERE "id" = $1`,
+        input.cursor,
+      );
+      const cursorRow = cursorRows[0];
+      if (cursorRow) {
+        values.push(cursorRow.createdAt, input.cursor);
+        where.push(
+          `("Item"."createdAt", "Item"."id") < ($${values.length - 1}::timestamptz, $${values.length})`,
+        );
+      }
     }
 
     // **The whole rollup, in one statement.**
@@ -325,8 +364,18 @@ export const getProjects = defineOperation({
          WHERE p."id" IN (SELECT "id" FROM roots)
          GROUP BY p."id", p."title", p."headline", p."area", p."repo", p."priority", p."updatedAt",
            p."createdAt"
-         ORDER BY p."createdAt" DESC, p."id" DESC`,
+         ORDER BY p."createdAt" DESC, p."id" DESC
+         LIMIT $${values.length + 1}`,
       ...values,
+      // **The SQL bound is a ceiling on work, not the page itself.**
+      // `includeCompleted` is applied in JS below (it needs the rolled-up
+      // counts, which only exist after the aggregate), so a raw `LIMIT
+      // limit + 1` here would hand back a short page whenever finished
+      // projects fell inside it — the page would look like the last one
+      // while more matched. Reading `MAX_LIMIT` rows caps the query's cost
+      // while leaving enough candidates that the post-filter page is full
+      // whenever the store can fill it.
+      MAX_LIMIT + 1,
     );
 
     const rollups: ProjectRollup[] = [];
@@ -377,9 +426,17 @@ export const getProjects = defineOperation({
     // list is final — the same shape and the same SQL constant `get_board`
     // uses for its cards. Skipped entirely when nothing matched, so an empty
     // result costs no second round trip.
-    const ids = rollups.map((project) => project.id);
+    // The page is taken **after** the `includeCompleted` filter, so a page
+    // is full whenever there are that many matching projects — see the
+    // `LIMIT` above for why the SQL cannot do this itself. Live crew is
+    // then fetched for the page only, never for the discarded candidates.
+    const hasMore = rollups.length > input.limit;
+    const paged = hasMore ? rollups.slice(0, input.limit) : rollups;
+    const nextCursor = hasMore ? (paged[paged.length - 1]?.id ?? null) : null;
+
+    const ids = paged.map((project) => project.id);
     if (ids.length === 0) {
-      return { projects: rollups, childlessCount: 0 };
+      return { projects: paged, childlessCount: 0, nextCursor };
     }
 
     const assignmentRows = await ctx.db.$queryRawUnsafe<RawBoardAssignmentRow[]>(
@@ -388,7 +445,7 @@ export const getProjects = defineOperation({
     );
     const assignmentsByItem = groupBoardAssignmentsByItem(assignmentRows);
 
-    const projects = rollups.map((project) => ({
+    const projects = paged.map((project) => ({
       ...project,
       // `?? []` is what makes "nobody holds this" an empty array rather than
       // an absent field — the same distinction the board draws.
@@ -398,6 +455,7 @@ export const getProjects = defineOperation({
     return {
       projects,
       childlessCount: projects.filter((project) => project.childless).length,
+      nextCursor,
     };
   },
 });
