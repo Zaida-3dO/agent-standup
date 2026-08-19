@@ -8,12 +8,20 @@ import Link from "next/link";
 import type { BoardEntry } from "@/lib/board/types";
 import { waitingTone } from "@/lib/board/view";
 import { isDraggable } from "@/lib/board/drag";
+import { relativeTime } from "@/lib/projects/view";
+import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import styles from "./Board.module.css";
 
 export interface ItemCardProps {
   readonly entry: BoardEntry;
   /** True when this card is on the active profile's needs-you list — see `needsYou`. */
   readonly needsYou: boolean;
+  /**
+   * The clock — `Board.tsx` samples it once per load. Used only to render
+   * each assignment's "last active" caption, so a card with nobody on it
+   * never reads this at all.
+   */
+  readonly now: number;
   /**
    * Called when a drag of this card starts (#73). Absent on a board with no
    * drag wired up, which is why the handlers below are only attached when it
@@ -38,7 +46,7 @@ function waitingReason(entry: BoardEntry): string | null {
   return null;
 }
 
-export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: ItemCardProps) {
+export function ItemCard({ entry, needsYou, now, onDragStart, onDragEnd, pending }: ItemCardProps) {
   const tone = waitingTone(entry);
   const reason = waitingReason(entry);
   const toneClass = tone === "amber" ? styles.toneAmber : tone === "red" ? styles.toneRed : "";
@@ -100,6 +108,22 @@ export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: I
           with a screen reader. */}
       {entry.item.headline && <span className={styles.cardHeadline}>{entry.item.headline}</span>}
       {reason && <span className={styles.cardReason}>{reason}</span>}
+      {/* Presence — who holds this right now, and how long since they last
+          reported. One row per live assignment (SCHEMA.md §2 allows more
+          than one holder at once — an orchestrator plus a builder, say),
+          rendered only when the card has any; an unheld card shows nothing
+          here rather than an empty row. */}
+      {entry.assignments.length > 0 && (
+        <ul className={styles.cardPresence}>
+          {entry.assignments.map((assignment) => (
+            <li key={`${assignment.holderId}-${assignment.role}`} className={styles.presenceRow}>
+              <AgentPresenceDot liveness={assignment.liveness} agentName={assignment.displayName} />
+              <span className={styles.presenceName}>{assignment.displayName}</span>
+              <span className={styles.presenceAge}>{relativeTime(assignment.lastActive, now)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className={styles.cardMeta}>
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>
         {entry.item.repo && <span className={styles.repo}>{entry.item.repo}</span>}

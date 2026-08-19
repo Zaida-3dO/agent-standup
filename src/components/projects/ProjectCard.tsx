@@ -17,6 +17,7 @@ import type { ProjectRollup } from "@/lib/projects/types";
 import { distributionOf, liveCrewCount, progressOf, relativeTime } from "@/lib/projects/view";
 import { STATE_LABELS, stateTokens } from "@/lib/design/tokens";
 import { AreaChip } from "@/components/chips/AreaChip";
+import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import styles from "./Projects.module.css";
 
 export interface ProjectCardProps {
@@ -156,6 +157,24 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
         )}
         <span className={styles.activity}>{relativeTime(project.lastActivity, now)}</span>
       </div>
+
+      {/* Presence — who holds this project right now, and how long since
+          they last reported (M10 T16). Additive to the crew badge above
+          rather than a replacement: the badge is the at-a-glance count
+          (and stays exactly as tested), this is the per-holder detail —
+          same split `ItemCard` draws between its priority chip and its
+          presence rows. */}
+      {project.assignments.length > 0 && (
+        <ul className={styles.projectPresence}>
+          {project.assignments.map((assignment) => (
+            <li key={`${assignment.holderId}-${assignment.role}`} className={styles.presenceRow}>
+              <AgentPresenceDot liveness={assignment.liveness} agentName={assignment.displayName} />
+              <span className={styles.presenceName}>{assignment.displayName}</span>
+              <span className={styles.presenceAge}>{relativeTime(assignment.lastActive, now)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </article>
   );
 }

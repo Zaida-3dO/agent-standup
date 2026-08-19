@@ -281,6 +281,7 @@ describe("a filtered-to-nothing column", () => {
       // cannot know whether the filter would have excluded its contents.
       section: { entries: [], total: 12, nextCursor: null, withheld: false },
       personId: null,
+      now: 0,
       filtered: true,
       onClearFilter: () => {},
     }) as ReactElement;
@@ -300,6 +301,7 @@ describe("a filtered-to-nothing column", () => {
       column: "backlog",
       section: { entries: [], total: 0, nextCursor: null, withheld: false },
       personId: null,
+      now: 0,
       filtered: false,
     }) as ReactElement;
     const empties = [...walk(column)].filter((el) => el.type === EmptyState);

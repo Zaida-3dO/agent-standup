@@ -86,6 +86,14 @@ export function Board() {
   // Bumped to re-run the load effect — how the error state's retry works
   // without duplicating the fetch itself.
   const [reloadNonce, setReloadNonce] = useState(0);
+  /**
+   * The clock, sampled once per load — the same reasoning `Projects.tsx`
+   * gives: reading `Date.now()` during render would produce a different
+   * tree on the server than on the client for the same data (a hydration
+   * mismatch), and every card would disagree about "now" by however long
+   * the render took. Feeds each card's presence "last active" caption.
+   */
+  const [now, setNow] = useState(0);
 
   // **The ref is the authoritative copy; `drag` is what renders.**
   //
@@ -122,6 +130,7 @@ export function Board() {
       .then((board) => {
         if (cancelled) return;
         applyDrag((current) => boardReplaced(current, board));
+        setNow(Date.now());
         setStatus("loaded");
       })
       .catch((err: unknown) => {
@@ -258,6 +267,7 @@ export function Board() {
       <BoardView
         loadState={loadState}
         personId={activeProfile?.id ?? null}
+        now={now}
         // The two props that make a filtered-to-nothing column say so. They
         // have existed on `BoardView` and `BoardColumn` since #123 built the
         // shared states, with nothing passing them — this is the caller they

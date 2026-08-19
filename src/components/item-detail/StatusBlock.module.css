@@ -132,7 +132,7 @@
 
 /* running — solid, the only filled disc. */
 .shapeFilled {
-  background: var(--presence-live);
+  background: var(--presence-running);
 }
 
 /* stalled — half-filled: present, but not reporting. */

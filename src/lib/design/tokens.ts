@@ -10,7 +10,7 @@
 // until someone decides what it looks like — which is the whole reason to
 // centralise it.
 
-import type { ItemState } from "@/lib/board/types";
+import type { ItemState, Liveness } from "@/lib/board/types";
 
 /**
  * Every `ItemState`, in board order (SCHEMA.md §1.1).
@@ -226,10 +226,18 @@ export function stalenessToken(level: StalenessLevel): string | null {
   }
 }
 
-/** Agent liveness, as the fleet reads it. */
-export type Liveness = "live" | "stalled" | "dead";
-
-/** Liveness → its presence-dot colour token. */
+/**
+ * Liveness → its presence-dot colour token.
+ *
+ * Takes the REAL four-value `Liveness` from `@/lib/board/types` (the wire
+ * vocabulary, SCHEMA.md §2) rather than a local alias: a locally-declared
+ * three-value union here could drift from the wire vocabulary silently,
+ * missing `superseded` and misnaming `running` with no compile error
+ * anywhere to catch it. Deriving the CSS variable name from the shared type
+ * directly is what makes that drift impossible: a fifth `Liveness` value
+ * fails this function's return until a token for it is added to
+ * `globals.css` and named here.
+ */
 export function presenceToken(liveness: Liveness): string {
   return `var(--presence-${liveness})`;
 }

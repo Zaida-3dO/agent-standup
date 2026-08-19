@@ -73,6 +73,7 @@ describe("the column's show-more control", () => {
       column: "backlog",
       section: section(["a"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
       onShowMore: () => {},
     });
     expect(buttonsOf(element).length).toBe(1);
@@ -85,6 +86,7 @@ describe("the column's show-more control", () => {
       column: "backlog",
       section: section(["a"], { total: 146, nextCursor: null }),
       personId: null,
+      now: 0,
       onShowMore: () => {},
     });
     expect(buttonsOf(element).length).toBe(0);
@@ -95,6 +97,7 @@ describe("the column's show-more control", () => {
       column: "backlog",
       section: section(["a"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
     });
     expect(buttonsOf(element).length).toBe(0);
   });
@@ -107,6 +110,7 @@ describe("the column's show-more control", () => {
       column: "completed",
       section: section(["a"], { total: 222, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
       onShowMore: (column) => asked.push(column),
     });
     (buttonsOf(element)[0]!.props as { onClick: () => void }).onClick();
@@ -118,6 +122,7 @@ describe("the column's show-more control", () => {
       column: "backlog",
       section: section(["a"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
       onShowMore: () => {},
       loadingMore: true,
     });
@@ -131,6 +136,7 @@ describe("the column's show-more control", () => {
       column: "backlog",
       section: section(["a", "b"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
       onShowMore: () => {},
     });
     const text = textOf(element);
@@ -150,6 +156,7 @@ describe("the column's scroll region", () => {
       column: "backlog",
       section: section(["a", "b"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
     });
     const focusable = [...walk(element)].filter(
       (el) => (el.props as { tabIndex?: number }).tabIndex === 0,
@@ -170,6 +177,7 @@ describe("the column's heading count", () => {
       column: "backlog",
       section: section(["a"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
     });
     expect(textOf(element)).toContain("146");
     expect(findAllByType(element, ItemCard).length).toBe(1);
@@ -181,6 +189,7 @@ describe("the column's heading count", () => {
       column: "completed",
       section: { entries: [], total: 222, nextCursor: null, withheld: true },
       personId: null,
+      now: 0,
     });
     expect(textOf(element)).toContain("222");
   });
@@ -192,6 +201,7 @@ describe("which state the column shows when it has no cards", () => {
       column: "waiting",
       section: section([]),
       personId: null,
+      now: 0,
     });
     expect((findOneByType(element, EmptyState).props as { kind: string }).kind).toBe("empty");
   });
@@ -204,6 +214,7 @@ describe("which state the column shows when it has no cards", () => {
       column: "completed",
       section: { entries: [], total: 222, nextCursor: null, withheld: true },
       personId: null,
+      now: 0,
     });
     expect((findOneByType(element, EmptyState).props as { kind: string }).kind).toBe("withheld");
   });
@@ -213,6 +224,7 @@ describe("which state the column shows when it has no cards", () => {
       column: "backlog",
       section: { entries: [], total: 146, nextCursor: null, withheld: false },
       personId: null,
+      now: 0,
       filtered: true,
     });
     expect((findOneByType(element, EmptyState).props as { kind: string }).kind).toBe("filtered");
@@ -227,6 +239,7 @@ describe("which state the column shows when it has no cards", () => {
       column: "completed",
       section: { entries: [], total: 222, nextCursor: null, withheld: true },
       personId: null,
+      now: 0,
       onShowMore: (column) => asked.push(column),
     });
     const load = findOneByType(element, EmptyState).props as { onLoad?: () => void };
@@ -241,6 +254,7 @@ describe("which state the column shows when it has no cards", () => {
       column: "backlog",
       section: section([]),
       personId: null,
+      now: 0,
       loading: true,
     });
     expect(findAllByType(element, EmptyState).length).toBe(0);
@@ -256,6 +270,7 @@ describe("a failed page request", () => {
       column: "backlog",
       section: section(["a", "b"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
       onShowMore: () => {},
       pageError: "Could not load the board (GET /api/board returned 500).",
     });
@@ -269,6 +284,7 @@ describe("a failed page request", () => {
       column: "backlog",
       section: section(["a"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
       onShowMore: () => {},
       pageError: null,
     });
@@ -281,6 +297,7 @@ describe("a failed page request", () => {
       column: "backlog",
       section: section(["a"], { total: 146, nextCursor: "cur-1" }),
       personId: null,
+      now: 0,
       onShowMore: (column) => asked.push(column),
       pageError: "Could not load the board (GET /api/board returned 500).",
     });
