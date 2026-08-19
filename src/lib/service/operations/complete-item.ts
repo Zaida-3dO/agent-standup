@@ -38,7 +38,6 @@ import {
   WHAT_TO_TEST_MAX,
   WHAT_TO_TEST_MIN,
   WHAT_TO_TEST_TEXT_CHAR_CAP,
-  isNonDeliveryState,
   validateSummaryShape,
   type NotDoneEntry,
   type SummaryCandidate,

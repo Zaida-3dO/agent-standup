@@ -64,6 +64,13 @@ const ALLOWED: ReadonlyMap<string, string> = new Map([
     "Runs on the server and returns a URL for a *session* to fetch with its own machine " +
       "token during registration — not a path any browser code calls.",
   ],
+  [
+    "src/lib/http-routes.generated.ts",
+    "The generated inventory of this build's HTTP routes, served by `GET /api` so a caller " +
+      "can discover the surface instead of inferring it from which paths 404. Every entry is " +
+      "a path *named as data*; the module fetches nothing and imports nothing, so there is no " +
+      "call here for the forwarding prefix to apply to.",
+  ],
 ]);
 
 function walk(dir: string): string[] {
@@ -184,6 +191,7 @@ describe("no front-end module calls the API directly", () => {
     expect([...ALLOWED.keys()].sort()).toEqual(
       [
         "src/lib/admin/kinds.ts",
+        "src/lib/http-routes.generated.ts",
         "src/lib/service/operations/register-session.ts",
         "src/lib/ui-proxy/forward.ts",
         "src/lib/ui-proxy/path.ts",

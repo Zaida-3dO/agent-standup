@@ -38,11 +38,10 @@ export const DELIVERY_STATES = ["merged", "research_done"] as const;
  *
  * ── Why this split exists at all ────────────────────────────────────────
  *
- * `shipped` used to be required for every completed state, `wont_do` and
- * `cancelled` included. Closing a duplicate row therefore forced writing a
- * non-delivery into a field named for delivered work — one real observed
- * case put *"Identified as a duplicate of the open-loop writes milestone
- * row"* under `shipped`, where nothing had shipped at all.
+ * Requiring `shipped` for every completed state would force a caller closing
+ * a duplicate row to write a non-delivery into a field named for delivered
+ * work — *"identified as a duplicate of the open-loop writes row"* listed as
+ * something that shipped, when nothing shipped at all.
  *
  * That is a worse failure than an awkward field name. Every other check in
  * this module exists to make the closing summary a *truthful record*: the

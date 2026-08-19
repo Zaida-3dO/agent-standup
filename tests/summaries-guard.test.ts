@@ -213,8 +213,8 @@ describeIfDb("the summaries guard, against Postgres", () => {
 
     it("refuses a wont_do close that claims a delivery in shipped", async () => {
       // The corrosive case this split exists to remove, asserted from the
-      // other side: the old rule forced this shape, so it must now be the
-      // one that is refused rather than merely tolerated.
+      // other side. A rule requiring `shipped` everywhere would force this
+      // exact shape, so it has to be refused rather than merely tolerated.
       const reg = registryWithSummaryGuard();
       const id = await createTask("executing");
       const error = (await callTransition("apply", id, "wont_do", reg, {
