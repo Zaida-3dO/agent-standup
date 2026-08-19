@@ -77,6 +77,25 @@ describe("which URLs the report is willing to link", () => {
     }
   });
 
+  it("refuses a URL that would close the markdown link and open another", () => {
+    // The scheme check above cannot catch this: the string below is a
+    // perfectly valid https URL. But the report renders `[label](ref)`, and a
+    // markdown renderer ends the link at the FIRST `)` — so everything after
+    // it becomes literal markdown that the caller wrote. The value here
+    // renders as two links, the second one entirely attacker-controlled,
+    // which is the exact injection the scheme check exists to prevent.
+    //
+    // Fails if the `)`/whitespace refusal is dropped and only the protocol
+    // check remains.
+    expect(isLinkableUrl("https://example.com/p/1) [CLICK ME](https://evil.example.com")).toBe(
+      false,
+    );
+    expect(isLinkableUrl("https://example.com/p/1)")).toBe(false);
+    expect(isLinkableUrl("https://example.com/a b")).toBe(false);
+    // Still true for the shape every real forge actually emits.
+    expect(isLinkableUrl("https://github.com/owner/repo/pull/223")).toBe(true);
+  });
+
   it("refuses anything that is not a URL at all", () => {
     // `ref` is a generic column shared with screenshots, so a path, a bare
     // PR number or a sentence are realistic values rather than defensive

@@ -115,5 +115,14 @@ export function isLinkableUrl(url: string | null | undefined): boolean {
     // defensive impossibility.
     return false;
   }
-  return parsed.protocol === "http:" || parsed.protocol === "https:";
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  // A markdown renderer ends a link at the first `)`, so a URL carrying one
+  // — or any whitespace — lets an authenticated caller close our link early
+  // and append their own: `https://ok/1) [CLICK ME](https://evil)` renders as
+  // two links, the second entirely theirs. The protocol check above cannot
+  // see that, because such a string is a perfectly valid URL. Refuse the
+  // characters rather than escape them: every real forge PR URL is free of
+  // both, so nothing legitimate is lost, and a refusal at the write is one
+  // place to reason about instead of every render site.
+  return !/[()\s]/.test(url.trim());
 }
