@@ -426,6 +426,17 @@ enum ArtifactKind {
   // looking at the row later. A flag would be a distinction every existing
   // reader ignores by default; a kind is one they cannot.
   historical_verification
+  // A pull request was opened for this item's work — the URL in `ref`
+  // (MILESTONES.md #136). Recorded rather than composed from `repo` +
+  // `branch`, because a composed URL cannot tell an open PR from one that
+  // was never opened or has since been closed: the branch is present in all
+  // three cases, so two of them would render a confident link to nothing.
+  //
+  // Its own kind rather than a column on `Item` for the reason every kind
+  // here is a row: a PR is a thing produced for an item, by a known actor,
+  // at a review round. A column would hold one URL, lose the previous one
+  // when work is re-proposed, and carry neither author nor timestamp.
+  pull_request
   screenshot
   other
 }

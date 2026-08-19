@@ -30,6 +30,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
 import { InvalidFindingError, parseFindings } from "@/lib/findings";
+import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib/pull-requests";
 import { currentReviewRound } from "../guards/merge-review-round";
 
 /**
@@ -46,6 +47,7 @@ const ARTIFACT_KINDS = [
   "test_run",
   "commit",
   "historical_verification",
+  "pull_request",
   "screenshot",
   "other",
 ] as const;
@@ -261,6 +263,51 @@ export const recordArtifact = defineOperation({
       throw new InvalidInputError("A commit artifact must record its commitSha.", {
         fields: ["commitSha"],
       });
+    }
+
+    // A `pull_request` artifact exists to be turned into a link, so one that
+    // names no URL is the same shape of useless as a `commit` with no
+    // `commitSha` above: `progress_report` reads `ref` off the newest
+    // `pull_request` row, and a null one would make the item look as though
+    // it has a PR while rendering nothing to click.
+    //
+    // This is the write that makes the report's "never a dead link" promise
+    // structural rather than aspirational. The report will not compose a URL
+    // it was not given, so the only way a link reaches a reader is a caller
+    // having recorded one here — and the only way to record one is to supply
+    // it. `ref` is already `.trim().min(1)`, so a whitespace-only URL is
+    // refused by the schema before this runs.
+    if (input.kind === "pull_request") {
+      if (input.ref === undefined || input.ref === null) {
+        throw new InvalidInputError(
+          "A pull_request artifact must record the PR's URL in `ref` — the report renders it as " +
+            "a link, and a PR row with no URL would advertise a link there is nothing behind.",
+          { fields: ["ref"] },
+        );
+      }
+      if (!isLinkableUrl(input.ref)) {
+        throw new InvalidInputError(
+          "A pull_request artifact's `ref` must be an http(s) URL — the report renders it as a " +
+            "markdown link, so anything else is either unclickable or an injection into whatever " +
+            "displays the report.",
+          { fields: ["ref"] },
+        );
+      }
+      // `body` carries the PR's status, and the vocabulary is two words. It
+      // is refused rather than coerced because the alternative — treating
+      // unrecognised prose as `open` — is how a closed PR keeps rendering as
+      // a live link: a caller recording "closed by review" would be read as
+      // open. The read path is deliberately more forgiving (see
+      // `pullRequestStatusOf`), because rows written before this vocabulary
+      // existed cannot be refused retrospectively.
+      if (input.body != null && !isPullRequestStatus(input.body.trim())) {
+        throw new InvalidInputError(
+          `A pull_request artifact's \`body\` records its status and must be one of: ${PULL_REQUEST_STATUSES.join(", ")}. ` +
+            "Record a PR that has closed as a NEW pull_request row with status `closed` — artifacts " +
+            "are append-only, so the row that opened it is never edited.",
+          { fields: ["body"] },
+        );
+      }
     }
 
     // A `historical_verification` must carry the evidence that makes it

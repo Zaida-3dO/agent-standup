@@ -590,16 +590,61 @@ is already the place that says which transitions require what.
 |---|---|---|
 | `id` | `uuid` PK | |
 | `item_id` | `text` → `items.id` | |
-| `kind` | enum | `plan` · `plan-review` · `code-review` · `visual-review` · `test-run` · `commit` · `screenshot` · `other`. The **thing** and its **review** are separate rows — as `commit` and `code-review` already were, so `plan` and `plan-review` follow the same shape. |
+| `kind` | enum | `plan` · `plan-review` · `code-review` · `visual-review` · `test-run` · `commit` · `pull-request` (§6a-pr) · `screenshot` · `other`. The **thing** and its **review** are separate rows — as `commit` and `code-review` already were, so `plan` and `plan-review` follow the same shape. |
 | `verdict` | enum null | `approved` · `changes-required` · `n/a`. Null on artifacts that aren't reviews — a plan document has no verdict; its `plan-review` does. |
 | `review_round` | `int` | Which round this belongs to. |
 | `commit_sha` | `text` null | What it applies to — the "at tip" check. |
 | `body` | `text` null | Review text, stored inline: queryable, survives a repo move. |
-| `ref` | `text` null | Path or URL for binaries (screenshots). |
+| `ref` | `text` null | Path or URL for binaries (screenshots), and the PR's URL on a `pull_request`. |
 | `browser_session` | `text` null | Which browser session a visual review ran in. An opaque string — the core never learns that any browser-automation tool exists. |
 | `created_by_type` | enum | `person` · `agent`. A review by a person and one by a reviewer agent are both evidence. |
 | `created_by_id` | `text` | → `people.id` or `agents.name`, per `created_by_type`. |
 | `created_at` | `timestamptz` | |
+
+---
+
+### 6a-pr. `pull_request` — the link the progress report will not invent
+
+`progress_report` (MILESTONES.md #136) renders each row's reference as a **link to the open pull
+request**, falling back to the branch and then to the item id. The link is the half that makes a row
+actionable: *"in review, branch `feat/whatever`"* still leaves a reader to go and find the PR.
+
+**The obvious cheap implementation is wrong, and not repairably so.** The report already holds
+`Item.repo` and `Item.branch`, so a URL could be composed from them with no schema change and no
+write. But the branch is present in *all three* of the cases a reader needs told apart — the PR is
+open, the PR was closed unmerged, nobody ever opened a PR — so a composed link would render
+identically for all three and be live for only one. It would also have to guess a forge: `Repo.host`
+is nullable by design (unknown is a distinct state from a guess) and nothing records which forge a
+host runs or how it spells a pull-request path. **A link that 404s is worse than the branch name it
+replaced**, because a reader who clicks a dead link stops trusting the links that work.
+
+So a PR is a recorded fact: an artifact of kind `pull_request` whose `ref` is the URL, written by
+whoever opened it — at the one moment the URL is in hand and free to record.
+
+Three properties keep the promise that no dead link is ever emitted:
+
+1. **The URL is refused at the write if it is missing or not `http(s)`.** `ref` is a generic column
+   shared with screenshots, so a path, a bare PR number or a sentence are realistic values. A
+   markdown link to a `javascript:` or `data:` target is also an injection into whatever renders the
+   report, from a string that arrived over the API.
+2. **Closure is a NEWER row, never an edit.** `artifacts` is append-only — the merge gate's "at tip"
+   reasoning depends on it — so a PR that closes is recorded as another `pull_request` artifact
+   whose `body` is `closed`. The report reads the newest row per item and links only when it says
+   `open`. Every PR an item ever had survives underneath, in order, so re-proposed work reads
+   correctly: open, closed, open again.
+3. **The status vocabulary is two words and is enforced at the write.** `open` · `closed`. Coercing
+   unrecognised prose to `open` is exactly how a closed PR keeps rendering as a live link — a caller
+   recording `"closed by review"` would read as open. The *read* is deliberately more forgiving
+   (unrecognised prose reads as `open`), because rows written before this vocabulary existed cannot
+   be refused retrospectively and one legacy row should cost one link, not the whole report.
+
+`merged` is deliberately not a status. A merged PR's item reaches `merged` on its own, and a link to
+a merged PR is still a live link — so it would be a third value that no reader branches on
+differently from `open`.
+
+**Why a kind rather than a column on `items`.** A PR is a thing produced for an item, by a known
+actor, at a review round — which is what this table is for. A column would hold one URL, silently
+lose the previous one when work is re-proposed, and carry neither author nor timestamp.
 
 ---
 
