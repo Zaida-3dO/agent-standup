@@ -39,6 +39,14 @@ import {
 } from "@/lib/item-detail/state";
 import { DEFAULT_TAB, hashForTab, tabFromHash, type DetailTab } from "@/lib/item-detail/tabs";
 import { fetchAgentView, agentViewErrorMessageFrom } from "@/lib/item-detail/orientation-state";
+import {
+  fieldForEdit,
+  submitItemEdit,
+  titleDraftIsValid,
+  type EditableField,
+} from "@/lib/item-detail/edit-state";
+import { titleAdviceFor } from "@/lib/item-title";
+import type { EventType } from "@/lib/events";
 import { ItemDetailView } from "./ItemDetailView";
 import type { AgentPanelState } from "./AgentPanel";
 
@@ -93,6 +101,95 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   // Fetching it with the detail would put the page's largest cost on every
   // visit, including every visit that never opens the tab.
   const [agentState, setAgentState] = useState<AgentPanelState>({ status: "idle" });
+
+  // Activity tab state — the type filter and the page, kept here rather
+  // than inside `HistoryList` because that component is hook-free by
+  // convention (see its own header) and the filter has to reset the page
+  // to zero the moment it changes, which is a cross-field rule a single
+  // component's own state cannot express without a hook.
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<EventType | null>(null);
+  const [historyPage, setHistoryPage] = useState(0);
+
+  const onHistoryTypeFilterChange = useCallback((type: EventType | null) => {
+    setHistoryTypeFilter(type);
+    // A filter change can leave a page number past the end of the now
+    // narrower list — see `pageOf`'s own header on why a stale page must
+    // not render as empty beneath a filter that has matches.
+    setHistoryPage(0);
+  }, []);
+
+  // ── Inline edit — title, headline, priority, area (M10 T10) ───────────
+  //
+  // One field at a time, per `EditingField`'s own reasoning: at most one of
+  // the four is ever mid-edit, so this is one `editingField` plus one
+  // `draft` rather than four independent pairs.
+  const [editingField, setEditingField] = useState<EditableField | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const onStartEdit = useCallback(
+    (field: EditableField) => {
+      if (loadState.status !== "loaded") return;
+      const { item } = loadState.detail;
+      const current =
+        field === "title"
+          ? item.title
+          : field === "headline"
+            ? (item.headline ?? "")
+            : field === "priority"
+              ? item.priority
+              : item.area;
+      setEditingField(field);
+      setDraft(current);
+      setEditError(null);
+    },
+    [loadState],
+  );
+
+  const onCancelEdit = useCallback(() => {
+    setEditingField(null);
+    setDraft("");
+    setEditError(null);
+  }, []);
+
+  const onSaveEdit = useCallback(() => {
+    if (editingField === null || loadState.status !== "loaded") return;
+    if (editingField === "title" && !titleDraftIsValid(draft)) return;
+    setSaving(true);
+    setEditError(null);
+    const itemId = loadState.detail.item.id;
+    submitItemEdit(itemId, fieldForEdit(editingField, draft))
+      .then((outcome) => {
+        setSaving(false);
+        if (!outcome.ok) {
+          setEditError(outcome.message);
+          return;
+        }
+        setEditingField(null);
+        setDraft("");
+        // Re-fetches the whole detail rather than patching the saved field
+        // into local state, so the edit is reflected the same way any
+        // other change to the item would be — one source of truth for
+        // "what does the server say now" — and so a field that changed the
+        // item's derived `column` (an edit to `priority` never does, but
+        // the same path handles every field uniformly) is not shown stale.
+        fetchItemDetail(itemId)
+          .then((detail) => setLoadState({ status: "loaded", detail }))
+          .catch(() => {
+            // The save already succeeded; a failed re-fetch leaves the
+            // page showing the pre-edit value until the next natural
+            // reload rather than surfacing a scary error for a write that
+            // worked.
+          });
+      })
+      .catch((err: unknown) => {
+        setSaving(false);
+        setEditError(err instanceof Error ? err.message : "Could not save this edit.");
+      });
+  }, [editingField, draft, loadState]);
+
+  const titleAdvice = editingField === "title" ? titleAdviceFor(draft) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -153,6 +250,21 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
       now={now}
       agentState={agentState}
       onLoadAgentView={onLoadAgentView}
+      historyTypeFilter={historyTypeFilter}
+      onHistoryTypeFilterChange={onHistoryTypeFilterChange}
+      historyPage={historyPage}
+      onHistoryPageChange={setHistoryPage}
+      edit={{
+        editingField,
+        draft,
+        onDraftChange: setDraft,
+        onStartEdit,
+        onSaveEdit,
+        onCancelEdit,
+        saving,
+        editError,
+        titleAdvice,
+      }}
     />
   );
 }

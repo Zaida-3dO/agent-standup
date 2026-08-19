@@ -45,6 +45,7 @@ function item(overrides: Partial<DetailItem> = {}): DetailItem {
     id: "item-1",
     parentId: null,
     title: "An item",
+    headline: null,
     body: "",
     kind: "task",
     state: "executing",

@@ -15,6 +15,8 @@
 import { describe, expect, it } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import { StatusBlock } from "@/components/item-detail/StatusBlock";
+import { ChipLink } from "@/components/item-detail/ChipLink";
+import { InlineEditField } from "@/components/item-detail/InlineEditField";
 import { StateChip } from "@/components/chips/StateChip";
 import { PriorityChip } from "@/components/chips/PriorityChip";
 import { StalenessDot } from "@/components/chips/StalenessDot";
@@ -27,6 +29,7 @@ function item(overrides: Partial<DetailItem> = {}): DetailItem {
     id: "item-1",
     parentId: null,
     title: "An item",
+    headline: null,
     body: "",
     kind: "task",
     state: "executing",
@@ -93,6 +96,7 @@ function render(parts: {
   previousHolders?: readonly DetailAssignment[];
   history?: readonly DetailHistoryEntry[];
   now?: number;
+  edit?: import("@/lib/item-detail/edit-state").ItemEditProps;
 }) {
   const detail = {
     item: parts.item ?? item(),
@@ -106,6 +110,7 @@ function render(parts: {
     column: parts.column ?? "in_progress",
     status: statusSummary(detail, now),
     now,
+    edit: parts.edit,
   });
 }
 
@@ -500,6 +505,101 @@ describe("StatusBlock — the empty item", () => {
     expect(text).toContain("Nobody holds this");
     expect(text).toContain("No checkpoint yet");
     expect(text).toContain("No open loops");
+  });
+});
+
+describe("StatusBlock — chip links back to a filtered board (M10 T10)", () => {
+  // `ChipLink` is its own component and this harness does not render — it
+  // walks the tree a component RETURNED without calling nested component
+  // functions (`tests/helpers/react-element.ts`'s own header). A
+  // `<ChipLink href="…">` therefore appears in the tree as an unrendered
+  // *reference* whose `href` prop is what the assertion has to read, not
+  // the `<a>` it would produce if actually rendered — the same reasoning
+  // `item-detail-panels-component.test.ts`'s `textOf` gives for reading a
+  // `<Markdown>`'s `source` prop directly.
+  function hrefsOf(root: ReactNode): string[] {
+    return findAllByType(root, ChipLink)
+      .map((el) => (el.props as { href?: string }).href)
+      .filter((href): href is string => typeof href === "string");
+  }
+
+  it("links the state chip to /board?state=<value>", () => {
+    const element = render({ item: item({ state: "blocked" }) });
+    expect(hrefsOf(element)).toContain("/board?state=blocked");
+  });
+
+  it("links the priority chip to /board?priority=<value>", () => {
+    const element = render({ item: item({ priority: "P0" }) });
+    expect(hrefsOf(element)).toContain("/board?priority=P0");
+  });
+
+  it("links the area to /board?area=<value>", () => {
+    const element = render({ item: item({ area: "billing" }) });
+    expect(hrefsOf(element)).toContain("/board?area=billing");
+  });
+
+  it("links a holder's name to /board?assignee=<holderId>, not their display name", () => {
+    // assignee matches a live assignment's holderId exactly (get-board.ts);
+    // a link built from displayName instead would 404-equivalent (filter
+    // to nothing) the moment the two differ, which they legitimately can
+    // for a person.
+    const element = render({
+      assignments: [assignment({ holderId: "person-42", displayName: "Alex Rivera" })],
+    });
+    expect(hrefsOf(element)).toContain("/board?assignee=person-42");
+  });
+});
+
+describe("StatusBlock — priority and area inline edit (M10 T10)", () => {
+  it("shows an Edit control for priority and area when onStartEdit is wired", () => {
+    const element = render({ edit: { onStartEdit: () => {} } });
+    const buttons = [...walk(element)].filter((el) => el.type === "button");
+    const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
+    expect(labels).toContain("Edit priority");
+    expect(labels).toContain("Edit area");
+  });
+
+  it("shows no Edit control when onStartEdit is absent", () => {
+    const element = render({});
+    const buttons = [...walk(element)].filter((el) => el.type === "button");
+    const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
+    expect(labels).not.toContain("Edit priority");
+    expect(labels).not.toContain("Edit area");
+  });
+
+  it("hands InlineEditField the priority kind, editing, and the draft while priority is the editing field", () => {
+    // `InlineEditField` is its own component (see the note above `hrefsOf`)
+    // — what StatusBlock actually decides is which PROPS it hands that
+    // component, which is what this asserts directly rather than walking
+    // for the `<select>` its own render would produce.
+    const element = render({ edit: { editingField: "priority", draft: "P1" } });
+    const fields = findAllByType(element, InlineEditField);
+    const priorityField = fields.find((f) => (f.props as { kind?: string }).kind === "priority");
+    expect(priorityField).toBeDefined();
+    expect((priorityField!.props as { editing?: boolean }).editing).toBe(true);
+    expect((priorityField!.props as { draft?: string }).draft).toBe("P1");
+    // And the chip is NOT also rendered — the two must not overlap.
+    expect(findAllByType(element, PriorityChip)).toEqual([]);
+  });
+
+  it("hands InlineEditField the area's draft while area is the editing field", () => {
+    const element = render({ edit: { editingField: "area", draft: "billing" } });
+    const fields = findAllByType(element, InlineEditField);
+    const areaField = fields.find((f) => (f.props as { label?: string }).label === "Area");
+    expect(areaField).toBeDefined();
+    expect((areaField!.props as { editing?: boolean }).editing).toBe(true);
+    expect((areaField!.props as { draft?: string }).draft).toBe("billing");
+  });
+
+  it("passes onSaveEdit through to the priority field's onSave", () => {
+    let saved = false;
+    const element = render({
+      edit: { editingField: "priority", draft: "P1", onSaveEdit: () => (saved = true) },
+    });
+    const fields = findAllByType(element, InlineEditField);
+    const priorityField = fields.find((f) => (f.props as { kind?: string }).kind === "priority");
+    (priorityField!.props as { onSave?: () => void }).onSave?.();
+    expect(saved).toBe(true);
   });
 });
 

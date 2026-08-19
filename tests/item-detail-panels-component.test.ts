@@ -471,6 +471,7 @@ describe("the detail view, wired to the new panels", () => {
         id: "item-1",
         parentId: null,
         title: "An item",
+        headline: null,
         body: "",
         kind: "task",
         state: "in_review",

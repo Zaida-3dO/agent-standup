@@ -120,6 +120,15 @@ export interface DetailItem {
   readonly id: string;
   readonly parentId: string | null;
   readonly title: string;
+  /**
+   * The one-line BLUF (MILESTONES.md #107) — read here for M10 T10's
+   * inline edit, which offers it as one of the four editable fields.
+   * Absent from earlier detail-view reads (this response has always
+   * carried the item's `headline`; only the client-side type omitted it),
+   * so `fetchItemDetail` defaults a missing value to `null` the same way
+   * it does every other optional field.
+   */
+  readonly headline: string | null;
   readonly body: string;
   readonly kind: "project" | "task" | "subtask";
   readonly state: string;
