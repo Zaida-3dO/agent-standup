@@ -60,17 +60,22 @@ export function emptyStateMessage(feed: SinceFeed): string | null {
  * catch-up view must not do.
  */
 export function eventSummary(event: SinceEvent): string {
+  // `payload` is only present on a `full: true` read (`SinceEvent`'s own
+  // header) — the slim default carries enough to say WHAT happened
+  // (`event.type`) but not always the specific field or value, so a slim
+  // event falls through to the type-name line below rather than the
+  // type-specific one.
   const payload = event.payload;
   switch (event.type) {
     case "state_change": {
-      const from = typeof payload.from === "string" ? payload.from : null;
-      const to = typeof payload.to === "string" ? payload.to : null;
+      const from = typeof payload?.from === "string" ? payload.from : null;
+      const to = typeof payload?.to === "string" ? payload.to : null;
       if (from && to) return `moved from ${humanise(from)} to ${humanise(to)}`;
       if (to) return `moved to ${humanise(to)}`;
       return "changed state";
     }
     case "field_change": {
-      const field = typeof payload.field === "string" ? payload.field : null;
+      const field = typeof payload?.field === "string" ? payload.field : null;
       return field ? `${humanise(field)} changed` : "a field changed";
     }
     case "note":

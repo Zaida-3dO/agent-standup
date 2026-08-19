@@ -30,6 +30,8 @@ export async function GET(request: Request) {
   if (personId !== null) input.personId = personId;
   const unseenOnly = url.searchParams.get("unseenOnly");
   if (unseenOnly !== null) input.unseenOnly = parseBooleanParam(unseenOnly);
+  const full = url.searchParams.get("full");
+  if (full !== null) input.full = parseBooleanParam(full);
 
   // `limit` is a number in the schema, so it has to arrive as one. A
   // non-numeric string is forwarded untouched rather than dropped or

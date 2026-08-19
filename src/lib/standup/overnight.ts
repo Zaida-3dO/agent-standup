@@ -66,9 +66,17 @@ export interface OvernightReport {
   readonly eventsTruncated: boolean;
 }
 
-/** An event whose `state_change` payload moved the item TO `to`. */
+/**
+ * An event whose `state_change` payload moved the item TO `to`.
+ *
+ * Requires `event.payload` to be present, which means this report's own
+ * events fetch must ask for `full: true` (see `fetchStandup` in
+ * `state.ts`) — the slim default (`SinceEvent`'s own header) does not
+ * carry `payload` at all, and an event missing it can never match here
+ * rather than being misread as "not a state change".
+ */
 function movedTo(event: SinceEvent, to: string): boolean {
-  return event.type === "state_change" && event.payload.to === to;
+  return event.type === "state_change" && event.payload?.to === to;
 }
 
 /**
