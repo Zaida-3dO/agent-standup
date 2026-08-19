@@ -123,9 +123,8 @@ function withoutComments(source) {
  *   - `[...path]` becomes `{path...}`, marking a catch-all as one rather
  *     than as a single parameter — a caller told `/api/ui/{path}` would
  *     reasonably assume one segment.
- *   - Route groups (`(group)`) contribute nothing to the URL. None exist
- *     under the API tree today; handled so that adding one does not
- *     silently produce a wrong path.
+ *   - Route groups (`(group)`) contribute nothing to the URL. Handled so
+ *     that introducing one cannot silently produce a wrong path.
  */
 function urlPathFor(relative) {
   const segments = relative
@@ -167,8 +166,8 @@ function methodsFor(source) {
         // `export const POST = ` — the assignment form, used by the MCP mount.
         `export\\s+(const|let|var)\\s+${method}\\s*=` +
         `|` +
-        // `export { serve as POST }` — the re-export form. Unused today;
-        // recognised so adopting it cannot silently drop a method.
+        // `export { serve as POST }` — the re-export form. Recognised so
+        // that adopting it cannot silently drop a method from the list.
         `export\\s*\\{[^}]*\\bas\\s+${method}\\b[^}]*\\}`,
     ).test(stripped),
   );

@@ -217,7 +217,7 @@ describe("the staleness check", () => {
     }
   });
 
-  it("fails when the committed index lists a route that no longer exists", () => {
+  it("fails when the committed index lists a route the tree does not serve", () => {
     // The other direction of drift, and the more dangerous one for a
     // caller: an index naming a deleted path sends them to a 404 while
     // asserting it should work.
