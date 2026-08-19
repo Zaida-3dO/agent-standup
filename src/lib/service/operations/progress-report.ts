@@ -5,18 +5,22 @@
 // half that reads: it gathers the facts the server already holds and maps
 // them into the rows, and its job is to gather them **honestly**.
 //
-// ── Two things the row asks for that the schema does not have ───────────
+// ── The PR link, and why it is read rather than composed ────────────────
 //
-// The row describes a link to the open PR and a blocked-on drawn from the
-// dependency graph. Neither exists, and inventing them would be the worse
-// failure — a report is trusted precisely because a reader does not have to
-// audit it, so a fabricated link is more damaging than an absent one.
+// The row asks for a link to the open PR. That is now a recorded fact: a
+// `pull_request` artifact carries the URL in `ref`, written by whoever opened
+// the PR, and this module reads the newest one per item. It links only when
+// that row says `open` and carries an http(s) URL, and otherwise falls back
+// to the branch — the full argument for recording over composing is in
+// `@/lib/pull-requests`, and the short version is that `repo` + `branch` are
+// present whether a PR is open, closed or never opened, so a composed URL
+// would be a confident link to nothing in two cases out of three.
 //
-//   - **No PR field.** Nothing in the schema stores a pull-request number or
-//     URL. The row's own parenthetical allows the alternative — "(or branch
-//     name)" — so a row references `Item.branch`, falling back to the item id,
-//     which is the thing a reader can always act on. When a PR reference is
-//     stored one day, this is the one function that changes.
+// A report is trusted precisely because a reader does not have to audit it,
+// so a fabricated link is more damaging than an absent one.
+//
+// ── One thing the row asks for that the schema still does not have ──────
+//
 //   - **No dependency graph.** There is no item-to-item edge anywhere. What
 //     exists is what an item records about *itself* when it is stopped:
 //     `blockedReason` with `blockedOnType`, and `pauseReason` with
@@ -45,11 +49,14 @@ import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import { deriveOpenLoops, type LoopEventLike } from "@/lib/open-loops";
 import {
   DONE_STATES,
+  MAX_FLAGS_PER_REPORT,
+  applyFlagBudget,
   renderProgressReport,
   summarise,
   type ProgressReport,
   type ProgressRow,
 } from "@/lib/progress-report";
+import { isLinkableUrl, pullRequestStatusOf } from "@/lib/pull-requests";
 
 /**
  * How many sub-bullets one row may carry.
@@ -110,6 +117,13 @@ interface RawLoopRow extends LoopEventLike {
   itemId: string;
 }
 
+/** The newest `pull_request` artifact per item: its URL and its status. */
+interface RawPullRequestRow {
+  itemId: string;
+  ref: string | null;
+  body: string | null;
+}
+
 /**
  * What is stopping this row, in a reader's words.
  *
@@ -164,6 +178,13 @@ function bulletsFor(
   return bullets;
 }
 
+// The two rules below are anchored on `sessionId` rather than on the output
+// fields they describe (`flags`, `reference`). A contract's `fields` name the
+// INPUT a rule is read against, so that a caller who has just been refused
+// finds the rule by matching on what they sent — `tests/describe-tool.test.ts`
+// enforces it. Neither behaviour has an input that switches it on, so both
+// belong to the call as a whole.
+//
 // Stryker disable all : this metadata is a module-level literal, read into
 // the registry at import — before any test body runs and never re-evaluated
 // — so a mutation here is unkillable by construction, NOT untested.
@@ -174,7 +195,7 @@ export const progressReport = defineOperation({
   name: "progress_report",
   kind: "read",
   summary:
-    "A progress report on everything this session holds, in one fixed shape: a numbered row per item with its branch, state and blocker, and two or three bullets on what is done and what is left.",
+    "A progress report on everything this session holds, in one fixed shape: a numbered row per item linking to its open PR (or naming its branch), with its state, its blocker, and two or three bullets on what is done and what is left.",
   contract: {
     rules: [
       {
@@ -184,6 +205,14 @@ export const progressReport = defineOperation({
       {
         fields: ["includeCompleted"],
         rule: "Completed work is omitted by default and still counted in the summary line. Pass `includeCompleted: true` to list it.",
+      },
+      {
+        fields: ["sessionId"],
+        rule: `Sub-bullets are the report's emphasis, so they are budgeted rather than merely advised against: at most ${MAX_FLAGS_PER_ROW} per row and at most ${MAX_FLAGS_PER_REPORT} across the whole report, spent in row order. They are not authored — they are the item's OPEN LOOPS, so the way to raise one is \`loop_add\` and the way to clear one is \`loop_close\`. Anything either cap withholds is counted at the foot of the report and listed in full by \`open_loops\`, so a dropped flag is never silent.`,
+      },
+      {
+        fields: ["sessionId"],
+        rule: "A row links to its pull request only when a `pull_request` artifact has been recorded for the item, is the newest one, and carries an http(s) URL in `ref`; otherwise it falls back to the branch and then to the item id. The report never composes a PR URL from the repo and branch, so record one with `record_artifact` when you open it — and record a PR that closes as a NEW `pull_request` artifact whose `body` is `closed`, since artifacts are append-only.",
       },
     ],
     example: { sessionId: "a-session-id" },
@@ -232,8 +261,41 @@ export const progressReport = defineOperation({
     const checkpoints = new Map<string, string | null>();
     const openChildren = new Map<string, number>();
     const loops = new Map<string, string[]>();
+    const prUrls = new Map<string, string>();
 
     if (itemIds.length > 0) {
+      // The newest `pull_request` artifact per item, and only that one.
+      // Artifacts are append-only, so a PR that closed is a NEWER row saying
+      // `closed` rather than an edit to the row that opened it — which makes
+      // "is there a live PR right now" this single-row read, while the whole
+      // history of an item's PRs survives underneath it.
+      //
+      // Ordered by `createdAt` and NOT by `id`, which is the one thing that
+      // differs from the checkpoint lookup above. `Event.id` is a sequence,
+      // so ordering an event by id really is newest-last; `Artifact.id` is a
+      // **random uuid**, so the same ORDER BY would pick an arbitrary row and
+      // the report would link to a closed PR roughly half the time. `id DESC`
+      // survives only as the tie-break, matching `currentTipCommitSha` — two
+      // artifacts written in one transaction share a timestamp, and an
+      // unordered "the last one" would be a coin flip.
+      const prRows = await ctx.db.$queryRawUnsafe<RawPullRequestRow[]>(
+        `SELECT DISTINCT ON ("itemId") "itemId", "ref", "body"
+           FROM "Artifact"
+          WHERE "itemId" = ANY($1) AND "kind" = 'pull_request'::"ArtifactKind"
+          ORDER BY "itemId", "createdAt" DESC, "id" DESC`,
+        itemIds,
+      );
+      for (const row of prRows) {
+        // Three conditions, each of which independently means "do not link":
+        // the newest row says the PR closed; the row carries no URL; the URL
+        // is not an http(s) address. The write path refuses the latter two,
+        // so they can only arrive on a row written before that guard existed
+        // — which is exactly when a report is most at risk of rendering
+        // something dead, so they are checked at the read as well.
+        if (pullRequestStatusOf(row.body) !== "open") continue;
+        if (!isLinkableUrl(row.ref)) continue;
+        prUrls.set(row.itemId, row.ref!.trim());
+      }
       // `DISTINCT ON` takes the newest checkpoint per item in one pass — the
       // same single-row-per-item read `orientation` does, widened to a set.
       const checkpointRows = await ctx.db.$queryRawUnsafe<RawCheckpointRow[]>(
@@ -298,9 +360,14 @@ export const progressReport = defineOperation({
       itemId: row.id,
       title: row.title,
       state: row.state,
-      reference: { branch: row.branch, itemId: row.id },
+      reference: { prUrl: prUrls.get(row.id) ?? null, branch: row.branch, itemId: row.id },
       blockedOn: blockedOnFor(row),
       bullets: bulletsFor(row, checkpoints.get(row.id) ?? null, openChildren.get(row.id) ?? 0),
+      // The per-row cap. What it drops is counted below rather than
+      // discarded, because a flag withheld by THIS cap is exactly as invisible
+      // to a reader as one withheld by the report budget — and the whole
+      // argument for announcing truncation is that a silently dropped flag is
+      // worse than one too many.
       flags: (loops.get(row.id) ?? []).slice(0, MAX_FLAGS_PER_ROW),
     }));
 
@@ -319,11 +386,30 @@ export const progressReport = defineOperation({
           .filter((row) => !DONE_STATES.has(row.state))
           .map((row, index) => ({ ...row, n: index + 1 }));
 
+    // The report-level flag budget, spent after filtering rather than before.
+    // Spending it on rows that are then dropped would let completed work
+    // consume the budget of the in-flight work the reader actually asked
+    // about — the flags would be withheld from the rows that matter, and the
+    // footer would explain a truncation the reader could not see the cause of.
+    const budgeted = applyFlagBudget(listed);
+
+    // What the PER-ROW cap dropped, counted over the rows that are actually
+    // listed — a row filtered out as completed withheld nothing a reader
+    // could have seen, so counting it would explain a truncation with no
+    // visible cause. Added to the report budget's own count so the foot of
+    // the report states one number for "flags you are not seeing", which is
+    // the only figure a reader can act on: both caps are equally invisible
+    // from the outside, and `open_loops` shows everything either of them hid.
+    const withheldByRowCap = listed.reduce((sum, row) => {
+      const all = loops.get(row.itemId)?.length ?? 0;
+      return sum + Math.max(0, all - MAX_FLAGS_PER_ROW);
+    }, 0);
+
     return {
       sessionId: input.sessionId,
-      rows: listed,
+      rows: budgeted.rows,
       summary,
-      report: renderProgressReport(listed, summary),
+      report: renderProgressReport(budgeted.rows, summary, budgeted.withheld + withheldByRowCap),
     };
   },
 });

@@ -1,0 +1,29 @@
+-- A distinct artifact kind for "a pull request was opened for this work".
+--
+-- Additive: one new label on "ArtifactKind". No existing column, constraint
+-- or row is altered, so this migration has nothing to back-fill and nothing
+-- to lose.
+--
+-- `ADD VALUE IF NOT EXISTS` rather than a bare `ADD VALUE`, for the reason
+-- the historical-verification migration records: a bare `ADD VALUE` on a
+-- label that already exists is an error, and an error here would leave the
+-- migration half-applied. Postgres 12+ permits `ALTER TYPE ... ADD VALUE`
+-- inside a transaction block (how Prisma runs this file) as long as the new
+-- label is not USED in the same transaction — nothing below writes one.
+--
+-- Why a recorded row rather than a URL composed from `repo` + `branch`: a
+-- composed link cannot tell "no PR was ever opened" and "the PR was closed
+-- unmerged" apart from "the PR is open", because the branch is present in
+-- all three cases. It would render a confident link to nothing in two of
+-- them, and a link that 404s is worse than the branch name it replaced.
+-- `Repo.host` is nullable and there is no forge or URL-scheme field, so
+-- composing would also have to guess the forge. Recording costs one write
+-- by the crew that opened the PR and is true by construction.
+--
+-- Why its own kind rather than a column on "Item": a PR is a thing that was
+-- produced for an item, at a review round, by a known actor — which is what
+-- this table is for. A column would hold one URL and silently lose the
+-- earlier one when work is re-proposed, and it would carry no author and no
+-- timestamp. The artifact row keeps every PR the item ever had, and the
+-- report reads the newest.
+ALTER TYPE "ArtifactKind" ADD VALUE IF NOT EXISTS 'pull_request';
