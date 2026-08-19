@@ -30,6 +30,29 @@ import { buildOvernightReport, defaultCutoff, type OvernightReport } from "./ove
  */
 const OVERNIGHT_EVENTS_LIMIT = 15;
 
+/**
+ * The `since` cursor that lands a page of `limit` rows at the ledger's tail.
+ *
+ * `horizon` is the newest id a read can see, and ids are a gapless-enough
+ * sequence that `horizon - limit` is a good page boundary: too low and the
+ * page is merely larger than asked for (the LIMIT still bounds it), never
+ * smaller. Clamped at 0 so a ledger shorter than one page reads from the
+ * start, which is correct — there is nothing before it to miss.
+ *
+ * Returns `undefined` on an unparseable horizon so the caller falls back to
+ * an unbounded `since`, which is the pre-existing behaviour rather than a
+ * new failure mode.
+ */
+export function tailCursor(horizon: string, limit: number): string | undefined {
+  // `BigInt("")` is 0n rather than a throw, so an empty horizon would silently
+  // become a read from the ledger's start — the exact bug this exists to stop.
+  // Demand digits explicitly instead of relying on the constructor to refuse.
+  if (!/^\d+$/.test(horizon.trim())) return undefined;
+  const parsed = BigInt(horizon.trim());
+  const start = parsed - BigInt(limit);
+  return (start > 0n ? start : 0n).toString();
+}
+
 export interface StandupData {
   readonly overnight: OvernightReport;
   /** Every in-progress entry, live assignments included — "in flight now". */
@@ -60,10 +83,26 @@ export async function fetchStandup(
 ): Promise<StandupData> {
   const since = defaultCutoff(now);
 
+  // The overnight report is about *last night*, so it must read the END of
+  // the ledger. `readSinceBounded` is `WHERE id > since ORDER BY id ASC`, so
+  // a fetch with no `since` starts at the ledger's beginning and LIMIT takes
+  // the OLDEST rows — on this installation that is the 2026-08-14 import,
+  // and the report renders a confident "0 merged" about events from months
+  // ago. A large page can hide this on a young ledger by reaching far enough
+  // to cover last night by accident; the window is wrong at any page size,
+  // and the smaller the page the more certainly it shows.
+  //
+  // A cheap first probe gets `horizon` (the newest visible event id), and the
+  // real read then starts one page back from it. Two round-trips rather than
+  // one, deliberately: `since` is an id cursor and takes no timestamp, so
+  // this is the only way to reach the tail without widening the API.
+  const probe = await fetchFeed({ personId, limit: 1 }, fetchImpl);
+  const tailStart = tailCursor(probe.horizon, OVERNIGHT_EVENTS_LIMIT);
+
   const [feed, costs, inProgress, projects, needsYou] = await Promise.all([
     // `full: true` — see `OVERNIGHT_EVENTS_LIMIT`'s own comment on why this
     // fetch, alone among this file's reads, needs the heavy shape.
-    fetchFeed({ personId, limit: OVERNIGHT_EVENTS_LIMIT, full: true }, fetchImpl),
+    fetchFeed({ personId, limit: OVERNIGHT_EVENTS_LIMIT, full: true, since: tailStart }, fetchImpl),
     fetchCosts({ groupBy: "stage", since }, fetchImpl),
     fetchBoardColumn("in_progress", { fetchImpl }),
     fetchProjects({ fetchImpl }),
