@@ -12,8 +12,23 @@ import type { ProjectsPayload } from "@/lib/projects/types";
 import type { BoardEntry } from "@/lib/board/types";
 import { buildOvernightReport, defaultCutoff, type OvernightReport } from "./overnight";
 
-/** The events page size the overnight report reads — the max a single `get_events` call allows. */
-const OVERNIGHT_EVENTS_LIMIT = 200;
+/**
+ * The events page size the overnight report reads.
+ *
+ * **Not the max `get_events` allows.** This fetch asks for `full: true`
+ * (`buildOvernightReport`'s `movedTo` needs `payload.to` to tell a
+ * `state_change` into `blocked` from any other field change), so it pays
+ * the same per-event size the response-size guard was filed over: one event
+ * measured at 7,398 characters full, and a 200-row full page was the
+ * concrete read that broke `/api/events` with a 547,961-character response
+ * against the 200,000-character guard (`response-size.ts`). 15 is a
+ * conservative page at that per-event size, with real margin below the
+ * guard rather than riding its edge — an installation whose events run
+ * larger than measured still has the guard itself as a backstop, so this
+ * number degrading gracefully (via `OvernightReport.eventsTruncated`)
+ * matters more than it being exact.
+ */
+const OVERNIGHT_EVENTS_LIMIT = 15;
 
 export interface StandupData {
   readonly overnight: OvernightReport;
@@ -46,7 +61,9 @@ export async function fetchStandup(
   const since = defaultCutoff(now);
 
   const [feed, costs, inProgress, projects, needsYou] = await Promise.all([
-    fetchFeed({ personId, limit: OVERNIGHT_EVENTS_LIMIT }, fetchImpl),
+    // `full: true` — see `OVERNIGHT_EVENTS_LIMIT`'s own comment on why this
+    // fetch, alone among this file's reads, needs the heavy shape.
+    fetchFeed({ personId, limit: OVERNIGHT_EVENTS_LIMIT, full: true }, fetchImpl),
     fetchCosts({ groupBy: "stage", since }, fetchImpl),
     fetchBoardColumn("in_progress", { fetchImpl }),
     fetchProjects({ fetchImpl }),

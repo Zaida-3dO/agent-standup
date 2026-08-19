@@ -30,7 +30,18 @@ export type SinceEventType =
   | "open_loop"
   | "open_loop_closed";
 
-/** One event, with the current profile's read state already resolved against it by the server. */
+/**
+ * One event, with the current profile's read state already resolved against
+ * it by the server.
+ *
+ * **`payload` and `body` are optional, not always present.** `GET /events`
+ * returns the slim shape by default — id, itemId, itemTitle, ts, actorType,
+ * actorId, type and seen state, which is what a "what's new" line needs —
+ * and only carries `payload`/`body` when the caller asked with `full: true`
+ * (`FetchFeedOptions.full`, `state.ts`). A component reading `event.body`
+ * or `event.payload` without checking for `undefined` first would be
+ * assuming a shape the server only sometimes sends.
+ */
 export interface SinceEvent {
   /** A stringified `bigint` — never a number. See the operation's `since` field for why. */
   readonly id: string;
@@ -41,8 +52,10 @@ export interface SinceEvent {
   readonly actorType: "person" | "agent" | "system";
   readonly actorId: string | null;
   readonly type: string;
-  readonly payload: Record<string, unknown>;
-  readonly body: string | null;
+  /** Present only when the request that produced this feed asked for `full: true`. */
+  readonly payload?: Record<string, unknown>;
+  /** Present only when the request that produced this feed asked for `full: true`. */
+  readonly body?: string | null;
   /** Whether **this** profile has marked it seen. */
   readonly seen: boolean;
   /** Whether any profile has — distinct from `seen`, see the operation's header. */
