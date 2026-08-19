@@ -13,6 +13,8 @@ import { SummaryPanel } from "@/components/item-detail/SummaryPanel";
 import { Markdown } from "@/components/item-detail/Markdown";
 import { TabStrip } from "@/components/item-detail/TabStrip";
 import { StatusBlock } from "@/components/item-detail/StatusBlock";
+import { ChipLink } from "@/components/item-detail/ChipLink";
+import { InlineEditField } from "@/components/item-detail/InlineEditField";
 import { TABS } from "@/lib/item-detail/tabs";
 import type {
   DetailArtifact,
@@ -63,6 +65,7 @@ function detailItem(overrides: Partial<ItemDetail["item"]> = {}): ItemDetail["it
     id: "item-1",
     parentId: null,
     title: "An item",
+    headline: null,
     body: "",
     kind: "task",
     state: "executing",
@@ -297,6 +300,120 @@ describe("ItemDetailView", () => {
       "changes_required",
     );
   });
+
+  describe("chip links back to a filtered board (M10 T10)", () => {
+    it("links the header's area and repo chips", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({ item: detailItem({ area: "billing", repo: "api" }) }),
+        },
+      });
+      const hrefs = findAllByType(element, ChipLink)
+        .map((el) => (el.props as { href?: string }).href)
+        .filter((h): h is string => typeof h === "string");
+      expect(hrefs).toContain("/board?area=billing");
+      expect(hrefs).toContain("/board?repo=api");
+    });
+
+    it("does not link a repo the item has none of", () => {
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail({ item: detailItem({ repo: null }) }) },
+      });
+      const hrefs = findAllByType(element, ChipLink)
+        .map((el) => (el.props as { href?: string }).href)
+        .filter((h): h is string => typeof h === "string");
+      expect(hrefs.some((h) => h.startsWith("/board?repo="))).toBe(false);
+    });
+  });
+
+  describe("inline edit on title and headline (M10 T10)", () => {
+    it("shows the title as plain text, with an Edit control, when not editing", () => {
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail({ item: detailItem({ title: "A title" }) }) },
+        edit: { onStartEdit: () => {} },
+      });
+      expect(textOf(element)).toContain("A title");
+      const buttons = [...walk(element)].filter((el) => el.type === "button");
+      const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
+      expect(labels).toContain("Edit title");
+    });
+
+    it("hands InlineEditField the title's own draft while title is the editing field", () => {
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail() },
+        edit: { editingField: "title", draft: "New title" },
+      });
+      const fields = findAllByType(element, InlineEditField);
+      const titleField = fields.find((f) => (f.props as { label?: string }).label === "Title");
+      expect(titleField).toBeDefined();
+      expect((titleField!.props as { editing?: boolean }).editing).toBe(true);
+      expect((titleField!.props as { draft?: string }).draft).toBe("New title");
+    });
+
+    it("passes live title advice through to InlineEditField while editing the title", () => {
+      // MILESTONES.md #131's convention advises, never refuses — this is
+      // the plumbing that gets the advisory text in front of the reader
+      // while they are still typing, not only after a failed save.
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail() },
+        edit: { editingField: "title", draft: "fix #102", titleAdvice: "A note on the title" },
+      });
+      const fields = findAllByType(element, InlineEditField);
+      const titleField = fields.find((f) => (f.props as { label?: string }).label === "Title");
+      expect((titleField!.props as { advice?: string }).advice).toBe("A note on the title");
+    });
+
+    it("offers headline edit even when the item has none yet", () => {
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail({ item: detailItem({ headline: null }) }) },
+        edit: { onStartEdit: () => {} },
+      });
+      const fields = findAllByType(element, InlineEditField);
+      const headlineField = fields.find(
+        (f) => (f.props as { label?: string }).label === "Headline",
+      );
+      expect(headlineField).toBeDefined();
+      expect((headlineField!.props as { value?: string | null }).value).toBeNull();
+    });
+
+    it("does not editorialise which field is mid-edit onto both title and headline at once", () => {
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail() },
+        edit: { editingField: "title", draft: "x" },
+      });
+      const fields = findAllByType(element, InlineEditField);
+      const editingFields = fields.filter((f) => (f.props as { editing?: boolean }).editing);
+      expect(editingFields).toHaveLength(1);
+    });
+  });
+
+  describe("the Activity tab's filter and page state (M10 T10)", () => {
+    it("passes the type filter and page through to HistoryList", () => {
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail() },
+        activeTab: "activity",
+        historyTypeFilter: "escalation",
+        historyPage: 2,
+      });
+      const lists = findAllByType(element, HistoryList);
+      expect(lists).toHaveLength(1);
+      expect((lists[0]!.props as { typeFilter?: string | null }).typeFilter).toBe("escalation");
+      expect((lists[0]!.props as { page?: number }).page).toBe(2);
+    });
+  });
+
+  it("hands StatusBlock the edit props, so priority/area edit reaches the block that renders them", () => {
+    const onStartEdit = () => {};
+    const element = ItemDetailView({
+      loadState: { status: "loaded", detail: detail() },
+      edit: { onStartEdit },
+    });
+    const block = findOneByType(element, StatusBlock);
+    expect((block.props as { edit?: { onStartEdit?: unknown } }).edit?.onStartEdit).toBe(
+      onStartEdit,
+    );
+  });
 });
 
 describe("SubtaskTree", () => {
@@ -478,6 +595,103 @@ describe("HistoryList", () => {
   it("does not claim truncation when the whole ledger was returned", () => {
     const element = HistoryList({ history: [historyEntry()], truncated: false });
     expect(textOf(element)).not.toContain("Older entries are not shown");
+  });
+
+  it("groups entries by day, day headings newest first", () => {
+    const element = HistoryList({
+      history: [
+        historyEntry({ id: "3", ts: "2026-03-05T01:00:00.000Z" }),
+        historyEntry({ id: "2", ts: "2026-03-04T23:00:00.000Z" }),
+        historyEntry({ id: "1", ts: "2026-03-04T01:00:00.000Z" }),
+      ],
+      truncated: false,
+    });
+    const days = elementsWithProp(element, "data-day").map(
+      (el) => (el.props as Record<string, unknown>)["data-day"],
+    );
+    expect(days).toEqual(["2026-03-05", "2026-03-04"]);
+  });
+
+  it("shows a filter chip for every type present, and only those types", () => {
+    const element = HistoryList({
+      history: [historyEntry({ type: "note" }), historyEntry({ id: "2", type: "escalation" })],
+      truncated: false,
+    });
+    const chips = elementsWithProp(element, "data-event-type").map(
+      (el) => (el.props as Record<string, unknown>)["data-event-type"],
+    );
+    expect(chips.sort()).toEqual(["escalation", "note"]);
+  });
+
+  it("narrows the rows shown to the active type filter", () => {
+    const history = [
+      historyEntry({ id: "1", type: "note" }),
+      historyEntry({ id: "2", type: "escalation" }),
+    ];
+    const element = HistoryList({ history, truncated: false, typeFilter: "escalation" });
+    expect(elementsWithProp(element, "data-holder-id")).toHaveLength(0);
+    const rows = [...walk(element)].filter(
+      (el) => (el.props as Record<string, unknown>)["data-type"] !== undefined,
+    );
+    expect(rows).toHaveLength(1);
+    expect((rows[0]!.props as Record<string, unknown>)["data-type"]).toBe("escalation");
+  });
+
+  it("says plainly when the active filter matches nothing", () => {
+    const element = HistoryList({
+      history: [historyEntry({ type: "note" })],
+      truncated: false,
+      typeFilter: "escalation",
+    });
+    expect(textOf(element)).toContain("No events of this type");
+  });
+
+  it("shows a pager even at exactly one page", () => {
+    // `textOf` joins each child with a space, so "Page {n} of {count}"
+    // arrives as separate tokens ("Page", 1, "of", 1) rather than one
+    // string — asserted as the tokens actually present, not the sentence
+    // they compose visually.
+    const text = textOf(HistoryList({ history: [historyEntry()], truncated: false }));
+    expect(text).toContain("Page");
+    expect(text).toContain("of");
+    // Both the page number and the count render as "1" at a single page.
+    expect((text.match(/\b1\b/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("pages a long list HISTORY_PAGE_SIZE at a time", () => {
+    const history = Array.from({ length: 30 }, (_, i) =>
+      historyEntry({ id: String(i), ts: `2026-03-0${1 + Math.floor(i / 10)}T00:00:00.000Z` }),
+    );
+    const pageZero = HistoryList({ history, truncated: false, page: 0 });
+    const pagerZero = elementsWithProp(pageZero, "data-page-count");
+    expect((pagerZero[0]!.props as Record<string, unknown>)["data-page-count"]).toBe(2);
+    expect((pagerZero[0]!.props as Record<string, unknown>)["data-page"]).toBe(0);
+
+    const pageOne = HistoryList({ history, truncated: false, page: 1 });
+    const pagerOne = elementsWithProp(pageOne, "data-page-count");
+    expect((pagerOne[0]!.props as Record<string, unknown>)["data-page"]).toBe(1);
+
+    // Exactly HISTORY_PAGE_SIZE rows shown on the first page, the
+    // remainder on the second — the "not unbounded" acceptance criterion.
+    const shownZero = elementsWithProp(pageZero, "data-shown-count");
+    expect((shownZero[0]!.props as Record<string, unknown>)["data-shown-count"]).toBe(25);
+    const shownOne = elementsWithProp(pageOne, "data-shown-count");
+    expect((shownOne[0]!.props as Record<string, unknown>)["data-shown-count"]).toBe(5);
+  });
+
+  it("renders the pager's Previous/Next as calling onPageChange with the adjacent page", () => {
+    const history = Array.from({ length: 30 }, (_, i) => historyEntry({ id: String(i) }));
+    const calls: number[] = [];
+    const element = HistoryList({
+      history,
+      truncated: false,
+      page: 0,
+      onPageChange: (page) => calls.push(page),
+    });
+    const buttons = [...walk(element)].filter((el) => el.type === "button");
+    const next = buttons.find((b) => textOf(b) === "Next")!;
+    (next.props as { onClick?: () => void }).onClick?.();
+    expect(calls).toEqual([1]);
   });
 });
 

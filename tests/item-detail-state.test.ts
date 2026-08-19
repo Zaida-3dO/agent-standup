@@ -10,6 +10,7 @@ function detailItem(): ItemDetail["item"] {
     id: "item-1",
     parentId: null,
     title: "An item",
+    headline: null,
     body: "",
     kind: "task",
     state: "executing",

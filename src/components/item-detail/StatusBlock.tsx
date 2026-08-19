@@ -28,6 +28,7 @@ import type { ItemState } from "@/lib/board/types";
 import type { Priority } from "@/lib/design/tokens";
 import { columnTitle } from "@/lib/board/view";
 import { showsOwnState } from "@/lib/item-detail/view";
+import { boardLinkFor } from "@/lib/item-detail/board-link";
 import {
   blockedLabel,
   livenessPresentation,
@@ -37,7 +38,11 @@ import {
 } from "@/lib/item-detail/status";
 import type { BoardColumnId, DetailAssignment, DetailItem } from "@/lib/item-detail/types";
 import type { OpenLoop } from "@/lib/open-loops";
+import type { ItemEditProps } from "@/lib/item-detail/edit-state";
+import { ChipLink } from "./ChipLink";
+import { InlineEditField } from "./InlineEditField";
 import styles from "./StatusBlock.module.css";
+import detailStyles from "./ItemDetail.module.css";
 
 export interface StatusBlockProps {
   readonly item: DetailItem;
@@ -45,18 +50,71 @@ export interface StatusBlockProps {
   readonly status: StatusSummary;
   /** What the caller means by "now", in epoch ms — see the header. */
   readonly now: number;
+  /** Inline edit on priority and area — see `ItemDetailView`'s `ItemEditProps`. Absent renders both read-only. */
+  readonly edit?: ItemEditProps;
 }
 
-export function StatusBlock({ item, column, status, now }: StatusBlockProps) {
+export function StatusBlock({ item, column, status, now, edit = {} }: StatusBlockProps) {
+  const editingPriority = edit.editingField === "priority";
+  const editingArea = edit.editingField === "area";
+  const draft = edit.draft ?? "";
+
   return (
     <section className={styles.block} data-status-block aria-label="Status and ownership">
       <div className={styles.chips}>
         {/* A project's own `state` is a creation leftover (DECISIONS.md
             §13c), so it is suppressed rather than printed as fact — the
             derived column below is the honest position. Same rule the
-            header applies, via the same function. */}
-        {showsOwnState(item.kind) && <StateChip state={item.state as ItemState} />}
-        <PriorityChip priority={item.priority as Priority} />
+            header applies, via the same function.
+
+            Also a link back to a board filtered on this state (M10 T10). */}
+        {showsOwnState(item.kind) && (
+          <ChipLink
+            href={boardLinkFor("state", item.state)}
+            label={`Filter the board by state: ${item.state}`}
+          >
+            <StateChip state={item.state as ItemState} />
+          </ChipLink>
+        )}
+
+        {/* Priority: a link when not editing, an inline `<select>` when
+            it is (M10 T10 — "there is no edit affordance anywhere"). The
+            two do not overlap: a chip that is also a text input would be
+            neither a clean link nor a clean control. */}
+        {editingPriority ? (
+          <InlineEditField
+            label="Priority"
+            value={item.priority}
+            kind="priority"
+            editing
+            draft={draft || item.priority}
+            onDraftChange={edit.onDraftChange}
+            onSave={edit.onSaveEdit}
+            onCancel={edit.onCancelEdit}
+            saving={edit.saving}
+            error={edit.editError}
+          />
+        ) : (
+          <span className={detailStyles.inlineEditView} data-field="priority">
+            <ChipLink
+              href={boardLinkFor("priority", item.priority)}
+              label={`Filter the board by priority: ${item.priority}`}
+            >
+              <PriorityChip priority={item.priority as Priority} />
+            </ChipLink>
+            {edit.onStartEdit && (
+              <button
+                type="button"
+                className={detailStyles.inlineEditButton}
+                aria-label="Edit priority"
+                onClick={() => edit.onStartEdit?.("priority")}
+              >
+                Edit
+              </button>
+            )}
+          </span>
+        )}
+
         <span className={styles.column} data-column={column}>
           {columnTitle(column)}
         </span>
@@ -64,6 +122,47 @@ export function StatusBlock({ item, column, status, now }: StatusBlockProps) {
         {/* Renders nothing under 4h, by design — an indicator on every item
             is an indicator on no item. See `StalenessDot`'s header. */}
         <StalenessDot ageMs={status.ageMs} />
+      </div>
+
+      {/* Area — editable here rather than in the header meta row, so both
+          priority and area sit beside the same "Edit" affordance pattern
+          as state/priority above, and the header stays the title and
+          headline's own space. */}
+      <div className={styles.row} data-region="area">
+        <span className={styles.rowLabel}>Area</span>
+        {editingArea ? (
+          <InlineEditField
+            label="Area"
+            value={item.area}
+            kind="text"
+            editing
+            draft={draft}
+            onDraftChange={edit.onDraftChange}
+            onSave={edit.onSaveEdit}
+            onCancel={edit.onCancelEdit}
+            saving={edit.saving}
+            error={edit.editError}
+          />
+        ) : (
+          <span className={detailStyles.inlineEditView} data-field="area">
+            <ChipLink
+              href={boardLinkFor("area", item.area)}
+              label={`Filter the board by area: ${item.area}`}
+            >
+              <span>{item.area}</span>
+            </ChipLink>
+            {edit.onStartEdit && (
+              <button
+                type="button"
+                className={detailStyles.inlineEditButton}
+                aria-label="Edit area"
+                onClick={() => edit.onStartEdit?.("area")}
+              >
+                Edit
+              </button>
+            )}
+          </span>
+        )}
       </div>
 
       {ownership(status.holders, status.previousHolders)}
@@ -98,7 +197,18 @@ function ownership(holders: readonly DetailAssignment[], previous: readonly Deta
           {holders.map((holder) => (
             <li key={holder.id} className={styles.holder} data-holder-id={holder.holderId}>
               {liveness(holder.liveness, holder.displayName)}
-              <span className={styles.holderName}>{holder.displayName}</span>
+              {/* A link back to the board filtered to this holder as
+                  assignee (M10 T10) — "who else is this person on right
+                  now" becomes one click. Uses `holderId`, not
+                  `displayName`: `assignee` matches a live assignment's
+                  `holderId` exactly (see `boardLinkFor`'s header), and a
+                  person's display name can differ from their id. */}
+              <ChipLink
+                href={boardLinkFor("assignee", holder.holderId)}
+                label={`Filter the board by assignee: ${holder.displayName}`}
+              >
+                <span className={styles.holderName}>{holder.displayName}</span>
+              </ChipLink>
               <span className={styles.role}>{roleLabel(holder)}</span>
               <span>since {holder.claimedAt}</span>
               <span>last active {holder.lastActive}</span>

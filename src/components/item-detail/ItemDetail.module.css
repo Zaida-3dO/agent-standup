@@ -91,6 +91,77 @@
   font-size: 0.85rem;
 }
 
+/* A chip wrapped as a link back to a filtered board — M10 T10. No border
+   or background of its own: the chip inside supplies its full look, and
+   this only needs to signal "this is clickable" on hover/focus without
+   doubling the chip's outline. */
+.chipLink {
+  display: inline-flex;
+  text-decoration: none;
+  border-radius: var(--radius-full);
+}
+
+.chipLink:hover,
+.chipLink:focus-visible {
+  outline: 1px solid var(--state-in_review-fg);
+  outline-offset: 1px;
+}
+
+/* ── Inline edit — M10 T10 ──────────────────────────────────────────────
+   No control anywhere else in the app can correct a stored field. Title,
+   headline, priority and area each get a small view/edit toggle rather
+   than a form of their own — one field at a time, saved independently, so
+   fixing a title costs one click and one Enter, not a page navigation. */
+.inlineEditView {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.inlineEditForm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.inlineEditButton {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--surface-card);
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.inlineEditButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.inlineEditInput,
+.inlineEditSelect {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--state-in_review-fg);
+  border-radius: var(--radius-md, 6px);
+  background: var(--surface-app);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.inlineEditAdvice {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.inlineEditError {
+  color: var(--state-blocked-fg);
+  font-size: 0.78rem;
+}
+
 .body {
   margin: 0.75rem 0 0;
   color: var(--text-secondary);
@@ -238,6 +309,58 @@
   white-space: pre-wrap;
 }
 
+/* The type filter row — "All" plus one chip per type actually present in
+   the loaded window, so the row never offers a filter that would empty the
+   list. Plain buttons, not the priority/state chip primitives: those carry
+   a fixed, product-wide vocabulary (twelve states, four priorities) and
+   this row's set changes per item. */
+.historyFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.75rem;
+}
+
+.historyFilterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--surface-card);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-3xs);
+  cursor: pointer;
+}
+
+.historyFilterChip[data-active="true"] {
+  border-color: var(--state-in_review-fg);
+  color: var(--state-in_review-fg);
+}
+
+/* One day's worth of the timeline. `<h3>` for the heading rather than a
+   styled `<span>`, so the grouping is structure a screen reader announces,
+   not merely a visual break a sighted reader infers from spacing. */
+.historyDays {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historyDay + .historyDay {
+  margin-top: 1rem;
+}
+
+.historyDayHeading {
+  margin: 0 0 0.35rem;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .history {
   margin: 0;
   padding: 0;
@@ -246,10 +369,18 @@
 
 .historyEntry {
   display: flex;
+  align-items: baseline;
   gap: 0.6rem;
   padding: 0.4rem 0;
   border-bottom: 1px solid var(--surface-card);
   font-size: 0.85rem;
+}
+
+.historyIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
 }
 
 .historyTs {
@@ -270,6 +401,39 @@
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The pager. Shown even at one page — the count itself ("Page 1 of 1") is
+   the fact that tells a reader there is nothing more to page through,
+   which an absent control does not. */
+.historyPager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.historyPagerButton {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--surface-card);
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.historyPagerButton:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.historyPagerLabel {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .truncated {

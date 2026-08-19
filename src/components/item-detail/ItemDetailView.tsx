@@ -30,6 +30,9 @@ import type { ReactNode } from "react";
 import type { DetailLoadState } from "@/lib/item-detail/state";
 import { artifactsForTab, latestVerdict, waitingReason } from "@/lib/item-detail/view";
 import { DEFAULT_TAB, type DetailTab } from "@/lib/item-detail/tabs";
+import type { ItemEditProps } from "@/lib/item-detail/edit-state";
+import type { EventType } from "@/lib/events";
+import { boardLinkFor } from "@/lib/item-detail/board-link";
 import { SubtaskTree } from "./SubtaskTree";
 import { HistoryList } from "./HistoryList";
 import { PlanPanel } from "./PlanPanel";
@@ -40,6 +43,8 @@ import { Markdown } from "./Markdown";
 import { VerdictBadge } from "./VerdictBadge";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
 import { StatusBlock } from "./StatusBlock";
+import { InlineEditField } from "./InlineEditField";
+import { ChipLink } from "./ChipLink";
 import { statusSummary } from "@/lib/item-detail/status";
 import styles from "./ItemDetail.module.css";
 
@@ -70,6 +75,13 @@ export interface ItemDetailViewProps {
   readonly agentState?: AgentPanelState;
   /** Fetches the agent view. Absent renders that panel read-only. */
   readonly onLoadAgentView?: () => void;
+  /** Inline edit on title, headline, priority and area — see `ItemEditProps`. */
+  readonly edit?: ItemEditProps;
+  /** The Activity tab's own state — which event type is filtered and which page is showing. See `HistoryList`. */
+  readonly historyTypeFilter?: EventType | null;
+  readonly onHistoryTypeFilterChange?: (type: EventType | null) => void;
+  readonly historyPage?: number;
+  readonly onHistoryPageChange?: (page: number) => void;
 }
 
 /**
@@ -109,6 +121,11 @@ export function ItemDetailView({
   now = 0,
   agentState = { status: "idle" },
   onLoadAgentView,
+  edit = {},
+  historyTypeFilter = null,
+  onHistoryTypeFilterChange,
+  historyPage = 0,
+  onHistoryPageChange,
 }: ItemDetailViewProps) {
   if (loadState.status === "error") {
     return (
@@ -137,6 +154,10 @@ export function ItemDetailView({
   const planArtifacts = artifactsForTab(artifacts, "plan");
   const reviewArtifacts = artifactsForTab(artifacts, "reviews");
 
+  const editingTitle = edit.editingField === "title";
+  const editingHeadline = edit.editingField === "headline";
+  const draft = edit.draft ?? "";
+
   return (
     <article className={styles.detail} data-item-id={item.id} data-active-tab={activeTab}>
       <header className={styles.header}>
@@ -144,11 +165,84 @@ export function ItemDetailView({
             every tab, so it sits outside them; the state/priority/column
             chips belong to the status block below, where they are one part
             of a larger answer rather than a row of their own. Rendering
-            them here as well would show the same three chips twice. */}
-        <h1 className={styles.title}>{item.title}</h1>
+            them here as well would show the same three chips twice.
+
+            Inline-editable (M10 T10): every item is minted by an agent and
+            nothing in the UI could correct one, so a badly-titled item
+            stays badly titled. `<h1>` is preserved in view mode; in edit
+            mode `InlineEditField` renders its own control, so the
+            heading's semantics are not lost, only interrupted for the
+            duration of the edit. */}
+        {editingTitle ? (
+          <div className={styles.title}>
+            <InlineEditField
+              label="Title"
+              value={item.title}
+              kind="text"
+              editing
+              draft={draft}
+              onDraftChange={edit.onDraftChange}
+              onSave={edit.onSaveEdit}
+              onCancel={edit.onCancelEdit}
+              saving={edit.saving}
+              error={edit.editError}
+              advice={edit.titleAdvice}
+            />
+          </div>
+        ) : (
+          <h1 className={styles.title}>
+            {item.title}
+            {edit.onStartEdit && (
+              <button
+                type="button"
+                className={styles.inlineEditButton}
+                aria-label="Edit title"
+                onClick={() => edit.onStartEdit?.("title")}
+              >
+                Edit
+              </button>
+            )}
+          </h1>
+        )}
+
+        {/* The headline — the one-line BLUF (MILESTONES.md #107) — gets
+            its own inline edit row rather than sharing the title's, since
+            the two are independent fields with independent saves. */}
+        <div className={styles.meta} data-field="headline">
+          <InlineEditField
+            label="Headline"
+            value={item.headline}
+            kind="text"
+            editing={editingHeadline}
+            draft={draft}
+            onDraftChange={edit.onDraftChange}
+            onStartEdit={edit.onStartEdit ? () => edit.onStartEdit?.("headline") : undefined}
+            onSave={edit.onSaveEdit}
+            onCancel={edit.onCancelEdit}
+            saving={edit.saving}
+            error={editingHeadline ? edit.editError : null}
+          />
+        </div>
+
         <div className={styles.meta}>
-          <span>{item.area}</span>
-          {item.repo !== null && <span>{item.repo}</span>}
+          {/* Area and repo are links back to `/board`, pre-filtered to
+              this value (M10 T10) — "what else is in this area" becomes
+              one click. See `boardLinkFor`'s header for the contract this
+              targets. */}
+          <ChipLink
+            href={boardLinkFor("area", item.area)}
+            label={`Filter the board by area: ${item.area}`}
+          >
+            <span>{item.area}</span>
+          </ChipLink>
+          {item.repo !== null && (
+            <ChipLink
+              href={boardLinkFor("repo", item.repo)}
+              label={`Filter the board by repo: ${item.repo}`}
+            >
+              <span>{item.repo}</span>
+            </ChipLink>
+          )}
           {item.branch !== null && <span className={styles.sha}>{item.branch}</span>}
           {/* The LATEST verdict, as its tier rather than as an
               underscore-stripped string — the difference between "merge it"
@@ -172,7 +266,7 @@ export function ItemDetailView({
           block. Inside a tab it would answer "why is this stuck" only for
           the reader who already guessed which tab to open; the question is
           asked of every item, on arrival, before anything else. */}
-      <StatusBlock item={item} column={column} status={status} now={now} />
+      <StatusBlock item={item} column={column} status={status} now={now} edit={edit} />
 
       <TabStrip
         activeTab={activeTab}
@@ -217,7 +311,14 @@ export function ItemDetailView({
       {panel(
         "activity",
         activeTab === "activity",
-        <HistoryList history={history} truncated={historyTruncated} />,
+        <HistoryList
+          history={history}
+          truncated={historyTruncated}
+          typeFilter={historyTypeFilter}
+          onTypeFilterChange={onHistoryTypeFilterChange}
+          page={historyPage}
+          onPageChange={onHistoryPageChange}
+        />,
       )}
 
       {/* A summary exists only once an item has been completed (SCHEMA.md
