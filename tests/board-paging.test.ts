@@ -32,6 +32,7 @@ function entry(id: string): BoardEntry {
     },
     column: "backlog",
     assignments: [],
+    trust: null,
   };
 }
 

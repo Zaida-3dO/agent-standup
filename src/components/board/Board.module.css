@@ -345,6 +345,19 @@
   opacity: 0.65;
 }
 
+/* A card whose `state` arrived by copy from an external store and has never
+   been checked (MILESTONES.md #131) — the dashed border `globals.css` §6
+   promises alongside the `TrustBadge`. Applied to the card's WHOLE outline
+   rather than only the left border `.toneAmber`/`.toneRed` use: the tone
+   border already carries paused-vs-blocked, and stealing it for a second
+   meaning would make a paused-and-unverified card ambiguous between the
+   two. A dashed outline is a distinct channel from a solid coloured edge,
+   so both can be true on one card without either reading as the other. */
+.cardUnverified {
+  border-style: dashed;
+  border-color: var(--trust-unverified-border);
+}
+
 /* A card that can be picked up says so on hover; a project cannot be
    dragged at all, so it keeps the default cursor. */
 .card[draggable="true"] {
@@ -447,12 +460,15 @@
   text-decoration: underline;
 }
 
-/* The BLUF line (#107) — sits under the title, quieter than it but louder
-   than the waiting reason, because it is what the card is *for*. */
-.cardHeadline {
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  line-height: 1.35;
+/* The demoted source `title`, shown ONLY when `headline` has taken its
+   place as the card's primary line (MILESTONES.md #131). Quieter than the
+   headline above it and quieter than the waiting reason below — a reader
+   who wants it is confirming a source reference, not scanning for it. */
+.cardSourceTitle {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.3;
+  font-family: var(--font-mono, monospace);
 }
 
 .cardReason {

@@ -17,6 +17,7 @@ function artifact(overrides: Partial<DetailArtifact> = {}): DetailArtifact {
     body: null,
     findings: null,
     followUpItemId: null,
+    createdByType: "agent",
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };

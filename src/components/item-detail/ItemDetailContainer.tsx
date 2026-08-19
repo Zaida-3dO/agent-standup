@@ -47,6 +47,10 @@ import {
 } from "@/lib/item-detail/edit-state";
 import { titleAdviceFor } from "@/lib/item-title";
 import type { EventType } from "@/lib/events";
+import { verifyState } from "@/lib/item-detail/verify-state";
+import { currentTipCommitSha } from "@/lib/item-detail/view";
+import { bodyFor, type VerifyStateStatus } from "./VerifyStateAction";
+import { useProfile } from "@/lib/profile/ProfileProvider";
 import { ItemDetailView } from "./ItemDetailView";
 import type { AgentPanelState } from "./AgentPanel";
 
@@ -191,6 +195,15 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
 
   const titleAdvice = editingField === "title" ? titleAdviceFor(draft) : null;
 
+  // The "confirm state" action's submit state (MILESTONES.md #131) — same
+  // idle/loading/error shape as `agentState`, and reset per outcome click
+  // rather than accumulated, so a second click after an error tries fresh
+  // rather than compounding a stale one.
+  const [verifyStateStatus, setVerifyStateStatus] = useState<VerifyStateStatus>({
+    status: "idle",
+  });
+  const { activeProfile } = useProfile();
+
   useEffect(() => {
     let cancelled = false;
     fetchItemDetail(itemId)
@@ -242,6 +255,61 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
     window.history.replaceState(null, "", hashForTab(tab));
   }, []);
 
+  // Records a `historical_verification` for the outcome the reader picked.
+  //
+  // **Refuses to guess a person.** `record_artifact` will not accept
+  // `createdByType: "person"` without a real id (`resolveCreator`'s own
+  // reasoning: a default of `person` would let anything satisfy the clause
+  // that exists to require a human). With nobody chosen in the profile
+  // switcher, `activeProfile` is `null`, and this reports that rather than
+  // sending a request the server would refuse anyway.
+  //
+  // `loadState.status === "loaded"` is required for the item's id and
+  // current `state` — the outcome's recorded `body` names which state was
+  // checked (`bodyFor`), so a stale or absent load has nothing honest to
+  // write.
+  const onVerifyState = useCallback(
+    (outcome: "agrees" | "disagrees") => {
+      if (loadState.status !== "loaded") return;
+      if (activeProfile === null) {
+        setVerifyStateStatus({
+          status: "error",
+          message: "Choose who you are (top right) before recording a verification.",
+        });
+        return;
+      }
+      const { item, artifacts } = loadState.detail;
+      // The exact same derivation `ItemDetailView` used to decide the
+      // button could be offered — reused rather than re-derived, so the
+      // commit this records against can never disagree with the one shown.
+      const tipCommitSha = currentTipCommitSha(artifacts);
+      if (tipCommitSha === null) return;
+
+      setVerifyStateStatus({ status: "submitting" });
+      verifyState({
+        itemId: item.id,
+        commitSha: tipCommitSha,
+        body: bodyFor(outcome, item.state),
+        createdByType: "person",
+        createdById: activeProfile.id,
+      })
+        .then((result) => {
+          if (result.ok) {
+            setVerifyStateStatus({ status: "done" });
+          } else {
+            setVerifyStateStatus({ status: "error", message: result.message });
+          }
+        })
+        .catch(() => {
+          setVerifyStateStatus({
+            status: "error",
+            message: "Could not record the verification. Try again.",
+          });
+        });
+    },
+    [loadState, activeProfile],
+  );
+
   return (
     <ItemDetailView
       loadState={loadState}
@@ -265,6 +333,8 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
         editError,
         titleAdvice,
       }}
+      verifyStateStatus={verifyStateStatus}
+      onVerifyState={onVerifyState}
     />
   );
 }

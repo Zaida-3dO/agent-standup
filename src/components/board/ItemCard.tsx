@@ -8,6 +8,8 @@ import Link from "next/link";
 import type { BoardEntry } from "@/lib/board/types";
 import { waitingTone } from "@/lib/board/view";
 import { isDraggable } from "@/lib/board/drag";
+import { hasDistinctHeadline, primaryLine } from "@/lib/item-headline-display";
+import { TrustBadge } from "@/components/chips/TrustBadge";
 import styles from "./Board.module.css";
 
 export interface ItemCardProps {
@@ -46,15 +48,23 @@ export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: I
   // it has no state of its own to transition (DECISIONS.md §13c). Offering
   // the gesture and refusing every time would teach the wrong model.
   const draggable = onDragStart !== undefined && isDraggable(entry);
+  // MILESTONES.md #131: an imported title is a work order written for an
+  // agent, so the card leads with `headline` (a person-facing BLUF) where
+  // one exists and falls back to `title` where it does not. `title` itself
+  // is never rewritten — see `item-headline-display.ts`'s header — so when
+  // a headline stands in, `title` still renders, just smaller, underneath.
+  const distinctHeadline = hasDistinctHeadline(entry.item);
+  const unverified = entry.trust?.unverifiedOrigin === true;
 
   return (
     <li
-      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""}`
+      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""} ${unverified ? styles.cardUnverified : ""}`
         .replace(/\s+/g, " ")
         .trim()}
       data-tone={tone ?? undefined}
       data-draggable={draggable}
       data-pending={pending ? true : undefined}
+      data-unverified={unverified ? true : undefined}
       draggable={draggable}
       onDragStart={
         draggable
@@ -83,22 +93,34 @@ export function ItemCard({ entry, needsYou, onDragStart, onDragEnd, pending }: I
             Needs you
           </span>
         )}
+        {/* The trust marker (#131) — a verified state and an unverifiable
+            one must not render identically, the same rule #123 applies to
+            an empty vs. withheld column. `entry.trust` is `null` for a
+            project (DECISIONS.md §13c: no `state` of its own to distrust),
+            so the badge is skipped outright rather than shown as "verified"
+            by a default it never earned. */}
+        {entry.trust && (
+          <TrustBadge
+            verified={entry.trust.verification !== null}
+            checkedAt={entry.trust.verification?.checkedAt}
+            checkedByType={entry.trust.verification?.checkedByType}
+          />
+        )}
       </div>
       {/* The title is the way into the detail view (#72). A real <Link>
           rather than a click handler on the card: it is a navigation, so it
           should be middle-clickable, openable in a new tab, and reachable
           by keyboard — all of which a div with an onClick silently is not. */}
       <Link className={styles.cardTitle} href={`/items/${entry.item.id}`}>
-        {entry.item.title}
+        {primaryLine(entry.item)}
       </Link>
-      {/* The BLUF (#107) — what this work is, without opening it. Absent on
-          an item nobody has written one for, in which case the card shows
-          nothing rather than an empty line, exactly like `reason` below.
-          Deliberately outside the link: it describes the work rather than
-          naming it, so folding it into the navigation target would make the
-          link text a paragraph for anyone reading the page by keyboard or
-          with a screen reader. */}
-      {entry.item.headline && <span className={styles.cardHeadline}>{entry.item.headline}</span>}
+      {/* `title` as a secondary line — ONLY when a headline is standing in
+          for it above. Rendering it unconditionally would print every plain
+          item's title twice; rendering it only here is what keeps the
+          source title reachable (correlating a row with the PR or issue
+          that produced it) without duplicating it where nothing was
+          replaced. */}
+      {distinctHeadline && <span className={styles.cardSourceTitle}>{entry.item.title}</span>}
       {reason && <span className={styles.cardReason}>{reason}</span>}
       <div className={styles.cardMeta}>
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>

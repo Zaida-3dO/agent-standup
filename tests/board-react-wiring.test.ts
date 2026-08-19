@@ -87,6 +87,7 @@ function boardWithOneCard(): BoardData {
         },
         column: "backlog",
         assignments: [],
+        trust: null,
       },
     ]),
   };

@@ -15,6 +15,8 @@ import { TabStrip } from "@/components/item-detail/TabStrip";
 import { StatusBlock } from "@/components/item-detail/StatusBlock";
 import { ChipLink } from "@/components/item-detail/ChipLink";
 import { InlineEditField } from "@/components/item-detail/InlineEditField";
+import { TrustBadge } from "@/components/chips/TrustBadge";
+import { VerifyStateAction } from "@/components/item-detail/VerifyStateAction";
 import { TABS } from "@/lib/item-detail/tabs";
 import type {
   DetailArtifact,
@@ -81,6 +83,7 @@ function detailItem(overrides: Partial<ItemDetail["item"]> = {}): ItemDetail["it
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     completedAt: null,
+    originType: "person",
     ...overrides,
   };
 }
@@ -125,6 +128,7 @@ function artifact(overrides: Partial<DetailArtifact> = {}): DetailArtifact {
     body: null,
     findings: null,
     followUpItemId: null,
+    createdByType: "agent",
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -413,6 +417,147 @@ describe("ItemDetailView", () => {
     expect((block.props as { edit?: { onStartEdit?: unknown } }).edit?.onStartEdit).toBe(
       onStartEdit,
     );
+  });
+
+  // MILESTONES.md #131 — the header leads with headline, never rewriting title.
+  describe("titles a person can read", () => {
+    it("shows the headline in the header when one is written", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({
+            item: detailItem({
+              title: "agent-standup #102 - route the four raw event writes",
+              headline: "Route event writes through appendEvent",
+            }),
+          }),
+        },
+      });
+      expect(textOf(element)).toContain("Route event writes through appendEvent");
+    });
+
+    // Fails if the demoted source title is dropped entirely instead of shown, smaller.
+    it("still shows the source title, demoted, once a headline stands in for it", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({
+            item: detailItem({
+              title: "agent-standup #102 - route the four raw event writes",
+              headline: "Route event writes through appendEvent",
+            }),
+          }),
+        },
+      });
+      expect(textOf(element)).toContain("agent-standup #102 - route the four raw event writes");
+    });
+
+    it("falls back to the title when there is no headline", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({ item: detailItem({ title: "Ship the board", headline: null }) }),
+        },
+      });
+      const text = textOf(element);
+      expect(text).toContain("Ship the board");
+      // Not doubled: with no headline, `title` is the primary line and is
+      // never ALSO rendered as the demoted secondary line.
+      expect(text.match(/Ship the board/g)).toHaveLength(1);
+    });
+  });
+
+  // MILESTONES.md #131 — the trust marker and the confirm-state action.
+  describe("trust marker", () => {
+    it("shows no trust badge for a verified (person-originated) item", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({ item: detailItem({ originType: "person" }) }),
+        },
+      });
+      expect(findAllByType(element, TrustBadge)).toHaveLength(0);
+    });
+
+    it("shows the trust badge for an imported (source-originated) item", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({ item: detailItem({ originType: "source" }) }),
+        },
+      });
+      const badge = findOneByType(element, TrustBadge);
+      expect((badge.props as { verified: boolean }).verified).toBe(false);
+    });
+
+    it("reports verified once a historical_verification artifact is on file", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({
+            item: detailItem({ originType: "source" }),
+            artifacts: [
+              artifact({
+                kind: "historical_verification",
+                commitSha: "abc123",
+                body: "Checked.",
+                createdByType: "agent",
+              }),
+            ],
+          }),
+        },
+      });
+      const badge = findOneByType(element, TrustBadge);
+      expect((badge.props as { verified: boolean }).verified).toBe(true);
+    });
+
+    it("hides the confirm-state action entirely when no handler is wired", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({ item: detailItem({ originType: "source" }) }),
+        },
+      });
+      expect(findAllByType(element, VerifyStateAction)).toHaveLength(0);
+    });
+
+    it("offers the confirm-state action once a handler is wired, disabled with a reason with no commit", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({ item: detailItem({ originType: "source" }) }),
+        },
+        onVerifyState: () => {},
+      });
+      const action = findOneByType(element, VerifyStateAction);
+      expect((action.props as { tipCommitSha: string | null }).tipCommitSha).toBeNull();
+    });
+
+    it("passes the tip commit through once the item has one", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({
+            item: detailItem({ originType: "source" }),
+            artifacts: [artifact({ kind: "commit", commitSha: "abc123" })],
+          }),
+        },
+        onVerifyState: () => {},
+      });
+      const action = findOneByType(element, VerifyStateAction);
+      expect((action.props as { tipCommitSha: string | null }).tipCommitSha).toBe("abc123");
+    });
+
+    it("never offers the confirm-state action on a verified item", () => {
+      const element = ItemDetailView({
+        loadState: {
+          status: "loaded",
+          detail: detail({ item: detailItem({ originType: "person" }) }),
+        },
+        onVerifyState: () => {},
+      });
+      expect(findAllByType(element, VerifyStateAction)).toHaveLength(0);
+    });
   });
 });
 

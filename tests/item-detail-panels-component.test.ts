@@ -52,6 +52,7 @@ function artifact(overrides: Partial<DetailArtifact> = {}): DetailArtifact {
     body: null,
     findings: null,
     followUpItemId: null,
+    createdByType: "agent",
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -487,6 +488,7 @@ describe("the detail view, wired to the new panels", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
         completedAt: null,
+        originType: "person",
       },
       column: "in_progress",
       subtasks: [],

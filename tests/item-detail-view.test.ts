@@ -7,10 +7,13 @@
 import { describe, expect, it } from "vitest";
 import {
   artifactsByRound,
+  currentTipCommitSha,
   hasSummary,
   humanEventType,
   humanState,
+  isUnverifiedOrigin,
   latestVerdict,
+  newestVerification,
   orderedHistory,
   showsOwnState,
   subtaskProgress,
@@ -44,6 +47,7 @@ function artifact(overrides: Partial<DetailArtifact> = {}): DetailArtifact {
     body: null,
     findings: null,
     followUpItemId: null,
+    createdByType: "agent",
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -282,5 +286,87 @@ describe("summaryEntries", () => {
     expect(summaryEntries(null)).toEqual([]);
     expect(summaryEntries(undefined)).toEqual([]);
     expect(summaryEntries([42])).toEqual(["42"]);
+  });
+});
+
+describe("newestVerification", () => {
+  // Fails if the kind filter is dropped, e.g. picks up a code_review too.
+  it("ignores every artifact that is not a historical_verification", () => {
+    const artifacts = [artifact({ kind: "code_review", verdict: "lgtm" })];
+    expect(newestVerification(artifacts)).toBeNull();
+  });
+
+  // Fails if the mapping drops or swaps a field.
+  it("maps the fields a reader needs off the newest one", () => {
+    const artifacts = [
+      artifact({
+        kind: "historical_verification",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdByType: "person",
+        body: "Checked — state matches.",
+        commitSha: "abc123",
+      }),
+    ];
+    expect(newestVerification(artifacts)).toEqual({
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      checkedByType: "person",
+      body: "Checked — state matches.",
+      commitSha: "abc123",
+    });
+  });
+
+  // Fails if the newest-by-createdAt selection is reversed or picks by array position instead.
+  it("picks the newest by createdAt, not the last one recorded", () => {
+    const artifacts = [
+      artifact({
+        kind: "historical_verification",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        commitSha: "newer",
+      }),
+      artifact({
+        kind: "historical_verification",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        commitSha: "older",
+      }),
+    ];
+    expect(newestVerification(artifacts)?.commitSha).toBe("newer");
+  });
+});
+
+describe("isUnverifiedOrigin", () => {
+  it("is true for a source origin", () => {
+    expect(isUnverifiedOrigin("source")).toBe(true);
+  });
+
+  it("is false for person and auto", () => {
+    expect(isUnverifiedOrigin("person")).toBe(false);
+    expect(isUnverifiedOrigin("auto")).toBe(false);
+  });
+});
+
+describe("currentTipCommitSha", () => {
+  // Fails if the kind filter is dropped, e.g. reads commitSha off any artifact.
+  it("ignores non-commit artifacts even if they carry a commitSha", () => {
+    const artifacts = [artifact({ kind: "historical_verification", commitSha: "not-the-tip" })];
+    expect(currentTipCommitSha(artifacts)).toBeNull();
+  });
+
+  // Fails if a commit artifact with a null sha is treated as a real tip.
+  it("skips a commit artifact recording no sha", () => {
+    const artifacts = [artifact({ kind: "commit", commitSha: null })];
+    expect(currentTipCommitSha(artifacts)).toBeNull();
+  });
+
+  // Fails if the newest-by-createdAt selection is reversed.
+  it("picks the newest commit's sha", () => {
+    const artifacts = [
+      artifact({ kind: "commit", commitSha: "older", createdAt: "2026-01-01T00:00:00.000Z" }),
+      artifact({ kind: "commit", commitSha: "newer", createdAt: "2026-02-01T00:00:00.000Z" }),
+    ];
+    expect(currentTipCommitSha(artifacts)).toBe("newer");
+  });
+
+  it("returns null for an item with no commit artifact at all", () => {
+    expect(currentTipCommitSha([])).toBeNull();
   });
 });

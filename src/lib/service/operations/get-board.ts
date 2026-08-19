@@ -220,6 +220,19 @@ import {
   type BoardAssignment,
   type RawBoardAssignmentRow,
 } from "../items/assignment-view";
+import {
+  NEWEST_VERIFICATION_SQL,
+  groupVerificationsByItem,
+  isUnverifiedOrigin,
+  type ItemVerification,
+  type RawVerificationRow,
+} from "../items/trust-view";
+
+/** A card's trust position — see `trust-view.ts`. */
+export interface TrustInfo {
+  readonly unverifiedOrigin: boolean;
+  readonly verification: ItemVerification | null;
+}
 
 /**
  * Narrows a raw `state` string to the typed vocabulary, or throws.
@@ -384,6 +397,14 @@ export interface BoardEntry {
    * and why.
    */
   readonly assignments: readonly BoardAssignment[];
+  /**
+   * Whether this row's `state` can be taken on faith, and what the newest
+   * check found — MILESTONES.md #131's second half. `null` on a project,
+   * which has no `state` of its own to distrust (DECISIONS.md §13c) — every
+   * task and subtask entry, slim or `full`, gets a real value, because both
+   * shapes carry `originType`.
+   */
+  readonly trust: TrustInfo | null;
 }
 
 /**
@@ -644,7 +665,10 @@ export const getBoard = defineOperation({
         const list = projectEntries.get(column) ?? [];
         // Ownership is attached in one pass over the whole response below,
         // so nothing here — project or task — queries for its own holder.
-        list.push({ item, column, assignments: [] });
+        // `trust` is `null` outright: a project's `state` is a creation
+        // leftover, not a fact anyone could verify (DECISIONS.md §13c) —
+        // there is no "state is a lie" question to ask of it.
+        list.push({ item, column, assignments: [], trust: null });
         projectEntries.set(column, list);
       }
     }
@@ -747,6 +771,11 @@ export const getBoard = defineOperation({
           item,
           column: columnForState(requireItemState(item.state, item.id)),
           assignments: [],
+          // Filled in the same one-statement pass as `assignments`, below —
+          // `unverifiedOrigin` is known already (it's on the row) but
+          // `verification` needs the join, so both wait for that pass
+          // rather than half-filling `trust` here and half there.
+          trust: null,
         }));
         nextCursor = hasMore ? (entries[entries.length - 1]?.item.id ?? null) : null;
       }
@@ -789,6 +818,19 @@ export const getBoard = defineOperation({
         [...new Set(entryIds)],
       );
       const assignmentsByItem = groupBoardAssignmentsByItem(assignmentRows);
+
+      // Trust, in the same one-statement-for-the-whole-response shape
+      // (MILESTONES.md #131). `unverifiedOrigin` needs no query — it's a
+      // column already on the row — but the newest `historical_verification`
+      // does, and it gets the same `ANY($1::text[])` treatment as
+      // ownership, for the identical reason: a card-by-card lookup is the
+      // N+1 this whole read exists to avoid.
+      const verificationRows = await ctx.db.$queryRawUnsafe<RawVerificationRow[]>(
+        NEWEST_VERIFICATION_SQL,
+        [...new Set(entryIds)],
+      );
+      const verificationsByItem = groupVerificationsByItem(verificationRows);
+
       for (const column of requested) {
         board[column] = {
           ...board[column],
@@ -797,6 +839,19 @@ export const getBoard = defineOperation({
             // `?? []` is what makes "nobody holds this" an empty array
             // rather than an absent field — see `BoardEntry.assignments`.
             assignments: assignmentsByItem.get(entry.item.id) ?? [],
+            // A project's `trust` stays `null` — it was pushed that way
+            // above and nothing here has a reason to overwrite it, since a
+            // project's `item` carries no `originType` a card could read
+            // anyway (`ItemRecord`/`BoardItemSummaryRecord` both have one,
+            // but a project's is the creation leftover DECISIONS.md §13c
+            // says not to trust for anything).
+            trust:
+              entry.item.kind === "project"
+                ? null
+                : {
+                    unverifiedOrigin: isUnverifiedOrigin(entry.item.originType),
+                    verification: verificationsByItem.get(entry.item.id) ?? null,
+                  },
           })),
         };
       }
