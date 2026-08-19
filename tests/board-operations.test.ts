@@ -829,7 +829,16 @@ describeIfDb("get_board against Postgres", () => {
   // right item rather than merely typechecking against an in-memory model.
   describe("trust — MILESTONES.md #131", () => {
     it("marks a source-origin item unverified with no verification recorded", async () => {
-      const item = await createItem({ area: "board-trust", originType: "source" });
+      // `createItem` with no `parentId` mints a PROJECT (depth 0), which
+      // never carries a trust position (DECISIONS.md §13c — see the last
+      // case in this block). The row under test here has to be a TASK, so
+      // it needs a project of its own to hang off.
+      const project = await createItem({ area: "board-trust" });
+      const item = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
       const board = await wholeBoard({ area: "board-trust" });
       const all = [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed];
       const entry = all.find((e) => e.item.id === item.id);
@@ -837,7 +846,12 @@ describeIfDb("get_board against Postgres", () => {
     });
 
     it("does not mark a person/auto-origin item as unverified", async () => {
-      const item = await createItem({ area: "board-trust", originType: "auto" });
+      const project = await createItem({ area: "board-trust" });
+      const item = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "auto",
+      });
       const board = await wholeBoard({ area: "board-trust" });
       const all = [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed];
       const entry = all.find((e) => e.item.id === item.id);
@@ -845,8 +859,17 @@ describeIfDb("get_board against Postgres", () => {
     });
 
     it("attaches the newest historical_verification to its own item, not a neighbour's", async () => {
-      const verified = await createItem({ area: "board-trust", originType: "source" });
-      const unverified = await createItem({ area: "board-trust", originType: "source" });
+      const project = await createItem({ area: "board-trust" });
+      const verified = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
+      const unverified = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
 
       await runtime.call("record_artifact", {
         itemId: verified.id,
@@ -877,7 +900,12 @@ describeIfDb("get_board against Postgres", () => {
     });
 
     it("reports the NEWEST verification when more than one has been recorded", async () => {
-      const item = await createItem({ area: "board-trust", originType: "source" });
+      const project = await createItem({ area: "board-trust" });
+      const item = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
       await runtime.call("record_artifact", {
         itemId: item.id,
         kind: "commit",
