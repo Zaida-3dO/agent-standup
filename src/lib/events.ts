@@ -165,6 +165,47 @@ export interface EventRow {
 }
 
 /**
+ * The slim shape of an event row — everything needed to know what kind of
+ * thing happened and to what, none of the two fields that carry it (see
+ * `EVENT_SLIM_COLUMNS` below for why those two and not others).
+ */
+export interface EventSummaryRow {
+  readonly id: bigint;
+  readonly itemId: string | null;
+  readonly ts: Date;
+  readonly actorType: ActorType;
+  readonly actorId: string | null;
+  readonly type: EventType;
+}
+
+/**
+ * The columns a bounded read selects when it has not asked for `full` —
+ * mirrors `itemColumnsFor`'s split (`service/items/row.ts`) rather than
+ * inventing a second convention for the same problem.
+ *
+ * **Why `payload` and `body` are the two dropped, and not e.g.
+ * `sessionId` or `assignmentId`.** Measured on a live store: one event
+ * averaged 7,398 characters, of which `payload` was 4,512 and `body`
+ * 2,532 — 95% of the row, against six identifying scalars that together
+ * run under 150 characters. `body` is free text a checkpoint or note
+ * carries; `payload` is unbounded for the same reason `list_items`'
+ * `customFields` is — `recordFieldChanges` (this module) puts the
+ * changed field's whole before/after value in
+ * `payload.from`/`payload.to`, so a `field_change` on an item's
+ * `body` or `customFields` embeds that value's entire size into the
+ * event it logs.
+ *
+ * `txId`, `sessionId` and `assignmentId` stay off the slim shape too —
+ * nothing at the current call sites reads them without also needing
+ * `full` — but they are small scalars, not the reason a page overflows,
+ * so their absence is a size-of-response courtesy rather than
+ * load-bearing for the fix.
+ */
+export const EVENT_SLIM_COLUMNS = `"id", "itemId", "ts", "actorType", "actorId", "type"`;
+
+export const EVENT_FULL_COLUMNS = `"id", "txId", "itemId", "ts", "actorType", "actorId", "sessionId", "assignmentId", "type", "payload", "body"`;
+
+/**
  * Reads events with `id > since`, bounded to the visibility horizon and
  * ordered by `id` — the read SCHEMA.md §3 says is the one that "never skips
  * a row": everything returned was written by a transaction that has
@@ -192,25 +233,28 @@ export interface EventRow {
 export async function readSinceBounded(
   db: TransactionHandle,
   args: { readonly since: bigint; readonly limit?: number },
-): Promise<{ events: EventRow[]; horizon: bigint }> {
+): Promise<{ events: EventRow[]; horizon: bigint }>;
+export async function readSinceBounded(
+  db: TransactionHandle,
+  args: { readonly since: bigint; readonly limit?: number; readonly full: true },
+): Promise<{ events: EventRow[]; horizon: bigint }>;
+export async function readSinceBounded(
+  db: TransactionHandle,
+  args: { readonly since: bigint; readonly limit?: number; readonly full: false },
+): Promise<{ events: EventSummaryRow[]; horizon: bigint }>;
+export async function readSinceBounded(
+  db: TransactionHandle,
+  args: { readonly since: bigint; readonly limit?: number; readonly full?: boolean },
+): Promise<{ events: (EventRow | EventSummaryRow)[]; horizon: bigint }> {
   const horizon = await visibilityHorizon(db);
   const limit = args.limit ?? 500;
-  const rows = await db.$queryRawUnsafe<
-    {
-      id: bigint;
-      txId: bigint;
-      itemId: string | null;
-      ts: Date;
-      actorType: ActorType;
-      actorId: string | null;
-      sessionId: string | null;
-      assignmentId: string | null;
-      type: EventType;
-      payload: Record<string, unknown>;
-      body: string | null;
-    }[]
-  >(
-    `SELECT "id", "txId", "itemId", "ts", "actorType", "actorId", "sessionId", "assignmentId", "type", "payload", "body"
+  // Defaults true so `orientation` — the other caller, which reads
+  // `payload`/`body` for the one item it already scoped down to — is
+  // unaffected by this parameter existing at all. `get_events` is the one
+  // caller that passes `false`.
+  const full = args.full ?? true;
+  const rows = await db.$queryRawUnsafe<(EventRow | EventSummaryRow)[]>(
+    `SELECT ${full ? EVENT_FULL_COLUMNS : EVENT_SLIM_COLUMNS}
      FROM "Event"
      WHERE "id" > $1 AND "txId" < $2
      ORDER BY "id" ASC

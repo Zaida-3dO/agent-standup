@@ -59,6 +59,17 @@
 // and a late commit can land a lower `id` after a reader already advanced
 // past it. The `horizon` comes back with the rows so a caller can tell a
 // healthy short delay from a stuck one.
+//
+// **The slim shape is the default** (mirrors `list_items` — MILESTONES.md
+// #107 and the response-size sweep this operation was the trigger for). A
+// `limit` bounds row *count*; nothing bounded row *size* — one event
+// measured at 7,398 characters, of which `payload` was 4,512 and `body`
+// 2,532, against six identifying scalars that together run under 150. The
+// default response therefore omits `payload` and `body`; `full: true` asks
+// for them back. See `@/lib/events`'s `EVENT_SLIM_COLUMNS` for the
+// column-level half of this — the query itself never selects the two heavy
+// columns unless asked, so the saving is in what Postgres reads, not only
+// in what the operation returns.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
@@ -105,35 +116,51 @@ const inputSchema = z
      * without the filter would never see them again.
      */
     unseenOnly: z.boolean().default(false),
+    /**
+     * Return `payload` and `body` on every event. Off by default — see the
+     * module header. This is the parameter that bounds response *size*;
+     * `limit` only ever bounded row count.
+     */
+    full: z.boolean().default(false),
   })
   .strict();
 
 export type GetEventsInput = z.infer<typeof inputSchema>;
 
-/** One event in the slice, with this profile's read state resolved against it. */
-export interface SinceEvent {
+/** The fields every event carries, in either shape — read state plus enough to say what happened and to what. */
+export interface SinceEventBase {
   /** `bigint` stringified — `JSON.stringify` throws on a `bigint` outright. */
   readonly id: string;
-  readonly txId: string;
   readonly itemId: string | null;
   /** The item's title, when the event is scoped to one — so a row reads as prose without a second call. */
   readonly itemTitle: string | null;
   readonly ts: string;
   readonly actorType: EventRow["actorType"];
   readonly actorId: string | null;
-  readonly sessionId: string | null;
-  readonly assignmentId: string | null;
   readonly type: EventRow["type"];
-  readonly payload: Record<string, unknown>;
-  readonly body: string | null;
   /** Whether **this** profile has marked it seen. Always `false` when no profile was named. */
   readonly seen: boolean;
   /** Whether *any* profile has — see the module header on why this is separate from `seen`. */
   readonly seenByAnyone: boolean;
 }
 
+/** The slim shape — `full: false`, the default. What a "what's new" line needs, none of what makes a row large. */
+export interface SinceEventSummary extends SinceEventBase {
+  readonly full: false;
+}
+
+/** One event in the slice, with this profile's read state resolved against it — `full: true`. */
+export interface SinceEvent extends SinceEventBase {
+  readonly full: true;
+  readonly txId: string;
+  readonly sessionId: string | null;
+  readonly assignmentId: string | null;
+  readonly payload: Record<string, unknown>;
+  readonly body: string | null;
+}
+
 export interface GetEventsOutput {
-  readonly events: readonly SinceEvent[];
+  readonly events: readonly (SinceEvent | SinceEventSummary)[];
   /** The cursor to pass as `since` next time — the highest `id` in this slice, or the caller's own `since` when it was empty. */
   readonly cursor: string;
   /** SCHEMA.md §3's visibility horizon, so a caller can tell a short delay from a stuck one. */
@@ -164,12 +191,14 @@ export const getEvents = defineOperation({
   name: "get_events",
   kind: "read",
   summary:
-    "Since your last visit: a bounded slice of the events ledger with per-profile read state. Pass since to page, personId to resolve whose read state, unseenOnly for just what is new.",
+    "Since your last visit: a bounded slice of the events ledger with per-profile read state. Returns id, itemId, itemTitle, ts, actorType, actorId, type and seen state by default — pass full for payload and body too. Pass since to page, personId to resolve whose read state, unseenOnly for just what is new.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetEventsInput): Promise<GetEventsOutput> {
     const since = input.since !== undefined ? BigInt(input.since) : 0n;
-    const { events, horizon } = await readSinceBounded(ctx.db, { since, limit: input.limit });
+    const { events, horizon } = input.full
+      ? await readSinceBounded(ctx.db, { since, limit: input.limit, full: true })
+      : await readSinceBounded(ctx.db, { since, limit: input.limit, full: false });
 
     // Read state for exactly the events in this slice — one query keyed on
     // the ids already in hand, rather than a join inside `readSinceBounded`.
@@ -225,22 +254,30 @@ export const getEvents = defineOperation({
       firstVisit = anySeen.length === 0;
     }
 
-    const mapped: SinceEvent[] = events.map((event) => ({
-      id: event.id.toString(),
-      txId: event.txId.toString(),
-      itemId: event.itemId,
-      itemTitle: event.itemId !== null ? (titles.get(event.itemId) ?? null) : null,
-      ts: event.ts.toISOString(),
-      actorType: event.actorType,
-      actorId: event.actorId,
-      sessionId: event.sessionId,
-      assignmentId: event.assignmentId,
-      type: event.type,
-      payload: event.payload,
-      body: event.body,
-      seen: seenByThisPerson.has(event.id),
-      seenByAnyone: seenBySomeone.has(event.id),
-    }));
+    const mapped: (SinceEvent | SinceEventSummary)[] = events.map((event) => {
+      const base: SinceEventBase = {
+        id: event.id.toString(),
+        itemId: event.itemId,
+        itemTitle: event.itemId !== null ? (titles.get(event.itemId) ?? null) : null,
+        ts: event.ts.toISOString(),
+        actorType: event.actorType,
+        actorId: event.actorId,
+        type: event.type,
+        seen: seenByThisPerson.has(event.id),
+        seenByAnyone: seenBySomeone.has(event.id),
+      };
+      if (!input.full) return { ...base, full: false };
+      const fullEvent = event as EventRow;
+      return {
+        ...base,
+        full: true,
+        txId: fullEvent.txId.toString(),
+        sessionId: fullEvent.sessionId,
+        assignmentId: fullEvent.assignmentId,
+        payload: fullEvent.payload,
+        body: fullEvent.body,
+      };
+    });
 
     // The cursor is the slice's own high-water mark, taken **before**
     // `unseenOnly` filters anything — see that field's comment. `events` is

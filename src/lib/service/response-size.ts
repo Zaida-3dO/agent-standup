@@ -130,7 +130,7 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   get_board: "a single `column` with a smaller `limit`, or `full: false`",
   list_items: "a smaller `limit`, a `state` or `area` filter, or `full: false`",
   search: "a narrower `query` or a smaller `limit`",
-  get_events: "a smaller `limit`, or a narrower time range",
+  get_events: "`full: false` (the default), which drops `payload` and `body`",
   get_item: "`full: false`, which returns the slim record",
   get_item_detail: "`get_item` with `full: false` for the slim record",
   orientation: "`get_item` for the one item, rather than its whole context",

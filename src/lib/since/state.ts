@@ -20,6 +20,15 @@ export interface FetchFeedOptions {
   readonly unseenOnly?: boolean;
   readonly since?: string;
   readonly limit?: number;
+  /**
+   * Ask for `payload` and `body` on every event. Omitted (not sent as
+   * `full=false`) when falsy, matching `unseenOnly`'s own omission rule —
+   * the server default is already `false`. A caller that only needs
+   * `event.type`/`event.itemTitle` (the "what's new" list) should leave
+   * this unset; `buildOvernightReport`'s `movedTo` is the one consumer
+   * that reads `payload` and passes `full: true` for it.
+   */
+  readonly full?: boolean;
 }
 
 /**
@@ -44,6 +53,7 @@ export function buildFeedQuery(options: FetchFeedOptions = {}): string {
   if (options.unseenOnly) params.set("unseenOnly", "true");
   if (options.since !== undefined) params.set("since", options.since);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.full) params.set("full", "true");
   const query = params.toString();
   return query === "" ? uiApiPath("/api/events") : uiApiPath(`/api/events?${query}`);
 }
