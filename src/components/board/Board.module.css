@@ -461,6 +461,39 @@
   line-height: 1.3;
 }
 
+/* Presence — who holds this card right now (M10 T16). A plain list rather
+   than chips: this is ownership, not classification, and reads best as a
+   short row of "name · time" rather than as pill-shaped metadata. */
+.cardPresence {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presenceRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.presenceName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presenceAge {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .cardMeta {
   display: flex;
   flex-wrap: wrap;

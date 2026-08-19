@@ -63,6 +63,10 @@ import { getBoard } from "./operations/get-board";
 // a store outgrows one flat column of cards, and the only level at which
 // progress is a meaningful ratio.
 import { getProjects } from "./operations/get-projects";
+// Every live assignment in the installation, full detail, in one read — the
+// fleet page (M10 T16): "who is doing what right now, and is anything
+// wedged?"
+import { getFleet } from "./operations/get-fleet";
 import { getProjectDetail } from "./operations/get-project-detail";
 // Since your last visit (MILESTONES.md #38): the ledger slice, and the
 // per-profile read state that decides what in it is new to you.
@@ -171,6 +175,7 @@ export const OPERATION_REGISTRY = {
   [getBoard.name]: getBoard,
   [getProjects.name]: getProjects,
   [getProjectDetail.name]: getProjectDetail,
+  [getFleet.name]: getFleet,
   [getEvents.name]: getEvents,
   [markEventSeen.name]: markEventSeen,
   [getItemDetail.name]: getItemDetail,

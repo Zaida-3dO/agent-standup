@@ -36,6 +36,8 @@ export interface BoardColumnProps {
   readonly section: BoardSection;
   /** The active profile's id, or `null` when none is chosen — decides which cards are flagged. */
   readonly personId: string | null;
+  /** The clock — threaded to every card's presence "last active" caption. See `BoardView.tsx`'s prop. */
+  readonly now: number;
   /**
    * The amber/red tally, passed only for the Waiting column. Rendering it
    * under the heading is what keeps the shared column readable at a glance
@@ -74,6 +76,7 @@ export function BoardColumn({
   column,
   section,
   personId,
+  now,
   split,
   onDrop,
   onDragEnter,
@@ -193,6 +196,7 @@ export function BoardColumn({
                 key={entry.item.id}
                 entry={entry}
                 needsYou={needsYou(entry, personId)}
+                now={now}
                 onDragStart={onCardDragStart}
                 onDragEnd={onCardDragEnd}
                 pending={pendingItemId === entry.item.id}

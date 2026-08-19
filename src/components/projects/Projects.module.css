@@ -161,7 +161,7 @@
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 50%;
-  background: var(--presence-live);
+  background: var(--presence-running);
 }
 
 .headline {
@@ -291,4 +291,37 @@
   color: var(--text-faint);
   font-size: 0.75rem;
   white-space: nowrap;
+}
+
+/* Presence — who holds this project right now (M10 T16). Same shape and
+   sizing as the board's `.cardPresence` (`Board.module.css`) — one plain
+   row per live assignment, not a chip. */
+.projectPresence {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presenceRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.presenceName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presenceAge {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
