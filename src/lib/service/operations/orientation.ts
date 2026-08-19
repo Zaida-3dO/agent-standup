@@ -23,6 +23,31 @@ import { readSinceBounded, type EventRow } from "../../events";
 import { liveAssignments, type Assignment } from "../../claims";
 import { deriveOpenLoops, type LoopEventLike, type OpenLoop } from "../../open-loops";
 
+/**
+ * The `whatChanged` page bound — see `limit` in the input schema.
+ *
+ * **Deliberately small, because these are full events.** Each carries
+ * `payload` and `body`, which measured ~7,400 characters apiece on a
+ * realistic corpus — so 50 of them is ~370,000 characters and is refused
+ * outright, and even 20 is ~148,000. The count that actually fits is
+ * therefore in the low tens, which is the same arithmetic `get_events` ran
+ * into from the other direction: on this table row *count* and response
+ * *size* are barely related, so a bound that looks generous as a row count
+ * is not one.
+ *
+ * 3 is a readable catch-up for a resuming session — the last few things
+ * that happened, which is what "catch me up" actually asks for — and it is
+ * what fits: at ~7,000 characters an event, five is already ~36,000 and ten
+ * is ~70,000. 100 is the most a caller may ask for, and a caller asking for
+ * it does so knowingly.
+ *
+ * The same number bounds the crew list below, which is a count of holders
+ * rather than of events; it is generous for that and tight for these, which
+ * is the right way round.
+ */
+const DEFAULT_CHANGED_EVENTS = 3;
+const MAX_CHANGED_EVENTS = 100;
+
 const inputSchema = z
   .object({
     itemId: z.string().min(1),
@@ -34,6 +59,24 @@ const inputSchema = z
      * that it wants everything since whatever was last recorded.
      */
     since: z.string().regex(/^\d+$/, "since must be a decimal integer string").optional(),
+    /**
+     * The most `whatChanged` events to return — MILESTONES.md #109.
+     *
+     * **This read carries the full event shape on purpose** (see the
+     * `readSinceBounded` call below: `whatChanged` renders `payload` and
+     * `body`), and until this bound existed it carried however many of them
+     * the ledger held since the last checkpoint. On a busy item that is not
+     * a small number: measured on this file's own corpus, an unbounded
+     * `orientation` came to ~955,000 characters and was refused outright by
+     * the response-size guard.
+     *
+     * `full: true` plus no bound is the combination that overflows, so the
+     * read that legitimately needs the heavy columns is the one that most
+     * needs a ceiling on how many of them it returns. Newest-first, because
+     * a session catching up wants the most recent activity when it cannot
+     * have all of it — see `whatChanged`'s own note.
+     */
+    limit: z.number().int().min(1).max(MAX_CHANGED_EVENTS).default(DEFAULT_CHANGED_EVENTS),
   })
   .strict();
 
@@ -108,6 +151,25 @@ export interface OrientationOutput {
    * "I don't know", not an error.
    */
   readonly whatChanged: readonly OrientationChangedEvent[];
+  /**
+   * True when this item had more events since `changedSince` than `limit`
+   * returned, so `whatChanged` holds the most recent ones and not all of
+   * them.
+   *
+   * Reported rather than left to be inferred from a full page, for the
+   * reason the response-size guard states: a partial result a caller cannot
+   * identify as partial is worse than none. A caller that needs the rest
+   * raises `limit` or walks back with `since`.
+   */
+  readonly whatChangedTruncated: boolean;
+  /**
+   * True when this item has more live assignments than `limit` returned.
+   *
+   * Reported for the same reason as `whatChangedTruncated`: a partial list
+   * a caller cannot identify as partial is worse than none. `get_fleet`
+   * returns the whole crew, paged, for a caller that needs it.
+   */
+  readonly crewTruncated: boolean;
   /** The cursor `whatChanged` was read from — hand back as `since` on the next orientation call. */
   readonly changedSince: string;
   /** The horizon `whatChanged` was bounded to (SCHEMA.md §3) — how far "what changed" can be trusted. */
@@ -236,7 +298,13 @@ export const orientation = defineOperation({
     // question is "what happened since the last thing I know about", and a
     // checkpoint is the one thing recorded specifically to answer it.
     const since = input.since !== undefined ? BigInt(input.since) : (checkpointRow?.id ?? 0n);
-    const { events: allEvents, horizon } = await readSinceBounded(ctx.db, { since });
+    // `full: true` because `whatChanged` renders `payload` and `body` —
+    // this read is scoped to one item, so it carries the heavy columns for
+    // a handful of rows rather than for the whole ledger. The projection is
+    // named explicitly rather than relied on as a default: the default is
+    // now the slim shape (MILESTONES.md #109), and a caller that needs the
+    // heavy columns has to say so.
+    const { events: allEvents, horizon } = await readSinceBounded(ctx.db, { since, full: true });
     // `readSinceBounded` reads the ledger table-wide (it has no `itemId`
     // filter of its own — SCHEMA.md §3's cross-item "since your last visit"
     // view and this item-scoped one are "the same rows, sliced
@@ -245,21 +313,29 @@ export const orientation = defineOperation({
     // `bigint` (`JSON.stringify` throws on one outright), which is exactly
     // what the HTTP route (`NextResponse.json`) would hit on the first
     // call if this operation returned `EventRow`s unmapped.
-    const whatChanged: OrientationChangedEvent[] = allEvents
-      .filter((event) => event.itemId === input.itemId)
-      .map((event) => ({
-        id: event.id.toString(),
-        txId: event.txId.toString(),
-        itemId: event.itemId,
-        ts: event.ts.toISOString(),
-        actorType: event.actorType,
-        actorId: event.actorId,
-        sessionId: event.sessionId,
-        assignmentId: event.assignmentId,
-        type: event.type,
-        payload: event.payload,
-        body: event.body,
-      }));
+    const forThisItem = allEvents.filter((event) => event.itemId === input.itemId);
+    // **Bounded to the most RECENT `limit` events, not the first.**
+    // `readSinceBounded` returns ascending by `id`, so slicing from the
+    // front would hand a catching-up session the oldest activity and drop
+    // everything that happened since — the opposite of what "what changed"
+    // is for. Taking from the end keeps the newest and preserves the
+    // ascending order the field is documented to have.
+    const truncated = forThisItem.length > input.limit;
+    const whatChanged: OrientationChangedEvent[] = (
+      truncated ? forThisItem.slice(-input.limit) : forThisItem
+    ).map((event) => ({
+      id: event.id.toString(),
+      txId: event.txId.toString(),
+      itemId: event.itemId,
+      ts: event.ts.toISOString(),
+      actorType: event.actorType,
+      actorId: event.actorId,
+      sessionId: event.sessionId,
+      assignmentId: event.assignmentId,
+      type: event.type,
+      payload: event.payload,
+      body: event.body,
+    }));
 
     // Open loops, part one: this item's own recorded deferrals (SCHEMA.md
     // §5a `not_done`), if it has ever been completed with a Summary. Most
@@ -314,12 +390,23 @@ export const orientation = defineOperation({
     );
     const loops = deriveOpenLoops(loopRows);
 
-    const crew = await liveAssignments(ctx.db, input.itemId);
+    // **Bounded, like `whatChanged`.** `liveAssignments` is deliberately
+    // unbounded — its other two callers are the claim guards, which have to
+    // see *every* live row to decide whether a second crew has appeared, and
+    // a limit there would be a correctness bug rather than a page size. So
+    // the bound goes here, on the display copy, where the list is being
+    // rendered rather than reasoned over. Measured on this file's corpus the
+    // crew list was ~46,000 characters, larger than `whatChanged` itself.
+    const allCrew = await liveAssignments(ctx.db, input.itemId);
+    const crewTruncated = allCrew.length > input.limit;
+    const crew = crewTruncated ? allCrew.slice(0, input.limit) : allCrew;
 
     return {
       item,
       checkpoint,
       whatChanged,
+      whatChangedTruncated: truncated,
+      crewTruncated,
       changedSince: since.toString(),
       horizon: horizon.toString(),
       openLoops: { notDone, children, loops },

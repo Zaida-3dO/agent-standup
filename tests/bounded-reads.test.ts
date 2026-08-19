@@ -50,6 +50,7 @@ import {
   WITHHELD_COLUMNS,
   buildSliceNotice,
 } from "@/lib/service/board/slice";
+import { FULL_EVENT_COLUMNS, SLIM_EVENT_COLUMNS, eventColumnsFor } from "@/lib/events";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -150,6 +151,39 @@ describe("the notice a default read carries", () => {
 
   it("says `item` rather than `items` for a single one", () => {
     expect(buildSliceNotice(1, [{ column: "backlog", total: 2 }])).toContain("1 open item;");
+  });
+});
+
+/**
+ * The ledger's column choice, asserted directly rather than through a
+ * response — MILESTONES.md #109.
+ *
+ * **Why this cannot be tested through `get_events`'s output.** That
+ * operation builds its slim record field by field and only copies `payload`
+ * and `body` across when `full` is set, so a read that *selected* every
+ * column and then dropped two would return a byte-identical response while
+ * transferring every byte out of Postgres — the exact defect
+ * `itemColumnsFor`'s own header describes ("a read that selected all thirty
+ * columns and then mapped four would return a byte-identical response while
+ * doing the exact work this row exists to stop"). That defect is invisible
+ * to any assertion about the response, so the column choice has to be
+ * asserted as a thing in itself.
+ *
+ * Verified by mutation: changing `eventColumnsFor` to return the full list
+ * unconditionally leaves every size assertion in this file green and turns
+ * exactly these two red.
+ */
+describe("which columns a ledger read selects", () => {
+  it("selects the slim list by default, without payload or body", () => {
+    expect(eventColumnsFor(false)).toBe(SLIM_EVENT_COLUMNS);
+    expect(eventColumnsFor(false)).not.toContain("payload");
+    expect(eventColumnsFor(false)).not.toContain("body");
+  });
+
+  it("selects payload and body only when full is asked for", () => {
+    expect(eventColumnsFor(true)).toBe(FULL_EVENT_COLUMNS);
+    expect(eventColumnsFor(true)).toContain('"payload"');
+    expect(eventColumnsFor(true)).toContain('"body"');
   });
 });
 
@@ -260,6 +294,72 @@ describeIfDb("every registered read is bounded against a realistic corpus", () =
       `INSERT INTO "Session" ("id", "machine", "transport") VALUES ($1, 'test-machine', 'http'::"SessionTransport") ON CONFLICT DO NOTHING`,
       "bounded-reads-session",
     );
+
+    // ── The ledger, at the size that actually broke ────────────────────
+    //
+    // Seeded here rather than left empty because an unseeded table is the
+    // header's trap #1 in its purest form: with no events, `get_events`
+    // returns `{events: [], …}` — about 90 characters — and passes a size
+    // bound against a completely unbounded read. That is exactly what
+    // happened: this sweep was green while `GET /api/events` was being
+    // refused in production at 547,961 characters, because the corpus had
+    // no rows for the read to be big about.
+    //
+    // The proportions are the measured ones: `payload` ~4,500 characters
+    // and `body` ~2,532 against ~150 for every other field combined, which
+    // is why `limit` alone never reached this and only dropping the two
+    // columns does.
+    const eventPayload = JSON.stringify({
+      diff: "a realistic tool-call payload. ".repeat(145),
+      refs: Array.from({ length: 6 }, (_, i) => `ref-${i}`),
+    });
+    const eventBody = "A realistic event body, as a checkpoint or note carries. ".repeat(44);
+    for (let i = 0; i < 120; i++) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Event" ("txId", "itemId", "ts", "actorType", "type", "payload", "body")
+         VALUES ($1::bigint, $2, now(), 'agent'::"ActorType", 'note'::"EventType", $3::jsonb, $4)`,
+        String(i + 1),
+        sample,
+        eventPayload,
+        eventBody,
+      );
+    }
+
+    // Profiles, live processes and live assignments — the three reads that
+    // had neither a limit nor a cursor. Each is seeded past its own default
+    // page so the bound is the thing being measured rather than the table
+    // being short.
+    for (let i = 0; i < 140; i++) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Person" ("id", "displayName") VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        `bounded-person-${i}`,
+        `A profile with a realistically long display name ${i}`,
+      );
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "registered_processes" ("id", "machine", "pid", "executable", "sessionId", "root_session_id", "description", "registeredAt")
+         VALUES ($1, 'test-machine', $2, 'node', $3, $3, $4, now()) ON CONFLICT DO NOTHING`,
+        `bounded-process-${i}`,
+        1000 + i,
+        `bounded-reads-session-${i}`,
+        `npx vitest run tests/some/realistically-long-command-${i}.test.ts`,
+      );
+      // Spread across distinct items rather than piled onto `sample`.
+      // Concentrating every live claim on one item is not a realistic
+      // fleet — it is one item held by 140 crews — and it would inflate
+      // that item's board card rather than the fleet read this is for,
+      // measuring `get_board`'s per-card assignment list instead of the
+      // thing being bounded here.
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Assignment" ("id", "itemId", "holderId", "holderType", "role", "machine", "sessionId", "rootSessionId", "branch", "worktree", "claimedAt", "lastActive")
+         VALUES ($1, $2, $3, 'agent'::"HolderType", 'builder'::"Role", 'test-machine', $4, $4, $5, $6, now(), now())`,
+        `bounded-assignment-${i}`,
+        `bounded-executing-${i % 18}`,
+        `bounded-person-${i}`,
+        `bounded-reads-session-${i}`,
+        `feat/a-realistically-long-branch-name-${i}`,
+        `C:/Users/someone/Documents/Coding/a-worktree-${i}`,
+      );
+    }
 
     return { sampleItemId: sample, sessionId: "bounded-reads-session" };
   }
@@ -423,6 +523,107 @@ describeIfDb("every registered read is bounded against a realistic corpus", () =
     }
   });
 
+  // ── get_events: the read that was actually failing ───────────────────
+  //
+  // `GET /api/events` was being refused in production at 547,961 characters
+  // against the 200,000 guard, which is why the Standup page could not
+  // load. The sweep above did not catch it because the corpus had no events
+  // in it — so these assertions exist to measure the specific read, on a
+  // ledger seeded at the size that broke.
+
+  it("bounds get_events, the read the Standup page could not load", async () => {
+    const result = await runtime.call("get_events", {});
+    const size = payloadSize(result);
+    expect(size, `get_events returned ${size} characters`).toBeLessThanOrEqual(
+      TENABLE_PAYLOAD_CHARS,
+    );
+    // Not vacuous: it genuinely returned a full page of events rather than
+    // being small because it was empty.
+    expect((result as unknown as { events: unknown[] }).events.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The negative control for the slim default, and the reason `limit` was
+   * never the answer.
+   *
+   * **What would break this test:** deleting `full` from `get_events`'s
+   * input schema, or changing `eventColumnsFor` to return the full column
+   * list for `full: false`. Either makes the default response carry
+   * `payload` and `body` again, and the first assertion goes red.
+   *
+   * The second assertion is what distinguishes this row from "add a
+   * smaller limit": it measures the *same twenty rows* in both projections
+   * and requires the heavy one to be at least ten times larger. That
+   * multiple is the whole argument — a page of 20 was still ~144,000
+   * characters, so no page size a caller would accept fits, and only
+   * dropping the columns does.
+   */
+  it("bounds get_events by dropping payload and body, which a smaller limit could not do", async () => {
+    const slim = payloadSize(await runtime.call("get_events", { limit: 20 }));
+    const full = payloadSize(await runtime.call("get_events", { limit: 20, full: true }));
+    expect(slim).toBeLessThanOrEqual(TENABLE_PAYLOAD_CHARS);
+    expect(
+      full / slim,
+      `full was ${full} and slim ${slim} characters for the same 20 events`,
+    ).toBeGreaterThan(10);
+  });
+
+  /**
+   * The three reads that had neither a `limit` nor a cursor.
+   *
+   * Each is seeded past its own default page above, so a page is genuinely
+   * a slice rather than the whole table being short. **What would break
+   * this:** removing the `LIMIT` from any of the three queries, which is a
+   * one-line deletion and is exactly the state they were in before.
+   */
+  it("bounds the reads that were unbounded by construction, and pages them", async () => {
+    const people = (await runtime.call("list_people", {})) as unknown as {
+      people: unknown[];
+      nextCursor: string | null;
+    };
+    // 100 is `list_people`'s default page, against 140 seeded profiles.
+    expect(people.people).toHaveLength(100);
+    // A cursor is only meaningful if it says there is more — with 140 rows
+    // seeded and a page of 100, there is.
+    expect(people.nextCursor).not.toBeNull();
+
+    const fleet = (await runtime.call("get_fleet", {})) as unknown as {
+      assignments: unknown[];
+      nextCursor: string | null;
+    };
+    // 50 is `get_fleet`'s default page, against 140 seeded live assignments.
+    expect(fleet.assignments).toHaveLength(50);
+    expect(fleet.nextCursor).not.toBeNull();
+
+    const processes = (await runtime.call("list_processes", { limit: 25 })) as unknown[];
+    expect(processes).toHaveLength(25);
+  });
+
+  /**
+   * A cursor has to actually advance, or paging is decorative.
+   *
+   * **What would break this:** flipping the keyset comparison in
+   * `list_people` from `>` to `<`, which returns the page you already had
+   * rather than erroring — the silent failure the comment at that
+   * comparison warns about. The overlap assertion is what catches it.
+   */
+  it("advances through pages rather than returning the same rows again", async () => {
+    const first = (await runtime.call("list_people", { limit: 40 })) as unknown as {
+      people: { id: string }[];
+      nextCursor: string | null;
+    };
+    expect(first.nextCursor).not.toBeNull();
+    const second = (await runtime.call("list_people", {
+      limit: 40,
+      cursor: first.nextCursor,
+    })) as unknown as { people: { id: string }[] };
+
+    expect(second.people).toHaveLength(40);
+    const firstIds = new Set(first.people.map((person) => person.id));
+    const overlap = second.people.filter((person) => firstIds.has(person.id));
+    expect(overlap, "the second page repeated rows from the first").toHaveLength(0);
+  });
+
   // The corpus has to be big enough that an unbounded read would fail the
   // bound above — otherwise every assertion in the loop is vacuous. This
   // measures the thing the loop is protecting against, directly.
@@ -435,5 +636,21 @@ describeIfDb("every registered read is bounded against a realistic corpus", () =
     const everything =
       await prisma.$queryRawUnsafe<Record<string, unknown>[]>(`SELECT * FROM "Item"`);
     expect(payloadSize(everything)).toBeGreaterThan(TENABLE_PAYLOAD_CHARS * 5);
+  });
+
+  // The same guard for the ledger, which is a separate table and was the
+  // one actually overflowing. Without this, an events seed that quietly
+  // shrank would leave every `get_events` assertion above passing against
+  // a corpus too small to overflow anything — trap #1 in the header, in
+  // the exact place it already caught this file out once.
+  it("is seeded with a ledger large enough that an unbounded read would breach the bound", async () => {
+    // `id` and `txId` are `bigint`, which `JSON.stringify` throws on
+    // outright, so the two are cast to text in the measurement rather than
+    // selected raw. Their character cost is what is being counted here, not
+    // their type.
+    const everyEvent = await prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+      `SELECT "id"::text, "txId"::text, "itemId", "ts", "actorType", "type", "payload", "body" FROM "Event"`,
+    );
+    expect(payloadSize(everyEvent)).toBeGreaterThan(TENABLE_PAYLOAD_CHARS * 5);
   });
 });

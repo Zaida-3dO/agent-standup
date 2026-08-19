@@ -165,6 +165,43 @@ export interface EventRow {
 }
 
 /**
+ * One ledger row without its two unbounded columns — MILESTONES.md #109.
+ *
+ * **`payload` and `body` are the entire size problem.** Measured on a
+ * corpus of realistically-sized events, one row is ~7,400 characters, of
+ * which `payload` is ~4,500 and `body` ~2,500 — 95% of the row. The fields
+ * a "what's new" line actually renders (`id`, `ts`, `type`, `itemId`, and
+ * the item title resolved beside it) come to under 150. So the slim
+ * projection is not a marginal saving; it is two orders of magnitude, and
+ * it is the difference between a ledger read that fits a caller's context
+ * and one that is refused outright.
+ *
+ * **Why a separate row type rather than nulling the columns out after the
+ * fact.** Mapping a full row and then dropping two fields returns a
+ * byte-identical response while still transferring every byte from
+ * Postgres, which is the defect `itemColumnsFor` exists to make
+ * impossible for items. The same reasoning applies here: the column list
+ * has to differ in the SQL, so the two shapes are two types.
+ */
+export type SlimEventRow = Omit<EventRow, "payload" | "body">;
+
+/**
+ * The columns each projection selects.
+ *
+ * Written as two explicit lists rather than one derived from the other,
+ * for the reason `ITEM_SUMMARY_COLUMNS` gives: deriving would mean parsing
+ * a pre-quoted, pre-joined string, and two short lists a test compares are
+ * cheaper to keep honest than one list that has to be taken apart.
+ */
+export const SLIM_EVENT_COLUMNS = `"id", "txId", "itemId", "ts", "actorType", "actorId", "sessionId", "assignmentId", "type"`;
+export const FULL_EVENT_COLUMNS = `${SLIM_EVENT_COLUMNS}, "payload", "body"`;
+
+/** Which column list a ledger read selects, given the caller's `full` flag. */
+export function eventColumnsFor(full: boolean): string {
+  return full ? FULL_EVENT_COLUMNS : SLIM_EVENT_COLUMNS;
+}
+
+/**
  * Reads events with `id > since`, bounded to the visibility horizon and
  * ordered by `id` — the read SCHEMA.md §3 says is the one that "never skips
  * a row": everything returned was written by a transaction that has
@@ -191,26 +228,26 @@ export interface EventRow {
  */
 export async function readSinceBounded(
   db: TransactionHandle,
-  args: { readonly since: bigint; readonly limit?: number },
-): Promise<{ events: EventRow[]; horizon: bigint }> {
+  args: { readonly since: bigint; readonly limit?: number; readonly full: true },
+): Promise<{ events: EventRow[]; horizon: bigint }>;
+export async function readSinceBounded(
+  db: TransactionHandle,
+  args: { readonly since: bigint; readonly limit?: number; readonly full?: false },
+): Promise<{ events: SlimEventRow[]; horizon: bigint }>;
+export async function readSinceBounded(
+  db: TransactionHandle,
+  args: { readonly since: bigint; readonly limit?: number; readonly full?: boolean },
+): Promise<{ events: (EventRow | SlimEventRow)[]; horizon: bigint }> {
   const horizon = await visibilityHorizon(db);
   const limit = args.limit ?? 500;
-  const rows = await db.$queryRawUnsafe<
-    {
-      id: bigint;
-      txId: bigint;
-      itemId: string | null;
-      ts: Date;
-      actorType: ActorType;
-      actorId: string | null;
-      sessionId: string | null;
-      assignmentId: string | null;
-      type: EventType;
-      payload: Record<string, unknown>;
-      body: string | null;
-    }[]
-  >(
-    `SELECT "id", "txId", "itemId", "ts", "actorType", "actorId", "sessionId", "assignmentId", "type", "payload", "body"
+  // `full` defaults to **false**, so a caller that does not name a
+  // projection gets the bounded one. That direction is deliberate: the
+  // unbounded shape is the one that overflowed, and a default nobody chose
+  // should be the safe one. `orientation` passes `full: true` explicitly
+  // because its "what changed" list renders the payload.
+  const full = args.full ?? false;
+  const rows = await db.$queryRawUnsafe<(EventRow | SlimEventRow)[]>(
+    `SELECT ${eventColumnsFor(full)}
      FROM "Event"
      WHERE "id" > $1 AND "txId" < $2
      ORDER BY "id" ASC

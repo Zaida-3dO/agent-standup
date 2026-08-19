@@ -59,6 +59,16 @@
 // and a late commit can land a lower `id` after a reader already advanced
 // past it. The `horizon` comes back with the rows so a caller can tell a
 // healthy short delay from a stuck one.
+//
+// **The slim shape is the default** (MILESTONES.md #109). `limit` bounds row
+// *count*; nothing bounded row *size*, and on this table the two are barely
+// related: `payload` and `body` measured ~95% of a realistic event, so a
+// default page of 50 came to ~360,000 characters and was refused outright by
+// the response-size guard — which is why the Standup page could not load.
+// Reducing `limit` does not reach it; a page of 20 was still ~144,000. The
+// only control that works is dropping the two unbounded columns, so
+// `full: true` is what asks for them back. See `SlimEventRow` in
+// `@/lib/events` for the measurements.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
@@ -105,12 +115,27 @@ const inputSchema = z
      * without the filter would never see them again.
      */
     unseenOnly: z.boolean().default(false),
+    /**
+     * Return each event's `payload` and `body` as well as the fields a
+     * "what's new" line renders. Off by default — see the module header.
+     * This is the parameter that bounds response *size*; `limit` only ever
+     * bounded row count, and on this table that was never the same thing.
+     */
+    full: z.boolean().default(false),
   })
   .strict();
 
 export type GetEventsInput = z.infer<typeof inputSchema>;
 
-/** One event in the slice, with this profile's read state resolved against it. */
+/**
+ * One event in the slice, with this profile's read state resolved against
+ * it — the slim default (MILESTONES.md #109).
+ *
+ * Everything here is what a "what's new" line needs to render itself:
+ * which event, when, what kind, which item (by id, with its title resolved
+ * beside it so the row reads as prose), and whether you have seen it. The
+ * two unbounded columns are `SinceEventFull`'s, behind `full: true`.
+ */
 export interface SinceEvent {
   /** `bigint` stringified — `JSON.stringify` throws on a `bigint` outright. */
   readonly id: string;
@@ -124,16 +149,20 @@ export interface SinceEvent {
   readonly sessionId: string | null;
   readonly assignmentId: string | null;
   readonly type: EventRow["type"];
-  readonly payload: Record<string, unknown>;
-  readonly body: string | null;
   /** Whether **this** profile has marked it seen. Always `false` when no profile was named. */
   readonly seen: boolean;
   /** Whether *any* profile has — see the module header on why this is separate from `seen`. */
   readonly seenByAnyone: boolean;
 }
 
+/** `SinceEvent` plus the two unbounded columns — what `full: true` returns. */
+export interface SinceEventFull extends SinceEvent {
+  readonly payload: Record<string, unknown>;
+  readonly body: string | null;
+}
+
 export interface GetEventsOutput {
-  readonly events: readonly SinceEvent[];
+  readonly events: readonly (SinceEvent | SinceEventFull)[];
   /** The cursor to pass as `since` next time — the highest `id` in this slice, or the caller's own `since` when it was empty. */
   readonly cursor: string;
   /** SCHEMA.md §3's visibility horizon, so a caller can tell a short delay from a stuck one. */
@@ -164,12 +193,18 @@ export const getEvents = defineOperation({
   name: "get_events",
   kind: "read",
   summary:
-    "Since your last visit: a bounded slice of the events ledger with per-profile read state. Pass since to page, personId to resolve whose read state, unseenOnly for just what is new.",
+    "Since your last visit: a bounded slice of the events ledger with per-profile read state. Returns id, timestamp, type, item and seen state only — pass full for each event's payload and body. Pass since to page, personId to resolve whose read state, unseenOnly for just what is new.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetEventsInput): Promise<GetEventsOutput> {
     const since = input.since !== undefined ? BigInt(input.since) : 0n;
-    const { events, horizon } = await readSinceBounded(ctx.db, { since, limit: input.limit });
+    // The projection is chosen in the SQL, not stripped afterwards: mapping
+    // a full row and then dropping two fields would return the same bytes
+    // to the caller while still reading every byte out of Postgres, which
+    // is the defect this bound exists to prevent rather than to disguise.
+    const { events, horizon } = input.full
+      ? await readSinceBounded(ctx.db, { since, limit: input.limit, full: true })
+      : await readSinceBounded(ctx.db, { since, limit: input.limit });
 
     // Read state for exactly the events in this slice — one query keyed on
     // the ids already in hand, rather than a join inside `readSinceBounded`.
@@ -225,22 +260,25 @@ export const getEvents = defineOperation({
       firstVisit = anySeen.length === 0;
     }
 
-    const mapped: SinceEvent[] = events.map((event) => ({
-      id: event.id.toString(),
-      txId: event.txId.toString(),
-      itemId: event.itemId,
-      itemTitle: event.itemId !== null ? (titles.get(event.itemId) ?? null) : null,
-      ts: event.ts.toISOString(),
-      actorType: event.actorType,
-      actorId: event.actorId,
-      sessionId: event.sessionId,
-      assignmentId: event.assignmentId,
-      type: event.type,
-      payload: event.payload,
-      body: event.body,
-      seen: seenByThisPerson.has(event.id),
-      seenByAnyone: seenBySomeone.has(event.id),
-    }));
+    const mapped: (SinceEvent | SinceEventFull)[] = events.map((event) => {
+      const slim: SinceEvent = {
+        id: event.id.toString(),
+        txId: event.txId.toString(),
+        itemId: event.itemId,
+        itemTitle: event.itemId !== null ? (titles.get(event.itemId) ?? null) : null,
+        ts: event.ts.toISOString(),
+        actorType: event.actorType,
+        actorId: event.actorId,
+        sessionId: event.sessionId,
+        assignmentId: event.assignmentId,
+        type: event.type,
+        seen: seenByThisPerson.has(event.id),
+        seenByAnyone: seenBySomeone.has(event.id),
+      };
+      if (!input.full) return slim;
+      const heavy = event as EventRow;
+      return { ...slim, payload: heavy.payload, body: heavy.body } satisfies SinceEventFull;
+    });
 
     // The cursor is the slice's own high-water mark, taken **before**
     // `unseenOnly` filters anything — see that field's comment. `events` is
