@@ -1,12 +1,12 @@
-// `/needs-you` — the narrow list behind the sidebar's badge. A later task
-// owns it; this is the route resolving with an honest placeholder.
-import { Placeholder } from "@/components/placeholder/Placeholder";
+// `/needs-you` — the narrow list behind the sidebar's badge: everything
+// genuinely requiring a person, oldest-first, decidable in place.
+//
+// No wrapping <main> here — AppShell (src/components/app-shell) already
+// supplies the one for the whole app. `NeedsYouInbox` is a client component
+// because it fetches on mount; this page stays a server component that
+// simply places it, matching `BoardPage`/`ActivityPage`.
+import { NeedsYouInbox } from "@/components/needs-you/NeedsYouInbox";
 
 export default function NeedsYouPage() {
-  return (
-    <Placeholder
-      title="Needs you"
-      summary="Items blocked on you specifically — not everything that is blocked, and not everything that is paused."
-    />
-  );
+  return <NeedsYouInbox />;
 }
