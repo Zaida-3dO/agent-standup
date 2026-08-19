@@ -130,6 +130,13 @@ export function buildOvernightReport(
     // the opposite — the read reached all the way to the ledger's start —
     // so there is nothing left to miss.
     eventsTruncated: events.length >= requestedLimit && !coversSince(events, cutoff),
+    // NOTE: `coversSince` asks whether the OLDEST event reaches back past the
+    // cutoff. That is the right question only because the caller now reads the
+    // ledger's tail (see `tailCursor` in `standup/state.ts`). A caller that
+    // reads from the ledger's START satisfies this trivially with ancient
+    // rows and gets `eventsTruncated: false` on a report that covers nothing —
+    // which is exactly what happened before that fix. If you change where the
+    // page is read from, change this with it.
   };
 }
 
