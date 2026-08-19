@@ -66,6 +66,52 @@ that reports success without providing it — which is the exact failure the job
 the job itself. A `Stryker disable` scoped to provably unkillable mutants, with the reason stated at
 the disable and the behaviour asserted by a real test, is a different thing and is allowed.
 
+## G2 — Both capability documents are unset, and one gate is unsatisfiable because of it
+
+**State:** `visual_review.doc` and `notify.doc` are both `null`. Both mechanisms they gate are fully
+built; neither is reachable.
+
+**How it got here.** Not a decision — a gap, found on 2026-08-19 while asking why a milestone's worth
+of front-end work never hit a visual review. Neither setting has ever been given a value, and nothing
+reports that they are missing, so the absence has been invisible since the settings were introduced.
+
+**Why it matters more than an unset default usually would.** These are not dormant switches. Each has
+a live consequence today:
+
+1. **`visual_review.doc` null makes the visual gate unsatisfiable.** The setting's own help is
+   explicit — *"Null means visual review is unavailable, and an item that needs one has no way through
+   its gate."* Two repositories are registered `needsVisualReview: true` (`jcs`, `haven-dashboard`),
+   so every item minted against them inherits a requirement the installation cannot fulfil. Nothing
+   fails loudly; items simply cannot reach `merged` by the route the schema describes.
+2. **`notify.doc` null means escalation reaches nobody.** Again from its help — *"Null means
+   notifications are off — including the escalation that puts a blocked item on somebody's list."*
+   An item that blocks and escalates does so into silence, which is indistinguishable from an item
+   that never blocked.
+
+**The shape of the mistake is worth keeping, because it is not "someone forgot".** `SCHEMA.md` §17.5
+anticipated this exactly — it specifies the warning *"14 items require a visual review and
+`visual_review.doc` is not set"* — so the condition was understood, written down, and still went
+unnoticed for the entire period it was true. A documented warning nobody implemented is
+indistinguishable from a warning that never fires. This is also why the related intervention
+(**I18**, `INTERVENTIONS.md`) ships as a nudge rather than a block: blocking on a gate no one can
+satisfy stops work without protecting anything.
+
+**What has to be true to close it.**
+
+- `visual_review.doc` points at a real document describing how a visual review is performed here. One
+  plausibly already exists — the `design-review` skill in the Patrick workspace — in which case this
+  is a `put_setting`, not authorship.
+- `notify.doc` points at a real document describing how to reach people, or the installation states
+  deliberately that notifications are off and accepts that escalation is inert.
+- The §17.5 warning is actually implemented, so the next unset capability announces itself instead of
+  waiting to be discovered. **This is the part that stops G2 recurring under a different setting
+  name**, and without it the other two bullets are a one-time fix rather than a closed gate.
+- Each repository's `needsVisualReview` is checked against whether it is genuinely a UI repository —
+  `agent-standup` itself carried `false` while both sibling UI repositories carried `true`, which is
+  what let a 26-PR front-end milestone merge without a single render.
+
+---
+
 ---
 
 ## How to add an entry
