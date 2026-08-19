@@ -34,12 +34,19 @@ const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 const WRITE_TOOL_NAMES = ["create_item", "update_item", "transition_item", "complete_item"];
 
-function validSummary(overrides: Record<string, unknown> = {}) {
+/**
+ * A valid summary for the closes that assert work was *not* done — the two
+ * `complete_item` cases below both close as `wont_do`. These take a
+ * `decision` and no `shipped`: the field naming delivered work has nothing
+ * truthful to hold when nothing was delivered.
+ */
+function validNonDeliverySummary(overrides: Record<string, unknown> = {}) {
   return {
-    shipped: ["Delivered the thing."],
+    shipped: [],
+    decision: "Duplicate of the open-loop writes row, which already covers this change.",
     not_done: [],
     user_facing: false,
-    how_verified: "Ran it locally and watched it work end to end.",
+    how_verified: "Read both rows and confirmed the other one carries the whole change.",
     watch_for: [],
     ...overrides,
   };
@@ -232,7 +239,7 @@ describeIfDb("MCP write tools against Postgres", () => {
 
     const result = await client.callTool({
       name: "complete_item",
-      arguments: { id, to: "wont_do", summary: validSummary() },
+      arguments: { id, to: "wont_do", summary: validNonDeliverySummary() },
     });
 
     expect(result.isError).toBeFalsy();
@@ -249,7 +256,10 @@ describeIfDb("MCP write tools against Postgres", () => {
 
     const result = await client.callTool({
       name: "complete_item",
-      arguments: { id, to: "wont_do", summary: validSummary({ shipped: [] }) },
+      // An empty `shipped` is the *correct* shape for a `wont_do` close, so
+      // the invalid summary here is one missing the field that close does
+      // require — the decision saying why the work is not being done.
+      arguments: { id, to: "wont_do", summary: validNonDeliverySummary({ decision: undefined }) },
     });
 
     expect(result.isError).toBe(true);

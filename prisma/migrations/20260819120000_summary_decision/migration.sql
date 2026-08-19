@@ -1,0 +1,14 @@
+-- The reason a `wont_do` or `cancelled` close was made.
+--
+-- These two states assert that work was NOT delivered, so requiring
+-- `shipped` for them forced a non-delivery to be written into a field named
+-- for delivered work. `decision` is what they require instead: the reasoning,
+-- which is the one fact about a non-delivery close that cannot be
+-- reconstructed from the row later.
+--
+-- Nullable, and no backfill. A delivery close (`merged`, `research_done`)
+-- has nothing to put here by rule, and every summary written before this
+-- column existed predates the field — inventing a reason for those rows
+-- would be asserting a decision nobody recorded, which is the same class of
+-- mistake the column exists to stop.
+ALTER TABLE "Summary" ADD COLUMN "decision" TEXT;

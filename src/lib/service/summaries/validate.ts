@@ -20,6 +20,93 @@ export const SHIPPED_MIN = 1;
 export const SHIPPED_MAX = 5;
 export const SHIPPED_CHAR_CAP = 120; // SCHEMA.md §5: "1-5 entries, <=120 chars each."
 
+/**
+ * The terminal states whose summary must carry `shipped` — the ones that
+ * assert work was delivered.
+ *
+ * `merged` is the obvious member. `research_done` is the less obvious one
+ * and belongs here for the same reason: it closes an investigation that
+ * *produced* something — findings, a recommendation, a ruled-out approach —
+ * and those are outcomes a reader wants listed. Nothing about it is a
+ * non-delivery.
+ */
+export const DELIVERY_STATES = ["merged", "research_done"] as const;
+
+/**
+ * The terminal states that assert the *opposite* of delivery, and therefore
+ * require a `decision` instead of `shipped` (see `DECISION_CHAR_MIN`).
+ *
+ * ── Why this split exists at all ────────────────────────────────────────
+ *
+ * Requiring `shipped` for every completed state would force a caller closing
+ * a duplicate row to write a non-delivery into a field named for delivered
+ * work — *"identified as a duplicate of the open-loop writes row"* listed as
+ * something that shipped, when nothing shipped at all.
+ *
+ * That is a worse failure than an awkward field name. Every other check in
+ * this module exists to make the closing summary a *truthful record*: the
+ * similarity check kills the log-paste, the jargon list keeps it readable by
+ * someone who did not build it, `how_verified` may not be a bare CI
+ * reference. A rule that forces a false-ish statement in order to close a
+ * truthful state teaches the opposite lesson — that the summary is a
+ * formality to satisfy rather than a record to get right — and it teaches it
+ * at exactly the moment a caller is deciding how much care the whole
+ * structure deserves. One field that must be lied into is enough to make
+ * every neighbouring field feel optional.
+ *
+ * ── Why these states get a required `decision` and not simply nothing ────
+ *
+ * Dropping the requirement entirely was the smaller change and is the wrong
+ * one. `wont_do` and `cancelled` are not the absence of an outcome; they
+ * *are* an outcome — "this was wanted, considered, and deliberately not
+ * done" (SCHEMA.md §1.4, which draws precisely this line to explain why
+ * `delete_item` exists separately). The fact worth recording is the
+ * reasoning, and it is the one fact nobody can reconstruct later: a closed
+ * row with no reason is indistinguishable from an abandoned one, which is
+ * the confusion `delete_item` already refuses to create.
+ *
+ * So the obligation is not removed, it is *pointed at the true thing*. The
+ * shape is taken from `delete_item`'s archive reason rather than invented:
+ * a required free-text field with a minimum length, refused when it is short
+ * enough to be a shrug.
+ */
+export const NON_DELIVERY_STATES = ["wont_do", "cancelled"] as const;
+
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
+export type NonDeliveryState = (typeof NON_DELIVERY_STATES)[number];
+
+/** Every completed state, in one place — the union the two lists above partition. */
+export const COMPLETED_STATES = [...DELIVERY_STATES, ...NON_DELIVERY_STATES] as const;
+export type CompletedState = (typeof COMPLETED_STATES)[number];
+
+/** True when `state` is a completed state that asserts delivery, so `shipped` is required. */
+export function isDeliveryState(state: string): boolean {
+  return (DELIVERY_STATES as readonly string[]).includes(state);
+}
+
+/** True when `state` is a completed state that asserts non-delivery, so `decision` is required. */
+export function isNonDeliveryState(state: string): boolean {
+  return (NON_DELIVERY_STATES as readonly string[]).includes(state);
+}
+
+/**
+ * The shortest `decision` accepted, and the cap it may not exceed.
+ *
+ * The floor is 20, the same number and the same reasoning as
+ * `delete_item`'s `ARCHIVE_REASON_MIN_CHARS`: long enough that "dupe",
+ * "n/a" and "wont fix" do not clear it, short enough that "duplicate of
+ * the open-loop writes row" does. The point is not the character count —
+ * it is that a caller has to name *which* duplicate or *which* change of
+ * plan, which is the sentence that makes the closure reviewable later.
+ *
+ * Deliberately the same floor rather than an independently-chosen one:
+ * these two refusals ask a caller for the same kind of sentence at the same
+ * kind of moment, and two different minimum lengths for "name the reason"
+ * would be a difference with no meaning behind it.
+ */
+export const DECISION_CHAR_MIN = 20;
+export const DECISION_CHAR_CAP = 240;
+
 export const NOT_DONE_MIN = 0;
 export const NOT_DONE_MAX = 5; // SCHEMA.md §5: "0-5 typed entries."
 // SCHEMA.md §5a does not state a per-field character cap for `not_done`'s
@@ -204,7 +291,28 @@ export interface SummaryCandidate {
   readonly what_to_test?: readonly WhatToTestEntry[] | null;
   readonly how_verified?: string | null;
   readonly watch_for: readonly string[];
+  /**
+   * Why the work is not being done — required for `wont_do` and `cancelled`,
+   * refused for the delivery states. See `NON_DELIVERY_STATES`.
+   */
+  readonly decision?: string | null;
 }
+
+/**
+ * The terminal state this summary is being written for.
+ *
+ * Passed to the validator rather than inferred, because `shipped` and
+ * `decision` are required in opposite cases and neither can be decided from
+ * the summary's own contents — a caller who omitted both is making a
+ * different mistake depending on where they are going.
+ *
+ * `undefined` means "state not supplied", and is treated as the delivery
+ * case: that is the pre-existing behaviour every caller not passing a state
+ * already relies on, and it is the conservative direction — an unknown
+ * destination keeps the stricter `shipped` requirement rather than silently
+ * accepting a summary that asserts nothing.
+ */
+export type SummaryTargetState = string | undefined;
 
 function pushIfTooLong(
   issues: SummaryValidationIssue[],
@@ -241,16 +349,71 @@ function pushIfTooLong(
  * fixing a rejected summary wants the whole list in one round, not one
  * violation at a time.
  */
-export function validateSummaryShape(candidate: SummaryCandidate): SummaryValidationIssue[] {
+export function validateSummaryShape(
+  candidate: SummaryCandidate,
+  to?: SummaryTargetState,
+): SummaryValidationIssue[] {
   const issues: SummaryValidationIssue[] = [];
+  const nonDelivery = to !== undefined && isNonDeliveryState(to);
 
-  // --- shipped: 1-5 entries, <=120 chars each ---
-  if (candidate.shipped.length < SHIPPED_MIN || candidate.shipped.length > SHIPPED_MAX) {
-    issues.push({
-      field: "shipped",
-      rule: "count",
-      message: `shipped must have ${SHIPPED_MIN}-${SHIPPED_MAX} entries; got ${candidate.shipped.length}.`,
-    });
+  // --- shipped / decision: which one is required is decided by `to` ---
+  //
+  // The two branches are exclusive in both directions. A `wont_do` close
+  // must not be able to *also* claim delivery, or the field this split
+  // exists to keep honest is back in play through a side door; and a
+  // `merged` close must not be able to substitute a reason for a list of
+  // outcomes.
+  if (nonDelivery) {
+    const decision = candidate.decision;
+    if (decision === null || decision === undefined || decision.trim().length === 0) {
+      issues.push({
+        field: "decision",
+        rule: "required",
+        message:
+          `Closing as ${to} needs a decision: one or two sentences on why this work is not ` +
+          `being done. Nothing shipped, so shipped is not required and must be empty — say ` +
+          `what was decided instead.`,
+      });
+    } else {
+      if (decision.trim().length < DECISION_CHAR_MIN) {
+        issues.push({
+          field: "decision",
+          rule: "min_length",
+          message:
+            `decision is ${decision.trim().length} characters, under the ` +
+            `${DECISION_CHAR_MIN}-character floor. Name which duplicate, or what changed — ` +
+            `a reader six months from now cannot reconstruct it from the row alone.`,
+        });
+      }
+      pushIfTooLong(issues, "decision", undefined, decision, DECISION_CHAR_CAP);
+      issues.push(...findJargonHits("decision", undefined, decision));
+    }
+    if (candidate.shipped.length > 0) {
+      issues.push({
+        field: "shipped",
+        rule: "not_applicable",
+        message:
+          `shipped must be empty when closing as ${to} — nothing was delivered. Put the ` +
+          `reasoning in decision instead.`,
+      });
+    }
+  } else {
+    if (candidate.shipped.length < SHIPPED_MIN || candidate.shipped.length > SHIPPED_MAX) {
+      issues.push({
+        field: "shipped",
+        rule: "count",
+        message: `shipped must have ${SHIPPED_MIN}-${SHIPPED_MAX} entries; got ${candidate.shipped.length}.`,
+      });
+    }
+    if (candidate.decision !== null && candidate.decision !== undefined) {
+      issues.push({
+        field: "decision",
+        rule: "not_applicable",
+        message:
+          "decision applies only when closing as wont_do or cancelled — for a completion that " +
+          "delivered something, list the outcomes in shipped.",
+      });
+    }
   }
   candidate.shipped.forEach((entry, i) => {
     pushIfTooLong(issues, "shipped", i, entry, SHIPPED_CHAR_CAP);

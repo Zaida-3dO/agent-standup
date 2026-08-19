@@ -364,6 +364,47 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       expect(events.some((e) => e.type === "state_change")).toBe(true);
     });
 
+    it("persists a decision and an empty shipped for a wont_do close", async () => {
+      // The write path for the non-delivery half, end to end against real
+      // Postgres. `shipped` stays empty because nothing was delivered, and
+      // the reasoning — the one fact nobody can reconstruct from the row
+      // later — lands in its own column rather than being forced into the
+      // field that means the opposite.
+      const id = await createTask({ state: "executing" });
+      const decision = "Duplicate of the open-loop writes row, which already covers this change.";
+      const result = (await runtime.call("complete_item", {
+        id,
+        to: "wont_do",
+        summary: {
+          shipped: [],
+          decision,
+          not_done: [],
+          user_facing: false,
+          how_verified: "Read both rows and confirmed the other one carries the whole change.",
+          watch_for: [],
+        },
+      })) as { item: { state: string } };
+
+      expect(result.item.state).toBe("wont_do");
+      expect(await readState(id)).toBe("wont_do");
+
+      const summary = await summaryFor(id);
+      expect(summary).not.toBeNull();
+      expect(summary?.decision).toBe(decision);
+      expect(summary?.shipped).toEqual([]);
+    });
+
+    it("leaves decision null on a merged close, rather than storing an empty string", async () => {
+      // Null distinguishes "this state has no decision to record" from
+      // "somebody recorded an empty one" — a column that stored `''` here
+      // would make the two indistinguishable to every later reader.
+      const id = await createTask({ state: "in_review" });
+      await satisfyMergeGuards(id);
+      await runtime.call("complete_item", { id, to: "merged", summary: validSummary() });
+
+      expect((await summaryFor(id))?.decision).toBeNull();
+    });
+
     it("persists what_to_test and userFacing=true for a user-facing summary, not just the not-user-facing branch", async () => {
       const id = await createTask({ state: "in_review" });
       await satisfyMergeGuards(id);

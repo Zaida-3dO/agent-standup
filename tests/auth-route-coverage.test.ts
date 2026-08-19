@@ -135,7 +135,22 @@ describe("every API route passes through the authentication gate", () => {
       const gate = source.indexOf("if (!auth.ok) return auth.response;");
       const firstServiceCall = source.indexOf("service.call(");
 
+      // The gate itself is required of every route here — that is the
+      // assertion above, and it is unconditional.
       expect(gate).toBeGreaterThan(-1);
+
+      // The *ordering* claim only means something for a route that reaches
+      // the service at all. A route can authenticate and then answer from a
+      // constant without ever calling an operation — `GET /api` serves the
+      // generated route inventory that way. Requiring a `service.call` of
+      // every route would fail that one for doing nothing wrong, and the
+      // pressure would be to add a pointless call to satisfy a test, which
+      // is how a check stops meaning what it says.
+      //
+      // Skipping is safe precisely because it is conditioned on there being
+      // no service call in the file: a route that *does* reach the service
+      // cannot take this branch, so nothing it protects is weakened.
+      if (firstServiceCall === -1) return;
       expect(firstServiceCall).toBeGreaterThan(gate);
     },
   );

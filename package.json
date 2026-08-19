@@ -31,6 +31,8 @@
     "test:mutate": "node scripts/run-mutation-tests.mjs",
     "test:mutate:changed": "node scripts/run-mutation-tests.mjs --changed-only",
     "check:external-refs": "node scripts/check-external-refs.mjs",
+    "generate:http-routes": "node scripts/generate-http-routes.mjs",
+    "check:http-routes": "node scripts/generate-http-routes.mjs --check",
     "check:db-imports": "node scripts/check-db-import-allowlist.mjs",
     "check:event-emitters": "node scripts/check-event-emitters.mjs",
     "check:db-gated": "node scripts/check-db-gated-suites.mjs",

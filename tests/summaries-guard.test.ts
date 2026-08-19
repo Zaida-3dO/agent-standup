@@ -128,6 +128,22 @@ describeIfDb("the summaries guard, against Postgres", () => {
     watch_for: [],
   };
 
+  /**
+   * The summary shape the non-delivery closes need: no `shipped`, and a
+   * `decision` saying why. Deliberately a separate fixture rather than a
+   * spread of `validSummary` with `shipped` blanked, so a reader sees the
+   * two shapes side by side — they are different claims, not one shape with
+   * a field switched off.
+   */
+  const validNonDeliverySummary = {
+    shipped: [],
+    decision: "Duplicate of the guard-registration row, which already covers this check.",
+    not_done: [],
+    user_facing: false,
+    how_verified: "Read both rows and confirmed the other one carries the whole change.",
+    watch_for: [],
+  };
+
   describe("applies only when entering a completed state", () => {
     it("does not fire on a non-completed target — the transition succeeds with no summary supplied", async () => {
       const reg = registryWithSummaryGuard();
@@ -177,13 +193,63 @@ describeIfDb("the summaries guard, against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("applies identically to each of the four completed states", async () => {
+    it("applies to each of the four completed states, with the shape that state requires", async () => {
+      // The guard fires on all four; what a valid summary *is* differs
+      // between the two halves. `merged` and `research_done` assert
+      // delivery and take `shipped`; `wont_do` and `cancelled` assert the
+      // opposite and take `decision`.
       const reg = registryWithSummaryGuard();
-      for (const to of ["merged", "research_done", "wont_do", "cancelled"]) {
+      for (const to of ["merged", "research_done"]) {
         const id = await createTask("executing");
         await callTransition("apply", id, to, reg, { summary: validSummary });
         expect(await readState(id)).toBe(to);
       }
+      for (const to of ["wont_do", "cancelled"]) {
+        const id = await createTask("executing");
+        await callTransition("apply", id, to, reg, { summary: validNonDeliverySummary });
+        expect(await readState(id)).toBe(to);
+      }
+    });
+
+    it("refuses a wont_do close that claims a delivery in shipped", async () => {
+      // The corrosive case this split exists to remove, asserted from the
+      // other side. A rule requiring `shipped` everywhere would force this
+      // exact shape, so it has to be refused rather than merely tolerated.
+      const reg = registryWithSummaryGuard();
+      const id = await createTask("executing");
+      const error = (await callTransition("apply", id, "wont_do", reg, {
+        summary: {
+          ...validNonDeliverySummary,
+          shipped: ["Identified as a duplicate of the open-loop writes row."],
+        },
+      }).catch((e: unknown) => e)) as { code?: string; fields?: string[] };
+      expect(error.code).toBe("guard_rejected");
+      expect(error.fields).toContain("shipped");
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("refuses a wont_do close with no decision, and says so in the refusal", async () => {
+      const reg = registryWithSummaryGuard();
+      const id = await createTask("executing");
+      const error = (await callTransition("apply", id, "wont_do", reg, {
+        summary: { ...validNonDeliverySummary, decision: undefined },
+      }).catch((e: unknown) => e)) as { code?: string; fields?: string[]; message?: string };
+      expect(error.code).toBe("guard_rejected");
+      expect(error.fields).toContain("decision");
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("still refuses a merged close with no shipped entries", async () => {
+      // The guarantee the split must not weaken. A delivery close without
+      // outcomes is exactly as invalid as it was before.
+      const reg = registryWithSummaryGuard();
+      const id = await createTask("executing");
+      const error = (await callTransition("apply", id, "merged", reg, {
+        summary: { ...validSummary, shipped: [] },
+      }).catch((e: unknown) => e)) as { code?: string; fields?: string[] };
+      expect(error.code).toBe("guard_rejected");
+      expect(error.fields).toContain("shipped");
+      expect(await readState(id)).toBe("executing");
     });
   });
 

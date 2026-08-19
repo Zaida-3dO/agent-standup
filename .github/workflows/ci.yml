@@ -208,6 +208,14 @@ jobs:
       # structural check it resembles rather than with the database tests.
       - name: Check every declared event type has an emitter
         run: npm run check:event-emitters
+      # Source-text only, like its neighbours. This is what makes `GET /api`
+      # trustworthy rather than merely present: the committed route list is
+      # regenerated here and compared, so a route added, moved or removed
+      # without regenerating fails the pull request that did it. A route
+      # index that can drift is worse than none — a caller has no reason to
+      # doubt it, so a stale one sends them looking for a path that moved.
+      - name: Check the served route index matches the route tree
+        run: npm run check:http-routes
       # Source-text only, like the two checks above it — no Stryker, no test
       # run. It belongs here rather than in the mutation job because it exists
       # to fail *before* a pull request pays nine minutes to be told the same

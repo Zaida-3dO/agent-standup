@@ -9,7 +9,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_CAPS_PREFIXES,
+  DECISION_CHAR_CAP,
+  DECISION_CHAR_MIN,
+  DELIVERY_STATES,
   HOW_VERIFIED_CHAR_CAP,
+  NON_DELIVERY_STATES,
   JARGON_TERMS,
   NOT_DONE_MAX,
   NOT_DONE_TEXT_CHAR_CAP,
@@ -37,6 +41,114 @@ function baseCandidate(overrides: Partial<SummaryCandidate> = {}): SummaryCandid
     ...overrides,
   };
 }
+
+/**
+ * A valid non-delivery candidate — what `wont_do` and `cancelled` require:
+ * no `shipped`, and a `decision` naming why.
+ */
+function nonDeliveryCandidate(overrides: Partial<SummaryCandidate> = {}): SummaryCandidate {
+  return {
+    shipped: [],
+    decision: "Duplicate of the open-loop writes row, which already covers this change.",
+    not_done: [],
+    user_facing: false,
+    how_verified: "Read both rows and confirmed the other one carries the whole change.",
+    watch_for: [],
+    ...overrides,
+  };
+}
+
+describe("what a completed state requires depends on whether it claims delivery", () => {
+  // The whole point of the split: closing a duplicate must not force a
+  // non-delivery to be written into a field named for delivered work.
+
+  it.each([...NON_DELIVERY_STATES])(
+    "accepts a %s close with no shipped entries at all",
+    (state) => {
+      expect(validateSummaryShape(nonDeliveryCandidate(), state)).toEqual([]);
+    },
+  );
+
+  it.each([...NON_DELIVERY_STATES])("requires a decision when closing as %s", (state) => {
+    const issues = validateSummaryShape(nonDeliveryCandidate({ decision: undefined }), state);
+    expect(issues.some((i) => i.field === "decision" && i.rule === "required")).toBe(true);
+  });
+
+  it.each([...NON_DELIVERY_STATES])(
+    "refuses a %s close that also claims something shipped",
+    (state) => {
+      // Exclusive in both directions — otherwise the field this split
+      // exists to keep honest is reachable through a side door.
+      const issues = validateSummaryShape(
+        nonDeliveryCandidate({ shipped: ["Identified as a duplicate of the other row."] }),
+        state,
+      );
+      expect(issues.some((i) => i.field === "shipped" && i.rule === "not_applicable")).toBe(true);
+    },
+  );
+
+  it.each([...DELIVERY_STATES])("still requires shipped when closing as %s", (state) => {
+    // The guarantee the split must not weaken. A single-character change
+    // making the non-delivery branch fire for every state would break this.
+    const issues = validateSummaryShape(baseCandidate({ shipped: [] }), state);
+    expect(issues.some((i) => i.field === "shipped" && i.rule === "count")).toBe(true);
+  });
+
+  it.each([...DELIVERY_STATES])("refuses a decision on a %s close", (state) => {
+    const issues = validateSummaryShape(
+      baseCandidate({ decision: "Not applicable to a delivery close." }),
+      state,
+    );
+    expect(issues.some((i) => i.field === "decision" && i.rule === "not_applicable")).toBe(true);
+  });
+
+  it("requires shipped when no target state is supplied at all", () => {
+    // The conservative default: an unknown destination keeps the stricter
+    // requirement rather than silently accepting a summary asserting
+    // nothing. Every pre-existing caller relies on this.
+    const issues = validateSummaryShape(baseCandidate({ shipped: [] }));
+    expect(issues.some((i) => i.field === "shipped" && i.rule === "count")).toBe(true);
+  });
+
+  it("refuses a decision one character under the minimum length", () => {
+    // Boundary, asserted from below: a reason short enough to be a shrug
+    // does not make a closure reviewable later.
+    const tooShort = "x".repeat(DECISION_CHAR_MIN - 1);
+    const issues = validateSummaryShape(nonDeliveryCandidate({ decision: tooShort }), "wont_do");
+    expect(issues.some((i) => i.field === "decision" && i.rule === "min_length")).toBe(true);
+  });
+
+  it("accepts a decision exactly at the minimum length — the boundary is inclusive", () => {
+    const exactly = "x".repeat(DECISION_CHAR_MIN);
+    const issues = validateSummaryShape(nonDeliveryCandidate({ decision: exactly }), "wont_do");
+    expect(issues.some((i) => i.field === "decision")).toBe(false);
+  });
+
+  it("refuses a decision one character over the cap, and does not shorten it", () => {
+    const overLong = "x".repeat(DECISION_CHAR_CAP + 1);
+    const candidate = nonDeliveryCandidate({ decision: overLong });
+    const issues = validateSummaryShape(candidate, "cancelled");
+    expect(issues.some((i) => i.field === "decision" && i.rule === "max_length")).toBe(true);
+    // Reject, never truncate — the caller gets back what they sent.
+    expect(candidate.decision).toHaveLength(DECISION_CHAR_CAP + 1);
+  });
+
+  it("applies the jargon denylist to decision like every other prose field", () => {
+    const issues = validateSummaryShape(
+      nonDeliveryCandidate({ decision: "Superseded because review_round two said so." }),
+      "wont_do",
+    );
+    expect(issues.some((i) => i.field === "decision" && i.rule === "jargon")).toBe(true);
+  });
+
+  it("a whitespace-only decision does not satisfy the requirement", () => {
+    const issues = validateSummaryShape(
+      nonDeliveryCandidate({ decision: "   ".repeat(20) }),
+      "wont_do",
+    );
+    expect(issues.some((i) => i.field === "decision" && i.rule === "required")).toBe(true);
+  });
+});
 
 describe("shape and counts (SCHEMA.md §5)", () => {
   it("accepts a minimal valid non-user-facing candidate", () => {

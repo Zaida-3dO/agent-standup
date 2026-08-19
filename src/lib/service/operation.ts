@@ -65,6 +65,18 @@ export interface OperationContract {
    * Deliberately a value rather than prose: a caller copies it.
    */
   readonly example?: Readonly<Record<string, unknown>>;
+  /**
+   * Further complete calls, for an operation whose rules make one example
+   * unrepresentative.
+   *
+   * Most operations need only `example`. One is not enough when a field
+   * *selects between* mutually exclusive shapes — `complete_item`'s `to`
+   * decides whether `shipped` or `decision` is the mandatory field, so a
+   * caller shown only the delivery shape will copy it into a non-delivery
+   * close and be refused. Each entry is held to the same standard as
+   * `example`: a real call the operation's own schema accepts.
+   */
+  readonly examples?: readonly Readonly<Record<string, unknown>>[];
 }
 
 /**

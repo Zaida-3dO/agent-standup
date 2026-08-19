@@ -604,7 +604,12 @@ describeIfDb("delete_item", () => {
         to: "cancelled",
         fields: {
           summary: {
-            shipped: ["Nothing shipped."],
+            // A cancellation asserts that nothing was delivered, so it
+            // carries a decision rather than a list of outcomes — writing
+            // "nothing shipped" into `shipped` would be putting a
+            // non-delivery in the field that means the opposite.
+            shipped: [],
+            decision: "Superseded by the replacement task, so this one is not worth finishing.",
             not_done: [],
             user_facing: false,
             how_verified: "Checked the item tree by hand before cancelling.",
@@ -621,7 +626,12 @@ describeIfDb("delete_item", () => {
         to: "cancelled",
         fields: {
           summary: {
-            shipped: ["Nothing shipped."],
+            // A cancellation asserts that nothing was delivered, so it
+            // carries a decision rather than a list of outcomes — writing
+            // "nothing shipped" into `shipped` would be putting a
+            // non-delivery in the field that means the opposite.
+            shipped: [],
+            decision: "Superseded by the replacement task, so this one is not worth finishing.",
             not_done: [],
             user_facing: false,
             how_verified: "Checked the item tree by hand before cancelling.",
