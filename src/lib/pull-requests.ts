@@ -44,7 +44,7 @@
 // single-row read rather than a fold.
 
 /**
- * What a recorded pull request currently is.
+ * The state a recorded pull request is in.
  *
  * Two values, not a copy of any forge's state vocabulary. The report asks
  * exactly one question of a PR — "should this render as a link?" — and every
