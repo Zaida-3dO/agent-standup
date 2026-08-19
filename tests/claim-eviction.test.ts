@@ -445,9 +445,9 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
 
   it("leaves the original refusal intact when nothing is stale enough to take", async () => {
     // The refusal a caller acts on is "who holds this and under which
-    // rule". Replacing it with a message about eviction would send the
-    // caller to fix the wrong thing — and `takeover` is the documented next
-    // step, which the original error already points at.
+    // rule". A message about eviction instead would send the caller to fix
+    // the wrong thing — and `takeover` is the documented next step, which
+    // the error raised by the holder's own rule already points at.
     const itemId = await seedItem();
     await seedHolder(itemId, "session-live", 10);
 
