@@ -66,9 +66,6 @@ that reports success without providing it — which is the exact failure the job
 the job itself. A `Stryker disable` scoped to provably unkillable mutants, with the reason stated at
 the disable and the behaviour asserted by a real test, is a different thing and is allowed.
 
-
----
-
 ---
 
 ## How to add an entry
