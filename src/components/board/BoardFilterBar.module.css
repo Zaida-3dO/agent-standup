@@ -1,0 +1,207 @@
+/* The board's filter/sort/search strip.
+ *
+ * Every colour, radius and step is a token — see `src/app/globals.css`. The
+ * one judgement call worth stating is the border: controls take
+ * `--border-control`, which is the role held to 3:1 against the surface
+ * behind it, and NOT `--border-strong`, which bounds quiet regions and is
+ * deliberately too faint to outline something you are meant to operate. */
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--surface-panel);
+}
+
+/* The axes wrap as a group rather than individually, so a narrow viewport
+   breaks the row between whole controls and never between a label and the
+   select it names. */
+.axes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.axis,
+.sortGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sortGroup {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-areas:
+    "label label"
+    "select direction";
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.sortGroup .axisLabel {
+  grid-area: label;
+}
+
+.sortGroup .select {
+  grid-area: select;
+}
+
+.axisLabel {
+  color: var(--text-muted);
+  font-size: var(--text-3xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.select {
+  height: 30px;
+  min-width: 8rem;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+}
+
+/* A narrowed axis is marked by more than its own value: the value is inside
+   a closed control, so a reader scanning the strip for "what is filtered"
+   would otherwise have to read every select. The accent border is
+   reinforcement for the value, never the only carrier of it. */
+.select[data-filtered="true"] {
+  border-color: var(--accent-border);
+}
+
+.direction {
+  grid-area: direction;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.direction:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.searchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 16rem;
+  min-width: 12rem;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.search {
+  width: 100%;
+  height: 30px;
+  padding: 0 var(--space-2) 0 var(--space-8);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+}
+
+.search::placeholder {
+  color: var(--text-faint);
+}
+
+.clear {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.clear:hover {
+  color: var(--text-primary);
+}
+
+/* Saved views — the named filter+sort combinations, pinned beside the bar
+   that produced them so naming one and using one are the same place. */
+.views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.viewChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-size: var(--text-3xs);
+  cursor: pointer;
+}
+
+.viewChip[data-active="true"] {
+  border-color: var(--accent-border);
+  color: var(--text-primary);
+}
+
+.viewName {
+  height: 30px;
+  min-width: 9rem;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+}
+
+.viewDelete {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.viewDelete:hover {
+  color: var(--state-blocked-fg);
+}
+
+/* Why a save control can't be used right now — a refusal that says which of
+   the two reasons it is, rather than a control that silently does nothing. */
+.viewHint {
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+}

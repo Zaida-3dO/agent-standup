@@ -45,7 +45,14 @@ describe("fetchBoardColumn", () => {
       return { ok: true, status: 200, json: async () => ({ board: {} }) } as unknown as Response;
     }) as unknown as typeof fetch;
     await fetchBoardColumn("completed", { fetchImpl: spy });
-    expect(requested).toBe("/api/ui/board?column=completed");
+    // Two independent facts in one string. The `/api/ui/` prefix is the
+    // server-side proxy the browser reaches the API through, so no
+    // credential rides on the client. The sort is always sent even when it
+    // is the default (#75): the address bar omits a default for
+    // readability, but omitting it from the REQUEST would require this
+    // module's default and the operation's to stay equal forever while
+    // being declared in different files.
+    expect(requested).toBe("/api/ui/board?column=completed&sort=created&direction=desc");
   });
 
   it("passes a cursor through when paging further", async () => {

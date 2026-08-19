@@ -49,6 +49,22 @@ vi.mock("@/lib/profile/ProfileProvider", () => ({
   useProfile: () => ({ activeProfile: { id: "person-1", name: "Test" } }),
 }));
 
+// `Board` reads its filters out of the URL and navigates to change them
+// (#75), which needs the app router mounted — and mounting a real router here
+// would drag Next's whole navigation runtime into a file that exists to test
+// React's update scheduling. The stub is an unfiltered board in the default
+// order, which is the state every assertion below already assumed.
+//
+// **`useSearchParams` returns a real `URLSearchParams`**, not a bare object
+// with a `get`: `Board` calls `.toString()` on it to key the load effect, so
+// a stub missing that method would fail for a reason that has nothing to do
+// with what these tests check.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/board",
+}));
+
 /** A board with one task in Backlog, so it has somewhere to be dragged to. */
 function boardWithOneCard(): BoardData {
   return {

@@ -31,8 +31,18 @@ export async function GET(request: Request) {
   if (state !== null) input.state = state;
   const assignee = url.searchParams.get("assignee");
   if (assignee !== null) input.assignee = assignee;
+  const actor = url.searchParams.get("actor");
+  if (actor !== null) input.actor = actor;
   const search = url.searchParams.get("search");
   if (search !== null) input.search = search;
+  // The ordering (MILESTONES.md #75). Passed through as strings for the
+  // operation's own enums to accept or refuse — the adapter validates
+  // nothing itself, so an unknown sort key is refused in one place with the
+  // same message however the caller arrived.
+  const sort = url.searchParams.get("sort");
+  if (sort !== null) input.sort = sort;
+  const direction = url.searchParams.get("direction");
+  if (direction !== null) input.direction = direction;
   const includeTerminal = url.searchParams.get("includeTerminal");
   if (includeTerminal !== null) input.includeTerminal = parseBooleanParam(includeTerminal);
   // The opt-in out of the slim card shape (MILESTONES.md #107). The board UI

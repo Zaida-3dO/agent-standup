@@ -22,6 +22,9 @@ import { useProfile } from "@/lib/profile/ProfileProvider";
 import { createErrorMessage, createPerson } from "@/lib/profile/create";
 import { emptyCounts, fetchNavCounts, type NavCounts } from "@/lib/nav/counts";
 import { DEFAULT_DENSITY, densityClass, writeStoredDensity, type Density } from "@/lib/nav/density";
+import { fetchSavedViews } from "@/lib/board/saved-views-client";
+import { savedViewLinksFrom } from "@/lib/nav/saved-view-links";
+import type { SavedViewLink } from "@/components/sidebar/SavedViewLinks";
 import { AppShellView } from "./AppShellView";
 
 /**
@@ -53,6 +56,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // opened by a control in the top strip, which is the sidebar's sibling
   // and not its child.
   const [counts, setCounts] = useState<NavCounts>(emptyCounts);
+  // The reader's pinned board views (MILESTONES.md #75). Held at shell level
+  // because they render in the sidebar, which is on every screen — a board
+  // that owned them would leave them missing everywhere else.
+  const [savedViews, setSavedViews] = useState<readonly SavedViewLink[]>([]);
   // **The sheet's state carries the path it was opened on**, rather than an
   // effect resetting it when the path changes. The reset is genuinely
   // wanted — the sheet covers the page it just navigated to, so leaving it
@@ -105,6 +112,21 @@ export function AppShell({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [personId]);
+
+  // Loaded once, on mount. Not per profile: a saved view is a way of looking
+  // at the work, not a claim about a person, so it is the same list whoever
+  // is active. `fetchSavedViews` folds every failure into an empty list, so
+  // there is no rejection path here for the same reason `fetchNavCounts` has
+  // none — chrome on every page must not be able to fail the page.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSavedViews().then((views) => {
+      if (!cancelled) setSavedViews(savedViewLinksFrom(views));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onToggleDensity = useCallback(() => {
     const next: Density = density === "compact" ? "comfortable" : "compact";
@@ -176,6 +198,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       onCreateDraftChange={setCreateDraft}
       onCreateSubmit={onCreateSubmit}
       counts={counts}
+      savedViews={savedViews}
       navOpen={navOpen}
       onOpenNav={onOpenNav}
       onCloseNav={onCloseNav}

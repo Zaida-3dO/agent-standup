@@ -22,7 +22,8 @@
 // page, never re-add an entry already shown — is `@/lib/board/paging`'s
 // `boardWithPage`, so it is provable without a renderer. What is here is the
 // request and the per-column in-flight/error bookkeeping.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useProfile } from "@/lib/profile/ProfileProvider";
 import {
   fetchBoard,
@@ -44,10 +45,36 @@ import {
   refusalDismissed,
   type DragState,
 } from "@/lib/board/drag-state";
+import { isFiltered, parseBoardQuery, withoutFilters, boardHref } from "@/lib/board/filters";
+import {
+  emptyFilterOptions,
+  fetchFilterOptions,
+  type FilterOptions,
+} from "@/lib/board/filter-options";
+import { fetchSavedViews } from "@/lib/board/saved-views-client";
+import type { SavedViews } from "@/lib/board/saved-views";
 import { BoardView } from "./BoardView";
+import { BoardFilterBar } from "./BoardFilterBar";
 
 export function Board() {
   const { activeProfile } = useProfile();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // **The URL is the filter state, not a mirror of it** (#75). There is no
+  // `useState` holding the filters — `parseBoardQuery` reads them out of the
+  // address on every render, so a pasted link and a select turned by hand
+  // reach exactly the same board by exactly the same path. It is also what
+  // makes the load effect below re-run when a filter changes: the query
+  // string is in its dependency list, so there is no second mechanism that
+  // could apply a filter to the address and not to the request.
+  const queryString = searchParams.toString();
+  const boardQuery = useMemo(() => parseBoardQuery(queryString), [queryString]);
+  const filtered = isFiltered(boardQuery.filters);
+
+  const [options, setOptions] = useState<FilterOptions>(() => emptyFilterOptions());
+  const [savedViews, setSavedViews] = useState<SavedViews>([]);
+
   const [status, setStatus] = useState<"loading" | "error" | "loaded">("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [drag, setDrag] = useState<DragState>(() => initialDragState(emptyBoard()));
@@ -85,9 +112,13 @@ export function Board() {
   // it at the source also makes the transition atomic with the decision to
   // reload, so there is no render in between showing the stale error beside
   // a load that has already started.
+  // **`boardQuery` is in the dependency list**, so changing a filter or the
+  // sort re-reads the board. That is the whole of "the filter is applied" —
+  // there is no separate apply step and nothing to keep in step, because the
+  // address the reader can copy is the same value this effect reads.
   useEffect(() => {
     let cancelled = false;
-    fetchBoard()
+    fetchBoard(fetch, boardQuery)
       .then((board) => {
         if (cancelled) return;
         applyDrag((current) => boardReplaced(current, board));
@@ -101,7 +132,25 @@ export function Board() {
     return () => {
       cancelled = true;
     };
-  }, [applyDrag, reloadNonce]);
+  }, [applyDrag, reloadNonce, boardQuery]);
+
+  // The selects' vocabularies and the pinned views, fetched once on mount.
+  // Neither depends on the filters, so re-reading them on every filter
+  // change would be three requests per keystroke for lists that did not
+  // move. Both resolve to empty rather than throwing — see their modules for
+  // why a failure here must not take the board down with it.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchFilterOptions().then((next) => {
+      if (!cancelled) setOptions(next);
+    });
+    void fetchSavedViews().then((next) => {
+      if (!cancelled) setSavedViews(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /**
    * Fetch one column's next page and append it.
@@ -124,7 +173,16 @@ export function Board() {
       // failure on screen while a retry is in flight reports a stale failure
       // as a current one.
       setPageErrors((current) => ({ ...current, [column]: undefined }));
-      void fetchBoardColumn(column, cursor === undefined ? {} : { cursor })
+      // **The same filters and the same sort as the first page.** A "show
+      // more" that dropped them would page an unfiltered, differently
+      // ordered sequence into a filtered column — and because the cursor is
+      // keyset on the sort key, a page requested under a different sort is
+      // not merely unfiltered, it is drawn from a sequence the cursor does
+      // not belong to.
+      void fetchBoardColumn(column, {
+        query: boardQuery,
+        ...(cursor === undefined ? {} : { cursor }),
+      })
         .then((page) => {
           applyDrag((current) =>
             boardReplaced(current, boardWithPage(current.board, column, page)),
@@ -137,7 +195,7 @@ export function Board() {
           setLoadingColumns((current) => ({ ...current, [column]: false }));
         });
     },
-    [applyDrag],
+    [applyDrag, boardQuery],
   );
 
   const onDrop = useCallback(
@@ -190,31 +248,48 @@ export function Board() {
         : { status: "loaded", board: drag.board };
 
   return (
-    <BoardView
-      loadState={loadState}
-      personId={activeProfile?.id ?? null}
-      onRetry={() => {
-        // Both writes together: the board shows its loading state from this
-        // press, and the nonce re-runs the load effect.
-        setStatus("loading");
-        setErrorMessage("");
-        setReloadNonce((n) => n + 1);
-      }}
-      paging={{
-        onShowMore,
-        loadingColumns,
-        errors: pageErrors,
-      }}
-      drag={{
-        onCardDragStart: (itemId) => applyDrag((current) => dragStarted(current, itemId)),
-        onCardDragEnd: () => applyDrag((current) => dragEnded(current)),
-        onDragEnter: (column) => applyDrag((current) => draggedOver(current, column)),
-        onDrop,
-        overColumn: drag.overColumn,
-        pendingItemId: drag.pendingItemId,
-        refusal: drag.refusal,
-        onDismissRefusal: () => applyDrag((current) => refusalDismissed(current)),
-      }}
-    />
+    <>
+      <BoardFilterBar
+        query={boardQuery}
+        options={options}
+        views={savedViews}
+        onViewsChange={setSavedViews}
+      />
+      <BoardView
+        loadState={loadState}
+        personId={activeProfile?.id ?? null}
+        // The two props that make a filtered-to-nothing column say so. They
+        // have existed on `BoardView` and `BoardColumn` since #123 built the
+        // shared states, with nothing passing them — this is the caller they
+        // were waiting for, and `emptinessOf` already decides when the
+        // `filtered` kind applies. No new state component was written.
+        filtered={filtered}
+        onClearFilter={() =>
+          router.replace(boardHref(withoutFilters(boardQuery)), { scroll: false })
+        }
+        onRetry={() => {
+          // Both writes together: the board shows its loading state from this
+          // press, and the nonce re-runs the load effect.
+          setStatus("loading");
+          setErrorMessage("");
+          setReloadNonce((n) => n + 1);
+        }}
+        paging={{
+          onShowMore,
+          loadingColumns,
+          errors: pageErrors,
+        }}
+        drag={{
+          onCardDragStart: (itemId) => applyDrag((current) => dragStarted(current, itemId)),
+          onCardDragEnd: () => applyDrag((current) => dragEnded(current)),
+          onDragEnter: (column) => applyDrag((current) => draggedOver(current, column)),
+          onDrop,
+          overColumn: drag.overColumn,
+          pendingItemId: drag.pendingItemId,
+          refusal: drag.refusal,
+          onDismissRefusal: () => applyDrag((current) => refusalDismissed(current)),
+        }}
+      />
+    </>
   );
 }

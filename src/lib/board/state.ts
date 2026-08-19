@@ -6,6 +6,7 @@
 import { BOARD_COLUMNS, type Board, type BoardColumnId, type BoardSection } from "./types";
 import { emptyBoard, emptySection } from "./view";
 import { uiApiPath } from "@/lib/ui-proxy/path";
+import { boardRequestParams, emptyBoardQuery, type BoardQuery } from "./filters";
 
 export type BoardLoadState =
   { status: "loading" } | { status: "error"; message: string } | { status: "loaded"; board: Board };
@@ -28,11 +29,31 @@ export type BoardLoadState =
  */
 export async function fetchBoardColumn(
   column: BoardColumnId,
-  options: { readonly cursor?: string; readonly fetchImpl?: typeof fetch } = {},
+  options: {
+    readonly cursor?: string;
+    readonly fetchImpl?: typeof fetch;
+    /**
+     * The reader's filters and ordering (MILESTONES.md #75). Absent means an
+     * unnarrowed board in the default order — the shape every caller had
+     * before filters were reachable, so an existing caller keeps working.
+     *
+     * **The same object the address bar encodes**, translated by
+     * `boardRequestParams` rather than by a second mapping here: one
+     * translation is what makes a pasted URL reproduce the board, because
+     * there is no second one that could apply a filter to the request but
+     * not to the address.
+     */
+    readonly query?: BoardQuery;
+  } = {},
 ): Promise<BoardSection> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const query = new URLSearchParams({ column });
-  if (options.cursor !== undefined) query.set("cursor", options.cursor);
+  const query = boardRequestParams(options.query ?? emptyBoardQuery(), {
+    column,
+    ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+  });
+  // The browser reaches the API through the server-side proxy, which is what
+  // keeps the credential off the client — `uiApiPath` decides that, and it is
+  // orthogonal to how the query string is built.
   const response = await fetchImpl(uiApiPath(`/api/board?${query.toString()}`));
   if (!response.ok) {
     throw new Error(`Could not load the board (GET /api/board returned ${response.status}).`);
@@ -50,9 +71,12 @@ export async function fetchBoardColumn(
  * requests go out in parallel: they are independent, and serialising them
  * would make the first paint wait on the slowest column for no benefit.
  */
-export async function fetchBoard(fetchImpl: typeof fetch = fetch): Promise<Board> {
+export async function fetchBoard(
+  fetchImpl: typeof fetch = fetch,
+  query: BoardQuery = emptyBoardQuery(),
+): Promise<Board> {
   const sections = await Promise.all(
-    BOARD_COLUMNS.map((column) => fetchBoardColumn(column, { fetchImpl })),
+    BOARD_COLUMNS.map((column) => fetchBoardColumn(column, { fetchImpl, query })),
   );
   const board = emptyBoard();
   return BOARD_COLUMNS.reduce<Board>(

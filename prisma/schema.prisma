@@ -144,15 +144,8 @@ model Item {
   // Reviews that deferred their findings into THIS item — the back-reference
   // of `Artifact.followUpItemId`. Named for the direction it reads in:
   // "which reviews are relying on this item existing".
-  followUpFor Artifact[] @relation("ArtifactFollowUp")
+  followUpFor Artifact[]   @relation("ArtifactFollowUp")
   areaLinks   ItemArea[]
-
-  @@index([state])
-  @@index([parentId])
-  @@index([area])
-  @@index([repo])
-  @@index([state, priority])
-  @@index([sourceRef])
   // `Item_archivedAt_idx` is deliberately absent here and lives only in the
   // migration SQL. It is a PARTIAL index — `WHERE "archivedAt" IS NOT NULL`
   // — which this schema language cannot express, and declaring the full
@@ -166,6 +159,40 @@ model Item {
   // representation, so the diff cannot see one in either direction.
   // Declaring it here is what *would* make the drift check red, because the
   // migration's partial index and this file's full one are different objects.
+
+  @@index([state])
+  @@index([parentId])
+  @@index([area])
+  @@index([repo])
+  @@index([state, priority])
+  @@index([sourceRef])
+  // The board's `actor` filter (MILESTONES.md #75) — "whose idea it was".
+  // Here for the same reason `area` and `repo` are: it is an equality check a
+  // whole-board read narrows on.
+  @@index([originPersonId])
+  // The board's sort keys, each carrying `id` because `id` is the tie-break
+  // every page orders by and every keyset cursor compares on. The sort column
+  // alone would serve the ORDER BY but not the cursor's row comparison, which
+  // is the query that runs on every page after the first.
+  //
+  // `createdAt` has no entry: the default ordering is already served, and an
+  // index nothing needs still taxes every write.
+  @@index([updatedAt, id])
+  @@index([title, id])
+  // The board's search (MILESTONES.md #75). GIN + `gin_trgm_ops`, because
+  // the predicate is an UNANCHORED `ILIKE '%term%'` and no B-tree can serve
+  // one — a leading `%` means the match may begin anywhere, which leaves
+  // Postgres a sequential scan of every body in the table as its only plan.
+  // A trigram index decomposes each value into three-character substrings so
+  // that pattern becomes a lookup plus a recheck on a much smaller set.
+  //
+  // Fast is not ranked: this gives substring matching no relevance ordering,
+  // no stemming and no phrase handling. Ranked search wants a `tsvector`
+  // column with `ts_rank` — a different index answering a different
+  // question. Said here because a reader finding a GIN index on `body` could
+  // reasonably assume full-text search already exists.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, name: "Item_title_trgm_idx")
+  @@index([body(ops: raw("gin_trgm_ops"))], type: Gin, name: "Item_body_trgm_idx")
 }
 
 // Installation-owned reference data (SCHEMA.md §23) — not build-owned
@@ -581,10 +608,10 @@ model Run {
   // than a scan of the highest-volume table in the schema.
   stateAt      ItemState?
 
-  startedAt DateTime  @default(now()) @db.Timestamptz(3)
-  endedAt   DateTime? @db.Timestamptz(3)
-  model     String
-  effort    String
+  startedAt              DateTime         @default(now()) @db.Timestamptz(3)
+  endedAt                DateTime?        @db.Timestamptz(3)
+  model                  String
+  effort                 String
   // Nullable: every value of this enum is a fact about a dispatch decision,
   // and a run cut from telemetry has none behind it. The hook reports which
   // model served a call and cannot report why it was chosen. Null means "no
@@ -778,28 +805,28 @@ enum CapabilityCheckResult {
 // those want different answers: the first is a refusal, the second is a
 // no-op the caller should be told about rather than blocked over.
 model RegisteredProcess {
-  id           String    @id @default(uuid())
+  id            String    @id @default(uuid())
   // Which machine the pid is meaningful on. A pid is only unique per host,
   // so every lookup is keyed on the pair and never on the pid alone.
-  machine      String
-  pid          Int
+  machine       String
+  pid           Int
   // The image name, normalised (lower-case, no `.exe`). Stored because the
   // machine-wide kill names an executable rather than a pid, and answering
   // "would this kill something that is not yours" needs the name to be
   // comparable across rows written by different sessions on different
   // platforms.
-  executable   String
+  executable    String
   // The session that started it, and the root of that session's tree. The
   // ownership check compares ROOTS, not sessions: a builder spawned by an
   // orchestrator is the same crew, and a crew killing its own subagent's
   // dev server is exactly the case that must stay allowed.
-  sessionId    String
-  rootSessionId String   @map("root_session_id")
+  sessionId     String
+  rootSessionId String    @map("root_session_id")
   // Free text from the registrant — the command line, a label. Never
   // parsed; shown in a refusal so a person reads what they would have hit.
-  description  String?
-  registeredAt DateTime  @default(now()) @db.Timestamptz(3)
-  endedAt      DateTime? @db.Timestamptz(3)
+  description   String?
+  registeredAt  DateTime  @default(now()) @db.Timestamptz(3)
+  endedAt       DateTime? @db.Timestamptz(3)
 
   @@index([machine, pid])
   @@index([machine, executable])
@@ -841,40 +868,40 @@ enum HookVariant {
 // registration to exist for every one of them. This is a registry, not a
 // constraint.
 model Session {
-  id       String           @id
-  machine  String
-  transport SessionTransport
+  id                    String           @id
+  machine               String
+  transport             SessionTransport
   // Null until a registration reports one. Distinct from `cli`/`http`: a
   // session that registered without naming a variant is not the same fact as
   // one that named `cli`, because only the second is a claim about what is
   // installed.
-  hookVariant HookVariant?
+  hookVariant           HookVariant?
   // Whether `hookVariant` came from the transport or from an explicit
   // override in the payload. Recorded because §21 says an override "is
   // honoured and recorded as an override" — without this column an override
   // and a derivation are indistinguishable afterwards, and the question
   // "why is this session on the cli hook when it registered over HTTP?" has
   // no answer.
-  hookVariantOverridden Boolean @default(false)
+  hookVariantOverridden Boolean          @default(false)
   // What the session reported. Null = never reported one, which §21 treats
   // the same as never having registered for the purpose of claiming: a
   // registration that names no version makes no claim about what the session
   // can enforce.
-  hookVersion Int?
+  hookVersion           Int?
   // What kind of agent tool it is, as it describes itself. Free text on
   // purpose — the server cannot know the set of tools that will ever exist,
   // and an enum here would refuse a registration for naming a tool this
   // build had not heard of.
-  client   String?
+  client                String?
   // Who this session acts for, and how its work is driven — the two halves
   // of one declaration made at registration and inherited by later calls
   // (MILESTONES.md #111). Both nullable, and both nullable for the same
   // reason: "declared nothing" is a distinct fact from "declared the value
   // that happens to be the default", and only the first should fall through
   // to an item-level default.
-  personId String?
-  person   Person? @relation(fields: [personId], references: [id])
-  driveMode DriveMode?
+  personId              String?
+  person                Person?          @relation(fields: [personId], references: [id])
+  driveMode             DriveMode?
 
   registeredAt DateTime @default(now()) @db.Timestamptz(3)
   lastSeenAt   DateTime @default(now()) @db.Timestamptz(3)
