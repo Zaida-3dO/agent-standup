@@ -9,10 +9,10 @@
  * ── This script decides nothing ─────────────────────────────────────────
  *
  * Every value it writes comes from `src/lib/plugin/manifest.ts`; the whole
- * of this file is "turn those values into files". That split is deliberate
- * and matches `scripts/lib/sweep-schedule.mjs`: the contents are the part
- * worth asserting, and a decision that only exists inside a function which
- * also creates directories can only be tested by creating directories.
+ * of this file is "turn those values into files". That split is deliberate:
+ * the contents are the part worth asserting, and a decision that only exists
+ * inside a function which also creates directories can only be tested by
+ * creating directories.
  * `tests/plugin-package.test.ts` reads the built output; every claim about
  * *what should be in it* is asserted against the module, with no filesystem.
  *

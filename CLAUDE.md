@@ -316,17 +316,24 @@ does not block a merge, and `main` moving while you work does not invalidate you
   - **Re-run the full verification after rebasing, not just before.** You are now on code you have
     never tested against.
 
-**The tradeoff you should understand, because it will occasionally land on you.** Two PRs can each be
+**The tradeoff you should understand, because it will routinely land on you.** Two PRs can each be
 green, each be correct, and merge cleanly, and still **not work together** — one deletes a symbol the
 other's test imports, or adds a guard that invalidates the other's fixtures. Git stays silent, because
 the changes sit in different files. Nothing catches that combination before it lands; `main`'s own CI
 catches it after.
 
-**This is deliberate.** Neither PR is wrong. A semantic conflict between two independently-correct
-changes is a normal integration event, and the posture here is:
+**This is deliberate, and during a busy milestone it is the expected background rate rather than a
+warning sign.** Neither PR is wrong. A semantic conflict between two independently-correct changes is
+a normal integration event, and it gets *more* common exactly when things are going well — many PRs
+in flight, landing fast, against a moving `main`. The posture here is:
 
 > `main` goes red → we notice → we put up a small follow-up PR that fixes it. That is cheap and easy.
 > Taxing **every** open PR to prevent it costs far more than it saves.
+
+**So bias towards speed while the queue is deep.** The alternative — every PR rebasing to stay level,
+re-running the full pipeline each time — spends real build minutes on every open branch to avoid a
+handful of cheap follow-ups, and it slows the queue precisely when the queue is the thing that
+matters. Land the work; fix the seams after.
 
 So: **if `main` is red and it wasn't you, don't panic and don't hunt for a culprit.** Read the first
 lines of the failing CI step — this class is almost always diagnosable straight from there — and open
@@ -335,6 +342,44 @@ not your fault**.
 
 **Required checks gate every merge.** `Build & test`, `Actionlint (required)` and
 `Docker build (required)` must pass. "Green is not the same as right" applies in full.
+
+### The final pass, once the queue drains
+
+Biasing towards speed is only safe if the seams get inspected at the end. **When a milestone's PRs
+have landed and nothing is in flight, do one deliberate pass over `main` as a whole** — not over any
+individual diff, which is the thing per-PR CI already did.
+
+**Why this pass exists, and what it is for.** Per-PR CI answers *is this change correct in
+isolation*. It cannot answer *does the merge result work*, because no CI run ever has the merge result
+in front of it until after the merge. Most of what escapes is invisible to a gate by construction:
+
+- **A failure spanning changes that are individually fine** — an auth or config change that is correct
+  in its own PR and breaks every caller once combined. Nothing is red; nothing textually conflicted.
+- **A file whose diff hid itself.** A source file that acquires a NUL byte reads as binary, so review
+  sees no diff at all while every check still passes. A diff stat that says `Bin` where a `.ts` should
+  be is the tell.
+- **A shared type or token that drifted.** One PR widens a union while other modules still carry the
+  narrower value; each compiles in isolation, and they disagree once merged.
+
+**What the pass actually is** — cheap, and mostly not novel work:
+
+- **Run the full suite on the merge result**, not on a branch. This is the single highest-yield step.
+- **Read the diff stat for the whole milestone** (`git diff --stat`). You are looking for surprises:
+  a file that shouldn't be binary, a deletion nobody mentioned, a size that doesn't match the story.
+- **Render the app and use it.** Load a page, sign in, click through the surfaces the milestone
+  touched. Compiling is not the same claim as working, and the front end has exactly one honest test.
+- **Where the work was user-facing, that render belongs in a `visual_review` artifact** rather than in
+  someone's memory — see `needs_visual_review` and the merge gate in `docs/plans/SCHEMA.md` §1. An
+  item inherits the flag from its repo when the caller does not set one, so **the repo row is where
+  this is decided once** rather than per item. Two things follow, and both have bitten:
+  - **A UI repo whose row says `false` gates nothing**, however front-end the work is — nothing infers
+    the flag from a diff. Check the row, not your intent.
+  - **The gate needs `visual_review.doc` set to be satisfiable at all.** Null means visual review is
+    unavailable, so an item that needs one has no way through — turning the flag on without the doc
+    wedges items instead of protecting them.
+
+Anything this pass finds is a follow-up PR like any other. Finding something here is the process
+working — it is the price of the speed above, paid once at the end instead of on every branch.
 
 ### Don't pull the ground out from under a running crew
 

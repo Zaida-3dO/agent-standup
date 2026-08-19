@@ -185,7 +185,7 @@ configuration, and the actor a client declares stops being an unverified
 self-report — the server knows which machine presented the token, so an
 attributed write means something.
 
-### The liveness sweep has to be scheduled
+### The liveness sweep has to be run by something
 
 **A deployment that never runs the sweep leaks claims that can never be handed
 back.** A session takes ownership of an item by claiming it; if that session
@@ -193,41 +193,40 @@ crashes rather than releasing, the claim outlives it and every later claim on
 that item is refused as already-held. The liveness sweep is what notices — it
 ages quiet sessions, releases what died, and escalates what is stuck — and it
 runs only when something invokes it. Measured on an installation running without
-a schedule: the first manual sweep released **174** stale claims that had been
-sitting for three days, every one of them blocking ownership of its item.
+one: the first manual sweep released **174** stale claims that had been sitting
+for three days, every one of them blocking ownership of its item.
 
-**The schedule is the deployment's, not the application's.** The application
-deliberately ships no internal timer. It runs as a bundle that may be one
-replica or several, so a timer inside it fires once _per replica_ — a multiple
-of the intended rate on a scaled deployment, or not at all if the replica
-holding it is the one that restarted — and neither mistake produces any output
-to notice. A schedule outside the process has exactly one of it, and whoever
-owns the deployment gets to decide what runs it.
+**Running it is the deployment's job, and this compose file ships nothing to do
+it.** The application deliberately has no internal timer. It runs as a bundle
+that may be one replica or several, so a timer inside it fires once _per
+replica_ — a multiple of the intended rate on a scaled deployment, or not at all
+if the replica holding it is the one that restarted — and neither mistake
+produces any output to notice. Invoke it from outside the process, where there
+is exactly one of whatever you choose.
 
-`docker-compose.prod.yml` ships one: a `sweep-scheduler` service running the same
-image, with `scripts/sweep-schedule.mjs` as its command. It calls
-`POST /api/sweep` every **`SWEEP_INTERVAL_SECONDS`** (default **300**, five
-minutes), giving up on any single attempt after `SWEEP_TIMEOUT_SECONDS`
-(default 60). A failed attempt is logged and retried on the next tick — the app
-restarting is both the likeliest cause and the moment claims are most likely to
-be stranded — but a missing `STANDUP_URL` or a mistyped interval refuses to
-start, because that is wrong on every future tick rather than this one.
-
-**If you'd rather use a scheduler you already have**, delete that service and
-run either surface on your own timer. Nothing in the application distinguishes
-the callers:
+Either surface works, and nothing in the application distinguishes the callers:
 
 ```bash
 # Host cron, every five minutes — over HTTP:
-*/5 * * * * curl -fsS -X POST http://localhost:3000/api/sweep >/dev/null
+*/5 * * * * curl -fsS -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/sweep >/dev/null
 
 # …or over the command line, which reports what it released:
 */5 * * * * standup sweep --json
 ```
 
-The endpoint is `POST` rather than `GET` on purpose: it writes, and a `GET` that
-releases other sessions' claims is one a crawler or a browser prefetch will
-invoke without anyone asking it to. It takes no input, so an empty body is fine.
+`POST /api/sweep` authenticates like every other route, so a scheduler calling
+it needs a token in `STANDUP_TOKENS` the same as any machine. The endpoint is
+`POST` rather than `GET` on purpose: it writes, and a `GET` that releases other
+sessions' claims is one a crawler or a browser prefetch will invoke without
+anyone asking it to. It takes no input, so an empty body is fine.
+
+**Worth knowing before you automate it.** A timer reclaims on the strength of a
+liveness signal that may not be written — heartbeats are optional, and the
+process check is what usually answers — so a session that claims an item and
+then works for half an hour can look the same as one that crashed. Reclaiming at
+the point of contention, when another session actually wants that item, is a
+safer place to be wrong than a fixed tick. Escalation is the part that genuinely
+needs a push, because nobody is reading by definition.
 
 ### Postgres
 
@@ -310,6 +309,5 @@ loads a backlog held in an external file-based store.
 
 **Where the edges are.** [`MILESTONES.md`](docs/plans/MILESTONES.md) is the honest inventory: it
 carries every row with its status, and the queue is worked in dependency order rather than
-front-to-back. Two limits are worth knowing before deploying: the HTTP transport carries no
-authentication, so it expects a trusted network (`DECISIONS.md` records the reasoning), and the
-liveness sweep needs a schedule the deployment provides — see above, because claims leak without one.
+front-to-back. One limit is worth knowing before deploying: the liveness sweep only runs when
+something invokes it — see above, because claims leak while nothing does.

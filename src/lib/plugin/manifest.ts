@@ -8,9 +8,8 @@
 //
 // ── Why the contents are values and the writing is a script ─────────────
 //
-// The reason is the same one `scripts/lib/sweep-schedule.mjs` gives for its
-// own split: a file's *contents* are a decision worth asserting directly,
-// and a decision buried inside a function that also creates directories can
+// A file's *contents* are a decision worth asserting directly, and a
+// decision buried inside a function that also creates directories can
 // only be tested by creating directories. Every field below is reachable as
 // a plain object, so a test can assert the MCP URL, the hook matchers and
 // the command path without a filesystem, and the one thing left in the

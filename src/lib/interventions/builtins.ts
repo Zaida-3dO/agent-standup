@@ -479,6 +479,52 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "flags as unsettled has to be answered before a rule could mean anything.",
   },
   {
+    id: "I18",
+    missing:
+      "the tier the selector would have recommended for this job. The tier a subagent was spawned " +
+      "at is knowable; what it should have been is a judgement made by a service this schema does " +
+      "not hold, and comparing against nothing is how a nudge becomes noise. Wanted alongside it: " +
+      "the recommendation recorded at dispatch, so the comparison is against what was advised " +
+      "rather than against a guess made afterwards.",
+  },
+  {
+    id: "I19",
+    missing:
+      "which tools a given job requires. The tool list a subagent was spawned with is on the " +
+      "spawn; that a reviewer on a UI territory needed a browser is a per-role judgement, and a " +
+      "rule that fires on every subagent without one would fire on every subagent that correctly " +
+      "had none. The `agent-standup` half is the tractable one — a spawned agent that records " +
+      "nothing is visible without knowing anything about the territory.",
+  },
+  {
+    id: "I20",
+    missing:
+      "whether the caller intends to complete the parent. A `create_subtask` is visible and so is " +
+      "its parent's state, but the thing that makes a subtask the wrong shape is an intent held " +
+      "by the session and stated nowhere — the same call is correct when the follow-up really is " +
+      "a prerequisite. Readable from a completion attempt that follows shortly after, which makes " +
+      "this a `post` check on the parent rather than a `pre` check on the create.",
+  },
+  {
+    id: "I21",
+    missing:
+      "whether the SQL bodies were read before the claim. Both halves nearly exist — the " +
+      "tool-call stream shows which files a session opened, and a changeset names its migrations " +
+      "— but the claim itself is prose in a note or a report, and deciding that a sentence " +
+      "characterises a migration as safe is the part nothing here can do. A keyword match on " +
+      "`additive` would miss every paraphrase and fire on every accurate use of the word.",
+  },
+  {
+    id: "I22",
+    missing:
+      "that an authorisation does not exist. A question addressed to a person is visible; " +
+      "recognising that the protocol it names was invented requires knowing the full set of real " +
+      "ones, which lives in an installation's own operating documents rather than in this schema. " +
+      "The tractable half is the second signal — an item parked as blocked whose stated blocker " +
+      "names paths rather than a dependency — and it is worth building alone. The other half of " +
+      "this pair is not an intervention at all: a hold that actually holds at merge time.",
+  },
+  {
     id: "I9",
     missing:
       "whether an unblocked row is sitting idle — the same absent dependency graph I2 needs. The " +
