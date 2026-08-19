@@ -484,4 +484,15 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "whether an unblocked row is sitting idle — the same absent dependency graph I2 needs. The " +
       "`sleep` half is readable from the command; the half that makes it worth saying is not.",
   },
+  {
+    id: "I18",
+    missing:
+      "which changed paths are user-facing. Both other halves are already here — the item carries " +
+      "`needsVisualReview` and a `commit` artifact can carry its changed paths — but deciding " +
+      "that a path renders something a person looks at is a per-repository judgement this schema " +
+      "holds nowhere, and a guess from a path prefix would fire on a backend module and stay " +
+      "silent on a component in an unexpected directory. Wanted alongside it, and the reason the " +
+      "entry is a nudge rather than a block: `visual_review.doc` may be unset, in which case the " +
+      "gate the nudge points at cannot be satisfied at all.",
+  },
 ];
