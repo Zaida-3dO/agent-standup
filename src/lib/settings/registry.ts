@@ -193,6 +193,39 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  // The lazy-eviction threshold. Deliberately far above
+  // `dead_after_seconds`, and the reason is the honest note in `help`: the
+  // sweep's thresholds assume `lastActive` is stamped on every tool call,
+  // and in this tree nothing stamps it except the `heartbeat` operation,
+  // which agents are told is "usually unnecessary". The full reasoning —
+  // including why a tool-call timestamp is consulted as a second,
+  // independent signal and why the promised process check does not exist —
+  // is in `src/lib/claim-eviction.ts`, which is the one place that policy
+  // is written down.
+  "liveness.evict_after_seconds": define({
+    schema: z.number().int().positive(),
+    default: 14_400,
+    label: "Evict a claim after",
+    help:
+      "Seconds a claim holder must go unseen before another session's claim may take the item from it. " +
+      "Checked only when a competing claim actually arrives — there is no timer. " +
+      "Much larger than the dead threshold on purpose: liveness here is read from the heartbeat " +
+      "timestamp and the session's most recent tool call, and the heartbeat is usually not written " +
+      "at all (the hook does not stamp it, and the process check the stale threshold refers to does " +
+      "not exist), so a session working normally can look quiet for as long as its turn lasts. " +
+      "Lowering this risks evicting a live agent mid-run and losing its uncommitted work; raising it " +
+      "means a genuinely dead holder keeps its claim for longer. Use takeover to reclaim sooner.",
+    category: "Liveness",
+    // Read on the next claim that contends, not on a sweep — this is the
+    // whole point of the setting, so it must not say "next-sweep".
+    appliesWhen: "next-call",
+    // Relaxes an enforcement in the dangerous direction when lowered: a
+    // small value evicts live holders.
+    sensitive: true,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "dispatch.failed_after_seconds": define({
     schema: z.number().int().positive(),
     default: 180,
