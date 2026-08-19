@@ -358,8 +358,8 @@ in front of it until after the merge. Most of what escapes is invisible to a gat
 - **A file whose diff hid itself.** A source file that acquires a NUL byte reads as binary, so review
   sees no diff at all while every check still passes. A diff stat that says `Bin` where a `.ts` should
   be is the tell.
-- **A shared type or token that drifted.** One PR widens a union, three modules already on the old
-  value still compile in isolation and disagree once merged.
+- **A shared type or token that drifted.** One PR widens a union while other modules still carry the
+  narrower value; each compiles in isolation, and they disagree once merged.
 
 **What the pass actually is** — cheap, and mostly not novel work:
 

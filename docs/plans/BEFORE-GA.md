@@ -76,7 +76,7 @@ of front-end work never hit a visual review. Neither setting has ever been given
 reports that they are missing, so the absence has been invisible since the settings were introduced.
 
 **Why it matters more than an unset default usually would.** These are not dormant switches. Each has
-a live consequence today:
+a live consequence while it stays unset:
 
 1. **`visual_review.doc` null makes the visual gate unsatisfiable.** The setting's own help is
    explicit — *"Null means visual review is unavailable, and an item that needs one has no way through
@@ -98,9 +98,10 @@ satisfy stops work without protecting anything.
 
 **What has to be true to close it.**
 
-- `visual_review.doc` points at a real document describing how a visual review is performed here. One
-  plausibly already exists — the `design-review` skill in the Patrick workspace — in which case this
-  is a `put_setting`, not authorship.
+- `visual_review.doc` points at a real document describing how a visual review is performed here.
+  The installation may already have one, in which case this is a `put_setting` rather than
+  authorship — the setting takes a path or URL, so the document does not have to live in this
+  repository.
 - `notify.doc` points at a real document describing how to reach people, or the installation states
   deliberately that notifications are off and accepts that escalation is inert.
 - The §17.5 warning is actually implemented, so the next unset capability announces itself instead of
