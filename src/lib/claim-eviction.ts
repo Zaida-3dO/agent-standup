@@ -87,6 +87,29 @@
 //      cheap consistency check against the one input class that is not a
 //      measurement of the holder's own behaviour.
 //
+// ── The residual hole, stated because it is the one that bites ─────────
+//
+// **These three are NOT jointly sufficient in every case, and the exception
+// is precise.** `claimedAt` and `lastActive` both default to `now()` at
+// insert. So for a session running **no hook** (therefore writing no
+// `ToolCall` rows) that also never calls `heartbeat`, both terms are
+// computed from the same instant: `unseenForSeconds == claimAgeSeconds`,
+// and condition 3 is not an independent check at all. Such a session on a
+// single turn longer than the threshold **can be evicted while alive.**
+//
+// Condition 3 still does its other job in that case — it defends against
+// clock skew, restores and imported rows, which is why it stays — but it is
+// not a second liveness signal there, and reading it as one is the mistake
+// this paragraph exists to prevent.
+//
+// That is the whole of the exposure, and it is why the default threshold is
+// four hours rather than something tuned to the sweep. **Anyone lowering
+// this threshold is trading directly against that case**, so the two facts
+// belong next to each other. It closes on its own the moment either the
+// hook stamps `lastActive` or any tool-call telemetry reaches the server,
+// because condition 1 then has a signal that moves independently of the
+// claim.
+//
 // **What this deliberately does not do.** It does not evict a holder that
 // is merely `stalled`, and it does not treat the sweep's `dead` rung as
 // sufficient on its own — the rung is computed from `lastActive`, which is
@@ -255,6 +278,35 @@ export async function evictStaleHolders(
 ): Promise<EvictedClaim[]> {
   const now = args.now ?? new Date();
 
+  // ⚠️ `FOR UPDATE OF a` IS LOAD-BEARING AND IS NOT COVERED BY A TEST.
+  // Do not "simplify" it away: removing it leaves this file's whole suite
+  // green, which is exactly why this comment exists instead of an assertion.
+  //
+  // **What it defends.** The transaction runs at Postgres default Read
+  // Committed — no isolation level is set anywhere in the service layer — so
+  // without the lock a holder that heartbeats in the window *between* the
+  // read below and the release `UPDATE` further down is evicted on the
+  // strength of a staleness its own heartbeat has already answered. That is
+  // the live-builder eviction this module exists to prevent, arriving
+  // through a door the pure judgement in `judgeEviction` cannot see. Locking
+  // the row at the read is what serialises the two: the heartbeat waits, and
+  // the eviction either wins outright or reads the updated row and declines.
+  //
+  // **Why there is no test.** The window that matters is interior to this
+  // function, between its read and its write, and there is no seam to inject
+  // a competing statement into it. A test that races a heartbeat from
+  // outside can only fire once this function has returned — by which point
+  // the release `UPDATE` holds a row lock of its own, so the heartbeat
+  // blocks whether or not the read ever locked anything. Such a test passes
+  // identically with and without `FOR UPDATE`; it was written, measured
+  // against a lock-removed mutant, found to be exactly that hollow, and
+  // removed rather than committed. Proving this properly needs an injectable
+  // seam between the read and the write, which is a change to the shape of
+  // this function and not worth making for the test alone.
+  //
+  // `OF a` restricts the lock to the assignment; the `ToolCall` side is a
+  // correlated read, and locking it would contend with telemetry ingest for
+  // no benefit.
   const rows = await db.$queryRawUnsafe<HolderRow[]>(
     `SELECT a."id", a."itemId", a."role"::text AS "role", a."holderType", a."holderId",
             a."sessionId", a."liveness", a."releasedAt", a."lastActive", a."claimedAt",
