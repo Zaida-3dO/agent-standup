@@ -30,17 +30,26 @@
 //      which is what `sweepLiveness`'s own header requires and could not
 //      guarantee for itself.
 //
-// **What runs it on a schedule.** Reason 1 is a claim about where the
-// schedule lives, not an excuse for there being none — an installation with
-// no schedule leaks claims that are reclaimable and never reclaimed, which is
-// the state an operator actually experiences. So the repository ships one, at
-// the layer the reasoning puts it: `docker-compose.prod.yml`'s
-// `sweep-scheduler` service runs `scripts/sweep-schedule.mjs` beside the app,
-// calling `POST /api/sweep` every `SWEEP_INTERVAL_SECONDS` (default 300). An
-// operator who would rather use a scheduler they already have drops that
-// service and points a cron entry at the same endpoint or at `standup sweep`;
-// nothing here distinguishes the callers, which is the property reason 1 buys.
-// README.md's Deployment section is the operator-facing version.
+// **What runs it.** Reason 1 is a claim about where the schedule lives, not
+// an excuse for there being none — an installation with no schedule leaks
+// claims that are reclaimable and never reclaimed, which is the state an
+// operator actually experiences. **The repository ships nothing that runs
+// it**, deliberately: an operator points a cron entry, a platform scheduler
+// or a hand-run command at `POST /api/sweep` or at `standup sweep`, and
+// nothing here distinguishes the callers, which is the property reason 1
+// buys. README.md's Deployment section is the operator-facing version.
+//
+// A bundled scheduler was tried and withdrawn, and the reason is worth
+// keeping because it constrains what should replace it. It could not
+// authenticate — the route is authenticated per machine, the scheduler
+// carried no token, and it failed every tick while its container reported
+// healthy, which is the silent-success shape this codebase treats as worse
+// than an outage. Reclaiming on a fixed tick is also the weakest form of the
+// idea: it acts on a liveness signal that may never be written, so a session
+// working for half an hour looks like one that crashed. Reclaiming at the
+// point of contention — when another session actually wants the item — is
+// correct at the instant it matters. Escalation is the part that genuinely
+// needs a push, since nobody is reading by definition.
 //
 // **Why `now` is not an input.** A caller that could set the sweep's clock
 // could age every assignment past the dead threshold in one call and release
