@@ -407,6 +407,12 @@ model Summary {
   whatToTest  Json?
   howVerified String?
   watchFor    Json
+  // Why the work was not done. Populated only for the non-delivery closes
+  // (`wont_do`, `cancelled`), where `shipped` is empty by rule — see
+  // `src/lib/service/summaries/validate.ts`. Nullable because the delivery
+  // closes have nothing to put here, and because every summary written
+  // before this column existed predates the field.
+  decision    String?
   finalState  Json
   createdAt   DateTime @default(now()) @db.Timestamptz(3)
 }

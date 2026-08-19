@@ -20,15 +20,25 @@ import type { ServiceContext } from "../context";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
 import { applyTransition } from "../state-machine/transition";
 import {
+  COMPLETED_STATES as COMPLETED_STATE_LIST,
+  DECISION_CHAR_CAP,
+  DECISION_CHAR_MIN,
+  HOW_VERIFIED_CHAR_CAP,
+  NON_DELIVERY_STATES,
   NOT_DONE_MAX,
   NOT_DONE_MIN,
   NOT_DONE_REASONS,
+  NOT_DONE_TEXT_CHAR_CAP,
   SHIPPED_CHAR_CAP,
   SHIPPED_MAX,
   SHIPPED_MIN,
   SIMILARITY_REJECT_AT,
+  WATCH_FOR_CHAR_CAP,
+  WATCH_FOR_MAX,
   WHAT_TO_TEST_MAX,
   WHAT_TO_TEST_MIN,
+  WHAT_TO_TEST_TEXT_CHAR_CAP,
+  isNonDeliveryState,
   validateSummaryShape,
   type NotDoneEntry,
   type SummaryCandidate,
@@ -46,8 +56,16 @@ import { findNotDoneProofIssues } from "../guards/deferral";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
 
-/** The four states a `complete` call may land on (SCHEMA.md §1.1's "Completed" column). */
-const COMPLETED_STATES = ["merged", "research_done", "wont_do", "cancelled"] as const;
+/**
+ * The four states a `complete` call may land on (SCHEMA.md §1.1's
+ * "Completed" column).
+ *
+ * Taken from `summaries/validate.ts`'s partition rather than listed again:
+ * that module splits the same four into the ones requiring `shipped` and the
+ * ones requiring `decision`, and a state accepted here but absent from that
+ * split would be a state whose summary rules nothing decides.
+ */
+const COMPLETED_STATES = COMPLETED_STATE_LIST;
 
 const notDoneEntrySchema = z
   .object({
@@ -72,6 +90,13 @@ const summarySchema = z
     what_to_test: z.array(whatToTestEntrySchema).nullable().optional(),
     how_verified: z.string().nullable().optional(),
     watch_for: z.array(z.string()),
+    /**
+     * Why the work is not being done. Required when `to` is `wont_do` or
+     * `cancelled`, refused otherwise — the conditional is enforced at call
+     * time by `validateSummaryShape`, since JSON Schema cannot state
+     * "required only when a sibling field has one of two values".
+     */
+    decision: z.string().nullable().optional(),
   })
   .strict();
 
@@ -118,29 +143,46 @@ export type CompleteItemInput = z.infer<typeof inputSchema>;
 const contract = {
   rules: [
     {
-      fields: ["summary.shipped"],
+      fields: ["summary.shipped", "to"],
       rule:
         `\`shipped\` must hold ${SHIPPED_MIN}–${SHIPPED_MAX} entries of at most ` +
-        `${SHIPPED_CHAR_CAP} characters each. The schema says only "array of strings"; the ` +
-        `cardinality is checked at call time.`,
+        `${SHIPPED_CHAR_CAP} characters each **when \`to\` asserts delivery** — ` +
+        `\`merged\` or \`research_done\`. The schema says only "array of strings"; the ` +
+        `cardinality is checked at call time. Closing as ` +
+        `${NON_DELIVERY_STATES.join(" or ")} is the opposite claim, so \`shipped\` is not ` +
+        `required there and must be **empty** — use \`decision\` instead.`,
+    },
+    {
+      fields: ["summary.decision", "to"],
+      rule:
+        `\`decision\` is required when \`to\` is ${NON_DELIVERY_STATES.join(" or ")}, and ` +
+        `must be omitted otherwise. It says why the work is not being done — which duplicate, ` +
+        `or what changed — in at least ${DECISION_CHAR_MIN} and at most ` +
+        `${DECISION_CHAR_CAP} characters. Nothing was delivered in these states, so there is ` +
+        `no outcome to list; the reasoning is the record, and it is the one fact nobody can ` +
+        `reconstruct from the row later.`,
     },
     {
       fields: ["summary.what_to_test", "summary.user_facing"],
       rule:
         `\`what_to_test\` is required when \`user_facing\` is true — ${WHAT_TO_TEST_MIN}–` +
-        `${WHAT_TO_TEST_MAX} entries — and must be omitted or null when it is false.`,
+        `${WHAT_TO_TEST_MAX} entries, each \`text\` at most ${WHAT_TO_TEST_TEXT_CHAR_CAP} ` +
+        `characters — and must be omitted or null when it is false.`,
     },
     {
       fields: ["summary.how_verified", "summary.user_facing"],
       rule:
         "`how_verified` is required when `user_facing` is **false**, and says what was run and " +
         "observed. This is the opposite condition to `what_to_test`: exactly one of the two " +
-        "applies to any given completion, decided by `user_facing`.",
+        `applies to any given completion, decided by \`user_facing\`. At most ` +
+        `${HOW_VERIFIED_CHAR_CAP} characters, and it may not consist solely of a CI or ` +
+        `test-run reference.`,
     },
     {
       fields: ["summary.not_done"],
       rule:
-        `\`not_done\` holds ${NOT_DONE_MIN}–${NOT_DONE_MAX} typed entries. Every reason except ` +
+        `\`not_done\` holds ${NOT_DONE_MIN}–${NOT_DONE_MAX} typed entries, each \`text\` at ` +
+        `most ${NOT_DONE_TEXT_CHAR_CAP} characters. Every reason except ` +
         `\`descoped\` requires an \`item_id\` naming a real item, and that item's state has to ` +
         `bear the reason out. \`follow-up\` says the work is stuck, so its target must be ` +
         `blocked or paused. \`follow-up-scheduled\` says the opposite — the work is not ` +
@@ -149,7 +191,16 @@ const contract = {
         `requires a target blocked on a person. \`descoped\` needs no linked item.`,
     },
     {
-      fields: ["summary.shipped", "summary.watch_for", "summary.not_done"],
+      fields: ["summary.watch_for"],
+      rule:
+        `\`watch_for\` holds at most ${WATCH_FOR_MAX} entries of at most ` +
+        `${WATCH_FOR_CHAR_CAP} characters each, and an explicit empty list is the common ` +
+        `case. It is only for risks that **could not be checked now** — if it could have ` +
+        `been verified it belongs in \`what_to_test\` or \`how_verified\`, and if it needs ` +
+        `work it is a \`not_done\` follow-up.`,
+    },
+    {
+      fields: ["summary.shipped", "summary.watch_for", "summary.not_done", "summary.decision"],
       rule:
         `Entries are rejected, never truncated, and an entry at least ` +
         `${Math.round(SIMILARITY_REJECT_AT * 100)}% similar to something already in this item's ` +
@@ -167,9 +218,16 @@ const contract = {
       rule:
         `\`to\` must be one of the completed states (${COMPLETED_STATES.join(", ")}), and the ` +
         `transition's own guards still apply on top of the summary: completing to \`merged\` ` +
-        `additionally needs the merge evidence that state requires.`,
+        `additionally needs the merge evidence that state requires. \`to\` also selects which ` +
+        `summary field is mandatory — \`shipped\` for the states that delivered something, ` +
+        `\`decision\` for ${NON_DELIVERY_STATES.join(" and ")}, which assert the opposite.`,
     },
   ],
+  // Two examples, not one, because the two halves of the `to` split need
+  // different fields and a caller shown only the delivery shape will copy it
+  // into a `wont_do` close — which is precisely the mistake that produced a
+  // non-delivery written into `shipped`. Showing the second shape costs a
+  // few lines here and is only ever read by a caller who asked for it.
   example: {
     id: "<item id>",
     to: "merged",
@@ -182,6 +240,21 @@ const contract = {
       watch_for: [],
     },
   },
+  examples: [
+    {
+      id: "<item id>",
+      to: "wont_do",
+      summary: {
+        shipped: [],
+        decision:
+          "Duplicate of the open-loop writes row, which covers the same change and is further along.",
+        not_done: [],
+        user_facing: false,
+        how_verified: "Read both rows and confirmed the other one carries the whole change.",
+        watch_for: [],
+      },
+    },
+  ],
 } as const;
 
 export interface CompleteItemResult {
@@ -196,6 +269,7 @@ function toCandidate(summary: CompleteItemInput["summary"]): SummaryCandidate {
     what_to_test: (summary.what_to_test ?? null) as readonly WhatToTestEntry[] | null,
     how_verified: summary.how_verified ?? null,
     watch_for: summary.watch_for,
+    decision: summary.decision ?? null,
   };
 }
 
@@ -313,7 +387,7 @@ export const completeItem = defineOperation({
     // still runs too, inside `applyTransition` below, and actually gates
     // the transition — this earlier check is a superset run for a better
     // error, not the enforcement mechanism itself.
-    const shapeIssues = validateSummaryShape(candidate);
+    const shapeIssues = validateSummaryShape(candidate, input.to);
     const historyRows = await ctx.db.$queryRawUnsafe<{ body: string | null; payload: unknown }[]>(
       `SELECT "body", "payload" FROM "Event" WHERE "itemId" = $1`,
       input.id,
@@ -351,8 +425,8 @@ export const completeItem = defineOperation({
     // history of its own.
     await ctx.db.$executeRawUnsafe(
       `INSERT INTO "Summary" (
-         "itemId", "shipped", "notDone", "userFacing", "whatToTest", "howVerified", "watchFor", "finalState"
-       ) VALUES ($1, $2::jsonb, $3::jsonb, $4, $5::jsonb, $6, $7::jsonb, $8::jsonb)
+         "itemId", "shipped", "notDone", "userFacing", "whatToTest", "howVerified", "watchFor", "decision", "finalState"
+       ) VALUES ($1, $2::jsonb, $3::jsonb, $4, $5::jsonb, $6, $7::jsonb, $8, $9::jsonb)
        ON CONFLICT ("itemId") DO UPDATE SET
          "shipped" = EXCLUDED."shipped",
          "notDone" = EXCLUDED."notDone",
@@ -360,6 +434,7 @@ export const completeItem = defineOperation({
          "whatToTest" = EXCLUDED."whatToTest",
          "howVerified" = EXCLUDED."howVerified",
          "watchFor" = EXCLUDED."watchFor",
+         "decision" = EXCLUDED."decision",
          "finalState" = EXCLUDED."finalState",
          "createdAt" = now()`,
       input.id,
@@ -369,6 +444,10 @@ export const completeItem = defineOperation({
       input.summary.what_to_test === undefined ? null : JSON.stringify(input.summary.what_to_test),
       input.summary.how_verified ?? null,
       JSON.stringify(input.summary.watch_for),
+      // Null rather than an empty string for a delivery close, so the column
+      // distinguishes "this state has no decision to record" from "somebody
+      // recorded an empty one".
+      input.summary.decision ?? null,
       // `final_state` is "derived, never authored" (SCHEMA.md §5) — commit,
       // branch and merged_at are owned by rows this milestone has not yet
       // built (#29's checkpoint/note path, the merge guard's artifact).

@@ -52,7 +52,11 @@ export interface ToolSource {
   readonly name: string;
   readonly kind: "read" | "write";
   readonly summary: string;
-  readonly contract?: { readonly rules: readonly OperationRule[]; readonly example?: unknown };
+  readonly contract?: {
+    readonly rules: readonly OperationRule[];
+    readonly example?: unknown;
+    readonly examples?: readonly unknown[];
+  };
   readonly input: unknown;
 }
 
@@ -80,6 +84,13 @@ export interface ToolContract {
   readonly rules: readonly OperationRule[];
   /** A minimal call satisfying every rule, when the operation declares one. */
   readonly example?: unknown;
+  /**
+   * Further complete calls, when one example cannot represent the operation
+   * — see `OperationContract.examples`. Absent when the operation declares
+   * none, rather than being an empty array, so a caller can tell "no further
+   * shapes" from "this field exists and is empty".
+   */
+  readonly examples?: readonly unknown[];
 }
 
 const inputSchema = z
@@ -142,6 +153,7 @@ export const describeTool = defineOperation({
       fields: describeFields(found.input),
       rules: found.contract?.rules ?? [],
       ...(found.contract?.example === undefined ? {} : { example: found.contract.example }),
+      ...(found.contract?.examples === undefined ? {} : { examples: found.contract.examples }),
     };
   },
 });

@@ -14,6 +14,8 @@
 // guard registry at all, exactly as this file reuses it here.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import {
+  COMPLETED_STATES as COMPLETED_STATE_LIST,
+  isNonDeliveryState,
   isTooSimilar,
   validateSummaryShape,
   type NotDoneEntry,
@@ -22,8 +24,19 @@ import {
   type WhatToTestEntry,
 } from "../summaries/validate";
 
-/** The four completed states (SCHEMA.md §1.1's "Completed" column). Matches `transition.ts`'s own set. */
-const COMPLETED_STATES = new Set(["merged", "research_done", "wont_do", "cancelled"]);
+/**
+ * The four completed states (SCHEMA.md §1.1's "Completed" column). Matches
+ * `transition.ts`'s own set.
+ *
+ * Built from `summaries/validate.ts`'s own partition of those four into the
+ * delivery and non-delivery halves, rather than written out again here. The
+ * two lists have to stay in agreement — this guard decides *whether* a
+ * summary is required and the validator decides *which fields* it needs, so
+ * a state present in one and missing from the other would be a state whose
+ * summary is either unvalidated or unreachable. Deriving the set makes that
+ * disagreement unrepresentable instead of merely unlikely.
+ */
+const COMPLETED_STATES = new Set<string>(COMPLETED_STATE_LIST);
 
 /**
  * Reads `fields.summary` off a `GuardInput` as a `SummaryCandidate`, or
@@ -51,6 +64,7 @@ function readCandidate(fields: Readonly<Record<string, unknown>>): SummaryCandid
           ? null
           : undefined,
     watch_for: Array.isArray(r.watch_for) ? (r.watch_for as string[]) : [],
+    decision: typeof r.decision === "string" ? r.decision : r.decision === null ? null : undefined,
   };
 }
 
@@ -159,15 +173,25 @@ export const summaryRequiredGuard: Guard = {
       // supply the wrong field, costing the round trip a good refusal
       // exists to save. Naming `what_to_test` and `how_verified` outright
       // is longer and has exactly one reading.
+      // Worded for the state actually being entered. A caller closing a
+      // duplicate as `wont_do` who is told to "supply shipped" has been
+      // told to claim a delivery that did not happen — the exact confusion
+      // the delivery/non-delivery split exists to remove, and it would be
+      // reintroduced here if this one sentence stayed generic.
       return guardRejected(
-        "A summary is required to complete this item — supply shipped, not_done and user_facing, " +
-          "plus what user_facing then requires: what_to_test when it is true, how_verified when " +
-          "it is false.",
+        isNonDeliveryState(input.to)
+          ? `A summary is required to complete this item — closing as ${input.to} needs a ` +
+              "decision saying why the work is not being done, plus not_done and user_facing, " +
+              "and what user_facing then requires: what_to_test when it is true, how_verified " +
+              "when it is false. shipped is not required and must be empty."
+          : "A summary is required to complete this item — supply shipped, not_done and " +
+              "user_facing, plus what user_facing then requires: what_to_test when it is true, " +
+              "how_verified when it is false.",
         { fields: ["summary"] },
       );
     }
 
-    const shapeIssues = validateSummaryShape(candidate);
+    const shapeIssues = validateSummaryShape(candidate, input.to);
 
     const historyRows = await input.db.$queryRawUnsafe<{ body: string | null; payload: unknown }[]>(
       `SELECT "body", "payload" FROM "Event" WHERE "itemId" = $1`,
