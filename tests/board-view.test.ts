@@ -43,7 +43,7 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   // These fixtures are about drag, tone and tallies; ownership is proved
   // against real data in the operation's own suites. An empty list is what
   // the API sends for an item nobody holds, so it is the honest default.
-  return { item: item(overrides), column, assignments: [] };
+  return { item: item(overrides), column, assignments: [], trust: null };
 }
 
 /**

@@ -99,7 +99,7 @@ describe("the slim read's column lists", () => {
     // towards the whole row one plausible field at a time.
     expect(BOARD_ITEM_SUMMARY_COLUMNS).toBe(
       'id, title, state, headline, kind, priority, area, repo, "blockedReason", ' +
-        '"blockedOnType", "blockedOnPersonId", "pauseReason"',
+        '"blockedOnType", "blockedOnPersonId", "pauseReason", "originType"',
     );
   });
 });

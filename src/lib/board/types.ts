@@ -102,6 +102,46 @@ export interface BoardAssignment {
   readonly lastActive: string;
 }
 
+/**
+ * A recorded check of an item's stored `state` — MILESTONES.md #131.
+ *
+ * `historical_verification` under the hood (`src/lib/service/guards/
+ * historical-verification.ts`), read back here for a different question
+ * than the merge guard asks: not "does this satisfy a merge", but "has
+ * anyone ever looked at what this row claims". `checkedByType`/`checkedById`
+ * name who, so "verified by an agent" and "verified by a person" are told
+ * apart rather than collapsed into one dot.
+ */
+export interface ItemVerification {
+  readonly checkedAt: string;
+  readonly checkedByType: HolderType;
+  readonly checkedById: string;
+  readonly body: string | null;
+  readonly commitSha: string | null;
+}
+
+/**
+ * Whether a card's `state` can be taken on faith.
+ *
+ * `unverifiedOrigin` is true for a row imported from an external store
+ * (`originType: "source"`) — the one case where `state` arrived by copy
+ * rather than by this product's own state machine, so it can be wrong in a
+ * way nothing here would catch on its own (`trust-view.ts`'s header has the
+ * full reasoning for why this is the mechanical signal and `headline`
+ * disagreeing with `state` is not). `verification` is the newest check
+ * anyone has recorded, or `null` when nobody has.
+ *
+ * **An unverified item with a verification on file is not a contradiction.**
+ * `unverifiedOrigin` names where the row came from, permanently; a
+ * verification is a point-in-time check that may have found the state
+ * right, found it wrong, or gone stale since. A card reads both — see
+ * `trustPresentation` in `@/lib/board/trust`.
+ */
+export interface TrustInfo {
+  readonly unverifiedOrigin: boolean;
+  readonly verification: ItemVerification | null;
+}
+
 /** One entry in a column, as `GET /api/board` returns it. */
 export interface BoardEntry {
   readonly item: BoardItem;
@@ -115,6 +155,8 @@ export interface BoardEntry {
    * and a builder and two reviewers at once (SCHEMA.md §2).
    */
   readonly assignments: readonly BoardAssignment[];
+  /** `null` on a project — see `TrustInfo`'s header for why a project has none to give. */
+  readonly trust: TrustInfo | null;
 }
 
 /**

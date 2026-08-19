@@ -144,6 +144,7 @@ describe("InFlightBlock", () => {
               lastActive: "2026-08-18T09:00:00.000Z",
             },
           ],
+          trust: null,
         },
       ],
     });

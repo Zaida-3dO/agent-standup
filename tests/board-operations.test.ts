@@ -45,6 +45,10 @@ describeIfDb("get_board against Postgres", () => {
       "session-gamma",
       "session-delta",
     ]);
+    // `record_artifact` refuses a `createdByType: "person"` whose id names
+    // nobody (#134) — the trust cases below credit one verification to a
+    // person, so that person has to exist.
+    await prisma.person.create({ data: { id: "user-a", displayName: "User A" } });
   }, 60_000);
 
   afterAll(async () => {
@@ -815,6 +819,131 @@ describeIfDb("get_board against Postgres", () => {
         expect(board.waiting).toEqual([]);
         expect(board.completed).toEqual([]);
       });
+    });
+  });
+
+  // MILESTONES.md #131 — the trust marker. `originType` and the newest
+  // `historical_verification` are both read off the whole page in one pass
+  // (see `get-board.ts`'s "one statement for the whole response" note), so
+  // these prove the join actually attaches the right verification to the
+  // right item rather than merely typechecking against an in-memory model.
+  describe("trust — MILESTONES.md #131", () => {
+    it("marks a source-origin item unverified with no verification recorded", async () => {
+      // `createItem` with no `parentId` mints a PROJECT (depth 0), which
+      // never carries a trust position (DECISIONS.md §13c — see the last
+      // case in this block). The row under test here has to be a TASK, so
+      // it needs a project of its own to hang off.
+      const project = await createItem({ area: "board-trust" });
+      const item = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
+      const board = await wholeBoard({ area: "board-trust" });
+      const all = [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed];
+      const entry = all.find((e) => e.item.id === item.id);
+      expect(entry?.trust).toEqual({ unverifiedOrigin: true, verification: null });
+    });
+
+    it("does not mark a person/auto-origin item as unverified", async () => {
+      const project = await createItem({ area: "board-trust" });
+      const item = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "auto",
+      });
+      const board = await wholeBoard({ area: "board-trust" });
+      const all = [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed];
+      const entry = all.find((e) => e.item.id === item.id);
+      expect(entry?.trust?.unverifiedOrigin).toBe(false);
+    });
+
+    it("attaches the newest historical_verification to its own item, not a neighbour's", async () => {
+      const project = await createItem({ area: "board-trust" });
+      const verified = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
+      const unverified = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
+
+      await runtime.call("record_artifact", {
+        itemId: verified.id,
+        kind: "commit",
+        commitSha: "commit-1",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      await runtime.call("record_artifact", {
+        itemId: verified.id,
+        kind: "historical_verification",
+        commitSha: "commit-1",
+        body: "Checked — the state matches.",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+
+      const board = await wholeBoard({ area: "board-trust" });
+      const all = [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed];
+      const verifiedEntry = all.find((e) => e.item.id === verified.id);
+      const unverifiedEntry = all.find((e) => e.item.id === unverified.id);
+
+      expect(verifiedEntry?.trust?.verification?.commitSha).toBe("commit-1");
+      expect(verifiedEntry?.trust?.verification?.body).toBe("Checked — the state matches.");
+      // The neighbour recorded nothing — proves the join is keyed per item,
+      // not a single row broadcast across the whole page.
+      expect(unverifiedEntry?.trust?.verification).toBeNull();
+    });
+
+    it("reports the NEWEST verification when more than one has been recorded", async () => {
+      const project = await createItem({ area: "board-trust" });
+      const item = await createItem({
+        area: "board-trust",
+        parentId: project.id,
+        originType: "source",
+      });
+      await runtime.call("record_artifact", {
+        itemId: item.id,
+        kind: "commit",
+        commitSha: "commit-1",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      await runtime.call("record_artifact", {
+        itemId: item.id,
+        kind: "historical_verification",
+        commitSha: "commit-1",
+        body: "First check — looked fine.",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      await runtime.call("record_artifact", {
+        itemId: item.id,
+        kind: "historical_verification",
+        commitSha: "commit-1",
+        body: "Second check — actually wrong.",
+        createdByType: "person",
+        createdById: "user-a",
+      });
+
+      const board = await wholeBoard({ area: "board-trust" });
+      const all = [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed];
+      const entry = all.find((e) => e.item.id === item.id);
+      expect(entry?.trust?.verification?.body).toBe("Second check — actually wrong.");
+      expect(entry?.trust?.verification?.checkedByType).toBe("person");
+    });
+
+    it("gives a project no trust position at all — DECISIONS.md §13c", async () => {
+      const project = await createItem({ area: "board-trust-project", originType: "source" });
+      await createItem({ area: "board-trust-project", parentId: project.id });
+      const board = await wholeBoard({ area: "board-trust-project" });
+      const all = [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed];
+      const projectEntry = all.find((e) => e.item.id === project.id);
+      expect(projectEntry?.trust).toBeNull();
     });
   });
 });

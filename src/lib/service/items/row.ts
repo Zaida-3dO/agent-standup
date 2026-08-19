@@ -261,6 +261,13 @@ export interface BoardItemSummaryRecord extends ItemSummaryRecord {
   readonly blockedOnType: "person" | "external_process" | "time" | null;
   readonly blockedOnPersonId: string | null;
   readonly pauseReason: string | null;
+  /**
+   * `person` | `source` | `auto` — plain, not derived, so `trust-view.ts`'s
+   * `isUnverifiedOrigin` is the one place that decides what it means. A
+   * card needs this to know whether it can render the trust marker without
+   * a second per-item lookup (MILESTONES.md #131).
+   */
+  readonly originType: "person" | "source" | "auto";
 }
 
 /** The raw shape `$queryRawUnsafe` returns for one board summary row. */
@@ -273,6 +280,7 @@ export interface RawBoardItemSummaryRow extends RawItemSummaryRow {
   blockedOnType: string | null;
   blockedOnPersonId: string | null;
   pauseReason: string | null;
+  originType: string;
 }
 
 /** Maps one raw board summary row to `BoardItemSummaryRecord`. */
@@ -287,6 +295,7 @@ export function toBoardItemSummaryRecord(row: RawBoardItemSummaryRow): BoardItem
     blockedOnType: row.blockedOnType as BoardItemSummaryRecord["blockedOnType"],
     blockedOnPersonId: row.blockedOnPersonId,
     pauseReason: row.pauseReason,
+    originType: row.originType as BoardItemSummaryRecord["originType"],
   };
 }
 
@@ -321,6 +330,7 @@ export const BOARD_ITEM_SUMMARY_COLUMNS = [
   '"blockedOnType"',
   '"blockedOnPersonId"',
   '"pauseReason"',
+  '"originType"',
 ].join(", ");
 
 export const ITEM_COLUMNS = [

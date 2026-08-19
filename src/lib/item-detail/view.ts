@@ -143,6 +143,88 @@ export function latestVerdict(artifacts: readonly DetailArtifact[]): string | nu
   return best?.verdict ?? null;
 }
 
+/** The newest recorded check of this item's `state` — MILESTONES.md #131. */
+export interface DetailVerification {
+  readonly checkedAt: string;
+  readonly checkedByType: string;
+  readonly body: string | null;
+  readonly commitSha: string | null;
+}
+
+/**
+ * The item's own `historical_verification` kind name, mirrored so this
+ * module needs no import from the server's artifact-kind vocabulary — the
+ * client never imports service-layer modules (`board/types.ts`'s header
+ * gives the full reason).
+ */
+const HISTORICAL_VERIFICATION_KIND = "historical_verification";
+
+/**
+ * The newest `historical_verification` artifact against this item, or
+ * `null` when nobody has recorded one.
+ *
+ * The detail response already carries every artifact (`get_item_detail`
+ * reads the whole table once, ordered `reviewRound ASC, createdAt ASC`), so
+ * this needs no extra call — it is the same "derive from what the server
+ * already sent" discipline `latestVerdict` follows next to it, applied to a
+ * different kind. Server order is round-then-creation, which is not
+ * creation order alone, so this scans for the maximum `createdAt` rather
+ * than trusting the last matching entry — a `historical_verification` never
+ * carries a review round that means anything (it isn't a review), but nothing
+ * stops a caller passing one, and reading the array positionally would then
+ * silently pick the wrong one.
+ */
+export function newestVerification(
+  artifacts: readonly DetailArtifact[],
+): DetailVerification | null {
+  let best: DetailArtifact | null = null;
+  for (const artifact of artifacts) {
+    if (artifact.kind !== HISTORICAL_VERIFICATION_KIND) continue;
+    if (best === null || artifact.createdAt >= best.createdAt) best = artifact;
+  }
+  if (best === null) return null;
+  return {
+    checkedAt: best.createdAt,
+    checkedByType: best.createdByType,
+    body: best.body,
+    commitSha: best.commitSha,
+  };
+}
+
+/**
+ * Whether this item's `state` was ever written by this product's own state
+ * machine, or arrived by copy from an external store — the mechanical
+ * signal `trust-view.ts` (server side) uses for the same question, mirrored
+ * here so the client can decide without a round trip. See that module's
+ * header for why `originType` and not `headline`-vs-`state` is the check.
+ */
+export function isUnverifiedOrigin(originType: string): boolean {
+  return originType === "source";
+}
+
+/**
+ * The item's current tip commit, derived from its own artifacts — mirrors
+ * `currentTipCommitSha` (`src/lib/service/guards/artifact-tip.ts`) client
+ * side, off the same data: the newest `commit`-kind artifact's `commitSha`,
+ * or `null` when the item has none.
+ *
+ * The detail response already carries every artifact, so this needs no
+ * extra call — same "derive from what the server already sent" discipline
+ * `newestVerification` follows next to it. `record_artifact` refuses a
+ * `historical_verification` with no `commitSha`, so the "confirm state"
+ * action reads this to know whether the button can be offered at all,
+ * rather than letting the click fail on the server after the fact.
+ */
+export function currentTipCommitSha(artifacts: readonly DetailArtifact[]): string | null {
+  let best: DetailArtifact | null = null;
+  for (const artifact of artifacts) {
+    if (artifact.kind !== "commit") continue;
+    if (artifact.commitSha === null) continue;
+    if (best === null || artifact.createdAt >= best.createdAt) best = artifact;
+  }
+  return best?.commitSha ?? null;
+}
+
 /**
  * How a history entry's type reads on screen. Same substitution as
  * `humanState` and deliberately a separate function: the two vocabularies

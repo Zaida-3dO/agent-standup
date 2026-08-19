@@ -106,3 +106,16 @@
   border: 1.5px solid var(--surface-card);
   box-shadow: 0 0 0 1.5px var(--presence-superseded);
 }
+
+/* ── Trust ──────────────────────────────────────────────────────────────
+
+   The `unverified`/`verified` badge is a plain outlined chip like a state
+   chip, plus a dashed border for the unverified case — the same visual
+   move `Board.module.css`'s `.cardUnverified` makes on the card itself, so
+   the badge and the card it sits on agree on what "unverified" looks like
+   rather than each inventing its own. `verified` keeps the ordinary solid
+   outline: once a check is on record there is nothing tentative left to
+   signal about the marking itself. */
+.trustBadge[data-trust="unverified"] {
+  border-style: dashed;
+}

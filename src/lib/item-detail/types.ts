@@ -82,6 +82,8 @@ export interface DetailArtifact {
    * merely stated.
    */
   readonly followUpItemId: string | null;
+  /** `person` or `agent` — who produced this artifact. Needed to say "verified by a person" vs "by an agent" on a `historical_verification` (MILESTONES.md #131). */
+  readonly createdByType: string;
   readonly createdAt: string;
 }
 
@@ -121,12 +123,13 @@ export interface DetailItem {
   readonly parentId: string | null;
   readonly title: string;
   /**
-   * The one-line BLUF (MILESTONES.md #107) — read here for M10 T10's
-   * inline edit, which offers it as one of the four editable fields.
-   * Absent from earlier detail-view reads (this response has always
-   * carried the item's `headline`; only the client-side type omitted it),
-   * so `fetchItemDetail` defaults a missing value to `null` the same way
-   * it does every other optional field.
+   * The one-line BLUF (MILESTONES.md #107) — the header's primary line
+   * where one exists (see `@/lib/item-headline-display`), and one of the
+   * four fields M10 T10's inline edit offers. Absent from earlier
+   * detail-view reads (this response has always carried the item's
+   * `headline`; only the client-side type omitted it), so
+   * `fetchItemDetail` defaults a missing value to `null` the same way it
+   * does every other optional field.
    */
   readonly headline: string | null;
   readonly body: string;
@@ -162,6 +165,13 @@ export interface DetailItem {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt: string | null;
+  /**
+   * `person` | `source` | `auto` — whether this row's `state` was ever
+   * written by this product's own state machine, or arrived by copy from an
+   * external store (MILESTONES.md #131). See `@/lib/board/types`'
+   * `TrustInfo` for what a `source` origin means for the trust marker.
+   */
+  readonly originType: "person" | "source" | "auto";
 }
 
 /** The whole detail payload, as `GET /api/items/{id}/detail` returns it. */

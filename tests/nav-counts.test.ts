@@ -33,6 +33,7 @@ function entry(overrides: Partial<BoardEntry["item"]> = {}): BoardEntry {
     },
     column: "waiting",
     assignments: [],
+    trust: null,
   };
 }
 

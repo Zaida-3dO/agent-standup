@@ -26,6 +26,7 @@ function detailItem(): ItemDetail["item"] {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     completedAt: null,
+    originType: "person",
   };
 }
 

@@ -241,3 +241,26 @@ export function stalenessToken(level: StalenessLevel): string | null {
 export function presenceToken(liveness: Liveness): string {
   return `var(--presence-${liveness})`;
 }
+
+/**
+ * The trust triplet — `globals.css` §6's `--trust-unverified{,-bg,-border}`,
+ * named the same way `stateTokens`/`priorityTokens` name theirs.
+ *
+ * One value, not a per-state map: unlike a `StateShape`, trust has exactly
+ * one visual position to mark — "this row's `state` cannot be taken on
+ * faith" — so there is nothing here for a state-style lookup table to do.
+ * Deliberately its own function rather than folded into `stateTokens`: an
+ * unverified row's *state* still paints from its own state triplet (a
+ * `blocked` item that is also unverified is still red-for-blocked first),
+ * and this is a second, independent channel layered alongside it, always
+ * additive and never overriding what the state triplet already paints. See
+ * `globals.css` §6: "neutral-warm rather than a severity colour, because an
+ * unverified row is not *wrong*, it is unconfirmed".
+ */
+export function trustTokens(): TokenTriplet {
+  return {
+    fg: "var(--trust-unverified)",
+    bg: "var(--trust-unverified-bg)",
+    border: "var(--trust-unverified-border)",
+  };
+}

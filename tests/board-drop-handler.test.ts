@@ -45,7 +45,7 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   // These fixtures are about drag, tone and tallies; ownership is proved
   // against real data in the operation's own suites. An empty list is what
   // the API sends for an item nobody holds, so it is the honest default.
-  return { item: item(overrides), column, assignments: [] };
+  return { item: item(overrides), column, assignments: [], trust: null };
 }
 
 /**
@@ -105,7 +105,7 @@ function host(initial: DragState, result?: MoveResult) {
       return Promise.resolve(
         result ?? {
           ok: true,
-          entry: { item: item({ state: "executing" }), column, assignments: [] },
+          entry: { item: item({ state: "executing" }), column, assignments: [], trust: null },
         },
       );
     }),
@@ -162,7 +162,7 @@ describe("handleDrop — a drop actually reaches the server", () => {
         moves.push(`${itemId}->${column}`);
         return Promise.resolve({
           ok: true,
-          entry: { item: item({ state: "executing" }), column, assignments: [] },
+          entry: { item: item({ state: "executing" }), column, assignments: [], trust: null },
         });
       },
     };
@@ -182,7 +182,12 @@ describe("handleDrop — a drop actually reaches the server", () => {
   it("settles on the server's answer once it arrives", async () => {
     const h = host(pickedUp(), {
       ok: true,
-      entry: { item: item({ id: "a", state: "blocked" }), column: "waiting", assignments: [] },
+      entry: {
+        item: item({ id: "a", state: "blocked" }),
+        column: "waiting",
+        assignments: [],
+        trust: null,
+      },
     });
     await handleDrop(h.deps, "in_progress");
 

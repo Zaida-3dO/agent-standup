@@ -28,7 +28,15 @@
 // from a section that failed to load.
 import type { ReactNode } from "react";
 import type { DetailLoadState } from "@/lib/item-detail/state";
-import { artifactsForTab, latestVerdict, waitingReason } from "@/lib/item-detail/view";
+import {
+  artifactsForTab,
+  currentTipCommitSha,
+  isUnverifiedOrigin,
+  latestVerdict,
+  newestVerification,
+  waitingReason,
+} from "@/lib/item-detail/view";
+import { primaryLine, hasDistinctHeadline } from "@/lib/item-headline-display";
 import { DEFAULT_TAB, type DetailTab } from "@/lib/item-detail/tabs";
 import type { ItemEditProps } from "@/lib/item-detail/edit-state";
 import type { EventType } from "@/lib/events";
@@ -41,6 +49,8 @@ import { AgentPanel, type AgentPanelState } from "./AgentPanel";
 import { SummaryPanel } from "./SummaryPanel";
 import { Markdown } from "./Markdown";
 import { VerdictBadge } from "./VerdictBadge";
+import { TrustBadge } from "@/components/chips/TrustBadge";
+import { VerifyStateAction, type VerifyStateStatus } from "./VerifyStateAction";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
 import { StatusBlock } from "./StatusBlock";
 import { InlineEditField } from "./InlineEditField";
@@ -82,6 +92,19 @@ export interface ItemDetailViewProps {
   readonly onHistoryTypeFilterChange?: (type: EventType | null) => void;
   readonly historyPage?: number;
   readonly onHistoryPageChange?: (page: number) => void;
+  /**
+   * The "confirm state" action's own submit state (MILESTONES.md #131).
+   * Defaults to idle so a caller that does not wire it still renders the
+   * button — same convention as `agentState`.
+   */
+  readonly verifyStateStatus?: VerifyStateStatus;
+  /**
+   * Records a check of the item's `state` — `agrees` or `disagrees` with
+   * what is stored. Absent hides the action entirely rather than rendering
+   * a button that does nothing, which is the same "read-only when unwired"
+   * rule `onLoadAgentView` follows.
+   */
+  readonly onVerifyState?: (outcome: "agrees" | "disagrees") => void;
 }
 
 /**
@@ -126,6 +149,8 @@ export function ItemDetailView({
   onHistoryTypeFilterChange,
   historyPage = 0,
   onHistoryPageChange,
+  verifyStateStatus = { status: "idle" },
+  onVerifyState,
 }: ItemDetailViewProps) {
   if (loadState.status === "error") {
     return (
@@ -153,6 +178,17 @@ export function ItemDetailView({
   const verdict = latestVerdict(artifacts);
   const planArtifacts = artifactsForTab(artifacts, "plan");
   const reviewArtifacts = artifactsForTab(artifacts, "reviews");
+  // MILESTONES.md #131: the header leads with `headline` where one exists,
+  // never rewriting `title` — see `item-headline-display.ts`'s header for
+  // why. `project`/`task`/`subtask` all carry `originType`, so the trust
+  // marker is unconditional here, unlike the board card's `entry.trust`,
+  // which is `null` for a project entry specifically because THAT read
+  // never resolves a per-item origin — the detail read for one item
+  // always has it.
+  const distinctHeadline = hasDistinctHeadline(item);
+  const unverified = isUnverifiedOrigin(item.originType);
+  const verification = newestVerification(artifacts);
+  const tipCommitSha = currentTipCommitSha(artifacts);
 
   const editingTitle = edit.editingField === "title";
   const editingHeadline = edit.editingField === "headline";
@@ -172,7 +208,17 @@ export function ItemDetailView({
             stays badly titled. `<h1>` is preserved in view mode; in edit
             mode `InlineEditField` renders its own control, so the
             heading's semantics are not lost, only interrupted for the
-            duration of the edit. */}
+            duration of the edit.
+
+            **View mode shows `primaryLine(item)`, not raw `item.title`**
+            (MILESTONES.md #131) — the same headline-first rule the board
+            card follows, and for the same reason: an imported title is a
+            work order written for an agent, so the heading a person reads
+            first should be the BLUF where one has been written. Editing
+            still targets the real `title` field underneath — a reader
+            fixing a bad title corrects the stored value, never the derived
+            display line, which is why `editingTitle` reads `item.title`
+            unchanged below. */}
         {editingTitle ? (
           <div className={styles.title}>
             <InlineEditField
@@ -191,7 +237,7 @@ export function ItemDetailView({
           </div>
         ) : (
           <h1 className={styles.title}>
-            {item.title}
+            {primaryLine(item)}
             {edit.onStartEdit && (
               <button
                 type="button"
@@ -204,6 +250,12 @@ export function ItemDetailView({
             )}
           </h1>
         )}
+        {/* `title` demoted to a secondary line — ONLY when `headline` has
+            taken the primary spot above, exactly the board card's own
+            rule. Skipped while editing the title itself: the edit control
+            already shows the real value being changed, so repeating it
+            here would be the same fact rendered twice mid-edit. */}
+        {!editingTitle && distinctHeadline && <p className={styles.sourceTitle}>{item.title}</p>}
 
         {/* The headline — the one-line BLUF (MILESTONES.md #107) — gets
             its own inline edit row rather than sharing the title's, since
@@ -224,6 +276,18 @@ export function ItemDetailView({
           />
         </div>
 
+        {/* The trust marker (#131) — a verified state and an unverifiable
+            one must not render identically, #123's rule applied to a
+            single header rather than a whole column. */}
+        {unverified && (
+          <div className={styles.trustRow} data-region="trust">
+            <TrustBadge
+              verified={verification !== null}
+              checkedAt={verification?.checkedAt}
+              checkedByType={verification?.checkedByType}
+            />
+          </div>
+        )}
         <div className={styles.meta}>
           {/* Area and repo are links back to `/board`, pre-filtered to
               this value (M10 T10) — "what else is in this area" becomes
@@ -260,6 +324,20 @@ export function ItemDetailView({
             covers `paused`, which is not a block and has no
             `blockedOnType`. */}
         {reason !== null && <p className={styles.reason}>{reason}</p>}
+        {/* The "confirm state" action — offered only on an unverified item,
+            and only when the caller wired a handler (the read-only rule
+            `onLoadAgentView` already follows). `tipCommitSha` tells the
+            action whether it can be offered at all: `record_artifact`
+            refuses a `historical_verification` naming no commit, so a
+            `null` here means the button says why rather than failing on
+            the server after the click. */}
+        {unverified && onVerifyState && (
+          <VerifyStateAction
+            tipCommitSha={tipCommitSha}
+            status={verifyStateStatus}
+            onConfirm={onVerifyState}
+          />
+        )}
       </header>
 
       {/* ABOVE the tabs, deliberately — and this is the point of the whole

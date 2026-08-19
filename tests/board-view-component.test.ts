@@ -7,6 +7,7 @@ import { BoardView } from "@/components/board/BoardView";
 import { BoardColumn } from "@/components/board/BoardColumn";
 import { ItemCard } from "@/components/board/ItemCard";
 import { NeedsYouBadge } from "@/components/board/NeedsYouBadge";
+import { TrustBadge } from "@/components/chips/TrustBadge";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
@@ -43,11 +44,17 @@ function item(overrides: Partial<BoardItem> = {}): BoardItem {
   };
 }
 
-function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): BoardEntry {
+function entry(
+  column: BoardColumnId,
+  overrides: Partial<BoardItem> = {},
+  trust: BoardEntry["trust"] = null,
+): BoardEntry {
   // These fixtures are about drag, tone and tallies; ownership is proved
   // against real data in the operation's own suites. An empty list is what
   // the API sends for an item nobody holds, so it is the honest default.
-  return { item: item(overrides), column, assignments: [] };
+  // `trust` defaults to `null` (the project case) — a test that cares about
+  // the trust marker passes it explicitly.
+  return { item: item(overrides), column, assignments: [], trust };
 }
 
 /** A `BoardAssignment` fixture — presence tests below build their own list of these. */
@@ -439,6 +446,45 @@ describe("ItemCard", () => {
     expect(text).toContain("P0");
   });
 
+  // MILESTONES.md #131: the card leads with `headline` where one exists.
+  it("leads with the headline, not the imported title, when one is written", () => {
+    const card = ItemCard({
+      entry: entry("backlog", {
+        title: "agent-standup #102 - route the four raw event writes",
+        headline: "Route event writes through appendEvent",
+      }),
+      needsYou: false,
+      now: 0,
+    });
+    const link = [...walk(card)].find((el) => (el.props as { href?: unknown }).href !== undefined);
+    expect(textOf(link!)).toBe("Route event writes through appendEvent");
+  });
+
+  // Fails if the title is dropped from the response rather than demoted —
+  // the whole point is that nothing is lost, only re-ordered.
+  it("still shows the source title, demoted, once a headline stands in for it", () => {
+    const card = ItemCard({
+      entry: entry("backlog", {
+        title: "agent-standup #102 - route the four raw event writes",
+        headline: "Route event writes through appendEvent",
+      }),
+      needsYou: false,
+      now: 0,
+    });
+    expect(textOf(card)).toContain("agent-standup #102 - route the four raw event writes");
+  });
+
+  // Fails if the card prints the title twice once headline stops being null.
+  it("does not show the source title a second time when there is no headline", () => {
+    const card = ItemCard({
+      entry: entry("backlog", { title: "Ship the board", headline: null }),
+      needsYou: false,
+      now: 0,
+    });
+    const text = textOf(card);
+    expect(text.match(/Ship the board/g)).toHaveLength(1);
+  });
+
   it("links the title to that item's detail view (#72)", () => {
     // A real link rather than a click handler, so it is middle-clickable,
     // openable in a new tab and reachable by keyboard.
@@ -528,6 +574,80 @@ describe("ItemCard", () => {
     const text = textOf(card);
     expect(text).toContain("plan review");
     expect(text).not.toContain("plan_review");
+  });
+
+  // MILESTONES.md #131 — the trust marker.
+  describe("trust marker", () => {
+    it("shows no trust badge for a project (trust: null)", () => {
+      const card = ItemCard({ entry: entry("backlog", {}, null), needsYou: false, now: 0 });
+      expect(findAllByType(card, TrustBadge)).toHaveLength(0);
+    });
+
+    // `TrustBadge` is a nested component — it appears in `ItemCard`'s
+    // returned tree as an unrendered reference, so its own text ("Imported"/
+    // "Verified") is not there to be walked yet (the same reason
+    // `AgentPanel`'s `Bounded` note gives for `Markdown`). Asserting on the
+    // PROP the card passed is what actually proves the card decided
+    // correctly; `TrustBadge`'s own rendering is proved in
+    // `tests/trust-badge-component.test.ts`.
+    it("shows Imported for an unverified item with no verification on file", () => {
+      const card = ItemCard({
+        entry: entry("backlog", {}, { unverifiedOrigin: true, verification: null }),
+        needsYou: false,
+        now: 0,
+      });
+      const badge = findOneByType(card, TrustBadge);
+      expect((badge.props as { verified: boolean }).verified).toBe(false);
+    });
+
+    it("shows Verified once a historical_verification is on file", () => {
+      const card = ItemCard({
+        entry: entry(
+          "backlog",
+          {},
+          {
+            unverifiedOrigin: true,
+            verification: {
+              checkedAt: "2026-01-01T00:00:00.000Z",
+              checkedByType: "agent",
+              checkedById: "crew-1",
+              body: "Checked.",
+              commitSha: "abc123",
+            },
+          },
+        ),
+        needsYou: false,
+        now: 0,
+      });
+      const badge = findOneByType(card, TrustBadge);
+      expect((badge.props as { verified: boolean }).verified).toBe(true);
+    });
+
+    // Fails if the dashed-border class is applied unconditionally, or never.
+    it("marks the card itself unverified only when trust says so", () => {
+      const unverified = ItemCard({
+        entry: entry("backlog", {}, { unverifiedOrigin: true, verification: null }),
+        needsYou: false,
+        now: 0,
+      });
+      expect((unverified.props as { "data-unverified"?: boolean })["data-unverified"]).toBe(true);
+
+      const verified = ItemCard({
+        entry: entry(
+          "backlog",
+          {},
+          {
+            unverifiedOrigin: false,
+            verification: null,
+          },
+        ),
+        needsYou: false,
+        now: 0,
+      });
+      expect(
+        (verified.props as { "data-unverified"?: boolean })["data-unverified"],
+      ).toBeUndefined();
+    });
   });
 
   describe("presence — M10 T16", () => {
