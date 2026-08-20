@@ -122,7 +122,7 @@ export function isFilterVisible(visible: VisibleFilters, param: keyof BoardFilte
 /**
  * Ticking or unticking one box.
  *
- * **An axis that is currently NARROWED cannot be hidden.** Hiding it would
+ * **An axis that NARROWS the board cannot be hidden.** Hiding it would
  * leave the board filtered by something with no control on screen to undo
  * it — the reader sees a short board, sees no filter, and has only the back
  * button. Turning a narrowed axis off is therefore refused rather than
