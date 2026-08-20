@@ -9,6 +9,7 @@ import { createElement, type ReactElement } from "react";
 import { BoardFilterBarView } from "@/components/board/BoardFilterBarView";
 import { SavedViewsView } from "@/components/board/SavedViewsView";
 import { emptyBoardQuery, parseBoardQuery, type BoardQuery } from "@/lib/board/filters";
+import { DEFAULT_VISIBLE_FILTERS, FILTER_VISIBILITY_CHOICES } from "@/lib/board/visible-filters";
 import { BoardColumn } from "@/components/board/BoardColumn";
 import { EmptyState } from "@/components/states/EmptyState";
 import { walk } from "./helpers/react-element";
@@ -71,15 +72,25 @@ function bar(overrides: Partial<Parameters<typeof BoardFilterBarView>[0]> = {}):
     onClearFilters: () => {},
     searchDraft: "",
     onSearchDraftChange: () => {},
+    // The bar renders only the axes a reader has turned on, so the default
+    // set is what "the bar" means in these tests. Overridable, because the
+    // tests below that are ABOUT the picker need to vary it.
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
+    onVisibilityChange: () => {},
     ...overrides,
   }) as ReactElement;
 }
 
 describe("every filter the service accepts is reachable from the bar", () => {
-  it("renders a control for each of the eight axes", () => {
+  it("renders a control for each of the nine axes visible by default", () => {
     // The acceptance criterion, as a rendering assertion: the service's
     // filters were finished and unreachable, and a missing control here is
     // that defect returning for one axis.
+    //
+    // Nine and not ten: `project` is the one axis the header does not show
+    // until a reader turns it on, which is what the picker exists for. It
+    // has its own assertion below rather than being quietly absent from
+    // this list.
     const tree = bar();
     for (const id of [
       "board-filter-area",
@@ -89,10 +100,38 @@ describe("every filter the service accepts is reachable from the bar", () => {
       "board-filter-priority",
       "board-filter-state",
       "board-filter-kind",
+      // The level axis is a chip group, not a select — its mode button is
+      // the control that must exist for the axis to be operable at all.
+      "board-filter-level-mode",
     ]) {
       expect(byId(tree, id), `${id} is missing from the filter bar`).toBeDefined();
     }
     expect(byId(tree, "board-search")).toBeDefined();
+    // Every axis the picker offers is reachable — the picker is the only
+    // way to reach one that is off by default, so a picker missing an entry
+    // is an axis with no route to the header at all.
+    for (const choice of FILTER_VISIBILITY_CHOICES) {
+      expect(
+        byId(bar({ pickerOpen: true }), `board-show-${choice.param}`),
+        `${choice.param} has no checkbox in the More-filters picker`,
+      ).toBeDefined();
+    }
+  });
+
+  it("renders an axis only when it is in the visible set", () => {
+    // The picker's whole contract in one assertion. The single-character
+    // change this catches: dropping the `shows(...)` guard on an axis, which
+    // would put every control back in the header and make the picker a
+    // decoration that silently does nothing.
+    const hidden = bar({ visibleFilters: DEFAULT_VISIBLE_FILTERS.filter((p) => p !== "repo") });
+    expect(byId(hidden, "board-filter-repo")).toBeUndefined();
+    // ...and the axes that ARE in the set still render, so the assertion
+    // above is about the one axis removed rather than about a bar that
+    // rendered nothing at all.
+    expect(byId(hidden, "board-filter-area")).toBeDefined();
+
+    const shown = bar({ visibleFilters: [...DEFAULT_VISIBLE_FILTERS, "project"] });
+    expect(byId(shown, "board-filter-project")).toBeDefined();
   });
 
   it("gives every select an 'Any' option, so a narrowed axis can be widened again", () => {
@@ -195,9 +234,38 @@ describe("the clear control", () => {
   });
 
   it("counts one filter as singular", () => {
-    const one = JSON.stringify(bar({ query: parseBoardQuery("area=web") }));
-    expect(one).toContain("filter");
-    expect(one).not.toContain("filters");
+    // Asserted against the CLEAR BUTTON's own rendered children rather than
+    // by scanning the whole serialised tree for the substring "filters".
+    // That scan read as a test of the pluralisation and was really a test of
+    // every prop name in the bar — it went red the moment an unrelated
+    // component was given a prop called `filters`, and it would equally have
+    // passed a broken pluralisation had any other node happened to contain
+    // the word. This looks at the text the reader actually sees.
+    // The button's text with its parts CONCATENATED. JSX renders
+    // `filter{n === 1 ? "" : "s"}` as two adjacent children, so the rendered
+    // word only exists once they are joined — a check over the serialised
+    // children would never find "filters" however many filters were active.
+    const clearText = (query: BoardQuery): string => {
+      for (const el of walk(expand(bar({ query })) as ReactElement)) {
+        if (el.type !== "button") continue;
+        const props = el.props as { className?: unknown };
+        if (typeof props.className !== "string" || !props.className.includes("clear")) continue;
+        const parts: string[] = [];
+        for (const inner of walk(el)) {
+          const children = (inner.props as { children?: unknown }).children;
+          for (const child of Array.isArray(children) ? children : [children]) {
+            if (typeof child === "string" || typeof child === "number") parts.push(String(child));
+          }
+        }
+        return parts.join("");
+      }
+      return "";
+    };
+    expect(clearText(parseBoardQuery("area=web"))).toContain("filter");
+    expect(clearText(parseBoardQuery("area=web"))).not.toContain("filters");
+    // The plural half, which the original never asserted — without it, a
+    // hardcoded "filter" with the pluralisation deleted would still pass.
+    expect(clearText(parseBoardQuery("area=web&repo=api"))).toContain("filters");
   });
 });
 

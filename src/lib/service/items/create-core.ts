@@ -373,7 +373,18 @@ export async function insertItem(
   assertOriginResolved(resolved);
   const driveMode = resolved.driveMode ?? "autonomous";
 
-  const kind = kindForDepth(parent.depth);
+  // `parent.depth` is `ancestorDepthOf`'s ancestor ROW COUNT, which is
+  // exactly the absolute depth the NEW item lands at — 0 when there is no
+  // parent, 1 under a root, and so on. That is the same number `kindForDepth`
+  // has always consumed, so `kind` and `depth` are two readings of one value
+  // and are written from it together rather than computed twice.
+  //
+  // Stated here because the two depth helpers in this codebase deliberately
+  // differ by one — `ancestorDepthOf` (a row count) and `depthOf` (absolute)
+  // — and taking the wrong one would type every created item one level too
+  // shallow while `kind` stayed right, which no test of `kind` would catch.
+  const depth = parent.depth;
+  const kind = kindForDepth(depth);
 
   // `ensureArea` (areas.ts) takes a Prisma client's `.area` delegate,
   // which `TransactionHandle` deliberately does not expose (context.ts —
@@ -454,20 +465,21 @@ export async function insertItem(
   const id = crypto.randomUUID();
   const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
     `INSERT INTO "Item" (
-       "id", "parentId", "kind", "title", "headline", "body", "state", "priority",
+       "id", "parentId", "kind", "depth", "title", "headline", "body", "state", "priority",
        "originType", "originPersonId", "area", "repo", "needsVisualReview",
        "driveMode", "mergeAuthority", "difficulty", "customFields",
        "updatedAt"
      ) VALUES (
-       $1, $2, $3::"ItemKind", $4, $5, $6, 'on_deck'::"ItemState", $7::"Priority",
-       $8::"OriginType", $9, $10, $11, $12,
-       $13::"DriveMode", $14::"MergeAuthority", $15::jsonb, $16::jsonb,
+       $1, $2, $3::"ItemKind", $4, $5, $6, $7, 'on_deck'::"ItemState", $8::"Priority",
+       $9::"OriginType", $10, $11, $12, $13,
+       $14::"DriveMode", $15::"MergeAuthority", $16::jsonb, $17::jsonb,
        CURRENT_TIMESTAMP
      )
      RETURNING ${ITEM_COLUMNS}`,
     id,
     parent.id,
     kind,
+    depth,
     input.title,
     input.headline ?? null,
     input.body,

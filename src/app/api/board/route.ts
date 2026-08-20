@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
 import { parseBooleanParam } from "../_shared/query";
+import { parseLevelFilter } from "@/lib/board/filters";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
@@ -35,6 +36,31 @@ export async function GET(request: Request) {
   if (actor !== null) input.actor = actor;
   const search = url.searchParams.get("search");
   if (search !== null) input.search = search;
+  const project = url.searchParams.get("project");
+  if (project !== null) input.project = project;
+
+  // The level filter is the one axis whose URL form is not its service form:
+  // the address carries `exclude:0` (one atomic value, so a hand-edited link
+  // cannot arrive half-set), while the operation takes `{mode, levels}`. The
+  // codec that writes the URL form owns reading it too, so the two cannot
+  // drift into disagreeing about the spelling.
+  //
+  // **`getAll`, not `get`.** A repeated `level=` is a URL a reader can
+  // produce — a stale link concatenated with a new one, or a form that
+  // submitted twice — and `get` would silently honour the first while
+  // ignoring the rest. Reading them all lets the LAST win, which is the
+  // behaviour every other "set this filter" path here already has: the most
+  // recent choice is the one that applies.
+  //
+  // An unparseable value is passed to no filter at all rather than refused,
+  // matching how the board's own codec treats a bad `priority` — the reader
+  // gets a board they can see and correct instead of a 400.
+  const levels = url.searchParams.getAll("level");
+  const rawLevel = levels[levels.length - 1];
+  if (rawLevel !== undefined) {
+    const parsed = parseLevelFilter(rawLevel);
+    if (parsed !== undefined) input.level = { mode: parsed.mode, levels: [...parsed.levels] };
+  }
   // The ordering (MILESTONES.md #75). Passed through as strings for the
   // operation's own enums to accept or refuse — the adapter validates
   // nothing itself, so an unknown sort key is refused in one place with the

@@ -19,16 +19,26 @@
 // that takes plain props can be called as a function and its element tree
 // inspected — which is what actually proves the branches below. The state,
 // the router and the debounce live in `BoardFilterBar.tsx`.
-import { Search, X } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import {
   BOARD_FILTER_KINDS,
   BOARD_FILTER_PRIORITIES,
+  BOARD_LEVEL_CHOICES,
+  BOARD_LEVEL_TOP_BUCKET,
   BOARD_SORT_KEYS,
   activeFilterCount,
+  defaultLevelFilter,
   type BoardFilters,
+  type BoardLevelFilter,
   type BoardQuery,
   type BoardSortKey,
 } from "@/lib/board/filters";
+import {
+  FILTER_VISIBILITY_CHOICES,
+  canHide,
+  isFilterVisible,
+  type VisibleFilters,
+} from "@/lib/board/visible-filters";
 import { ITEM_STATES } from "@/lib/design/tokens";
 import styles from "./BoardFilterBar.module.css";
 
@@ -68,6 +78,18 @@ export interface BoardFilterBarViewProps {
   readonly people?: readonly FilterOption[];
   /** Live assignment holders, which includes agent crew names a `Person` list does not carry. */
   readonly assignees?: readonly FilterOption[];
+  /** The projects that exist — the vocabulary for the project-scope select. */
+  readonly projects?: readonly FilterOption[];
+  /**
+   * Which axes render in the header (MILESTONES.md — the "More filters"
+   * picker). Browser-local, never in the URL: see
+   * `@/lib/board/visible-filters` for why the two are deliberately split.
+   */
+  readonly visibleFilters: VisibleFilters;
+  readonly onVisibilityChange: (param: keyof BoardFilters, visible: boolean) => void;
+  /** Whether the picker is open. Held by the container, like the search draft. */
+  readonly pickerOpen?: boolean;
+  readonly onTogglePicker?: () => void;
 }
 
 /**
@@ -151,6 +173,201 @@ function AxisSelect({
   );
 }
 
+/**
+ * A level's reader-facing name. The top entry is a BUCKET, not a level —
+ * nesting is unbounded, so the deepest choice has to mean "this and
+ * anything deeper" or a store nested past the list would have rows no
+ * choice could reach.
+ */
+function levelLabel(level: number): string {
+  if (level === 0) return "Projects (level 0)";
+  if (level === BOARD_LEVEL_TOP_BUCKET) return `Level ${BOARD_LEVEL_TOP_BUCKET}+`;
+  return `Level ${level}`;
+}
+
+/**
+ * The level axis: a mode toggle plus one checkbox per level.
+ *
+ * **Checkboxes rather than a multiple `<select>`.** A `<select multiple>` is
+ * the control readers most often cannot operate — deselecting needs a
+ * modifier key nothing on screen mentions, and one stray click clears the
+ * whole set. Toggle chips follow the idiom already in this codebase
+ * (`HistoryList`'s filter row), and each one carries its own accessible
+ * name and pressed state.
+ *
+ * **The mode is announced in words, not by colour.** It is the difference
+ * between "only these levels" and "everything but these", which reverses the
+ * meaning of every chip beside it — the one thing on this control that must
+ * not be conveyed by styling alone. Same reasoning as the sort-direction
+ * button below.
+ */
+function LevelAxis({
+  value,
+  onChange,
+}: {
+  readonly value: BoardLevelFilter;
+  readonly onChange: (value: BoardLevelFilter) => void;
+}) {
+  const include = value.mode === "include";
+  const chosen = new Set(value.levels);
+  const modeWords = include ? "Only these levels" : "Everything except";
+
+  return (
+    <div className={styles.axis} data-axis="level">
+      <span className={styles.axisLabel} id="board-filter-level-label">
+        Level
+      </span>
+      <div
+        className={styles.levelGroup}
+        role="group"
+        aria-labelledby="board-filter-level-label"
+        data-mode={value.mode}
+      >
+        <button
+          id="board-filter-level-mode"
+          type="button"
+          className={styles.levelMode}
+          data-mode={value.mode}
+          aria-pressed={include}
+          onClick={() => onChange({ ...value, mode: include ? "exclude" : "include" })}
+          // The full sentence, because the two states mean opposite things
+          // and a reader arriving on this control has to be able to tell
+          // which one is active without inspecting the chips.
+          aria-label={
+            include
+              ? "Showing only the levels ticked below — switch to excluding them instead"
+              : "Showing everything except the levels ticked below — switch to only them instead"
+          }
+        >
+          {modeWords}
+        </button>
+        {BOARD_LEVEL_CHOICES.map((level) => {
+          const ticked = chosen.has(level);
+          return (
+            <button
+              key={level}
+              id={`board-filter-level-${level}`}
+              type="button"
+              className={styles.levelChip}
+              data-level={level}
+              data-active={ticked}
+              aria-pressed={ticked}
+              // Says what ticking this chip will DO, which depends on the
+              // mode — a bare "Level 2" would read identically in the two
+              // modes that show opposite boards.
+              // The pressed state is carried by `aria-pressed`, which is
+              // what a screen reader announces for a toggle; the name says
+              // what ticking DOES, which depends on the mode and would
+              // otherwise read identically in the two modes that show
+              // opposite boards.
+              aria-label={`${levelLabel(level)} — ${include ? "shown" : "hidden"} when ticked`}
+              onClick={() => {
+                const levels = ticked
+                  ? value.levels.filter((entry) => entry !== level)
+                  : [...value.levels, level];
+                // An empty selection is meaningless in both modes — `include`
+                // nothing shows an empty board and `exclude` nothing is no
+                // filter — so emptying it returns to the board default
+                // rather than to a state whose own control cannot escape it.
+                onChange(levels.length === 0 ? defaultLevelFilter() : { ...value, levels });
+              }}
+            >
+              {levelLabel(level)}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The "More filters" picker — a checkbox per axis, deciding which controls
+ * the header renders.
+ *
+ * This changes what the HEADER shows, never what the BOARD shows. That
+ * distinction is why an axis that narrows the board cannot be unticked:
+ * hiding it would leave the board filtered with no on-screen control to undo
+ * it. The box is disabled and says why, rather than being enabled and doing
+ * nothing.
+ */
+function MoreFiltersPicker({
+  open,
+  onToggle,
+  visible,
+  filters,
+  onVisibilityChange,
+}: {
+  readonly open: boolean;
+  readonly onToggle?: () => void;
+  readonly visible: VisibleFilters;
+  readonly filters: BoardFilters;
+  readonly onVisibilityChange: (param: keyof BoardFilters, next: boolean) => void;
+}) {
+  const shown = FILTER_VISIBILITY_CHOICES.filter((choice) =>
+    isFilterVisible(visible, choice.param),
+  ).length;
+
+  return (
+    <div className={styles.picker}>
+      <button
+        id="board-more-filters"
+        type="button"
+        className={styles.pickerToggle}
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls="board-more-filters-menu"
+        // The count is what makes the control honest about the state it is
+        // hiding: a header missing an axis otherwise looks like a build that
+        // forgot one.
+        aria-label={`More filters — ${shown} of ${FILTER_VISIBILITY_CHOICES.length} controls shown`}
+      >
+        <SlidersHorizontal size={13} aria-hidden="true" />
+        <span>More filters</span>
+      </button>
+      {open && (
+        <div
+          id="board-more-filters-menu"
+          className={styles.pickerMenu}
+          role="group"
+          aria-label="Choose which filter controls to show"
+        >
+          <p className={styles.pickerHint}>
+            Which controls appear in this bar. Saved in this browser — it is not part of the
+            board&rsquo;s address, so a link you share is unaffected.
+          </p>
+          {FILTER_VISIBILITY_CHOICES.map((choice) => {
+            const checked = isFilterVisible(visible, choice.param);
+            const hideable = canHide(choice.param, filters);
+            const locked = checked && !hideable;
+            return (
+              <label
+                key={choice.param}
+                className={styles.pickerRow}
+                htmlFor={`board-show-${choice.param}`}
+              >
+                <input
+                  id={`board-show-${choice.param}`}
+                  type="checkbox"
+                  checked={checked}
+                  disabled={locked}
+                  onChange={(event) => onVisibilityChange(choice.param, event.target.checked)}
+                />
+                <span>{choice.label}</span>
+                {locked && (
+                  <span className={styles.pickerLocked}>
+                    in use — clear it to hide this control
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BoardFilterBarView({
   query,
   onFilterChange,
@@ -163,9 +380,21 @@ export function BoardFilterBarView({
   repos = [],
   people = [],
   assignees = [],
+  projects = [],
+  visibleFilters,
+  onVisibilityChange,
+  pickerOpen = false,
+  onTogglePicker,
 }: BoardFilterBarViewProps) {
   const active = activeFilterCount(query.filters);
   const ascending = query.direction === "asc";
+  // One helper rather than the same `includes` at each of nine call sites:
+  // an axis is rendered when the reader has it turned on.
+  const shows = (param: keyof BoardFilters) => isFilterVisible(visibleFilters, param);
+  // Never absent in practice — `parseBoardQuery` resolves an absent `level`
+  // to the default — but the type allows it, and defaulting here is cheaper
+  // than a non-null assertion that would be wrong if the shape ever changed.
+  const level = query.filters.level ?? defaultLevelFilter();
 
   return (
     <div className={styles.bar} role="search" aria-label="Filter and sort the board">
@@ -188,57 +417,94 @@ export function BoardFilterBarView({
         />
       </div>
 
+      {/* Only the axes this reader has turned on. The set is browser-local
+          and the values stay in the URL — see `@/lib/board/visible-filters`
+          for why those two are deliberately different places. */}
       <div className={styles.axes}>
-        <AxisSelect
-          id="board-filter-area"
-          label="Area"
-          value={query.filters.area}
-          options={areas}
-          onChange={(value) => onFilterChange("area", value)}
-        />
-        <AxisSelect
-          id="board-filter-repo"
-          label="Repo"
-          value={query.filters.repo}
-          options={repos}
-          onChange={(value) => onFilterChange("repo", value)}
-        />
-        <AxisSelect
-          id="board-filter-assignee"
-          label="On it"
-          value={query.filters.assignee}
-          options={assignees}
-          onChange={(value) => onFilterChange("assignee", value)}
-        />
-        <AxisSelect
-          id="board-filter-actor"
-          label="Raised by"
-          value={query.filters.actor}
-          options={people}
-          onChange={(value) => onFilterChange("actor", value)}
-        />
-        <AxisSelect
-          id="board-filter-priority"
-          label="Priority"
-          value={query.filters.priority}
-          options={BOARD_FILTER_PRIORITIES.map((value) => ({ value, label: value }))}
-          onChange={(value) => onFilterChange("priority", value as BoardFilters["priority"])}
-        />
-        <AxisSelect
-          id="board-filter-state"
-          label="State"
-          value={query.filters.state}
-          options={ITEM_STATES.map((value) => ({ value, label: humanise(value) }))}
-          onChange={(value) => onFilterChange("state", value)}
-        />
-        <AxisSelect
-          id="board-filter-kind"
-          label="Kind"
-          value={query.filters.kind}
-          options={BOARD_FILTER_KINDS.map((value) => ({ value, label: humanise(value) }))}
-          onChange={(value) => onFilterChange("kind", value as BoardFilters["kind"])}
-        />
+        {shows("area") && (
+          <AxisSelect
+            id="board-filter-area"
+            label="Area"
+            value={query.filters.area}
+            options={areas}
+            onChange={(value) => onFilterChange("area", value)}
+          />
+        )}
+        {shows("repo") && (
+          <AxisSelect
+            id="board-filter-repo"
+            label="Repo"
+            value={query.filters.repo}
+            options={repos}
+            onChange={(value) => onFilterChange("repo", value)}
+          />
+        )}
+        {shows("assignee") && (
+          <AxisSelect
+            id="board-filter-assignee"
+            label="On it"
+            value={query.filters.assignee}
+            options={assignees}
+            onChange={(value) => onFilterChange("assignee", value)}
+          />
+        )}
+        {shows("actor") && (
+          <AxisSelect
+            id="board-filter-actor"
+            label="Raised by"
+            value={query.filters.actor}
+            options={people}
+            onChange={(value) => onFilterChange("actor", value)}
+          />
+        )}
+        {shows("priority") && (
+          <AxisSelect
+            id="board-filter-priority"
+            label="Priority"
+            value={query.filters.priority}
+            options={BOARD_FILTER_PRIORITIES.map((value) => ({ value, label: value }))}
+            onChange={(value) => onFilterChange("priority", value as BoardFilters["priority"])}
+          />
+        )}
+        {shows("state") && (
+          <AxisSelect
+            id="board-filter-state"
+            label="State"
+            value={query.filters.state}
+            options={ITEM_STATES.map((value) => ({ value, label: humanise(value) }))}
+            onChange={(value) => onFilterChange("state", value)}
+          />
+        )}
+        {shows("kind") && (
+          <AxisSelect
+            id="board-filter-kind"
+            label="Kind"
+            value={query.filters.kind}
+            options={BOARD_FILTER_KINDS.map((value) => ({ value, label: humanise(value) }))}
+            onChange={(value) => onFilterChange("kind", value as BoardFilters["kind"])}
+          />
+        )}
+        {shows("project") && (
+          <AxisSelect
+            id="board-filter-project"
+            label="Project"
+            value={query.filters.project}
+            options={projects}
+            onChange={(value) => onFilterChange("project", value)}
+          />
+        )}
+        {shows("level") && (
+          <LevelAxis value={level} onChange={(value) => onFilterChange("level", value)} />
+        )}
       </div>
+
+      <MoreFiltersPicker
+        open={pickerOpen}
+        onToggle={onTogglePicker}
+        visible={visibleFilters}
+        filters={query.filters}
+        onVisibilityChange={onVisibilityChange}
+      />
 
       <div className={styles.sortGroup}>
         <label className={styles.axisLabel} htmlFor="board-sort">

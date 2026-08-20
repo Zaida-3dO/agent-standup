@@ -267,6 +267,61 @@ const inputSchema = z
     area: z.string().min(1).optional(),
     repo: z.string().min(1).optional(),
     kind: z.enum(["project", "task", "subtask"]).optional(),
+    /**
+     * Which tree levels to show — the board's LEVEL filter.
+     *
+     * **Strictly more expressive than `kind`, which is why both exist.**
+     * `kind` collapses every depth from 2 downwards into `subtask`
+     * (`kindForDepth`), so `kind: "subtask"` cannot distinguish a level-2
+     * row from a level-5 one. This reads the stored `depth` column, so it
+     * can.
+     *
+     * Two modes over the same list of levels:
+     *
+     *   - `include` — ONLY these levels. `{mode: "include", levels: [1, 2]}`
+     *     returns level 1 and level 2 rows, and a level-3 subtask sitting
+     *     under one of those level-2 rows is EXCLUDED. Membership is asked
+     *     of each row on its own, never of its ancestry — a filter that kept
+     *     a row because its parent matched would not be a level filter.
+     *   - `exclude` — everything BUT these levels.
+     *
+     * Absent means no level narrowing at all. The board's *own* default is
+     * `exclude [0]` ("everything except projects"), but that default is the
+     * reader-facing one and lives in the URL codec: an operation that
+     * defaulted it here would make an unfiltered read impossible to ask for,
+     * and would silently change what every existing caller — the CLI, a
+     * script, this repo's own tests — gets back from a call that names no
+     * level at all.
+     *
+     * `levels` is bounded at 64 entries and each level at 0..1000: the input
+     * is spliced into a parameter array, and neither the tree's real depth
+     * (`items.max_depth`, single digits) nor any reader's intent comes
+     * anywhere near those, so the caps refuse nonsense without constraining
+     * use. Non-negative because there is no level above a root.
+     */
+    level: z
+      .object({
+        mode: z.enum(["include", "exclude"]),
+        levels: z.array(z.number().int().min(0).max(1000)).min(1).max(64),
+      })
+      .optional(),
+    /**
+     * Scope the board to one project's WHOLE SUBTREE — the project itself
+     * and every descendant at any depth, not only its direct children.
+     *
+     * The whole subtree rather than one level because that is what makes it
+     * compose with `level`: scope to a project, then narrow to level 1, and
+     * you get that project's tasks. A one-level scope would make the second
+     * half of that sentence meaningless, and a reader would have no way to
+     * ask "everything under this project" at all.
+     *
+     * An id that names no item, or names a row that is not a project, is not
+     * refused — it simply matches nothing but itself. A refusal would turn a
+     * stale bookmark into an error page rather than an empty board, and the
+     * board's whole posture on hand-edited URLs is that a bad value renders
+     * something the reader can see and correct.
+     */
+    project: z.string().min(1).optional(),
     // Same eleven-value vocabulary `list_items` (#26) already validates
     // against — kept in sync by hand here because the two operations have
     // no shared schema fragment to both read from; `tests/board-columns.test.ts`
@@ -465,7 +520,7 @@ export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "One paginated page of one board column, with that column's true total, and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee, actor and search; sortable by priority, name, created or updated in either direction; pass full for whole records.",
+    "One paginated page of one board column, with that column's true total, and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee, actor, search, level (tree depth, include or exclude a set of levels) and project (one project's whole subtree); sortable by priority, name, created or updated in either direction; pass full for whole records.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
@@ -570,6 +625,74 @@ export const getBoard = defineOperation({
         `("title" ILIKE $${paramIndex} ESCAPE '\\' OR "body" ILIKE $${paramIndex} ESCAPE '\\')`,
       );
       sharedValues.push(`%${escapeLikePattern(input.search)}%`);
+      paramIndex++;
+    }
+
+    // The level filter — a narrowing on the stored `depth` column, applied
+    // to the item list only.
+    //
+    // `include` is `depth = ANY(...)`; `exclude` is its negation. Written as
+    // ONE array parameter rather than a generated `IN (...)` list, so the
+    // number of placeholders this block consumes is one regardless of how
+    // many levels the caller named — a variable placeholder count in a
+    // hand-counted `$N` scheme is precisely how the frozen `statesParam`
+    // below would come to point at the wrong parameter.
+    //
+    // **This must not, and does not, reach the project subtree walk.** A
+    // project's derived column is computed from every descendant regardless
+    // of the active filter (see the module header and
+    // `tests/board-operations.test.ts`), so a level filter leaking into that
+    // walk would make a project's column depend on which levels a reader
+    // happened to be looking at. It is a `shared` condition, and `shared`
+    // is not what that walk is built from.
+    if (input.level !== undefined) {
+      const condition = `"depth" = ANY($${paramIndex}::int[])`;
+      shared.push(input.level.mode === "include" ? condition : `NOT (${condition})`);
+      sharedValues.push(input.level.levels);
+      paramIndex++;
+    }
+
+    // The project scope — this project and every descendant of it, at any
+    // depth.
+    //
+    // **A scalar subquery rather than a CTE, deliberately.** `shared` is a
+    // flat list of conditions AND-ed into a `WHERE`, and it is reused
+    // verbatim by three different statements (the project read, each
+    // column's `COUNT(*)`, and each column's page). A `WITH RECURSIVE`
+    // clause cannot live in that list at all — it has to be attached to the
+    // front of a statement — so putting one here would mean restructuring
+    // how all three statements are assembled, and every one of them would
+    // have to carry the CTE whether or not this filter was applied.
+    // `"id" IN (SELECT ...)` composes into the existing array untouched,
+    // which keeps the parameter accounting the rest of this function depends
+    // on exactly as it was.
+    //
+    // The subquery walks DOWN from the named row (`parentId = <scope>`, then
+    // its children, and so on) and unions the row itself, so the project's
+    // own card stays on the board it scopes. Archived rows are not excluded
+    // *inside* the walk on purpose: an archived row is still a real parent
+    // for the purpose of finding what sits beneath it, and a live child of
+    // an archived row would otherwise vanish from its project entirely.
+    // `shared` already carries `NOT_ARCHIVED_CONDITION`, so the archived
+    // rows themselves are still never served.
+    if (input.project !== undefined) {
+      shared.push(
+        // Every column reference inside the subquery is table-qualified.
+        // The outer statement's `FROM "Item"` is in scope here, so a bare
+        // `"id"` in the base term would be ambiguous between the two — and
+        // Postgres resolving it outward would silently turn this from "the
+        // named subtree" into "every row", which is a filter that reads as
+        // applied and narrows nothing.
+        `"Item"."id" IN (
+           WITH RECURSIVE scope AS (
+             SELECT root."id" FROM "Item" root WHERE root."id" = $${paramIndex}
+             UNION ALL
+             SELECT i."id" FROM "Item" i JOIN scope s ON i."parentId" = s."id"
+           )
+           SELECT s2."id" FROM scope s2
+         )`,
+      );
+      sharedValues.push(input.project);
       paramIndex++;
     }
 
