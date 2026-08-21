@@ -14,7 +14,7 @@
 // which is the behaviour that makes filter bars feel like traps. A saved
 // view applied from the sidebar is an ordinary `<Link>` and does push,
 // because that genuinely is going somewhere.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import {
   directionToggled,
@@ -28,6 +28,13 @@ import {
   SEARCH_DEBOUNCE_MS,
 } from "@/lib/board/filter-state";
 import { withFilter, type BoardFilters, type BoardQuery } from "@/lib/board/filters";
+import { visibilityToggled } from "@/lib/board/visible-filters";
+import {
+  setVisibleFilters,
+  subscribeToVisibleFilters,
+  visibleFiltersServerSnapshot,
+  visibleFiltersSnapshot,
+} from "@/lib/board/visible-filters-client";
 import { savedViewNameProblem, type SavedViews } from "@/lib/board/saved-views";
 import { writeSavedViews } from "@/lib/board/saved-views-client";
 import type { FilterOptions } from "@/lib/board/filter-options";
@@ -52,6 +59,38 @@ export function BoardFilterBar({ query, options, views, onViewsChange }: BoardFi
   // have to be different, or a cleared box would immediately be refilled
   // from the URL it is in the middle of clearing.
   const [searchDraft, setSearchDraft] = useState<string | null>(null);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // **`useSyncExternalStore`, because that is exactly what this is.** The
+  // chosen control set lives in the browser, not in the URL and not on the
+  // server (see `@/lib/board/visible-filters` for why the two are split), so
+  // it is an external store with a separate server value.
+  //
+  // The hook takes both: the third argument is the SSR snapshot, so the
+  // server render and the first client render agree BY CONSTRUCTION rather
+  // than by a correction applied after mount. A `useState` seeded from
+  // storage would hydrate-mismatch for any reader who had chosen anything,
+  // and a `useState` corrected in an effect would cascade a second render
+  // and flash the default set first.
+  const visibleFilters = useSyncExternalStore(
+    subscribeToVisibleFilters,
+    visibleFiltersSnapshot,
+    visibleFiltersServerSnapshot,
+  );
+
+  const onVisibilityChange = useCallback(
+    (param: keyof BoardFilters, next: boolean) => {
+      // `query.filters` is read here so an axis that narrows the board
+      // cannot be hidden — `visibilityToggled` owns that rule; this just
+      // supplies the filters it decides against.
+      //
+      // The store persists and notifies in one call, so what the reader sees
+      // and what is remembered cannot disagree.
+      setVisibleFilters(visibilityToggled(visibleFiltersSnapshot(), param, next, query.filters));
+    },
+    [query.filters],
+  );
 
   const navigate = useCallback(
     (next: BoardQuery) => {
@@ -145,6 +184,11 @@ export function BoardFilterBar({ query, options, views, onViewsChange }: BoardFi
         repos={options.repos}
         people={options.people}
         assignees={options.people}
+        projects={options.projects}
+        visibleFilters={visibleFilters}
+        onVisibilityChange={onVisibilityChange}
+        pickerOpen={pickerOpen}
+        onTogglePicker={() => setPickerOpen((open) => !open)}
       />
       <SavedViewsView
         views={views}

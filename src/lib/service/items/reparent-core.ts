@@ -40,6 +40,17 @@ interface SubtreeRow {
   id: string;
   parentId: string | null;
   kind: string;
+  /**
+   * The row's stored `depth` BEFORE the move — the "from" a field change is
+   * recorded against.
+   *
+   * Read rather than computed from the moving item's old depth plus
+   * `relativeDepth`, because those two agree only while the column is
+   * already correct. Reading it is what lets a move repair a row whose
+   * stored depth had drifted, and what keeps the ledger honest about what
+   * the value actually was rather than about what it should have been.
+   */
+  depth: number;
   /** Hops from the moving item: 0 is the item itself, 1 its children, and so on. */
   relativeDepth: number;
 }
@@ -63,13 +74,13 @@ interface SubtreeRow {
 export async function subtreeOf(ctx: ServiceContext, itemId: string): Promise<SubtreeRow[]> {
   return ctx.db.$queryRawUnsafe<SubtreeRow[]>(
     `WITH RECURSIVE subtree AS (
-       SELECT "id", "parentId", "kind", 0 AS "relativeDepth"
+       SELECT "id", "parentId", "kind", "depth", 0 AS "relativeDepth"
        FROM "Item" WHERE "id" = $1
        UNION ALL
-       SELECT i."id", i."parentId", i."kind", s."relativeDepth" + 1
+       SELECT i."id", i."parentId", i."kind", i."depth", s."relativeDepth" + 1
        FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
      )
-     SELECT "id", "parentId", "kind", "relativeDepth"::int AS "relativeDepth" FROM subtree`,
+     SELECT "id", "parentId", "kind", "depth"::int AS "depth", "relativeDepth"::int AS "relativeDepth" FROM subtree`,
     itemId,
   );
 }
@@ -146,14 +157,18 @@ export async function applyMove(
 
   // The moving item itself: `parentId` and `kind` together, so the two
   // halves of one move land in the same statement and cannot half-apply.
+  // `kind` and `depth` are two readings of the same number, so they are
+  // derived from `newDepth` together and written in the same statement — the
+  // property that makes them unable to disagree about where a row sits.
   const newKind = kindForDepth(newDepth);
   const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
     `UPDATE "Item"
-     SET "parentId" = $1, "kind" = $2::"ItemKind", "updatedAt" = CURRENT_TIMESTAMP
-     WHERE "id" = $3
+     SET "parentId" = $1, "kind" = $2::"ItemKind", "depth" = $3, "updatedAt" = CURRENT_TIMESTAMP
+     WHERE "id" = $4
      RETURNING ${ITEM_COLUMNS}`,
     newParentId,
     newKind,
+    newDepth,
     item.id,
   );
   const updated = rows[0];
@@ -161,13 +176,19 @@ export async function applyMove(
     throw new NotFoundError(`No such item: ${item.id}.`, { fields: ["id"] });
   }
 
+  // `depth` goes through `recordFieldChanges` exactly as `parentId` and
+  // `kind` do — one `field_change` row per field that ACTUALLY changed. A
+  // move that shifts depth by zero writes nothing, and a move that changes
+  // depth without changing `kind` (level 2 to level 3: `subtask` either
+  // side) records the one field that moved — a case a kind-only ledger
+  // cannot express at all, because both readings of the row are one word.
   await recordFieldChanges(ctx.db, {
     itemId: item.id,
     actor,
     assignmentId: await liveAssignmentId(ctx.db, item.id, ctx.caller),
-    before: { parentId: item.parentId, kind: item.kind },
-    after: { parentId: newParentId, kind: newKind },
-    fields: ["parentId", "kind"],
+    before: { parentId: item.parentId, kind: item.kind, depth: item.depth },
+    after: { parentId: newParentId, kind: newKind, depth: newDepth },
+    fields: ["parentId", "kind", "depth"],
   });
 
   // Every descendant's `kind` is re-derived from where it now sits. Skipping
@@ -177,20 +198,30 @@ export async function applyMove(
   // makes a project's state derived in the first place (DECISIONS.md §13c).
   for (const descendant of subtree) {
     if (descendant.relativeDepth === 0) continue;
-    const descendantKind = kindForDepth(newDepth + descendant.relativeDepth);
-    if (descendantKind === descendant.kind) continue;
+    const descendantDepth = newDepth + descendant.relativeDepth;
+    const descendantKind = kindForDepth(descendantDepth);
+    // **The skip is now on both fields, not on `kind` alone.** `kind`
+    // saturates at `subtask`, so a subtree moved between two levels that are
+    // both at or below depth 2 changes every descendant's depth while
+    // changing no descendant's kind — the exact case a `kind`-only check
+    // reads as "nothing to do". Skipping it would leave the stored depth
+    // disagreeing with where the row sits — the stale-derived-field
+    // defect this walk exists to prevent, and invisible precisely because
+    // `kind` still looks right.
+    if (descendantKind === descendant.kind && descendantDepth === descendant.depth) continue;
     await ctx.db.$executeRawUnsafe(
-      `UPDATE "Item" SET "kind" = $1::"ItemKind", "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $2`,
+      `UPDATE "Item" SET "kind" = $1::"ItemKind", "depth" = $2, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $3`,
       descendantKind,
+      descendantDepth,
       descendant.id,
     );
     await recordFieldChanges(ctx.db, {
       itemId: descendant.id,
       actor,
       assignmentId: await liveAssignmentId(ctx.db, descendant.id, ctx.caller),
-      before: { kind: descendant.kind },
-      after: { kind: descendantKind },
-      fields: ["kind"],
+      before: { kind: descendant.kind, depth: descendant.depth },
+      after: { kind: descendantKind, depth: descendantDepth },
+      fields: ["kind", "depth"],
     });
   }
 

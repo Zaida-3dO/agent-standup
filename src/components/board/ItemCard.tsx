@@ -118,8 +118,21 @@ export function ItemCard({ entry, needsYou, now, onDragStart, onDragEnd, pending
       {/* The title is the way into the detail view (#72). A real <Link>
           rather than a click handler on the card: it is a navigation, so it
           should be middle-clickable, openable in a new tab, and reachable
-          by keyboard — all of which a div with an onClick silently is not. */}
-      <Link className={styles.cardTitle} href={`/items/${entry.item.id}`}>
+          by keyboard — all of which a div with an onClick silently is not.
+
+          **A PROJECT row goes to `/projects/{id}`, not `/items/{id}`.** Its
+          own row has no state to show — a project's stored `state` is a
+          creation leftover (DECISIONS.md §13c) — so the item view would
+          render a reading nobody wrote. The project page derives it from
+          the children instead. This row is also now the ONLY way to that
+          page from the grid side, since a project card on the projects grid
+          leads to the board scoped to it. */}
+      <Link
+        className={styles.cardTitle}
+        href={
+          entry.item.kind === "project" ? `/projects/${entry.item.id}` : `/items/${entry.item.id}`
+        }
+      >
         {primaryLine(entry.item)}
       </Link>
       {/* `title` as a secondary line — ONLY when a headline is standing in

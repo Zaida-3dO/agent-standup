@@ -16,6 +16,7 @@ import Link from "next/link";
 import type { ProjectRollup } from "@/lib/projects/types";
 import { distributionOf, liveCrewCount, progressOf, relativeTime } from "@/lib/projects/view";
 import { STATE_LABELS, stateTokens } from "@/lib/design/tokens";
+import { projectBoardHref } from "@/lib/board/filters";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import styles from "./Projects.module.css";
@@ -48,12 +49,18 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
     >
       <div className={styles.cardHeader}>
         <h2 className={styles.cardTitle}>
-          {/* `/projects/{id}`, not `/items/{id}` — a project's own row has
-              no state to show, so the item view would render the leftover
-              default `create_item` writes. The project page derives the
-              reading from the children instead, which is the only honest
-              answer for this kind. */}
-          <Link href={`/projects/${project.id}`} className={styles.cardLink}>
+          {/* **The card leads to the BOARD scoped to this project, not to
+              the project page.** The grid answers "what projects are
+              there"; the question a reader has after choosing one is "what
+              is the work under it", and that is a board rather than a
+              rollup. The project's own ROW on the board is the way to its
+              detail page, so both destinations stay reachable and each is
+              reached from the surface where it is the obvious next step.
+
+              Never `/items/{id}` either way — a project's own row has no
+              state to show, so the item view would render the leftover
+              default `create_item` writes. */}
+          <Link href={projectBoardHref(project.id)} className={styles.cardLink}>
             {project.title}
           </Link>
         </h2>

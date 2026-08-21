@@ -36,6 +36,10 @@ function itemRecord(overrides: Partial<ItemRecord> = {}): ItemRecord {
     id: "task-1",
     parentId: null,
     kind: "task",
+    // Consistent with `kind` above rather than a bare 0: the two are two
+    // readings of one position in the tree, and a fixture where they
+    // disagree is a fixture asserting a row that no write path can produce.
+    depth: 1,
     title: "Title",
     // The BLUF (MILESTONES.md #107). No notification rule may ask about it,
     // so null is the honest default here rather than a value implying it is

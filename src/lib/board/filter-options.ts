@@ -35,10 +35,12 @@ export interface FilterOptions {
   readonly areas: readonly FilterOption[];
   readonly repos: readonly FilterOption[];
   readonly people: readonly FilterOption[];
+  /** The projects the board can be scoped to — see `fetchFilterOptions`. */
+  readonly projects: readonly FilterOption[];
 }
 
 export function emptyFilterOptions(): FilterOptions {
-  return { areas: [], repos: [], people: [] };
+  return { areas: [], repos: [], people: [], projects: [] };
 }
 
 /**
@@ -99,7 +101,7 @@ function labelOf(row: Record<string, unknown>, id: string, ...fields: readonly s
  * make the bar's slowest select decide when any of them can be used.
  */
 export async function fetchFilterOptions(fetchImpl: typeof fetch = fetch): Promise<FilterOptions> {
-  const [areas, repos, people] = await Promise.all([
+  const [areas, repos, people, projects] = await Promise.all([
     fetchOptions(fetchImpl, uiApiPath("/api/areas"), "areas", (row) => {
       const id = idOf(row);
       return id === null ? null : { value: id, label: labelOf(row, id, "displayName", "name") };
@@ -112,6 +114,15 @@ export async function fetchFilterOptions(fetchImpl: typeof fetch = fetch): Promi
       const id = idOf(row);
       return id === null ? null : { value: id, label: labelOf(row, id, "displayName", "name") };
     }),
+    // The project-scope vocabulary. A project is labelled by its `title` —
+    // unlike an area or a repo, whose id is a readable slug, a project id is
+    // a UUID and would make the menu unusable if the fallback ever showed.
+    // `labelOf` still falls back to the id, which is the honest last resort:
+    // an unreadable option a reader can still select beats a blank line.
+    fetchOptions(fetchImpl, uiApiPath("/api/projects"), "projects", (row) => {
+      const id = idOf(row);
+      return id === null ? null : { value: id, label: labelOf(row, id, "title", "displayName") };
+    }),
   ]);
-  return { areas, repos, people };
+  return { areas, repos, people, projects };
 }

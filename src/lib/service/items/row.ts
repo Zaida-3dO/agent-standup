@@ -29,6 +29,17 @@ export interface ItemRecord {
   readonly id: string;
   readonly parentId: string | null;
   readonly kind: "project" | "task" | "subtask";
+  /**
+   * How far below a root this item sits — 0 for a project, 1 for a task, 2
+   * and beyond for a subtask.
+   *
+   * **Strictly more information than `kind`**, not a restatement of it:
+   * `kind` collapses every depth from 2 downwards into `subtask`, so two
+   * rows two levels apart read identically through it. Both are returned
+   * because both are stored, and a caller narrowing by level needs the
+   * number the board narrowed on to be visible on the row it returned.
+   */
+  readonly depth: number;
   readonly title: string;
   /** The one-line BLUF — see `ItemSummaryRecord`. Null on an item nobody has written one for. */
   readonly headline: string | null;
@@ -80,6 +91,7 @@ export interface RawItemRow {
   id: string;
   parentId: string | null;
   kind: string;
+  depth: number;
   title: string;
   headline: string | null;
   body: string;
@@ -134,6 +146,7 @@ export function toItemRecord(row: RawItemRow): ItemRecord {
     id: row.id,
     parentId: row.parentId,
     kind: row.kind as ItemRecord["kind"],
+    depth: row.depth,
     title: row.title,
     headline: row.headline,
     body: row.body,
@@ -337,6 +350,7 @@ export const ITEM_COLUMNS = [
   "id",
   '"parentId"',
   "kind",
+  "depth",
   "title",
   "headline",
   "body",

@@ -45,14 +45,22 @@ describe("fetchBoardColumn", () => {
       return { ok: true, status: 200, json: async () => ({ board: {} }) } as unknown as Response;
     }) as unknown as typeof fetch;
     await fetchBoardColumn("completed", { fetchImpl: spy });
-    // Two independent facts in one string. The `/api/ui/` prefix is the
+    // Three independent facts in one string. The `/api/ui/` prefix is the
     // server-side proxy the browser reaches the API through, so no
     // credential rides on the client. The sort is always sent even when it
     // is the default (#75): the address bar omits a default for
     // readability, but omitting it from the REQUEST would require this
     // module's default and the operation's to stay equal forever while
     // being declared in different files.
-    expect(requested).toBe("/api/ui/board?column=completed&sort=created&direction=desc");
+    //
+    // The level is sent for a STRONGER version of that reason: `get_board`
+    // has no default for it at all, so a request that omitted it would ask
+    // for an unnarrowed board and every project would appear in the item
+    // list beside the work inside it. `exclude:0` is the board's default,
+    // and the request is where that default becomes real.
+    expect(requested).toBe(
+      "/api/ui/board?column=completed&level=exclude%3A0&sort=created&direction=desc",
+    );
   });
 
   it("passes a cursor through when paging further", async () => {

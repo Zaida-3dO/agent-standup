@@ -80,6 +80,24 @@ model Item {
   parent            Item?          @relation("Tree", fields: [parentId], references: [id])
   children          Item[]         @relation("Tree")
   kind              ItemKind
+  // How far below a root this item sits — 0 for a project, 1 for a task, 2
+  // and beyond for a subtask. Stored alongside `kind`, and the two are NOT
+  // the same fact: `kind` collapses every depth from 2 downwards into
+  // `subtask`, so a level-2 and a level-4 row carry the same stored `kind`
+  // and cannot be told apart by reading it.
+  //
+  // The board narrows on true depth ("level 1 only", "everything except
+  // projects"), a question `kind` stops being able to answer once nesting
+  // passes two. Nesting is unbounded — `items.max_depth` (SCHEMA.md §17.2) is
+  // a runaway guard an installation configures, not a ceiling the schema
+  // encodes — so this is an `Int` rather than a widened enum.
+  //
+  // Derived, not free: a pure function of the row's position in the tree,
+  // written by the same paths that already derive `kind` (`insertItem` on a
+  // create, `applyMove` on a reparent). The denormalisation carries the
+  // reason SCHEMA.md asks every denormalisation to carry — the alternative is
+  // a recursive CTE per row on the hottest read in the product.
+  depth             Int            @default(0)
   title             String
   // The one-line BLUF: what this work *is*, maintained as it moves. Distinct
   // from `body` (the brief, which can run to kilobytes) and from `Summary`
@@ -162,6 +180,12 @@ model Item {
 
   @@index([state])
   @@index([parentId])
+  // The board's level filter (`depth = ANY(...)`, or its negation). An
+  // equality-shaped narrowing of a whole-board read, which is the same reason
+  // `area` and `repo` carry one — and the level filter is applied on EVERY
+  // board read, because "everything except projects" is its default rather
+  // than something a reader opts into.
+  @@index([depth])
   @@index([area])
   @@index([repo])
   @@index([state, priority])

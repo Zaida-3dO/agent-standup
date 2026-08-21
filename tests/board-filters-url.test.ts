@@ -27,12 +27,16 @@ import {
 } from "@/lib/board/filters";
 
 describe("the board's query parameter names", () => {
-  it("are exactly the eight the API accepts, spelled the way the API spells them", () => {
+  it("are exactly the ten the API accepts, spelled the way the API spells them", () => {
     // Literal, not derived. Deriving this list from the same constant the
     // code uses would make the assertion vacuous — it would pass however the
     // names were spelled. Changing one character of one name below is the
     // change that breaks every detail-page chip link, and this is what
     // catches it.
+    //
+    // The ORDER is asserted too, not just the membership, because the order
+    // of this list is what `boardQueryString` emits parameters in — so one
+    // board having one address depends on it.
     expect([...BOARD_FILTER_PARAMS]).toEqual([
       "area",
       "repo",
@@ -41,6 +45,8 @@ describe("the board's query parameter names", () => {
       "priority",
       "state",
       "kind",
+      "level",
+      "project",
       "search",
     ]);
   });
@@ -58,6 +64,12 @@ describe("the board's query parameter names", () => {
       "priority",
       "state",
       "kind",
+      // Depth-based, and NOT reachable through `kind`: `kind` collapses
+      // every level from 2 down into `subtask`, so a board that offered only
+      // `kind` could not express "level 2 but not level 4".
+      "level",
+      // One project's whole subtree.
+      "project",
       "search",
     ];
     for (const filter of serviceFilters) {
@@ -69,7 +81,7 @@ describe("the board's query parameter names", () => {
 describe("parseBoardQuery", () => {
   it("reads every axis out of a query string", () => {
     const query = parseBoardQuery(
-      "area=web&repo=api&assignee=gary&actor=person-1&priority=P0&state=blocked&kind=task&search=auth",
+      "area=web&repo=api&assignee=gary&actor=person-1&priority=P0&state=blocked&kind=task&level=include:1,2&project=proj-1&search=auth",
     );
     expect(query.filters).toEqual({
       area: "web",
@@ -79,6 +91,8 @@ describe("parseBoardQuery", () => {
       priority: "P0",
       state: "blocked",
       kind: "task",
+      level: { mode: "include", levels: [1, 2] },
+      project: "proj-1",
       search: "auth",
     });
   });
@@ -107,7 +121,15 @@ describe("parseBoardQuery", () => {
     // `search=` is what a cleared text box leaves behind. Keeping it would
     // send an empty string to a schema requiring one character — a cleared
     // box would 400 rather than widening the board.
-    expect(parseBoardQuery("search=&area=%20%20").filters).toEqual({});
+    //
+    // `level` is present in the result because absent MEANS the board
+    // default (`exclude(0)`), not "unfiltered" — the one axis where a
+    // missing parameter says something. `isFiltered` still reports false,
+    // which is the fact this test is really about: a board nobody has
+    // narrowed must not claim a filter is applied.
+    expect(parseBoardQuery("search=&area=%20%20").filters).toEqual({
+      level: { mode: "exclude", levels: [0] },
+    });
     expect(isFiltered(parseBoardQuery("search=").filters)).toBe(false);
   });
 
@@ -214,7 +236,11 @@ describe("withFilter and withoutFilters", () => {
     // "Clear filters" names one thing. A control that also reset the sort
     // would be doing something its own label does not mention.
     const cleared = withoutFilters(parseBoardQuery("area=web&sort=priority&direction=asc"));
-    expect(cleared.filters).toEqual({});
+    // The level returns to its DEFAULT rather than to nothing: "no level
+    // filter" is not a state this board has, and leaving the key off would
+    // describe a board that still hides projects while reporting it does not.
+    expect(cleared.filters).toEqual({ level: { mode: "exclude", levels: [0] } });
+    expect(isFiltered(cleared.filters)).toBe(false);
     expect(cleared.sort).toBe("priority");
     expect(cleared.direction).toBe("asc");
   });
