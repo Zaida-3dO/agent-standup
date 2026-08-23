@@ -64,7 +64,7 @@ import {
 } from "../items/reparent-core";
 import { resolveInboxProject } from "../items/inbox-project";
 import { INBOX_PROJECT_ID } from "./create-task";
-import type { ItemRecord } from "../items/row";
+import { toItemWriteRecord, type ItemRecord, type ItemWriteRecord } from "../items/row";
 
 const inputSchema = z
   .object({
@@ -77,6 +77,18 @@ const inputSchema = z
      * is the caller best placed to say which one.
      */
     projectId: z.string().trim().min(1, "projectId is required"),
+    /**
+     * Return the whole `items` row rather than the slim default — the same
+     * flag the reads and the other writes take (MILESTONES.md #107). Off by
+     * default.
+     *
+     * A retype changes `kind` and `parentId` and deliberately leaves
+     * `state` alone, so what a caller needs back is confirmation the right
+     * row moved — not the brief it already holds. Measured at 40,780
+     * characters before this flag existed, for an item with a
+     * 20,000-character `body` and an equally large `customFields`.
+     */
+    full: z.boolean().default(false),
   })
   .strict();
 
@@ -117,7 +129,10 @@ export const retypeToTask = defineOperation({
     ],
     example: { id: "a-stuck-project-id", projectId: "inbox" },
   },
-  async handler(ctx: ServiceContext, input: RetypeToTaskInput): Promise<ItemRecord> {
+  async handler(
+    ctx: ServiceContext,
+    input: RetypeToTaskInput,
+  ): Promise<ItemRecord | ItemWriteRecord> {
     const item = await loadItem(ctx, input.id);
 
     if (item.kind !== "project") {
@@ -162,6 +177,10 @@ export const retypeToTask = defineOperation({
 
     assertDepthFits(ctx, { newDepth, subtree, field: "projectId" });
 
-    return applyMove(ctx, { item, newParentId: parentId, newDepth, subtree });
+    const moved = await applyMove(ctx, { item, newParentId: parentId, newDepth, subtree });
+    // Narrowed here rather than in `reparent-core`, which `repair_stuck_projects`
+    // also calls: the core keeps returning the whole row and each operation
+    // decides what its own contract hands back.
+    return input.full ? moved : toItemWriteRecord(moved);
   },
 });

@@ -34,7 +34,7 @@ import {
 } from "../items/reparent-core";
 import { resolveInboxProject } from "../items/inbox-project";
 import { INBOX_PROJECT_ID } from "./create-task";
-import type { ItemRecord } from "../items/row";
+import { toItemWriteRecord, type ItemRecord, type ItemWriteRecord } from "../items/row";
 
 const inputSchema = z
   .object({
@@ -52,6 +52,21 @@ const inputSchema = z
      * field is required and its value carries the whole answer.
      */
     parentId: z.string().trim().min(1).nullable(),
+    /**
+     * Return the whole `items` row rather than the slim default — the same
+     * flag `get_item`/`list_items`/`get_board` take on the reads and
+     * `transition_item`/`update_item`/`complete_item` take on the writes
+     * (MILESTONES.md #107). Off by default.
+     *
+     * A move is the sharpest case for the default being off. Emptying a
+     * project means one call per child, and before this flag existed each
+     * one echoed that child's entire `body` and `customFields` back — a
+     * measured 40,775 characters for a reparent of an item carrying a
+     * 20,000-character brief, to report a changed `parentId`. The cost of
+     * the bulk operation therefore scaled with how well the children were
+     * briefed rather than with how many there were.
+     */
+    full: z.boolean().default(false),
   })
   .strict();
 
@@ -87,7 +102,17 @@ export const reparentItem = defineOperation({
     ],
     example: { id: "an-item-id", parentId: "inbox" },
   },
-  async handler(ctx: ServiceContext, input: ReparentItemInput): Promise<ItemRecord> {
+  async handler(
+    ctx: ServiceContext,
+    input: ReparentItemInput,
+  ): Promise<ItemRecord | ItemWriteRecord> {
+    // Applied at both returns below. `applyMove` hands back the whole row
+    // because the two callers that are not this one need it — notably
+    // `repair_stuck_projects`, which shares the core — so the narrowing
+    // belongs here at the operation boundary rather than in the core.
+    const shape = (record: ItemRecord): ItemRecord | ItemWriteRecord =>
+      input.full ? record : toItemWriteRecord(record);
+
     const item = await loadItem(ctx, input.id);
 
     // Read once, before anything resolves a parent, so the cycle test and
@@ -99,7 +124,7 @@ export const reparentItem = defineOperation({
       // cycle to check — a root has no ancestors — but the depth bound still
       // applies to what hangs beneath it.
       assertDepthFits(ctx, { newDepth: 0, subtree, field: "parentId" });
-      return applyMove(ctx, { item, newParentId: null, newDepth: 0, subtree });
+      return shape(await applyMove(ctx, { item, newParentId: null, newDepth: 0, subtree }));
     }
 
     // `"inbox"` resolves the same way `create_task` resolves it, through the
@@ -123,6 +148,6 @@ export const reparentItem = defineOperation({
 
     assertDepthFits(ctx, { newDepth, subtree, field: "parentId" });
 
-    return applyMove(ctx, { item, newParentId: parentId, newDepth, subtree });
+    return shape(await applyMove(ctx, { item, newParentId: parentId, newDepth, subtree }));
   },
 });
