@@ -323,6 +323,63 @@ export function toItemSummaryRecord(row: RawItemSummaryRow): ItemSummaryRecord {
 }
 
 /**
+ * What a successful **write** returns about the item it changed, unless the
+ * caller asks for the whole record — MILESTONES.md #107's convention,
+ * carried across to the write path.
+ *
+ * **Why the write path needed its own row.** #107 bounded the *reads* and
+ * made slim their default; the writes were not in that audit and kept
+ * echoing the complete record — `body` and `customFields` included — for
+ * changing one enum field. Measured on a live store: four `transition_item`
+ * calls and two `update_item` calls returned roughly **20,000 characters of
+ * body text the caller had authored minutes earlier**. Context spend
+ * therefore scaled with how much prose an item's brief carried rather than
+ * with how much work was being done, so the better the brief the worse the
+ * tax — and an orchestrator's job is many small state changes across many
+ * items, which is exactly the usage pattern the product is for.
+ *
+ * **Why this is `ItemSummaryRecord` and not something new.** `list_items`,
+ * `get_item` and `get_board` already established `full: false` as the
+ * default with `full: true` to opt in, over precisely this shape. A second
+ * convention for writes would mean a caller learning the same lesson twice,
+ * so the writes reuse the reads' shape verbatim rather than inventing a
+ * parallel one.
+ *
+ * **Why `updatedAt` is the one field added to it.** A write's response is a
+ * receipt, and the question a receipt has to answer that a read does not is
+ * "did my change land, and when". `id`/`title`/`state` confirm the right row
+ * moved and where it moved to; `updatedAt` is what distinguishes a write
+ * that committed from a stale read of the same row. It is a fixed-width
+ * scalar, so it cannot reintroduce the unbounded growth this shape exists to
+ * stop — which is the test `body` and `customFields` fail.
+ */
+export interface ItemWriteRecord extends ItemSummaryRecord {
+  /** When the row was last written — the receipt half of the shape. See the interface header. */
+  readonly updatedAt: string;
+}
+
+/**
+ * Narrows a full record to what a write returns by default.
+ *
+ * Takes an `ItemRecord` rather than a raw row on purpose: every write here
+ * already has to read the whole row for its own reasons — the field-change
+ * diff, the before/after notification snapshots, the event payload — so
+ * unlike the reads there is no query to make cheaper. **The saving is
+ * entirely in what crosses the wire**, which is where the 20,000 characters
+ * actually landed, and pretending otherwise by adding a second slim SELECT
+ * would buy nothing and give the diff two shapes to keep in step.
+ */
+export function toItemWriteRecord(record: ItemRecord): ItemWriteRecord {
+  return {
+    id: record.id,
+    title: record.title,
+    state: record.state,
+    headline: record.headline,
+    updatedAt: record.updatedAt,
+  };
+}
+
+/**
  * The four columns the slim read selects.
  *
  * A separate constant rather than a subset computed from `ITEM_COLUMNS`:

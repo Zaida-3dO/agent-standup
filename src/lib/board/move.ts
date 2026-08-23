@@ -56,7 +56,14 @@ export async function requestMove(
     response = await fetchImpl(uiApiPath(`/api/items/${encodeURIComponent(itemId)}/transition`), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ to }),
+      // `full: true` on purpose. A successful write returns the slim shape
+      // by default (MILESTONES.md #107, carried to the writes), and slim is
+      // `{id, title, state, headline, updatedAt}` — but the card this
+      // reconciles to is a `BoardItem`, which also draws `kind`, `priority`,
+      // `area`, `repo` and the blocked/paused fields. Settling a card on
+      // the slim shape would blank all of those until the next board read.
+      // This is the caller the `full` flag exists for.
+      body: JSON.stringify({ to, full: true }),
     });
   } catch {
     // The request never reached the server — a refusal all the same, and

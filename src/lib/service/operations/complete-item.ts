@@ -17,7 +17,14 @@ import { z } from "zod";
 import { GuardRejectedError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  ITEM_COLUMNS,
+  toItemRecord,
+  toItemWriteRecord,
+  type ItemRecord,
+  type ItemWriteRecord,
+  type RawItemRow,
+} from "../items/row";
 import { applyTransition } from "../state-machine/transition";
 import {
   COMPLETED_STATES as COMPLETED_STATE_LIST,
@@ -112,6 +119,14 @@ const inputSchema = z
      * key past the dedicated field above.
      */
     fields: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * Return the whole `items` row rather than the slim default — the same
+     * flag the reads and the other item writes take (MILESTONES.md #107).
+     * Off by default. A completion carries the largest input of any write
+     * here (the summary), and echoing the item's `body` back on top of it
+     * was the worst single case.
+     */
+    full: z.boolean().default(false),
   })
   .strict()
   .refine((value) => value.fields === undefined || !("summary" in value.fields), {
@@ -257,7 +272,8 @@ const contract = {
 } as const;
 
 export interface CompleteItemResult {
-  readonly item: ItemRecord;
+  /** Slim by default, the whole record under `full: true` — see `ItemWriteRecord`. */
+  readonly item: ItemRecord | ItemWriteRecord;
 }
 
 function toCandidate(summary: CompleteItemInput["summary"]): SummaryCandidate {
@@ -479,6 +495,6 @@ export const completeItem = defineOperation({
     });
 
     const item = await loadItemRecord(ctx, input.id);
-    return { item };
+    return { item: input.full ? item : toItemWriteRecord(item) };
   },
 });

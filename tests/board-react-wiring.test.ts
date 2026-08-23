@@ -243,7 +243,9 @@ describe("Board, mounted in real React", () => {
 
     expect(transitionCalls).toHaveLength(1);
     expect(transitionCalls[0]?.url).toContain("/api/ui/items/item-a/transition");
-    expect(transitionCalls[0]?.body).toEqual({ to: "executing" });
+    // `full: true` — the board needs the whole record to reconcile the card
+    // it just moved; see `board/move.ts` and `tests/board-move.test.ts`.
+    expect(transitionCalls[0]?.body).toEqual({ to: "executing", full: true });
   });
 
   it("moves the card in the rendered board as well as sending the request", async () => {

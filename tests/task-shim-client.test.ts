@@ -72,14 +72,18 @@ describe("getTask", () => {
 });
 
 describe("updateTask", () => {
-  it("patches /api/items/<id> with only the given edits, id out of the body", async () => {
+  it("patches /api/items/<id> with the given edits and full, id out of the body", async () => {
     const { seen, fetch } = capture(
       json({ item: { id: "item-1", area: "web", state: "on_deck" } }),
     );
     await updateTask({ baseUrl, fetch }, "item-1", { title: "Renamed" });
     expect(seen[0]?.url).toBe("https://example.test/api/items/item-1");
     expect(seen[0]?.init.method).toBe("PATCH");
-    expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ title: "Renamed" });
+    // The `id` staying out of the body is still the point of this case —
+    // it travels in the path. `full: true` is there because `ShimTask`
+    // needs `body`/`area`/`repo`, which the slim write shape drops (#107);
+    // see `transitionTask`'s case for the full reasoning.
+    expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ title: "Renamed", full: true });
   });
 });
 
@@ -144,7 +148,7 @@ describe("listTasks", () => {
 });
 
 describe("transitionTask", () => {
-  it("posts to /api/items/<id>/transition with only { to }", async () => {
+  it("posts to /api/items/<id>/transition with the state and full", async () => {
     const { seen, fetch } = capture(
       json({
         item: { id: "item-1", area: "web", state: "merged" },
@@ -159,7 +163,13 @@ describe("transitionTask", () => {
     );
     await transitionTask({ baseUrl, fetch }, "item-1", "merged");
     expect(seen[0]?.url).toBe("https://example.test/api/items/item-1/transition");
-    expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ to: "merged" });
+    // `full: true` is required, not incidental. `ShimTask` carries `body`,
+    // `area` and `repo`, none of which are in the slim shape the writes now
+    // default to (#107) — and `toShimTask` degrades a missing field to an
+    // empty string rather than failing, so without the flag the shim would
+    // keep working while reporting every task as having an empty brief and
+    // no area. Same reasoning as `getTask`'s `?full=true`.
+    expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ to: "merged", full: true });
   });
 
   it("unwraps the item, not the outcome", async () => {

@@ -142,8 +142,17 @@ describeIfDb("items HTTP routes against Postgres", () => {
       )
       .then((r) => r.json() as Promise<{ item: { id: string } }>);
 
+    // `full: true` in the PATCH body for the same reason the GET below
+    // sends `?full=true` — `priority` is not in the slim shape, which the
+    // WRITES now default to as well, and reading it back is what this test
+    // is for. It also exercises the PATCH route's own threading of the
+    // opt-in: without it the parameter would be dropped in the adapter and
+    // the assertion would fail on `undefined`.
     const patchResponse = await itemRoute.PATCH(
-      jsonRequest(`http://localhost/api/items/${created.item.id}`, "PATCH", { priority: "P0" }),
+      jsonRequest(`http://localhost/api/items/${created.item.id}`, "PATCH", {
+        priority: "P0",
+        full: true,
+      }),
       { params: Promise.resolve({ id: created.item.id }) },
     );
     expect(patchResponse.status).toBe(200);
@@ -161,6 +170,36 @@ describeIfDb("items HTTP routes against Postgres", () => {
       })
       .then((r) => r.json() as Promise<{ item: { priority: string } }>);
     expect(reread.item.priority).toBe("P0");
+  });
+
+  it("PATCH answers with the slim shape by default, over the real route", async () => {
+    // The write-side counterpart of the read's slim default. Asserted over
+    // the route rather than only at the service, because an opt-out that
+    // exists in the service but leaks the whole record through the adapter
+    // is not an opt-out for anything actually calling the product.
+    const created = await collectionRoute
+      .POST(
+        jsonRequest("http://localhost/api/items", "POST", {
+          title: "Slim by default on the wire",
+          body: "b".repeat(5_000),
+          area: "route-tests",
+          originType: "auto",
+        }),
+      )
+      .then((r) => r.json() as Promise<{ item: { id: string } }>);
+
+    const patched = await itemRoute
+      .PATCH(
+        jsonRequest(`http://localhost/api/items/${created.item.id}`, "PATCH", { priority: "P0" }),
+        { params: Promise.resolve({ id: created.item.id }) },
+      )
+      .then((r) => r.json() as Promise<{ item: Record<string, unknown> }>);
+
+    // Absence, not presence: a full record contains `id` too, so only the
+    // missing heavy fields can distinguish the two shapes.
+    expect(patched.item.id).toBe(created.item.id);
+    expect(patched.item).not.toHaveProperty("body");
+    expect(patched.item).not.toHaveProperty("customFields");
   });
 
   it("PATCH on a non-existent id returns 404, not a 500 or a silent success", async () => {

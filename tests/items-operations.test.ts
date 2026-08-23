@@ -436,9 +436,13 @@ describeIfDb("item service operations against Postgres", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
+      // `full: true` — this asserts on `priority`, which the slim write
+      // response does not carry (#107's convention, now on the writes too).
+      // `updatedAt` IS in the slim shape; the opt-in is only for `priority`.
       const updated = (await runtime.call("update_item", {
         id: created.id,
         priority: "P0",
+        full: true,
       })) as { priority: string; updatedAt: string };
 
       expect(updated.priority).toBe("P0");
@@ -564,9 +568,11 @@ describeIfDb("item service operations against Postgres", () => {
         mergeAuthority: "needs-approval",
       })) as { id: string };
 
+      // `full: true` — `mergeAuthority` is not in the slim write shape.
       const updated = (await runtime.call("update_item", {
         id: created.id,
         mergeAuthority: "pre-approved",
+        full: true,
       })) as { mergeAuthority: string };
       expect(updated.mergeAuthority).toBe("pre_approved");
 

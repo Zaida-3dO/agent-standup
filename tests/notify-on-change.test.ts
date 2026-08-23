@@ -425,9 +425,14 @@ describeIfDb("the mutations actually call the evaluator", () => {
       { notify: ["user-b"], when_all: [{ field: "priority", op: "eq", value: "P0" }] },
     ]);
 
+    // `full: true` because this reads `priority` off the result, which the
+    // slim write shape does not carry (#107's convention, now on the
+    // writes). The subject of this case is the notification firing and the
+    // fields staying UNNESTED, both of which are unchanged by that.
     const result = (await runtimeWith(async () => notifyOnSnapshot()).call("update_item", {
       id,
       priority: "P0",
+      full: true,
     })) as { priority: string; notifications?: { recipients: string[] } };
 
     // The item fields are still on the result, unnested — existing callers
