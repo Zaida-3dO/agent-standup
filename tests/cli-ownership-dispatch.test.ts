@@ -100,11 +100,21 @@ describe("session claim — builds the full operation input", () => {
     expect(typeof input.pid).toBe("number");
   });
 
-  it("leaves a non-numeric --pid as the raw string, for the operation's own schema to refuse", async () => {
+  // Behaviour change: `--pid` now goes through the shared `numericFlag`
+  // (src/lib/cli/args.ts) rather than a claim-local `Number()` coercion, so
+  // a non-numeric value is refused here naming the flag that was typed
+  // instead of being passed through for the schema to refuse as a type
+  // error. The binding is never reached, which is the observable difference.
+  it("refuses a non-numeric --pid, naming the flag, without reaching the binding", async () => {
     const binding = recorder();
-    await runCommand(["session", "claim", "item-1", "--pid", "not-a-number"], binding);
-    const input = binding.calls[0]?.input as Record<string, unknown>;
-    expect(input.pid).toBe("not-a-number");
+    const outcome = await runCommand(
+      ["session", "claim", "item-1", "--pid", "not-a-number"],
+      binding,
+    );
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+    if (outcome.envelope.ok) throw new Error("unreachable");
+    expect(outcome.envelope.error.fields).toEqual(["pid"]);
   });
 
   it("keeps --json and --as out of the operation's input, same as item create does", async () => {
