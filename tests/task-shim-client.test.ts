@@ -38,11 +38,18 @@ describe("createTask", () => {
 
     expect(seen[0]?.url).toBe("https://example.test/api/items");
     expect(seen[0]?.init.method).toBe("POST");
+    // `full: true` is there for the same reason it is on `updateTask` and
+    // `getTask`: `ShimTask` needs `body`/`area`/`repo`, which the slim write
+    // shape drops (#107) — and the creates now default to it too. Without
+    // it `toShimTask` would degrade each to an empty string rather than
+    // failing, so the shim would report every task it just created as
+    // having an empty brief.
     expect(JSON.parse(seen[0]?.init.body as string)).toEqual({
       title: "T",
       body: "B",
       area: "web",
       originType: "source",
+      full: true,
     });
     expect(result).toEqual({
       ok: true,

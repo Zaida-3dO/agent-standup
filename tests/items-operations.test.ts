@@ -80,6 +80,9 @@ describeIfDb("item service operations against Postgres", () => {
         originType: "auto",
         difficulty: { reasoning: 3, breadth: 2 },
         customFields: { ticket: "ext-42" },
+        // `customFields` is one of the two heavy columns the slim create
+        // response withholds (#107), and this case asserts on it directly.
+        full: true,
       })) as { id: string; difficulty: unknown; customFields: unknown };
 
       expect(item.difficulty).toEqual({ reasoning: 3, breadth: 2 });
@@ -114,6 +117,11 @@ describeIfDb("item service operations against Postgres", () => {
         body: "the brief keeps its em dash — right here",
         area: "em-dash-title",
         originType: "auto",
+        // This case is precisely about what happened to `body`, which the
+        // slim create response withholds (#107) — so it asks for it rather
+        // than dropping the half of the assertion that gives the case its
+        // name.
+        full: true,
       })) as { title: string; body: string };
 
       expect(item.title).toBe("Ship it - quickly");
@@ -402,16 +410,20 @@ describeIfDb("item service operations against Postgres", () => {
         area: "reading",
         originType: "auto",
         priority: "P1",
+        // `full: true` on the create for the same reason the read below
+        // passes it: the creates return the slim shape by default too
+        // (#107), and this case compares the two field for field, so both
+        // sides have to be the same shape for the comparison to mean
+        // anything.
+        full: true,
       })) as { id: string; titleAdvice?: string };
       // The advice is a fact about the *call*, not about the row, so a create
       // that earns none must carry no key at all — otherwise every read would
       // have to explain a field it can never return. Asserted here because
       // this is the one case that compares the two shapes directly.
       expect(created.titleAdvice).toBeUndefined();
-      // `full: true` — `create_item` returns the whole record, and the slim
-      // default (MILESTONES.md #107) is by construction not equal to it.
-      // What this asserts is unchanged: a create and a get of the same row
-      // agree field for field.
+      // `full: true` on both sides. What this asserts is unchanged: a
+      // create and a get of the same row agree field for field.
       const read = await runtime.call("get_item", { id: created.id, full: true });
       expect(read).toEqual(created);
     });

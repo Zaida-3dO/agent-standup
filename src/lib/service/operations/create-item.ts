@@ -33,8 +33,10 @@ import {
   areaSpellingMessage,
   originPersonCheck,
   originPersonMessage,
+  toCreatedWriteRecord,
   type CommonCreateInput,
   type CreatedItem,
+  type CreatedWriteRecord,
   TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
 
@@ -123,11 +125,22 @@ export const createItem = defineOperation({
   contract,
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: CreateItemInput): Promise<CreatedItem> {
+  async handler(
+    ctx: ServiceContext,
+    input: CreateItemInput,
+  ): Promise<CreatedItem | CreatedWriteRecord> {
     const { parentId, ...common } = input;
 
+    // Applied at both returns below. The parentless branch returns down an
+    // earlier path, which is the same trap #234 called out on
+    // `reparent_item`'s `parentId: null` early return — narrowing only the
+    // final return would leave the root-item create still echoing the whole
+    // record, and no test of the ordinary path would notice.
+    const shape = (created: CreatedItem): CreatedItem | CreatedWriteRecord =>
+      input.full ? created : toCreatedWriteRecord(created);
+
     if (parentId === undefined) {
-      return insertItem(ctx, common as CommonCreateInput, { id: null, depth: 0 });
+      return shape(await insertItem(ctx, common as CommonCreateInput, { id: null, depth: 0 }));
     }
 
     const depth = await ancestorDepthOf(ctx, parentId);
@@ -135,6 +148,6 @@ export const createItem = defineOperation({
       throw new NotFoundError(`No such parent item: ${parentId}.`, { fields: ["parentId"] });
     }
 
-    return insertItem(ctx, common as CommonCreateInput, { id: parentId, depth });
+    return shape(await insertItem(ctx, common as CommonCreateInput, { id: parentId, depth }));
   },
 });

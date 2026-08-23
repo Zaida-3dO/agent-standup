@@ -258,6 +258,11 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
           body: "the brief mentions an em dash — right here — twice",
           area: "utf8-round-trip",
           originType: "auto",
+          // This case asserts on `body` over the real MCP boundary, and the
+          // slim create response withholds it (#107) — so it asks for the
+          // whole record rather than dropping the half of the assertion
+          // that proves `body` keeps its em dashes.
+          full: true,
         },
       },
     });
