@@ -194,6 +194,8 @@ describe("EVENT_TYPE_ORDER", () => {
       "setting_change",
       "open_loop",
       "open_loop_closed",
+      "open_loop_edited",
+      "open_loop_deleted",
     ];
     expect([...EVENT_TYPE_ORDER].sort()).toEqual([...allTypes].sort());
     expect(new Set(EVENT_TYPE_ORDER).size).toBe(EVENT_TYPE_ORDER.length);

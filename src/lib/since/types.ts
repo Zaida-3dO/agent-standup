@@ -28,7 +28,9 @@ export type SinceEventType =
   | "note"
   | "setting_change"
   | "open_loop"
-  | "open_loop_closed";
+  | "open_loop_closed"
+  | "open_loop_edited"
+  | "open_loop_deleted";
 
 /**
  * One event, with the current profile's read state already resolved against

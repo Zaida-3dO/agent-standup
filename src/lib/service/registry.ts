@@ -92,6 +92,12 @@ import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
 import { recordArtifact, requestReview } from "./operations/record-artifact";
 import { loopAdd, loopClose } from "./operations/open-loops";
+// The read half of open loops, and the rest of their lifecycle. Loops could
+// be written one at a time and only ever read in bulk, as a side effect of a
+// whole-context read — on a long-lived item that overflowed the response
+// ceiling, so its loops could not be read at all.
+import { loopGet, loopList } from "./operations/loop-reads";
+import { loopDelete, loopEdit } from "./operations/loop-lifecycle";
 import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 // The progress report (MILESTONES.md #136) — session-scoped, and shaped by
@@ -196,6 +202,10 @@ export const OPERATION_REGISTRY = {
   [requestReview.name]: requestReview,
   [loopAdd.name]: loopAdd,
   [loopClose.name]: loopClose,
+  [loopEdit.name]: loopEdit,
+  [loopDelete.name]: loopDelete,
+  [loopList.name]: loopList,
+  [loopGet.name]: loopGet,
   [orientation.name]: orientation,
   [myWork.name]: myWork,
   [progressReport.name]: progressReport,

@@ -159,6 +159,8 @@ export const EVENT_TYPE_ORDER: readonly EventType[] = [
   "merge",
   "open_loop",
   "open_loop_closed",
+  "open_loop_edited",
+  "open_loop_deleted",
   "nudge",
   "escalation",
   "setting_change",

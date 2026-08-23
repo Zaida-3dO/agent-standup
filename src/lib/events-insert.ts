@@ -39,7 +39,9 @@ export type EventType =
   | "note"
   | "setting_change"
   | "open_loop"
-  | "open_loop_closed";
+  | "open_loop_closed"
+  | "open_loop_edited"
+  | "open_loop_deleted";
 
 /** Who is credited with an event — the same shape `Caller` carries through the service layer. */
 export interface EventActor {

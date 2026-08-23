@@ -29,6 +29,8 @@ import {
   GitMerge,
   CircleDot,
   CircleCheck,
+  CircleSlash,
+  PencilLine,
   Bell,
   TriangleAlert,
   SlidersHorizontal,
@@ -52,6 +54,12 @@ const ICONS: Record<EventType, LucideIcon> = {
   merge: GitMerge,
   open_loop: CircleDot,
   open_loop_closed: CircleCheck,
+  // An edit reads as a correction to the loop, a deletion as its
+  // retraction — deliberately NOT the same glyph as a close, because the
+  // whole point of the distinction is that a resolved loose end and one
+  // that should never have existed are different claims about history.
+  open_loop_edited: PencilLine,
+  open_loop_deleted: CircleSlash,
   // The three MILESTONES.md #131-adjacent row names outright as "not
   // equally interesting" — nudge, escalation and takeover are the signals
   // that something needed a human or a supervisor to step in, so all three

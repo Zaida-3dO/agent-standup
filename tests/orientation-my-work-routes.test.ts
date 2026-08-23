@@ -110,7 +110,13 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
         item: { id: string; state: string };
         checkpoint: unknown;
         whatChanged: unknown[];
-        openLoops: { notDone: unknown[]; children: unknown[]; loops: unknown[] };
+        openLoops: {
+          notDone: unknown[];
+          children: unknown[];
+          loops: unknown[];
+          loopsTruncated: boolean;
+          loopTextTruncated: boolean;
+        };
         crew: unknown[];
       };
       expect(payload.item.id).toBe(created.item.id);
@@ -120,7 +126,17 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
       // fourth one added later has to come through this test rather than
       // appearing silently in the transport payload. `loops` is the one an
       // item can carry while it is still in flight (SCHEMA.md §3a).
-      expect(payload.openLoops).toEqual({ notDone: [], children: [], loops: [] });
+      //
+      // The two truncation flags travel beside them because `loops` is
+      // bounded in count and in text: a caller has to be able to tell a
+      // short list from a cut one, and on this item neither bound was hit.
+      expect(payload.openLoops).toEqual({
+        notDone: [],
+        children: [],
+        loops: [],
+        loopsTruncated: false,
+        loopTextTruncated: false,
+      });
       expect(payload.crew).toEqual([]);
     });
 

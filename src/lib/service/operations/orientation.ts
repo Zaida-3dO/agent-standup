@@ -21,7 +21,9 @@ import {
 import { checkpointHeadline } from "../items/checkpoint-headline";
 import { readSinceBounded, type EventRow } from "../../events";
 import { liveAssignments, type Assignment } from "../../claims";
-import { deriveOpenLoops, type LoopEventLike, type OpenLoop } from "../../open-loops";
+import { deriveOpenLoops, type OpenLoop } from "../../open-loops";
+import { previewText } from "./loop-reads";
+import { loopEventsFor } from "./loop-shared";
 
 /**
  * The `whatChanged` page bound — see `limit` in the input schema.
@@ -194,8 +196,21 @@ export interface OrientationOutput {
      * Loops opened against this item and not yet closed — the only one of
      * the three an item can carry while it is still `executing`. See
      * `src/lib/open-loops.ts`.
+     *
+     * **Bounded in count and in text, like `whatChanged` and `crew`.** A
+     * loop's text is prose and there is no ceiling on how many an item
+     * accumulates: measured on a 40-loop item, this field alone took
+     * `orientation` to 321,056 characters, over the response ceiling, so
+     * the read failed outright and the loops could not be reached by any
+     * setting of any parameter. Each entry now carries the first
+     * ~200 characters, which is what "catch me up" needs; `loop_list` pages
+     * them and `loop_get` returns one in full.
      */
     readonly loops: readonly OpenLoop[];
+    /** True when this item has more open loops than were returned — read them all with `loop_list`. */
+    readonly loopsTruncated: boolean;
+    /** True when at least one returned loop's text was cut to its preview length. */
+    readonly loopTextTruncated: boolean;
   };
   /** Live assignments on this item — who is on it and in what role (SCHEMA.md §2). */
   readonly crew: readonly Assignment[];
@@ -217,14 +232,6 @@ interface RawChildRow {
   id: string;
   title: string;
   state: string;
-}
-
-/** One `open_loop`/`open_loop_closed` row as the driver returns it — `LoopEventLike`'s concrete shape. */
-interface RawLoopEventRow extends LoopEventLike {
-  id: bigint;
-  ts: Date;
-  type: string;
-  payload: unknown;
 }
 
 /**
@@ -382,13 +389,25 @@ export const orientation = defineOperation({
     // sessions, that a resuming session most needs to be told about. Scoping
     // them to "since you last looked" would hide exactly the ones that
     // matter.
-    const loopRows = await ctx.db.$queryRawUnsafe<RawLoopEventRow[]>(
-      `SELECT "id", "ts", "type", "payload" FROM "Event"
-       WHERE "itemId" = $1 AND "type" IN ('open_loop'::"EventType", 'open_loop_closed'::"EventType")
-       ORDER BY "id" ASC`,
-      input.itemId,
-    );
-    const loops = deriveOpenLoops(loopRows);
+    //
+    // Read through `loopEventsFor` rather than with a fourth copy of the
+    // same statement: the fold is only correct when handed the item's
+    // *complete* loop-event slice in `id` order, so a copy that omitted an
+    // event type would not fail loudly — it would report a closed or
+    // deleted loop as open.
+    const allLoops = deriveOpenLoops(await loopEventsFor(ctx, input.itemId));
+    // Bounded by the same `limit` that bounds `whatChanged` and `crew`, and
+    // each text cut to a preview. Both bounds are reported rather than left
+    // to be inferred, for the reason the other two are: a partial result a
+    // caller cannot identify as partial is worse than none.
+    const loopsTruncated = allLoops.length > input.limit;
+    const boundedLoops = loopsTruncated ? allLoops.slice(0, input.limit) : allLoops;
+    let loopTextTruncated = false;
+    const loops: OpenLoop[] = boundedLoops.map((loop) => {
+      const { preview, truncated } = previewText(loop.text);
+      if (truncated) loopTextTruncated = true;
+      return { ...loop, text: preview };
+    });
 
     // **Bounded, like `whatChanged`.** `liveAssignments` is deliberately
     // unbounded — its other two callers are the claim guards, which have to
@@ -409,7 +428,7 @@ export const orientation = defineOperation({
       crewTruncated,
       changedSince: since.toString(),
       horizon: horizon.toString(),
-      openLoops: { notDone, children, loops },
+      openLoops: { notDone, children, loops, loopsTruncated, loopTextTruncated },
       crew,
     };
   },
