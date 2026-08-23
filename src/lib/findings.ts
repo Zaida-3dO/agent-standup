@@ -69,15 +69,66 @@ export function isAtLeastSeverity(value: unknown, floor: FindingSeverity): boole
   return rank >= floorRank;
 }
 
+/** The element shape, stated once, for every message that has to name it. */
+export const FINDING_SHAPE_DESCRIPTION =
+  `an array of objects, each {text: string (required, non-empty), ` +
+  `severity?: ${FINDING_SEVERITIES.join("|")}, where?: string} — ` +
+  `for example [{"text": "N+1 query in the board loader", "severity": "medium", "where": "src/lib/board.ts:88"}]`;
+
+/**
+ * A findings list that could not be stored, naming what was wrong.
+ *
+ * `index` is the offending entry, or `null` when the fault is with the list
+ * as a whole rather than any entry in it, and the distinction is the whole
+ * reason the parameter is nullable.
+ *
+ * **An index must never be fabricated for a whole-list fault.** Rendering
+ * one — `findings[0]: findings must be an array` — states something the
+ * validator did not do: indexing into element 0 implies the value WAS an
+ * array and that its first element was the problem. A caller who believes
+ * the message goes looking for a nesting level nothing ever wanted, and the
+ * field's real shape appears nowhere in the text to correct them. So a
+ * whole-list fault is prefixed `findings:` with no index at all.
+ *
+ * The companion rule: a message that rejects a shape names the shape that
+ * WOULD be accepted. A validator that only says "no" makes the caller guess,
+ * and `findings` is a nested structure with several plausible spellings.
+ */
 export class InvalidFindingError extends Error {
-  constructor(index: number, reason: string) {
-    super(`findings[${index}]: ${reason}`);
+  /** The entry at fault, or `null` when the whole value is. */
+  readonly index: number | null;
+
+  constructor(index: number | null, reason: string) {
+    super(index === null ? `findings: ${reason}` : `findings[${index}]: ${reason}`);
     this.name = "InvalidFindingError";
+    this.index = index;
   }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * What arrived, in one phrase, for a message that has to say so.
+ *
+ * A JSON string gets its own wording because it is the most likely
+ * near-miss: a caller who serialised a correct array before sending it is
+ * one `JSON.parse` from being right, and "a JSON-encoded string" tells them
+ * that where "a string" does not.
+ */
+function describeReceived(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      return "a JSON-encoded string (send the array itself, not a string containing it)";
+    }
+    return "a string";
+  }
+  const kind = typeof value;
+  return `${kind === "object" ? "an" : "a"} ${kind}`;
 }
 
 /**
@@ -91,11 +142,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function parseFindings(value: unknown): Finding[] {
   if (!Array.isArray(value)) {
-    throw new InvalidFindingError(0, "findings must be an array");
+    // `null` index, and the expected shape named outright. This is the
+    // message a caller guessing at the field actually hits — including the
+    // one who sent a JSON *string* of a correct array, a near-miss worth
+    // naming precisely because it is one `JSON.parse` from being right.
+    throw new InvalidFindingError(
+      null,
+      `must be ${FINDING_SHAPE_DESCRIPTION}. Received ${describeReceived(value)}`,
+    );
   }
   return value.map((entry, index) => {
     if (!isRecord(entry)) {
-      throw new InvalidFindingError(index, "must be an object");
+      throw new InvalidFindingError(
+        index,
+        `must be an object {text, severity?, where?}, not ${describeReceived(entry)}. ` +
+          `The list as a whole is ${FINDING_SHAPE_DESCRIPTION}`,
+      );
     }
     const text = entry.text;
     if (typeof text !== "string" || text.trim() === "") {

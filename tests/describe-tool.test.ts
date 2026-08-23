@@ -40,6 +40,7 @@ import { invocationFor, invocationWithArgumentFor, surfaceForTransport } from "@
 import { assessVersion } from "@/lib/sessions";
 import { defaultSnapshot } from "@/lib/settings";
 import { z } from "zod";
+import { FINDING_SEVERITIES, parseFindings } from "@/lib/findings";
 
 /** A handle no test here needs to reach — `describe_tool` touches no table. */
 const inertHandle: TransactionHandle = {
@@ -135,6 +136,51 @@ describe("describe_tool returns one tool's full contract", () => {
     );
     expect(whatToTest).toBeDefined();
     expect(whatToTest!.rule).toMatch(/user_facing[\s\S]*true/);
+  });
+
+  it("gives record_artifact.findings a concrete type, an element shape and a worked example", async () => {
+    // Row 94eed34b: `findings` was declared `z.unknown()`, so this field
+    // reported `type: "unknown"` with `rules: []` on a tool where every
+    // other field is typed — the one field that required a guess was the
+    // one field with no contract. Two reviewers guessed wrong.
+    const contract = await contractFor("record_artifact");
+
+    const field = contract.fields.find((entry) => entry.name === "findings");
+    expect(field).toBeDefined();
+    // Asserts the real rendering rather than merely `not.toBe("unknown")`,
+    // so any untyped node in this position fails the test.
+    // Single-character mutation this catches: declaring `findings` in
+    // record-artifact.ts as `z.unknown()` makes this "unknown".
+    expect(field!.type).toBe("array<object>");
+    expect(field!.required).toBe(false);
+
+    // The element shape has to be reachable, not just the container's type.
+    const rule = contract.rules.find((entry) => entry.fields.includes("findings"));
+    expect(rule).toBeDefined();
+    expect(rule!.rule).toContain("text");
+    expect(rule!.rule).toContain("severity");
+    // The vocabulary is interpolated from FINDING_SEVERITIES rather than
+    // retyped, so the documented list cannot drift from the enforced one.
+    const text = ruleText(contract);
+    for (const severity of FINDING_SEVERITIES) {
+      expect(text).toContain(severity);
+    }
+    // The "send the array, not a string of it" instruction — the exact
+    // near-miss that cost the round trip.
+    expect(text).toMatch(/not a JSON string/i);
+
+    // A worked example a caller can copy, and it must be a real call: the
+    // operation's own schema has to accept it. A prose example that the
+    // validator would refuse is worse than none.
+    const example = contract.example as Record<string, unknown> | undefined;
+    expect(example).toBeDefined();
+    expect(Array.isArray(example!.findings)).toBe(true);
+    const parsedExample = OPERATION_REGISTRY.record_artifact.input.safeParse(example);
+    expect(parsedExample.success).toBe(true);
+    // And the example's findings survive the runtime validator too — the
+    // two doors have to agree, which is the whole reason both exist.
+    expect(() => parseFindings(example!.findings)).not.toThrow();
+    expect(parseFindings(example!.findings)[0]!.severity).toBe("medium");
   });
 
   it("derives the field list from the schema, including enums and defaults", async () => {
