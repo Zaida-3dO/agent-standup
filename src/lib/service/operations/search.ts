@@ -48,6 +48,7 @@ import { TERMINAL_STATES } from "../board/columns";
 import { areaFilterCondition } from "../items/area-filter";
 import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import { buildExcerpt, rankMatch, type MatchField } from "../items/search-rank";
+import { deriveLoops, LOOP_EVENT_TYPES } from "@/lib/open-loops";
 
 /**
  * The shortest query this accepts.
@@ -127,6 +128,31 @@ const inputSchema = z
      * behaviour.
      */
     openOnly: z.boolean().default(false),
+    /**
+     * Also search the text of open loops, returning the item that carries a
+     * matching loop and the `loopId` that matched.
+     *
+     * **Opt-in, and the default is the honest one rather than the
+     * convenient one.** A loop's text is not the item's text: an item whose
+     * loop mentions a phrase is not "an item about" that phrase, and
+     * folding loop hits into the ordinary ranking would put items in front
+     * of a caller for a word that appears nowhere a reader of the item
+     * would see it. So loop matches are returned in their own list.
+     *
+     * Worth having at all because the failure it fixes is the silent kind:
+     * loop text was indexed by nothing, so a search for something recorded
+     * only in a loop returned an empty result — which reads as "nothing
+     * exists", not as "I did not look there". A session acted on exactly
+     * that empty result, re-derived a finding an existing loop already
+     * recorded, and minted a duplicate loop.
+     *
+     * Only *open* loops are searched. A closed loop is a resolved loose end
+     * and a deleted one should never have existed; surfacing either in the
+     * call a caller uses to find live work would answer a question nobody
+     * asked, the same reasoning that keeps archived items out of these
+     * results.
+     */
+    includeLoops: z.boolean().default(false),
     limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
   })
   .strict();
@@ -147,8 +173,36 @@ export interface SearchMatch {
   readonly excerpt: string | null;
 }
 
+/**
+ * One open loop whose text matched — the containing item, and the `loopId`.
+ *
+ * Both, because either alone is unusable: the item id without the loop id
+ * makes a caller read every loop on the item to find the one that matched,
+ * and the loop id without the item id cannot be passed to `loop_get`, which
+ * is item-scoped. Together they are exactly the arguments of the call a
+ * caller makes next.
+ */
+export interface SearchLoopMatch {
+  readonly itemId: string;
+  readonly itemTitle: string;
+  readonly loopId: string;
+  readonly openedAt: string;
+  /** The text around the match, cut to the same excerpt length an item body uses. */
+  readonly excerpt: string | null;
+}
+
 export interface SearchOutput {
   readonly matches: readonly SearchMatch[];
+  /**
+   * Open loops whose text matched, when `includeLoops` was set. Always
+   * present so a caller need not branch on the flag, and empty rather than
+   * absent when nothing matched.
+   *
+   * Kept apart from `matches` rather than merged: a loop hit is a different
+   * kind of answer, and the two carry different identifiers — see
+   * `SearchLoopMatch`.
+   */
+  readonly loopMatches: readonly SearchLoopMatch[];
   /** How many rows were ranked — at most `RANK_CANDIDATE_CEILING`, never a count of the whole corpus. */
   readonly considered: number;
   /**
@@ -191,16 +245,136 @@ export function buildSearchNotice(
   query: string,
   truncated: boolean,
   narrowed: boolean,
+  options: { searchedLoops?: boolean; loopHits?: number } = {},
 ): string {
-  if (shown === 0) {
+  const searchedLoops = options.searchedLoops ?? false;
+  const loopHits = options.loopHits ?? 0;
+  // Named whenever loops were NOT searched, and not only on an empty
+  // result. The corpus this read silently excludes is the thing a caller
+  // cannot infer from the answer: "no item matches" is indistinguishable
+  // from "no item matches, and I never looked at the loops" — and acting on
+  // the first reading of the second answer is precisely what caused a
+  // duplicate loop to be minted.
+  const loopRoute = searchedLoops
+    ? ""
+    : ` Loop text was not searched; pass includeLoops to cover it.`;
+  if (shown === 0 && loopHits === 0) {
     return narrowed
-      ? `No item matches "${query}" under the filters given; searching without state, area, repo or openOnly covers every item.`
-      : `No item matches "${query}" in any title, headline or body. Search matches literal text, so a shorter or differently-spelled query may find it.`;
+      ? `No item matches "${query}" under the filters given; searching without state, area, repo or openOnly covers every item.${loopRoute}`
+      : `No item matches "${query}" in any title, headline or body. Search matches literal text, so a shorter or differently-spelled query may find it.${loopRoute}`;
   }
+  if (shown === 0) {
+    return `No item's title, headline or body matches "${query}", but ${loopHits} open ${loopHits === 1 ? "loop" : "loops"} did — read one with loop_get, or list them with loop_list.`;
+  }
+  const loopTail =
+    loopHits > 0
+      ? ` ${loopHits} open ${loopHits === 1 ? "loop" : "loops"} also matched.`
+      : loopRoute;
   const head = `Found ${shown} ${shown === 1 ? "item" : "items"} matching "${query}", best first; read one in full with get_item.`;
   return truncated
-    ? `${head} More items matched than were ranked, so these are the best of the most recent matches — narrow the query to see the rest.`
-    : head;
+    ? `${head} More items matched than were ranked, so these are the best of the most recent matches — narrow the query to see the rest.${loopTail}`
+    : `${head}${loopTail}`;
+}
+
+/** The loop event types, as `EventType` literals for an `IN` list. Built from the tuple so the two cannot drift. */
+const LOOP_EVENT_TYPE_SQL = LOOP_EVENT_TYPES.map((type) => `'${type}'::"EventType"`).join(", ");
+
+/** One loop event row, joined to its item's title. */
+interface RawLoopSearchRow {
+  id: bigint;
+  ts: Date;
+  type: string;
+  payload: unknown;
+  itemId: string;
+  itemTitle: string;
+}
+
+/**
+ * Finds open loops whose current text matches the query.
+ *
+ * **The match is applied after the fold, not in SQL, and that is not an
+ * optimisation given up.** A loop's current text is the newest
+ * `open_loop_edited` payload where it has one, so an `ILIKE` against the
+ * opening event would match text that has since been rewritten and miss the
+ * wording the loop actually carries now. The fold is the only thing that
+ * knows which text is current — and the only thing that knows the loop is
+ * still open rather than closed or retracted.
+ *
+ * The SQL is therefore narrowed by what it *can* narrow by soundly: rows
+ * belonging to items that survive the caller's filters, of the loop event
+ * types only, capped at the same candidate ceiling the item search uses so
+ * this cannot become the unbounded read the ceiling exists to prevent.
+ */
+async function searchLoops(ctx: ServiceContext, input: SearchInput): Promise<SearchLoopMatch[]> {
+  const conditions: string[] = [`i.${NOT_ARCHIVED_CONDITION}`];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  if (input.state !== undefined) {
+    conditions.push(`i."state" = $${paramIndex}::"ItemState"`);
+    values.push(input.state);
+    paramIndex++;
+  } else if (input.openOnly) {
+    conditions.push(`i."state" != ALL($${paramIndex}::"ItemState"[])`);
+    values.push(TERMINAL_STATES);
+    paramIndex++;
+  }
+  if (input.area !== undefined) {
+    // `areaFilterCondition` writes an unqualified `"areas"`, which is
+    // unambiguous here because `Event` has no such column.
+    conditions.push(areaFilterCondition(paramIndex));
+    values.push(input.area);
+    paramIndex++;
+  }
+  if (input.repo !== undefined) {
+    conditions.push(`i."repo" = $${paramIndex}`);
+    values.push(input.repo);
+    paramIndex++;
+  }
+
+  values.push(RANK_CANDIDATE_CEILING);
+  const rows = await ctx.db.$queryRawUnsafe<RawLoopSearchRow[]>(
+    `SELECT e."id", e."ts", e."type", e."payload", i."id" AS "itemId", i."title" AS "itemTitle"
+       FROM "Event" e JOIN "Item" i ON i."id" = e."itemId"
+      WHERE e."type" IN (${LOOP_EVENT_TYPE_SQL}) AND ${conditions.join(" AND ")}
+      ORDER BY e."id" ASC
+      LIMIT $${paramIndex}`,
+    ...values,
+  );
+
+  // Grouped by item, because the fold is per-item: a loop is correlated by
+  // `payload.loopId`, which is unique within an item and not across the
+  // store, so folding every row together would let two items' loops that
+  // happen to share an id cancel each other.
+  const byItem = new Map<string, { title: string; rows: RawLoopSearchRow[] }>();
+  for (const row of rows) {
+    const entry = byItem.get(row.itemId);
+    if (entry === undefined) {
+      byItem.set(row.itemId, { title: row.itemTitle, rows: [row] });
+    } else {
+      entry.rows.push(row);
+    }
+  }
+
+  const needle = input.query.toLowerCase();
+  const found: SearchLoopMatch[] = [];
+  for (const [itemId, entry] of byItem) {
+    for (const loop of deriveLoops(entry.rows)) {
+      if (loop.status !== "open") continue;
+      if (!loop.text.toLowerCase().includes(needle)) continue;
+      found.push({
+        itemId,
+        itemTitle: entry.title,
+        loopId: loop.loopId,
+        openedAt: loop.openedAt,
+        excerpt: buildExcerpt(loop.text, input.query),
+      });
+    }
+  }
+  // Newest loops first, so a truncated read shows the most recent — the
+  // ordering the item search already uses for the same reason.
+  found.sort((a, b) => b.openedAt.localeCompare(a.openedAt));
+  return found.slice(0, input.limit);
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -212,7 +386,7 @@ export const search = defineOperation({
   name: "search",
   kind: "read",
   summary:
-    "Finds items by text in their title, headline or body, best match first. Searches every state including finished work, unlike the list reads — pass openOnly to exclude it, or state, area and repo to narrow. Returns id, title, state, headline and an excerpt; read one in full with get_item.",
+    "Finds items by text in their title, headline or body, best match first. Searches every state including finished work, unlike the list reads — pass openOnly to exclude it, or state, area and repo to narrow. Loop text is NOT searched unless includeLoops is passed, which adds the open loops whose text matched and the loopId of each. Returns id, title, state, headline and an excerpt; read one in full with get_item.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: SearchInput): Promise<SearchOutput> {
@@ -307,11 +481,17 @@ export const search = defineOperation({
       input.repo !== undefined ||
       input.openOnly;
 
+    const loopMatches = input.includeLoops ? await searchLoops(ctx, input) : [];
+
     return {
       matches,
+      loopMatches,
       considered: candidates.length,
       truncated,
-      notice: buildSearchNotice(matches.length, input.query, truncated, narrowed),
+      notice: buildSearchNotice(matches.length, input.query, truncated, narrowed, {
+        searchedLoops: input.includeLoops,
+        loopHits: loopMatches.length,
+      }),
     };
   },
 });

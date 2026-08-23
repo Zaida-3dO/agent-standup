@@ -1,0 +1,45 @@
+-- The rest of a loop's lifecycle: an edit, and a deletion.
+--
+-- Additive: two new labels on "EventType". No existing column, constraint or
+-- row is altered, so this migration has nothing to back-fill and nothing to
+-- lose. Every loop already in the ledger keeps folding exactly as before —
+-- an event type nothing has written yet cannot change how existing rows read.
+--
+-- `ADD VALUE IF NOT EXISTS` rather than a bare `ADD VALUE`, for the reason
+-- the open-loops migration records: a bare `ADD VALUE` on a label that
+-- already exists is an error, and an error here would leave the migration
+-- half-applied. Postgres 12+ permits `ALTER TYPE ... ADD VALUE` inside a
+-- transaction block (which is how Prisma runs this file) as long as the new
+-- label is not USED in the same transaction -- nothing below writes one.
+--
+-- ── Why events rather than columns on a loop row ────────────────────────
+--
+-- There is no loop row. A loop is a pair of events correlated by
+-- `payload.loopId` (SCHEMA.md §3a), folded by `deriveLoops` in
+-- src/lib/open-loops.ts. So "edit the text" and "remove this loop" cannot be
+-- an UPDATE or a DELETE against anything -- there is no target -- and the
+-- ledger is append-only regardless. They are further facts about the loop,
+-- which is what an event is.
+--
+-- ── Why deletion is its own label, not a close with a flag ──────────────
+--
+-- A close and a deletion are different claims about history. A closed loop
+-- was a real loose end that got resolved and belongs in the record; a
+-- deleted loop should never have existed -- a duplicate, or a mistake -- and
+-- listing it as closed would make the record narrate a resolution nobody
+-- reached. This is the distinction `delete_item` already draws between
+-- `cancelled` (a decision someone made) and archived (a row that should not
+-- exist), applied one level down. A boolean on the closing event would also
+-- force a loop to be closed before it could be deleted, which is backwards:
+-- the whole point is that it was never a real loop.
+
+-- The loop's text, corrected. Payload `{loopId, text}` -- the same shape as
+-- `open_loop`, so the fold reads the newest edit's text in place of the
+-- opening event's without a second parser.
+ALTER TYPE "EventType" ADD VALUE IF NOT EXISTS 'open_loop_edited';
+
+-- The loop, retracted. Payload `{loopId, reason}`. A deleted loop is
+-- withheld from every ordinary read, including the one that returns closed
+-- loops; the events stay in the ledger, so `get_events` and the item's
+-- history still show that it happened and who did it.
+ALTER TYPE "EventType" ADD VALUE IF NOT EXISTS 'open_loop_deleted';

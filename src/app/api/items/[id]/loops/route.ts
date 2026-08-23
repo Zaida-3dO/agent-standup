@@ -1,10 +1,16 @@
-// The HTTP adapter's `POST /items/{id}/loops` endpoint (SCHEMA.md §3a, §19).
-// Records a loose end on the item named in the path. Thin shell over
-// `service.call`.
+// The HTTP adapter's `/items/{id}/loops` collection endpoints (SCHEMA.md
+// §3a, §19). `POST` records a loose end on the item named in the path;
+// `GET` lists the item's loops without reading its whole context. Thin
+// shells over `service.call`.
 //
 // Item-scoped, following `items/{id}/notes`: a loop has no meaning apart from
 // the item it was noticed on, so the item belongs in the path where it cannot
 // be omitted.
+//
+// The list is a `GET` on the collection the write already posts to, rather
+// than a new path: it is the same resource, read instead of appended to, and
+// a second URL for the same collection is the kind of near-miss that has
+// cost this API real calls before (see `scripts/generate-http-routes.mjs`).
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import {
@@ -40,6 +46,38 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       ),
       requestId,
     );
+  } catch (error) {
+    return serviceErrorResponse(error, requestId);
+  }
+}
+
+/**
+ * `GET /items/{id}/loops` — the list read.
+ *
+ * Open loops only by default; `?includeClosed=true` adds resolved ones and
+ * `?includeDeleted=true` adds retracted ones. Query parameters arrive as
+ * strings, so each is compared against `"true"` here rather than passed
+ * through — an absent parameter has to mean `false`, and the string `"false"`
+ * must not read as truthy, which is exactly what forwarding the raw value
+ * into a boolean field would do.
+ */
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId, caller } = auth;
+  const { id } = await params;
+  const url = new URL(request.url);
+  const input: Record<string, unknown> = { itemId: id };
+  if (url.searchParams.get("includeClosed") === "true") input.includeClosed = true;
+  if (url.searchParams.get("includeDeleted") === "true") input.includeDeleted = true;
+  const limit = url.searchParams.get("limit");
+  if (limit !== null) input.limit = limit;
+  const cursor = url.searchParams.get("cursor");
+  if (cursor !== null) input.cursor = cursor;
+
+  try {
+    const result = await service.call("loop_list", input, { caller });
+    return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }

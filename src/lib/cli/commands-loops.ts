@@ -4,7 +4,7 @@
 // per that file's header: rows add entries rather than rewriting existing
 // lines, so concurrent CLI rows do not conflict over the same lines.
 import { malformed, type ErrorEnvelope } from "./envelope";
-import { stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
 import type { CommandSpec, InputResult } from "./commands";
 
 /** The flags the dispatcher handles itself — never part of an operation's input. */
@@ -14,11 +14,24 @@ type FieldsResult =
   | { readonly ok: true; readonly input: Record<string, unknown> }
   | { readonly ok: false; readonly envelope: ErrorEnvelope };
 
-/** Same behaviour as `commands.ts`'s `flagsToInput` — see `commands-ownership.ts` for why it is a second copy. */
-function passThroughFlags(flags: ParsedArgs["flags"]): FieldsResult {
+/**
+ * Same behaviour as `commands.ts`'s `flagsToInput` — see `commands-ownership.ts` for why it is a second copy.
+ *
+ * `consumed` names the bare switches a verb has already read with
+ * `booleanFlag`. They have to be skipped here rather than left to fall
+ * through: this function refuses a valueless flag outright, so a switch
+ * reaching it would be rejected as "--all needs a value", and passing one
+ * through would send it to the operation twice under two spellings. `item
+ * list` handles `--all`/`--full` the same way.
+ */
+function passThroughFlags(
+  flags: ParsedArgs["flags"],
+  consumed: readonly string[] = [],
+): FieldsResult {
   const input: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(flags)) {
     if (GLOBAL_FLAGS.has(name)) continue;
+    if (consumed.includes(name)) continue;
     if (value === true) {
       return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
     }
@@ -90,6 +103,111 @@ function buildLoopCloseInput(rest: readonly string[], flags: ParsedArgs["flags"]
   return { ok: true, input };
 }
 
+/**
+ * `standup item loops <item-id>` — the list read.
+ *
+ * Plural `loops` against the singular `loop` that opens one, so the verb
+ * that lists and the verb that writes cannot be typed for each other. `--all`
+ * is the command line's spelling of `includeClosed`, matching what `item
+ * list` already calls the same idea; `--deleted` adds the retracted ones.
+ * Both are bare switches, so they cannot go through `passThroughFlags` —
+ * which refuses a valueless flag — and are declared consumed so they do not
+ * also arrive under their own names.
+ */
+function buildLoopListInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
+  const idResult = itemIdPositional(rest, "item loops <item-id>");
+  if (!idResult.ok) return idResult;
+  const all = booleanFlag(flags, "all");
+  if (!all.ok) return all;
+  const deleted = booleanFlag(flags, "deleted");
+  if (!deleted.ok) return deleted;
+  const passthrough = passThroughFlags(flags, ["all", "deleted"]);
+  if (!passthrough.ok) return passthrough;
+  const withSession = withSessionId(passthrough.input, flags);
+  if (!withSession.ok) return withSession;
+
+  return {
+    ok: true,
+    input: {
+      ...withSession.input,
+      itemId: idResult.itemId,
+      includeClosed: all.value,
+      includeDeleted: deleted.value,
+    },
+  };
+}
+
+/** `standup item loop-get <item-id> <loop-id>` — one loop in full. */
+function buildLoopGetInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
+  const idResult = itemIdPositional(rest, "item loop-get <item-id> <loop-id>");
+  if (!idResult.ok) return idResult;
+  const passthrough = passThroughFlags(flags);
+  if (!passthrough.ok) return passthrough;
+
+  const input: Record<string, unknown> = { ...passthrough.input, itemId: idResult.itemId };
+  const loopId = rest[1];
+  if (loopId !== undefined) {
+    input.loopId = loopId;
+  }
+  return { ok: true, input };
+}
+
+/**
+ * `standup item loop-edit <item-id> <loop-id> <text...>`.
+ *
+ * The replacement text is the remaining positional words joined, exactly as
+ * `item loop` takes the original: it is prose, it is the point of the
+ * command, and quoting a sentence into a flag is the friction that stops it
+ * being written at all.
+ */
+function buildLoopEditInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
+  const idResult = itemIdPositional(rest, "item loop-edit <item-id> <loop-id> <text>");
+  if (!idResult.ok) return idResult;
+  const passthrough = passThroughFlags(flags);
+  if (!passthrough.ok) return passthrough;
+  const withSession = withSessionId(passthrough.input, flags);
+  if (!withSession.ok) return withSession;
+
+  const input: Record<string, unknown> = { ...withSession.input, itemId: idResult.itemId };
+  const loopId = rest[1];
+  if (loopId !== undefined) {
+    input.loopId = loopId;
+  }
+  const words = rest.slice(2);
+  // Left absent when there are none, so the schema's own "loop text is
+  // required" is what refuses it — field validation belongs in the schema,
+  // not in `buildInput` (§20).
+  if (words.length > 0) {
+    input.text = words.join(" ");
+  }
+  return { ok: true, input };
+}
+
+/**
+ * `standup item loop-delete <item-id> <loop-id> --reason "..."`.
+ *
+ * The reason is a flag rather than trailing prose, deliberately unlike the
+ * text on `loop` and `loop-edit`. It is not the content of the thing being
+ * recorded — it is a justification the operation refuses without, and
+ * `--reason` at the end of the line reads as the deliberate step it is meant
+ * to be. `item delete` spells the same requirement the same way.
+ */
+function buildLoopDeleteInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
+  const idResult = itemIdPositional(rest, "item loop-delete <item-id> <loop-id>");
+  if (!idResult.ok) return idResult;
+  const passthrough = passThroughFlags(flags);
+  if (!passthrough.ok) return passthrough;
+  const withSession = withSessionId(passthrough.input, flags);
+  if (!withSession.ok) return withSession;
+
+  const input: Record<string, unknown> = { ...withSession.input, itemId: idResult.itemId };
+  const loopId = rest[1];
+  if (loopId !== undefined) {
+    input.loopId = loopId;
+  }
+  return { ok: true, input };
+}
+
 export const LOOP_COMMANDS: readonly CommandSpec[] = Object.freeze([
   {
     noun: "item",
@@ -105,5 +223,35 @@ export const LOOP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "loop_close",
     summary: "Closes an open loop on an item.",
     buildInput: buildLoopCloseInput,
+  },
+  {
+    noun: "item",
+    verb: "loops",
+    operation: "loop_list",
+    summary:
+      "List an item's loops — id, status, when it opened and the first 200 characters. Open loops only; --all includes closed ones, --deleted includes retracted ones.",
+    buildInput: buildLoopListInput,
+  },
+  {
+    noun: "item",
+    verb: "loop-get",
+    operation: "loop_get",
+    summary: "Show one loop on an item in full, by its loop id.",
+    buildInput: buildLoopGetInput,
+  },
+  {
+    noun: "item",
+    verb: "loop-edit",
+    operation: "loop_edit",
+    summary: "Rewrite an open loop's text. Keeps its original openedAt.",
+    buildInput: buildLoopEditInput,
+  },
+  {
+    noun: "item",
+    verb: "loop-delete",
+    operation: "loop_delete",
+    summary:
+      "Retract a loop that should never have existed — a duplicate, or one recorded by accident. Needs --reason. Use loop-close for a real loose end that is resolved.",
+    buildInput: buildLoopDeleteInput,
   },
 ]);

@@ -374,6 +374,19 @@ enum EventType {
   // completion, so before this an in-flight item had nowhere to put one.
   open_loop
   open_loop_closed
+  // The rest of the lifecycle: the loop's text corrected, and the loop
+  // retracted. Both are further events rather than mutations, because the
+  // ledger is append-only and there is no loop row to update — see
+  // `deriveLoops` in src/lib/open-loops.ts.
+  //
+  // A deletion is deliberately not a close carrying a flag: a close says a
+  // real loose end was resolved and belongs in the record, a deletion says
+  // the loop should never have existed. Deleted loops are withheld from
+  // every ordinary read; the events remain, so history still shows it
+  // happened. The same distinction `delete_item` draws between `cancelled`
+  // and archived, one level down.
+  open_loop_edited
+  open_loop_deleted
 }
 
 model Event {

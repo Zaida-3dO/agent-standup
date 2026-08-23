@@ -142,8 +142,24 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // advises wrongly costs the same debugging time as one that only refuses.
   get_events: "`full: false`, which drops each event's payload and body",
   get_item: "`full: false`, which returns the slim record",
-  get_item_detail: "`get_item` with `full: false` for the slim record",
-  orientation: "`get_item` for the one item, rather than its whole context",
+  // **Both of these used to name a call that does not return loops, and
+  // that is the correction.** `get_item_detail` suggested `get_item {full:
+  // false}` and `orientation` suggested `get_item`; neither returns loops at
+  // all. On a long-lived item the loops are frequently *why* the response
+  // does not fit — 40 of them measured 321,056 characters through
+  // `orientation` — so the caller most likely to hit this refusal was being
+  // redirected to a call that silently omits the thing they were reading
+  // for. A redirect to a tool that answers a different question is worse
+  // than the refusal alone: the refusal is at least legible as a failure,
+  // where an empty `openLoops` reads as "there are none".
+  //
+  // Both now name `loop_list` first, because that is the call that actually
+  // returns the withheld thing, and keep the slim-record route for the rest
+  // of the payload.
+  get_item_detail:
+    "`loop_list` for this item's loops, or `get_item` with `full: false` for the slim record",
+  orientation:
+    "`loop_list` for this item's loops, or `get_item` for the item itself, rather than its whole context",
   my_work: "a smaller `limit`",
 };
 
