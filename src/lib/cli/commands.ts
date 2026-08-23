@@ -14,7 +14,7 @@
 // `<noun> <verb>`, resolved before lookup, so an aliased command and its long
 // form produce the identical `CommandMatch` — not merely an equivalent one.
 import { malformed, type ErrorEnvelope } from "./envelope";
-import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
 import { ADMIN_COMMANDS } from "./commands-admin";
 import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
 import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
@@ -165,7 +165,13 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
       // `flagsToInput` would refuse.
       const openOnly = booleanFlag(flags, "open-only");
       if (!openOnly.ok) return openOnly;
-      const built = flagsToInput(flags, ["open-only"]);
+      // `--limit` names a `z.number()` field, and a flag is always a string.
+      // Declared consumed so the converted number is the only `limit` that
+      // reaches the operation, rather than being overwritten by the raw
+      // string `flagsToInput` would otherwise carry through.
+      const limit = numericFlag(flags, "limit");
+      if (!limit.ok) return limit;
+      const built = flagsToInput(flags, ["open-only", "limit"]);
       if (!built.ok) return built;
       return {
         ok: true,
@@ -173,6 +179,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
           ...(built.input as Record<string, unknown>),
           query,
           openOnly: openOnly.value,
+          ...(limit.value === undefined ? {} : { limit: limit.value }),
         },
       };
     },
@@ -201,7 +208,11 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
       // through would send `full` to the operation twice under two spellings.
       const full = booleanFlag(flags, "full");
       if (!full.ok) return full;
-      const built = flagsToInput(flags, ["all", "full"]);
+      // Same as `item search`: `limit` is a `z.number()` field and a flag is
+      // always a string, so it converts here and is declared consumed.
+      const limit = numericFlag(flags, "limit");
+      if (!limit.ok) return limit;
+      const built = flagsToInput(flags, ["all", "full", "limit"]);
       if (!built.ok) return built;
       return {
         ok: true,
@@ -209,6 +220,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
           ...(built.input as Record<string, unknown>),
           includeTerminal: all.value,
           full: full.value,
+          ...(limit.value === undefined ? {} : { limit: limit.value }),
         },
       };
     },

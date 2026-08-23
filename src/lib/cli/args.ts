@@ -122,3 +122,38 @@ export function booleanFlag(
   }
   return { ok: true, value: true };
 }
+
+/**
+ * Reads a flag whose operation schema declares a number.
+ *
+ * A command line has no types: every flag arrives as a string, so a schema
+ * field declared `z.number()` refuses `--limit 5` with `invalid_input` and
+ * names a field the person did type but cannot satisfy. This is the one
+ * conversion the adapter owes the schema, and it lives here so there is a
+ * single spelling of it rather than one per command module.
+ *
+ * **Refuses rather than passing a bad value through.** `z.number()` would
+ * also reject `--limit abc`, but its message talks about a type; the useful
+ * sentence names the flag that was typed. Refusing here does not duplicate
+ * schema validation — the *range* (`min`/`max`) stays the schema's, and is
+ * deliberately not checked here.
+ *
+ * Trimmed and checked for emptiness before `Number`, because `Number("")`
+ * and `Number("  ")` are both `0` — an integer some schemas accept, so
+ * without this `--limit ""` would silently mean something rather than being
+ * refused.
+ */
+export function numericFlag(
+  flags: ParsedArgs["flags"],
+  name: string,
+): { ok: true; value?: number } | { ok: false; envelope: ErrorEnvelope } {
+  const raw = stringFlag(flags, name);
+  if (!raw.ok) return raw;
+  if (raw.value === undefined) return { ok: true };
+  const text = raw.value.trim();
+  const parsed = text === "" ? Number.NaN : Number(text);
+  if (!Number.isInteger(parsed)) {
+    return { ok: false, envelope: malformed(`--${name} must be a whole number.`, [name]) };
+  }
+  return { ok: true, value: parsed };
+}

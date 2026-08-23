@@ -22,8 +22,8 @@
 // records is decided by which binding the dispatcher selected, and the
 // person choosing that with `--direct` or `--url` is choosing a real
 // property of the call rather than a label on it.
-import { malformed, type ErrorEnvelope } from "./envelope";
-import { stringFlag, type ParsedArgs } from "./args";
+import { malformed } from "./envelope";
+import { numericFlag, stringFlag, type ParsedArgs } from "./args";
 import type { CommandSpec, InputResult } from "./commands";
 
 /** The flags the dispatcher handles itself, never part of an operation's input. */
@@ -76,26 +76,6 @@ function buildRegisterInput(_rest: readonly string[], flags: ParsedArgs["flags"]
   if (hookVersion.value !== undefined) input.hookVersion = hookVersion.value;
 
   return { ok: true, input };
-}
-
-function numericFlag(
-  flags: ParsedArgs["flags"],
-  name: string,
-): { ok: true; value?: number } | { ok: false; envelope: ErrorEnvelope } {
-  const raw = stringFlag(flags, name);
-  if (!raw.ok) return raw;
-  if (raw.value === undefined) return { ok: true };
-  // Trimmed and checked for emptiness before `Number`, because `Number("")`
-  // and `Number("  ")` are both `0` — an integer, and one this schema
-  // accepts. Without this, `--hook-version ""` would register a session as
-  // speaking protocol version zero rather than being told the flag was
-  // empty, which is a silently wrong registration instead of a refusal.
-  const text = raw.value.trim();
-  const parsed = text === "" ? Number.NaN : Number(text);
-  if (!Number.isInteger(parsed)) {
-    return { ok: false, envelope: malformed(`--${name} must be a whole number.`, [name]) };
-  }
-  return { ok: true, value: parsed };
 }
 
 export const SESSION_COMMANDS: readonly CommandSpec[] = Object.freeze([

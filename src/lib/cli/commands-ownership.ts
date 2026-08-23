@@ -32,7 +32,7 @@
 // to touch that file's internals) so `passThroughFlags` below is the same
 // behaviour, defined once for every command in this file.
 import { malformed, type ErrorEnvelope } from "./envelope";
-import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
 import type { CommandSpec, InputResult } from "./commands";
 
 /** The flags every command in this build's dispatcher handles itself, never part of an operation's input. */
@@ -104,14 +104,11 @@ function buildClaimInput(rest: readonly string[], flags: ParsedArgs["flags"]): I
   // (`z.number().int().nullable().optional()`) — every other field here is
   // a string all the way through, so this is the one spot a CLI flag
   // (always a string) needs a type coercion rather than a straight
-  // pass-through. Left as the raw string when it doesn't parse cleanly —
-  // the schema's own `z.number()` check is what refuses that, with
-  // `invalid_input`, which is the one place field validation belongs
-  // (`commands.ts`'s `buildInput` contract, §20).
-  if (typeof input.pid === "string") {
-    const pidValue = Number(input.pid);
-    if (Number.isFinite(pidValue)) input.pid = pidValue;
-  }
+  // pass-through. It goes through the shared `numericFlag` so the CLI has
+  // one spelling of "this flag is a number" rather than a per-command one.
+  const pid = numericFlag(flags, "pid");
+  if (!pid.ok) return pid;
+  if (pid.value !== undefined) input.pid = pid.value;
   return { ok: true, input };
 }
 
@@ -231,12 +228,24 @@ function buildNoteInput(rest: readonly string[], flags: ParsedArgs["flags"]): In
 function buildOrientationInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
   const idResult = itemIdPositional(rest, "item orientation <item-id>");
   if (!idResult.ok) return idResult;
-  const passthrough = passThroughFlags(flags);
+  // `--limit` names a `z.number()` field, so it converts here and is
+  // declared consumed — otherwise the raw string would reach the operation
+  // and be refused as `invalid_input`.
+  const limit = numericFlag(flags, "limit");
+  if (!limit.ok) return limit;
+  const passthrough = passThroughFlags(flags, ["limit"]);
   if (!passthrough.ok) return passthrough;
   // No `--session` mapping here: `orientation`'s input schema has no
   // session field at all (it is item-scoped, not session-scoped — see this
   // file's header).
-  return { ok: true, input: { ...passthrough.input, itemId: idResult.itemId } };
+  return {
+    ok: true,
+    input: {
+      ...passthrough.input,
+      itemId: idResult.itemId,
+      ...(limit.value === undefined ? {} : { limit: limit.value }),
+    },
+  };
 }
 
 function buildCrewNameInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
