@@ -5,6 +5,8 @@
 // `src/lib/item-detail/status.ts` would break. That is the bar deliberately:
 // a test that passes whatever the module does is a test that will keep
 // passing when the module stops being right.
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ageMsOf,
@@ -408,6 +410,105 @@ describe("openLoops", () => {
     const loops = openLoops([event({ type: "checkpoint", headline: "not a loop" })]);
     expect(loops).toEqual([]);
   });
+
+  // ── The delete/edit half of the lifecycle ──────────────────────────────
+  //
+  // The cross-surface test in `loop-reads-and-lifecycle.test.ts` asserts the
+  // real guarantee for `loop_list`, `orientation`, `search` and
+  // `progress_report`, but its `get_item_detail` limb can only assert a
+  // PRECONDITION — that the deleting event reaches the client — because the
+  // fold on this surface happens here, client-side, not in the operation.
+  // These are the matching guarantee assertions for that surface.
+  //
+  // What they protect: `get-item-detail.ts` selects from `Event` with no
+  // type filter, so all four loop event types arrive. If anyone ever adds
+  // one for payload-size reasons, this fold silently narrows and starts
+  // reporting deleted loops as open — with the existing precondition
+  // assertion still passing, because the event would be in `history` while
+  // the fold's output was never checked.
+
+  it("does NOT show a loop that was deleted", () => {
+    const loops = openLoops([
+      loopEvent("1", "open_loop", { loopId: "l-1", text: "should never have existed" }),
+      loopEvent("2", "open_loop_deleted", { loopId: "l-1", reason: "a duplicate" }),
+    ]);
+    expect(loops).toEqual([]);
+  });
+
+  it("does not show a deleted loop as open even though it was never closed", () => {
+    // Deletion outranks closure, and it is not a close: a loop that should
+    // never have existed must not appear in a list whose whole meaning is
+    // "somebody meant to come back to this".
+    const loops = openLoops([
+      loopEvent("1", "open_loop", { loopId: "l-1", text: "gone" }),
+      loopEvent("2", "open_loop", { loopId: "l-2", text: "still here" }),
+      loopEvent("3", "open_loop_deleted", { loopId: "l-1", reason: null }),
+    ]);
+    expect(loops.map((l) => l.loopId)).toEqual(["l-2"]);
+  });
+
+  it("shows an edited loop with its CURRENT text, not the text it opened with", () => {
+    const loops = openLoops([
+      loopEvent("1", "open_loop", { loopId: "l-1", text: "the retyr path is untested" }),
+      loopEvent("2", "open_loop_edited", { loopId: "l-1", text: "the retry path is untested" }),
+    ]);
+    expect(loops.map((l) => l.text)).toEqual(["the retry path is untested"]);
+  });
+
+  it("takes the NEWEST edit by event id, not whichever it walked past first", () => {
+    // The LOWER id is placed first in the slice deliberately. `events.id` is
+    // allocated before commit, so slice order is not id order — a fold that
+    // simply kept the first edit it encountered would return "older" here,
+    // and a fixture listing them already in id order could not tell the two
+    // rules apart.
+    const loops = openLoops([
+      loopEvent("1", "open_loop", { loopId: "l-1", text: "first" }),
+      loopEvent("2", "open_loop_edited", { loopId: "l-1", text: "older" }),
+      loopEvent("3", "open_loop_edited", { loopId: "l-1", text: "newest" }),
+    ]);
+    expect(loops.map((l) => l.text)).toEqual(["newest"]);
+  });
+
+  it("orders edits beyond Number.MAX_SAFE_INTEGER correctly", () => {
+    // Event ids are `bigint` columns stringified for the JSON boundary, and
+    // these two ids are chosen because they collapse: `Number` rounds both
+    // ...995 and ...996 to 9007199254740996, so `newer > older` is FALSE and
+    // the newest edit loses to the stale one. Compared as `BigInt` for
+    // exactly this reason.
+    const loops = openLoops([
+      loopEvent("9007199254740994", "open_loop", { loopId: "l-1", text: "opened" }),
+      loopEvent("9007199254740995", "open_loop_edited", { loopId: "l-1", text: "older" }),
+      loopEvent("9007199254740996", "open_loop_edited", { loopId: "l-1", text: "newest" }),
+    ]);
+    expect(loops.map((l) => l.text)).toEqual(["newest"]);
+  });
+
+  it("keeps an edited loop's original openedAt, because refining wording does not restart the question", () => {
+    const loops = openLoops([
+      event({
+        id: "1",
+        type: "open_loop",
+        ts: "2026-01-01T00:00:00.000Z",
+        payload: { loopId: "l-1", text: "original" },
+      }),
+      event({
+        id: "2",
+        type: "open_loop_edited",
+        ts: "2026-02-02T00:00:00.000Z",
+        payload: { loopId: "l-1", text: "reworded" },
+      }),
+    ]);
+    expect(loops.map((l) => l.openedAt)).toEqual(["2026-01-01T00:00:00.000Z"]);
+  });
+
+  it("does not resurrect a deleted loop just because it was edited afterwards", () => {
+    const loops = openLoops([
+      loopEvent("1", "open_loop", { loopId: "l-1", text: "original" }),
+      loopEvent("2", "open_loop_deleted", { loopId: "l-1", reason: null }),
+      loopEvent("3", "open_loop_edited", { loopId: "l-1", text: "reworded after deletion" }),
+    ]);
+    expect(loops).toEqual([]);
+  });
 });
 
 describe("ageMsOf", () => {
@@ -542,5 +643,35 @@ describe("the copy is pinned to the server's rule", () => {
 
   it.each(rows)("agrees with the server on deriveHeadlineFromBody for %j", (row) => {
     expect(deriveHeadlineFromBody(row.body)).toBe(serverDeriveHeadlineFromBody(row.body));
+  });
+});
+
+// ── The invariant the client-side loop fold rests on ────────────────────
+//
+// `openLoops` can only exclude a deleted loop if the deleting event actually
+// reaches it. `get_item_detail` guarantees that by selecting history with no
+// type predicate at all — every event on the item, capped only by count.
+// That is a property of one SQL statement, and the fold above cannot detect
+// its loss: a narrowed history would simply stop containing
+// `open_loop_deleted`, and every assertion up there would still pass while
+// the screen reported deleted loops as open.
+//
+// Asserted against the source rather than a database so it runs in the
+// ordinary suite, the way `tests/auth-route-coverage.test.ts` asserts its
+// own cross-cutting rule. Same idea as the DB-gated cases, but this one
+// cannot be skipped for want of a `TEST_DATABASE_URL`.
+describe("get_item_detail's history query", () => {
+  it("applies NO event-type filter, which is what lets the loop fold see deletes and edits", () => {
+    const source = readFileSync(
+      path.join(process.cwd(), "src/lib/service/operations/get-item-detail.ts"),
+      "utf-8",
+    );
+    const query = source.match(/FROM "Event" WHERE[^`]*/);
+    expect(query, 'the history query should still read FROM "Event"').not.toBeNull();
+    // Narrowing by type is the specific regression: it would drop
+    // `open_loop_deleted`/`open_loop_edited` from the payload and silently
+    // un-fix the lifecycle bug. Ordering and the LIMIT are fine.
+    expect(query![0]).not.toMatch(/"type"\s*(=|IN|::)/i);
+    expect(query![0]).not.toMatch(/open_loop/);
   });
 });

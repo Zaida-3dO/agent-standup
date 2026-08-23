@@ -172,6 +172,15 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
         }
         setEditingField(null);
         setDraft("");
+        // **`outcome.item` is deliberately discarded, and that is what makes
+        // the narrow response safe.** `submitItemEdit` does not send
+        // `full: true`, so what comes back is the slim write shape — five
+        // fields, none of the four this tab can edit beyond `title` and
+        // `headline`. Nothing here reads it. If this ever stops re-fetching
+        // and starts patching local state from the response instead, the
+        // request needs `full: true` first; `ItemEditResult` names exactly
+        // what is available so that mistake fails to compile.
+        //
         // Re-fetches the whole detail rather than patching the saved field
         // into local state, so the edit is reflected the same way any
         // other change to the item would be — one source of truth for

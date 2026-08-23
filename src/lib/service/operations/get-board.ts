@@ -677,12 +677,19 @@ export const getBoard = defineOperation({
     // rows themselves are still never served.
     if (input.project !== undefined) {
       shared.push(
-        // Every column reference inside the subquery is table-qualified.
-        // The outer statement's `FROM "Item"` is in scope here, so a bare
-        // `"id"` in the base term would be ambiguous between the two — and
-        // Postgres resolving it outward would silently turn this from "the
-        // named subtree" into "every row", which is a filter that reads as
-        // applied and narrows nothing.
+        // Every column reference inside the subquery is table-qualified, so
+        // that a reader can see which relation each name binds to without
+        // having to work out Postgres's scoping rules.
+        //
+        // **This is for the reader, not a live hazard.** A bare `"id"` in
+        // the base term would still bind to the subquery's own
+        // `FROM "Item" root`, because an inner range table shadows an outer
+        // one for an unqualified name — outward resolution happens only for
+        // a name the inner query has no binding for, and both relations here
+        // are `Item`. Mutation-tested against Postgres 16.13: dropping the
+        // qualification, and dropping the alias with it, both leave the
+        // filter behaving identically. So the qualification is worth keeping
+        // for legibility, but nothing silently widens without it.
         `"Item"."id" IN (
            WITH RECURSIVE scope AS (
              SELECT root."id" FROM "Item" root WHERE root."id" = $${paramIndex}

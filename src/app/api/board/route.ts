@@ -55,6 +55,20 @@ export async function GET(request: Request) {
   // An unparseable value is passed to no filter at all rather than refused,
   // matching how the board's own codec treats a bad `priority` — the reader
   // gets a board they can see and correct instead of a 400.
+  //
+  // **Absent means unnarrowed HERE, which is deliberately NOT what absent
+  // means in the codec.** `parseBoardQuery` resolves an absent `level` to
+  // `defaultLevelFilter()`, because it is answering "what board is this
+  // address showing" and a board has to show something. This adapter is
+  // answering "what did the caller ask for", so it passes no level at all
+  // and lets `get_board`'s own default — no narrowing — stand. A scripted
+  // `GET /api/board` therefore sees every level, including projects, while
+  // the same board in the browser does not.
+  //
+  // The UI never takes that path: `fetchBoardColumn` routes through
+  // `boardRequestParams`, which always writes `level` explicitly, default
+  // included. Defaulting here instead would silently narrow what a direct
+  // API caller gets, which is the opposite of what an adapter should do.
   const levels = url.searchParams.getAll("level");
   const rawLevel = levels[levels.length - 1];
   if (rawLevel !== undefined) {
