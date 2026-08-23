@@ -50,7 +50,13 @@ import {
   WITHHELD_COLUMNS,
   buildSliceNotice,
 } from "@/lib/service/board/slice";
-import { FULL_EVENT_COLUMNS, SLIM_EVENT_COLUMNS, eventColumnsFor } from "@/lib/events";
+import {
+  FULL_EVENT_COLUMNS,
+  SLIM_EVENT_COLUMNS,
+  eventColumnsFor,
+  readSinceBounded,
+} from "@/lib/events";
+import type { TransactionHandle } from "@/lib/service/context";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -153,10 +159,8 @@ describe("the notice a default read carries", () => {
     expect(buildSliceNotice(1, [{ column: "backlog", total: 2 }])).toContain("1 open item;");
   });
 });
-
 /**
- * The ledger's column choice, asserted directly rather than through a
- * response — MILESTONES.md #109.
+ * The ledger's column choice, asserted **on the SQL that actually runs**.
  *
  * **Why this cannot be tested through `get_events`'s output.** That
  * operation builds its slim record field by field and only copies `payload`
@@ -169,21 +173,100 @@ describe("the notice a default read carries", () => {
  * to any assertion about the response, so the column choice has to be
  * asserted as a thing in itself.
  *
- * Verified by mutation: changing `eventColumnsFor` to return the full list
- * unconditionally leaves every size assertion in this file green and turns
- * exactly these two red.
+ * **Why asserting on `eventColumnsFor`'s return value was not enough**, and
+ * the reason this block was rewritten (#0ef97b7e). The previous version
+ * tested the helper alone:
+ *
+ * ```ts
+ * expect(eventColumnsFor(false)).toBe(SLIM_EVENT_COLUMNS);
+ * ```
+ *
+ * That is a unit test on a **string helper**, and nothing tied the helper to
+ * the query. Leaving `eventColumnsFor` correct while bypassing it at the
+ * call site — `readSinceBounded`'s template made to read
+ * `` `SELECT ${FULL_EVENT_COLUMNS}` `` — **survived the entire suite**: 47/47
+ * in this file against a real database, 6,607 across the repository. The
+ * helper can be perfect and the query can ignore it, which is precisely the
+ * regression the projection exists to prevent.
+ *
+ * So the assertions below run `readSinceBounded` against a recording fake
+ * that captures the SQL string it hands to `$queryRawUnsafe`, and require
+ * the projection to appear **in the emitted query**. No database is needed:
+ * `TransactionHandle` is a two-method interface, and both are stubbed.
+ *
+ * **Verified by mutation — each of these is a mutant that was run, not
+ * inspected**, and each turns this block red:
+ *
+ *   1. `eventColumnsFor` returning `FULL_EVENT_COLUMNS` unconditionally.
+ *   2. The call site bypassing the helper: `` `SELECT ${FULL_EVENT_COLUMNS}` ``
+ *      — the mutant that survived the previous version of this block.
+ *   3. The call site hard-coding the slim list for a `full: true` read.
+ *
+ * Mutant 2 is the one that matters, and it is the one a header claiming
+ * "verified by mutation" can hide: pinning only mutant 1 while naming the
+ * claim in general terms invites the next reader to stop looking.
  */
 describe("which columns a ledger read selects", () => {
-  it("selects the slim list by default, without payload or body", () => {
-    expect(eventColumnsFor(false)).toBe(SLIM_EVENT_COLUMNS);
-    expect(eventColumnsFor(false)).not.toContain("payload");
-    expect(eventColumnsFor(false)).not.toContain("body");
+  /**
+   * A `TransactionHandle` that records the SQL it is given.
+   *
+   * `visibilityHorizon` runs first and its row shape is unrelated, so the
+   * fake answers whichever query it is asked: the horizon query gets a row
+   * with a `horizon`, and the ledger read gets an empty result set. The
+   * queries are kept in order so the assertions can pick out the ledger read
+   * specifically rather than matching whichever query happened to run.
+   */
+  function recordingHandle(): { db: TransactionHandle; queries: string[] } {
+    const queries: string[] = [];
+    const db: TransactionHandle = {
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        queries.push(query);
+        if (query.includes("pg_snapshot_xmin")) {
+          return [{ horizon: 1n }] as T;
+        }
+        return [] as T;
+      },
+      $executeRawUnsafe: async () => 0,
+    };
+    return { db, queries };
+  }
+
+  /** The `SELECT` the ledger read emitted, as opposed to the horizon probe. */
+  async function ledgerReadSql(args: { full?: boolean }): Promise<string> {
+    const { db, queries } = recordingHandle();
+    await readSinceBounded(db, { since: 0n, ...args } as Parameters<typeof readSinceBounded>[1]);
+    const sql = queries.find((q) => q.includes('FROM "Event"'));
+    // Not vacuous: if the read stopped emitting a query at all, or stopped
+    // reading `Event`, these assertions would otherwise pass by matching
+    // nothing.
+    expect(
+      sql,
+      `no ledger read was emitted; queries were ${JSON.stringify(queries)}`,
+    ).toBeDefined();
+    return sql as string;
+  }
+
+  it("emits the slim column list by default, without payload or body", async () => {
+    const sql = await ledgerReadSql({});
+    expect(sql).toContain(SLIM_EVENT_COLUMNS);
+    expect(sql).not.toContain('"payload"');
+    expect(sql).not.toContain('"body"');
   });
 
-  it("selects payload and body only when full is asked for", () => {
+  it("emits payload and body only when full is asked for", async () => {
+    const sql = await ledgerReadSql({ full: true });
+    expect(sql).toContain(FULL_EVENT_COLUMNS);
+    expect(sql).toContain('"payload"');
+    expect(sql).toContain('"body"');
+  });
+
+  // The helper's own contract, kept because the emitted-SQL assertions above
+  // read it through `readSinceBounded` and would not notice `full` being
+  // inverted inside the helper while both call paths still selected *a*
+  // valid list. Cheap, and it pins the two constants against each other.
+  it("maps the full flag to the two column lists", () => {
+    expect(eventColumnsFor(false)).toBe(SLIM_EVENT_COLUMNS);
     expect(eventColumnsFor(true)).toBe(FULL_EVENT_COLUMNS);
-    expect(eventColumnsFor(true)).toContain('"payload"');
-    expect(eventColumnsFor(true)).toContain('"body"');
   });
 });
 

@@ -39,7 +39,7 @@
     "check:operation-metadata": "node scripts/check-operation-metadata-mutants.mjs",
     "check:db-gated:require": "node scripts/check-db-gated-suites.mjs --require-db",
     "version:from-tag": "node scripts/version-from-tag.mjs",
-    "db:up": "docker compose up -d db",
+    "db:up": "node scripts/db-up.mjs",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",

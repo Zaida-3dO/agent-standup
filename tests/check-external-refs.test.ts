@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -659,5 +659,75 @@ describe("check-external-refs — as CI runs it", () => {
 
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
+  });
+});
+
+/**
+ * The blind spot this check had, pinned so it cannot come back.
+ *
+ * The default scan (no file arguments — how CI and the pre-push hook run it)
+ * listed only tracked files. A file that had just been written and not yet
+ * staged was therefore invisible: the check reported success having never
+ * opened it, and CI failed on the same file a push later. That is the case a
+ * local gate is most for, and it was the one case it could not see.
+ *
+ * These tests build a real git repository, because that blind spot lived in
+ * the `git ls-files` call and nothing below it — a fake would test the fake.
+ *
+ * **What would break each of them:** dropping `--others` (or the whole
+ * second listing) from `trackedFiles()` turns the first red, and dropping
+ * `--exclude-standard` turns the second red.
+ */
+describe("check-external-refs — the default scan sees unstaged work", () => {
+  /** A throwaway git repository with the given files, none of them staged. */
+  function gitRepo(files: Record<string, string>): string {
+    const dir = mkdtempSync(path.join(tmpdir(), "external-refs-git-"));
+    tempDirs.push(dir);
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: "pipe" });
+    git("init", "--quiet");
+    // A commit so `ls-files` has a tracked baseline to report alongside the
+    // untracked files; without one the two listings cannot be told apart.
+    writeFileSync(path.join(dir, "tracked.md"), "The server refuses the change.\n", "utf8");
+    git("add", "tracked.md");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "--quiet", "-m", "base");
+    for (const [name, body] of Object.entries(files)) {
+      const target = path.join(dir, name);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, body, "utf8");
+    }
+    return dir;
+  }
+
+  it("fails on a violation in a file that has never been staged", () => {
+    const dir = gitRepo({ "brand-new.md": "The rules currently live elsewhere.\n" });
+
+    // Precondition, so this cannot pass by the file having been staged after
+    // all — that would make the assertion below true for the wrong reason.
+    const status = execFileSync("git", ["status", "--short", "brand-new.md"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    expect(status.trim().startsWith("??")).toBe(true);
+
+    const result = runCli([], dir);
+
+    expect(result.status).toBe(1);
+    // Failures are reported on stderr; stdout carries only the summary.
+    expect(result.stderr).toContain("brand-new.md");
+    expect(result.stderr).toContain("temporal-now");
+  });
+
+  it("still ignores an unstaged file that .gitignore excludes", () => {
+    const dir = gitRepo({
+      ".gitignore": "generated/\n",
+      "generated/output.md": "The rules currently live elsewhere.\n",
+    });
+
+    const result = runCli([], dir);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("output.md");
+    expect(result.stdout).not.toContain("output.md");
   });
 });

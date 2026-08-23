@@ -465,7 +465,12 @@ jobs:
 
   mutation-testing-gate:
     name: Mutation testing (required)
-    needs: [changes, mutation-testing]
+    # `build-and-test` is here because the branches below read its result to
+    # tell the two skip reasons apart. A `needs` context only carries jobs
+    # named here — an unnamed job's `result` is the empty string, which
+    # silently matches no branch, and this gate would then pass by falling off
+    # the end having verified nothing.
+    needs: [changes, mutation-testing, build-and-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -484,26 +489,65 @@ jobs:
       # them apart, because only one of them is a statement about the code.
       #
       # A `skipped` result on a source change means the mutation job's own
-      # `if:` did not hold — and with `changes.source == 'true'` already
-      # established here, the only remaining way for that to happen is
-      # `build-and-test` not having succeeded. That case is already red on
-      # `Build & test`, which is itself required, so failing here as well
-      # would add a second red check reporting the same fact while telling
-      # whoever reads it to look in the wrong place. It is passed here on the
-      # strength of that other gate, not forgiven.
+      # `if:` did not hold. Two different things cause that, they are not
+      # equally acceptable, and the gate says which one it saw:
+      #
+      #   1. **The job is switched off for this event.** It carries
+      #      `github.event_name == 'workflow_dispatch'`, so it skips on every
+      #      pull request and every push regardless of anything else. That is
+      #      an owner's decision recorded on the job itself, and the gate
+      #      passes on it — but it has to *say* that, because it is a
+      #      statement about configuration and not about the code.
+      #
+      #   2. **`build-and-test` did not succeed.** Already red on `Build &
+      #      test`, which is itself required, so failing here as well would
+      #      add a second red check reporting the same fact while telling
+      #      whoever reads it to look in the wrong place. Passed on the
+      #      strength of that other gate, not forgiven.
+      #
+      # These were one branch, whose message named reason 2 unconditionally.
+      # On a run where the job was off and `build-and-test` was green, the
+      # required check reported "the suite it follows is already red" about a
+      # suite that had passed — a gate stating a reason that was not the
+      # actual reason, which is the same class of defect as a gate passing
+      # without checking. Splitting them costs four lines and makes the log
+      # true in both cases.
+      #
+      # Anything else is a skip for a reason this gate does not know about —
+      # a narrowed `if:` nobody updated here — and it fails rather than
+      # guessing which of the two it was.
       #
       # A `failure` result still fails, unconditionally. That is the case
       # where mutation testing ran and found surviving mutants, and it must
       # never be softened — the whole value of the job is that it fails on
       # something no cheaper check can see.
-      #
-      # The branch is also what keeps the two jobs independently editable: any
-      # future narrowing of the mutation job's `if:` shows up here as a pass
-      # with a stated reason rather than as a required check nothing in the
-      # pull request can clear.
+      - name: Pass — mutation testing is switched off for this event
+        if: >-
+          needs.changes.outputs.source == 'true' &&
+          needs.mutation-testing.result == 'skipped' &&
+          github.event_name != 'workflow_dispatch'
+        run: |
+          echo "Mutation testing is limited to workflow_dispatch runs, so it did not run here."
+          echo "This gate passes on that configuration, and has verified nothing about the code."
+          echo "Turning it back on is a pre-GA gate — see docs/plans/BEFORE-GA.md and issue #166."
       - name: Pass — mutation testing did not run, and the suite it follows is already red
-        if: needs.changes.outputs.source == 'true' && needs.mutation-testing.result == 'skipped'
+        if: >-
+          needs.changes.outputs.source == 'true' &&
+          needs.mutation-testing.result == 'skipped' &&
+          github.event_name == 'workflow_dispatch' &&
+          needs.build-and-test.result != 'success'
         run: echo "Mutation testing did not run. It follows 'Build & test', which is required and reports that failure itself."
+      - name: Fail — mutation testing was skipped for an unrecognised reason
+        if: >-
+          needs.changes.outputs.source == 'true' &&
+          needs.mutation-testing.result == 'skipped' &&
+          github.event_name == 'workflow_dispatch' &&
+          needs.build-and-test.result == 'success'
+        run: |
+          echo "::error::Mutation testing was skipped on a workflow_dispatch run whose 'Build & test' passed."
+          echo "Neither reason this gate knows about applies, so it cannot say the job's absence"
+          echo "was intended. Check the 'mutation-testing' job's if: condition."
+          exit 1
       - name: Fail — mutation testing ran and did not pass
         if: >-
           needs.changes.outputs.source == 'true' &&
