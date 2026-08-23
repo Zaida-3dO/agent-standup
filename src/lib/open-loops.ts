@@ -19,8 +19,13 @@
 // so it is testable without a database, and orientation calls it rather than
 // asking Postgres to express the pairing in SQL.
 
-/** The two event types a loop is made of. Mirrors `EventType` in schema.prisma. */
-export const OPEN_LOOP_EVENT_TYPES = ["open_loop", "open_loop_closed"] as const;
+// `OPEN_LOOP_EVENT_TYPES` (just `open_loop` + `open_loop_closed`) was removed
+// once the lifecycle gained edit and delete: it named two of the four event
+// types a loop is made of, and sat one autocomplete away from
+// `LOOP_EVENT_TYPES` below, which names all four. Every query that reaches
+// for a loop's events wants all four — narrowing to the opening pair silently
+// drops edits and deletions from the fold, which is the exact bug the
+// lifecycle work had to fix twice. `LOOP_EVENT_TYPES` is the only such list.
 
 /**
  * One open loop, as `orientation` reports it.

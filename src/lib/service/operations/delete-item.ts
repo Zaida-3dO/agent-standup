@@ -300,6 +300,13 @@ export const deleteItem = defineOperation({
   },
   // Stryker restore all
   input: inputSchema,
+  // Returns the FULL `ItemRecord`, deliberately — the one write here that
+  // does not slim to `ItemWriteRecord`. That shape exists because a write's
+  // response is a receipt for a row the caller can read again whenever it
+  // likes, so shipping `body` and `customFields` back is waste. This call
+  // inverts that premise: it is the last moment the row is readable at all,
+  // and every later read withholds it. The full record IS the response's
+  // value, not padding on it.
   async handler(ctx: ServiceContext, input: DeleteItemInput): Promise<ItemRecord> {
     const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
       `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,
