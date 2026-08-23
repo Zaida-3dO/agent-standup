@@ -39,6 +39,24 @@ interface Created {
   supersededById: string | null;
 }
 
+/** `delete_item`'s outcome envelope — the item plus what happened to it. */
+interface DeleteOutcome {
+  item: Created;
+  archived: boolean;
+  archivedAt: string;
+  archivedReason: string | null;
+  supersededById: string | null;
+  effect: string;
+}
+
+/** One card from `get_projects`, with the rollup numbers this file asserts on. */
+interface ProjectCard {
+  id: string;
+  total: number;
+  childless: boolean;
+  counts: Record<string, number>;
+}
+
 interface Rejection {
   code: string;
   fields?: string[];
@@ -353,6 +371,71 @@ describeIfDb("delete_item", () => {
     });
   });
 
+  // The response has to *say* what happened. Archiving used to hand back an
+  // ordinary item whose only evidence of the archive was two changed fields
+  // out of thirty, and a session reading that response reasonably concluded
+  // nothing had happened — the incident this envelope exists to prevent.
+  describe("the response says what happened, rather than requiring two fields to be spotted", () => {
+    // Fails if `archived` is hardcoded to either constant: the fresh-archive
+    // case below and the no-op case beneath it assert opposite values, so no
+    // single literal satisfies both.
+    it("reports archived true, and states the effect on reads in words", async () => {
+      const { taskId } = await projectWithTask("legible");
+
+      const result = await call<DeleteOutcome>("delete_item", {
+        id: taskId,
+        reason: GOOD_REASON,
+      });
+
+      expect(result.archived).toBe(true);
+      expect(result.archivedReason).toBe(GOOD_REASON);
+      expect(result.archivedAt).not.toBe("");
+      // The effect names both halves of the truth — hidden from the ordinary
+      // reads, still reachable by id. Fails if the sentence stops mentioning
+      // either — a description that states only half of this is what teaches
+      // a caller to expect the wrong thing.
+      expect(result.effect).toContain("get_projects");
+      expect(result.effect).toContain("get_item");
+      // The full row still rides along for callers that want the record.
+      expect(result.item.id).toBe(taskId);
+      expect(result.item.archivedAt).not.toBeNull();
+    });
+
+    // Both calls succeed, so `archived` is the only thing telling them
+    // apart. Fails if the already-archived branch stops reporting
+    // `archived: false`.
+    it("distinguishes a no-op second archive from the one that did the work", async () => {
+      const { taskId } = await projectWithTask("noop");
+      const first = await call<DeleteOutcome>("delete_item", { id: taskId, reason: GOOD_REASON });
+
+      const second = await call<DeleteOutcome>("delete_item", {
+        id: taskId,
+        reason: "a completely different second reason for removing this",
+      });
+
+      expect(first.archived).toBe(true);
+      expect(second.archived).toBe(false);
+      // The no-op reports the ORIGINAL archive time, not this call's.
+      expect(second.archivedAt).toBe(first.archivedAt);
+    });
+
+    // Fails if the replacement stops being named in the effect sentence —
+    // the one thing a caller chasing a stale link most needs told.
+    it("names the replacement in the effect when one was given", async () => {
+      const { taskId } = await projectWithTask("superseded-effect");
+      const replacement = await call<Created>("create_project", base("The survivor"));
+
+      const result = await call<DeleteOutcome>("delete_item", {
+        id: taskId,
+        reason: GOOD_REASON,
+        supersededById: replacement.id,
+      });
+
+      expect(result.supersededById).toBe(replacement.id);
+      expect(result.effect).toContain(replacement.id);
+    });
+  });
+
   describe("an archived item is served by no ordinary read", () => {
     // Each of these is a separate query with its own WHERE clause, so each
     // is asserted separately — see this file's header. The sweep at the end
@@ -434,6 +517,112 @@ describeIfDb("delete_item", () => {
       expect(detail.subtasks.map((s) => s.id)).not.toContain(taskId);
     });
 
+    // ── get_projects: the read the reported incident actually hit ────────
+    //
+    // A childless root was archived, `delete_item` reported success, and the
+    // grid still showed it — because this operation's `roots` CTE had no
+    // archive predicate at all. The counting half had the same hole one
+    // level down, so these assert the grid and the numbers separately: a fix
+    // to either alone leaves a card whose `total` disagrees with its tree.
+    //
+    // Fails if the predicate is dropped from the `roots` CTE in
+    // get-projects.ts — the exact state of `main` before this change.
+    it("is absent from the projects grid, which is where the ghost was seen", async () => {
+      const project = await call<Created>("create_project", base("Ghost root", "archive-grid"));
+      await call("delete_item", { id: project.id, reason: GOOD_REASON });
+
+      const grid = await call<{ projects: ProjectCard[]; childlessCount: number }>("get_projects", {
+        area: "archive-grid",
+      });
+      expect(grid.projects.map((p) => p.id)).not.toContain(project.id);
+    });
+
+    // `childlessCount` is the number rendered as "N with no work under
+    // them", and a childless archived root is precisely the shape that was
+    // reported. Fails alongside the assertion above if the roots predicate
+    // is dropped.
+    it("is not counted in childlessCount", async () => {
+      const live = await call<Created>("create_project", base("Live root", "archive-childless"));
+      const ghost = await call<Created>("create_project", base("Ghost root", "archive-childless"));
+      await call("delete_item", { id: ghost.id, reason: GOOD_REASON });
+
+      const grid = await call<{ projects: ProjectCard[]; childlessCount: number }>("get_projects", {
+        area: "archive-childless",
+      });
+      // Exactly the one live childless root — not two.
+      expect(grid.childlessCount).toBe(1);
+      expect(grid.projects.map((p) => p.id)).toEqual([live.id]);
+    });
+
+    // The counting half, which the grid assertions above cannot see: the
+    // project itself is live, so it is returned either way — what changes is
+    // whether its archived child inflates the rollup. Fails if the
+    // descendant filter is dropped from the `subtree` CTE, which would leave
+    // a card counting work the installation has said should not exist.
+    it("is not counted in a project's rollup total or state counts", async () => {
+      const { projectId, taskId } = await (async () => {
+        const project = await call<Created>("create_project", base("Rollup root", "archive-roll"));
+        const task = await call<Created>("create_task", {
+          ...base("Rollup child", "archive-roll"),
+          projectId: project.id,
+        });
+        return { projectId: project.id, taskId: task.id };
+      })();
+
+      const before = await call<{ projects: ProjectCard[] }>("get_projects", {
+        area: "archive-roll",
+      });
+      expect(before.projects[0]?.total).toBe(1);
+
+      await call("delete_item", { id: taskId, reason: GOOD_REASON });
+
+      const after = await call<{ projects: ProjectCard[] }>("get_projects", {
+        area: "archive-roll",
+      });
+      const card = after.projects.find((p) => p.id === projectId);
+      expect(card?.total).toBe(0);
+      // The state-count columns must agree with `total` — the `count(*)
+      // FILTER (...)` list is a separate mechanism from `count(d."id")`, so
+      // a fix to one and not the other is a real and silent possibility.
+      expect(Object.values(card?.counts ?? {}).reduce((a, b) => a + b, 0)).toBe(0);
+      // Its only child is archived, so it is now structurally childless —
+      // the honest report, and what makes it visible to a repair sweep.
+      expect(card?.childless).toBe(true);
+    });
+
+    // The escape hatch, asserted in both halves so it cannot regress into
+    // widening the grid while leaving the counts filtered (or vice versa).
+    // Fails if `includeArchived` stops being threaded to either CTE.
+    it("returns archived roots and archived descendants when includeArchived is passed", async () => {
+      const project = await call<Created>("create_project", base("Audit root", "archive-audit"));
+      const task = await call<Created>("create_task", {
+        ...base("Audit child", "archive-audit"),
+        projectId: project.id,
+      });
+      await call("delete_item", { id: task.id, reason: GOOD_REASON });
+
+      const audited = await call<{ projects: ProjectCard[] }>("get_projects", {
+        area: "archive-audit",
+        includeArchived: true,
+      });
+      const card = audited.projects.find((p) => p.id === project.id);
+      expect(card?.total).toBe(1);
+      expect(card?.childless).toBe(false);
+
+      // And the archived root itself comes back, which the default read
+      // above proved it does not.
+      await call("delete_item", {
+        id: project.id,
+        reason: GOOD_REASON,
+        acknowledgeReferences: true,
+      });
+      const withRoot = await call<{ projects: ProjectCard[] }>("get_projects", {
+        area: "archive-audit",
+        includeArchived: true,
+      });
+      expect(withRoot.projects.map((p) => p.id)).toContain(project.id);
+    });
+
     // `get_item` by id is the deliberate exception, and it is asserted
     // rather than left implied: the row is kept so that a stale link still
     // resolves, and a read that refused would defeat the reason for keeping
@@ -503,7 +692,45 @@ describeIfDb("delete_item", () => {
       //     reason, is the single most useful row in it.
       //   - `describe_tool` describes operations and ranges over no items at
       //     all.
-      const EXEMPT = new Set(["get_item", "get_item_detail", "get_events", "describe_tool"]);
+      //   - `get_account` reads one row of the `Account` table by id. Like
+      //     `describe_tool` it ranges over no items, so there is nothing
+      //     here for it to leak. Named rather than skipped — it was found by
+      //     the `toBeDefined` guard below the moment that guard replaced a
+      //     silent `continue`.
+      //   - `get_account`, `get_area`, `get_machine`, `get_repo`,
+      //     `get_setting` each read one row of their own table by id, and
+      //     `readiness`, `get_session_shape`, `hook_decision`, `kill_guard`
+      //     and `get_costs` range over sessions, processes and run totals.
+      //     None of them return items at all, so — like `describe_tool` —
+      //     there is nothing here for them to leak.
+      //   - `get_project_detail` resolves one project **by id**, the same
+      //     shape and the same reason as `get_item_detail` beside it.
+      //
+      // Membership here is a claim that has to be argued, not a way to make
+      // the sweep quiet: the guard below refuses any read that is neither
+      // exempt nor given arguments, so the cost of adding a name is writing
+      // the reason above it.
+      const EXEMPT = new Set([
+        "get_item",
+        "get_item_detail",
+        "get_project_detail",
+        "get_events",
+        "describe_tool",
+        "get_account",
+        "get_area",
+        "get_machine",
+        "get_repo",
+        "get_setting",
+        "get_costs",
+        "get_session_shape",
+        "hook_decision",
+        "kill_guard",
+        "readiness",
+        // Resolves one open loop by `loopId`, not an item — the same by-id
+        // shape as the detail reads above. `loop_list`, which does range
+        // over an item's loops, is swept rather than exempted.
+        "loop_get",
+      ]);
 
       // Arguments per read. A read absent from this map fails the guard
       // below rather than being skipped.
@@ -515,6 +742,13 @@ describeIfDb("delete_item", () => {
         orientation: { itemId: project.id },
         progress_report: { sessionId: "sweep-session", includeCompleted: true },
         repair_stuck_projects: { projectId: "inbox", area: "archive-sweep", apply: false },
+        get_projects: { area: "archive-sweep", includeCompleted: true },
+        // Range over items rather than their own tables, so they are swept
+        // rather than exempted. `get_fleet` returns live assignments — the
+        // archived task here was deliberately claimed before archiving, so
+        // this is a real check and not a trivially empty one.
+        get_fleet: {},
+        loop_list: { itemId: project.id },
         list_areas: {},
         list_repos: {},
         list_people: {},
@@ -537,7 +771,18 @@ describeIfDb("delete_item", () => {
       for (const operation of reads) {
         if (EXEMPT.has(operation.name)) continue;
         const args = argsFor[operation.name];
-        if (args === undefined) continue;
+        // **A read absent from `argsFor` fails here rather than being
+        // skipped**, which is what makes this sweep a completeness check
+        // rather than a long list. Skipping an unmapped read is
+        // indistinguishable, in a green run, from checking it and finding
+        // it clean — so a read serving archived rows could sit behind a
+        // passing test indefinitely purely by never being added to the map.
+        // Failing here means a new read is checked on the day it is
+        // written.
+        expect(
+          args,
+          `${operation.name} is a read with no arguments in argsFor, so the archive sweep never checked it — add it to the map, or to EXEMPT with a reason`,
+        ).toBeDefined();
         // A refusal fails the sweep rather than passing it. An operation
         // given arguments it rejects returns nothing, and "nothing" trivially
         // does not contain the archived id — so a wrong argument here would

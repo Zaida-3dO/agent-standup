@@ -38,6 +38,10 @@ export async function GET(request: Request) {
   // rejected as invalid input rather than honoured.
   const includeCompleted = url.searchParams.get("includeCompleted");
   if (includeCompleted !== null) input.includeCompleted = parseBooleanParam(includeCompleted);
+  // Archived projects are off by default, the same shape as `includeCompleted`
+  // above and for the same reason it is parsed rather than forwarded raw.
+  const includeArchived = url.searchParams.get("includeArchived");
+  if (includeArchived !== null) input.includeArchived = parseBooleanParam(includeArchived);
 
   try {
     const result = await service.call("get_projects", input, { caller });

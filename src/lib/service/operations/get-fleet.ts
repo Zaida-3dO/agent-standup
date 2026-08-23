@@ -36,6 +36,7 @@ import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { isoOrString, type ItemDetailAssignment } from "../items/assignment-view";
+import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import type { HolderType, Liveness, Role } from "../../claims";
 
 /**
@@ -114,6 +115,13 @@ interface RawFleetAssignmentRow {
  * than reading it off the wire. Ordered oldest-claimed-first, matching
  * `LIVE_BOARD_ASSIGNMENTS_SQL`'s own ordering, so an item held by two
  * holders at once lists them in the order they took it.
+ *
+ * The `Item` join carries `NOT_ARCHIVED_CONDITION` (MILESTONES.md #137).
+ * This read answers "who is working on what right now", and an archived row
+ * is one the installation has said should never have existed — so a live
+ * claim against one is not fleet activity worth reporting, it is a claim
+ * nobody can act on, listed with a title and a state as though it were real
+ * work. Held to by the registry sweep in `tests/item-archive.test.ts`.
  */
 export const LIVE_FLEET_ASSIGNMENTS_SQL = `SELECT
    i."id" AS "itemId",
@@ -140,7 +148,7 @@ export const LIVE_FLEET_ASSIGNMENTS_SQL = `SELECT
    FROM "Assignment" a
    JOIN "Item" i ON i."id" = a."itemId"
    LEFT JOIN "Person" p ON p."id" = a."holderId" AND a."holderType" = 'person'::"HolderType"
-   WHERE a."releasedAt" IS NULL`;
+   WHERE a."releasedAt" IS NULL AND i.${NOT_ARCHIVED_CONDITION}`;
 
 /**
  * The ordering, kept beside the SELECT it belongs to rather than inside it.

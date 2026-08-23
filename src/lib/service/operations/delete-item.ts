@@ -164,6 +164,54 @@ const inputSchema = z
 export type DeleteItemInput = z.infer<typeof inputSchema>;
 
 /** What points at an item, as the refusal reports it. */
+/**
+ * What `delete_item` hands back: the archived row, plus a plain statement of
+ * what just happened to it.
+ *
+ * **Why an envelope rather than the bare item.** A bare item makes the
+ * caller infer the outcome from two changed fields — `archivedAt` and
+ * `archivedReason` — on a record with thirty of them. A caller who does not
+ * already know to look for those two sees a normal-looking item come back
+ * from an operation named *delete*, and the honest reading of that response
+ * is "nothing happened". That misreading is cheap to make and expensive to
+ * catch: it ends with a session telling its user the row is still there.
+ *
+ * The item rides along under `item` because callers that want the record
+ * want the whole record. The envelope's job is to state the outcome
+ * directly, so reporting it correctly never depends on knowing which two
+ * fields to check.
+ */
+export interface DeleteItemOutput {
+  /** The archived row itself — every field, exactly as any other item read returns it. */
+  readonly item: ItemRecord;
+  /**
+   * True when this call is what archived the row; false when it was already
+   * archived and this call was a no-op.
+   *
+   * Both outcomes are successes — the already-archived branch in the
+   * handler deliberately reports done rather than refusing — so this flag
+   * is the only thing in the response that tells them apart.
+   */
+  readonly archived: boolean;
+  /** When the row was archived, ISO 8601 — the original time, not this call's, when it was already archived. */
+  readonly archivedAt: string;
+  /** Why, as given by whoever first archived it. */
+  readonly archivedReason: string | null;
+  /** The surviving replacement this row was superseded by, when one was named. */
+  readonly supersededById: string | null;
+  /**
+   * What the archive means for reads, in words, so a caller does not have to
+   * hold this file's semantics in their head to report the outcome
+   * correctly.
+   *
+   * States the exception as well as the rule: the row is gone from the
+   * ordinary reads *and* still resolvable by id, because a stale link
+   * landing somewhere real is the reason the row is kept rather than
+   * deleted.
+   */
+  readonly effect: string;
+}
+
 export interface InboundReference {
   /** What kind of thing is pointing here. */
   readonly kind: "child" | "follow_up_artifact" | "superseded_by" | "live_claim";
@@ -266,6 +314,30 @@ export function cancellationPhraseIn(reason: string): string | undefined {
   return CANCELLATION_PHRASES.find((phrase) => haystack.includes(phrase));
 }
 
+/**
+ * Wraps an archived row in the outcome envelope — see `DeleteItemOutput`.
+ *
+ * One builder for both exits (the fresh archive and the already-archived
+ * no-op) so the two cannot drift into describing the same storage state
+ * differently, which is the failure the envelope exists to prevent.
+ *
+ * `archivedAt` is non-null on every path that reaches here: the fresh
+ * archive has just set it, and the no-op branch is guarded on it being set
+ * already. The fallback keeps the type honest rather than asserting.
+ */
+function archiveOutcome(item: ItemRecord, archived: boolean): DeleteItemOutput {
+  return {
+    item,
+    archived,
+    archivedAt: item.archivedAt ?? "",
+    archivedReason: item.archivedReason,
+    supersededById: item.supersededById,
+    effect: item.supersededById
+      ? `Archived. It is now excluded from the board, list_items, search, get_projects and every other ordinary read, and is still resolvable by id via get_item so a stale link finds its replacement (${item.supersededById}).`
+      : "Archived. It is now excluded from the board, list_items, search, get_projects and every other ordinary read, and is still resolvable by id via get_item so a stale link still lands somewhere real.",
+  };
+}
+
 // Stryker disable all : this metadata is a module-level literal, read into
 // the registry at import — before any test body runs and never re-evaluated
 // — so a mutation here is unkillable by construction, NOT untested.
@@ -276,7 +348,7 @@ export const deleteItem = defineOperation({
   name: "delete_item",
   kind: "write",
   summary:
-    "Removes an item from every read, for rows that should never have existed — a duplicate, or one created by accident. Requires a reason, and prefers supersededById naming the item this one was replaced by. Use transition_item to cancelled instead for work that was real and is not being done; that is almost always the right call.",
+    "Archives an item, for rows that should never have existed — a duplicate, or one created by accident. It disappears from the board, list_items, search, get_projects and every other ordinary read, and stays resolvable by id through get_item so a stale link still lands somewhere real. Requires a reason, and prefers supersededById naming the item this one was replaced by. Use transition_item to cancelled instead for work that was real and is not being done; that is almost always the right call.",
   contract: {
     rules: [
       {
@@ -313,7 +385,7 @@ export const deleteItem = defineOperation({
   // LISTING read, so a caller holding only a board or search result has no
   // route back to `body` and `customFields` without already knowing the id.
   // The full record is the response's value for that caller, not padding.
-  async handler(ctx: ServiceContext, input: DeleteItemInput): Promise<ItemRecord> {
+  async handler(ctx: ServiceContext, input: DeleteItemInput): Promise<DeleteItemOutput> {
     const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
       `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,
       input.id,
@@ -328,7 +400,7 @@ export const deleteItem = defineOperation({
     // overwrite the original reason — losing the record of why it first
     // happened in exchange for nothing.
     if (row.archivedAt !== null) {
-      return toItemRecord(row);
+      return archiveOutcome(toItemRecord(row), false);
     }
 
     if (input.reason.length < ARCHIVE_REASON_MIN_CHARS) {
@@ -420,6 +492,6 @@ export const deleteItem = defineOperation({
       },
     });
 
-    return toItemRecord(updated);
+    return archiveOutcome(toItemRecord(updated), true);
   },
 });
