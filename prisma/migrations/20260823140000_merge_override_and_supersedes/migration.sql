@@ -1,0 +1,63 @@
+-- Two additive changes that between them make the merge gate satisfiable by
+-- an honest caller under a squash-merge workflow, and make the one remaining
+-- escape hatch a countable row rather than a silent bypass.
+--
+-- ── 1. "Artifact"."supersedesSha" ─────────────────────────────────────────
+--
+-- The sha a `commit` artifact is a REWRITE OF, when the sha it records
+-- carries already-reviewed work under a new identity rather than new work: a
+-- squash merge, a rebase, an amend.
+--
+-- The merge gate requires an approving `code_review` at the item's tip
+-- commit, and the tip is the newest `commit` artifact's sha. Under a squash
+-- merge those cannot both hold in either order — record the squash sha and
+-- the tip becomes a sha the review does not name (the review was recorded at
+-- the branch tip, the only sha in existence when it ran); do not record it and
+-- `merge.requires_commit` refuses instead. The squash sha does not exist
+-- until the merge happens, so no ordering satisfies the gate. It refused
+-- identically whether the tree changed or not, and a squash rewrites the
+-- commit object while leaving the tree identical.
+--
+-- Recorded rather than computed because the service has no clone and no
+-- network path to one — and ancestry would not answer the question anyway,
+-- since a squash commit is not a descendant of the branch it squashed. The
+-- caller that performed the merge is the one that knows both shas.
+--
+-- Nullable with no default and no backfill: every existing row keeps exactly
+-- the meaning it already carries, and an artifact that does not set the
+-- column is evaluated by the same rules it always was. The new behaviour is
+-- opt-in per artifact, so nothing widens implicitly.
+ALTER TABLE "Artifact" ADD COLUMN IF NOT EXISTS "supersedesSha" TEXT;
+
+-- Serves the guard's supersession walk, which resolves an approval forward
+-- from a reviewed sha onto the sha it landed as by asking, repeatedly, "which
+-- commit artifact for this item supersedes X". Without this the walk is a
+-- sequential scan of the item's artifacts once per hop, on the query path of
+-- every merge decision.
+CREATE INDEX IF NOT EXISTS "Artifact_itemId_supersedesSha_idx"
+  ON "Artifact" ("itemId", "supersedesSha");
+
+-- ── 2. "ArtifactKind".'merge_override' ────────────────────────────────────
+--
+-- A named, reasoned decision to merge WITHOUT the approving review the gate
+-- would otherwise require — the judgement call "nothing material changed
+-- since review, the review still stands".
+--
+-- Its own label rather than a flag on `code_review`, for the reason
+-- `historical_verification` is its own label: the two make different claims,
+-- and the entire value here is that an override cannot be read as a review
+-- by anything looking at the row later. A flag would be a distinction every
+-- existing reader ignores by default; a kind is one they cannot.
+--
+-- Being a kind is also what makes overriding COUNTABLE. "How often is this
+-- installation overriding its own merge gate, and on whose authority" is one
+-- query against this label — which is the difference between a pattern of
+-- overriding being detectable and being anecdotal.
+--
+-- `ADD VALUE IF NOT EXISTS` rather than a bare `ADD VALUE`, for the reason
+-- the historical-verification migration records: a bare `ADD VALUE` on an
+-- existing label is an error, and an error here would leave the migration
+-- half-applied. Postgres 12+ permits this inside a transaction block (how
+-- Prisma runs this file) provided the new label is not USED in the same
+-- transaction — nothing below writes one.
+ALTER TYPE "ArtifactKind" ADD VALUE IF NOT EXISTS 'merge_override';

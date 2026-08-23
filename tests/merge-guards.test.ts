@@ -16,6 +16,7 @@ import {
   currentReviewRound,
   hasApprovingArtifactAtCurrentRound,
   hasApprovingArtifactAtCurrentRoundAndTip,
+  tipCommitLineage,
   mergeRequiresApprovingCodeReviewGuard,
   mergeRequiresAuthorisationGuard,
   mergeRequiresCommitGuard,
@@ -103,6 +104,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     kind: string;
     verdict?: string | null;
     commitSha?: string | null;
+    supersedesSha?: string | null;
     reviewRound?: number;
     createdByType?: string;
     createdAt?: Date;
@@ -117,6 +119,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         kind: overrides.kind as never,
         verdict: (overrides.verdict ?? null) as never,
         commitSha: overrides.commitSha ?? null,
+        supersedesSha: overrides.supersedesSha ?? null,
         body: overrides.body ?? null,
         reviewRound: overrides.reviewRound ?? 1,
         createdByType: (overrides.createdByType ?? "agent") as never,
@@ -1896,6 +1899,375 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(outcome.allowed).toBe(false);
       expect(outcome.rejection?.guard).toBe("merge.requires_commit");
       expect(await readState(id)).toBe("in_review");
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // The squash-merge fix (#236) and the stated-reason override.
+  //
+  // Two separate things, tested separately on purpose, because conflating
+  // them is the mistake the design set out to avoid: the squash case is a
+  // BUG in the check and is fixed so that no override is consumed for it;
+  // the override is for the judgement call that genuinely remains.
+  // ══════════════════════════════════════════════════════════════════════
+
+  /** A `TransactionHandle` over the scratch database, for calling helpers directly. */
+  function dbHandleFor(): TransactionHandle {
+    return {
+      $queryRawUnsafe: (query: string, ...values: unknown[]) =>
+        prisma.$queryRawUnsafe(query, ...values),
+      $executeRawUnsafe: (query: string, ...values: unknown[]) =>
+        prisma.$executeRawUnsafe(query, ...values),
+    };
+  }
+
+  describe("squash-merge — an approval carries forward onto the sha the reviewed code landed as", () => {
+    // The regression this whole section exists for. Reproduces the exact
+    // sequence three independent sessions reported as unsatisfiable: review
+    // the branch tip, squash-merge (which mints a NEW sha that did not exist
+    // at review time), record the landed commit, try to merge.
+    it("REFUSES without a supersession link — the documented unsatisfiable case, still refused", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "e993415" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "e993415",
+      });
+      // The squash merge. A brand-new commit object, claiming nothing.
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "97837fa" });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        guard: "merge.requires_approving_code_review",
+      });
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("ALLOWS when the landed commit records supersedesSha — same shas, link added", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "e993415" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "e993415",
+      });
+      // The ONLY difference from the refusing case above: the landed commit
+      // says what it is a rewrite of. No new review, no override, no
+      // environment variable, no change to the shas involved.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "97837fa",
+        supersedesSha: "e993415",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("follows a multi-hop chain — a rebase, then a squash", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "aaa1111" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "aaa1111",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "bbb2222",
+        supersedesSha: "aaa1111",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "ccc3333",
+        supersedesSha: "bbb2222",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    // The load-bearing negative. If this ever passes, the fix has become a
+    // hole: a commit carrying genuinely new, unreviewed work would be riding
+    // in on an older approval.
+    it("REFUSES a genuinely new commit stacked after a superseding one — staleness still caught", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "aaa1111" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "aaa1111",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "bbb2222",
+        supersedesSha: "aaa1111",
+      });
+      // Real new work: it declares no supersession, so it is not a rewrite
+      // of anything and the approval must not reach it.
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ddd4444" });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        guard: "merge.requires_approving_code_review",
+      });
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("a supersession cycle terminates rather than hanging the merge decision", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "cyc0001" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "cyc0002",
+        supersedesSha: "cyc0001",
+      });
+      // Closes the loop: the newest artifact for 0001 supersedes 0002, which
+      // supersedes 0001. An unbounded walk here would not return, inside the
+      // transaction that decides a merge.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "cyc0001",
+        supersedesSha: "cyc0002",
+      });
+      const lineage = await tipCommitLineage(dbHandleFor(), id);
+      expect(lineage.has("cyc0001")).toBe(true);
+      expect(lineage.has("cyc0002")).toBe(true);
+      expect(lineage.size).toBe(2);
+    });
+
+    it("only a commit artifact can extend the lineage — a review claiming supersession is ignored", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "real999" });
+      // A non-commit kind carrying the column has no standing to assert that
+      // one sha replaced another. If this were honoured, any artifact could
+      // drag an arbitrary sha into the comparison set.
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "real999",
+        supersedesSha: "sneaky1",
+      });
+      const lineage = await tipCommitLineage(dbHandleFor(), id);
+      expect(lineage.has("real999")).toBe(true);
+      expect(lineage.has("sneaky1")).toBe(false);
+    });
+
+    it("the person-approval clause reads the same lineage — a human review survives the squash", async () => {
+      // If this clause used a narrower reading than the code-review clause,
+      // needs_approval would stay unsatisfiable in exactly the workflow it
+      // most needs to work in — and the two clauses could come to rest on
+      // different artifacts, the composition-bug class merge.ts documents
+      // twice.
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "hum1111" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "hum1111",
+        createdByType: "person",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "hum2222",
+        supersedesSha: "hum1111",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("the refusal names the supersedesSha remedy, so the fix is discoverable from the refusal", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "msg1111" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "msg1111",
+      });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "msg2222" });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        message: expect.stringContaining("supersedesSha"),
+      });
+    });
+  });
+
+  describe("merge_override — an escape hatch that leaves a trace", () => {
+    it("ALLOWS a merge with no approving review at all, on a reasoned override", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr1111" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_override",
+        commitSha: "ovr1111",
+        body: "Docs-only change since review; no source files were touched.",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("REFUSES when the override names a different commit — not standing permission", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr2222" });
+      // The override was a judgement about one state of the code and must
+      // not reach the one that is actually here.
+      await createArtifact({
+        itemId: id,
+        kind: "merge_override",
+        commitSha: "some-other-commit",
+        body: "Nothing material changed since the review was recorded.",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        guard: "merge.requires_approving_code_review",
+      });
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("REFUSES an override with an empty body — the row cannot vouch for itself", async () => {
+      // Belt-and-braces at the GUARD, independent of the write-time check
+      // below: this is the clause that decides a merge, and it must not rest
+      // on a validator it does not itself run. Written through Prisma
+      // directly for that reason — `record_artifact` would refuse it.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr3333" });
+      await prisma.artifact.create({
+        data: {
+          id: randomUUID(),
+          itemId: id,
+          kind: "merge_override" as never,
+          commitSha: "ovr3333",
+          body: null,
+          reviewRound: 1,
+          createdByType: "agent" as never,
+          createdById: "test-actor",
+        },
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        guard: "merge.requires_approving_code_review",
+      });
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("does NOT satisfy needs_approval — it widens review evidence, never authorisation", async () => {
+      // The boundary that keeps this from being a way to merge round a
+      // human. If this ever passes, an agent can override its way past a
+      // person's required sign-off.
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr4444" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_override",
+        commitSha: "ovr4444",
+        body: "Trivial rebase since review; the approval still stands here.",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        guard: "merge.requires_authorisation",
+      });
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("survives the squash that lands it, exactly as an approval does", async () => {
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr5555" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_override",
+        commitSha: "ovr5555",
+        body: "Comment-only edit after review; behaviour is unchanged.",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "ovr6666",
+        supersedesSha: "ovr5555",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("is recorded and countable — the override is auditable after the merge", async () => {
+      // AC #4: a pattern of overriding has to be detectable, which means the
+      // decision has to survive as a queryable row rather than as a field on
+      // a request that is discarded once the guard has read it.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr7777" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_override",
+        commitSha: "ovr7777",
+        body: "Lint-only fix after the approving review; logic untouched.",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await callTransition(id, "merged", reg);
+
+      const overrides = await prisma.artifact.findMany({
+        where: { itemId: id, kind: "merge_override" as never },
+      });
+      expect(overrides).toHaveLength(1);
+      expect(overrides[0]!.body).toContain("Lint-only fix");
+      expect(overrides[0]!.createdById).toBe("test-actor");
+      // Never readable as a review — the property the separate kind buys.
+      expect(overrides[0]!.verdict).toBeNull();
+      const reviews = await prisma.artifact.findMany({
+        where: { itemId: id, kind: "code_review" as never },
+      });
+      expect(reviews).toHaveLength(0);
+    });
+
+    it("the refusal names the override route, and names one that exists", async () => {
+      // An earlier wording of this message named a remedy no surface
+      // implemented, and a session burned six attempts chasing it.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr8888" });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        message: expect.stringContaining("merge_override"),
+      });
     });
   });
 });

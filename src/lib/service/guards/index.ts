@@ -64,7 +64,18 @@ export {
   pausedRequiredFieldsGuard,
   BLOCKED_PAUSED_GUARDS,
 } from "./blocked-paused";
-export { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
+export {
+  currentTipCommitSha,
+  hasApproval,
+  latestApprovalAtTip,
+  tipCommitLineage,
+} from "./artifact-tip";
+export {
+  MERGE_OVERRIDE_KIND,
+  MIN_REASON_LENGTH,
+  mergeOverrideSatisfies,
+  type MergeOverrideOutcome,
+} from "./merge-override";
 export {
   HISTORICAL_VERIFICATION_KIND,
   historicalVerificationSatisfies,

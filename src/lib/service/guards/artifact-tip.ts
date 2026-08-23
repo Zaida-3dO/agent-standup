@@ -20,6 +20,96 @@ interface ArtifactRow {
 }
 
 /**
+ * How many supersession hops the walk below will follow before giving up.
+ *
+ * A bound rather than an unbounded loop, because the chain is built from
+ * caller-supplied `supersedesSha` values and nothing stops a caller — or a
+ * bug — from recording a cycle (`b` supersedes `a`, `a` supersedes `b`). An
+ * unbounded walk over a cycle does not return, and this code runs inside the
+ * transaction that decides a merge.
+ *
+ * The visited-set below already breaks a true cycle; this bounds the other
+ * shape, a long non-cyclic chain, and costs one query per hop on the merge
+ * path. Ten is far above real use — a squash, a rebase and an amend of the
+ * same work is three — and far below anything that would matter.
+ */
+const MAX_SUPERSESSION_HOPS = 10;
+
+/**
+ * Every sha that the item's tip commit stands in for: the tip itself, then
+ * whatever each link in the supersession chain replaced, oldest-ward.
+ *
+ * ── What this is answering ──────────────────────────────────────────────
+ *
+ * "Is this approval at the tip?" is the right question, and comparing shas
+ * is the wrong way to ask it whenever the repository rewrites commits.
+ * A squash merge produces a sha nobody has reviewed or could have reviewed —
+ * it does not exist until the merge happens — for a tree that may be
+ * byte-identical to the reviewed one. Comparing the review's sha against it
+ * refuses every honest caller and detects no actual staleness.
+ *
+ * So the comparison widens from one sha to the **set of shas the tip is
+ * known to stand in for**, built by following `supersedesSha` links that the
+ * merging caller recorded. An approval qualifies if it names any sha in that
+ * set.
+ *
+ * ── Why this does not weaken the check ──────────────────────────────────
+ *
+ * The set only ever contains shas that some `commit` artifact explicitly
+ * declared its own sha to be a rewrite of. A commit recording new work sets
+ * nothing, contributes nothing to the set, and continues to invalidate every
+ * earlier approval exactly as before — which is the case the guard exists
+ * for. Genuine staleness (someone pushed a real change after review) is
+ * unaffected, because the new commit does not claim to supersede anything.
+ *
+ * Returned oldest-last in a `Set`, and membership is all any caller asks.
+ */
+export async function tipCommitLineage(
+  db: TransactionHandle,
+  itemId: string,
+): Promise<ReadonlySet<string>> {
+  const tip = await currentTipCommitSha(db, itemId);
+  const lineage = new Set<string>();
+  if (tip === null) {
+    return lineage;
+  }
+  lineage.add(tip);
+
+  let cursor: string = tip;
+  for (let hop = 0; hop < MAX_SUPERSESSION_HOPS; hop += 1) {
+    const rows = await db.$queryRawUnsafe<{ supersedesSha: string | null }[]>(
+      // Scoped to `kind = 'commit'`: only a commit artifact can assert that
+      // one sha replaced another. A review or a screenshot carrying the
+      // column would otherwise be able to extend the lineage, which is a
+      // claim those kinds have no standing to make.
+      `SELECT "supersedesSha"
+         FROM "Artifact"
+        WHERE "itemId" = $1 AND "kind" = 'commit' AND "commitSha" = $2
+          AND "supersedesSha" IS NOT NULL
+        ORDER BY "createdAt" DESC, "id" DESC
+        LIMIT 1`,
+      itemId,
+      cursor,
+    );
+    const next = rows[0]?.supersedesSha;
+    // No link recorded for this sha — the chain ends here, which is the
+    // ordinary case for work that was never rewritten.
+    if (next == null) {
+      return lineage;
+    }
+    // A sha already in the set closes a cycle. Stopping rather than throwing:
+    // the lineage collected so far is still true, and a merge decision should
+    // not fail because someone recorded a confused link.
+    if (lineage.has(next)) {
+      return lineage;
+    }
+    lineage.add(next);
+    cursor = next;
+  }
+  return lineage;
+}
+
+/**
  * The item's current tip commit, derived from its own artifact history —
  * never stored, per DECISIONS.md §13a ("store facts, derive volatiles").
  *
@@ -110,12 +200,15 @@ export async function hasApproval(
  * approval and **at the item's current tip commit**, or `null` if none
  * qualifies.
  *
- * "At the tip" is deliberately the narrow reading: an artifact whose
- * `commitSha` does not exactly equal `currentTipCommitSha` is refused, full
- * stop — there is no fuzzy notion of "close enough" or "the tip's ancestor."
- * A review approving sha X says nothing about sha Y, however the two shas are
- * related; only an exact match counts as evidence for the transition in
- * front of the guard.
+ * "At the tip" means the tip **or any sha the tip has been declared a
+ * rewrite of** (`tipCommitLineage`). It is still the narrow reading in the
+ * way that matters: a review approving sha X says nothing about an unrelated
+ * sha Y, and nothing here infers a relationship. The only shas that join the
+ * comparison set are ones a `commit` artifact explicitly recorded its own
+ * sha as superseding — a squash, a rebase, an amend — where the reviewed
+ * code and the landed code are the same work under two names. A commit
+ * carrying new work declares no supersession, so it invalidates earlier
+ * approvals exactly as it always did.
  *
  * Two artifacts can carry a null `commitSha` and still be compared correctly
  * here: with no `commit` artifact for the item (tip is `null`), an approval
@@ -133,6 +226,7 @@ export async function latestApprovalAtTip(
   kind: string,
 ): Promise<ArtifactRow | null> {
   const tip = await currentTipCommitSha(db, itemId);
+  const lineage = await tipCommitLineage(db, itemId);
   const rows = await approvedArtifacts(db, itemId, kind);
 
   // Walk newest-first and return the first one that is actually at the tip,
@@ -145,7 +239,11 @@ export async function latestApprovalAtTip(
   // collapsing them to "the latest one, checked" would silently answer the
   // wrong one whenever they diverge.
   for (const row of rows) {
-    if (row.commitSha === tip) {
+    // `=== tip` still carries the `null`-tip case: with no commit artifact
+    // for the item, `lineage` is empty and an approval with `commitSha:
+    // null` must still match, which set membership alone would not give
+    // (`lineage.has(null)` is not a question the set can answer).
+    if (row.commitSha === tip || (row.commitSha !== null && lineage.has(row.commitSha))) {
       return row;
     }
   }

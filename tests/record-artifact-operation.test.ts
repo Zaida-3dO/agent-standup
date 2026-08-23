@@ -274,6 +274,124 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(error.fields).toEqual(["body"]);
     });
 
+    // #236 — a `merge_override` is a reasoned decision to merge WITHOUT the
+    // approving review the gate requires. Its entire claim to being an
+    // audited escape hatch rather than a silent bypass is that the reason is
+    // mandatory and durable, so the reason is enforced at the WRITE: a row
+    // asserting an override that could never have qualified should not
+    // exist, because a later reader counts it as an override.
+    it("refuses a merge_override with no commitSha", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "merge_override",
+        body: "Nothing material changed since the review; docs only.",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      // An override is a judgement about one specific state of the code. An
+      // unpinned one would be standing permission to skip review.
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["commitSha"]);
+    });
+
+    it("refuses a merge_override with no body — the stated reason is the whole point", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "merge_override",
+        commitSha: "abc123",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+    });
+
+    it("refuses a merge_override whose body is only whitespace", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "merge_override",
+        commitSha: "abc123",
+        body: "   \n  ",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+    });
+
+    it("refuses a merge_override whose reason is too short to say anything", async () => {
+      // A mandatory field satisfiable by "ok" is an optional field with extra
+      // keystrokes. The floor is crude and does not pretend to detect a
+      // considered reason — it removes the dismissal, which is the shape a
+      // required field collapses into when nothing checks its content.
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "merge_override",
+        commitSha: "abc123",
+        body: "fine",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+      // The refusal says the actual length and the required one, so the
+      // caller does not have to guess how much more is wanted.
+      const text = (error as unknown as Error).message;
+      expect(text).toContain("4 characters");
+      expect(text).toContain("20");
+    });
+
+    it("accepts a merge_override carrying a commit and a real reason, and never as a review", async () => {
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "merge_override",
+        commitSha: "abc123",
+        body: "Rebased onto main after approval; no source changes since the review.",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.kind).toBe("merge_override");
+      // No verdict, so nothing counting approvals can ever count this. The
+      // separate kind is what makes overriding countable rather than
+      // indistinguishable from an ordinary approval.
+      expect(artifact.verdict).toBeNull();
+      // Attribution is recorded, which is what makes "who overrode this"
+      // answerable after the fact.
+      expect(artifact.createdByType).toBe("agent");
+      expect(artifact.createdById).toBe("agent-a");
+    });
+
+    it("records supersedesSha on a commit artifact, which is what carries an approval across a squash", async () => {
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "commit",
+        commitSha: "97837fa",
+        supersedesSha: "e993415",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.commitSha).toBe("97837fa");
+      expect(artifact.supersedesSha).toBe("e993415");
+    });
+
+    it("leaves supersedesSha null when not supplied — nothing widens implicitly", async () => {
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "commit",
+        commitSha: "plain11",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.supersedesSha).toBeNull();
+    });
+
     it("accepts a historical_verification carrying both, and stores it as its own kind — never as a review", async () => {
       const itemId = await createTask();
       const artifact = await record({
