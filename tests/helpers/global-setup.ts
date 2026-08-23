@@ -23,6 +23,7 @@
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { buildCli } from "../../scripts/build-cli.mjs";
+import { assertPrismaClientReady } from "../../scripts/lib/prisma-client-state.mjs";
 import { runMigrations } from "../../scripts/lib/run-migrations.mjs";
 import { withDatabaseName } from "./scratch-db";
 
@@ -46,6 +47,11 @@ async function execSql(url: string, ...statements: string[]): Promise<void> {
 }
 
 export default async function setup(): Promise<() => Promise<void>> {
+  // Before anything else, because the alternative is six suites failing in
+  // ways that read as defects in the code rather than as a missing build
+  // step. See the module's own header for what the failures look like.
+  assertPrismaClientReady();
+
   // Builds `dist/` exactly once for the whole run, and it has to happen ABOVE
   // the database guard below: the files that exercise the built artefacts
   // (`tests/cli-package-publish.test.ts`, `tests/hook-built-script.test.ts`)

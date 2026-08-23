@@ -287,17 +287,37 @@ function lineOf(sourceFile, pos) {
   return sourceFile.getLineAndCharacterOfPosition(pos).line + 1;
 }
 
-/** Every tracked `.ts`/`.tsx` file under `src/`, so a new file is covered the moment it is added. */
+/**
+ * Every `.ts`/`.tsx` file under `src/` in the working tree — tracked **and**
+ * untracked-but-not-ignored.
+ *
+ * The untracked half is not optional, for the reason
+ * `scripts/check-external-refs.mjs` gives at its own listing helper: a check
+ * that runs before CI is worth having only if it sees the file a developer
+ * has just written and not yet staged. Listing tracked files alone reported
+ * "none found" over a brand-new violating module — a pass that positively
+ * meant nothing about the new work — and left CI to catch it a push later.
+ *
+ * `--exclude-standard` keeps `.gitignore`d paths out, so build output and
+ * `node_modules` are still not scanned.
+ */
 function trackedSourceFiles() {
-  const result = spawnSync("git", ["ls-files", "-z", "--", "src/**/*.ts", "src/**/*.tsx"], {
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `git ls-files failed: ${result.stderr || result.error?.message || "unknown error"}`,
+  const listing = (extra) => {
+    const result = spawnSync(
+      "git",
+      ["ls-files", "-z", ...extra, "--", "src/**/*.ts", "src/**/*.tsx"],
+      { encoding: "utf8" },
     );
-  }
-  return result.stdout.split("\0").filter(Boolean);
+    if (result.status !== 0) {
+      throw new Error(
+        `git ls-files failed: ${result.stderr || result.error?.message || "unknown error"}`,
+      );
+    }
+    return result.stdout.split("\0").filter(Boolean);
+  };
+  // Dedupe: a path can be reported by both listings in some index states,
+  // and a file scanned twice would report the same violation twice.
+  return [...new Set([...listing([]), ...listing(["--others", "--exclude-standard"])])];
 }
 
 function describe(violation, path) {

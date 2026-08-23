@@ -736,15 +736,41 @@ export function isScannable(path) {
   return !BINARY_EXTENSIONS.has(extension);
 }
 
-/** Every tracked file, so a new file is covered the moment it is added. */
+/**
+ * Every file in the working tree the repository would keep — tracked **and**
+ * untracked-but-not-ignored.
+ *
+ * **Why the untracked half is not optional.** This check exists to fail
+ * before CI does. Listing only tracked files made it reliably wrong in the
+ * one case a developer most needs it: a file they have just written and not
+ * yet staged. The scan reported success having never opened that file, so a
+ * green result said nothing at all about the new work — and CI, which reads
+ * the file once it is committed, then failed on it. That cost a real
+ * round-trip on PR #223, and would have cost one on every new file forever.
+ *
+ * A check that cannot tell "this is clean" apart from "I never looked at
+ * this" is the silent-success failure this repository treats as worse than
+ * no check at all.
+ *
+ * `--others` adds the untracked files; `--exclude-standard` applies
+ * `.gitignore` and friends, which is what keeps `node_modules` and build
+ * output out, and is presumably why `ls-files` was chosen over a directory
+ * walk in the first place. Paths that are tracked but deleted from disk are
+ * handled by the caller's `statSync`, which already skips them.
+ */
 function trackedFiles() {
-  const result = spawnSync("git", ["ls-files", "-z"], { encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(
-      `git ls-files failed: ${result.stderr || result.error?.message || "unknown error"}`,
-    );
-  }
-  return result.stdout.split("\0").filter(Boolean);
+  const listing = (extra) => {
+    const result = spawnSync("git", ["ls-files", "-z", ...extra], { encoding: "utf8" });
+    if (result.status !== 0) {
+      throw new Error(
+        `git ls-files failed: ${result.stderr || result.error?.message || "unknown error"}`,
+      );
+    }
+    return result.stdout.split("\0").filter(Boolean);
+  };
+  // A path can appear in both listings in some index states, so dedupe: a
+  // file scanned twice would report the same violation twice.
+  return [...new Set([...listing([]), ...listing(["--others", "--exclude-standard"])])];
 }
 
 /** What to say about a violation that came from a waiver rather than a pattern. */

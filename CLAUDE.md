@@ -216,6 +216,24 @@ to follow: the script's own header states outright that a green run means the re
 absent, not that the prose is clean, and the test both seeds a violation to prove the gate fires and
 asserts the exemption lists stay exactly as narrow as intended.
 
+## Setting up a working tree
+
+```bash
+npm ci
+npx prisma generate      # NOT optional, and `npm ci` does not do it
+```
+
+**Why the second line is called out.** There is no `postinstall` hook, so `npm ci` leaves
+`@prisma/client` as the placeholder module it ships as. Every crew works in a fresh
+`git worktree`, which gets its own empty `node_modules`, so an ungenerated client is the
+normal state of new work rather than a broken machine — and without it several suites fail
+in ways that read as defects in the code under test, not as a missing build step (the worst
+of them reports `expected Error: @prisma/client did not initialize … to be an instance of
+DatabaseUnreachableError`, which sends you into the boot code for no reason).
+
+The test run refuses to start on an ungenerated client and says this in one line, so the
+step is enforced rather than merely documented — see `scripts/lib/prisma-client-state.mjs`.
+
 ## Local checks before a push
 
 `npm install` (or `npm ci`) wires a pre-push git hook (`.githooks/pre-push`, installed by the

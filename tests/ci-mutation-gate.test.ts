@@ -146,9 +146,17 @@ describe("the gate distinguishes a paused job from a failing one", () => {
     // The assertion that would have caught the original bug. The failing
     // step's condition must exclude `skipped`; a bare
     // `result != 'success'` does not, and this is exactly that check.
-    const failingStep = gateConditions().find((condition) => condition.includes("!= 'success'"));
+    //
+    // Anchored on `mutation-testing.result` specifically. A looser search for
+    // any `!= 'success'` also matches the *pass* branch that reads
+    // `build-and-test.result != 'success'`, and would then assert about the
+    // wrong step entirely — passing or failing for reasons unconnected to the
+    // regression this guards.
+    const failingStep = gateConditions().find((condition) =>
+      condition.includes("needs.mutation-testing.result != 'success'"),
+    );
     expect(failingStep).toBeDefined();
-    expect(failingStep).toContain("!= 'skipped'");
+    expect(failingStep).toContain("needs.mutation-testing.result != 'skipped'");
   });
 
   it("still fails when mutation testing ran and did not succeed", () => {
@@ -172,6 +180,61 @@ describe("the gate distinguishes a paused job from a failing one", () => {
     expect(passesOnNoSource).toBe(true);
   });
 
+  // The gate passes on a `skipped` mutation job for two unrelated reasons,
+  // and it used to state only one of them. On a run where the job was off
+  // (it is limited to `workflow_dispatch`) and `build-and-test` was green,
+  // the required check reported "the suite it follows is already red" about
+  // a suite that had passed — observed on run 32374433954.
+  //
+  // A required gate whose stated reason is not the actual reason is the same
+  // class of defect as one that passes without checking: the log is the only
+  // thing a reader has, and it was false. These pin each branch to the
+  // condition that makes its own message true.
+  describe("each pass branch states the reason that actually applies", () => {
+    /** The step whose `if:` contains every one of `needles`. */
+    function stepMatching(...needles: string[]): string {
+      const conditions = gateConditions().filter((c) => needles.every((n) => c.includes(n)));
+      expect(
+        conditions.length,
+        `expected exactly one gate branch matching ${JSON.stringify(needles)}`,
+      ).toBe(1);
+      return extractStepBlock(GATE, conditions[0] as string);
+    }
+
+    it("attributes a skip on a non-dispatch run to the job being switched off", () => {
+      const step = stepMatching(
+        "needs.mutation-testing.result == 'skipped'",
+        "github.event_name != 'workflow_dispatch'",
+      );
+      expect(step).not.toBe("");
+      // It must not blame `build-and-test`, which may well have passed.
+      expect(step).not.toContain("already red");
+      // And it must be explicit that nothing about the code was checked,
+      // rather than reading as a clean bill of health.
+      expect(step).toContain("verified nothing");
+    });
+
+    it("blames build-and-test only when build-and-test actually failed", () => {
+      const step = stepMatching(
+        "needs.mutation-testing.result == 'skipped'",
+        "needs.build-and-test.result != 'success'",
+      );
+      expect(step).not.toBe("");
+      expect(step).toContain("already red");
+    });
+
+    it("fails on a skip that neither reason explains", () => {
+      // A narrowed `if:` on the mutation job that nobody mirrored here. The
+      // gate must not guess which of the two it was and pass anyway.
+      const step = stepMatching(
+        "needs.mutation-testing.result == 'skipped'",
+        "needs.build-and-test.result == 'success'",
+      );
+      expect(step).not.toBe("");
+      expect(step).toContain("exit 1");
+    });
+  });
+
   it("always runs, so a skipped dependency cannot skip the required check itself", () => {
     // A required check that is itself skipped never reports, which reads as
     // quiet rather than red — the same trap CLAUDE.md names for a pull
@@ -179,8 +242,27 @@ describe("the gate distinguishes a paused job from a failing one", () => {
     expect(GATE).toMatch(/if:\s*always\(\)/);
   });
 
-  it("depends on both the changes job and the mutation job", () => {
-    expect(GATE).toMatch(/needs:\s*\[changes,\s*mutation-testing\]/);
+  it("declares every job whose result it reads", () => {
+    // A `needs` context only carries jobs named here. An unnamed job's
+    // `result` is the empty string rather than an error, so a branch reading
+    // it matches nothing and the gate falls off the end reporting success
+    // having verified nothing — the exact failure mode the fail-closed
+    // pattern exists to prevent, reintroduced through the back door.
+    //
+    // So this is derived from the conditions rather than pinned to a literal
+    // list: a branch that starts reading a new job's result fails here until
+    // that job is declared.
+    const declared = /needs:\s*\[([^\]]*)\]/.exec(GATE)?.[1] ?? "";
+    const names = declared.split(",").map((n) => n.trim());
+    expect(names).toContain("changes");
+    expect(names).toContain("mutation-testing");
+
+    const read = new Set(
+      [...GATE.matchAll(/needs\.([\w-]+)\.(?:result|outputs)/g)].map((m) => m[1] as string),
+    );
+    // Not vacuous: the gate does read at least one job's result.
+    expect(read.size).toBeGreaterThan(0);
+    for (const job of read) expect(names).toContain(job);
   });
 });
 
