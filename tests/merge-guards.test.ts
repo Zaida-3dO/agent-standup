@@ -484,6 +484,47 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("in_review");
     });
 
+    it("needs_approval: the refusal names the standing-authorisation route, and warns off the wrong one", async () => {
+      // Both halves are load-bearing and neither is implied by the rule itself.
+      //
+      // A caller holding a standing authorisation ("merge this class of work
+      // without asking me each time") reads the bare rule as "go and fetch a
+      // human" and stalls on work that was already authorised — so the message
+      // has to say that a standing grant lives on the ITEM, as
+      // `mergeAuthority: pre-approved`, rather than in the transition request.
+      // The default makes this the common case, not the exotic one: an item
+      // minted by an agent lands on `needs_approval`.
+      //
+      // And the guard is trivially satisfiable the WRONG way, by recording the
+      // artifact with `createdByType: person` — which credits a human with a
+      // review an agent wrote. A refusal that leaves a tempting-but-dishonest
+      // escape hatch unmentioned relies on every caller noticing unaided.
+      //
+      // Mutation-checked: deleting either sentence from the guard fails this
+      // test and nothing else in the suite.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "agent",
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        message?: string;
+      };
+
+      // The remedy: the field to set, the value to set it to, and the call.
+      expect(error.message).toMatch(/mergeAuthority/);
+      expect(error.message).toMatch(/pre-approved/);
+      expect(error.message).toMatch(/update_item/);
+
+      // The anti-remedy, named so it is not discovered by accident.
+      expect(error.message).toMatch(/created_by_type/);
+      expect(error.message).toMatch(/WROTE/);
+    });
+
     it("needs_approval: ALLOWS when the approving code_review was recorded by a person", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);

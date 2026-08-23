@@ -248,6 +248,25 @@ export const mergeRequiresVisualReviewGuard: Guard = {
  *     but for a commit a newer, same-round commit has since superseded.
  *     Either gap lets the item merge with no human having reviewed what
  *     actually shipped.
+ *
+ *     **The refusal names two things, and the second matters as much as the
+ *     first.** (1) A standing authorisation — a person saying "merge this
+ *     class of work without asking me each time" — is expressed by setting
+ *     the item's `merge_authority` to `pre_approved`, not by anything in the
+ *     transition request. A caller who holds one otherwise reads this refusal
+ *     as "go and fetch a human" and stalls on work that was already
+ *     authorised. Worth stating because the default cuts against it: an item
+ *     minted by an agent lands on `needs_approval`, so the rows most likely
+ *     to be covered by a standing grant are exactly the ones that do not
+ *     announce it. (2) The guard is trivially satisfiable by recording the
+ *     `code_review` artifact with `created_by_type: person` — and that is
+ *     **wrong**, because that field records who *wrote* the artifact, not
+ *     who permitted the merge. Doing it puts a person's name on a review an
+ *     agent performed and destroys the only signal separating a merge a
+ *     human actually looked at from one that was stamped. A message that
+ *     leaves a tempting-but-wrong escape hatch unmentioned is relying on
+ *     every caller to work out on its own that the obvious route is the
+ *     dishonest one.
  *   - `agent_judgement` — DECISIONS.md §9: "the agent decides at the gate
  *     ... and must record a one-line rationale". No schema column or event
  *     payload carries this yet (row #27, the transition operation itself,
@@ -277,7 +296,11 @@ export const mergeRequiresAuthorisationGuard: Guard = {
       if (!approvedByPerson) {
         return guardRejected(
           "merge_authority is needs_approval — a person must record the approving code_review " +
-            "artifact at the current review round and tip commit before this item can merge.",
+            "artifact at the current review round and tip commit before this item can merge. " +
+            "If a person already authorised this work in advance, that belongs on the item, not " +
+            'in this request: set mergeAuthority to "pre-approved" with update_item, then retry. ' +
+            "Do not instead record the review artifact as a person — created_by_type says who " +
+            "WROTE it, so doing that credits a human with a review an agent performed.",
           { fields: ["state"] },
         );
       }
