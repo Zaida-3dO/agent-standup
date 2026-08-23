@@ -375,11 +375,246 @@ describeIfDb("the slim write against Postgres", () => {
     });
   });
 
+  // -- The two writes #231's audit classified as "already compact" ---------
+  //
+  // They were not. Both return whatever `applyMove` hands back, which is the
+  // whole row: measured at 40,775 (`reparent_item`) and 40,780
+  // (`retype_to_task`) characters against an item carrying a 20,000-char
+  // `body` and an equally large `customFields` -- twice the ~20,000 that
+  // motivated the original row, and with no flag to opt out of.
+  //
+  // Reparenting is where this bites hardest, because emptying a project is
+  // one call per child. The cases below therefore pin the per-call shape AND
+  // the bulk case, since the bulk case is the reason the row exists.
+  describe("reparent_item", () => {
+    /** A fresh destination project, so no case depends on another's leftovers. */
+    async function destination(title: string) {
+      return (await runtime.call("create_item", {
+        title,
+        body: "Somewhere to move things to.",
+        area: "slim-writes",
+        originType: "auto",
+      })) as unknown as { id: string };
+    }
+
+    it("returns the slim record by default, with nothing heavy", async () => {
+      const created = await makeHeavyItem();
+      const to = await destination("Reparent destination");
+      const result = (await runtime.call("reparent_item", {
+        id: created.id,
+        parentId: to.id,
+      })) as unknown as Record<string, unknown>;
+
+      for (const field of IDENTITY_FIELDS) {
+        expect(result).toHaveProperty(field);
+      }
+      // THE assertion: absence, not presence. A truncated `body` would still
+      // satisfy a presence check on `id`/`title`/`state`.
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+    });
+
+    it("answers a move in a few hundred characters, not forty thousand", async () => {
+      const created = await makeHeavyItem();
+      const to = await destination("Reparent size destination");
+      const result = await runtime.call("reparent_item", { id: created.id, parentId: to.id });
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    it("is an order of magnitude smaller than the same call with full", async () => {
+      const slimItem = await makeHeavyItem();
+      const fullItem = await makeHeavyItem();
+      const to = await destination("Reparent ratio destination");
+      const slim = await runtime.call("reparent_item", { id: slimItem.id, parentId: to.id });
+      const full = await runtime.call("reparent_item", {
+        id: fullItem.id,
+        parentId: to.id,
+        full: true,
+      });
+      expect(wireSize(full)).toBeGreaterThan(wireSize(slim) * 20);
+    });
+
+    it("restores every heavy field when full is passed", async () => {
+      const created = await makeHeavyItem();
+      const to = await destination("Reparent full destination");
+      const result = (await runtime.call("reparent_item", {
+        id: created.id,
+        parentId: to.id,
+        full: true,
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).toHaveProperty(field);
+      }
+      expect(result.body).toHaveLength(20_000);
+    });
+
+    // The `parentId: null` branch returns down a *different* path -- it never
+    // resolves a parent -- so slimming the main return alone would leave this
+    // one echoing the whole record. Same trap as `update_item`'s no-op paths.
+    it("stays slim on the parentId: null branch, which returns down an earlier path", async () => {
+      const created = await makeHeavyItem();
+      const result = (await runtime.call("reparent_item", {
+        id: created.id,
+        parentId: null,
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    // The `"inbox"` sentinel resolves its parent through a different function
+    // before reaching the same return, so it is exercised rather than assumed
+    // to be covered by the named-parent case.
+    it("stays slim when the parent is resolved from the inbox sentinel", async () => {
+      const created = await makeHeavyItem();
+      const result = (await runtime.call("reparent_item", {
+        id: created.id,
+        parentId: "inbox",
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    // The bulk case the parent row describes, asserted as one number rather
+    // than per call: emptying a project of heavily-briefed children used to
+    // cost ~40k characters *per child*.
+    it("keeps emptying a project cheap across every child moved", async () => {
+      const from = await destination("Bulk source");
+      const to = await destination("Bulk destination");
+      const children = [
+        await makeHeavyItem({ parentId: from.id, title: "Bulk child one" }),
+        await makeHeavyItem({ parentId: from.id, title: "Bulk child two" }),
+        await makeHeavyItem({ parentId: from.id, title: "Bulk child three" }),
+      ];
+
+      let total = 0;
+      for (const child of children) {
+        total += wireSize(await runtime.call("reparent_item", { id: child.id, parentId: to.id }));
+      }
+
+      // Three moves. At the measured ~40,775 characters per unslimmed move,
+      // the same loop costs ~122,000 characters.
+      expect(total).toBeLessThan(SLIM_WRITE_CEILING * children.length);
+    });
+
+    // Slimming the success path must not have touched the refusals; a move
+    // under the item itself is still refused.
+    it("still refuses a move under the item itself, and the refusal is unchanged", async () => {
+      const created = await makeHeavyItem();
+      await expect(
+        runtime.call("reparent_item", { id: created.id, parentId: created.id }),
+      ).rejects.toBeDefined();
+    });
+  });
+
+  describe("retype_to_task", () => {
+    /**
+     * A childless **project** -- what a retype needs. Parentless on purpose:
+     * that is what makes it a project, and a project with no children is the
+     * stuck row `retype_to_task` exists to rescue.
+     */
+    async function makeHeavyProject(title: string) {
+      return (await runtime.call("create_item", {
+        title,
+        headline: "One line about the stuck project",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+      })) as unknown as { id: string };
+    }
+
+    it("returns the slim record by default, with nothing heavy", async () => {
+      const stuck = await makeHeavyProject("Stuck, slim");
+      const result = (await runtime.call("retype_to_task", {
+        id: stuck.id,
+        projectId: parentProjectId,
+      })) as unknown as Record<string, unknown>;
+
+      for (const field of IDENTITY_FIELDS) {
+        expect(result).toHaveProperty(field);
+      }
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+    });
+
+    it("answers a retype in a few hundred characters, not forty thousand", async () => {
+      const stuck = await makeHeavyProject("Stuck, sized");
+      const result = await runtime.call("retype_to_task", {
+        id: stuck.id,
+        projectId: parentProjectId,
+      });
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    it("is an order of magnitude smaller than the same call with full", async () => {
+      const slimProject = await makeHeavyProject("Stuck, ratio slim");
+      const fullProject = await makeHeavyProject("Stuck, ratio full");
+      const slim = await runtime.call("retype_to_task", {
+        id: slimProject.id,
+        projectId: parentProjectId,
+      });
+      const full = await runtime.call("retype_to_task", {
+        id: fullProject.id,
+        projectId: parentProjectId,
+        full: true,
+      });
+      expect(wireSize(full)).toBeGreaterThan(wireSize(slim) * 20);
+    });
+
+    it("restores every heavy field when full is passed", async () => {
+      const stuck = await makeHeavyProject("Stuck, full");
+      const result = (await runtime.call("retype_to_task", {
+        id: stuck.id,
+        projectId: parentProjectId,
+        full: true,
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).toHaveProperty(field);
+      }
+      expect(result.body).toHaveLength(20_000);
+    });
+
+    it("stays slim when the parent is resolved from the inbox sentinel", async () => {
+      const stuck = await makeHeavyProject("Stuck, inbox-bound");
+      const result = (await runtime.call("retype_to_task", {
+        id: stuck.id,
+        projectId: "inbox",
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    // The guard that refuses a project with children is the operation's
+    // whole reason for existing beside `reparent_item`; slimming must not
+    // have quietened it.
+    it("still refuses a project that has children, and the refusal is unchanged", async () => {
+      const parent = await makeHeavyProject("Stuck, has a child");
+      await makeHeavyItem({ parentId: parent.id, title: "In the way" });
+      await expect(
+        runtime.call("retype_to_task", { id: parent.id, projectId: parentProjectId }),
+      ).rejects.toBeDefined();
+    });
+  });
+
   // Acceptance #4. `describe_tool` derives its field list from each
   // operation's own input schema, so this asserts the flag reached the
   // surface an agent actually reads rather than only the service layer.
   describe("describe_tool advertises the flag", () => {
-    for (const tool of ["transition_item", "update_item", "complete_item"] as const) {
+    for (const tool of [
+      "transition_item",
+      "update_item",
+      "complete_item",
+      "reparent_item",
+      "retype_to_task",
+    ] as const) {
       it(`names full among ${tool}'s fields`, async () => {
         const contract = (await runtime.call("describe_tool", { tool })) as unknown as {
           fields: { name: string }[];

@@ -74,6 +74,15 @@ describeIfDb("reparenting and retyping", () => {
     return { title, body: "The brief.", area, originType: "auto" as const };
   }
 
+  /**
+   * Note the `full: true` on the `reparent_item` / `retype_to_task` calls
+   * whose *return value* is asserted on below. Both operations return the
+   * slim write shape by default (`id`/`title`/`state`/`headline`/`updatedAt`
+   * — MILESTONES.md #107), which does not carry `kind` or `parentId`. The
+   * flag is passed at each call site rather than hidden in this helper so a
+   * reader can see which cases depend on the wide record; the cases that
+   * assert through `rowOf` deliberately do not pass it.
+   */
   async function call(name: string, input: unknown): Promise<Item> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (await (runtime.call as any)(name, input)) as Item;
@@ -113,7 +122,7 @@ describeIfDb("reparenting and retyping", () => {
       const to = await call("create_project", base("Destination project"));
       const task = await call("create_task", { ...base("A task"), projectId: from.id });
 
-      const moved = await call("reparent_item", { id: task.id, parentId: to.id });
+      const moved = await call("reparent_item", { id: task.id, parentId: to.id, full: true });
 
       expect(moved.parentId).toBe(to.id);
       expect(moved.kind).toBe("task");
@@ -428,7 +437,7 @@ describeIfDb("reparenting and retyping", () => {
     it('accepts the "inbox" sentinel and files the item under the inbox project', async () => {
       const stuck = await call("create_project", base("Inbox-bound"));
 
-      const moved = await call("reparent_item", { id: stuck.id, parentId: "inbox" });
+      const moved = await call("reparent_item", { id: stuck.id, parentId: "inbox", full: true });
 
       expect(moved.kind).toBe("task");
       expect(moved.parentId).not.toBeNull();
@@ -443,7 +452,11 @@ describeIfDb("reparenting and retyping", () => {
       const stuck = await call("create_project", base("Was a project"));
       const home = await call("create_project", base("Retype home"));
 
-      const retyped = await call("retype_to_task", { id: stuck.id, projectId: home.id });
+      const retyped = await call("retype_to_task", {
+        id: stuck.id,
+        projectId: home.id,
+        full: true,
+      });
 
       expect(retyped.kind).toBe("task");
       expect(retyped.parentId).toBe(home.id);
@@ -466,7 +479,11 @@ describeIfDb("reparenting and retyping", () => {
         stuck.id,
       );
 
-      const retyped = await call("retype_to_task", { id: stuck.id, projectId: home.id });
+      const retyped = await call("retype_to_task", {
+        id: stuck.id,
+        projectId: home.id,
+        full: true,
+      });
       expect(retyped.state).toBe("blocked");
     });
 
@@ -515,7 +532,11 @@ describeIfDb("reparenting and retyping", () => {
       const child = await call("create_task", { ...base("Moved away"), projectId: parent.id });
 
       await call("reparent_item", { id: child.id, parentId: elsewhere.id });
-      const retyped = await call("retype_to_task", { id: parent.id, projectId: home.id });
+      const retyped = await call("retype_to_task", {
+        id: parent.id,
+        projectId: home.id,
+        full: true,
+      });
 
       expect(retyped.kind).toBe("task");
     });
