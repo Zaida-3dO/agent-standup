@@ -13,7 +13,7 @@
 // its own small module rather than overloading `artifact-tip.ts` with a
 // second axis it was never asked to compare on.
 import type { TransactionHandle } from "../context";
-import { currentTipCommitSha } from "./artifact-tip";
+import { currentTipCommitSha, tipCommitLineage } from "./artifact-tip";
 import { APPROVING_VERDICTS } from "../../verdicts";
 
 interface ReviewRoundRow {
@@ -111,6 +111,14 @@ export async function approvingArtifactAtCurrentRoundAndTip(
     return null;
   }
   const tip = await currentTipCommitSha(db, itemId);
+  // "At the tip" is the tip **or any sha the tip was declared a rewrite of**
+  // — `tipCommitLineage`'s doc carries the full reasoning. In short: under a
+  // squash merge the landed sha does not exist until the merge happens, so
+  // demanding a review against it refuses every honest caller and detects no
+  // real staleness. Only shas a `commit` artifact explicitly recorded as
+  // superseded join the comparison, so a commit carrying genuinely new work
+  // still invalidates earlier approvals exactly as before.
+  //
   // Same reading `artifact-tip.ts`'s `latestApprovalAtTip` documents and for
   // the same reason: with no `commit` artifact for the item at all, tip is
   // `null` and an approval with `commitSha: null` matches — nothing exists
@@ -121,7 +129,12 @@ export async function approvingArtifactAtCurrentRoundAndTip(
   // approval" and "the newest approval that is at the tip" are different
   // questions, and collapsing them would answer the wrong one whenever a
   // newer approval sits at the same round but an older commit.
-  return rows.find((row) => row.commitSha === tip) ?? null;
+  const lineage = await tipCommitLineage(db, itemId);
+  return (
+    rows.find(
+      (row) => row.commitSha === tip || (row.commitSha !== null && lineage.has(row.commitSha)),
+    ) ?? null
+  );
 }
 
 /**

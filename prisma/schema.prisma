@@ -481,6 +481,20 @@ enum ArtifactKind {
   // when work is re-proposed, and carry neither author nor timestamp.
   pull_request
   screenshot
+  // A named, reasoned decision to merge WITHOUT the approving review the
+  // gate would otherwise require (SCHEMA.md §6c). Its own kind, for the
+  // same reason `historical_verification` is: the claim it makes — "a human
+  // judged this safe to land unreviewed, and here is why" — must not be
+  // readable as a review by anything looking at the row later, and a flag on
+  // `code_review` would be a distinction every existing reader ignores by
+  // default.
+  //
+  // The whole value of this kind is that it is COUNTABLE. An override that
+  // left no row would be a silent bypass; one recorded as a review would be
+  // indistinguishable from an ordinary approval. As a kind, "how often is
+  // this installation overriding its own merge gate" is one query, which is
+  // what makes a pattern of overriding detectable rather than anecdotal.
+  merge_override
   other
 }
 
@@ -523,6 +537,51 @@ model Artifact {
   verdict        Verdict?
   reviewRound    Int          @default(1)
   commitSha      String?
+  // The sha this commit is a REWRITE OF — set on a `commit` artifact when
+  // the sha it records carries already-reviewed work under a new identity
+  // rather than new work (SCHEMA.md §6d). A squash merge, a rebase, an
+  // amend: each mints a new commit object for work already reviewed under a
+  // different sha.
+  //
+  // ── The failure this exists to fix ───────────────────────────────────
+  //
+  // The merge gate requires an approving `code_review` at the item's tip
+  // commit, and the tip is the newest `commit` artifact's sha. Under a
+  // squash-merge workflow those two facts cannot both be satisfied, in
+  // either order:
+  //
+  //   - Record the squash commit, and the review — recorded against the
+  //     branch tip, the only sha that existed when review happened — is no
+  //     longer at the tip. Refused as stale.
+  //   - Do not record it, and `merge.requires_commit` refuses instead.
+  //
+  // The squash sha does not exist until the merge happens, so "review the
+  // tip commit" names something unreviewable: there is no ordering that
+  // satisfies the gate. It fired identically whether a byte of the tree
+  // changed or not — and a squash rewrites the commit object while leaving
+  // the tree identical. That is not staleness detection; it is a guard that
+  // no honest caller can pass, which trains callers to route around it.
+  //
+  // ── Why a recorded link rather than asking git ──────────────────────
+  //
+  // The obvious fix is "accept an approval whose sha is an ancestor of the
+  // tip". The service cannot do that: it has no clone, no network path to
+  // one, and no business acquiring either — and a squash commit is not a
+  // descendant of the branch it squashed in the first place, so ancestry
+  // would not answer this even with a repository to ask. Comparing trees has
+  // the same problem twice over.
+  //
+  // So the link is a recorded FACT, supplied by the caller that performed
+  // the merge and therefore actually knows both shas. That is the same
+  // shape every other evidence column here takes, and it fails safe: the
+  // field is optional, absent by default, and an artifact that does not set
+  // it behaves exactly as before. Nothing widens implicitly.
+  //
+  // **This is not a hole.** It carries a reviewed approval forward onto the
+  // sha that reviewed code actually landed as — it never invents one. If no
+  // approval existed at the superseded sha, nothing is carried and the gate
+  // refuses exactly as it did before.
+  supersedesSha  String?
   body           String?      @db.Text
   ref            String?
   browserSession String?
@@ -563,6 +622,12 @@ model Artifact {
 
   @@index([itemId, kind, reviewRound])
   @@index([followUpItemId])
+  // Serves the merge guard's supersession walk, which resolves an approval
+  // forward from a reviewed sha onto the sha it landed as by asking,
+  // repeatedly, "which commit artifact for this item supersedes X". Without
+  // it that walk is a sequential scan of the item's artifacts once per hop,
+  // on the query path of every merge decision.
+  @@index([itemId, supersedesSha])
   // Anticipatory, and still unused by any query. The application now READS
   // findings — the item detail view renders them grouped by severity
   // (`src/components/item-detail/FindingsList.tsx`) — but it reads them off

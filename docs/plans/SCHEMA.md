@@ -620,10 +620,11 @@ is already the place that says which transitions require what.
 |---|---|---|
 | `id` | `uuid` PK | |
 | `item_id` | `text` → `items.id` | |
-| `kind` | enum | `plan` · `plan-review` · `code-review` · `visual-review` · `test-run` · `commit` · `pull-request` (§6a-pr) · `screenshot` · `other`. The **thing** and its **review** are separate rows — as `commit` and `code-review` already were, so `plan` and `plan-review` follow the same shape. |
+| `kind` | enum | `plan` · `plan-review` · `code-review` · `visual-review` · `test-run` · `commit` · `pull-request` (§6a-pr) · `historical-verification` (§6b) · `merge-override` (§6c) · `screenshot` · `other`. The **thing** and its **review** are separate rows — as `commit` and `code-review` already were, so `plan` and `plan-review` follow the same shape. |
 | `verdict` | enum null | `approved` · `changes-required` · `n/a`. Null on artifacts that aren't reviews — a plan document has no verdict; its `plan-review` does. |
 | `review_round` | `int` | Which round this belongs to. |
 | `commit_sha` | `text` null | What it applies to — the "at tip" check. |
+| `supersedes_sha` | `text` null | On a `commit`, the sha this one REWRITES — a squash, a rebase, an amend (§6d). Null on everything else, and null by default: what makes the "at tip" check satisfiable when the forge rewrites the commit, without widening it for a commit that carries new work. |
 | `body` | `text` null | Review text, stored inline: queryable, survives a repo move. |
 | `ref` | `text` null | Path or URL for binaries (screenshots), and the PR's URL on a `pull_request`. |
 | `browser_session` | `text` null | Which browser session a visual review ran in. An opaque string — the core never learns that any browser-automation tool exists. |
@@ -748,6 +749,102 @@ through an import — was rejected twice over. The obvious markers (`origin_type
 the protection on a value the caller writes. And even an unforgeable column would grant a permanent
 second merge path to a permanent class of rows, still standing long after one of those items has been
 reopened and worked on live. A window is bounded by construction and expires by being closed.
+
+---
+
+### 6c. `merge_override` — the judgement call, recorded rather than waved through
+
+`historical_verification` (§6b) answers "this shipped before we existed". Two other things were
+arriving at the same refusal and neither was that, so both were being answered by forging a review.
+
+**The first was not strictness — it was a check no honest caller could pass.** See §6d: under a
+squash-merge workflow the review-at-tip requirement is unsatisfiable in either ordering. That is a
+bug and it is fixed as one, in §6d. **It deliberately does not consume an override.** An escape
+hatch reached daily stops being read, and routing a structural defect through it would have buried
+the defect under a pile of "reasons" nobody audits.
+
+**The second is a genuine judgement call**, and it is the only thing this kind is for: *nothing
+material changed since the review, so the review still stands*. A doc tweak after approval, a lint
+fix, a rebase onto a moved base. The reviewer's judgement really does still apply, no rule can
+establish that it does, and a person can see it in a second.
+
+So the merge gate accepts an artifact of kind `merge_override` as an alternative satisfier for the
+code-review clause. Four properties bound it:
+
+1. **It is a row, not a request field.** The cheap implementation is a `merge_override_reason`
+   passed alongside the transition, as `merge_rationale` already is. Rejected: `fields` on a
+   transition is read by the guard that wants it and then **discarded**, so the reason would exist
+   only inside the refusal that did not happen. An override nobody can read afterwards is a silent
+   bypass with a conscience. An artifact is durable, attributed, timestamped, and appears in the
+   item's detail view beside the reviews it stood in for.
+2. **The reason is mandatory, and checked for content rather than presence.** `record_artifact`
+   refuses a `merge_override` with no `commit_sha`, with no `body`, or with a body under
+   `MIN_REASON_LENGTH`. A required field satisfiable by `"x"` is an optional field with extra
+   keystrokes. The floor is a crude proxy and does not pretend to detect a *considered* reason —
+   what it removes is the dismissal, which is the shape a mandatory field collapses into when
+   nothing checks it.
+3. **It is scoped to the commit it excuses**, and its lineage (§6d) — never to the item. An override
+   is a statement about one specific state of the code; a standing one would be permission to skip
+   review forever, which is a different and far worse thing than what was asked for.
+4. **It never satisfies `merge_authority = needs_approval`.** That clause reads `kind = 'code_review'
+   AND created_by_type = 'person'` and is untouched. This widens what counts as *review evidence*,
+   never what counts as *authorisation* — the same boundary §6b respects.
+
+**No environment window, unlike §6b, and the difference is deliberate.** That window gates a one-off
+event, so a permanent capability would be a permanent second merge path. This serves a judgement
+call that recurs, at low volume, forever: a window would be opened and then left open, which reads
+as a control while being permanently disarmed. The control here is that **every use is a countable
+row with a name on it** — "how often is this installation overriding its own merge gate, and on
+whose authority" is one query against one `kind`. That is a real control precisely because it does
+not depend on anyone remembering to close anything.
+
+**Never readable as a review.** Its own `kind`, carrying no `verdict`, for the reason §6b gives:
+a flag on `code_review` would be a distinction every existing reader ignores by default.
+
+### 6d. `supersedes_sha` — why review-at-tip was unsatisfiable under squash-merge
+
+`artifacts.supersedes_sha` records, on a `commit` artifact, the sha this commit is a **rewrite of**
+— set when the commit carries already-reviewed work under a new identity rather than new work. A
+squash merge, a rebase, an amend.
+
+**The defect.** Entering `merged` requires an approving `code_review` at the item's tip commit, and
+the tip is the newest `commit` artifact's sha. Under a squash merge those two facts cannot both be
+satisfied, in either order:
+
+- Record the squash commit, and the tip becomes a sha the review does not name — the review was
+  recorded against the branch tip, the only sha in existence when it happened. Refused as stale.
+- Do not record it, and `merge.requires_commit` refuses instead.
+
+The squash sha **does not exist until the merge happens**, so "get it reviewed at the tip commit"
+names something unreviewable. There is no ordering that satisfies the gate. Worse, it refused
+identically whether a byte of the tree had changed or not — and a squash rewrites the commit object
+while leaving the tree identical. That is not staleness detection; it is a check no honest caller
+can pass, and its observed effect was to train callers to record an approval nobody gave.
+
+**Why a recorded link rather than asking git.** The obvious fix — "accept an approval whose sha is
+an ancestor of the tip" — is not available and would not work. The service has no clone and no
+network path to one; and a squash commit is **not a descendant** of the branch it squashed, so
+ancestry would not answer this even with a repository to ask. Comparing trees has the same problem
+twice over. So the link is a recorded fact, supplied by the caller that performed the merge and
+therefore the only party that knows both shas — the same shape every other evidence column here
+takes.
+
+**Why this does not widen the gate.** The guard builds the set of shas the tip stands in for by
+following `supersedes_sha` links, and an approval qualifies if it names any sha in that set. The set
+contains **only** shas that a `commit` artifact explicitly declared its own sha to be a rewrite of:
+
+- A commit recording genuinely new work sets nothing, contributes nothing, and invalidates earlier
+  approvals exactly as before — which is the case the guard exists for.
+- Only `kind = 'commit'` can extend the chain. A review carrying the column has no standing to
+  assert that one sha replaced another.
+- The column is nullable with no backfill, so every pre-existing row keeps precisely the meaning it
+  had, and the new behaviour is opt-in per artifact.
+- The walk is bounded and keeps a visited set, because the chain is caller-supplied and a cycle must
+  not hang the transaction that decides a merge.
+
+It carries a **real** approval forward onto the sha that reviewed code actually landed as. It never
+invents one: with no approval at the superseded sha, nothing is carried and the gate refuses exactly
+as before.
 
 ---
 
@@ -1092,7 +1189,7 @@ Every `(from, to)` pair is legal. What's enforced is **what must be supplied**.
 | `in-review` | ≥1 `artifacts` row of kind `review-requested`. |
 | `executing` **from** `plan-review` | A `plan-review` artifact with `verdict = approved`. |
 | any `completed` state | A valid `summaries` row. |
-| `merged` | Plus `commit_sha`, plus an approving `code-review` artifact at the current `max(artifacts.review_round)`; plus an approving `visual-review` artifact iff `needs_visual_review`; plus an auth check per `merge_authority`. |
+| `merged` | Plus `commit_sha`, plus an approving `code-review` artifact at the current `max(artifacts.review_round)`; plus an approving `visual-review` artifact iff `needs_visual_review`; plus an auth check per `merge_authority`. "At the tip commit" includes any sha the tip declares it supersedes (§6d). The code-review clause has two alternative satisfiers: `historical_verification` (§6b, env-gated) and `merge_override` (§6c, reason mandatory) — **neither satisfies the `needs_approval` auth check.** |
 | `backlog` from in-progress | No live `assignments` row. |
 
 `POST …/transition?dry_run=true` validates and returns the would-be rejection without mutating.

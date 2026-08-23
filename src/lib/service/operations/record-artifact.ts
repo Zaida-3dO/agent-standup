@@ -32,6 +32,7 @@ import { appendEvent } from "@/lib/events";
 import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
 import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib/pull-requests";
 import { currentReviewRound } from "../guards/merge-review-round";
+import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH } from "../guards/merge-override";
 
 /**
  * `ArtifactKind` in schema.prisma, mirrored. Written out rather than derived
@@ -49,6 +50,7 @@ const ARTIFACT_KINDS = [
   "historical_verification",
   "pull_request",
   "screenshot",
+  "merge_override",
   "other",
 ] as const;
 
@@ -84,6 +86,24 @@ const inputSchema = z
      */
     reviewRound: z.coerce.number().int().min(1).optional(),
     commitSha: z.string().trim().min(1).nullable().optional(),
+    /**
+     * On a `commit` artifact, the sha this commit is a REWRITE OF — set when
+     * it carries already-reviewed work under a new identity rather than new
+     * work (§6d). A squash merge, a rebase, an amend.
+     *
+     * This is what makes the merge gate satisfiable under a squash-merge
+     * workflow. The gate wants an approving review at the tip; a squash
+     * produces a sha that did not exist when the review happened and cannot
+     * have been reviewed. Recording "this landed sha is that reviewed sha,
+     * rewritten" lets the approval carry forward onto the commit it actually
+     * became, without inventing an approval that was never given.
+     *
+     * Supplied by the caller because only the caller that performed the
+     * merge knows both shas — the service has no clone to ask, and ancestry
+     * would not answer it anyway, since a squash commit is not a descendant
+     * of the branch it squashed.
+     */
+    supersedesSha: z.string().trim().min(1).nullable().optional(),
     body: z.string().nullable().optional(),
     ref: z.string().trim().min(1).nullable().optional(),
     /** Which browser session a visual review ran in (§6) — an opaque string to the core. */
@@ -141,6 +161,7 @@ export interface RecordedArtifact {
   readonly verdict: string | null;
   readonly reviewRound: number;
   readonly commitSha: string | null;
+  readonly supersedesSha: string | null;
   readonly ref: string | null;
   readonly browserSession: string | null;
   readonly followUpItemId: string | null;
@@ -440,6 +461,52 @@ export const recordArtifact = defineOperation({
       }
     }
 
+    // A `merge_override` must carry the two things that make it an override
+    // rather than a bypass — SCHEMA.md §6c: the commit it excuses, and a
+    // reason someone can read.
+    //
+    // **Enforced at the write, not at the merge.** The alternative — let the
+    // artifact be recorded and refuse the merge later — would leave a row on
+    // the item asserting an override that never qualified, which is exactly
+    // the sort of thing a later reader counts as an override. The row should
+    // not exist unless it means something.
+    //
+    // The length floor is a crude proxy and is not pretending otherwise (see
+    // `MIN_REASON_LENGTH`): it cannot distinguish a considered sentence from
+    // forty characters of keyboard. What it removes is the one-character
+    // reason, which is the shape a mandatory field collapses into the moment
+    // nothing checks its content. A field satisfiable by "x" is an optional
+    // field with extra keystrokes, and this one is the entire difference
+    // between an audited override and a silent one.
+    if (input.kind === MERGE_OVERRIDE_KIND) {
+      if (input.commitSha === undefined || input.commitSha === null) {
+        throw new InvalidInputError(
+          "A merge_override must record the commitSha it applies to — an override is a " +
+            "judgement about one specific state of the code, not standing permission to skip " +
+            "review.",
+          { fields: ["commitSha"] },
+        );
+      }
+      const reason = input.body?.trim() ?? "";
+      if (reason.length === 0) {
+        throw new InvalidInputError(
+          "A merge_override must record in `body` why the merge should proceed without an " +
+            "approving review at this commit. The stated reason is the whole difference between " +
+            "an override and a silent bypass.",
+          { fields: ["body"] },
+        );
+      }
+      if (reason.length < MIN_REASON_LENGTH) {
+        throw new InvalidInputError(
+          `A merge_override's reason is ${reason.length} characters; it must be at least ` +
+            `${MIN_REASON_LENGTH}. Say what changed since the review and why it does not ` +
+            "invalidate it — this row is kept permanently and is what a later reader has to " +
+            "judge the merge by.",
+          { fields: ["body"] },
+        );
+      }
+    }
+
     // §6: "Null on artifacts that aren't reviews — a plan document has no
     // verdict; its `plan-review` does." Enforced rather than merely
     // documented, because a verdict on a non-review is not inert: `hasApproval`
@@ -507,21 +574,23 @@ export const recordArtifact = defineOperation({
       // test can catch.
       `INSERT INTO "Artifact" (
          "id", "itemId", "kind", "verdict", "reviewRound", "commitSha",
-         "body", "ref", "browserSession", "findings", "followUpItemId",
+         "supersedesSha", "body", "ref", "browserSession", "findings", "followUpItemId",
          "createdByType", "createdById"
        )
        VALUES (
          gen_random_uuid(), $1, $2::"ArtifactKind", $3::"Verdict", $4, $5,
-         $6, $7, $8, $9::jsonb, $10, $11::"HolderType", $12
+         $6, $7, $8, $9, $10::jsonb, $11, $12::"HolderType", $13
        )
        RETURNING "id", "itemId", "kind"::text AS "kind", "verdict"::text AS "verdict",
-                 "reviewRound", "commitSha", "ref", "browserSession", "followUpItemId",
+                 "reviewRound", "commitSha", "supersedesSha", "ref", "browserSession",
+                 "followUpItemId",
                  "createdByType"::text AS "createdByType", "createdById", "createdAt"`,
       input.itemId,
       input.kind,
       input.verdict ?? null,
       reviewRound,
       input.commitSha ?? null,
+      input.supersedesSha ?? null,
       input.body ?? null,
       input.ref ?? null,
       input.browserSession ?? null,

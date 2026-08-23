@@ -28,8 +28,14 @@
 // `hasPersonApprovedCodeReviewAtCurrentRoundAndTip`) — see each function's
 // own doc for the exact scenario this closes.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
-import { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
+import {
+  currentTipCommitSha,
+  hasApproval,
+  latestApprovalAtTip,
+  tipCommitLineage,
+} from "./artifact-tip";
 import { historicalVerificationSatisfies } from "./historical-verification";
+import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH, mergeOverrideSatisfies } from "./merge-override";
 import {
   approvingArtifactAtCurrentRoundAndTip,
   currentReviewRound,
@@ -38,6 +44,27 @@ import {
 import { APPROVING_VERDICTS, requiresLinkedFollowUp } from "../../verdicts";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement"]);
+
+/**
+ * The sentence every code-review refusal ends with, naming the override and
+ * what it costs.
+ *
+ * **Stated in the refusal on purpose.** An earlier wording of this message
+ * named a remedy — "proceed with a written reason" — that no surface
+ * actually implemented, and a caller burned six attempts across three
+ * hypotheses chasing it. An unreachable remedy is worse than none, because
+ * it reads as actionable. This one names an operation that exists, the exact artifact
+ * kind, and the two things that make it not-free: the reason is mandatory,
+ * and the row is permanent and countable.
+ *
+ * One constant rather than the same prose in two places, so the two refusals
+ * cannot drift into describing the escape hatch differently.
+ */
+const OVERRIDE_REMEDY =
+  `If the review genuinely still applies and you are judging that nothing material changed, ` +
+  `record a ${MERGE_OVERRIDE_KIND} artifact naming this commit, with a body of at least ` +
+  `${MIN_REASON_LENGTH} characters saying why — it is kept permanently as an override rather ` +
+  `than as a review, and overrides are counted.`;
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -138,6 +165,22 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
       );
     }
 
+    // ── The stated-reason override ────────────────────────────────────────
+    //
+    // Checked here, in the same clause and for the same structural reason as
+    // the historical-verification alternative above: guards are AND-composed
+    // and the first rejection wins, so an alternative satisfier has to live
+    // where the requirement lives.
+    //
+    // Unlike that one this has no environment window, and the difference is
+    // deliberate — see `./merge-override.ts`. It is always available, and
+    // what makes that safe is that every use is a durable, attributed,
+    // reasoned row rather than a request field that evaporates.
+    const override = await mergeOverrideSatisfies(input.db, input.item.id);
+    if (override.satisfied) {
+      return guardOk;
+    }
+
     const approvedAtAll = await hasApproval(input.db, input.item.id, "code_review");
     if (!approvedAtAll) {
       // When the window is open, a caller who has just been refused for
@@ -152,7 +195,8 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
               "artifact instead: it must name the commit it was checked against and say what " +
               "was inspected, and it is recorded permanently as an inspection rather than as a " +
               "review."
-            : ""),
+            : "") +
+          ` ${OVERRIDE_REMEDY}`,
         { fields: ["state"] },
       );
     }
@@ -166,7 +210,21 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
       const tip = await currentTipCommitSha(input.db, input.item.id);
       return guardRejected(
         `The most recent code_review approval is not for the current review round (${round}) ` +
-          `and tip commit (${tip ?? "none"}). The item has moved since it was approved — get it re-reviewed.`,
+          `and tip commit (${tip ?? "none"}). The item has moved since it was approved — get it ` +
+          "re-reviewed." +
+          // Named here specifically, because this is the refusal that used to
+          // be unsatisfiable and the two remedies are for different causes.
+          // If the sha moved because the forge rewrote the commit — a squash
+          // merge, a rebase — that is not staleness and there is nothing to
+          // re-review: record the landed commit with `supersedesSha` set to
+          // the sha that WAS reviewed, and the existing approval carries
+          // forward on its own. The override below is for the other case,
+          // where something really did change and a human judges it
+          // immaterial.
+          " If the sha moved only because the commit was rewritten (a squash merge, a rebase, an" +
+          " amend), that is not staleness: record the landed commit artifact with `supersedesSha`" +
+          " set to the reviewed sha, and this approval carries forward without a new review." +
+          ` ${OVERRIDE_REMEDY}`,
         { fields: ["state"] },
       );
     }
@@ -516,7 +574,21 @@ async function hasPersonApprovedCodeReviewAtCurrentRoundAndTip(
     return false;
   }
   const tip = await currentTipCommitSha(db, itemId);
-  return approval.commitSha === tip;
+  // The same lineage reading `approvingArtifactAtCurrentRoundAndTip` uses,
+  // and it has to be the same or the two clauses could accept different
+  // artifacts — the exact class of composition bug regressions (1) and (2)
+  // above were. A person who reviewed the branch tip that was then
+  // squash-merged has reviewed the code that shipped; refusing them because
+  // the forge rewrote the sha would make the human-approval clause
+  // unsatisfiable in precisely the workflow it most needs to work in.
+  if (approval.commitSha === tip) {
+    return true;
+  }
+  if (approval.commitSha === null) {
+    return false;
+  }
+  const lineage = await tipCommitLineage(db, itemId);
+  return lineage.has(approval.commitSha);
 }
 
 /** All five merge guards, for the registration module to install in one call. */
