@@ -25,9 +25,16 @@ import {
   type RawItemSummaryRow,
 } from "../items/row";
 import { latestCheckpointHeadline } from "../items/checkpoint-headline";
+import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
   .object({
+    /**
+     * The item's id — a full UUID, or a short id that is a prefix of one
+     * (see `../items/resolve-id.ts`). Still `min(1)` rather than a UUID
+     * check: this operation never validated the shape, and tightening it
+     * here would be a behaviour change riding along with an additive one.
+     */
     id: z.string().min(1),
     /**
      * Return the whole `items` row rather than the slim default. Off by
@@ -72,29 +79,34 @@ export const getItem = defineOperation({
     ctx: ServiceContext,
     input: GetItemInput,
   ): Promise<ItemRecord | GetItemSummaryOutput> {
+    // A full UUID passes straight through untouched; a short id becomes the
+    // one item it identifies, or refuses. Everything below still queries by
+    // exact id, so the lookups are unchanged.
+    const id = await resolveItemId(ctx.db, input.id);
+
     if (input.full) {
       const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
         `SELECT ${itemColumnsFor(true)} FROM "Item" WHERE "id" = $1`,
-        input.id,
+        id,
       );
       const row = rows[0];
       if (!row) {
-        throw new NotFoundError(`No such item: ${input.id}.`, { fields: ["id"] });
+        throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
       }
       return toItemRecord(row);
     }
 
     const rows = await ctx.db.$queryRawUnsafe<RawItemSummaryRow[]>(
       `SELECT ${itemColumnsFor(false)} FROM "Item" WHERE "id" = $1`,
-      input.id,
+      id,
     );
     const row = rows[0];
     if (!row) {
-      throw new NotFoundError(`No such item: ${input.id}.`, { fields: ["id"] });
+      throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
     }
     return {
       ...toItemSummaryRecord(row),
-      checkpointHeadline: await latestCheckpointHeadline(ctx.db, input.id),
+      checkpointHeadline: await latestCheckpointHeadline(ctx.db, id),
     };
   },
 });

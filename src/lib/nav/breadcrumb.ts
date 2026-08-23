@@ -26,7 +26,15 @@ export interface Crumb {
  * segment is left exactly as it is, because truncating something already
  * short only removes information.
  */
-const ID_DISPLAY_LENGTH = 8;
+/**
+ * Exported so the short-id parser can assert it agrees with what the
+ * breadcrumb shows. A crumb that displays `422637bc…` is an invitation to
+ * copy those eight characters and paste them into a URL, so the display
+ * length and `SHORT_ID_MIN_LENGTH` must not drift apart — shipping a short
+ * id people can *see* but not *paste* is the failure this coupling exists
+ * to prevent. `tests/short-id.test.ts` asserts the two are equal.
+ */
+export const ID_DISPLAY_LENGTH = 8;
 
 export function shortenSegment(segment: string): string {
   return segment.length > ID_DISPLAY_LENGTH ? `${segment.slice(0, ID_DISPLAY_LENGTH)}…` : segment;

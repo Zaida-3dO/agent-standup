@@ -62,6 +62,7 @@ import {
 // header says the mapping lives in one place so `get_board` and every other
 // reader cannot drift apart on it, and a project's column on the detail
 // view has to be the column the board shows for that same project.
+import { resolveItemId } from "../items/resolve-id";
 import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
 import type { ItemStateValue } from "../state-machine/states";
 import {
@@ -73,6 +74,10 @@ import {
 
 const inputSchema = z
   .object({
+    /**
+     * The item's id — a full UUID, or a short id that is a prefix of one
+     * (see `../items/resolve-id.ts`).
+     */
     id: z.string().min(1),
     /**
      * How many history entries to return, newest first. Bounded because an
@@ -271,13 +276,19 @@ export const getItemDetail = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetItemDetailInput): Promise<ItemDetailOutput> {
+    // Resolved once, up front, and every query below uses the canonical id.
+    // Resolving per-query would mean a short id could match one item for
+    // the header read and a different one for the history read if a row
+    // were created in between; one resolution makes that impossible.
+    const id = await resolveItemId(ctx.db, input.id);
+
     const itemRows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
       `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,
-      input.id,
+      id,
     );
     const itemRow = itemRows[0];
     if (!itemRow) {
-      throw new NotFoundError(`No such item: ${input.id}.`, { fields: ["id"] });
+      throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
     }
     const item = toItemRecord(itemRow);
 
@@ -322,7 +333,7 @@ export const getItemDetail = defineOperation({
        )
        SELECT "id", "parentId", "title", "kind", "state", "priority", "depth"
        FROM subtree ORDER BY "path" ASC`,
-      input.id,
+      id,
     );
     const subtasks: ItemDetailSubtaskNode[] = subtreeRows.map((row) => ({
       id: row.id,
@@ -366,7 +377,7 @@ export const getItemDetail = defineOperation({
               "createdByType"::text AS "createdByType", "createdAt"
        FROM "Artifact" WHERE "itemId" = $1
        ORDER BY "reviewRound" ASC, "createdAt" ASC`,
-      input.id,
+      id,
     );
     const artifacts: ItemDetailArtifact[] = artifactRows.map((row) => ({
       id: row.id,
@@ -391,7 +402,7 @@ export const getItemDetail = defineOperation({
               "actorId", "sessionId", "body", "payload", "headline"
        FROM "Event" WHERE "itemId" = $1
        ORDER BY "id" DESC LIMIT $2`,
-      input.id,
+      id,
       input.historyLimit + 1,
     );
     const historyTruncated = historyRows.length > input.historyLimit;
@@ -416,7 +427,7 @@ export const getItemDetail = defineOperation({
       `SELECT "shipped", "notDone", "userFacing", "whatToTest", "howVerified",
               "watchFor", "finalState", "createdAt"
        FROM "Summary" WHERE "itemId" = $1`,
-      input.id,
+      id,
     );
     const summaryRow = summaryRows[0];
     const summary: ItemDetailSummary | null = summaryRow
@@ -439,7 +450,7 @@ export const getItemDetail = defineOperation({
     // count as current.
     const assignmentRows = await ctx.db.$queryRawUnsafe<RawItemDetailAssignmentRow[]>(
       ALL_ITEM_ASSIGNMENTS_SQL,
-      input.id,
+      id,
     );
     const assignments: ItemDetailAssignment[] = [];
     const previousHolders: ItemDetailAssignment[] = [];
