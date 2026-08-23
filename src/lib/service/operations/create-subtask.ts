@@ -32,8 +32,10 @@ import {
   areaSpellingMessage,
   originPersonCheck,
   originPersonMessage,
+  toCreatedWriteRecord,
   type CommonCreateInput,
   type CreatedItem,
+  type CreatedWriteRecord,
   TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
 
@@ -80,7 +82,10 @@ export const createSubtask = defineOperation({
   },
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: CreateSubtaskInput): Promise<CreatedItem> {
+  async handler(
+    ctx: ServiceContext,
+    input: CreateSubtaskInput,
+  ): Promise<CreatedItem | CreatedWriteRecord> {
     const { taskId, ...common } = input;
 
     const depth = await ancestorDepthOf(ctx, taskId);
@@ -98,6 +103,7 @@ export const createSubtask = defineOperation({
       );
     }
 
-    return insertItem(ctx, common as CommonCreateInput, { id: taskId, depth });
+    const created = await insertItem(ctx, common as CommonCreateInput, { id: taskId, depth });
+    return input.full ? created : toCreatedWriteRecord(created);
   },
 });

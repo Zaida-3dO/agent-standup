@@ -220,12 +220,16 @@ describe("create", () => {
     // originType is added by client.ts's createTask, not commands.ts — real
     // enough to belong in this assertion, since this test is verifying the
     // actual bytes that leave the process, not one layer's local contract.
+    // `full` rides along for the same reason and is asserted for the same
+    // reason: the creates return the slim shape by default now (#107), and
+    // `ShimTask` needs the `body`/`area`/`repo` it drops.
     expect(seen[0]).toEqual({
       title: "T",
       body: "B",
       area: "web",
       repo: "web",
       originType: "source",
+      full: true,
     });
   });
 
@@ -243,7 +247,12 @@ describe("create", () => {
       fetch: fetchImpl,
       streams: sinks,
     });
-    expect(seen[0]).toEqual({ title: "T", body: "B", area: "web", originType: "source" });
+    expect(editsOnly(seen[0])).toEqual({
+      title: "T",
+      body: "B",
+      area: "web",
+      originType: "source",
+    });
   });
 
   it("omits repo from the wire payload when --repo is bare (empty), not just when it's absent", async () => {
@@ -260,18 +269,24 @@ describe("create", () => {
       fetch: fetchImpl,
       streams: sinks,
     });
-    expect(seen[0]).toEqual({ title: "T", body: "B", area: "web", originType: "source" });
+    expect(editsOnly(seen[0])).toEqual({
+      title: "T",
+      body: "B",
+      area: "web",
+      originType: "source",
+    });
   });
 });
 
 /**
- * A PATCH body with the response-shaping `full` flag removed.
+ * A request body with the response-shaping `full` flag removed.
  *
- * These cases pin **which edits travel**, and `full` is not an edit — the
- * shim sends it so the slim write response (#107, now on the writes too)
- * still carries the `body`/`area`/`repo` that `ShimTask` needs. Stripping it
- * here keeps each assertion about its actual subject; that the flag is sent
- * at all is pinned once, in `tests/task-shim-client.test.ts`.
+ * These cases pin **which fields travel**, and `full` is not one of them —
+ * the shim sends it so the slim write response (#107, now on the creates
+ * too) still carries the `body`/`area`/`repo` that `ShimTask` needs.
+ * Stripping it here keeps each assertion about its actual subject; that the
+ * flag is sent at all is pinned once, in `tests/task-shim-client.test.ts`,
+ * and on the wire-bytes case above.
  */
 function editsOnly(body: unknown): Record<string, unknown> {
   const edits = { ...(body as Record<string, unknown>) };

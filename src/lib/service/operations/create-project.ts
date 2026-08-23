@@ -22,8 +22,10 @@ import {
   areaSpellingMessage,
   originPersonCheck,
   originPersonMessage,
+  toCreatedWriteRecord,
   type CommonCreateInput,
   type CreatedItem,
+  type CreatedWriteRecord,
   TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
 
@@ -62,7 +64,11 @@ export const createProject = defineOperation({
   },
   // Stryker restore all
   input: inputSchema,
-  async handler(ctx: ServiceContext, input: CreateProjectInput): Promise<CreatedItem> {
-    return insertItem(ctx, input as CommonCreateInput, { id: null, depth: 0 });
+  async handler(
+    ctx: ServiceContext,
+    input: CreateProjectInput,
+  ): Promise<CreatedItem | CreatedWriteRecord> {
+    const created = await insertItem(ctx, input as CommonCreateInput, { id: null, depth: 0 });
+    return input.full ? created : toCreatedWriteRecord(created);
   },
 });

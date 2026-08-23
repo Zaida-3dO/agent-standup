@@ -29,7 +29,9 @@ import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
   toItemRecord,
+  toItemWriteRecord,
   type ItemRecord,
+  type ItemWriteRecord,
   type RawItemRow,
 } from "./row";
 
@@ -118,6 +120,27 @@ export const commonCreateShape = {
   needsVisualReview: z.boolean().optional(),
   difficulty: z.record(z.string(), z.number().int().min(1).max(5)).optional(),
   customFields: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Return the whole `items` row rather than the slim default — the same
+   * flag the reads and the other writes take (MILESTONES.md #107). Off by
+   * default.
+   *
+   * Declared once here rather than four times, because all four creates
+   * spread this shape and a flag that only three of them carried would be
+   * the inconsistency this convention exists to remove.
+   *
+   * **Why a create is slimmed at all, when #231 waived the family.** That
+   * waiver reasoned that a create is the only way a caller learns the
+   * generated `id` and the server-derived fields, which is true and is why
+   * the slim shape here is not the bare five: `toCreatedWriteRecord` keeps
+   * the server-decided `kind`, `parentId`, `depth` and `priority` beside
+   * them. What it does not justify is echoing `body` and `customFields` —
+   * the caller sent those in the very same call, so they are the one part
+   * of the response it provably already holds. A create carrying a
+   * 20,000-character brief paid ~20,000 characters to be told its own
+   * brief back.
+   */
+  full: z.boolean().default(false),
 } as const;
 
 /**
@@ -330,6 +353,103 @@ export interface CreatedItem extends ItemRecord {
    * created either way, and nothing downstream reads this.
    */
   readonly titleAdvice?: string;
+}
+
+/**
+ * What a create returns by default — the write receipt, plus the fields the
+ * server decided rather than the caller.
+ *
+ * **Wider than `ItemWriteRecord`, and deliberately so.** #231 waived the
+ * create family from slimming on the grounds that a create is the only way
+ * a caller learns what the server derived, and that argument is correct as
+ * far as it goes. The dividing line this shape draws is therefore **not**
+ * "the five cheapest fields" but *who decided the value*: everything the
+ * SERVER resolves stays, because a caller cannot predict it and would have
+ * to re-read the row to learn it — which trades one round trip for another
+ * and makes the flag pointless.
+ *
+ * What the server resolves, and none of it is guessable from the call:
+ * `kind` and `depth` are computed from the resolved parent; `parentId` may
+ * have come from the `"inbox"` sentinel; `priority` is defaulted; `area`
+ * and `areas` are normalised and de-duplicated, and an unseen area is
+ * created on the way through; `needsVisualReview` is inherited from the
+ * `repo` row (#126); and `originType`, `originPersonId`, `driveMode` and
+ * `mergeAuthority` are inherited from the session's declaration (#111), so
+ * a declared session creates without restating any of them.
+ *
+ * **What the waiver does not cover is `body` and `customFields`**, which
+ * are the two unbounded columns and the entire measured cost. Unlike every
+ * other field here, the caller supplied them in the same call — echoing
+ * them back is the one part of the response that can be guaranteed to tell
+ * a caller something it already knows.
+ *
+ * `titleAdvice` rides along under the same rule it already follows: present
+ * only when there is something to say, because it is advice about *this
+ * call* rather than state on the row.
+ */
+export interface CreatedWriteRecord extends ItemWriteRecord {
+  readonly kind: ItemRecord["kind"];
+  readonly parentId: ItemRecord["parentId"];
+  readonly depth: number;
+  readonly priority: ItemRecord["priority"];
+  /**
+   * The resolved area set, and its primary.
+   *
+   * Server-resolved in a way the caller cannot predict: the labels are
+   * normalised and de-duplicated, so `["Web Platform", "web-platform",
+   * "infra"]` comes back as `["web-platform", "infra"]`, and an area named
+   * for the first time is created on the way through. A caller that echoed
+   * back what it sent would have the wrong set.
+   */
+  readonly area: string;
+  readonly areas: readonly string[];
+  /**
+   * Inherited from the `repo` row when the caller did not state it
+   * (MILESTONES.md #126), so it is frequently a value the call never
+   * contained.
+   */
+  readonly needsVisualReview: boolean;
+  /**
+   * Resolved from the session's declaration when the call omitted them
+   * (MILESTONES.md #111, `session-defaults.ts`). A session that declared a
+   * person and a drive mode creates without restating either, and these are
+   * the only place the resolution is visible.
+   */
+  readonly originType: ItemRecord["originType"];
+  readonly originPersonId: ItemRecord["originPersonId"];
+  readonly driveMode: ItemRecord["driveMode"];
+  readonly mergeAuthority: ItemRecord["mergeAuthority"];
+  /** See `CreatedItem.titleAdvice` — carried through, since it is about this call. */
+  readonly titleAdvice?: string;
+}
+
+/**
+ * Narrows a created item to what a create returns by default.
+ *
+ * Applied at the four operation handlers rather than inside `insertItem`,
+ * mirroring where #234 put the same decision for `reparent_item`: the core
+ * insert keeps returning the whole record, and each operation decides what
+ * its own contract hands back. That keeps one shape in the plumbing and the
+ * contract choice visible at the boundary a caller actually reaches.
+ */
+export function toCreatedWriteRecord(record: CreatedItem): CreatedWriteRecord {
+  return {
+    ...toItemWriteRecord(record),
+    kind: record.kind,
+    parentId: record.parentId,
+    depth: record.depth,
+    priority: record.priority,
+    area: record.area,
+    areas: record.areas,
+    needsVisualReview: record.needsVisualReview,
+    originType: record.originType,
+    originPersonId: record.originPersonId,
+    driveMode: record.driveMode,
+    mergeAuthority: record.mergeAuthority,
+    // Spread conditionally, so an item whose title is fine carries no key —
+    // the same posture `insertItem` uses when it attaches the advice.
+    ...(record.titleAdvice === undefined ? {} : { titleAdvice: record.titleAdvice }),
+  };
 }
 
 /**

@@ -35,6 +35,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { toItemWriteRecord, type ItemRecord } from "@/lib/service/items/row";
+import { toCreatedWriteRecord, type CreatedItem } from "@/lib/service/items/create-core";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -126,6 +127,120 @@ describe("narrowing a record to what a write returns", () => {
     const slim = toItemWriteRecord({ ...record, headline: null } as ItemRecord);
     expect(slim).toHaveProperty("headline");
     expect(slim.headline).toBeNull();
+  });
+});
+
+describe("narrowing a created item to what a create returns", () => {
+  // The pure half for the create family, mirroring the block above. Runs
+  // with or without a database, because `toCreatedWriteRecord` is the one
+  // function all four creates go through.
+  const created = {
+    id: "item-2",
+    title: "A created title",
+    state: "on_deck",
+    headline: "One line",
+    body: "b".repeat(20_000),
+    customFields: { brief: "c".repeat(20_000) },
+    updatedAt: "2026-08-23T00:00:00.000Z",
+    kind: "task",
+    parentId: "project-1",
+    depth: 1,
+    priority: "P1",
+    area: "an-area",
+    areas: ["an-area", "another"],
+    needsVisualReview: true,
+    originType: "person",
+    originPersonId: "person-1",
+    driveMode: "supervised",
+    mergeAuthority: "needs_approval",
+  } as unknown as CreatedItem;
+
+  it("drops the heavy fields entirely rather than truncating them", () => {
+    const slim = toCreatedWriteRecord(created) as unknown as Record<string, unknown>;
+    for (const field of HEAVY_FIELDS) {
+      expect(slim).not.toHaveProperty(field);
+    }
+  });
+
+  // The half of #231's waiver that was correct: a create is the only way a
+  // caller learns these, so narrowing to the bare write receipt would force
+  // a re-read and make the flag pointless.
+  it("keeps the fields the server decided rather than the caller", () => {
+    const slim = toCreatedWriteRecord(created);
+    expect(slim.kind).toBe("task");
+    expect(slim.parentId).toBe("project-1");
+    expect(slim.depth).toBe(1);
+    expect(slim.priority).toBe("P1");
+  });
+
+  // The widening this shape exists to carry. Each of these is resolved
+  // server-side — the area set is normalised and de-duplicated,
+  // `needsVisualReview` is inherited from the repo (#126), and the origin
+  // and drive fields from the session's declaration (#111) — so a caller
+  // cannot reconstruct any of them from what it sent.
+  it("keeps the fields resolved from the repo, the session and the area vocabulary", () => {
+    const slim = toCreatedWriteRecord(created);
+    expect(slim.area).toBe("an-area");
+    expect(slim.areas).toEqual(["an-area", "another"]);
+    expect(slim.needsVisualReview).toBe(true);
+    expect(slim.originType).toBe("person");
+    expect(slim.originPersonId).toBe("person-1");
+    expect(slim.driveMode).toBe("supervised");
+    expect(slim.mergeAuthority).toBe("needs_approval");
+  });
+
+  it("keeps the write receipt beneath it", () => {
+    const slim = toCreatedWriteRecord(created);
+    expect(slim.id).toBe("item-2");
+    expect(slim.title).toBe("A created title");
+    expect(slim.state).toBe("on_deck");
+    expect(slim.updatedAt).toBe("2026-08-23T00:00:00.000Z");
+  });
+
+  it("drops every field beyond the ones it names, so the shape cannot grow by accident", () => {
+    expect(Object.keys(toCreatedWriteRecord(created)).sort()).toEqual([
+      "area",
+      "areas",
+      "depth",
+      "driveMode",
+      "headline",
+      "id",
+      "kind",
+      "mergeAuthority",
+      "needsVisualReview",
+      "originPersonId",
+      "originType",
+      "parentId",
+      "priority",
+      "state",
+      "title",
+      "updatedAt",
+    ]);
+  });
+
+  it("is an order of magnitude smaller than what it narrowed", () => {
+    expect(wireSize(created)).toBeGreaterThan(wireSize(toCreatedWriteRecord(created)) * 20);
+  });
+
+  // Advice is about *this call*, so it cannot be recovered by re-reading the
+  // row — it has to survive the narrowing.
+  it("carries titleAdvice through when there is some", () => {
+    const withAdvice = { ...created, titleAdvice: "Name the outcome." } as CreatedItem;
+    expect(toCreatedWriteRecord(withAdvice).titleAdvice).toBe("Name the outcome.");
+  });
+
+  // Absent rather than present-and-undefined, matching how `insertItem`
+  // attaches it: a caller checking `"titleAdvice" in result` gets a clean
+  // answer.
+  it("omits the titleAdvice key entirely when there is nothing to say", () => {
+    expect(toCreatedWriteRecord(created)).not.toHaveProperty("titleAdvice");
+  });
+
+  it("carries a null parentId through rather than dropping the key", () => {
+    const root = { ...created, parentId: null } as CreatedItem;
+    const slim = toCreatedWriteRecord(root);
+    expect(slim).toHaveProperty("parentId");
+    expect(slim.parentId).toBeNull();
   });
 });
 
@@ -604,6 +719,239 @@ describeIfDb("the slim write against Postgres", () => {
     });
   });
 
+  // -- The write family #231's audit waived ------------------------------
+  //
+  // `CreatedItem extends ItemRecord`, so all four creates echoed the whole
+  // row. #231 left them full on the grounds that a create is the only way a
+  // caller learns the generated `id` and the server-derived fields -- true,
+  // and the reason the slim shape here keeps `kind`, `parentId`, `depth` and
+  // `priority` rather than being the bare five. What that argument does not
+  // reach is `body` and `customFields`: the caller sent them in the same
+  // call, so they are the one part of a create's response it provably
+  // already holds.
+  describe("the create family", () => {
+    /** The fields a create must keep beyond the write receipt, because the server decided them. */
+    const SERVER_DERIVED = ["kind", "parentId", "depth", "priority"] as const;
+
+    it("create_task returns the slim record by default, with nothing heavy", async () => {
+      const result = (await runtime.call("create_task", {
+        title: "A heavy created task",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+        projectId: parentProjectId,
+      })) as unknown as Record<string, unknown>;
+
+      for (const field of IDENTITY_FIELDS) {
+        expect(result).toHaveProperty(field);
+      }
+      // THE assertion: absence, not presence.
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+    });
+
+    // The sharpest statement of the defect: a caller that has just *sent* a
+    // 20,000-character brief should not be charged to read it back.
+    it("does not echo a body the caller just sent", async () => {
+      const result = (await runtime.call("create_task", {
+        title: "Echo check",
+        body: "d".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        projectId: parentProjectId,
+      })) as unknown as Record<string, unknown>;
+      expect(result).not.toHaveProperty("body");
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    // The half of #231's waiver that was right, pinned so slimming cannot
+    // quietly go too far. Without these a caller would have to re-read the
+    // row to learn what the server decided, which is the round trip the
+    // whole convention exists to save.
+    it("keeps the fields the server decided rather than the caller", async () => {
+      const result = (await runtime.call("create_task", {
+        title: "Server-derived check",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        projectId: parentProjectId,
+      })) as unknown as Record<string, unknown>;
+      for (const field of SERVER_DERIVED) {
+        expect(result).toHaveProperty(field);
+      }
+      expect(result.kind).toBe("task");
+      expect(result.parentId).toBe(parentProjectId);
+      expect(result.depth).toBe(1);
+    });
+
+    // `"inbox"` is resolved server-side into a real id, so it is the case
+    // where echoing `parentId` earns its place -- a caller that wrote the
+    // sentinel learns which project it actually landed in.
+    it("reports the resolved parent when the inbox sentinel was used", async () => {
+      const result = (await runtime.call("create_task", {
+        title: "Inbox-bound",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        projectId: "inbox",
+      })) as unknown as Record<string, unknown>;
+      expect(result.parentId).not.toBe("inbox");
+      expect(typeof result.parentId).toBe("string");
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+    });
+
+    it("restores every heavy field when full is passed", async () => {
+      const result = (await runtime.call("create_task", {
+        title: "A heavy created task, full",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+        projectId: parentProjectId,
+        full: true,
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).toHaveProperty(field);
+      }
+      expect(result.body).toHaveLength(20_000);
+    });
+
+    it("is an order of magnitude smaller than the same call with full", async () => {
+      const common = {
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+        projectId: parentProjectId,
+      };
+      const slim = await runtime.call("create_task", { ...common, title: "Ratio slim" });
+      const full = await runtime.call("create_task", {
+        ...common,
+        title: "Ratio full",
+        full: true,
+      });
+      expect(wireSize(full)).toBeGreaterThan(wireSize(slim) * 20);
+    });
+
+    it("create_project returns the slim record by default", async () => {
+      const result = (await runtime.call("create_project", {
+        title: "A heavy created project",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+      expect(result.kind).toBe("project");
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    it("create_subtask returns the slim record by default", async () => {
+      const parentTask = (await runtime.call("create_task", {
+        title: "Parent for the subtask case",
+        body: "Holds one subtask.",
+        area: "slim-writes",
+        originType: "auto",
+        projectId: parentProjectId,
+      })) as unknown as { id: string };
+
+      const result = (await runtime.call("create_subtask", {
+        title: "A heavy created subtask",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+        taskId: parentTask.id,
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+      expect(result.kind).toBe("subtask");
+      expect(result.depth).toBe(2);
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    it("create_item stays slim on the parented path", async () => {
+      const result = (await runtime.call("create_item", {
+        title: "A heavy created item, parented",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+        parentId: parentProjectId,
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    // `create_item` with no parent returns down an EARLIER path, before any
+    // parent is resolved -- the same trap #234 found on `reparent_item`'s
+    // `parentId: null` branch. Narrowing only the final return would leave
+    // this one echoing the whole record, and no test of the parented path
+    // would notice.
+    it("create_item stays slim on the parentless path, which returns down an earlier path", async () => {
+      const result = (await runtime.call("create_item", {
+        title: "A heavy created item, parentless",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        customFields: { brief: "c".repeat(20_000) },
+      })) as unknown as Record<string, unknown>;
+      for (const field of HEAVY_FIELDS) {
+        expect(result).not.toHaveProperty(field);
+      }
+      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
+    });
+
+    // `titleAdvice` is about the call rather than the row, so it has to
+    // survive the narrowing -- it is the one thing a caller cannot learn by
+    // re-reading the item afterwards.
+    it("carries titleAdvice through the slim shape", async () => {
+      const result = (await runtime.call("create_task", {
+        // A bare issue number trips the title convention (#131), so this
+        // create really does produce advice — the earlier fixture here read
+        // "fix the thing.", which trips no rule at all and so asserted
+        // nothing.
+        title: "Fix #42 in the parser",
+        body: "b".repeat(20_000),
+        area: "slim-writes",
+        originType: "auto",
+        projectId: parentProjectId,
+      })) as unknown as Record<string, unknown>;
+      expect(result).toHaveProperty("titleAdvice");
+      expect(result).not.toHaveProperty("body");
+    });
+
+    // `full` is a response-shaping flag, not a column. It must not reach the
+    // row or the ledger.
+    it("does not store full as a field on the created item", async () => {
+      const created = (await runtime.call("create_task", {
+        title: "Flag containment",
+        body: "A brief.",
+        area: "slim-writes",
+        originType: "auto",
+        projectId: parentProjectId,
+        full: true,
+      })) as unknown as { id: string };
+      const row = (await runtime.call("get_item", {
+        id: created.id,
+        full: true,
+      })) as unknown as Record<string, unknown>;
+      expect(row).not.toHaveProperty("full");
+      // The brief really was stored — proving the slim response withheld it
+      // rather than the create having dropped it.
+      expect(row.body).toBe("A brief.");
+    });
+  });
+
   // Acceptance #4. `describe_tool` derives its field list from each
   // operation's own input schema, so this asserts the flag reached the
   // surface an agent actually reads rather than only the service layer.
@@ -614,6 +962,10 @@ describeIfDb("the slim write against Postgres", () => {
       "complete_item",
       "reparent_item",
       "retype_to_task",
+      "create_item",
+      "create_project",
+      "create_task",
+      "create_subtask",
     ] as const) {
       it(`names full among ${tool}'s fields`, async () => {
         const contract = (await runtime.call("describe_tool", { tool })) as unknown as {

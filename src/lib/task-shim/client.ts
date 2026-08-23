@@ -90,6 +90,13 @@ export async function createTask(
     body: input.body,
     area: input.area,
     ...(input.repo === undefined ? {} : { repo: input.repo }),
+    // `full: true` for the same reason `getTask` and `updateTask` send it —
+    // the creates now default to the slim shape too, and `ShimTask` carries
+    // `body`, `area` and `repo`, none of which survive it. `toShimTask`
+    // degrades a missing field to an empty string rather than failing, so
+    // omitting this would have the shim keep working while reporting every
+    // task it just created as having an empty brief and no area.
+    full: true,
     // Neither "a person" nor "the system" minted this — it arrived through
     // this surface, which is what `source` means on `originType`
     // (SCHEMA.md §1's "who or what created it"; the importer, #10, makes the
