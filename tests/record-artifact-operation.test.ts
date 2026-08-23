@@ -177,12 +177,23 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       // Refused rather than repaired: a coerced findings list looks complete
       // and is not.
       //
-      // `invalid_input`, NOT `internal`. `InvalidFindingError` is not a
-      // ServiceError, so left to propagate it is wrapped as a server fault —
-      // a 500 for what is plainly a caller mistake. This assertion is the
-      // one that catches that translation being dropped.
+      // `invalid_input`, NOT `internal`. An off-ladder severity is plainly a
+      // caller mistake, and reporting it as a server fault would answer a
+      // fixable input with a 500. This assertion is the load-bearing one:
+      // both the schema and `parseFindings` reject this value, and whichever
+      // gets there first must produce a caller error.
       expect(error.code).toBe("invalid_input");
-      expect(error.fields).toEqual(["findings"]);
+
+      // The field path points AT the offending value — `findings.0.severity`,
+      // not the whole `findings` field. With `findings` typed as an array of
+      // objects, the schema rejects the bad enum member before the handler
+      // runs and names the exact path, which is strictly more useful on a
+      // fifty-entry list than naming the field as a whole. The prefix is what
+      // matters, so this does not pin the separator style.
+      const fields = error.fields ?? [];
+      expect(fields).toHaveLength(1);
+      expect(fields[0]).toMatch(/^findings/);
+      expect(fields[0]).toContain("severity");
     });
   });
 
