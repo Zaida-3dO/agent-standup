@@ -95,6 +95,33 @@ describe("submitItemEdit", () => {
     expect(outcome.message).toBe("title must not be empty");
   });
 
+  it("reports no item rather than an empty object when the envelope carried none", async () => {
+    // `{}` is not an `ItemEditResult` — it has none of the five fields — so
+    // returning it would have let a caller read `undefined` out of a value
+    // the type promised was populated. Null makes "the write landed but
+    // said nothing about the row" a state the caller has to handle.
+    const fetchImpl = vi.fn(async () => jsonResponse({}));
+    const outcome = await submitItemEdit(
+      "item-1",
+      { title: "x" },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.item).toBeNull();
+  });
+
+  it("does NOT ask for the full record, because the caller re-fetches", async () => {
+    // The load-bearing half of the slim-response contract: the page throws
+    // `outcome.item` away and re-reads the detail, so the request has no
+    // reason to carry `full: true`. If a caller ever starts reading the
+    // response, this is the assertion that has to change with it.
+    const fetchImpl = vi.fn(async () => jsonResponse({ item: { id: "item-1", title: "New" } }));
+    await submitItemEdit("item-1", { title: "New" }, fetchImpl as unknown as typeof fetch);
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).not.toHaveProperty("full");
+  });
+
   it("falls back to the status when the body carries no error envelope", async () => {
     const fetchImpl = vi.fn(async () => new Response("<html>", { status: 502 }));
     const outcome = await submitItemEdit(

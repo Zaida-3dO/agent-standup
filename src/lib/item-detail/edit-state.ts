@@ -25,8 +25,31 @@ export interface ItemEditFields {
   readonly area?: string;
 }
 
+/**
+ * What a successful write returns — the slim shape, and only that.
+ *
+ * `PATCH /api/items/{id}` returns `{id, title, state, headline, updatedAt}`
+ * by default (MILESTONES.md #107, carried to the writes); this request does
+ * not send `full: true`, so this is genuinely all that arrives.
+ *
+ * **Typed narrowly rather than as `Record<string, unknown>` on purpose.**
+ * The loose type advertised "the whole record" and could not fail a
+ * typecheck when the response silently became five fields — so a caller
+ * reaching for `priority` or `body` would compile and read `undefined` at
+ * runtime. Naming the five fields makes that a compile error instead, which
+ * is the signal that was missing. A caller that genuinely needs the whole
+ * record should send `full: true` here, the way `@/lib/board/move.ts` does.
+ */
+export interface ItemEditResult {
+  readonly id: string;
+  readonly title: string;
+  readonly state: string;
+  readonly headline: string | null;
+  readonly updatedAt: string;
+}
+
 export type EditOutcome =
-  | { readonly ok: true; readonly item: Record<string, unknown> }
+  | { readonly ok: true; readonly item: ItemEditResult | null }
   | { readonly ok: false; readonly message: string };
 
 /**
@@ -75,8 +98,13 @@ export async function submitItemEdit(
   if (!response.ok) {
     return { ok: false, message: await messageFromResponse(response) };
   }
-  const body = (await response.json()) as { item?: Record<string, unknown> };
-  return { ok: true, item: body.item ?? {} };
+  const body = (await response.json()) as { item?: ItemEditResult };
+  // `null` rather than `{}` when the envelope carried no item: the empty
+  // object could not be an `ItemEditResult` without lying about five
+  // required fields, and "the write succeeded but told us nothing about the
+  // row" is a state a caller should have to handle rather than one it can
+  // read blank strings out of.
+  return { ok: true, item: body.item ?? null };
 }
 
 /**

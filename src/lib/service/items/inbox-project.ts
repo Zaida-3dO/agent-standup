@@ -117,13 +117,21 @@ export async function resolveInboxProject(
   const area = await ensureAreaRaw(ctx, primaryArea);
 
   const id = crypto.randomUUID();
+  // `"depth"` is stated as 0 rather than left to the column's `DEFAULT 0`.
+  // The inbox project is always a root — `"parentId"` is hardcoded NULL
+  // right beside it — so the default happens to be correct, but the other
+  // two fields this row derives from its tree position (`parentId`, `kind`)
+  // are both spelled out, and depth is the one that was not. Writing it
+  // keeps the invariant "every insert states the depth it means" true of
+  // every path that creates an `Item`, so a future change to the column
+  // default cannot quietly reach this statement.
   const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
     `INSERT INTO "Item" (
-       "id", "parentId", "kind", "title", "body", "state", "priority",
+       "id", "parentId", "kind", "depth", "title", "body", "state", "priority",
        "originType", "originPersonId", "area", "needsVisualReview",
        "driveMode", "mergeAuthority", "updatedAt"
      ) VALUES (
-       $1, NULL, 'project'::"ItemKind", $2, '', 'on_deck'::"ItemState", 'P2'::"Priority",
+       $1, NULL, 'project'::"ItemKind", 0, $2, '', 'on_deck'::"ItemState", 'P2'::"Priority",
        $3::"OriginType", $4, $5, false,
        $6::"DriveMode", $7::"MergeAuthority", CURRENT_TIMESTAMP
      )
