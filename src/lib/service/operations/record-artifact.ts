@@ -29,7 +29,7 @@ import { InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
-import { InvalidFindingError, parseFindings } from "@/lib/findings";
+import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
 import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib/pull-requests";
 import { currentReviewRound } from "../guards/merge-review-round";
 
@@ -88,8 +88,42 @@ const inputSchema = z
     ref: z.string().trim().min(1).nullable().optional(),
     /** Which browser session a visual review ran in (§6) — an opaque string to the core. */
     browserSession: z.string().trim().min(1).nullable().optional(),
-    /** The review's individual findings, each with a severity (§6a). Validated by `parseFindings`. */
-    findings: z.unknown().optional(),
+    /**
+     * The review's individual findings, each with a severity (§6a).
+     *
+     * **Typed here as well as validated by `parseFindings`, and the
+     * duplication is the point.** This field was `z.unknown()`, which meant
+     * the only statement of its shape lived inside `parseFindings` — a
+     * runtime function neither `describe_tool` nor a `tools/list` client can
+     * see. So the field rendered as `"type": "unknown"` with no rules, on a
+     * tool where every other field is typed concretely, and a caller had
+     * nothing to copy: the one field requiring a guess was the one field
+     * with no contract. Declaring it as a schema is what makes the shape
+     * *visible* — `describeFields` reads exactly this node, and MCP
+     * advertises it — and an untyped field cannot be documented into
+     * existence.
+     *
+     * `parseFindings` still runs and still owns the verdict. It is the
+     * shared validator the import path uses too, and it refuses things this
+     * schema cannot express as cleanly (an all-whitespace `text`); keeping
+     * both means the two doors agree. Deliberately NOT `.strict()`: an
+     * unrecognised key on a finding is dropped by `parseFindings` rather
+     * than refused, and tightening that here would start rejecting calls
+     * that the import path accepts.
+     */
+    findings: z
+      .array(
+        z.object({
+          /** What was found. The one required field — a finding with no text is not a finding. */
+          text: z.string().min(1),
+          /** How severe. Optional and NOT defaulted: absent reads as "ungraded", not "low". */
+          severity: z.enum(FINDING_SEVERITIES).optional(),
+          /** Optional free-form location — a file, a line, a route. Never parsed. */
+          where: z.string().optional(),
+        }),
+      )
+      .nullable()
+      .optional(),
     /** The follow-up item a `lgtm_with_followups` review's findings were deferred into. */
     followUpItemId: z.string().min(1).nullable().optional(),
     createdByType: z.enum(HOLDER_TYPES).optional(),
@@ -232,6 +266,71 @@ async function resolveReviewRound(
   return currentReviewRound(ctx.db, input.itemId);
 }
 
+/**
+ * The conditional rules and worked example `describe_tool` serves for this
+ * operation.
+ *
+ * Hoisted to module scope rather than written inline in the declaration so
+ * that the `Stryker disable all` / `restore all` range around the metadata
+ * stays short enough for `scripts/check-operation-metadata-mutants.mjs` to
+ * see both ends of it — the checker requires the closing comment within a
+ * bounded window below the declaration, which a rules list this long would
+ * push past.
+ */
+const RECORD_ARTIFACT_CONTRACT = {
+  rules: [
+    {
+      fields: ["findings"],
+      rule:
+        "`findings` is a list of the review's individual findings — an array of objects, each " +
+        "with `text` (required, non-empty), an optional `severity` from " +
+        `${FINDING_SEVERITIES.join(", ")}, and an optional free-form \`where\`. Send the array ` +
+        "itself, not a JSON string of it. An absent `severity` records an UNGRADED finding, " +
+        "which is a different claim from `info` and is never defaulted. Example: " +
+        '[{"text": "N+1 query in the board loader", "severity": "medium", "where": "src/lib/board.ts:88"}]',
+    },
+    {
+      fields: ["findings"],
+      rule:
+        "`findings: []` and omitting the field are stored identically (as NULL) — an empty " +
+        "list is not a distinguishable claim. Findings are recorded for the record and for " +
+        "display; no merge guard reads a severity, so a `critical` finding under an approving " +
+        "verdict does NOT by itself block a merge. The verdict is what gates.",
+    },
+    {
+      fields: ["createdByType", "createdById"],
+      rule:
+        "An artifact must record who produced it: pass both, or a `sessionId` holding a live " +
+        "assignment on the item to be credited from. Never guessed — `createdByType` is what " +
+        "`merge.requires_authorisation` reads to decide a human authorised the merge.",
+    },
+    {
+      fields: ["commitSha", "kind"],
+      rule: "A `commit` artifact must carry `commitSha`; a `historical_verification` must carry both `commitSha` and a `body` saying what was inspected.",
+    },
+    {
+      fields: ["ref", "kind"],
+      rule: "A `pull_request` artifact must carry the PR's http(s) URL in `ref`, and its `body`, when set, must be one of the pull-request statuses.",
+    },
+    {
+      fields: ["verdict", "kind"],
+      rule: "Only `plan_review`, `code_review` and `visual_review` take a verdict; any other kind must leave it unset or `na`.",
+    },
+  ],
+  example: {
+    itemId: "b1f0c3d2-0000-4000-8000-000000000000",
+    kind: "code_review",
+    verdict: "lgtm_with_nits",
+    body: "Reads well. Two things worth fixing before the next round.",
+    findings: [
+      { text: "N+1 query in the board loader", severity: "medium", where: "src/lib/board.ts:88" },
+      { text: "Stray console.log", severity: "info", where: "src/app/page.tsx:12" },
+    ],
+    createdByType: "agent",
+    createdById: "reviewer-7b2",
+  },
+};
+
 // Stryker disable all : this metadata is a module-level literal, read into
 // the registry at import — before any test body runs and never re-evaluated
 // — so a mutation here is unkillable by construction, NOT untested.
@@ -242,6 +341,7 @@ export const recordArtifact = defineOperation({
   name: "record_artifact",
   kind: "write",
   summary: "Records an artifact — a plan, a review, a commit, a screenshot — against an item.",
+  contract: RECORD_ARTIFACT_CONTRACT,
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RecordArtifactInput): Promise<RecordedArtifact> {

@@ -70,10 +70,68 @@ describe("parsing a findings list", () => {
     expect(parsed[0]).not.toHaveProperty("severity");
   });
 
-  it("refuses a non-array", () => {
+  it("refuses a non-array WITHOUT inventing an index, and names the shape it wanted", () => {
+    // The regression this pins (row 94eed34b): the not-an-array branch used
+    // to throw `InvalidFindingError(0, ...)`, rendering
+    // `findings[0]: findings must be an array` — a message that reads as
+    // though the validator had parsed an array and found its first ELEMENT
+    // to be a non-array. It had not; the 0 was a placeholder for an index
+    // that did not exist. A reviewer sending the correct shape read it as a
+    // demand for a nesting level and could not find one.
+    //
+    // Single-character mutation this catches: changing `null` back to `0` in
+    // the `!Array.isArray` branch of parseFindings makes the message
+    // `findings[0]: ...` again and fails the `not.toMatch(/findings\[/)`.
     expect(() => parseFindings({ text: "x" })).toThrow(InvalidFindingError);
-    expect(() => parseFindings(null)).toThrow(/must be an array/);
-    expect(() => parseFindings("some prose")).toThrow(/must be an array/);
+    for (const notAList of [null, "some prose", { text: "x" }, 7]) {
+      let message = "";
+      try {
+        parseFindings(notAList);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      // No fabricated element index for a whole-list fault...
+      expect(message).not.toMatch(/findings\[/);
+      expect(message).toMatch(/^findings: /);
+      // ...and the message states the shape that WOULD be accepted, which is
+      // the thing a caller guessing at the field actually needs.
+      expect(message).toMatch(/array of objects/);
+      expect(message).toMatch(/text/);
+      expect(message).toMatch(/info\|low\|medium\|high\|critical/);
+    }
+  });
+
+  it("tells a caller who sent a JSON string of the right array exactly that", () => {
+    // The near-miss worth its own branch: a caller one JSON.parse from
+    // correct. "a string" would not tell them what to change.
+    // Mutation this catches: deleting the `startsWith("[")` test in
+    // describeReceived collapses this to the generic "a string" wording.
+    let message = "";
+    try {
+      parseFindings(JSON.stringify([{ text: "x", severity: "medium" }]));
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/JSON-encoded string/);
+    expect(message).toMatch(/not a string containing it/);
+  });
+
+  it("still indexes the entry when the fault IS a particular entry", () => {
+    // The other half of the same distinction: `index` is null only for a
+    // whole-list fault. An entry fault must still name its position, or the
+    // import-scale case ("one of your 1,117 findings") stops being fixable.
+    const error = (() => {
+      try {
+        parseFindings([{ text: "fine" }, "not an object"]);
+      } catch (caught) {
+        return caught as InvalidFindingError;
+      }
+    })();
+    expect(error).toBeInstanceOf(InvalidFindingError);
+    expect(error!.index).toBe(1);
+    expect(error!.message).toMatch(/^findings\[1\]: /);
+    // And it names the element shape, not merely "must be an object".
+    expect(error!.message).toMatch(/text, severity\?, where\?/);
   });
 
   it("refuses an entry with no text, and names which entry", () => {
@@ -83,6 +141,10 @@ describe("parsing a findings list", () => {
     expect(() => parseFindings([{ text: "   " }])).toThrow(/findings\[0\]/);
     expect(() => parseFindings([{ text: 7 }])).toThrow(/non-empty string/);
     expect(() => parseFindings(["just a string"])).toThrow(/must be an object/);
+    // A whole-list fault carries a null index; an entry fault carries its own.
+    expect(() => parseFindings([{ text: "fine" }, { severity: "low" }])).toThrow(
+      /findings\[1\]: text is required/,
+    );
   });
 
   it("refuses an off-vocabulary severity instead of silently dropping it", () => {
