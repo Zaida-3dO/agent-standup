@@ -192,7 +192,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       // matters, so this does not pin the separator style.
       const fields = error.fields ?? [];
       expect(fields).toHaveLength(1);
-      expect(fields[0]).toMatch(/^findings/);
+      expect(fields[0]).toMatch(/^findings/);
       expect(fields[0]).toContain("severity");
     });
   });
