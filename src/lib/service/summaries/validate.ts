@@ -332,6 +332,112 @@ function pushIfTooLong(
 }
 
 /**
+ * The well-formed subset of a candidate's list fields — what the checks in
+ * `validateSummaryShape` are safe to read `.text` and `.length` off.
+ *
+ * Separate from `SummaryCandidate` because that type describes what a
+ * caller is *supposed* to send, while this describes what actually survived
+ * inspection.
+ */
+interface SanitisedEntries {
+  readonly shipped: readonly string[];
+  readonly not_done: readonly NotDoneEntry[];
+  readonly what_to_test: readonly WhatToTestEntry[];
+  readonly watch_for: readonly string[];
+}
+
+/**
+ * The expected-shape sentence for an entry field, written for a caller who
+ * just sent the wrong one.
+ *
+ * States the shape positively and shows it, because a caller who reached
+ * this message needs something concrete to act on: the two typed-entry
+ * fields (`not_done`, `what_to_test`) are objects whose `text` carries the
+ * prose, and it is genuinely easy to assume they are bare strings like
+ * `shipped` and `watch_for` are.
+ */
+const ENTRY_SHAPE_HINTS: Readonly<Record<string, string>> = {
+  shipped: "a string",
+  watch_for: "a string",
+  not_done: 'an object like {"text": "...", "reason": "descoped"}',
+  what_to_test: 'an object like {"text": "..."}',
+};
+
+function describeReceived(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return `a ${typeof value}`;
+}
+
+/**
+ * Checks that every entry in the four list fields is the shape its field
+ * requires, recording a named issue for each that is not, and returns only
+ * the entries that are.
+ *
+ * A string field's entry must be a string; a typed field's entry must be an
+ * object carrying a string `text`. `reason` is deliberately *not* checked
+ * here — an object with a bad `reason` is well-formed enough to read, and
+ * the existing `not_done` reason check below produces a better message for
+ * it than a generic shape complaint would.
+ */
+function collectEntryShapeIssues(
+  candidate: SummaryCandidate,
+  issues: SummaryValidationIssue[],
+): SanitisedEntries {
+  function keepStrings(field: "shipped" | "watch_for", entries: readonly unknown[]): string[] {
+    const kept: string[] = [];
+    entries.forEach((entry, i) => {
+      if (typeof entry === "string") {
+        kept.push(entry);
+        return;
+      }
+      issues.push({
+        field,
+        rule: "entry_shape",
+        message: `${field}[${i}] must be ${ENTRY_SHAPE_HINTS[field]}; got ${describeReceived(entry)}.`,
+      });
+    });
+    return kept;
+  }
+
+  function keepTyped<T>(field: "not_done" | "what_to_test", entries: readonly unknown[]): T[] {
+    const kept: T[] = [];
+    entries.forEach((entry, i) => {
+      if (
+        typeof entry === "object" &&
+        entry !== null &&
+        !Array.isArray(entry) &&
+        typeof (entry as { text?: unknown }).text === "string"
+      ) {
+        kept.push(entry as T);
+        return;
+      }
+      // A string entry is called out separately: it is by far the most
+      // likely mistake here, and "got a string" alone does not tell a
+      // caller that the text they sent is the right *content* in the wrong
+      // wrapper. Saying so turns the fix into moving one value.
+      const received =
+        typeof entry === "string"
+          ? "a string — wrap it as the object's text field"
+          : describeReceived(entry);
+      issues.push({
+        field,
+        rule: "entry_shape",
+        message: `${field}[${i}] must be ${ENTRY_SHAPE_HINTS[field]}; got ${received}.`,
+      });
+    });
+    return kept;
+  }
+
+  return {
+    shipped: keepStrings("shipped", candidate.shipped ?? []),
+    watch_for: keepStrings("watch_for", candidate.watch_for ?? []),
+    not_done: keepTyped<NotDoneEntry>("not_done", candidate.not_done ?? []),
+    what_to_test: keepTyped<WhatToTestEntry>("what_to_test", candidate.what_to_test ?? []),
+  };
+}
+
+/**
  * Validates shape, counts and per-field caps (SCHEMA.md §5's static
  * validator 1) plus the conditional `user_facing` selects between (§5 —
  * `what_to_test` when true, `how_verified` when false) and the jargon
@@ -355,6 +461,27 @@ export function validateSummaryShape(
 ): SummaryValidationIssue[] {
   const issues: SummaryValidationIssue[] = [];
   const nonDelivery = to !== undefined && isNonDeliveryState(to);
+
+  // --- entry shape, before anything reads `.text`/`.length` off an entry ---
+  //
+  // `SummaryCandidate` is a *claim* about shape, not a proof of one. The
+  // guard path builds it in `readCandidate` (`guards/summaries.ts`) from
+  // `fields.summary`, which `transition_item` passes through unvalidated by
+  // design (SCHEMA.md §16 — the operation "does not interpret them"), and
+  // that builder only checks `Array.isArray`: an array of plain strings
+  // where entries are objects satisfies it and is then *cast* to
+  // `WhatToTestEntry[]`. Every check below would read `.text` off a string
+  // and get `undefined`, and `pushIfTooLong`'s `value.length` would throw a
+  // `TypeError` — which escapes as an `internal` service error carrying an
+  // empty `fields` array, the one refusal shape a caller cannot act on
+  // because it cannot distinguish bad input from a broken server.
+  //
+  // So malformed entries are rejected *by name* here and then excluded from
+  // the checks below. Excluding them matters as much as naming them: a
+  // caller gets the shape complaint plus every genuine issue in the rest of
+  // the summary in one round, instead of a shape complaint followed by a
+  // crash on the next line.
+  const sanitised = collectEntryShapeIssues(candidate, issues);
 
   // --- shipped / decision: which one is required is decided by `to` ---
   //
@@ -415,7 +542,7 @@ export function validateSummaryShape(
       });
     }
   }
-  candidate.shipped.forEach((entry, i) => {
+  sanitised.shipped.forEach((entry, i) => {
     pushIfTooLong(issues, "shipped", i, entry, SHIPPED_CHAR_CAP);
     issues.push(...findJargonHits("shipped", i, entry));
   });
@@ -428,7 +555,7 @@ export function validateSummaryShape(
       message: `not_done must have at most ${NOT_DONE_MAX} entries; got ${candidate.not_done.length}.`,
     });
   }
-  candidate.not_done.forEach((entry, i) => {
+  sanitised.not_done.forEach((entry, i) => {
     pushIfTooLong(issues, "not_done", i, entry.text, NOT_DONE_TEXT_CHAR_CAP);
     issues.push(...findJargonHits("not_done", i, entry.text));
     if (!NOT_DONE_REASONS.includes(entry.reason as NotDoneReason)) {
@@ -450,7 +577,12 @@ export function validateSummaryShape(
         message: `what_to_test is required when user_facing is true, with ${WHAT_TO_TEST_MIN}-${WHAT_TO_TEST_MAX} entries; got ${steps.length}.`,
       });
     }
-    steps.forEach((step, i) => {
+    // Counted above on the submitted array, but read here off the
+    // well-formed subset: a malformed entry still counts toward the
+    // cardinality it was submitted as (dropping it would turn one mistake
+    // into a spurious second "too few entries" complaint), while only
+    // entries that actually carry a `text` are dereferenced.
+    sanitised.what_to_test.forEach((step, i) => {
       pushIfTooLong(issues, "what_to_test", i, step.text, WHAT_TO_TEST_TEXT_CHAR_CAP);
       issues.push(...findJargonHits("what_to_test", i, step.text));
     });
@@ -505,7 +637,7 @@ export function validateSummaryShape(
       message: `watch_for must have at most ${WATCH_FOR_MAX} entries; got ${candidate.watch_for.length}.`,
     });
   }
-  candidate.watch_for.forEach((entry, i) => {
+  sanitised.watch_for.forEach((entry, i) => {
     pushIfTooLong(issues, "watch_for", i, entry, WATCH_FOR_CHAR_CAP);
     issues.push(...findJargonHits("watch_for", i, entry));
   });

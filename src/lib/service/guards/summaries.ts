@@ -92,15 +92,33 @@ function eventComparableText(row: { body: string | null; payload: unknown }): st
  */
 function candidateTextFields(candidate: SummaryCandidate): { field: string; text: string }[] {
   const fields: { field: string; text: string }[] = [];
-  candidate.shipped.forEach((text, i) => fields.push({ field: `shipped[${i}]`, text }));
+  // Every push goes through `pushText`, which drops anything that is not a
+  // string. `SummaryCandidate` says these are all strings, but the type is a
+  // claim about what a caller *should* send, not a proof: `readCandidate`
+  // above builds one from unvalidated `fields.summary` on nothing stronger
+  // than `Array.isArray`, so an array of plain strings arrives cast to
+  // `WhatToTestEntry[]` and `entry.text` is `undefined`. The `text.trim()`
+  // below would throw a `TypeError`, which escapes as an `internal` error
+  // with an empty `fields` array — a refusal a caller cannot act on.
+  //
+  // This runs alongside `validateSummaryShape`, not after it: both call
+  // sites collect shape issues and similarity issues in the same pass to
+  // report them together, so this function still sees malformed entries
+  // even though the shape pass has already named them. Skipping them here
+  // is right in its own terms too — an entry with no text has no text to
+  // compare, and the caller is being told about its shape regardless.
+  const pushText = (field: string, text: unknown) => {
+    if (typeof text === "string") fields.push({ field, text });
+  };
+  candidate.shipped.forEach((text, i) => pushText(`shipped[${i}]`, text));
   candidate.not_done.forEach((entry, i) =>
-    fields.push({ field: `not_done[${i}].text`, text: entry.text }),
+    pushText(`not_done[${i}].text`, (entry as { text?: unknown } | null)?.text),
   );
   (candidate.what_to_test ?? []).forEach((step, i) =>
-    fields.push({ field: `what_to_test[${i}].text`, text: step.text }),
+    pushText(`what_to_test[${i}].text`, (step as { text?: unknown } | null)?.text),
   );
-  if (candidate.how_verified) fields.push({ field: "how_verified", text: candidate.how_verified });
-  candidate.watch_for.forEach((text, i) => fields.push({ field: `watch_for[${i}]`, text }));
+  if (candidate.how_verified) pushText("how_verified", candidate.how_verified);
+  candidate.watch_for.forEach((text, i) => pushText(`watch_for[${i}]`, text));
   return fields;
 }
 

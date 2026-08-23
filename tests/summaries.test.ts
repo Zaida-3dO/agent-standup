@@ -29,6 +29,7 @@ import {
   validateSummaryShape,
   type SummaryCandidate,
 } from "@/lib/service/summaries";
+import { findSimilarityIssues } from "@/lib/service/guards/summaries";
 
 /** A minimal, fully valid non-user-facing candidate — the baseline every test mutates one field of. */
 function baseCandidate(overrides: Partial<SummaryCandidate> = {}): SummaryCandidate {
@@ -559,5 +560,228 @@ describe("jaccardSimilarity and isTooSimilar — the similarity algorithm itself
 describe("SIMILARITY_REJECT_AT matches the number SCHEMA.md §5 states", () => {
   it("is 0.85", () => {
     expect(SIMILARITY_REJECT_AT).toBe(0.85);
+  });
+});
+
+/**
+ * Malformed entries are *named*, never crashed on.
+ *
+ * The defect these pin: `SummaryCandidate` is a claim about shape, not a
+ * proof of one. `transition_item` passes `fields` through unvalidated by
+ * design (SCHEMA.md §16), and the guard's `readCandidate` builds a candidate
+ * from it on nothing stronger than `Array.isArray` — so an array of plain
+ * strings arrives cast to `WhatToTestEntry[]`, `step.text` is `undefined`,
+ * and `pushIfTooLong`'s `value.length` threw a `TypeError`. That escaped the
+ * service taxonomy as `internal` with an empty `fields` array: the one
+ * refusal shape a caller cannot act on, because it cannot tell bad input
+ * from a broken server.
+ *
+ * Every test here casts through `unknown` on purpose. The types forbid these
+ * shapes; the runtime was receiving them anyway, and that gap is the bug.
+ */
+describe("validateSummaryShape rejects malformed entries instead of throwing", () => {
+  it("the reporter's exact reproducer is a named rejection, not a crash", () => {
+    // Verbatim from the bug report: what_to_test as plain strings.
+    const candidate = {
+      shipped: ["Test entry for isolating the failure."],
+      not_done: [],
+      user_facing: true,
+      what_to_test: ["Test entry for isolating the failure."],
+      watch_for: [],
+    } as unknown as SummaryCandidate;
+
+    let issues: ReturnType<typeof validateSummaryShape>;
+    expect(() => {
+      issues = validateSummaryShape(candidate, "research_done");
+    }).not.toThrow();
+
+    const shape = issues!.filter((i) => i.field === "what_to_test" && i.rule === "entry_shape");
+    expect(shape).toHaveLength(1);
+    // The message must name the field, the index, and the shape expected —
+    // an unactionable refusal is the whole defect, so a bare rejection here
+    // would not be a fix.
+    expect(shape[0]!.message).toContain("what_to_test[0]");
+    expect(shape[0]!.message).toContain('"text"');
+  });
+
+  it("a well-formed user_facing what_to_test still passes cleanly", () => {
+    const issues = validateSummaryShape(
+      baseCandidate({
+        user_facing: true,
+        how_verified: undefined,
+        what_to_test: [{ text: "Open the site and confirm the footer renders the new address." }],
+      }),
+      "research_done",
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it("a malformed what_to_test entry still counts toward cardinality", () => {
+    // One bad entry must not also produce a spurious "too few entries"
+    // complaint — that would turn one mistake into two.
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate({ user_facing: true, how_verified: undefined }),
+        what_to_test: ["a bare string"],
+      } as unknown as SummaryCandidate,
+      "research_done",
+    );
+    expect(issues.some((i) => i.field === "what_to_test" && i.rule === "entry_shape")).toBe(true);
+    expect(issues.some((i) => i.rule === "count")).toBe(false);
+  });
+
+  it("a string not_done entry is named rather than crashed on", () => {
+    let issues: ReturnType<typeof validateSummaryShape>;
+    expect(() => {
+      issues = validateSummaryShape(
+        {
+          ...baseCandidate(),
+          not_done: ["deferred the caching work"],
+        } as unknown as SummaryCandidate,
+        "merged",
+      );
+    }).not.toThrow();
+    const shape = issues!.filter((i) => i.field === "not_done" && i.rule === "entry_shape");
+    expect(shape).toHaveLength(1);
+    expect(shape[0]!.message).toContain("not_done[0]");
+    expect(shape[0]!.message).toContain("reason");
+  });
+
+  it.each([
+    ["null", null],
+    ["a number", 7],
+    ["an object", { text: "wrong wrapper" }],
+  ])("a shipped entry that is %s is named rather than crashed on", (_label, bad) => {
+    let issues: ReturnType<typeof validateSummaryShape>;
+    expect(() => {
+      issues = validateSummaryShape(
+        { ...baseCandidate(), shipped: [bad] } as unknown as SummaryCandidate,
+        "merged",
+      );
+    }).not.toThrow();
+    expect(issues!.some((i) => i.field === "shipped" && i.rule === "entry_shape")).toBe(true);
+  });
+
+  it.each([
+    ["null", null],
+    ["an object", { text: "wrong wrapper" }],
+  ])("a watch_for entry that is %s is named rather than crashed on", (_label, bad) => {
+    let issues: ReturnType<typeof validateSummaryShape>;
+    expect(() => {
+      issues = validateSummaryShape(
+        { ...baseCandidate(), watch_for: [bad] } as unknown as SummaryCandidate,
+        "merged",
+      );
+    }).not.toThrow();
+    expect(issues!.some((i) => i.field === "watch_for" && i.rule === "entry_shape")).toBe(true);
+  });
+
+  it("a not_done object with a bad reason still gets the reason complaint, not a shape one", () => {
+    // An object carrying a string `text` is well-formed enough to read, so
+    // the existing (better) reason check must still be what fires.
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate(),
+        not_done: [{ text: "Left the caching work for later.", reason: "made-up" }],
+      } as unknown as SummaryCandidate,
+      "merged",
+    );
+    expect(issues.some((i) => i.field === "not_done" && i.rule === "reason")).toBe(true);
+    expect(issues.some((i) => i.rule === "entry_shape")).toBe(false);
+  });
+
+  it("reports a malformed entry alongside genuine issues in the same round", () => {
+    // The caller should not have to fix the shape, resubmit, and only then
+    // discover the cap violation.
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate({ user_facing: true, how_verified: undefined }),
+        shipped: ["x".repeat(SHIPPED_CHAR_CAP + 1)],
+        what_to_test: ["a bare string"],
+      } as unknown as SummaryCandidate,
+      "research_done",
+    );
+    expect(issues.some((i) => i.field === "what_to_test" && i.rule === "entry_shape")).toBe(true);
+    expect(issues.some((i) => i.field === "shipped" && i.rule === "max_length")).toBe(true);
+  });
+});
+
+/**
+ * The similarity check's own dereference of the same malformed entries.
+ *
+ * `findSimilarityIssues` lives in `guards/summaries.ts` (it is covered by
+ * the guard-registration sweep, which only scans `guards/`) but is pure —
+ * it takes the history rows as an argument — so it is provable here without
+ * Postgres. That matters: `tests/summaries-guard.test.ts` is
+ * TEST_DATABASE_URL-gated and skips by default, so without these the fix to
+ * `candidateTextFields` would ship with nothing able to fail on it.
+ *
+ * This is a genuinely *separate* crash path from `validateSummaryShape`.
+ * Both call sites (`complete_item`'s handler and `summaryRequiredGuard`)
+ * collect shape issues and similarity issues in the same pass so a caller
+ * sees everything in one round — so this function still receives malformed
+ * entries even after the shape pass has named them, and `text.trim()` on an
+ * `undefined` would throw independently.
+ */
+describe("findSimilarityIssues tolerates malformed entries", () => {
+  const history = [{ body: "Some entirely unrelated prior event text.", payload: null }];
+
+  it("does not throw on what_to_test entries that are plain strings", () => {
+    expect(() =>
+      findSimilarityIssues(
+        {
+          ...baseCandidate({ user_facing: true, how_verified: undefined }),
+          what_to_test: ["a bare string"],
+        } as unknown as SummaryCandidate,
+        history,
+      ),
+    ).not.toThrow();
+  });
+
+  it("does not throw on not_done entries that are plain strings", () => {
+    expect(() =>
+      findSimilarityIssues(
+        { ...baseCandidate(), not_done: ["a bare string"] } as unknown as SummaryCandidate,
+        history,
+      ),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["shipped", { shipped: [null] }],
+    ["watch_for", { watch_for: [42] }],
+  ])("does not throw on a %s entry that is not a string", (_label, override) => {
+    expect(() =>
+      findSimilarityIssues(
+        { ...baseCandidate(), ...override } as unknown as SummaryCandidate,
+        history,
+      ),
+    ).not.toThrow();
+  });
+
+  it("still catches a real pasted-log duplicate in a well-formed entry", () => {
+    // The tolerance above must not have cost the check its actual job.
+    const pasted =
+      "Applied the migration, restarted the worker, and confirmed the queue drained to zero.";
+    const issues = findSimilarityIssues(
+      { ...baseCandidate(), shipped: [pasted] } as unknown as SummaryCandidate,
+      [{ body: pasted, payload: null }],
+    );
+    expect(issues.some((i) => i.field === "shipped[0]" && i.rule === "similarity")).toBe(true);
+  });
+
+  it("still catches a duplicate inside a well-formed what_to_test entry", () => {
+    // Proves the typed-entry branch still reaches `.text` when it is there.
+    const pasted = "Open the board, filter to the archived column, and confirm the row is absent.";
+    const issues = findSimilarityIssues(
+      {
+        ...baseCandidate({ user_facing: true, how_verified: undefined }),
+        what_to_test: [{ text: pasted }],
+      } as unknown as SummaryCandidate,
+      [{ body: pasted, payload: null }],
+    );
+    expect(issues.some((i) => i.field === "what_to_test[0].text" && i.rule === "similarity")).toBe(
+      true,
+    );
   });
 });
