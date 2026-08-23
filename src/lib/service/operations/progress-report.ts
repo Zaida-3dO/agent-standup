@@ -46,7 +46,8 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { checkpointHeadline } from "../items/checkpoint-headline";
 import { NOT_ARCHIVED_CONDITION } from "../items/row";
-import { deriveOpenLoops, type LoopEventLike } from "@/lib/open-loops";
+import { deriveOpenLoops } from "@/lib/open-loops";
+import { groupLoopEventsByItem, loopEventsForMany } from "./loop-shared";
 import {
   DONE_STATES,
   MAX_FLAGS_PER_REPORT,
@@ -111,10 +112,6 @@ interface RawCheckpointRow {
 interface RawChildRow {
   parentId: string;
   openChildren: bigint | number;
-}
-
-interface RawLoopRow extends LoopEventLike {
-  itemId: string;
 }
 
 /** The newest `pull_request` artifact per item: its URL and its status. */
@@ -327,24 +324,18 @@ export const progressReport = defineOperation({
         openChildren.set(row.parentId, Number(row.openChildren));
       }
 
-      // Both halves of every loop pair, folded per item by the same pure
+      // Every event in a loop's lifecycle, folded per item by the same pure
       // function `orientation` uses — so "which loops are open" has one
       // definition rather than one per reader.
-      const loopRows = await ctx.db.$queryRawUnsafe<RawLoopRow[]>(
-        `SELECT "itemId", "id", "ts", "type", "payload"
-           FROM "Event"
-          WHERE "itemId" = ANY($1)
-            AND "type" IN ('open_loop'::"EventType", 'open_loop_closed'::"EventType")
-          ORDER BY "id" ASC`,
-        itemIds,
-      );
-      const byItem = new Map<string, RawLoopRow[]>();
-      for (const row of loopRows) {
-        const list = byItem.get(row.itemId);
-        if (list === undefined) byItem.set(row.itemId, [row]);
-        else list.push(row);
-      }
-      for (const [itemId, events] of byItem) {
+      //
+      // Read through `loopEventsForMany` rather than with a local statement:
+      // the fold is only correct when handed the *complete* slice, and a
+      // hand-written `IN` list that omits a type does not fail loudly. It
+      // reports a deleted loop as still open and serves an edited loop with
+      // its superseded text — which is precisely what this call site did
+      // while every test stayed green.
+      const loopRows = await loopEventsForMany(ctx, itemIds);
+      for (const [itemId, events] of groupLoopEventsByItem(loopRows)) {
         loops.set(
           itemId,
           deriveOpenLoops(events).map((loop) => loop.text),

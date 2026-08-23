@@ -19,6 +19,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
 import { deriveOpenLoops, type LoopEventLike } from "@/lib/open-loops";
+import { loopEventsFor } from "./loop-shared";
 
 const ACTOR_TYPES = ["person", "agent", "system"] as const;
 
@@ -101,16 +102,6 @@ function usesLoopId(events: readonly LoopEventLike[], loopId: string): boolean {
   });
 }
 
-/** Every loop event for an item, oldest first — the same slice `orientation` folds. */
-async function loopEvents(ctx: ServiceContext, itemId: string): Promise<LoopEventLike[]> {
-  return ctx.db.$queryRawUnsafe<LoopEventLike[]>(
-    `SELECT "id", "ts", "type", "payload" FROM "Event"
-      WHERE "itemId" = $1 AND "type" IN ('open_loop'::"EventType", 'open_loop_closed'::"EventType")
-      ORDER BY "id" ASC`,
-    itemId,
-  );
-}
-
 const addInput = z
   .object({
     itemId: z.string().min(1),
@@ -183,7 +174,13 @@ export const loopAdd = defineOperation({
     // and applied whether or not the caller supplied the id: a generated UUID
     // cannot collide, so the extra query costs nothing in the ordinary case
     // and the guard cannot be bypassed by omitting the field.
-    const events = await loopEvents(ctx, input.itemId);
+    //
+    // "Every" has to mean every *type*, which is why this reads through the
+    // shared helper. A slice naming only the open and closed events would let
+    // an id whose only trace is an edit or a deletion pass as unused — and
+    // re-opening a retired id is the one thing the fold cannot represent,
+    // because its terminal state is already recorded against that id.
+    const events = await loopEventsFor(ctx, input.itemId);
     if (usesLoopId(events, loopId)) {
       throw new InvalidInputError(
         `Loop ${loopId} has already been used on this item — a loopId cannot be reused, ` +
@@ -249,7 +246,7 @@ export const loopClose = defineOperation({
     // already closed) that would otherwise land as a permanently inert row.
     // Same split in posture the payload parsers already make between guarding
     // the write and tolerating the read.
-    const open = deriveOpenLoops(await loopEvents(ctx, input.itemId));
+    const open = deriveOpenLoops(await loopEventsFor(ctx, input.itemId));
     if (!open.some((loop) => loop.loopId === input.loopId)) {
       throw new NotFoundError(
         `No open loop ${input.loopId} on this item — it was never opened, or is already closed.`,

@@ -32,6 +32,8 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+import { claimItem } from "@/lib/claims";
+import { registerSessions } from "./helpers/register-sessions";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -407,6 +409,110 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
       expect(orientation.openLoops.loops).toEqual([]);
     });
 
+    it("is absent from EVERY read that surfaces loops, not just the ones nearby", async () => {
+      // **This test exists because the narrower version of it was not
+      // enough.** The original asserted the deletion guarantee against
+      // `loop_list` and `orientation` only, and shipped a `progress_report`
+      // that still reported deleted loops as open — the whole DB suite green
+      // the entire time. A guarantee stated as "every read" has to be
+      // asserted against every read, or it is a guarantee about the two
+      // surfaces someone happened to think of.
+      //
+      // `progress_report` is session-scoped, so it needs a live claim; the
+      // other three are item-scoped. Each is killed by narrowing that
+      // surface's loop-event slice back to two types.
+      const sessionId = "session-delete-sweep";
+      const itemId = await seedItem();
+      await registerSessions(prisma, [sessionId]);
+      await prisma.$transaction((tx) =>
+        claimItem(tx, {
+          itemId,
+          role: "builder",
+          holderType: "agent",
+          holderId: sessionId,
+          sessionId,
+          rootSessionId: sessionId,
+          machine: "test-machine",
+        }),
+      );
+      await call("loop_add", {
+        itemId,
+        sessionId,
+        loopId: "gone",
+        text: "a uniquely phrased retracted loose end",
+      });
+      await call("loop_delete", {
+        itemId,
+        loopId: "gone",
+        reason: "a duplicate of the loop on the sibling task",
+      });
+
+      expect((await list({ itemId })).loops).toEqual([]);
+
+      const orientation = await call<OrientationOutput>("orientation", { itemId });
+      expect(orientation.openLoops.loops).toEqual([]);
+
+      const detail = await call<{ history: { type: string }[] }>("get_item_detail", {
+        id: itemId,
+      });
+      // The detail view folds loops client-side from this history, so the
+      // guarantee there depends on the deleting event being *present* in it.
+      expect(detail.history.map((entry) => entry.type)).toContain("open_loop_deleted");
+
+      const found = await call<{ loopMatches: unknown[] }>("search", {
+        query: "uniquely phrased retracted",
+        includeLoops: true,
+      });
+      expect(found.loopMatches).toEqual([]);
+
+      const progress = await call<{ rows: { flags: string[] }[]; report: string }>(
+        "progress_report",
+        { sessionId },
+      );
+      expect(progress.rows[0]?.flags ?? []).toEqual([]);
+      expect(progress.report).not.toContain("uniquely phrased retracted");
+    });
+
+    it("serves an edited loop's current wording on every read", async () => {
+      // The edit half of the same sweep. A stale slice cannot see the edit,
+      // so each surface would serve superseded text — asserted here against
+      // the superseded wording being absent, not merely the current one being
+      // present, so a read returning both still fails.
+      const sessionId = "session-edit-sweep";
+      const itemId = await seedItem();
+      await registerSessions(prisma, [sessionId]);
+      await prisma.$transaction((tx) =>
+        claimItem(tx, {
+          itemId,
+          role: "builder",
+          holderType: "agent",
+          holderId: sessionId,
+          sessionId,
+          rootSessionId: sessionId,
+          machine: "test-machine",
+        }),
+      );
+      await call("loop_add", { itemId, sessionId, loopId: "refined", text: "supersededwording" });
+      await call("loop_edit", { itemId, loopId: "refined", text: "currentwording" });
+
+      const listed = (await list({ itemId })).loops;
+      expect(listed[0]!.text).toBe("currentwording");
+
+      const orientation = await call<OrientationOutput>("orientation", { itemId });
+      expect(orientation.openLoops.loops[0]!.text).toBe("currentwording");
+
+      const progress = await call<{ rows: { flags: string[] }[] }>("progress_report", {
+        sessionId,
+      });
+      expect(progress.rows[0]?.flags).toEqual(["currentwording"]);
+
+      const forOld = await call<{ loopMatches: unknown[] }>("search", {
+        query: "supersededwording",
+        includeLoops: true,
+      });
+      expect(forOld.loopMatches).toEqual([]);
+    });
+
     it("keeps the events in the ledger", async () => {
       // "It is called delete and it never deletes" — killed by any
       // implementation that removed rows.
@@ -471,6 +577,36 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
       await call("loop_delete", { itemId, loopId: "gone", reason: goodReason });
       const error = await rejection(call("loop_add", { itemId, loopId: "gone", text: "again" }));
       expect(error.code).toBe("invalid_input");
+    });
+
+    it("keeps the id reserved even when only a lifecycle row carries it", async () => {
+      // **The collision check has to see EVERY event type, not just the two
+      // that bracket a loop.** `loop_add`'s own comment claims it checks
+      // "every loop event for the id"; a slice naming only `open_loop` and
+      // `open_loop_closed` quietly made that false.
+      //
+      // The nearby "does not free the loopId" case does NOT catch this: it
+      // deletes a loop whose `open_loop` row is still inside the two-type
+      // slice, so the id collides either way and the narrow slice survives.
+      // Proved by mutation — that test passed against the stale query.
+      //
+      // Here the opening event is removed from the ledger after the fact, so
+      // the deleting row is the *only* remaining trace of the id. A stale
+      // slice sees nothing, lets the id be re-minted, and produces a loop
+      // whose terminal state is already recorded against it — the one thing
+      // the fold cannot represent.
+      const itemId = await seedItem();
+      await call("loop_add", { itemId, loopId: "ghosted", text: "a mistake" });
+      await call("loop_delete", {
+        itemId,
+        loopId: "ghosted",
+        reason: "a duplicate of the loop on the sibling task",
+      });
+      await prisma.event.deleteMany({ where: { itemId, type: "open_loop" } });
+
+      const error = await rejection(call("loop_add", { itemId, loopId: "ghosted", text: "again" }));
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toContain("loopId");
     });
 
     it("can retract a closed loop, reporting what it was", async () => {

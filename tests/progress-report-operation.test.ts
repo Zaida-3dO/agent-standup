@@ -500,6 +500,63 @@ describeIfDb("progress_report against Postgres", () => {
       expect(result.rows[0]?.flags).toEqual([]);
     });
 
+    it("drops a loop once it is deleted", async () => {
+      // A deleted loop must vanish from EVERY read that surfaces loops, and
+      // this report is one of them. It shipped broken: the query here sliced
+      // only `open_loop`/`open_loop_closed` while the fold understood four
+      // types, so a retracted loop kept being flagged as live work.
+      //
+      // Killed by narrowing `loopEventsForMany`'s `IN` list back to two
+      // labels — which is exactly the mutation that reached main, and which
+      // the whole DB suite tolerated because nothing asserted this.
+      const sessionId = "session-loops-deleted";
+      const itemId = await heldItem(sessionId);
+      await runtime.call("loop_add", {
+        itemId,
+        sessionId,
+        loopId: "loop-mistaken",
+        text: "A loose end recorded against the wrong item.",
+      });
+      await runtime.call("loop_delete", {
+        itemId,
+        sessionId,
+        loopId: "loop-mistaken",
+        reason: "a duplicate of the loop on the sibling task",
+      });
+
+      const result = await report(sessionId);
+      expect(result.rows[0]?.flags).toEqual([]);
+      expect(result.report).not.toContain("recorded against the wrong item");
+    });
+
+    it("flags an edited loop with its current wording, not the original", async () => {
+      // The other half of the same defect: a two-type slice cannot see the
+      // edit, so the report serves text the loop does not carry. Killed by
+      // the same narrowing — the assertion pins the exact flag list, so a
+      // fold returning both wordings fails too.
+      const sessionId = "session-loops-edited";
+      const itemId = await heldItem(sessionId);
+      await runtime.call("loop_add", {
+        itemId,
+        sessionId,
+        loopId: "loop-refined",
+        text: "The retry path is untested.",
+      });
+      await runtime.call("loop_edit", {
+        itemId,
+        sessionId,
+        loopId: "loop-refined",
+        text: "The retry path is untested on a cold boot.",
+      });
+
+      const result = await report(sessionId);
+      // `toEqual` on the whole array, not `toContain`: the edited wording has
+      // the original as a prefix, so an absence assertion on that substring
+      // would be vacuous. Exact equality is what proves the superseded
+      // wording is not also present as a second flag.
+      expect(result.rows[0]?.flags).toEqual(["The retry path is untested on a cold boot."]);
+    });
+
     it("caps flags per row, because sparingly is the point", async () => {
       // The seeded count and the expected ceiling are **literals**, not
       // `MAX_FLAGS_PER_ROW`. Deriving both from the constant makes the

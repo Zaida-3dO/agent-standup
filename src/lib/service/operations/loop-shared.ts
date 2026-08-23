@@ -39,6 +39,50 @@ export async function loopEventsFor(ctx: ServiceContext, itemId: string): Promis
   );
 }
 
+/** One loop event, carrying the item it belongs to — the multi-item read's row shape. */
+export interface LoopEventWithItem extends LoopEventLike {
+  readonly itemId: string;
+}
+
+/**
+ * Every loop event for several items at once, oldest first, each row carrying
+ * its `itemId`.
+ *
+ * A separate function rather than a parameter on `loopEventsFor` because the
+ * two differ in their result shape, not only in their predicate: this one has
+ * to return `itemId` so the caller can group by it, and a single-item caller
+ * should not have to ignore a column it already knows.
+ *
+ * **Grouping by item before folding is the caller's job, and it is not
+ * optional.** A `loopId` is unique within an item and not across the store,
+ * so folding two items' rows together would let loops that happen to share an
+ * id cancel each other — one item's close suppressing another item's open.
+ */
+export async function loopEventsForMany(
+  ctx: ServiceContext,
+  itemIds: readonly string[],
+): Promise<LoopEventWithItem[]> {
+  return ctx.db.$queryRawUnsafe<LoopEventWithItem[]>(
+    `SELECT "itemId", "id", "ts", "type", "payload" FROM "Event"
+      WHERE "itemId" = ANY($1) AND "type" IN (${LOOP_EVENT_TYPE_SQL})
+      ORDER BY "id" ASC`,
+    itemIds,
+  );
+}
+
+/** Groups loop-event rows by their item, preserving the order they arrived in. */
+export function groupLoopEventsByItem<T extends { itemId: string }>(
+  rows: readonly T[],
+): Map<string, T[]> {
+  const byItem = new Map<string, T[]>();
+  for (const row of rows) {
+    const list = byItem.get(row.itemId);
+    if (list === undefined) byItem.set(row.itemId, [row]);
+    else list.push(row);
+  }
+  return byItem;
+}
+
 /**
  * Refuses when no such item exists.
  *
