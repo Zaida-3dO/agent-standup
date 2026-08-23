@@ -89,6 +89,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ITEM_STATES, type ItemStateValue } from "../state-machine/states";
 import { areaFilterCondition } from "../items/area-filter";
+import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import {
   LIVE_BOARD_ASSIGNMENTS_SQL,
   groupBoardAssignmentsByItem,
@@ -195,6 +196,27 @@ const inputSchema = z
      */
     includeCompleted: z.boolean().default(false),
     /**
+     * Whether to include archived projects, and archived descendants in
+     * every rollup number.
+     *
+     * Defaults to `false`: an archived root is not a card. A grid that
+     * shows one contradicts the archive that hid it everywhere else, and
+     * the caller who just archived it reads the card as the archive having
+     * silently failed.
+     *
+     * It widens **both** halves of the rollup deliberately. Excluding the
+     * root but still counting archived descendants would leave a card whose
+     * `total` disagreed with the tree beneath it, and a project whose only
+     * remaining child was archived would render as live work — the same
+     * class of wrong number, one level down. `list_items` refuses a flag
+     * like this for a good reason (an archive is the installation saying a
+     * row should never have existed, so a generous filter should not put it
+     * back in front of an ordinary caller); it is offered here because a
+     * grid is also the natural place to *audit* what was archived, and
+     * because the counting half has no other way to be inspected.
+     */
+    includeArchived: z.boolean().default(false),
+    /**
      * The most projects to return — MILESTONES.md #109.
      *
      * This read returns one row per project rather than one per task, so
@@ -272,7 +294,7 @@ export const getProjects = defineOperation({
   name: "get_projects",
   kind: "read",
   summary:
-    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Computed in one recursive query rather than per project. A project with no children is reported with progress null and childless true, never as zero percent, and is never hidden. Paged: pass limit and cursor, and read nextCursor for the following page.",
+    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Computed in one recursive query rather than per project. A project with no children is reported with progress null and childless true, never as zero percent, and is never hidden. Archived projects and archived descendants are excluded from the grid and from every rollup number — pass includeArchived to audit them. Paged: pass limit and cursor, and read nextCursor for the following page.",
   // Stryker restore all
   input: inputSchema,
   contract: {
@@ -280,6 +302,10 @@ export const getProjects = defineOperation({
       {
         fields: ["includeCompleted"],
         rule: "Defaults to false, so the default read is work in flight. A project with no children at all is never excluded by it — that row is broken rather than finished, and hiding it is what this read exists to avoid.",
+      },
+      {
+        fields: ["includeArchived"],
+        rule: "Defaults to false: an archived project is not a card, and archived descendants are counted by no rollup number. Pass it to audit what was archived — it widens the grid and the counts together, so a card's total always agrees with the tree beneath it.",
       },
     ],
     example: { includeCompleted: false },
@@ -293,6 +319,13 @@ export const getProjects = defineOperation({
     // prevents.
     const where: string[] = [`"Item"."kind" = 'project'::"ItemKind"`];
     const values: unknown[] = [];
+
+    // Archived roots are not cards (MILESTONES.md #137). Parameterless by
+    // construction, so it can sit at any position in this list without
+    // disturbing the `$n` numbering the conditions below are counting on —
+    // see `NOT_ARCHIVED_CONDITION`. `"Item"` is the alias the `roots` CTE
+    // gives this table, the same one `areaFilterCondition` names.
+    if (!input.includeArchived) where.push(`"Item".${NOT_ARCHIVED_CONDITION}`);
 
     if (input.area !== undefined) {
       values.push(input.area);
@@ -324,6 +357,15 @@ export const getProjects = defineOperation({
       }
     }
 
+    // Archived descendants are counted by no rollup number — applied to
+    // **both** arms of the recursion, which is what makes an archived
+    // subtree disappear whole rather than leaving its grandchildren
+    // attached to a root through a parent that is itself uncounted. A
+    // filter on the seed alone would keep counting the children of an
+    // archived child; one on the recursive arm alone would keep counting
+    // the archived child itself.
+    const descendantFilter = input.includeArchived ? "" : ` AND i.${NOT_ARCHIVED_CONDITION}`;
+
     // **The whole rollup, in one statement.**
     //
     // `subtree` seeds with the direct children of every matching project at
@@ -343,10 +385,10 @@ export const getProjects = defineOperation({
          subtree AS (
            SELECT i."id", i."parentId" AS "rootId"
            FROM "Item" i
-           WHERE i."parentId" IN (SELECT "id" FROM roots)
+           WHERE i."parentId" IN (SELECT "id" FROM roots)${descendantFilter}
            UNION ALL
            SELECT i."id", s."rootId"
-           FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
+           FROM "Item" i JOIN subtree s ON i."parentId" = s."id"${descendantFilter}
          )
          SELECT p."id" AS "id",
            p."title" AS "title",
