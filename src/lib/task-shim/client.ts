@@ -118,7 +118,16 @@ export async function updateTask(
   id: string,
   edits: { title?: string; body?: string; repo?: string; area?: string },
 ): Promise<ShimResult<ShimTask>> {
-  const result = await request(options, "PATCH", `/api/items/${encodeURIComponent(id)}`, edits);
+  // `full: true` for the same reason `getTask` sends `?full=true` — the
+  // writes now default to the slim shape too, and `ShimTask` carries
+  // `body`, `area` and `repo`, none of which survive it. `toShimTask`
+  // degrades a missing field to an empty string rather than failing, so
+  // omitting this would have the shim keep working while reporting every
+  // edited task as having an empty brief and no area.
+  const result = await request(options, "PATCH", `/api/items/${encodeURIComponent(id)}`, {
+    ...edits,
+    full: true,
+  });
   return toShimResult(result, "item");
 }
 
@@ -171,8 +180,11 @@ export async function transitionTask(
   id: string,
   to: string,
 ): Promise<ShimResult<ShimTask>> {
+  // `full: true` — see `updateTask`. A transition's slim response carries
+  // no `body`/`area`/`repo`, and this surface's contract has all three.
   const result = await request(options, "POST", `/api/items/${encodeURIComponent(id)}/transition`, {
     to,
+    full: true,
   });
   return toShimResult(result, "item");
 }

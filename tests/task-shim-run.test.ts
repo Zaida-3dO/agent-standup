@@ -264,6 +264,21 @@ describe("create", () => {
   });
 });
 
+/**
+ * A PATCH body with the response-shaping `full` flag removed.
+ *
+ * These cases pin **which edits travel**, and `full` is not an edit — the
+ * shim sends it so the slim write response (#107, now on the writes too)
+ * still carries the `body`/`area`/`repo` that `ShimTask` needs. Stripping it
+ * here keeps each assertion about its actual subject; that the flag is sent
+ * at all is pinned once, in `tests/task-shim-client.test.ts`.
+ */
+function editsOnly(body: unknown): Record<string, unknown> {
+  const edits = { ...(body as Record<string, unknown>) };
+  delete edits.full;
+  return edits;
+}
+
 describe("update", () => {
   it("needs an id, with the exact message — not just whatever exit code a bypassed guard happens to produce", async () => {
     const { err, sinks } = streams();
@@ -292,7 +307,7 @@ describe("update", () => {
       streams: sinks,
     });
     expect(code).toBe(0);
-    expect(seen[0]).toEqual({ title: "Renamed" });
+    expect(editsOnly(seen[0])).toEqual({ title: "Renamed" });
   });
 
   it("treats a bare --title (empty string) as no edit at all", async () => {
@@ -319,7 +334,7 @@ describe("update", () => {
       streams: sinks,
     });
     expect(code).toBe(0);
-    expect(seen[0]).toEqual({ body: "new body" });
+    expect(editsOnly(seen[0])).toEqual({ body: "new body" });
   });
 
   it("forwards --repo and --area edits on the wire", async () => {
@@ -335,7 +350,7 @@ describe("update", () => {
       streams: sinks,
     });
     expect(code).toBe(0);
-    expect(seen[0]).toEqual({ repo: "web", area: "infra" });
+    expect(editsOnly(seen[0])).toEqual({ repo: "web", area: "infra" });
   });
 
   it("excludes a bare (empty) --repo and --area from the wire, keeping only the real edit", async () => {
@@ -351,7 +366,7 @@ describe("update", () => {
       streams: sinks,
     });
     expect(code).toBe(0);
-    expect(seen[0]).toEqual({ title: "Renamed" });
+    expect(editsOnly(seen[0])).toEqual({ title: "Renamed" });
   });
 });
 
@@ -532,7 +547,7 @@ describe("status — the honesty test", () => {
     };
     const { sinks } = streams();
     await run(["status", "item-1", "waiting"], { env, fetch: fetchImpl, streams: sinks });
-    expect(seen[0]).toEqual({ to: "paused" });
+    expect(seen[0]).toEqual({ to: "paused", full: true });
   });
 
   it("surfaces a guard rejection verbatim rather than papering over it", async () => {
@@ -579,6 +594,6 @@ describe("status — the honesty test", () => {
     };
     const { sinks } = streams();
     await run(["status", "item-1", "done"], { env, fetch: fetchImpl, streams: sinks });
-    expect(seen[0]).toEqual({ to: "merged" });
+    expect(seen[0]).toEqual({ to: "merged", full: true });
   });
 });

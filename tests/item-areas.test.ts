@@ -481,9 +481,12 @@ describeIfDb("item areas", () => {
         areas: ["edit-a", "edit-b"],
       });
 
+      // `full: true` because this asserts on `areas`, which the slim write
+      // response does not carry (#107's convention, now on the writes too).
       const updated = await call("update_item", {
         id: item.id,
         areas: ["edit-c", "edit-d"],
+        full: true,
       });
 
       // Fails if `setItemAreas`'s `DELETE` is removed: both the incoming
@@ -500,9 +503,11 @@ describeIfDb("item areas", () => {
         area: "keep-primary",
       });
 
+      // `full: true` — see the previous case; `areas` is not in the slim shape.
       const updated = await call("update_item", {
         id: item.id,
         areas: ["keep-primary", "added-later"],
+        full: true,
       });
 
       // The case the column diff cannot see on its own: `Item.area` is
@@ -520,7 +525,8 @@ describeIfDb("item areas", () => {
         areas: ["narrow-a", "narrow-b"],
       });
 
-      const updated = await call("update_item", { id: item.id, area: "narrow-a" });
+      // `full: true` — see above; `areas` is not in the slim shape.
+      const updated = await call("update_item", { id: item.id, area: "narrow-a", full: true });
 
       // `area` means the same thing on a read and on a write: one area.
       // Fails if the singular path stops collapsing to a one-element set —

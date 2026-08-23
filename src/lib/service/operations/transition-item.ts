@@ -10,7 +10,14 @@
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import {
+  ITEM_COLUMNS,
+  toItemRecord,
+  toItemWriteRecord,
+  type ItemRecord,
+  type ItemWriteRecord,
+  type RawItemRow,
+} from "../items/row";
 import {
   applyTransition,
   rehearseTransition,
@@ -38,6 +45,14 @@ const inputSchema = z
      * enforced rather than merely assumed.
      */
     dryRun: z.boolean().default(false),
+    /**
+     * Return the whole `items` row rather than the slim default — the same
+     * flag, spelled the same way, that `get_item`/`list_items`/`get_board`
+     * already take (MILESTONES.md #107). Off by default: a state change is
+     * the write least likely to want the record back, because the caller
+     * just supplied everything that changed. See `ItemWriteRecord`.
+     */
+    full: z.boolean().default(false),
   })
   .strict();
 
@@ -63,7 +78,13 @@ export interface AppliedTransitionOutcome {
 
 /** What `transition_item` returns on a real (non-rehearsed) move. */
 export interface TransitionItemResult {
-  readonly item: ItemRecord;
+  /**
+   * The item as it now stands — slim by default, the whole record under
+   * `full: true`. The key stays `item` in both shapes so a caller reading
+   * `result.item.state` keeps working; what changes is how much rides
+   * beside it.
+   */
+  readonly item: ItemRecord | ItemWriteRecord;
   readonly outcome: AppliedTransitionOutcome;
   /**
    * Who the notification rules say to tell about this move — MILESTONES.md
@@ -164,6 +185,13 @@ export const transitionItem = defineOperation({
       allowed: true,
       rehearsed: false,
     };
-    return { item, outcome, ...(notifications ? { notifications } : {}) };
+    return {
+      // `outcome` was already the compact shape this row wanted — `dryRun`
+      // has always returned it and nothing else. What overflowed was the
+      // whole record sitting beside it, which is what `full` now gates.
+      item: input.full ? item : toItemWriteRecord(item),
+      outcome,
+      ...(notifications ? { notifications } : {}),
+    };
   },
 });

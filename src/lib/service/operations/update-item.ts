@@ -12,7 +12,9 @@ import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
   toItemRecord,
+  toItemWriteRecord,
   type ItemRecord,
+  type ItemWriteRecord,
   type RawItemRow,
 } from "../items/row";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
@@ -59,6 +61,14 @@ const inputSchema = z
     driveMode: z.enum(["autonomous", "supervised", "manual"]).optional(),
     mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
     customFields: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * Return the whole `items` row rather than the slim default — the same
+     * flag `get_item`/`list_items`/`get_board` take (MILESTONES.md #107).
+     * Off by default. An edit is the sharpest case for this: a caller that
+     * has just *sent* a 3,000-character `body` does not need it read back,
+     * and before this row that is exactly what it got.
+     */
+    full: z.boolean().default(false),
   })
   .strict()
   // Both spellings at once is refused rather than resolved by precedence,
@@ -82,7 +92,7 @@ export type UpdateItemInput = z.infer<typeof inputSchema>;
  * is off (`notify.doc` unset), which stays distinguishable from "on, and
  * nobody matched" — an outcome with empty `recipients`.
  */
-export type UpdateItemResult = ItemRecord & {
+export type UpdateItemResult = (ItemRecord | ItemWriteRecord) & {
   readonly notifications?: NotificationOutcome;
 };
 
@@ -121,7 +131,13 @@ export const updateItem = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: UpdateItemInput): Promise<UpdateItemResult> {
-    const { id, ...rawEdits } = input;
+    const { id, full, ...rawEdits } = input;
+    // Applied at every return below, including the two no-op paths: an
+    // empty patch and a no-op patch are the calls most likely to be made in
+    // a loop, so they are the last places that should answer with the whole
+    // record.
+    const shape = (record: ItemRecord): ItemRecord | ItemWriteRecord =>
+      full ? record : toItemWriteRecord(record);
     const edits = Object.fromEntries(
       Object.entries(rawEdits).filter(([, value]) => value !== undefined),
     ) as Partial<Omit<UpdateItemInput, "id">>;
@@ -227,7 +243,7 @@ export const updateItem = defineOperation({
 
     if (setClauses.length === 0) {
       if (!areasChanged) {
-        return toItemRecord(current);
+        return shape(toItemRecord(current));
       }
       // The primary area is unchanged but the set is not, so there is no
       // column to UPDATE — re-read the row to pick up the `areas` the write
@@ -248,7 +264,7 @@ export const updateItem = defineOperation({
         after: { areas: resolvedAreas },
         fields: ["areas"],
       });
-      return toItemRecord(rereadRow);
+      return shape(toItemRecord(rereadRow));
     }
 
     setClauses.push(`"updatedAt" = CURRENT_TIMESTAMP`);
@@ -333,6 +349,7 @@ export const updateItem = defineOperation({
             snapshotOf(record, null),
           );
 
-    return notifications ? { ...record, notifications } : record;
+    const shaped = shape(record);
+    return notifications ? { ...shaped, notifications } : shaped;
   },
 });

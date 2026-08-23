@@ -56,7 +56,12 @@ describe("requestMove", () => {
       expect(impl.calls).toHaveLength(1);
       expect(impl.calls[0]!.url).toBe("/api/ui/items/a/transition");
       expect(impl.calls[0]!.method).toBe("POST");
-      expect(impl.calls[0]!.body).toEqual({ to: TARGET_STATE.in_progress });
+      // `full: true` is part of the contract, not incidental: the card this
+      // settles on is a `BoardItem`, which draws `kind`, `priority`, `area`,
+      // `repo` and the blocked/paused fields — none of which are in the
+      // slim write response the writes now default to (#107). Dropping the
+      // flag would blank all of them until the next board read.
+      expect(impl.calls[0]!.body).toEqual({ to: TARGET_STATE.in_progress, full: true });
     });
   });
 
