@@ -34,8 +34,8 @@
 -- the whole point is that it was never a real loop.
 
 -- The loop's text, corrected. Payload `{loopId, text}` -- the same shape as
--- `open_loop`, so the fold reads the newest edit's text in place of the
--- opening event's without a second parser.
+-- `open_loop`, so one parser serves both and the fold reads whichever text
+-- is current.
 ALTER TYPE "EventType" ADD VALUE IF NOT EXISTS 'open_loop_edited';
 
 -- The loop, retracted. Payload `{loopId, reason}`. A deleted loop is

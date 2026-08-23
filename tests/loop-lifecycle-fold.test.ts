@@ -110,7 +110,7 @@ describe("deriveLoops — status", () => {
 });
 
 describe("deriveLoops — edits", () => {
-  it("reports the edited text in place of the original", () => {
+  it("reports the current text once a loop has been edited", () => {
     // Killed by changing `edit?.text ?? text` to plain `text`.
     const loops = deriveLoops([
       opened(1, "loop-a", "the retry path is untested"),
@@ -133,8 +133,8 @@ describe("deriveLoops — edits", () => {
 
   it("takes the newest edit by event id, not the last one encountered", () => {
     // The out-of-order case, which is the whole reason the fold compares ids
-    // rather than overwriting. Killed by replacing the `id > previous.id`
-    // comparison with an unconditional `edits.set(...)`.
+    // rather than overwriting. Killed by reducing the `id > previous.id`
+    // comparison to an unconditional `edits.set(...)`.
     const loops = deriveLoops([
       opened(1, "loop-a", "first"),
       edited(9, "loop-a", "newest"),

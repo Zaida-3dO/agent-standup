@@ -232,7 +232,7 @@ const CLOSURE_REASON_PHRASES: readonly string[] = Object.freeze([
   "resolved",
   "fixed",
   "done",
-  "no longer relevant",
+  "not relevant",
   "sorted",
   "handled",
   "completed",

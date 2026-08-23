@@ -163,8 +163,8 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
     });
 
     it("cuts a long text to the preview length and says that it did", async () => {
-      // Killed by returning `loop.text` in place of `previewText(...)`, or by
-      // hard-coding `textTruncated: false`.
+      // Killed by returning `loop.text` where `previewText(...)` belongs, or
+      // by hard-coding `textTruncated: false`.
       const itemId = await seedItem();
       const long = "x".repeat(LOOP_TEXT_PREVIEW_CHARS + 50);
       await call("loop_add", { itemId, loopId: "wordy", text: long });
@@ -309,7 +309,7 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
   });
 
   describe("loop_edit", () => {
-    it("replaces the text, keeps openedAt, and returns what it was before", async () => {
+    it("sets the new text, keeps openedAt, and returns what it was before", async () => {
       const itemId = await seedItem();
       await call("loop_add", { itemId, loopId: "loop-a", text: "first wording" });
       const before = await call<LoopGetOutput>("loop_get", { itemId, loopId: "loop-a" });
