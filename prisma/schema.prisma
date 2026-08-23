@@ -533,7 +533,10 @@ model Artifact {
   // structural reason to be a row (schema.prisma's own header rule): it is
   // never edited independently, never referenced by a guard, and never
   // cardinality-constrained — it is a value belonging to exactly one
-  // artifact, read back whole.
+  // artifact, read back whole. (Read back whole is exactly what the detail
+  // view does with it: `FindingsList.tsx` renders the stored list grouped by
+  // severity. That is a read of the artifact, not a query into the jsonb,
+  // so the reasoning above still holds.)
   //
   // The severity vocabulary and the shape of an entry are validated in code
   // (`src/lib/findings.ts`), not by the column: Postgres cannot apply an
@@ -560,11 +563,15 @@ model Artifact {
 
   @@index([itemId, kind, reviewRound])
   @@index([followUpItemId])
-  // Storage-side only — nothing in the application queries findings yet. It
-  // is here rather than in a later migration because it is the difference
-  // between "severity is recorded" and "severity can be asked about", and
-  // adding it afterwards means an index build over a table that by then
-  // holds every review the installation has ever produced.
+  // Anticipatory, and still unused by any query. The application now READS
+  // findings — the item detail view renders them grouped by severity
+  // (`src/components/item-detail/FindingsList.tsx`) — but it reads them off
+  // an artifact row it already has by id, so nothing yet searches or filters
+  // ON a finding's contents, which is the only access shape this GIN index
+  // serves. It is here rather than in a later migration because it is the
+  // difference between "severity is recorded" and "severity can be asked
+  // about", and adding it afterwards means an index build over a table that
+  // by then holds every review the installation has ever produced.
   @@index([findings(ops: JsonbPathOps)], type: Gin)
 }
 
@@ -683,6 +690,14 @@ model Run {
   turnCount              Int              @default(0)
   outcome                RunOutcome?
   reworkRequired         Boolean          @default(false)
+  // NOT WIRED. No code writes this column — it is only ever its `0` default,
+  // so it is not a count of anything and must not be read as one. Stated
+  // plainly because a zero here is indistinguishable from a real "this run
+  // hit no blocking findings", and a reporting query that trusted it would
+  // return a confident, uniformly clean answer. Populating it means deciding
+  // what counts as blocking, which is undecided: the merge guards key on
+  // `Artifact.verdict` alone (`guards/merge.ts`), and no severity threshold
+  // exists anywhere in the system to derive this from.
   blockingFindings       Int              @default(0)
   steeringInterventions  Int              @default(0)
 

@@ -1,14 +1,27 @@
 // A review's findings, and the severity vocabulary they are graded on —
 // SCHEMA.md §6a, stored in `Artifact.findings`.
 //
-// **Storage only.** This module defines what a finding IS and refuses one
-// that is malformed. It deliberately does not count, aggregate, threshold or
-// report on findings, and nothing in the merge gate reads a severity: no
-// verdict-independent severity rule exists in this system and this is not the
-// change that invents one. Reporting (`Run.blocking_findings`, review-round
-// and rework analysis) is later work; what it needs from here is that the
-// severity was recorded at the time, honestly and in one vocabulary, because
-// that is the part that cannot be reconstructed afterwards.
+// **Definition and validation — not policy.** This module defines what a
+// finding IS and refuses one that is malformed. It deliberately does not
+// count, aggregate or threshold findings, and **nothing in the merge gate
+// reads a severity**: the guards key on `Artifact.verdict` alone
+// (`service/guards/merge.ts`), so no verdict-independent severity rule
+// exists in this system and this is not the change that invents one. A
+// MEDIUM finding does not mechanically block anything here; the reviewer's
+// verdict is what carries that weight.
+//
+// **Findings ARE displayed**, which the earlier "storage only" wording got
+// wrong. `src/lib/item-detail/findings-view.ts` parses them and
+// `src/components/item-detail/FindingsList.tsx` renders them grouped by
+// severity, ordering the groups by `FINDING_SEVERITIES` itself. Note that
+// `severityRank` and `isAtLeastSeverity` are a separate matter: they have
+// **no callers at all** outside this module's own tests, because nothing
+// asks the "at least this severe" question they answer. Aggregate
+// reporting (`Run.blockingFindings`,
+// which has no writer at all, plus review-round and rework analysis) is
+// still later work; what it needs from here is that the severity was
+// recorded at the time, honestly and in one vocabulary, because that is the
+// part that cannot be reconstructed afterwards.
 //
 // Why validate in code rather than in the column: Postgres cannot apply an
 // enum type to a value nested inside a jsonb document, so the alternative is

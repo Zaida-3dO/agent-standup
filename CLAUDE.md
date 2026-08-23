@@ -403,6 +403,17 @@ you.
   makes the milestone list a work queue instead of a wish list.
 - **Migrations are additive.** The whole schema lands as one baseline; change it with an `ALTER`,
   never by editing a migration that has already been applied.
+- **After ANY change to `schema.prisma`, run `npx prisma generate` — especially for a new enum
+  value.** Applying the migration is only half of it: the migration teaches *Postgres* the new
+  label, while the generated client carries its own copy of the enum and validates against that.
+  Skip the generate and Prisma rejects the new value **at the client layer**, before a query is
+  ever sent — so the database genuinely has the label, `\dT+` proves it, and the write still fails.
+  The error names the value as invalid, which reads like a migration that did not apply and sends
+  you to inspect the database, where everything looks correct. Do the generate first and the whole
+  confusion never starts. This is also why `npx prisma generate` is a separate step in every CI job
+  here (`ci.yml`) and in the local-development block in `README.md`, and why a **fresh worktree
+  needs it even with no schema change of its own** — `node_modules` starts empty, so there is no
+  generated client at all until you run it.
 - **Branch from `main`, never from another PR's branch.** CI's `pull_request` trigger filters on
   `branches: [main]`, so a PR opened against a branch that is itself not `main` matches no event and
   runs **zero** checks — and a PR with no runs at all reads as quiet, not red, which is easy to miss

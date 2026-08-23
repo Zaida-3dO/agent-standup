@@ -300,6 +300,19 @@ export const deleteItem = defineOperation({
   },
   // Stryker restore all
   input: inputSchema,
+  // Returns the FULL `ItemRecord`, deliberately — the one write here that
+  // does not slim to `ItemWriteRecord`. That shape exists because a write's
+  // response is a receipt for a row the caller can read again whenever it
+  // likes, so shipping `body` and `customFields` back is waste.
+  //
+  // This call weakens that premise rather than inverting it. The row is NOT
+  // unreadable afterwards: this archives (`archivedAt`), and `get_item`
+  // applies no archived filter, so a later read still returns it — see
+  // `tests/item-archive.test.ts`, "is still reachable by get_item, which is
+  // how a stale link resolves". What changes is that the row leaves every
+  // LISTING read, so a caller holding only a board or search result has no
+  // route back to `body` and `customFields` without already knowing the id.
+  // The full record is the response's value for that caller, not padding.
   async handler(ctx: ServiceContext, input: DeleteItemInput): Promise<ItemRecord> {
     const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
       `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,

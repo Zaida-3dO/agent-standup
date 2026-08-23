@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 import {
   InvalidOpenLoopPayloadError,
-  OPEN_LOOP_EVENT_TYPES,
   deriveOpenLoops,
   parseOpenLoopClosedPayload,
   parseOpenLoopPayload,
@@ -22,11 +21,13 @@ function closed(id: number, loopId: string, ts: Date = T1): LoopEventLike {
   return { id: BigInt(id), ts, type: "open_loop_closed", payload: { loopId } };
 }
 
-describe("the open-loop event types", () => {
-  it("are exactly the two the schema's enum gained", () => {
-    expect(OPEN_LOOP_EVENT_TYPES).toEqual(["open_loop", "open_loop_closed"]);
-  });
-});
+// The `OPEN_LOOP_EVENT_TYPES` case that stood here was removed with the
+// constant: it asserted the array equalled its own literal, so it could only
+// ever fail if someone edited both halves in the same breath. The list that
+// survives is `LOOP_EVENT_TYPES`, and it is pinned where it is load-bearing —
+// `tests/loop-lifecycle-fold.test.ts` for the fold, and the SQL built from it
+// in `loop-shared.ts` / `search.ts`, which a real database rejects if a label
+// drifts from the enum.
 
 describe("deriving which loops are still open", () => {
   it("reports a loop that was opened and never closed", () => {

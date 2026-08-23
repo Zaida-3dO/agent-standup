@@ -27,6 +27,11 @@ import {
 } from "@/lib/service/operations/loop-lifecycle";
 import type { LoopListOutput, LoopGetOutput } from "@/lib/service/operations/loop-reads";
 import type { OrientationOutput } from "@/lib/service/operations/orientation";
+// The detail view's own loop fold, run here over the very payload
+// `get_item_detail` returns — see the deleted-loop case below for why the
+// assertion goes through the fold rather than inspecting history types.
+import { openLoops } from "@/lib/item-detail/status";
+import type { DetailHistoryEntry } from "@/lib/item-detail/types";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -452,12 +457,25 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
       const orientation = await call<OrientationOutput>("orientation", { itemId });
       expect(orientation.openLoops.loops).toEqual([]);
 
-      const detail = await call<{ history: { type: string }[] }>("get_item_detail", {
+      const detail = await call<{ history: DetailHistoryEntry[] }>("get_item_detail", {
         id: itemId,
       });
-      // The detail view folds loops client-side from this history, so the
-      // guarantee there depends on the deleting event being *present* in it.
-      expect(detail.history.map((entry) => entry.type)).toContain("open_loop_deleted");
+      // The detail view folds loops client-side from the history in this
+      // payload, so assert the GUARANTEE the reader actually gets — the
+      // deleted loop is not offered as open — by running the very fold the
+      // view runs (`openLoops`, src/lib/item-detail/status.ts) over it.
+      //
+      // Asserting instead that the history merely *contains*
+      // `open_loop_deleted` would only pin a precondition, and one that holds
+      // solely because the history query in `get-item-detail.ts` is
+      // unfiltered. Narrow it to a subset of event types — a plausible
+      // response to that payload growing — and the fold would lose the
+      // deletion silently while a containment check still passed.
+      //
+      // Breaks if: the history query starts excluding `open_loop_deleted`
+      // (the fold then reads the loop as open and this returns one entry), or
+      // `deriveLoops` stops treating a deletion as withholding.
+      expect(openLoops(detail.history)).toEqual([]);
 
       const found = await call<{ loopMatches: unknown[] }>("search", {
         query: "uniquely phrased retracted",
