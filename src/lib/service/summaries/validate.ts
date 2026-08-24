@@ -332,18 +332,40 @@ function pushIfTooLong(
 }
 
 /**
+ * A surviving entry paired with the index it occupied in the array the
+ * caller actually sent.
+ *
+ * The index is carried rather than recomputed because the surviving list is
+ * *compacted*: malformed entries are dropped from it. Labelling a later
+ * complaint with its position in the compacted list would name an index the
+ * caller never sent that value at — see `SanitisedEntries`.
+ */
+interface IndexedEntry<T> {
+  readonly index: number;
+  readonly value: T;
+}
+
+/**
  * The well-formed subset of a candidate's list fields — what the checks in
  * `validateSummaryShape` are safe to read `.text` and `.length` off.
  *
  * Separate from `SummaryCandidate` because that type describes what a
  * caller is *supposed* to send, while this describes what actually survived
  * inspection.
+ *
+ * Entries are index-paired rather than bare. These lists are compacted, so
+ * a bare list would renumber everything after a dropped entry, and every
+ * subsequent complaint would name an index shifted down by the number of
+ * malformed entries before it — reporting `shipped[0] is 5000 characters`
+ * for a value the caller sent at `shipped[1]`, while the entry genuinely at
+ * index 0 drew a *different* complaint. Two contradictory messages about
+ * one index, and silence about the real offender.
  */
 interface SanitisedEntries {
-  readonly shipped: readonly string[];
-  readonly not_done: readonly NotDoneEntry[];
-  readonly what_to_test: readonly WhatToTestEntry[];
-  readonly watch_for: readonly string[];
+  readonly shipped: readonly IndexedEntry<string>[];
+  readonly not_done: readonly IndexedEntry<NotDoneEntry>[];
+  readonly what_to_test: readonly IndexedEntry<WhatToTestEntry>[];
+  readonly watch_for: readonly IndexedEntry<string>[];
 }
 
 /**
@@ -379,16 +401,23 @@ function describeReceived(value: unknown): string {
  * here — an object with a bad `reason` is well-formed enough to read, and
  * the existing `not_done` reason check below produces a better message for
  * it than a generic shape complaint would.
+ *
+ * Survivors come back paired with the index they were sent at, so that the
+ * length and jargon checks downstream can name the caller's own index
+ * rather than a position in the compacted list.
  */
 function collectEntryShapeIssues(
   candidate: SummaryCandidate,
   issues: SummaryValidationIssue[],
 ): SanitisedEntries {
-  function keepStrings(field: "shipped" | "watch_for", entries: readonly unknown[]): string[] {
-    const kept: string[] = [];
+  function keepStrings(
+    field: "shipped" | "watch_for",
+    entries: readonly unknown[],
+  ): IndexedEntry<string>[] {
+    const kept: IndexedEntry<string>[] = [];
     entries.forEach((entry, i) => {
       if (typeof entry === "string") {
-        kept.push(entry);
+        kept.push({ index: i, value: entry });
         return;
       }
       issues.push({
@@ -400,8 +429,11 @@ function collectEntryShapeIssues(
     return kept;
   }
 
-  function keepTyped<T>(field: "not_done" | "what_to_test", entries: readonly unknown[]): T[] {
-    const kept: T[] = [];
+  function keepTyped<T>(
+    field: "not_done" | "what_to_test",
+    entries: readonly unknown[],
+  ): IndexedEntry<T>[] {
+    const kept: IndexedEntry<T>[] = [];
     entries.forEach((entry, i) => {
       if (
         typeof entry === "object" &&
@@ -409,7 +441,7 @@ function collectEntryShapeIssues(
         !Array.isArray(entry) &&
         typeof (entry as { text?: unknown }).text === "string"
       ) {
-        kept.push(entry as T);
+        kept.push({ index: i, value: entry as T });
         return;
       }
       // A string entry is called out separately: it is by far the most
@@ -542,9 +574,9 @@ export function validateSummaryShape(
       });
     }
   }
-  sanitised.shipped.forEach((entry, i) => {
-    pushIfTooLong(issues, "shipped", i, entry, SHIPPED_CHAR_CAP);
-    issues.push(...findJargonHits("shipped", i, entry));
+  sanitised.shipped.forEach(({ index, value }) => {
+    pushIfTooLong(issues, "shipped", index, value, SHIPPED_CHAR_CAP);
+    issues.push(...findJargonHits("shipped", index, value));
   });
 
   // --- not_done: 0-5 typed entries, each with a recognised reason ---
@@ -555,14 +587,14 @@ export function validateSummaryShape(
       message: `not_done must have at most ${NOT_DONE_MAX} entries; got ${candidate.not_done.length}.`,
     });
   }
-  sanitised.not_done.forEach((entry, i) => {
-    pushIfTooLong(issues, "not_done", i, entry.text, NOT_DONE_TEXT_CHAR_CAP);
-    issues.push(...findJargonHits("not_done", i, entry.text));
+  sanitised.not_done.forEach(({ index, value: entry }) => {
+    pushIfTooLong(issues, "not_done", index, entry.text, NOT_DONE_TEXT_CHAR_CAP);
+    issues.push(...findJargonHits("not_done", index, entry.text));
     if (!NOT_DONE_REASONS.includes(entry.reason as NotDoneReason)) {
       issues.push({
         field: "not_done",
         rule: "reason",
-        message: `not_done[${i}].reason must be one of ${NOT_DONE_REASONS.join(", ")}; got ${JSON.stringify(entry.reason)}.`,
+        message: `not_done[${index}].reason must be one of ${NOT_DONE_REASONS.join(", ")}; got ${JSON.stringify(entry.reason)}.`,
       });
     }
   });
@@ -582,9 +614,9 @@ export function validateSummaryShape(
     // cardinality it was submitted as (dropping it would turn one mistake
     // into a spurious second "too few entries" complaint), while only
     // entries that actually carry a `text` are dereferenced.
-    sanitised.what_to_test.forEach((step, i) => {
-      pushIfTooLong(issues, "what_to_test", i, step.text, WHAT_TO_TEST_TEXT_CHAR_CAP);
-      issues.push(...findJargonHits("what_to_test", i, step.text));
+    sanitised.what_to_test.forEach(({ index, value: step }) => {
+      pushIfTooLong(issues, "what_to_test", index, step.text, WHAT_TO_TEST_TEXT_CHAR_CAP);
+      issues.push(...findJargonHits("what_to_test", index, step.text));
     });
     if (candidate.how_verified !== null && candidate.how_verified !== undefined) {
       issues.push({
@@ -637,9 +669,9 @@ export function validateSummaryShape(
       message: `watch_for must have at most ${WATCH_FOR_MAX} entries; got ${candidate.watch_for.length}.`,
     });
   }
-  sanitised.watch_for.forEach((entry, i) => {
-    pushIfTooLong(issues, "watch_for", i, entry, WATCH_FOR_CHAR_CAP);
-    issues.push(...findJargonHits("watch_for", i, entry));
+  sanitised.watch_for.forEach(({ index, value }) => {
+    pushIfTooLong(issues, "watch_for", index, value, WATCH_FOR_CHAR_CAP);
+    issues.push(...findJargonHits("watch_for", index, value));
   });
 
   return issues;

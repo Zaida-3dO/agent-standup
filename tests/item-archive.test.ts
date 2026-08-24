@@ -590,6 +590,45 @@ describeIfDb("delete_item", () => {
       expect(card?.childless).toBe(true);
     });
 
+    // The recursive arm of the `subtree` CTE, which the two-level fixture
+    // above cannot reach. Its filter only ever fires on a row found by the
+    // recursion rather than the seed — so it needs a live child standing
+    // between the project and the archived row.
+    //
+    // Fails if the descendant filter is dropped from the recursive arm of
+    // the `subtree` CTE in get-projects.ts (the `UNION ALL` half), which is
+    // the mutant all 37 of the other tests in this file survive.
+    it("does not count an archived grandchild under a live child", async () => {
+      const project = await call<Created>("create_project", base("Deep root", "archive-deep"));
+      const task = await call<Created>("create_task", {
+        ...base("Live child", "archive-deep"),
+        projectId: project.id,
+      });
+      const subtask = await call<Created>("create_subtask", {
+        ...base("Archived grandchild", "archive-deep"),
+        taskId: task.id,
+      });
+
+      const before = await call<{ projects: ProjectCard[] }>("get_projects", {
+        area: "archive-deep",
+      });
+      expect(before.projects.find((p) => p.id === project.id)?.total).toBe(2);
+
+      await call("delete_item", { id: subtask.id, reason: GOOD_REASON });
+
+      const after = await call<{ projects: ProjectCard[] }>("get_projects", {
+        area: "archive-deep",
+      });
+      const card = after.projects.find((p) => p.id === project.id);
+      // The live child still counts; only the archived grandchild drops.
+      // Seed-only filtering leaves this at 2, because the grandchild is
+      // reached by the recursion and never passes through the seed.
+      expect(card?.total).toBe(1);
+      expect(Object.values(card?.counts ?? {}).reduce((a, b) => a + b, 0)).toBe(1);
+      // Still has a live descendant, so it is not structurally childless.
+      expect(card?.childless).toBe(false);
+    });
+
     // The escape hatch, asserted in both halves so it cannot regress into
     // widening the grid while leaving the counts filtered (or vice versa).
     // Fails if `includeArchived` stops being threaded to either CTE.
