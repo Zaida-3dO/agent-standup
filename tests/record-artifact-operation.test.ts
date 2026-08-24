@@ -195,6 +195,85 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(fields[0]).toMatch(/^findings/);
       expect(fields[0]).toContain("severity");
     });
+
+    it("names the worked shape when findings is a JSON-encoded string, not just 'expected array'", async () => {
+      // The near-miss the whole message exists for, through the door a real
+      // caller uses. `ServiceRuntime` runs `safeParse` BEFORE the handler
+      // body, so `parseFindings` — which owns this wording — never runs on
+      // this input; without an errorMap on the schema node the caller read
+      // Zod's generic "Expected array, received string" and never learned
+      // they were one `JSON.parse` from a working call.
+      //
+      // Fails if the errorMap is removed from the `findings` node, or if it
+      // stops passing `ctx.data` (a static `invalid_type_error` cannot name
+      // what arrived, which is the entire value of this message).
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        findings: '[{"text": "a real finding", "severity": "medium"}]',
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+
+      expect(error.code).toBe("invalid_input");
+      const message = (error as unknown as Error).message;
+      // The specific diagnosis, not a generic type error.
+      expect(message).toContain("JSON-encoded string");
+      expect(message).toContain("send the array itself");
+      // And the shape that WOULD be accepted, so the caller can copy it.
+      expect(message).toContain("array of objects");
+      expect(message).toContain("text");
+    });
+
+    it("describes what actually arrived, so the message is not one fixed sentence", async () => {
+      // Guards the `ctx.data` half specifically. A number is not a
+      // JSON-encoded string, and the refusal must say so rather than
+      // reciting the JSON-string advice at everyone who gets the type wrong
+      // — advice aimed at the wrong mistake is the failure mode this row is
+      // about.
+      //
+      // Fails if the errorMap hardcodes the JSON-string wording, or if
+      // `describeReceived` stops being consulted.
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        findings: 42,
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+
+      expect(error.code).toBe("invalid_input");
+      const message = (error as unknown as Error).message;
+      expect(message).toContain("Received a number");
+      expect(message).not.toContain("JSON-encoded string");
+    });
+
+    it("still accepts the plain array of objects — the shape the original report thought was rejected", async () => {
+      // The post-mortem row (852c7585) in executable form. The original bug
+      // report listed this shape as rejected; it was always accepted, and a
+      // fabricated `findings[0]` index in a different error is what made it
+      // look otherwise. Pinned so that claim cannot quietly become true.
+      //
+      // Fails if the array-of-objects shape ever stops round-tripping.
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        findings: [{ severity: "medium", text: "the shape the reporter guessed first" }],
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+
+      const stored = await prisma.artifact.findUnique({ where: { id: artifact.id } });
+      expect(stored?.findings).toEqual([
+        { text: "the shape the reporter guessed first", severity: "medium" },
+      ]);
+    });
   });
 
   describe("what it refuses", () => {

@@ -130,7 +130,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * one `JSON.parse` from being right, and "a JSON-encoded string" tells them
  * that where "a string" does not.
  */
-function describeReceived(value: unknown): string {
+export function describeReceived(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "an array";
   if (typeof value === "string") {
@@ -142,6 +142,27 @@ function describeReceived(value: unknown): string {
   }
   const kind = typeof value;
   return `${kind === "object" ? "an" : "a"} ${kind}`;
+}
+
+/**
+ * The whole-list refusal, as one sentence, for every door that has to say it.
+ *
+ * **Two doors refuse this field and they must not disagree.** `parseFindings`
+ * below owns the verdict for the import path, but a call arriving over MCP or
+ * HTTP is shape-checked by Zod in `ServiceRuntime` *before* the handler body
+ * runs — so a caller who sends a JSON-encoded string never reaches
+ * `parseFindings` at all and used to get Zod's generic "Expected array,
+ * received string" instead of the wording written for exactly that near-miss.
+ * The message a caller reads should not depend on which door they knocked on,
+ * so the schema node borrows this function rather than restating it.
+ *
+ * The JSON-string branch is the one that earns this. A caller who serialised
+ * a correct array is one `JSON.parse` from success, and telling them so is
+ * the difference between a fixed call and a filed bug — this field has
+ * already cost one of the latter.
+ */
+export function findingsShapeRefusal(value: unknown): string {
+  return `must be ${FINDING_SHAPE_DESCRIPTION}. Received ${describeReceived(value)}`;
 }
 
 /**
@@ -159,10 +180,7 @@ export function parseFindings(value: unknown): Finding[] {
     // message a caller guessing at the field actually hits — including the
     // one who sent a JSON *string* of a correct array, a near-miss worth
     // naming precisely because it is one `JSON.parse` from being right.
-    throw new InvalidFindingError(
-      null,
-      `must be ${FINDING_SHAPE_DESCRIPTION}. Received ${describeReceived(value)}`,
-    );
+    throw new InvalidFindingError(null, findingsShapeRefusal(value));
   }
   return value.map((entry, index) => {
     if (!isRecord(entry)) {
