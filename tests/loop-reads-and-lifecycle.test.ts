@@ -752,6 +752,121 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
     });
   });
 
+  describe("a loop's kind, across every surface that counts loops", () => {
+    it("keeps a legacy loop — one whose payload has no kind at all — counted as work", async () => {
+      // **The migration-free claim, asserted against Postgres rather than
+      // against the pure fold.** A loop whose payload carries no `kind` at
+      // all must still count as work. The event row is written directly here,
+      // bypassing `loop_add`, precisely so the payload is genuinely
+      // `{loopId, text}` — going through the operation would fill the default
+      // in and the assertion would prove nothing. Killed by making
+      // `parseLoopKind` throw or default to anything but `work`, and by any
+      // read that filters on `kind === "work"` using strict payload
+      // presence.
+      const itemId = await seedItem();
+      await prisma.event.create({
+        data: {
+          itemId,
+          type: "open_loop" as never,
+          actorType: "agent" as never,
+          actorId: "legacy-writer",
+          payload: { loopId: "legacy-1", text: "written before kind existed" },
+        },
+      });
+
+      const listed = await list({ itemId });
+      expect(listed.total).toBe(1);
+      expect(listed.loops[0]?.kind).toBe("work");
+      expect(listed.nonWorkExcluded).toBe(0);
+    });
+
+    it("holds a note out of the default count on EVERY read that surfaces loops", async () => {
+      // The counting fix is the point of this work, so it is asserted the
+      // way the deletion guarantee above is: against every surface, not the
+      // two that came to mind. A note excluded from `loop_list` but still
+      // inflating `orientation` would leave the reported harm — a count that
+      // does not mean anything — exactly where it was.
+      //
+      // Killed on each surface independently by dropping that surface's
+      // `countsAsWork` filter.
+      const itemId = await seedItem();
+      await call("loop_add", { itemId, text: "the retry path is untested" });
+      await call("loop_add", { itemId, text: "INDEX of loop numbers", kind: "note" });
+      await call("loop_add", {
+        itemId,
+        text: "FOR TOMI — awaiting an answer on the subtitle",
+        kind: "blocked_on_person",
+      });
+
+      const listed = await list({ itemId });
+      // Two of the three count: the work loop and the one blocked on a
+      // person. Killed by writing the rule as `kind === "work"`, which would
+      // return 1 and hide the most pending thing on the item.
+      expect(listed.total).toBe(2);
+      expect(listed.loops.map((loop) => loop.kind).sort()).toEqual(["blocked_on_person", "work"]);
+      // The suppressed note is named rather than silently dropped.
+      expect(listed.nonWorkExcluded).toBe(1);
+
+      const orientation = await call<OrientationOutput>("orientation", { itemId });
+      expect(orientation.openLoops.loops).toHaveLength(2);
+      expect(orientation.openLoops.nonWorkExcluded).toBe(1);
+
+      // Opting in returns all three and reports nothing suppressed.
+      const everything = await list({ itemId, includeNonWork: true });
+      expect(everything.total).toBe(3);
+      expect(everything.nonWorkExcluded).toBe(0);
+    });
+
+    it("reclassifies through loop_edit without deleting the loop", async () => {
+      // A note filed as work is corrected by reclassifying it, which is what
+      // makes the kind usable after the fact — the alternative was deleting
+      // a real record. Killed by dropping `kind` from the edit payload, and
+      // by writing the resolved kind unconditionally (which would make every
+      // reword an assertion about the kind).
+      const itemId = await seedItem();
+      const added = await call<{ loopId: string; kind: string }>("loop_add", {
+        itemId,
+        text: "MIGRATION-INDEX — which loops need a schema change",
+      });
+      expect(added.kind).toBe("work");
+      expect((await list({ itemId })).total).toBe(1);
+
+      const edited = await call<{ previousKind: string; kind: string }>("loop_edit", {
+        itemId,
+        loopId: added.loopId,
+        text: "MIGRATION-INDEX — which loops need a schema change",
+        kind: "note",
+      });
+      expect(edited.previousKind).toBe("work");
+      expect(edited.kind).toBe("note");
+
+      const after = await list({ itemId });
+      expect(after.total).toBe(0);
+      expect(after.nonWorkExcluded).toBe(1);
+      // The loop still exists and is still open — reclassified, not retracted.
+      expect((await list({ itemId, includeNonWork: true })).loops[0]?.status).toBe("open");
+    });
+
+    it("lets loop_close close a note, because closing is kind-blind", async () => {
+      // **A regression this design could easily have introduced.** If the
+      // exclusion had been applied to the fold rather than to the reads,
+      // `loop_close` would refuse to close a note — it checks
+      // `deriveOpenLoops` for the loop — and a note would be unclosable
+      // forever. Killed by filtering non-work inside `deriveOpenLoops`.
+      const itemId = await seedItem();
+      const added = await call<{ loopId: string }>("loop_add", {
+        itemId,
+        text: "a reference worth keeping for now",
+        kind: "note",
+      });
+
+      await call("loop_close", { itemId, loopId: added.loopId });
+
+      const closed = await list({ itemId, includeNonWork: true, includeClosed: true });
+      expect(closed.loops[0]?.status).toBe("closed");
+    });
+  });
+
   describe("readsAsClosure", () => {
     it("spots a closure word", () => {
       expect(readsAsClosure("this is resolved now")).toBe("resolved");

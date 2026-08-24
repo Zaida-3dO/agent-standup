@@ -41,7 +41,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // that was just opened could never be closed.
     return withRequestId(
       NextResponse.json(
-        { loopId: added.loopId, event: serializeAppendedEvent(added.event) },
+        { loopId: added.loopId, kind: added.kind, event: serializeAppendedEvent(added.event) },
         { status: 201 },
       ),
       requestId,
@@ -54,8 +54,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 /**
  * `GET /items/{id}/loops` — the list read.
  *
- * Open loops only by default; `?includeClosed=true` adds resolved ones and
- * `?includeDeleted=true` adds retracted ones. Query parameters arrive as
+ * Open loops that track work only by default; `?includeClosed=true` adds
+ * resolved ones, `?includeDeleted=true` adds retracted ones, and
+ * `?includeNonWork=true` adds notes. Query parameters arrive as
  * strings, so each is compared against `"true"` here rather than passed
  * through — an absent parameter has to mean `false`, and the string `"false"`
  * must not read as truthy, which is exactly what forwarding the raw value
@@ -70,6 +71,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const input: Record<string, unknown> = { itemId: id };
   if (url.searchParams.get("includeClosed") === "true") input.includeClosed = true;
   if (url.searchParams.get("includeDeleted") === "true") input.includeDeleted = true;
+  if (url.searchParams.get("includeNonWork") === "true") input.includeNonWork = true;
   const limit = url.searchParams.get("limit");
   if (limit !== null) input.limit = limit;
   const cursor = url.searchParams.get("cursor");

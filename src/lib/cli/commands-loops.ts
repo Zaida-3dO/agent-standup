@@ -109,7 +109,8 @@ function buildLoopCloseInput(rest: readonly string[], flags: ParsedArgs["flags"]
  * Plural `loops` against the singular `loop` that opens one, so the verb
  * that lists and the verb that writes cannot be typed for each other. `--all`
  * is the command line's spelling of `includeClosed`, matching what `item
- * list` already calls the same idea; `--deleted` adds the retracted ones.
+ * list` already calls the same idea; `--deleted` adds the retracted ones, and
+ * `--notes` adds the ones filed as notes rather than as work.
  * Both are bare switches, so they cannot go through `passThroughFlags` —
  * which refuses a valueless flag — and are declared consumed so they do not
  * also arrive under their own names.
@@ -121,7 +122,12 @@ function buildLoopListInput(rest: readonly string[], flags: ParsedArgs["flags"])
   if (!all.ok) return all;
   const deleted = booleanFlag(flags, "deleted");
   if (!deleted.ok) return deleted;
-  const passthrough = passThroughFlags(flags, ["all", "deleted"]);
+  // Notes are held out of the default list because the count is what a
+  // person reads to judge whether an item is nearly done; `--notes` asks for
+  // them back. Loops blocked on a person are NOT held back — they are work.
+  const notes = booleanFlag(flags, "notes");
+  if (!notes.ok) return notes;
+  const passthrough = passThroughFlags(flags, ["all", "deleted", "notes"]);
   if (!passthrough.ok) return passthrough;
   const withSession = withSessionId(passthrough.input, flags);
   if (!withSession.ok) return withSession;
@@ -133,6 +139,7 @@ function buildLoopListInput(rest: readonly string[], flags: ParsedArgs["flags"])
       itemId: idResult.itemId,
       includeClosed: all.value,
       includeDeleted: deleted.value,
+      includeNonWork: notes.value,
     },
   };
 }
@@ -214,7 +221,9 @@ export const LOOP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "loop",
     operation: "loop_add",
     summary:
-      "Records a loose end on an item — something unresolved that is not itself a work item.",
+      "Records a loose end on an item — a piece of work that still needs doing but is not big enough to be its own item. " +
+      "Loops track WORK: a reference or a status note belongs in the repo or in a note, not here. " +
+      "--kind note keeps one out of the count of work outstanding; --kind blocked_on_person is for something real waiting on a human.",
     buildInput: buildLoopAddInput,
   },
   {
@@ -229,7 +238,7 @@ export const LOOP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "loops",
     operation: "loop_list",
     summary:
-      "List an item's loops — id, status, when it opened and the first 200 characters. Open loops only; --all includes closed ones, --deleted includes retracted ones.",
+      "List an item's loops — id, kind, status, when it opened and the first 200 characters. Open loops that track work only; --all includes closed ones, --deleted includes retracted ones, --notes includes loops filed as notes.",
     buildInput: buildLoopListInput,
   },
   {

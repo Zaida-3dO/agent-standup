@@ -43,7 +43,13 @@ import { z } from "zod";
 import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { deriveLoops, type DerivedLoop, type LoopStatus } from "@/lib/open-loops";
+import {
+  countsAsWork,
+  deriveLoops,
+  type DerivedLoop,
+  type LoopKind,
+  type LoopStatus,
+} from "@/lib/open-loops";
 import { loopEventsFor, requireItemExists } from "./loop-shared";
 
 /**
@@ -81,6 +87,8 @@ export function previewText(text: string): { preview: string; truncated: boolean
 /** One loop as the list read reports it — enough to recognise it and to act on it. */
 export interface LoopSummary {
   readonly loopId: string;
+  /** What this loop is tracking. `work` for every loop written before the field existed. */
+  readonly kind: LoopKind;
   readonly status: LoopStatus;
   readonly openedAt: string;
   readonly editedAt: string | null;
@@ -96,6 +104,11 @@ export interface LoopListOutput {
   readonly nextCursor: string | null;
   /** How many loops matched the filter in total, before the page was cut. */
   readonly total: number;
+  /**
+   * How many non-work loops (`kind: note`) were held back by the default.
+   * Zero when `includeNonWork` was set, or when the item has none.
+   */
+  readonly nonWorkExcluded: number;
 }
 
 const listInput = z
@@ -132,6 +145,28 @@ const listInput = z
      */
     includeDeleted: z.boolean().default(false),
     /**
+     * Include loops that are not tracking work — `kind: note`. Off by
+     * default, which is the whole point of the kind existing.
+     *
+     * **This is the counting fix.** An open-loop count is what a person uses
+     * to judge whether an item is nearly done, so a tracker padded with
+     * references, indexes and status markers misreports progress — quietly,
+     * and in the optimistic direction only for the people reading counts.
+     * Excluding notes by default makes the default answer mean "work
+     * outstanding" again, and `total` counts the same set that is listed.
+     *
+     * **`blocked_on_person` is NOT excluded by this flag**, deliberately.
+     * A loop waiting on a human is the most pending thing an item can carry;
+     * hiding it would misreport in the opposite direction. Only `note` is
+     * not-work — see `countsAsWork`.
+     *
+     * Named for what it admits rather than `includeNotes` because the set it
+     * governs is "everything that does not count as work", which is a rule
+     * (`countsAsWork`) rather than a list of labels — a caller that opts in
+     * keeps getting everything if a further non-work kind is ever added.
+     */
+    includeNonWork: z.boolean().default(false),
+    /**
      * `z.coerce.number()` rather than `z.number()`, so the string a command
      * line necessarily produces converts in the one place every adapter
      * shares — the reasoning `commands-artifacts.ts` records for `round`.
@@ -151,6 +186,7 @@ function toSummary(loop: DerivedLoop): LoopSummary {
   const { preview, truncated } = previewText(loop.text);
   return {
     loopId: loop.loopId,
+    kind: loop.kind,
     status: loop.status,
     openedAt: loop.openedAt,
     editedAt: loop.editedAt,
@@ -163,13 +199,36 @@ function toSummary(loop: DerivedLoop): LoopSummary {
 /** The loops of an item, filtered by the caller's status opt-ins. Order is oldest-open first. */
 export function selectLoops(
   loops: readonly DerivedLoop[],
-  options: { includeClosed: boolean; includeDeleted: boolean },
+  options: { includeClosed: boolean; includeDeleted: boolean; includeNonWork?: boolean },
 ): DerivedLoop[] {
   return loops.filter((loop) => {
     if (loop.status === "deleted") return options.includeDeleted;
     if (loop.status === "closed") return options.includeClosed;
+    // Applied after the status rules, so a note that has been closed or
+    // deleted is governed by the flag the caller actually reached for.
+    if (!countsAsWork(loop.kind) && options.includeNonWork !== true) return false;
     return true;
   });
+}
+
+/**
+ * How many of `loops` the non-work rule would hold back, among those the
+ * status filters would otherwise have returned.
+ *
+ * Reported rather than silently dropped. A count that shrank with no
+ * explanation is the same failure as a truncated response a caller cannot
+ * identify as truncated — the reader has no way to tell "this item has three
+ * loose ends" from "this item has three loose ends and two notes you are not
+ * being shown". Naming the number is what keeps the default honest in both
+ * directions.
+ */
+export function countNonWorkExcluded(
+  loops: readonly DerivedLoop[],
+  options: { includeClosed: boolean; includeDeleted: boolean },
+): number {
+  return selectLoops(loops, { ...options, includeNonWork: true }).filter(
+    (loop) => !countsAsWork(loop.kind),
+  ).length;
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -182,7 +241,7 @@ export const loopList = defineOperation({
   name: "loop_list",
   kind: "read",
   summary:
-    "Lists an item's loops without reading its whole context — loopId, status, when it opened and the first 200 characters of its text. Open loops only by default; pass includeClosed for resolved ones. Read one in full with loop_get.",
+    "Lists an item's loops without reading its whole context — loopId, kind, status, when it opened and the first 200 characters of its text. Open loops that are tracking work only by default; pass includeClosed for resolved ones and includeNonWork for notes. `total` counts the same set that is listed, and nonWorkExcluded says how many notes were held back. Read one in full with loop_get.",
   // Stryker restore all
   input: listInput,
   async handler(ctx: ServiceContext, input: LoopListInput): Promise<LoopListOutput> {
@@ -214,6 +273,7 @@ export const loopList = defineOperation({
       loops: page.map(toSummary),
       nextCursor: hasMore ? (page[page.length - 1]?.loopId ?? null) : null,
       total: selected.length,
+      nonWorkExcluded: input.includeNonWork ? 0 : countNonWorkExcluded(all, input),
     };
   },
 });
@@ -223,6 +283,8 @@ export interface LoopGetOutput {
   readonly loopId: string;
   readonly itemId: string;
   readonly status: LoopStatus;
+  /** What this loop is tracking. `work` for every loop written before the field existed. */
+  readonly kind: LoopKind;
   /** The current text in full — the newest edit's, or the opening event's where never edited. */
   readonly text: string;
   readonly openedAt: string;
@@ -271,6 +333,7 @@ export const loopGet = defineOperation({
       loopId: loop.loopId,
       itemId: input.itemId,
       status: loop.status,
+      kind: loop.kind,
       text: loop.text,
       openedAt: loop.openedAt,
       editedAt: loop.editedAt,

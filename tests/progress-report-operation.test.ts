@@ -607,6 +607,45 @@ describeIfDb("progress_report against Postgres", () => {
       expect(result.report).not.toContain("recorded against the wrong item");
     });
 
+    it("holds a note out of the flags, and keeps one blocked on a person in", async () => {
+      // The counting fix, on the surface that was missing it. This report is
+      // read to judge how much is still outstanding, so a flag list padded
+      // with references and status markers overstates the work left — which
+      // is the whole harm the kind exists to fix.
+      //
+      // Both halves are asserted in one case because they are one decision:
+      // the rule is `countsAsWork`, not "only work counts". A loop waiting on
+      // a human is the most pending thing an item can carry, so dropping it
+      // would misreport in the opposite direction and would be just as wrong.
+      //
+      // Killed by deleting this operation's `countsAsWork` filter — the
+      // note reappears as a flag; and by weakening that filter to
+      // `kind === "work"` — the blocked-on-person loop vanishes. Nothing
+      // else in the suite caught either mutation.
+      const sessionId = "session-loops-kind";
+      const itemId = await heldItem(sessionId);
+      await runtime.call("loop_add", {
+        itemId,
+        sessionId,
+        loopId: "loop-a-note",
+        kind: "note",
+        text: "The rollout runbook lives in the deploy guide.",
+      });
+      await runtime.call("loop_add", {
+        itemId,
+        sessionId,
+        loopId: "loop-awaiting-answer",
+        kind: "blocked_on_person",
+        text: "Waiting on a decision about the retention window.",
+      });
+
+      const result = await report(sessionId);
+      expect(result.rows[0]?.flags).toEqual([
+        "Waiting on a decision about the retention window.",
+      ]);
+      expect(result.report).not.toContain("rollout runbook");
+    });
+
     it("flags an edited loop with its current wording, not the original", async () => {
       // The other half of the same defect: a two-type slice cannot see the
       // edit, so the report serves text the loop does not carry. Killed by

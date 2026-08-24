@@ -169,11 +169,13 @@ describeIfDb("loop_add and loop_close (#100), against Postgres", () => {
 
       const rows = await prisma.event.findMany({ where: { itemId, type: "open_loop" } });
       expect(rows).toHaveLength(1);
-      // The exact payload. `{loopId, text}` is what `parseOpenLoopPayload`
-      // requires and what the fold reads; an event with a differently-shaped
-      // payload is silently skipped by the read path, so a test that only
-      // checked the row existed would pass while orientation showed nothing.
-      expect(rows[0]?.payload).toEqual({ loopId: added.loopId, text: "cold boot" });
+      // The exact payload. `{loopId, text, kind}` is what the fold reads; an
+      // event with a differently-shaped payload is silently skipped by the
+      // read path, so a test that only checked the row existed would pass
+      // while orientation showed nothing. `kind` is written explicitly even
+      // when it was defaulted, so the row states what it is rather than
+      // leaving every reader to re-derive the default.
+      expect(rows[0]?.payload).toEqual({ loopId: added.loopId, text: "cold boot", kind: "work" });
     });
 
     it("records the caller's session and live assignment", async () => {
