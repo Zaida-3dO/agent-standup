@@ -1473,6 +1473,39 @@ one thing given up is that a misconfigured installation still starts** — the r
 service, because a service that refuses to start is down for everyone, including whoever is trying to
 fix the configuration through the interface built for it.
 
+**The reference is deliberately a pointer, not the document.** The alternative — storing the body in
+`settings.value` — was considered and rejected: the document has a life outside the setting (it is
+version-controlled and reviewed on its own), so inlining forks it, and the copy in the database — the
+one a gate would consult — becomes the invisible authoritative copy while the repository copy keeps
+being edited. That is the `pricing.model_prices` failure at document scale, where "a stale rate yields
+a confident wrong total where an absent one yields a visible gap". It would also put a whole procedure
+into `GET /settings`, which every reader of every setting pays for. A broken pointer is detectable and
+repairable; a forked document is neither, because nothing can say which copy is authoritative.
+
+**What a reader gets instead is the distinction between "set" and "known to work".** The value is
+both a switch (is this capability on?) and an address (where is the procedure?), and the core only
+ever evaluates the switch — `notificationsEnabled()` is `notify.doc !== null`. So `get_settings`
+carries a `capabilities` block reporting the sweep's last finding per key, in four states rather than
+two:
+
+| Status | Meaning |
+|---|---|
+| `off` | The setting is null. Deliberately not configured (§17.2); any gate needing it fails closed. Not an error. |
+| `verified` | The last sweep found the document on the server's own filesystem. |
+| `unverified` | Set, and the server could not tell — a URL it never fetches, a filesystem it cannot see, or no sweep yet. **May be entirely correct**, and is the expected state for a capability the server never performs itself. |
+| `missing` | The last sweep looked and did not find it. Configured, and known to point at nothing. |
+
+`missing` and `unverified` are kept apart rather than merged into "not verified": they call for
+opposite responses, and collapsing them would either cry wolf about every legitimate URL or hide every
+genuinely broken path. A finding whose recorded path differs from the value the setting
+holds is reported as `unverified` with both paths visible, never as a pass — a `verified` badge
+earned by a path the installation does not use is worse than no badge at all.
+
+**This is a reading, not an enforcement.** `notificationsEnabled()` still asks only whether the value
+is null, so a broken path does not yet silence notifications; making delivery depend on sweep
+freshness is a behaviour change, not a display one. What changes here is that "set" and "set and
+working" stopped being the same observable state.
+
 `/settings` and the startup log both state, in a sentence, when a capability is wanted and unset:
 *"14 items require a visual review and `visual_review.doc` is not set."*
 
