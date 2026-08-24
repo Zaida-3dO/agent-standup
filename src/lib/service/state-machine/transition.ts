@@ -8,7 +8,7 @@
 // guards against a project, running whichever guards `appliesTo` the pair,
 // and either reporting the outcome (rehearsal) or writing it (real).
 import { isTerminalState } from "../board/columns";
-import { ForbiddenError, NotFoundError } from "../errors";
+import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
 import { guardRegistry, runGuards, type GuardableItem, type GuardRegistry } from "./guard";
 import { isItemState, type ItemStateValue } from "./states";
 import type { ServiceContext } from "../context";
@@ -24,6 +24,23 @@ export interface TransitionRequest {
    * something this module hard-codes.
    */
   readonly fields?: Readonly<Record<string, unknown>>;
+  /**
+   * The state the caller believed the item was in when it decided to make
+   * this move — an optimistic-concurrency precondition (MILESTONES.md
+   * #257).
+   *
+   * **Optional, and omitting it is not a weaker version of supplying it —
+   * it is the existing contract, unchanged.** Every caller that predates
+   * this field keeps last-writer-wins semantics exactly, which is what
+   * makes the field safe to land before anything sends it. A caller that
+   * *does* send it is asking a different question: not "move this item to
+   * `to`" but "move this item to `to` **if it is still where I left it**".
+   *
+   * Checked against the state read inside this call's transaction, so the
+   * window between the check and the write is the transaction itself
+   * rather than the caller's round trip.
+   */
+  readonly expectedFrom?: string;
 }
 
 /**
@@ -117,6 +134,37 @@ export async function loadItemForTransition(
   return toGuardableItem(row);
 }
 
+/**
+ * The item moved out from under the caller.
+ *
+ * `ConflictError` (`../errors.ts`) rather than a new taxonomy member: §22's
+ * set is closed on purpose, and `conflict` already means "someone else holds
+ * what the caller asked for" — which is exactly this, with the item's own
+ * state standing in for the thing held. Every adapter already maps
+ * `conflict` onto its transport's equivalent (HTTP 409), so this needs no
+ * adapter to learn a new code.
+ *
+ * **The actual current state is carried in two places, deliberately.** It is
+ * in the message because that is what a human reads and what every adapter
+ * already sends; it is in `details.currentState` because a client deciding
+ * whether to retry should not have to parse prose to learn where the item
+ * actually is. `fields` names `expectedFrom` — the input that was wrong —
+ * so an adapter can point at it without reading either.
+ */
+export class StaleTransitionError extends ConflictError {
+  constructor(itemId: string, expectedFrom: string, currentState: string) {
+    super(
+      `${itemId} is in ${currentState}, not ${expectedFrom}. The move was not applied: ` +
+        "`expected_from` said where you believed the item was, and it has moved since. " +
+        "Re-read the item and decide again against its current state.",
+      {
+        fields: ["expectedFrom"],
+        details: { itemId, expectedFrom, currentState },
+      },
+    );
+  }
+}
+
 export class ProjectHasNoStateError extends ForbiddenError {
   constructor(itemId: string) {
     super(
@@ -175,6 +223,28 @@ async function evaluate(
 
   const from = item.state;
   const to = request.to;
+
+  // The precondition, checked **after** the fresh in-transaction read and
+  // **before** any guard runs.
+  //
+  // After the read, because the whole point is to compare the caller's
+  // belief against what the row actually says right now — comparing it
+  // against anything staler would reproduce the race it exists to close.
+  //
+  // Before the guards, because a guard rejection and a failed precondition
+  // answer different questions, and answering the wrong one first is
+  // misleading. `registry.applicable(from, to)` selects guards by the
+  // item's real `from`, so when the precondition fails those guards are the
+  // ones for a move the caller did not ask about — reporting their verdict
+  // would describe a move nobody is making. Refusing first tells the caller
+  // the one fact that is both true and actionable: where the item is.
+  //
+  // Guards can write through `ctx.db` while deciding, so refusing before
+  // they run also means a stale call leaves nothing behind — consistent
+  // with `applyTransition`'s throw-don't-return reasoning below.
+  if (request.expectedFrom !== undefined && request.expectedFrom !== from) {
+    throw new StaleTransitionError(request.itemId, request.expectedFrom, from);
+  }
 
   const applicable = registry.applicable(from, to);
   const rejection = await runGuards(applicable, {

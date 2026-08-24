@@ -40,6 +40,24 @@ const inputSchema = z
      */
     fields: z.record(z.string(), z.unknown()).optional(),
     /**
+     * The state the caller believed the item was in — an optimistic-
+     * concurrency precondition (MILESTONES.md #257). When supplied and it
+     * does not match the state read inside this call's transaction, the
+     * move is refused with a `conflict` naming where the item actually is.
+     *
+     * **Optional. A call that omits it is not making a weaker version of
+     * the same request — it is making the unconditional request, which
+     * simply applies the move against whatever state it finds.** Without a
+     * precondition, two agents moving one item resolve as last-writer-wins
+     * with neither told, and this board is written concurrently by many
+     * sessions on many machines. Not validated against the state vocabulary here: an
+     * `expected_from` that is not a real state simply cannot match the
+     * freshly-read one, and refusing it as `invalid_input` instead would
+     * answer a stale caller with "you typed it wrong" rather than with
+     * where the item now is.
+     */
+    expectedFrom: z.string().min(1).optional(),
+    /**
      * `dry_run=true` reports what *would* happen and guarantees nothing is
      * written — see `rehearsal-rollback.ts` for how that guarantee is
      * enforced rather than merely assumed.
@@ -128,6 +146,13 @@ export const transitionItem = defineOperation({
         itemId: input.id,
         to: input.to,
         fields: input.fields,
+        // Honoured on the rehearsal path too. A dry run answers "what would
+        // happen if I made this move" — and if the item has already moved,
+        // the honest answer is that the move the caller is describing is
+        // not the move that would happen. Reporting `allowed` against a
+        // premise that has expired is precisely the misleading answer this
+        // precondition exists to prevent.
+        ...(input.expectedFrom === undefined ? {} : { expectedFrom: input.expectedFrom }),
       });
       throw new RehearsalRollback(outcome);
     }
@@ -143,6 +168,7 @@ export const transitionItem = defineOperation({
       itemId: input.id,
       to: input.to,
       fields: input.fields,
+      ...(input.expectedFrom === undefined ? {} : { expectedFrom: input.expectedFrom }),
     });
 
     // "Every mutating call appends a row" (SCHEMA.md §3) — `state-change`
