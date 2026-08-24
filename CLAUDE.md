@@ -248,6 +248,60 @@ nothing to install or branch on per platform.
 **Bypass in an emergency:** `git push --no-verify`. CI still runs the full check list regardless,
 so a bypass costs a slower feedback loop, not correctness.
 
+### Run the suite with `npm test` — and never read `$?` through a pipe
+
+```bash
+npm test                        # the documented way; add vitest args after `--`
+npm test -- tests/claims.test.ts
+```
+
+**`npm test` runs `scripts/run-tests.mjs`, not vitest directly.** The difference is not cosmetic.
+
+Three crews on 2026-08-25 reported the suite "exiting 0 with 106 failed test files". The runner was
+not lying — **the shell was**. A POSIX pipeline reports the status of its *last* command, so the
+near-universal idiom
+
+```bash
+npx vitest run 2>&1 | tail -40      # ← reports tail's 0, discards vitest's 1
+```
+
+throws vitest's exit code away. The output above it is completely truthful, which is what made this
+so convincing and so hard to pin down: a human reading the transcript sees the failures, a script
+checking `$?` sees success, and the runner gets blamed for the contradiction. Measured directly,
+vitest 4 exits 1 on a failing test, on a failing suite, and on a bad reporter — every time.
+
+`scripts/run-tests.mjs` gives you two independent guarantees:
+
+1. It spawns vitest **without a shell**, so no pipeline can reassign the status.
+2. It **parses vitest's own printed summary** and fails on it — so a run that reports failed files,
+   or that ran **no test files at all**, fails even if the child returned 0. The verdict is the
+   **last line on stdout** (`[run-tests] PASS —` / `[run-tests] FAIL —`), specifically so it
+   survives `| tail`.
+
+It never turns a failure into a success — there is no path through it that exits 0 when vitest
+exited non-zero, and `tests/run-tests-runner.test.ts` asserts that exhaustively. `npm run test:raw`
+is bare vitest, for when you want the unwrapped thing; it carries the pipe hazard above.
+
+**If you must pipe, use `set -o pipefail`** — or just read the `[run-tests]` line.
+
+### `--reporter=basic` does not exist any more
+
+It was removed in vitest 3. Passing it produces a startup error and a run that executes **zero
+tests** — which, read through a pipe, is a fast and utterly empty green. `npm test` rejects it up
+front and names a replacement (`--reporter=dot` for the terse output it used to give), because
+vitest's own error can only say it failed to resolve the string `basic`.
+
+### A fresh worktree needs `npx prisma generate`
+
+`npm ci` does **not** generate the Prisma client — there is no postinstall hook — and every worktree
+gets its own empty `node_modules`. Without it, roughly a third of the suite fails on
+`@prisma/client did not initialize yet`, and several of those failures read as defects in the code
+under test rather than a missing build step.
+
+`tests/helpers/global-setup.ts` stops the run up front with one actionable sentence instead. Note
+that this bites after a **rebase onto a new migration** too, not only in a brand-new worktree: a
+client generated against an older schema is stale in exactly the same way.
+
 ### A local run without a database is quieter than it looks
 
 Most test files self-gate on `TEST_DATABASE_URL` — `const describeIfDb = testDatabaseUrl ? describe

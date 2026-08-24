@@ -54,7 +54,46 @@ export function prismaClientProblem(load = defaultLoad) {
   // placeholder is a real module that imports cleanly in some versions and
   // only fails when constructed.
   const PrismaClient = /** @type {{ PrismaClient?: unknown }} */ (mod)?.PrismaClient;
-  return typeof PrismaClient === "function" ? null : "ungenerated";
+  if (typeof PrismaClient !== "function") return "ungenerated";
+
+  // …and the export being a function is still not enough.
+  //
+  // **The gap this closes, observed rather than reasoned about.** On
+  // 2026-08-25 a worktree with a `node_modules/.prisma/client` directory
+  // present ran the full suite and lost five files to
+  // `@prisma/client did not initialize yet. Please run "prisma generate"` —
+  // with this guard, which runs first, reporting the client ready. The
+  // placeholder in this Prisma version imports cleanly *and* exports a
+  // `PrismaClient` function; it throws only when that function is called. A
+  // type check on the export therefore cannot tell it from the real thing,
+  // and the run proceeded into exactly the wall of misleading failures this
+  // module exists to prevent.
+  //
+  // The trigger is not only a never-generated worktree. A client generated
+  // against a *different* schema — the normal state after switching branches
+  // or rebasing onto a migration — lands here too.
+  //
+  // Constructing it is the only check that distinguishes them, because
+  // construction is where the placeholder fails. A bogus `datasourceUrl` is
+  // passed deliberately: a real client validates and stores it without
+  // opening a socket (connection is lazy, on first query), so this stays a
+  // pure in-process check that touches no database, while the placeholder
+  // throws before looking at the argument at all.
+  try {
+    new PrismaClient({ datasourceUrl: "postgresql://prisma-client-state:probe@127.0.0.1:1/probe" });
+  } catch (error) {
+    const message = String(/** @type {{ message?: unknown }} */ (error)?.message ?? "");
+    // Only the initialisation error means "ungenerated". Anything else is a
+    // real client objecting to something, and swallowing it as a missing
+    // build step would send the reader to a `prisma generate` that fixes
+    // nothing — so it is re-thrown rather than reported.
+    if (/did not initialize yet|Please run ["`']?prisma generate/i.test(message)) {
+      return "ungenerated";
+    }
+    throw error;
+  }
+
+  return null;
 }
 
 function defaultLoad(id) {

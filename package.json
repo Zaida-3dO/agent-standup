@@ -26,7 +26,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run",
+    "test": "node scripts/run-tests.mjs",
     "test:watch": "vitest",
     "test:mutate": "node scripts/run-mutation-tests.mjs",
     "test:mutate:changed": "node scripts/run-mutation-tests.mjs --changed-only",
@@ -45,7 +45,8 @@
     "db:studio": "prisma studio",
     "db:check-drift": "node scripts/check-migration-drift.mjs",
     "db:seed": "node prisma/seed.mjs",
-    "backfill": "node scripts/backfill.mjs"
+    "backfill": "node scripts/backfill.mjs",
+    "test:raw": "vitest run"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"
