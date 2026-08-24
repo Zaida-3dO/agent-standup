@@ -273,7 +273,7 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     noun: "session",
     verb: "heartbeat",
     operation: "heartbeat",
-    summary: "Still alive. (Usually unnecessary — the hook does it.)",
+    summary: "Still alive. Unnecessary if your hook flushes tool calls; needed if you run no hook.",
     buildInput: buildItemSessionInput("session heartbeat <item-id>"),
   },
   {

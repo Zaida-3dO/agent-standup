@@ -25,30 +25,39 @@
 // the documentation says.**
 //
 // `Assignment.lastActive` is described in SCHEMA.md §2 as "stamped by the
-// hook on every tool call — free, no agent effort". In this tree it is not.
-// The only writer of that column anywhere in the source is the `heartbeat`
-// operation, whose own summary reads "Usually unnecessary — the hook does
-// it" — and the hook does not: `src/bin/standup-hook.ts` and
-// `src/lib/hook/**` never touch it, and `record_tool_calls` reads the
-// assignment without stamping it. So `lastActive` is, for a session that
-// does not explicitly call `heartbeat`, **frozen at the moment of the
-// claim**.
+// hook on every tool call — free, no agent effort". **That is now true for
+// a session running the hook, and was not true when this module was
+// written.** `record_tool_calls` stamps the column on the same statement
+// that resolves the session's live assignment, so every telemetry flush is
+// a liveness signal. Before that change the only writer anywhere in the
+// source was the `heartbeat` operation, whose own summary read "Usually
+// unnecessary — the hook does it" while the hook did not — and this
+// module's conservatism was built on that fact.
 //
-// `liveness.stale_after_seconds` says a process check "comes first" and
-// that the timeout is "the fallback for when that cannot answer". There is
-// no process check. Nothing in this repository consults the operating
-// system about whether a holder's pid is running; `registered_processes`
-// records processes an agent *started*, not the agent itself, and carries
-// no row for the session holding a claim.
+// **What has not changed: there is still no process check.**
+// `liveness.stale_after_seconds` used to say one "comes first" and that the
+// timeout is "the fallback for when that cannot answer"; nothing in this
+// repository consults the operating system about whether a holder's pid is
+// running. `registered_processes` records processes an agent *started*, not
+// the agent itself, and carries no row for the session holding a claim. The
+// settings text has been corrected to say so rather than describe a
+// mechanism that does not exist. A pid check was considered and declined
+// deliberately: this server does not in general share a host with the
+// sessions holding claims, so `kill(pid, 0)` would answer a question about
+// the wrong machine — confidently, and wrongly, which is worse than not
+// answering.
 //
-// The consequence is the single most important fact about this file: **with
-// only `lastActive` to read, a session that claims an item and then
-// legitimately works for half an hour is indistinguishable from one that
-// crashed a second after claiming.** At the sweep's thresholds (900s
-// stalled, 1800s dead) that is not hypothetical — half an hour of honest
-// work is the *normal* case for a builder, and evicting it would release a
-// claim out from under a running agent, which is the failure this system
-// exists to prevent.
+// The consequence that constrains this file therefore now applies to a
+// **narrower** set of sessions than it once did, and naming that set
+// precisely is the point: **a session that runs no hook and never calls
+// `heartbeat` still writes neither signal**, so for it `lastActive` remains
+// frozen at the claim and half an hour of honest work is indistinguishable
+// from a crash a second after claiming. A session whose hook flushes is
+// distinguishable, because its stamp moves. At the sweep's thresholds (900s stalled, 1800s
+// dead) the distinction is not academic — half an hour of work is the
+// *normal* case for a builder, and evicting it would release a claim out
+// from under a running agent, which is the failure this system exists to
+// prevent.
 //
 // ── What is therefore treated as evidence ──────────────────────────────
 //
@@ -90,25 +99,37 @@
 // ── The residual hole, stated because it is the one that bites ─────────
 //
 // **These three are NOT jointly sufficient in every case, and the exception
-// is precise.** `claimedAt` and `lastActive` both default to `now()` at
-// insert. So for a session running **no hook** (therefore writing no
-// `ToolCall` rows) that also never calls `heartbeat`, both terms are
-// computed from the same instant: `unseenForSeconds == claimAgeSeconds`,
-// and condition 3 is not an independent check at all. Such a session on a
-// single turn longer than the threshold **can be evicted while alive.**
+// is precise — it is now narrower than it was, but it is not gone.**
+// `claimedAt` and `lastActive` both default to `now()` at insert. So for a
+// session running **no hook** (therefore writing no `ToolCall` rows *and*
+// never reaching the stamp in `record_tool_calls`) that also never calls
+// `heartbeat`, both terms are still computed from the same instant:
+// `unseenForSeconds == claimAgeSeconds`, and condition 3 is not an
+// independent check at all. Such a session on a single turn longer than the
+// threshold **can still be evicted while alive.**
+//
+// What the `record_tool_calls` stamp changed is *who* is exposed, not
+// whether anyone is. A session running the hook now moves `lastActive` on
+// every flush, so it is seen, and the two terms diverge for it. The
+// residual case is the session with no hook running at all. The hook ships
+// in this repository and its flush path is complete — `flushSpool` ->
+// `POST /api/tool-calls` -> `record_tool_calls` -> this stamp — but whether
+// a given installation actually *runs* it is a deployment fact this module
+// cannot check. **So the exposure is narrowed for hooked sessions and
+// unchanged for unhooked ones**, and the threshold stays at four hours for
+// exactly that reason. Lowering it because the code path now exists, without
+// knowing that the sessions in front of it run the hook, would be the
+// cosmetic answer.
 //
 // Condition 3 still does its other job in that case — it defends against
 // clock skew, restores and imported rows, which is why it stays — but it is
 // not a second liveness signal there, and reading it as one is the mistake
 // this paragraph exists to prevent.
 //
-// That is the whole of the exposure, and it is why the default threshold is
-// four hours rather than something tuned to the sweep. **Anyone lowering
-// this threshold is trading directly against that case**, so the two facts
-// belong next to each other. It closes on its own the moment either the
-// hook stamps `lastActive` or any tool-call telemetry reaches the server,
-// because condition 1 then has a signal that moves independently of the
-// claim.
+// **The one thing a signal-less session can always do is call `heartbeat`,
+// and that is now what its description tells it to do.** That is a
+// documented, reachable escape rather than a fix, and it is deliberately
+// not counted as one here: it requires the session to know to do it.
 //
 // **What this deliberately does not do.** It does not evict a holder that
 // is merely `stalled`, and it does not treat the sweep's `dead` rung as
@@ -126,10 +147,16 @@
 // costs one sentence of written reason. The lazy path is for the unattended
 // case where nobody is there to write that sentence.
 //
-// **When the hook does start stamping `lastActive`**, this threshold should
-// come down — probably to something near `dead_after_seconds`. That is a
-// one-line settings change, and it is the reason this is a setting rather
-// than a constant. Until then the default encodes the deployment as it
+// **When the hook is actually deployed in this workspace**, this threshold
+// should come down — probably to something near `dead_after_seconds`. The
+// server half of that is done: `record_tool_calls` stamps `lastActive`, so
+// a flushing session is seen. What is still missing is the deployment —
+// nothing here runs the hook yet — and the threshold protects the sessions
+// that do not. **Lower it when signal-less sessions are the exception
+// rather than the rule, and not before**, because until then lowering it
+// trades directly against the case in the residual-hole note above. That is
+// a one-line settings change, and it is the reason this is a setting rather
+// than a constant. The default continues to encode the deployment as it
 // actually is rather than as the documentation describes it.
 import { appendEvent } from "./events";
 import type { TransactionHandle } from "./service/context";
@@ -166,7 +193,11 @@ export interface EvictionJudgement {
 export interface EvictionInputs {
   readonly liveness: Assignment["liveness"];
   readonly releasedAt: Date | null;
-  /** `Assignment.lastActive` — written only by `heartbeat` in this tree. */
+  /**
+   * `Assignment.lastActive` — written by `heartbeat`, and by
+   * `record_tool_calls` on every telemetry flush. Still frozen at the claim
+   * for a session that does neither; see this module's header.
+   */
   readonly lastActive: Date;
   /** `Assignment.claimedAt` — the floor on how long this row can have been quiet. */
   readonly claimedAt: Date;
@@ -278,9 +309,9 @@ export async function evictStaleHolders(
 ): Promise<EvictedClaim[]> {
   const now = args.now ?? new Date();
 
-  // ⚠️ `FOR UPDATE OF a` IS LOAD-BEARING AND IS NOT COVERED BY A TEST.
-  // Do not "simplify" it away: removing it leaves this file's whole suite
-  // green, which is exactly why this comment exists instead of an assertion.
+  // ⚠️ `FOR UPDATE OF a` IS LOAD-BEARING. Do not "simplify" it away — it is
+  // now covered by "takes a ROW LOCK on its read" in tests/claim-eviction,
+  // which fails when it is removed and when it is weakened to SKIP LOCKED.
   //
   // **What it defends.** The transaction runs at Postgres default Read
   // Committed — no isolation level is set anywhere in the service layer — so
@@ -292,17 +323,27 @@ export async function evictStaleHolders(
   // the row at the read is what serialises the two: the heartbeat waits, and
   // the eviction either wins outright or reads the updated row and declines.
   //
-  // **Why there is no test.** The window that matters is interior to this
-  // function, between its read and its write, and there is no seam to inject
-  // a competing statement into it. A test that races a heartbeat from
-  // outside can only fire once this function has returned — by which point
-  // the release `UPDATE` holds a row lock of its own, so the heartbeat
-  // blocks whether or not the read ever locked anything. Such a test passes
-  // identically with and without `FOR UPDATE`; it was written, measured
-  // against a lock-removed mutant, found to be exactly that hollow, and
-  // removed rather than committed. Proving this properly needs an injectable
-  // seam between the read and the write, which is a change to the shape of
-  // this function and not worth making for the test alone.
+  // **How it is tested, and why the obvious test does not work.** Racing a
+  // heartbeat *inward* — starting this function, then firing a competing
+  // statement at it — cannot reach the interior window: the racer only lands
+  // once this function has returned, by which point the release `UPDATE`
+  // holds a row lock of its own, so it blocks whether or not the read ever
+  // locked anything. That test was written, measured against a lock-removed
+  // mutant, found hollow, and deleted.
+  //
+  // The test that works races the other way: a rival transaction takes the
+  // row lock **first**, then eviction runs, and the question becomes whether
+  // *this* read waits. It does under `FOR UPDATE` and reads straight through
+  // under Read Committed without it.
+  //
+  // The subtlety, measured rather than assumed: the holder in that test must
+  // be **live, not stale**. With a stale holder the judgement says "evict",
+  // the release `UPDATE` runs, and that statement blocks on the rival's lock
+  // whether or not the read locked — 1211ms unlocked vs 1219ms locked, the
+  // same write-lock artefact in new clothing. With a live holder no `UPDATE`
+  // is ever issued, so the read is the only statement that can touch the row
+  // — 2ms unlocked vs a lock timeout locked. No seam, no test-only hook, and
+  // no change to the shape of this function was needed after all.
   //
   // `OF a` restricts the lock to the assignment; the `ToolCall` side is a
   // correlated read, and locking it would contend with telemetry ingest for

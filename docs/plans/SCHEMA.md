@@ -283,7 +283,7 @@ either to be true.
 | `liveness` | enum | `running` · `stalled` · `dead` · `superseded`. **Separate axis from `items.state`**, but a single axis in itself — see the two invariants below. |
 | `superseded_by` | `text` null | The session that took over. Lets the rejection *name the holder* instead of failing blankly. `released_at` carries the when. |
 | `claimed_at` | `timestamptz` | When ownership was taken. |
-| `last_active` | `timestamptz` | Stamped by the hook on every tool call — free, no agent effort. |
+| `last_active` | `timestamptz` | Stamped by the hook on every tool-call flush (`record_tool_calls` writes it on the statement that resolves the session's assignment) — free, no agent effort. Also stamped by `heartbeat`. **A session running no hook that never calls `heartbeat` writes neither, so this stays frozen at `claimed_at`** — see the eviction note below. |
 | `released_at` | `timestamptz` null | Set on release, takeover, or death. Rows are kept, not deleted — this is `previous_sessions`. |
 | `model` | `text` null | **The exact vendor model ID** — `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` — never a friendly form like "opus". "opus" spans 4.6/4.7/4.8/5, so an abbreviated name pools materially different models into one scoring bucket *and* makes the run unpriceable. Storing the vendor's own ID also means a Codex ID drops in with no translation. |
 | `effort` | `text` null | The literal effort value (`low`/`medium`/`high`/`xhigh`/`max`), never a paraphrase. |
@@ -324,21 +324,29 @@ somebody already holds the item, the holder is judged, and if the evidence says 
 released and the claim retries. The check then happens exactly when the answer matters. `sweep` and
 `takeover` both stay reachable and unchanged; the lazy path only covers the unattended case.
 
-> **⚠️ The liveness signal this rests on is weaker than the `last_active` row above claims.** That row
-> says "stamped by the hook on every tool call", and **nothing stamps it except the `heartbeat`
-> operation** — which agents are told is "usually unnecessary, the hook does it". The hook does not. Likewise `liveness.stale_after_seconds` describes itself as the fallback for
-> "when a process check cannot answer", and **there is no process check**: nothing consults the OS
-> about a holder's pid, and `registered_processes` holds processes an agent *started*, not the agent.
+> **⚠️ The liveness signal this rests on is weaker than it looks, for one specific class of session.**
+> `record_tool_calls` stamps `last_active` on every telemetry flush, so a session **running the hook**
+> is seen without doing anything deliberate. A session running **no** hook that also never calls
+> `heartbeat` writes neither signal, and for it `last_active` stays frozen at `claimed_at` — so it is
+> indistinguishable, on timestamps alone, from one that crashed immediately after claiming. **In this
+> installation that does not run the hook, that is *every* session — the flush path exists in this
+> repository end to end (`flushSpool` → `POST /api/tool-calls` → `record_tool_calls`), but whether it
+> is deployed is not something the server can verify.**
 >
-> So a session that claims an item and then legitimately works for half an hour is, on `last_active`
-> alone, indistinguishable from one that crashed immediately. Two things follow, and both are
-> deliberate: eviction reads the session's most recent `tool_calls` row as a **second, independent**
-> liveness signal (written by a different mechanism, and the one that actually moves), and
-> `liveness.evict_after_seconds` defaults to **four hours** rather than reusing
-> `dead_after_seconds`. It is biased towards leaving a stranded claim stranded — that is visible and
-> fixable with `takeover` — over evicting a live builder, which loses uncommitted work silently.
-> **When the hook starts stamping `last_active`, this threshold should come down.** The policy is
-> written once, in `src/lib/claim-eviction.ts`.
+> **There is no process check.** `liveness.stale_after_seconds` used to describe itself as the
+> fallback for "when a process check cannot answer"; nothing consults the OS about a holder's pid, and
+> `registered_processes` holds processes an agent *started*, not the agent. The settings text now says
+> so. A pid check was considered and **declined**: the server does not in general share a host with the
+> sessions holding claims, so `kill(pid, 0)` would confidently answer about the wrong machine.
+>
+> Two things follow, and both are deliberate: eviction reads the session's most recent `tool_calls`
+> row as a **second, independent** liveness signal (written by a different mechanism), and
+> `liveness.evict_after_seconds` defaults to **four hours** rather than reusing `dead_after_seconds`.
+> It is biased towards leaving a stranded claim stranded — that is visible and fixable with `takeover`
+> — over evicting a live builder, which loses uncommitted work silently.
+> **When the hook is actually deployed here, this threshold should come down**; the server half is
+> done, the deployment is not, and lowering it before then trades directly against the signal-less
+> case above. The policy is written once, in `src/lib/claim-eviction.ts`.
 >
 > **Escalation still needs a push.** Everything above is reachable at contention because a *claim*
 > is the thing that wants it. Escalating a blocked item is the opposite case — nobody is reading, by
@@ -1258,7 +1266,7 @@ typed.
 | `items.max_depth` | int, `6` | Items | Runaway guard on the item tree. |
 | `items.default_merge_authority` | enum, `needs-approval` | Items | What `merge_authority` a new item gets when nothing sets it. |
 | `agents.subagent_delegation` | `never` · `allowed` · `required`, default `allowed` | Agents | What an orchestrator may do itself. `never` blocks spawning; `allowed` nudges toward delegating; `required` blocks the orchestrator doing the work. Only fires when an orchestrator role exists, so a single-agent installation is never affected. |
-| `liveness.stale_after_seconds` | int, `900` | Liveness | Quiet → `stalled`. A process check comes first; this is the fallback. |
+| `liveness.stale_after_seconds` | int, `900` | Liveness | Quiet → `stalled`. Quiet is measured from `last_active`. There is no process check. |
 | `liveness.dead_after_seconds` | int, `1800` | Liveness | Stalled → `dead`, claim released. |
 | `liveness.evict_after_seconds` | int, `14400` | Liveness | How long a holder must go unseen before a *competing claim* may take the item from it. Checked at contention, not on a timer. Much larger than `dead_after_seconds` on purpose — see the note below. |
 | `dispatch.failed_after_seconds` | int, `180` | Dispatch | No session against a dispatch → the launch failed. |
@@ -1516,7 +1524,7 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 | `note` | Leave a timestamped remark on an item. |
 | `claim` | Take ownership of an item in a role. Atomic — two agents can't both win. Returns `crew_name` — the name the claiming session is now known by, assigned automatically (§9, §21). |
 | `release` | Give up ownership. |
-| `heartbeat` | Still alive. (Usually unnecessary — the hook does it.) |
+| `heartbeat` | Still alive. Unnecessary if your hook is flushing tool calls — that stamps it. Call it if you run no hook. |
 | `crew_status` | Non-blocking digest of what your crew is doing. |
 
 **Naming is not a tool a session calls.** A crew name is assigned as a side effect of registering (§21) and of `claim` above — the two calls a session already makes — rather than by a separate request. `get_crew_name` still exists as a registered operation (§9) for the rare caller that wants a name with no other side effect, reachable over HTTP and the command line; it is deliberately absent from this list because no agent needs it.

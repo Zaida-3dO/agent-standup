@@ -663,4 +663,95 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
       expect(error.code).toBe("invalid_input");
     });
   });
+
+  /**
+   * The liveness stamp — SCHEMA.md §2's `last_active` ("stamped by the hook
+   * on every tool call"), which until this operation wrote it was true of
+   * nothing in the tree.
+   *
+   * These are DB-backed rather than unit tests because the property under
+   * test *is* the write: that resolving the session's assignment and
+   * stamping it are one statement. A double would decide that by whatever
+   * it implemented.
+   */
+  describe("stamps lastActive, so a flushing session is visibly alive", () => {
+    /** `lastActive` and `claimedAt` for a session's newest live assignment. */
+    async function timestamps(sessionId: string) {
+      const rows = await prisma.$queryRawUnsafe<
+        { lastActive: Date; claimedAt: Date; id: string }[]
+      >(
+        `SELECT "id", "lastActive", "claimedAt" FROM "Assignment"
+          WHERE "sessionId" = $1 AND "releasedAt" IS NULL
+          ORDER BY "claimedAt" DESC LIMIT 1`,
+        sessionId,
+      );
+      return rows[0]!;
+    }
+
+    it("MOVES lastActive past claimedAt, so the column tracks activity not claim age", async () => {
+      const itemId = await seedItem();
+      await claim(itemId, "s-stamp-1");
+
+      // Both columns default to now() at insert, so before any flush they
+      // are the same instant. That equality is the whole defect this test
+      // exists to catch: it is what made every threshold computed from
+      // `lastActive` a measure of claim age.
+      const before = await timestamps("s-stamp-1");
+      expect(before.lastActive.getTime()).toBe(before.claimedAt.getTime());
+
+      await record("s-stamp-1", [call()]);
+
+      const after = await timestamps("s-stamp-1");
+      expect(after.lastActive.getTime()).toBeGreaterThan(after.claimedAt.getTime());
+      expect(after.lastActive.getTime()).toBeGreaterThan(before.lastActive.getTime());
+    });
+
+    it("stamps the flush time, NOT the caller's ts — an old batch still means alive now", async () => {
+      const itemId = await seedItem();
+      await claim(itemId, "s-stamp-2");
+
+      // `AT` is a fixed instant far behind whenever this suite runs.
+      // Stamping it would make a session that just flushed look years
+      // quiet — the false negative the stamp exists to prevent, arriving
+      // through the very path meant to prevent it.
+      await record("s-stamp-2", [call({ ts: AT.toISOString() })]);
+
+      const after = await timestamps("s-stamp-2");
+      expect(after.lastActive.getTime()).toBeGreaterThan(AT.getTime());
+      expect(after.lastActive.getTime()).toBeGreaterThan(after.claimedAt.getTime());
+    });
+
+    it("stamps the assignment the batch is ATTRIBUTED to when a session holds two", async () => {
+      const first = await seedItem();
+      const second = await seedItem();
+      await claim(first, "s-stamp-3");
+      const older = await timestamps("s-stamp-3");
+      await claim(second, "s-stamp-3");
+
+      const out = await record("s-stamp-3", [call()]);
+      // Newest-claim-wins is the attribution rule; the stamp must follow it
+      // or the row that proves the session is alive is not the row eviction
+      // will read when this item is contended.
+      expect(out.itemId).toBe(second);
+
+      const newest = await timestamps("s-stamp-3");
+      expect(newest.lastActive.getTime()).toBeGreaterThan(newest.claimedAt.getTime());
+
+      const untouched = await prisma.$queryRawUnsafe<{ lastActive: Date }[]>(
+        `SELECT "lastActive" FROM "Assignment" WHERE "id" = $1`,
+        older.id,
+      );
+      expect(untouched[0]!.lastActive.getTime()).toBe(older.lastActive.getTime());
+    });
+
+    it("records a ghost session's calls without failing, having no assignment to stamp", async () => {
+      // §10: a ghost session is first-class. The stamp must not turn "no
+      // assignment" into a refusal — that would make the system measure
+      // only work that was already tracked.
+      const out = await record("s-stamp-ghost", [call()]);
+      expect(out.recorded).toBe(1);
+      expect(out.assignmentId).toBeNull();
+      expect(out.itemId).toBeNull();
+    });
+  });
 });

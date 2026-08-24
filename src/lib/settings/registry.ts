@@ -172,7 +172,12 @@ export const SETTINGS_REGISTRY = {
     schema: z.number().int().positive(),
     default: 900,
     label: "Stale after",
-    help: "Seconds of quiet before a running session is treated as stalled. A process check comes first; this is the fallback for when that cannot answer. A large value means dead work is not noticed.",
+    help:
+      "Seconds of quiet before a running session is treated as stalled. Quiet is measured from " +
+      "`last_active`, which the hook stamps on every tool-call flush; a session running no hook " +
+      "must call `heartbeat` or it will look quiet while working. There is no process check — " +
+      "the server does not consult the OS about a holder's pid. A large value means dead work is " +
+      "not noticed.",
     category: "Liveness",
     appliesWhen: "next-sweep",
     // Relaxes an enforcement: set large enough, nothing is ever reclaimed.
@@ -185,7 +190,10 @@ export const SETTINGS_REGISTRY = {
     schema: z.number().int().positive(),
     default: 1800,
     label: "Dead after",
-    help: "Seconds of quiet before a stalled session is treated as dead and its claim is released. A large value means a claim held by a dead session is never handed back.",
+    help:
+      "Seconds of quiet before a stalled session is treated as dead and its claim is released. " +
+      "Quiet is measured from `last_active`, the same signal `stale_after_seconds` reads. A large " +
+      "value means a claim held by a dead session is never handed back.",
     category: "Liveness",
     appliesWhen: "next-sweep",
     sensitive: true,
@@ -193,15 +201,16 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
-  // The lazy-eviction threshold. Deliberately far above
-  // `dead_after_seconds`, and the reason is the honest note in `help`: the
-  // sweep's thresholds assume `lastActive` is stamped on every tool call,
-  // and in this tree nothing stamps it except the `heartbeat` operation,
-  // which agents are told is "usually unnecessary". The full reasoning —
-  // including why a tool-call timestamp is consulted as a second,
-  // independent signal and why the promised process check does not exist —
-  // is in `src/lib/claim-eviction.ts`, which is the one place that policy
-  // is written down.
+  // The lazy-eviction threshold. Still deliberately far above
+  // `dead_after_seconds`, but the reason has narrowed: `record_tool_calls`
+  // now stamps `lastActive` on every flush, so a session running the hook
+  // has a signal that genuinely moves while it works. What remains is the
+  // session running **no** hook and never calling `heartbeat` — for which
+  // `lastActive` is still frozen at the claim, and four hours is still the
+  // margin protecting it. The full reasoning, including why the promised
+  // process check does not exist and why a tool-call timestamp is consulted
+  // as a second signal, is in `src/lib/claim-eviction.ts`, which is the one
+  // place that policy is written down.
   "liveness.evict_after_seconds": define({
     schema: z.number().int().positive(),
     default: 14_400,
@@ -209,10 +218,10 @@ export const SETTINGS_REGISTRY = {
     help:
       "Seconds a claim holder must go unseen before another session's claim may take the item from it. " +
       "Checked only when a competing claim actually arrives — there is no timer. " +
-      "Much larger than the dead threshold on purpose: liveness here is read from the heartbeat " +
-      "timestamp and the session's most recent tool call, and the heartbeat is usually not written " +
-      "at all (the hook does not stamp it, and the process check the stale threshold refers to does " +
-      "not exist), so a session working normally can look quiet for as long as its turn lasts. " +
+      "Much larger than the dead threshold on purpose: a session running no hook and never calling " +
+      "`heartbeat` writes neither liveness signal, so its `last_active` stays frozen at the claim and " +
+      "it can look quiet for as long as its turn lasts. (A session whose hook flushes tool calls does " +
+      "stamp `last_active`, and is not exposed this way.) There is no process check. " +
       "Lowering this risks evicting a live agent mid-run and losing its uncommitted work; raising it " +
       "means a genuinely dead holder keeps its claim for longer. Use takeover to reclaim sooner.",
     category: "Liveness",

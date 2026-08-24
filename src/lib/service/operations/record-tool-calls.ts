@@ -309,7 +309,8 @@ interface LiveAssignmentRow {
 
 /**
  * The session's live assignment and the item's state right now, or null
- * when the session holds nothing.
+ * when the session holds nothing — **and, as the same statement, the stamp
+ * that makes `lastActive` mean what its name says.**
  *
  * One query rather than two: the state is only ever wanted for the item the
  * assignment points at, and a second round trip would widen the window in
@@ -322,18 +323,63 @@ interface LiveAssignmentRow {
  * the wrong item, on every row, which is #53's cost-per-stage attribution.
  * Newest wins because the most recently claimed item is the one the session
  * is working on now, and these records describe what it is doing now.
+ *
+ * ── Why the read is an UPDATE ──────────────────────────────────────────
+ *
+ * SCHEMA.md §2 describes `last_active` as "stamped by the hook on every
+ * tool call — free, no agent effort". Until this statement it was not: the
+ * only writer in the tree was the `heartbeat` operation, whose own summary
+ * told callers it was "usually unnecessary — the hook does it". The hook
+ * did not, so for any session that never called `heartbeat` explicitly the
+ * column was frozen at the instant of the claim, and every threshold read
+ * off it was reasoning about claim age wearing an activity column's name.
+ *
+ * This is the write that closes that gap, and it is deliberately *here*
+ * rather than in a new operation or a second statement:
+ *
+ *   - **It is the hook's own path.** `record_tool_calls` is what the hook's
+ *     spool flushes into, so stamping here is the documented mechanism
+ *     ("the hook does it") actually happening, rather than a third signal
+ *     invented beside two that do not work.
+ *   - **It costs nothing.** The row had to be located anyway to attribute
+ *     the batch. `UPDATE ... RETURNING` returns exactly what the `SELECT`
+ *     returned, off the same index lookup, so the stamp is free rather than
+ *     an added round trip on the highest-volume path in the system.
+ *   - **It fires on evidence, not on courtesy.** A tool call is something
+ *     the session demonstrably did. `heartbeat` remains available for a
+ *     session that wants to say "still here" without making a call, which
+ *     is the case it was always actually for.
+ *
+ * **The `ts` the caller supplied is deliberately NOT used for the stamp.**
+ * `CURRENT_TIMESTAMP` is. Every other consumer of `ts` in this operation
+ * wants when the call *happened* (the whole reason the field is on the
+ * envelope — see the header). `lastActive` answers a different question:
+ * "when did the server last hear from this session". A batch flushed now
+ * carrying an hour-old `ts` is evidence the session was alive *now*, since
+ * something had to be running to flush it. Stamping a call's own timestamp
+ * would make a live session look an hour quiet, which is the false negative
+ * this stamp exists to prevent — arriving through the very path meant to
+ * prevent it.
+ *
+ * **The `Item` join stays an ordinary join.** Only the assignment is
+ * written; `Item` is read for its state exactly as before.
  */
 async function liveAssignment(
   db: TransactionHandle,
   sessionId: string,
 ): Promise<LiveAssignmentRow | null> {
   const rows = await db.$queryRawUnsafe<LiveAssignmentRow[]>(
-    `SELECT a."id", a."itemId", i."state"::text AS "state"
-     FROM "Assignment" a
-     JOIN "Item" i ON i."id" = a."itemId"
-     WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL
-     ORDER BY a."claimedAt" DESC
-     LIMIT 1`,
+    `UPDATE "Assignment" a
+        SET "lastActive" = CURRENT_TIMESTAMP
+       FROM "Item" i
+      WHERE a."id" = (
+              SELECT a2."id" FROM "Assignment" a2
+               WHERE a2."sessionId" = $1 AND a2."releasedAt" IS NULL
+               ORDER BY a2."claimedAt" DESC
+               LIMIT 1
+            )
+        AND i."id" = a."itemId"
+     RETURNING a."id", a."itemId", i."state"::text AS "state"`,
     sessionId,
   );
   return rows[0] ?? null;
