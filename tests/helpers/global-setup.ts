@@ -25,7 +25,7 @@ import { Client } from "pg";
 import { buildCli } from "../../scripts/build-cli.mjs";
 import { assertPrismaClientReady } from "../../scripts/lib/prisma-client-state.mjs";
 import { runMigrations } from "../../scripts/lib/run-migrations.mjs";
-import { withDatabaseName } from "./scratch-db";
+import { RUN_TOKEN_ENV_VAR, dropScratchDatabasesForToken, withDatabaseName } from "./scratch-db";
 
 function adminUrl(databaseUrl: string): string {
   const url = new URL(databaseUrl);
@@ -80,6 +80,13 @@ export default async function setup(): Promise<() => Promise<void>> {
   const templateName = `agent_standup_test_template_${randomBytes(3).toString("hex")}`;
   const admin = adminUrl(databaseUrl);
 
+  // One token identifying THIS run, published before any worker starts so all
+  // of them inherit it and name their scratch databases with it. It is what
+  // lets the teardown below reclaim the databases of workers that died before
+  // reaching their own `afterAll` — see `scratch-db.ts` for the full reasoning.
+  const runToken = randomBytes(3).toString("hex");
+  process.env[RUN_TOKEN_ENV_VAR] = runToken;
+
   // Both on one connection: a direct `pg` connection carries no transaction
   // wrapper, which DROP/CREATE DATABASE could not run inside.
   await execSql(
@@ -105,5 +112,29 @@ export default async function setup(): Promise<() => Promise<void>> {
 
   return async () => {
     await execSql(admin, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE);`);
+
+    // Reclaim any scratch database this run created that its own file never
+    // dropped. On a clean run every file drops its own in `afterAll` and this
+    // finds nothing; it earns its keep when a worker is killed by Ctrl-C, an
+    // OOM or a hard timeout, which skips `afterAll` entirely and used to leak
+    // the database permanently.
+    //
+    // Scoped to this run's token, so a suite running concurrently against the
+    // same server keeps its own databases.
+    //
+    // Deliberately not fatal: this is cleanup after the results are already
+    // decided, and failing the run over it would turn a green suite red for a
+    // stray database. It reports instead, so a leak is visible rather than
+    // silent.
+    try {
+      const leaked = await dropScratchDatabasesForToken(databaseUrl, runToken);
+      if (leaked.length > 0) {
+        console.warn(
+          `[global-teardown] reclaimed ${leaked.length} scratch database(s) whose test file did not drop them: ${leaked.join(", ")}`,
+        );
+      }
+    } catch (cause) {
+      console.warn(`[global-teardown] could not sweep scratch databases: ${String(cause)}`);
+    }
   };
 }
