@@ -26,12 +26,13 @@ import {
   MAX_RESPONSE_CHARS,
   RESPONSE_TOO_LARGE_GUARD,
   enforceResponseSize,
+  narrowerCallFor,
   responseSize,
   responseTooLargeMessage,
   wireCopiesFor,
 } from "@/lib/service/response-size";
 import { defaultSnapshot } from "@/lib/settings";
-import { operationsOfKind } from "@/lib/service/registry";
+import { listOperations, operationsOfKind } from "@/lib/service/registry";
 
 /** A value whose serialised form is comfortably over the ceiling. */
 function oversized(): unknown {
@@ -208,6 +209,55 @@ describe("what the refusal tells a caller to do instead", () => {
   // the message is what stops a caller assuming a partial result arrived.
   it("says outright that nothing was truncated", () => {
     expect(responseTooLargeMessage("get_board", 999_999, undefined)).toMatch(/not be truncated/i);
+  });
+});
+
+describe("the advice names a remedy the operation actually has", () => {
+  // **The defect class this block exists for: advice that outlives the
+  // operation it describes.** `orientation`'s line told callers to use
+  // `get_item` instead, written before `orientation` had a `limit` — and
+  // `my_work`'s told them to send "a smaller `limit`" when `my_work` accepts
+  // only a `sessionId` and has never had one. Both refuse correctly and
+  // advise wrongly, which costs a caller the same debugging time as a
+  // refusal with no advice at all, plus a wasted attempt.
+  //
+  // Asserted generically rather than string-by-string so a future edit that
+  // recommends a parameter into existence is caught by the suite instead of
+  // by whoever follows the advice.
+  it("never recommends a `limit` to an operation that has no `limit`", () => {
+    const offenders: string[] = [];
+    for (const operation of listOperations()) {
+      const advice = narrowerCallFor(operation.name);
+      if (advice === undefined) continue;
+      // A *recommendation* to send one, not merely the word. `my_work`'s
+      // advice says it "takes no `limit`" — mentioning the parameter in
+      // order to rule it out is the opposite of the defect, so match the
+      // phrasings that ask the caller to supply one.
+      const recommendsALimit = /(?:smaller|a|raise the|lower the|with a)\s+`limit`/i.test(advice);
+      if (!recommendsALimit) continue;
+      const shape = (operation.input as unknown as { shape?: Record<string, unknown> }).shape;
+      // Only object schemas have a named-field shape to check; anything
+      // else is out of scope for this assertion rather than a failure.
+      if (shape === undefined) continue;
+      if (!Object.prototype.hasOwnProperty.call(shape, "limit")) offenders.push(operation.name);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("points `orientation` at the parameter that bounds it", () => {
+    // Fails if the advice reverts to redirecting at `get_item` without
+    // naming the control that actually answers the caller's question.
+    const message = responseTooLargeMessage("orientation", 999_999, "mcp");
+    expect(message).toContain("`limit`");
+  });
+
+  it("gives `my_work` a remedy that is not a parameter it lacks", () => {
+    // `my_work` returns everything a session holds and takes no `limit`, so
+    // the honest remedy is holding less. Fails if "a smaller `limit`" comes
+    // back.
+    const message = responseTooLargeMessage("my_work", 999_999, "mcp");
+    expect(message).toContain("release");
+    expect(message).not.toMatch(/smaller `limit`/);
   });
 });
 
