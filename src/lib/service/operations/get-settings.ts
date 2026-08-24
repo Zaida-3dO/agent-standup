@@ -18,6 +18,11 @@ import {
   type RenderedBootstrapVariable,
   type RenderedConstant,
 } from "@/lib/settings/build-constants";
+import {
+  readCapabilityChecks,
+  renderCapabilities,
+  type RenderedCapability,
+} from "@/lib/settings/capability-status";
 
 const inputSchema = z.object({}).strict();
 
@@ -40,6 +45,22 @@ export interface GetSettingsOutput {
    * not be readable from the application."
    */
   readonly bootstrap: readonly RenderedBootstrapVariable[];
+  /**
+   * SCHEMA.md §17.5 — "show it as unverified on `/settings`".
+   *
+   * The capability documents, each with the last finding the liveness sweep
+   * recorded about it. Carried separately from `settings` rather than as a
+   * field on the rendered setting, because it is a different kind of fact:
+   * a setting's `value` and `source` are known from the registry and the
+   * stored row, while this is an observation made by a particular process at
+   * a particular time, and may be about a path that differs from the one the
+   * setting holds.
+   *
+   * Present for both capabilities always, including when they are `off`, so
+   * "notifications are deliberately disabled" is a readable answer rather
+   * than an absence a client has to interpret.
+   */
+  readonly capabilities: readonly RenderedCapability[];
   /** The entity tag — SCHEMA.md §17.2. A string: a revision is a bigint and JSON has no bigint. */
   readonly revision: string;
 }
@@ -61,11 +82,21 @@ export const getSettings = defineOperation({
     const revisionRows = await ctx.db.$queryRawUnsafe<{ revision: bigint }[]>(
       `SELECT "revision" FROM "settings_revision" WHERE "id" = 1`,
     );
+    const settings = renderAllSettings(rows);
+    // Built from the rendered settings rather than from the raw override
+    // rows, so a capability sitting at its default (null) is reported the
+    // same way as one explicitly set to null — the two mean the same thing
+    // to every gate, and distinguishing them here would be a difference
+    // without a consequence.
+    const resolvedValues = Object.fromEntries(
+      settings.map((setting) => [setting.key, setting.value]),
+    );
     return {
-      settings: renderAllSettings(rows),
+      settings,
       unrecognised: renderUnrecognisedSettings(rows),
       constants: renderBuildConstants(),
       bootstrap: renderBootstrapVariables(),
+      capabilities: renderCapabilities(resolvedValues, await readCapabilityChecks(ctx.db)),
       revision: (revisionRows[0]?.revision ?? 0n).toString(),
     };
   },
