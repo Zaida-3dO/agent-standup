@@ -640,9 +640,7 @@ describeIfDb("progress_report against Postgres", () => {
       });
 
       const result = await report(sessionId);
-      expect(result.rows[0]?.flags).toEqual([
-        "Waiting on a decision about the retention window.",
-      ]);
+      expect(result.rows[0]?.flags).toEqual(["Waiting on a decision about the retention window."]);
       expect(result.report).not.toContain("rollout runbook");
     });
 
