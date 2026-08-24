@@ -77,6 +77,18 @@ export {
   type MergeOverrideOutcome,
 } from "./merge-override";
 export {
+  MERGE_APPROVAL_KIND,
+  personHasApprovedMerge,
+  type MergeApprovalResult,
+} from "./merge-approval";
+export {
+  BLOCKING_SEVERITY_FLOOR,
+  SEVERITY_GATED_VERDICT,
+  blockingFindings,
+  describeBlockingFindings,
+  type BlockingFinding,
+} from "./merge-findings";
+export {
   HISTORICAL_VERIFICATION_KIND,
   historicalVerificationSatisfies,
   type HistoricalVerificationOutcome,

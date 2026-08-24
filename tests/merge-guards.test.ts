@@ -482,8 +482,177 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         fields?: readonly string[];
       };
       expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/a person must record/);
+      expect(error.message).toMatch(/must record a merge_approval/);
       expect(error.fields).toEqual(["state"]);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("needs_approval: REFUSES a person's approving code_review - a review is not an authorisation", async () => {
+      // THE REGRESSION TEST FOR THE FOUR-MINUTE INCIDENT (SCHEMA.md 6e).
+      //
+      // This is the case that used to PASS, and its passing is what made a
+      // hold overridable. `created_by_type` on a review records who WROTE it,
+      // not who authorised the merge - so reading it as authorisation meant
+      // the only way to satisfy a hold was to put a person's name on a review
+      // an agent performed, which the guard's own message calls dishonest.
+      //
+      // A person reviewing the code is not the same act as a person deciding
+      // it may ship, and after this change only the latter satisfies the
+      // clause.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        createdByType: "person",
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("needs_approval: ALLOWS on a person-recorded merge_approval at the tip commit", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
+        commitSha: "sha-tip",
+        createdByType: "person",
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("needs_approval: REFUSES a merge_approval recorded by an AGENT - the hold is on a human", async () => {
+      // The write path refuses this too, but the gate must not depend on that
+      // alone: a row can arrive from a backfill, a fixture or direct SQL, and
+      // this is the single question "may this merge without a human" rests on.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
+        commitSha: "sha-tip",
+        createdByType: "agent",
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("needs_approval: REFUSES a merge_approval at a commit the item has moved past, and says so", async () => {
+      // Stale, not absent - and the refusal must distinguish them, because a
+      // caller told the wrong one chases the wrong person.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "sha-old",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
+        commitSha: "sha-old",
+        createdByType: "person",
+      });
+      // New work lands, declaring no supersession - so it is genuinely new.
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-new" });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.message).toMatch(/moved past/);
+      expect(error.message).toMatch(/sha-new/);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("needs_approval: a merge_approval carries forward across a squash (lineage), like every other clause", async () => {
+      // #243's lineage reading applies here too. A person who approved the
+      // branch tip that was then squash-merged approved the code that
+      // shipped; refusing them because the forge rewrote the sha would make
+      // this clause unsatisfiable in the workflow it most needs to work in.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "branch-tip",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
+        commitSha: "branch-tip",
+        createdByType: "person",
+        createdAt: new Date(Date.now() - 30_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "squashed",
+        supersedesSha: "branch-tip",
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("needs_approval: a merge_override does NOT satisfy the hold (#243's stated boundary)", async () => {
+      // #243 states outright that the override never satisfies
+      // `needs_approval`. Asserted against the authorisation guard directly:
+      // the override widens what counts as REVIEW EVIDENCE, never who may
+      // AUTHORISE, and that boundary is what makes a hold mean anything.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_override",
+        commitSha: "sha-tip",
+        createdByType: "person",
+        body: "Nothing material changed since the review; only a doc typo was fixed.",
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.message).toMatch(/merge_override does not satisfy/);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("needs_approval: a historical_verification does NOT satisfy the hold either", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
+      await createArtifact({
+        itemId: id,
+        kind: "historical_verification",
+        commitSha: "sha-tip",
+        createdByType: "person",
+        body: "Inspected the shipped code against the acceptance criteria.",
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
       expect(await readState(id)).toBe("in_review");
     });
 
@@ -526,20 +695,6 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // The anti-remedy, named so it is not discovered by accident.
       expect(error.message).toMatch(/created_by_type/);
       expect(error.message).toMatch(/WROTE/);
-    });
-
-    it("needs_approval: ALLOWS when the approving code_review was recorded by a person", async () => {
-      const reg = new GuardRegistry();
-      reg.register(mergeRequiresAuthorisationGuard);
-      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
-      await createArtifact({
-        itemId: id,
-        kind: "code_review",
-        verdict: "approved",
-        createdByType: "person",
-      });
-      await callTransition(id, "merged", reg);
-      expect(await readState(id)).toBe("merged");
     });
 
     it("needs_approval: REFUSES with no code_review artifact at all", async () => {
@@ -625,22 +780,35 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("in_review");
     });
 
-    it("needs_approval: ALLOWS when the person's approval IS the current round's approval", async () => {
+    it("needs_approval: a new review ROUND at the same commit does not expire a person's decision", async () => {
+      // Deliberately NOT round-scoped, unlike the review clauses (SCHEMA.md
+      // 6e). A review is a statement about a round of work; a person's
+      // decision is a statement about a state of the CODE, which the commit
+      // scope already pins exactly.
+      //
+      // Round-scoping it would expire a human decision because a REVIEWER
+      // opened another round at the same commit - invalidating the person's
+      // approval through an act the person had no part in, and sending
+      // someone back to them for a signature nothing had changed under.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
       await createArtifact({
         itemId: id,
-        kind: "code_review",
-        verdict: "changes_required",
+        kind: "merge_approval",
+        commitSha: "sha-tip",
         createdByType: "person",
         reviewRound: 1,
       });
+      // A second review round lands at the SAME commit. The code the person
+      // approved is unchanged, so their decision still applies.
       await createArtifact({
         itemId: id,
         kind: "code_review",
         verdict: "approved",
-        createdByType: "person",
+        createdByType: "agent",
+        commitSha: "sha-tip",
         reviewRound: 2,
       });
       await callTransition(id, "merged", reg);
@@ -697,27 +865,28 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("in_review");
     });
 
-    it("needs_approval: ALLOWS when the person's approval matches BOTH the current round and the current tip commit", async () => {
+    it("needs_approval: REFUSES an unpinned merge_approval once a real tip exists", async () => {
+      // An approval recording no commit cannot be shown to be about the code
+      // that would ship, so it is refused the moment there is a tip to be
+      // stale against. Same reading artifact-tip.ts documents.
+      //
+      // The write path requires a commitSha, so this row can only arrive from
+      // another writer - which is exactly why the gate checks it too.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
       await createArtifact({
         itemId: id,
-        kind: "commit",
-        commitSha: "commit-a",
-        createdAt: new Date(Date.now() - 60_000),
-      });
-      await createArtifact({
-        itemId: id,
-        kind: "code_review",
-        verdict: "approved",
+        kind: "merge_approval",
+        commitSha: null,
         createdByType: "person",
-        commitSha: "commit-a",
-        reviewRound: 1,
-        createdAt: new Date(),
       });
-      await callTransition(id, "merged", reg);
-      expect(await readState(id)).toBe("merged");
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
     });
 
     it("REFUSES a merge_authority value outside the three declared ones — defensive against an enum drift", async () => {
@@ -796,11 +965,15 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         verdict: "approved",
         commitSha: "commit-a",
       });
-      // Code review was recorded by an agent, so needs_approval still blocks.
+      // Every review clause is now satisfied, but no person has DECIDED, so
+      // needs_approval still blocks.
       error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
       expect((error as { guard?: string }).guard).toBe("merge.requires_authorisation");
       expect(await readState(id)).toBe("in_review");
 
+      // Recording the review a SECOND time as a person does not help - it is
+      // not an authorisation, and this is the step that used to let the hold
+      // be walked past.
       await createArtifact({
         itemId: id,
         kind: "code_review",
@@ -808,6 +981,17 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdByType: "person",
         commitSha: "commit-a",
         reviewRound: 1,
+      });
+      error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
+      expect((error as { guard?: string }).guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
+
+      // Only the person's recorded decision clears it.
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
+        createdByType: "person",
+        commitSha: "commit-a",
       });
       await callTransition(id, "merged", reg);
       expect(await readState(id)).toBe("merged");
@@ -1036,12 +1220,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       ).rejects.toThrow();
     });
 
-    it("stores a findings list with severities, and changes no merge outcome by doing so", async () => {
-      // Storage only. A medium-severity finding recorded against an
-      // approving review does not, on its own, block anything: no
-      // severity-derived gate exists in this system and this change does not
-      // add one. The gate still reads the verdict and the artifact's
-      // currency, exactly as before.
+    it("stores a findings list with severities, and a MEDIUM under lgtm_with_nits now BLOCKS", async () => {
+      // Findings change the merge outcome beneath exactly one verdict:
+      // `lgtm_with_nits` claims the remainder is cosmetic, and a medium
+      // finding contradicts the verdict's own terms.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
@@ -1056,9 +1238,19 @@ describeIfDb("merge guards (#18), against Postgres", () => {
           { text: "a stray log line", severity: "low" },
         ],
       });
-      await callTransition(id, "merged", reg);
-      expect(await readState(id)).toBe("merged");
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_approving_code_review");
+      // The refusal quotes the finding, so the caller does not have to go and
+      // look it up - the failure this gate addresses is a merging party who
+      // never read the review.
+      expect(error.message).toMatch(/the retry path is untested/);
+      expect(error.message).not.toMatch(/a stray log line/);
+      expect(await readState(id)).toBe("in_review");
 
+      // Still stored verbatim - the gate reads findings, it does not rewrite them.
       const stored = await prisma.artifact.findFirstOrThrow({
         where: { itemId: id, kind: "code_review" },
       });
@@ -1066,6 +1258,152 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         { text: "the retry path is untested", severity: "medium" },
         { text: "a stray log line", severity: "low" },
       ]);
+    });
+
+    it("lgtm_with_nits with only LOW/INFO findings still merges", async () => {
+      // The other half of the rule, and the one that keeps the tier usable:
+      // nits are what the verdict is FOR. A gate that blocked on any finding
+      // at all would make `lgtm_with_nits` identical to `changes_required`.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-nits" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        commitSha: "sha-nits",
+        findings: [
+          { text: "a stray log line", severity: "low" },
+          { text: "naming quibble", severity: "info" },
+        ],
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("a CRITICAL finding under a plain lgtm does NOT block - the verdict carries the weight", async () => {
+      // The deliberate asymmetry, and the one most likely to be "fixed" by a
+      // later reader who thinks it is an oversight. A plain `lgtm` makes no
+      // claim about the severity of what was found; a reviewer recording a
+      // critical finding alongside it has stated, attributably, that it does
+      // not block. Reading severity there would let a recorded observation
+      // silently overrule an explicit approval.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-crit" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "sha-crit",
+        findings: [{ text: "unbounded recursion on a rare path", severity: "critical" }],
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("a HIGH finding under lgtm_with_followups does NOT block - that tier is FOR real findings", async () => {
+      // `lgtm_with_followups` already pays for its bargain through
+      // merge.requires_linked_followup. Grading it here would double-charge
+      // it and make the tier unusable for the case it exists to serve.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      const followUp = await createTask({ state: "on_deck" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-fu" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_followups",
+        commitSha: "sha-fu",
+        followUpItemId: followUp,
+        findings: [{ text: "the cache is never invalidated", severity: "high" }],
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("an UNGRADED finding under lgtm_with_nits does not block", async () => {
+      // Absent severity reads as "ungraded", which is a different claim from
+      // "graded low" (findings.ts). Blocking on it would be the gate grading
+      // a finding the reviewer declined to grade, and every review recorded
+      // before the vocabulary existed is ungraded.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-ung" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        commitSha: "sha-ung",
+        findings: [{ text: "no severity was recorded for this one" }],
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("a malformed findings document does not block - the verdict decides alone", async () => {
+      // A row written before the validator existed, or by any other writer,
+      // must not become an item that can never merge, refused for a column
+      // the merging party did not write and cannot correct. Refusing to merge
+      // is a stronger action than this clause is entitled to take on data it
+      // cannot read.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-bad" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        commitSha: "sha-bad",
+        findings: { not: "an array" },
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("the severity clause grades the artifact the gate RESTS ON, not merely the newest", async () => {
+      // The composition property. Two approving reviews at the same round and
+      // tip: the newest is a clean `lgtm`, the one before it a
+      // `lgtm_with_nits` carrying a medium.
+      // `approvingArtifactAtCurrentRoundAndTip` resolves newest-first, so the
+      // gate rests on the clean one and must grade THAT - not re-query for
+      // "some review with findings".
+      //
+      // Getting this wrong in either direction is a real bug: grading a
+      // different artifact from the one relied on is exactly the shape of the
+      // composition regressions this file guards against.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "sha-two",
+        createdAt: new Date("2026-01-01T10:00:00Z"),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        commitSha: "sha-two",
+        findings: [{ text: "found on the first pass", severity: "medium" }],
+        createdAt: new Date("2026-01-01T10:01:00Z"),
+      });
+      // Re-reviewed at the same round and tip, and found clean.
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "lgtm",
+        commitSha: "sha-two",
+        createdAt: new Date("2026-01-01T10:02:00Z"),
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
     });
 
     it("lgtm_with_nits goes stale when the nits are addressed, and merges again once re-reviewed", async () => {
@@ -2079,10 +2417,21 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // twice.
       const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "hum1111" });
+      // An agent reviewed it; a PERSON authorised it. Both pinned to the
+      // branch tip that the squash then rewrote. The review satisfies the
+      // code-review clause and the merge_approval satisfies the
+      // authorisation clause, and BOTH have to survive the rewrite via the
+      // same lineage or the two clauses come to rest on different shas.
       await createArtifact({
         itemId: id,
         kind: "code_review",
         verdict: "approved",
+        commitSha: "hum1111",
+        createdByType: "agent",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
         commitSha: "hum1111",
         createdByType: "person",
       });

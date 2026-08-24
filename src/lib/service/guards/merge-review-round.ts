@@ -45,6 +45,24 @@ export interface ArtifactRow {
   commitSha: string | null;
   followUpItemId: string | null;
   createdByType: string;
+  /**
+   * The review's raw `findings` document, straight from the jsonb column and
+   * deliberately untyped here.
+   *
+   * Selected because the merge gate now grades severities
+   * (`./merge-findings.ts`), and it has to grade **the artifact it is
+   * actually resting on** — the one this module resolves. Fetching findings
+   * in a separate query would reintroduce exactly the "two questions, two
+   * artifacts" divergence this row's own doc exists to prevent: the gate
+   * could rest on one review while grading another's findings.
+   *
+   * `unknown` rather than `Finding[]` on purpose. This is an untrusted
+   * column value — rows predate the validator, and jsonb holds whatever was
+   * written — so it is parsed by `parseFindings` at the point of use rather
+   * than asserted here. A cast would make a claim the database does not
+   * guarantee.
+   */
+  findings: unknown;
 }
 
 /**
@@ -74,7 +92,8 @@ async function approvingArtifactsAtRound(
     // `$2::"ArtifactKind"` / `$4::"Verdict"[]` — Postgres infers an enum type
     // for a literal but not for a bind parameter; see artifact-tip.ts's
     // identical comment.
-    `SELECT "id", "verdict", "reviewRound", "commitSha", "followUpItemId", "createdByType"
+    `SELECT "id", "verdict", "reviewRound", "commitSha", "followUpItemId", "createdByType",
+            "findings"
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
         AND "reviewRound" = $3 AND "verdict" = ANY($4::"Verdict"[])
