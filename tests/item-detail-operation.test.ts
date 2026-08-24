@@ -18,6 +18,7 @@ import {
 } from "./helpers/scratch-db";
 import { registerSessions } from "./helpers/register-sessions";
 import type { ItemDetailOutput } from "@/lib/service/operations/get-item-detail";
+import { openLoops } from "@/lib/item-detail/status";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -414,6 +415,77 @@ describeIfDb("get_item_detail against Postgres", () => {
 
       const detail = await detailOf(mine.id);
       expect(detail.history.map((h) => h.body)).not.toContain("not mine");
+    });
+
+    it("applies NO event-type filter, which is what keeps the client-side loop fold honest", async () => {
+      // ── The invariant this pins, and why it is worth a test ────────────
+      //
+      // Unlike every other loop-bearing read, this operation does not fold
+      // loops. It returns raw history and the fold happens client-side in
+      // `openLoops` (`src/lib/item-detail/status.ts`). That fold is only
+      // correct when handed the COMPLETE loop-event slice: it is a
+      // four-type fold, and a narrower slice does not fail loudly — it
+      // reports a deleted loop as still open and serves an edited loop its
+      // superseded text.
+      //
+      // So this surface's correctness rests entirely on the history query
+      // above staying unfiltered. That is an invisible dependency: nothing
+      // in `get-item-detail.ts` mentions loops, and a future reader trimming
+      // the payload by type — an entirely plausible change, since this
+      // operation once returned 742,960 characters — would have no local
+      // signal that they had just broken the detail view's loop list.
+      //
+      // **Why this exists beside the source-level assertion.**
+      // `item-detail-status.test.ts` already pins this invariant by reading
+      // `get-item-detail.ts` and regex-ing its history query for a type
+      // predicate. That test is valuable — it runs unskipped without a
+      // database — but it pins the source TEXT, so it only sees a narrowing
+      // spelled the obvious way. Verified during this change: a filter whose
+      // column name and excluded label are assembled at runtime (so the
+      // literal tokens `"type" =` and `open_loop` never appear in the query
+      // string) leaves all 79 of that file's tests green, while this one
+      // fails. The two are complementary — that one is cheap and always
+      // runs, this one cannot be fooled by how the SQL is written — and the
+      // fold's own unit tests catch neither, because they are handed a slice
+      // directly and never see the query that supplies it.
+      //
+      // Breaks if: the history query grows any predicate that drops a loop
+      // event type, however spelled, or `historyLimit` stops admitting them.
+      const project = await createItem({ area: "detail-history-unfiltered" });
+      const task = await createItem({ area: "detail-history-unfiltered", parentId: project.id });
+
+      await runtime.call("loop_add", {
+        itemId: task.id,
+        loopId: "l-1",
+        text: "the original wording",
+      });
+      await runtime.call("loop_edit", { itemId: task.id, loopId: "l-1", text: "the new wording" });
+      await runtime.call("loop_add", { itemId: task.id, loopId: "l-2", text: "to be retracted" });
+      await runtime.call("loop_delete", {
+        itemId: task.id,
+        loopId: "l-2",
+        reason: "a duplicate of the loop above",
+      });
+
+      const detail = await detailOf(task.id);
+      const types = detail.history.map((entry) => entry.type);
+
+      // All four loop event types survive the round trip. `open_loop_edited`
+      // and `open_loop_deleted` are the two a narrowing filter would drop
+      // first, being the newest additions to the lifecycle.
+      for (const type of ["open_loop", "open_loop_edited", "open_loop_deleted"]) {
+        expect(types).toContain(type);
+      }
+
+      // And the guarantee that depends on it: running the very fold the view
+      // runs over this payload withholds the deleted loop and serves the
+      // edited loop's CURRENT text. Asserted against the superseded wording
+      // being absent, not merely the current one present, so a fold
+      // returning both still fails.
+      const folded = openLoops(detail.history);
+      expect(folded.map((loop) => loop.loopId)).toEqual(["l-1"]);
+      expect(folded[0]!.text).toBe("the new wording");
+      expect(folded.map((loop) => loop.text)).not.toContain("the original wording");
     });
   });
 
