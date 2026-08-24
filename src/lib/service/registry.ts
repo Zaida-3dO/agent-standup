@@ -128,6 +128,14 @@ import { listPeople } from "./operations/list-people";
 // three capabilities that were dead as a result.
 import { updatePerson } from "./operations/update-person";
 import { hookDecision } from "./operations/hook-decision";
+// The evidence loop for the intervention catalogue (`docs/plans/INTERVENTIONS.md`).
+// The guard surface only ever grew, because nothing recorded whether an entry
+// earned its cost: `record_intervention` captures a firing, `score_intervention`
+// records what a session thought of it, and `get_intervention_scores` is the
+// report that names the entries worth removing.
+import { recordIntervention } from "./operations/record-intervention";
+import { scoreIntervention } from "./operations/score-intervention";
+import { getInterventionScores } from "./operations/get-intervention-scores";
 // The process registry and the ownership check it exists to feed
 // (MILESTONES.md #45). `kill_guard` is the consumer; the other three are
 // how the registry gets its contents and how a refusal is explained.
@@ -230,6 +238,9 @@ export const OPERATION_REGISTRY = {
   [listPeople.name]: listPeople,
   [updatePerson.name]: updatePerson,
   [hookDecision.name]: hookDecision,
+  [recordIntervention.name]: recordIntervention,
+  [scoreIntervention.name]: scoreIntervention,
+  [getInterventionScores.name]: getInterventionScores,
   [registerProcess.name]: registerProcess,
   [endProcess.name]: endProcess,
   [listProcesses.name]: listProcesses,
