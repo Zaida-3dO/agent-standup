@@ -46,6 +46,18 @@ export const DEFAULT_FLUSH_TIMEOUT_MS = 15_000;
 export interface FlushHttpOptions {
   readonly baseUrl: string;
   readonly fetch: FetchLike;
+  /**
+   * The bearer token the ingest requires, when the deployment requires one.
+   *
+   * `POST /api/tool-calls` authenticates unconditionally, so a flush with
+   * no token is refused with a `401` — and a `401` is `4xx`, which
+   * `isPermanent` correctly classifies as permanent. The consequence, if
+   * this were absent, is the quietest possible failure: every flush
+   * rejected forever, the spool growing to its ceiling and dropping the
+   * oldest records, and nothing anywhere saying why. Optional because a
+   * deployment with no tokens configured is still a supported one.
+   */
+  readonly token?: string;
   readonly timeoutMs?: number;
   /** Creates the abort signal for the timeout. Injected so the timeout is testable. */
   readonly timeoutSignal?: (ms: number) => AbortSignal | undefined;
@@ -113,7 +125,12 @@ export function createHttpFlush(
         `${options.baseUrl.replace(/\/+$/, "")}/api/tool-calls`,
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(options.token === undefined || options.token === ""
+              ? {}
+              : { authorization: `Bearer ${options.token}` }),
+          },
           body: JSON.stringify(batch),
           ...(signal === undefined ? {} : { signal }),
         },

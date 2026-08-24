@@ -16,7 +16,7 @@
 // a value in and a value out. A filesystem module belongs on the other side
 // of that line.
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { SpoolStore } from "./hook-command";
 
@@ -76,3 +76,51 @@ export function fileSpool(file: string): SpoolStore {
     },
   };
 }
+
+/**
+ * An append counter that survives the process.
+ *
+ * The hook script is a **fresh process per tool call**, so an in-memory
+ * count is always 1 and would never reach the trim interval — the ceiling
+ * would appear wired and never fire. This derives the count from something
+ * that does persist: the spool file's own size.
+ *
+ * Size in bytes rather than a separate counter file, because a counter file
+ * is a second piece of state that can be deleted, go stale, or disagree
+ * with the spool it describes, and its only advantage would be exactness in
+ * a number whose whole job is to be "roughly every N".
+ *
+ * The returned value is therefore not a count of appends; it is a monotone
+ * proxy for one. `shouldTrimOnAppend` tests it modulo the interval, so what
+ * matters is that it advances by a bounded amount per append — a record is
+ * on the order of a hundred bytes — and that it is stable across processes.
+ * Both hold.
+ *
+ * A missing or unreadable spool answers `0`, which never triggers a trim.
+ * That is the right answer for a file that is not there: there is nothing
+ * to trim, and reporting a number that happened to hit the interval would
+ * schedule a read-and-rewrite of a file that does not exist.
+ */
+export function fileAppendCounter(file: string): () => number {
+  return () => {
+    try {
+      // Bytes are divided down so the counter advances at roughly the rate
+      // records are written rather than the rate bytes are, which is what
+      // makes the interval mean approximately "appends" as its name says.
+      return Math.floor(statSync(file).size / APPROXIMATE_RECORD_BYTES);
+    } catch {
+      return 0;
+    }
+  };
+}
+
+/**
+ * Roughly how many bytes one spooled record occupies.
+ *
+ * Measured against the live spool rather than guessed: ~28.6 MB across
+ * ~47,500 records is a shade over 600 bytes each. It does not need to be
+ * accurate — it converts a byte count into an appends-ish count for a
+ * modulo test — but being within an order of magnitude keeps the trim
+ * interval meaning approximately what it says.
+ */
+const APPROXIMATE_RECORD_BYTES = 600;

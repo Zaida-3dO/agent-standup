@@ -403,3 +403,198 @@ describe("the hook as a process, spooling telemetry", () => {
     }
   });
 });
+
+// ── The drain (row 636f640b, MILESTONES.md #88's "batched flush") ───────
+//
+// The bug: the `http` variant had **no flush path at all**. `flush-http.ts`
+// was built and tested, but its only caller was the `standup hook flush`
+// CLI verb, which a hook-only installation never invokes — so telemetry
+// accumulated forever and reached the server never (28 MB in ten days on
+// the machine that found it).
+//
+// These run the built artefact against a real server, because that is the
+// only way to prove the wiring rather than the intent: every part of this
+// flush was already unit-tested in isolation while the whole was dead code.
+describe("the built hook drains its spool to the server", () => {
+  let server: Server;
+  let url: string;
+  let toolCallBatches: { sessionId?: string; calls?: unknown[] }[];
+  let ingestStatus = 201;
+  let refusedSession: string | undefined;
+
+  beforeAll(async () => {
+    toolCallBatches = [];
+    server = createServer((request, result) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        if (request.url?.startsWith("/api/tool-calls") === true) {
+          let batch: { sessionId?: string; calls?: unknown[] } = {};
+          try {
+            batch = JSON.parse(body) as { sessionId?: string; calls?: unknown[] };
+          } catch {
+            batch = {};
+          }
+          toolCallBatches.push(batch);
+          // One session can be refused while another is accepted, which is
+          // what makes a *partial* flush reachable — the only case in which
+          // "what the server took" and "everything" differ.
+          const refused = refusedSession !== undefined && batch.sessionId === refusedSession;
+          result.writeHead(refused ? 400 : ingestStatus, { "content-type": "application/json" });
+          result.end(JSON.stringify({ recorded: 0 }));
+          return;
+        }
+        result.writeHead(200, { "content-type": "application/json" });
+        result.end(JSON.stringify({ decision: "allow" }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  /** A spool path of this test's own, so cases cannot see each other's records. */
+  function freshSpool(name: string): string {
+    const file = path.join(scratch, `${name}.jsonl`);
+    rmSync(file, { force: true });
+    return file;
+  }
+
+  it("sends what a turn spooled when the turn ends, and empties the spool", async () => {
+    const spool = freshSpool("drain-sends");
+    ingestStatus = 201;
+    toolCallBatches = [];
+
+    // Two tool calls, then the end of the turn. Nothing is sent by the tool
+    // calls themselves — that would be the per-call connection §13f
+    // forbids — so the batch must carry both.
+    await runHookAsync(payload("git status", "PostToolUse"), {
+      STANDUP_URL: url,
+      STANDUP_SPOOL: spool,
+    });
+    await runHookAsync(payload("git diff", "PostToolUse"), {
+      STANDUP_URL: url,
+      STANDUP_SPOOL: spool,
+    });
+    expect(toolCallBatches).toHaveLength(0);
+    expect(readFileSync(spool, "utf8").trim().split("\n")).toHaveLength(2);
+
+    await runHookAsync(JSON.stringify({ hook_event_name: "Stop", session_id: "s-1" }), {
+      STANDUP_URL: url,
+      STANDUP_SPOOL: spool,
+    });
+
+    expect(toolCallBatches).toHaveLength(1);
+    expect(toolCallBatches[0]?.sessionId).toBe("s-1");
+    expect(toolCallBatches[0]?.calls).toHaveLength(2);
+    // Acknowledged records leave the spool. This is the assertion that
+    // distinguishes a real drain from one that sends and then re-sends the
+    // same records on every subsequent turn forever.
+    expect(readFileSync(spool, "utf8").trim()).toBe("");
+  });
+
+  it("keeps the records and still exits 0 when the ingest refuses them", async () => {
+    // Criterion 4, and the property that matters most here: telemetry that
+    // cannot be delivered must cost a session nothing. A 500 is the
+    // server-side failure a hook has no control over.
+    const spool = freshSpool("drain-refused");
+    ingestStatus = 500;
+    toolCallBatches = [];
+
+    await runHookAsync(payload("git status", "PostToolUse"), {
+      STANDUP_URL: url,
+      STANDUP_SPOOL: spool,
+    });
+    const stop = await runHookAsync(
+      JSON.stringify({ hook_event_name: "Stop", session_id: "s-1" }),
+      { STANDUP_URL: url, STANDUP_SPOOL: spool },
+    );
+
+    expect(stop.status).toBe(0);
+    expect(toolCallBatches).toHaveLength(1);
+    // Nothing was acknowledged, so nothing is discarded — the flush is
+    // at-least-once, and a rejected batch is retried on the next `Stop`
+    // rather than being deleted.
+    expect(readFileSync(spool, "utf8").trim().split("\n")).toHaveLength(1);
+
+    ingestStatus = 201;
+  });
+
+  it("exits 0 on a Stop when the server is unreachable", async () => {
+    // The fail-open path, proven against a port with nothing on it. A hook
+    // that let an undeliverable flush become a non-zero exit would break
+    // every turn on a machine whose server is down.
+    const spool = freshSpool("drain-unreachable");
+    await runHookAsync(payload("git status", "PostToolUse"), {
+      STANDUP_URL: "http://127.0.0.1:1",
+      STANDUP_SPOOL: spool,
+    });
+    const stop = await runHookAsync(
+      JSON.stringify({ hook_event_name: "Stop", session_id: "s-1" }),
+      { STANDUP_URL: "http://127.0.0.1:1", STANDUP_SPOOL: spool },
+    );
+
+    expect(stop.status).toBe(0);
+    expect(stop.stdout).toBe("");
+    // Retained for the next attempt rather than dropped on the floor.
+    expect(readFileSync(spool, "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  it("retains only what the server did not take, when one session is refused", async () => {
+    // **The assertion that a spool is not simply emptied after a flush.**
+    // Two sessions are spooled and the ingest refuses exactly one. What
+    // must survive is that session's record and nothing else: clearing the
+    // file wholesale would delete telemetry the server never acknowledged,
+    // and the loss would be permanent and silent, since §10's history
+    // cannot be backfilled.
+    const spool = freshSpool("drain-partial");
+    ingestStatus = 201;
+    toolCallBatches = [];
+    refusedSession = "s-refused";
+
+    const call = (session: string) =>
+      JSON.stringify({
+        hook_event_name: "PostToolUse",
+        session_id: session,
+        tool_name: "Bash",
+        tool_input: { command: "git status" },
+      });
+
+    await runHookAsync(call("s-kept"), { STANDUP_URL: url, STANDUP_SPOOL: spool });
+    await runHookAsync(call("s-refused"), { STANDUP_URL: url, STANDUP_SPOOL: spool });
+    await runHookAsync(JSON.stringify({ hook_event_name: "Stop", session_id: "s-kept" }), {
+      STANDUP_URL: url,
+      STANDUP_SPOOL: spool,
+    });
+
+    const remaining = readFileSync(spool, "utf8").trim();
+    const lines = remaining === "" ? [] : remaining.split(String.fromCharCode(10));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] as string)).toMatchObject({ sessionId: "s-refused" });
+
+    refusedSession = undefined;
+  });
+
+  it("does not send on a tool call, only at the end of a turn", async () => {
+    // Pins the batching itself. A build that flushed per `PostToolUse`
+    // would pass the first test in this block and fail this one.
+    const spool = freshSpool("drain-batched");
+    ingestStatus = 201;
+    toolCallBatches = [];
+
+    await runHookAsync(payload("git status", "PreToolUse"), {
+      STANDUP_URL: url,
+      STANDUP_SPOOL: spool,
+    });
+    await runHookAsync(payload("git status", "PostToolUse"), {
+      STANDUP_URL: url,
+      STANDUP_SPOOL: spool,
+    });
+
+    expect(toolCallBatches).toHaveLength(0);
+  });
+});
