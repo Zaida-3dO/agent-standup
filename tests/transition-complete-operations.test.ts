@@ -109,16 +109,27 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
    * Seeds what row #18's merge guards (`merge.requires_commit`,
    * `merge.requires_approving_code_review`, `merge.requires_authorisation`
    * for `mergeAuthority: "needs_approval"`) actually require before a real
-   * `complete_item({ to: "merged" })` call can succeed: a `commit` artifact
-   * recording the tip commit sha, then a `code_review` artifact approved by
-   * a **person** (not an agent — `needs_approval` specifically requires a
-   * human sign-off) at that same commit and the item's current review round.
+   * `complete_item({ to: "merged" })` call can succeed:
+   *
+   *   1. a `commit` artifact recording the tip commit sha;
+   *   2. an approving `code_review` at that commit and the current round —
+   *      recorded by an agent, which is the ordinary case;
+   *   3. a `merge_approval` recorded by a **person** at the same commit,
+   *      which is the only thing that satisfies `needs_approval`
+   *      (SCHEMA.md §6e).
+   *
+   * (2) and (3) are separate rows because they are separate acts: a review
+   * says the code is sound, an approval says a human decided it may land.
+   * `created_by_type` on a review records who WROTE it, not who authorised
+   * the merge, so a person-recorded review is not an authorisation and this
+   * fixture does not pretend otherwise.
+   *
    * `needsVisualReview` defaults false on `createTask`, so
    * `merge.requires_visual_review` passes unconditionally and needs no
    * artifact here. Mirrors the fixture shape `tests/merge-guards.test.ts`'s
-   * "all four together" test already establishes as the genuine happy path
-   * for this guard set — this does not stub or bypass a guard, it gives the
-   * real guards evidence that genuinely satisfies them.
+   * "all four together" test establishes as the genuine happy path for this
+   * guard set — this does not stub or bypass a guard, it gives the real
+   * guards evidence that genuinely satisfies them.
    */
   async function satisfyMergeGuards(itemId: string, commitSha = "commit-a"): Promise<void> {
     await prisma.artifact.create({
@@ -139,8 +150,19 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
         verdict: "approved",
         commitSha,
         reviewRound: 1,
-        createdByType: "person",
+        createdByType: "agent",
         createdById: "test-reviewer",
+      },
+    });
+    await prisma.artifact.create({
+      data: {
+        id: randomUUID(),
+        itemId,
+        kind: "merge_approval",
+        commitSha,
+        reviewRound: 1,
+        createdByType: "person",
+        createdById: "test-approver",
       },
     });
   }

@@ -3,23 +3,29 @@
 //
 // **Definition and validation — not policy.** This module defines what a
 // finding IS and refuses one that is malformed. It deliberately does not
-// count, aggregate or threshold findings, and **nothing in the merge gate
-// reads a severity**: the guards key on `Artifact.verdict` alone
-// (`service/guards/merge.ts`), so no verdict-independent severity rule
-// exists in this system and this is not the change that invents one. A
-// MEDIUM finding does not mechanically block anything here; the reviewer's
-// verdict is what carries that weight.
+// count, aggregate or threshold findings: the policy that reads these values
+// lives in `service/guards/merge-findings.ts`, which grades them at the merge
+// gate.
+//
+// **Severity does gate now, beneath exactly one verdict.** Under
+// `lgtm_with_nits` a finding at `medium` or above blocks the merge as
+// `changes_required` would — that verdict claims only cosmetic work remains,
+// so a finding that is not cosmetic contradicts the verdict's own terms.
+// Under every other approving verdict no severity is read at all, and a
+// `critical` finding under a plain `lgtm` does not block: the reviewer has
+// said outright that it does not, and that is theirs to say. The verdict
+// still carries the weight; severity only gates beneath `lgtm_with_nits`.
+// This module remains the vocabulary and the validator, not the rule.
 //
 // **Findings ARE displayed**, which the earlier "storage only" wording got
 // wrong. `src/lib/item-detail/findings-view.ts` parses them and
 // `src/components/item-detail/FindingsList.tsx` renders them grouped by
-// severity, ordering the groups by `FINDING_SEVERITIES` itself. Note that
-// `severityRank` and `isAtLeastSeverity` are a separate matter: they have
-// **no callers at all** outside this module's own tests, because nothing
-// asks the "at least this severe" question they answer. Aggregate
-// reporting (`Run.blockingFindings`,
-// which has no writer at all, plus review-round and rework analysis) is
-// still later work; what it needs from here is that the severity was
+// severity, ordering the groups by `FINDING_SEVERITIES` itself.
+// `isAtLeastSeverity` is now the merge gate's own predicate — it is what
+// `merge-findings.ts` asks the "at least medium" question with, so the
+// ladder's order is load-bearing for a merge decision and not only for a
+// display order. Aggregate reporting (`Run.blockingFindings`, which has no
+// writer at all, plus review-round and rework analysis) is still later work; what it needs from here is that the severity was
 // recorded at the time, honestly and in one vocabulary, because that is the
 // part that cannot be reconstructed afterwards.
 //

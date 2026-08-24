@@ -366,6 +366,77 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(artifact.createdById).toBe("agent-a");
     });
 
+    // SCHEMA.md 6e - a `merge_approval` is a PERSON'S DECISION that this work
+    // may land, and it is the only thing that satisfies
+    // `merge_authority = needs_approval`. The properties that stop it being a
+    // rubber stamp are enforced at the WRITE, because an artifact silently
+    // accepted and then never counted is worse than one rejected: the caller
+    // believes the decision is on the record.
+    it("refuses a merge_approval recorded by an agent - only a person may authorise", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "merge_approval",
+        commitSha: "abc123",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["createdByType", "kind"]);
+      // The refusal has to say why, not merely no: an agent recording one
+      // would be the held item authorising its own merge.
+      const text = (error as unknown as Error).message;
+      expect(text).toContain("Only a person");
+    });
+
+    it("refuses a merge_approval with no commitSha - a decision is about one state of the code", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "merge_approval",
+        createdByType: "person",
+        createdById: "user-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["commitSha"]);
+      // Names the standing-grant route, which is the thing an unpinned
+      // approval was probably reaching for.
+      const text = (error as unknown as Error).message;
+      expect(text).toContain("pre-approved");
+    });
+
+    it("refuses a merge_approval naming a person who does not exist", async () => {
+      // Inherited from resolveCreator, and asserted here because it is what
+      // stops `createdByType: person` being satisfiable with any string at
+      // all - a gate whose subject need not exist is weaker than it reads.
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "merge_approval",
+        commitSha: "abc123",
+        createdByType: "person",
+        createdById: "nobody-at-all",
+      });
+      expect(error.code).toBe("not_found");
+    });
+
+    it("accepts a merge_approval from a real person, and never as a review", async () => {
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "merge_approval",
+        commitSha: "abc123",
+        createdByType: "person",
+        createdById: "user-a",
+      });
+      expect(artifact.kind).toBe("merge_approval");
+      // No verdict, so nothing counting approving REVIEWS can ever count this
+      // as one. It authorises; it does not review.
+      expect(artifact.verdict).toBeNull();
+      expect(artifact.createdByType).toBe("person");
+      expect(artifact.createdById).toBe("user-a");
+    });
+
     it("records supersedesSha on a commit artifact, which is what carries an approval across a squash", async () => {
       const itemId = await createTask();
       const artifact = await record({

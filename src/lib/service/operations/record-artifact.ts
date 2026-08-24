@@ -32,6 +32,7 @@ import { appendEvent } from "@/lib/events";
 import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
 import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib/pull-requests";
 import { currentReviewRound } from "../guards/merge-review-round";
+import { MERGE_APPROVAL_KIND } from "../guards/merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH } from "../guards/merge-override";
 
 /**
@@ -51,6 +52,7 @@ const ARTIFACT_KINDS = [
   "pull_request",
   "screenshot",
   "merge_override",
+  "merge_approval",
   "other",
 ] as const;
 
@@ -314,9 +316,15 @@ const RECORD_ARTIFACT_CONTRACT = {
       fields: ["findings"],
       rule:
         "`findings: []` and omitting the field are stored identically (as NULL) — an empty " +
-        "list is not a distinguishable claim. Findings are recorded for the record and for " +
-        "display; no merge guard reads a severity, so a `critical` finding under an approving " +
-        "verdict does NOT by itself block a merge. The verdict is what gates.",
+        "list is not a distinguishable claim. **Severity gates beneath one verdict only:** " +
+        "under `lgtm_with_nits`, a finding graded medium, high or critical blocks the merge " +
+        "exactly as `changes_required` would, because that verdict claims the remainder is " +
+        "cosmetic and such a finding contradicts it. Under every other approving verdict " +
+        "(`lgtm`, `approved`, `lgtm_with_followups`) no severity is read at all, so a " +
+        "`critical` finding under a plain `lgtm` does NOT block — that is a reviewer stating " +
+        "outright that it does not, which is theirs to state. Grade honestly in both " +
+        "directions: inflating a nit to medium under `lgtm_with_nits` forces a re-review " +
+        "round, and deflating a real finding to clear the gate defeats it.",
     },
     {
       fields: ["createdByType", "createdById"],
@@ -507,6 +515,26 @@ export const recordArtifact = defineOperation({
       }
     }
 
+    // A merge_approval is a person's decision about ONE state of the code, so
+    // it names the commit it approves — the same scoping, and for the same
+    // reason, as the override above. Without it the row would read as
+    // standing permission to merge whatever the item later becomes, which is
+    // a far broader grant than a person clicking approve intends to give and
+    // has its own separate expression (`mergeAuthority = pre_approved`).
+    if (input.kind === MERGE_APPROVAL_KIND) {
+      if (input.commitSha === undefined || input.commitSha === null) {
+        throw new InvalidInputError(
+          "A merge_approval must record the commitSha it approves — a person's decision applies " +
+            "to the state of the code they were shown, not to whatever the item later becomes. " +
+            "For a standing grant covering future work, set the item's mergeAuthority to " +
+            // Hyphenated: the value `update_item` accepts. `pre_approved` is
+            // the DB enum spelling and would be refused.
+            '"pre-approved" instead.',
+          { fields: ["commitSha"] },
+        );
+      }
+    }
+
     // §6: "Null on artifacts that aren't reviews — a plan document has no
     // verdict; its `plan-review` does." Enforced rather than merely
     // documented, because a verdict on a non-review is not inert: `hasApproval`
@@ -564,6 +592,32 @@ export const recordArtifact = defineOperation({
     }
 
     const { createdByType, createdById, assignmentId } = await resolveCreator(ctx, input);
+
+    // **Only a person may record a merge_approval.** This is the one kind
+    // whose entire meaning is WHO made it: it is the evidence
+    // `merge_authority = needs_approval` requires, and an agent recording one
+    // would be the held item authorising its own merge — precisely the
+    // failure the kind exists to prevent.
+    //
+    // Refused at the write rather than ignored at the gate, though the gate
+    // re-checks it too. An artifact silently accepted and then never counted
+    // is worse than one rejected: the caller believes the decision is on the
+    // record, the board shows a row that looks like an approval, and the
+    // refusal it actually gets at merge time names a requirement it will
+    // reasonably believe is already met.
+    //
+    // `resolveCreator` has already established that a `person` here names a
+    // real `Person` row, so this cannot be satisfied by asserting the string.
+    if (input.kind === MERGE_APPROVAL_KIND && createdByType !== "person") {
+      throw new InvalidInputError(
+        "Only a person can record a merge_approval — it is the recorded decision of a human " +
+          "that this work may land, and an agent recording one would be authorising its own " +
+          'merge. Pass createdByType: "person" with the approving person\'s createdById, or ' +
+          "hold an assignment on the item as a person. If no human decision has been made, the " +
+          "item is correctly still held.",
+        { fields: ["createdByType", "kind"] },
+      );
+    }
     const reviewRound = await resolveReviewRound(ctx, input);
 
     const rows = await ctx.db.$queryRawUnsafe<RecordedArtifact[]>(

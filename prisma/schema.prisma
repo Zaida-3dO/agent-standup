@@ -495,6 +495,28 @@ enum ArtifactKind {
   // this installation overriding its own merge gate" is one query, which is
   // what makes a pattern of overriding detectable rather than anecdotal.
   merge_override
+  // A PERSON'S DECISION that this specific work may land — the evidence
+  // `merge_authority = needs_approval` requires (SCHEMA.md §6d).
+  //
+  // Its own kind because the alternative, which is what this system did
+  // before, was to read a person's `code_review` as their authorisation.
+  // Those are different acts. `createdByType` on a review records who WROTE
+  // it, not who permitted the merge, so treating it as authorisation meant
+  // the only way to satisfy a hold was to put a person's name on a review an
+  // agent performed — the exact thing the guard's own refusal message told
+  // callers not to do. A requirement whose only satisfier is an act the
+  // system calls dishonest is not a requirement; it is a dead end, and its
+  // observed effect was that holds did not hold.
+  //
+  // Separating the two is also what lets a person authorise work an agent
+  // reviewed, which is the ordinary case: the human says "yes, land it"
+  // without having to claim they performed the review.
+  //
+  // Scoped to a commit like every other merge-time evidence kind, so it
+  // expires when the work moves. A standing "merge whatever this item
+  // becomes" is a different and much broader grant, and it already has its
+  // own expression: `merge_authority = pre_approved` on the item.
+  merge_approval
   other
 }
 

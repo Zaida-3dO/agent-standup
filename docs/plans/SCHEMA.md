@@ -216,7 +216,7 @@ discovered at 3am.
 | Value | Meaning |
 |---|---|
 | `pre-approved` | Merge when done, don't ask. |
-| `needs-approval` | Always block on a human. |
+| `needs-approval` | Always block on a human. Satisfied only by a person-recorded `merge_approval` artifact at the item's tip commit (§6e) — never by an agent, and never by §6b or §6c. |
 | `agent-judgement` | Agent decides at the gate — could this break something? Yes → block on you; no → merge. **Requires a recorded one-line rationale.** |
 
 ### 1.4 Removing an item — `delete_item`
@@ -620,7 +620,7 @@ is already the place that says which transitions require what.
 |---|---|---|
 | `id` | `uuid` PK | |
 | `item_id` | `text` → `items.id` | |
-| `kind` | enum | `plan` · `plan-review` · `code-review` · `visual-review` · `test-run` · `commit` · `pull-request` (§6a-pr) · `historical-verification` (§6b) · `merge-override` (§6c) · `screenshot` · `other`. The **thing** and its **review** are separate rows — as `commit` and `code-review` already were, so `plan` and `plan-review` follow the same shape. |
+| `kind` | enum | `plan` · `plan-review` · `code-review` · `visual-review` · `test-run` · `commit` · `pull-request` (§6a-pr) · `historical-verification` (§6b) · `merge-override` (§6c) · `merge-approval` (§6e) · `screenshot` · `other`. The **thing** and its **review** are separate rows — as `commit` and `code-review` already were, so `plan` and `plan-review` follow the same shape. |
 | `verdict` | enum null | `approved` · `changes-required` · `n/a`. Null on artifacts that aren't reviews — a plan document has no verdict; its `plan-review` does. |
 | `review_round` | `int` | Which round this belongs to. |
 | `commit_sha` | `text` null | What it applies to — the "at tip" check. |
@@ -714,7 +714,7 @@ argument alone:
    checked against and records what was inspected, so a later reader can confirm or refute it. A claim
    someone can be publicly wrong about is a different kind of thing from an unfalsifiable approval.
 4. **It never satisfies authorisation.** `merge_authority` of `needs_approval` is enforced by a
-   separate clause reading `kind = 'code_review' AND created_by_type = 'person'`, untouched by this.
+   separate clause reading a person-recorded `merge_approval` (§6e), untouched by this.
    The window widens what counts as review **evidence**, never what counts as **authorisation**.
    Defended twice: a verdict is refused on this kind at the write, so the clause's approving-verdict
    filter excludes it even before the kind scope applies.
@@ -786,8 +786,8 @@ code-review clause. Four properties bound it:
 3. **It is scoped to the commit it excuses**, and its lineage (§6d) — never to the item. An override
    is a statement about one specific state of the code; a standing one would be permission to skip
    review forever, which is a different and far worse thing than what was asked for.
-4. **It never satisfies `merge_authority = needs_approval`.** That clause reads `kind = 'code_review'
-   AND created_by_type = 'person'` and is untouched. This widens what counts as *review evidence*,
+4. **It never satisfies `merge_authority = needs_approval`.** That clause reads a person-recorded
+   `merge_approval` (§6e) and is untouched. This widens what counts as *review evidence*,
    never what counts as *authorisation* — the same boundary §6b respects.
 
 **No environment window, unlike §6b, and the difference is deliberate.** That window gates a one-off
@@ -845,6 +845,52 @@ contains **only** shas that a `commit` artifact explicitly declared its own sha 
 It carries a **real** approval forward onto the sha that reviewed code actually landed as. It never
 invents one: with no approval at the superseded sha, nothing is carried and the gate refuses exactly
 as before.
+
+---
+
+### 6e. `merge_approval` — the hold that actually holds
+
+`merge_authority = needs_approval` means "a human decides whether this lands" (§1.3). It is
+satisfied by exactly one thing: a `merge_approval` artifact, recorded by a **person**, naming the
+item's tip commit or a sha that tip supersedes (§6d).
+
+**The defect this closes.** There was no artifact kind recording a person's *decision*, so the gate
+read the nearest available fact instead — an approving `code_review` whose `created_by_type` is
+`person`. Those are different acts. `created_by_type` records who **wrote** an artifact, not who
+**authorised** a merge, so the only way to satisfy a hold was to record a review as a person, which
+the guard's own refusal message explicitly told callers not to do: it credits a human with a review
+an agent performed and destroys the one signal separating a merge a human looked at from one that
+was stamped.
+
+A requirement whose only satisfier is an act the system itself calls dishonest is not a requirement.
+The observed consequence was a hold that did not hold — an item was held for a person's decision on
+a customer-facing change, and the change landed four minutes later with the decision never made.
+
+Separating the two also makes the ordinary case expressible for the first time: **a person may
+authorise work an agent reviewed**, without either having to claim the other's act.
+
+**Why it cannot become a rubber stamp.**
+
+1. **Only a person may record one.** An agent is refused *at the write*, not ignored at the gate —
+   an artifact silently accepted and then never counted is worse than one rejected, because the
+   caller believes the decision is on the record. The gate re-checks it anyway, so a row inserted by
+   any other writer (a backfill, a fixture, direct SQL) is still not counted. `created_by_id` must
+   name a real `Person`, so `created_by_type: person` cannot be asserted with an arbitrary string.
+2. **It is scoped to a commit**, and its lineage (§6d) — never to the item. A person approves the
+   state of the code they were shown; the approval expires when the work moves past it. A standing
+   grant covering whatever the item later becomes is a different and much broader thing, and already
+   has its own expression: `merge_authority = pre_approved`.
+3. **The escape hatches do not reach it.** Neither §6b nor §6c satisfies this clause. Both widen
+   what counts as *review evidence*; this is *authorisation*, and that boundary is the whole reason
+   a hold means anything.
+4. **It is not round-scoped**, deliberately, unlike the review clauses. A review is a statement about
+   a round of work; a person's decision is a statement about a state of the code, which the commit
+   scope already pins exactly. Round-scoping it would expire a human decision because a *reviewer*
+   recorded another round at the same commit — invalidating a person's approval through an act the
+   person had no part in.
+
+The refusal distinguishes "no decision yet" from "a decision that the work has since moved past",
+because those need different things said and a caller told the wrong one chases the wrong person.
 
 ---
 
@@ -1189,7 +1235,7 @@ Every `(from, to)` pair is legal. What's enforced is **what must be supplied**.
 | `in-review` | ≥1 `artifacts` row of kind `review-requested`. |
 | `executing` **from** `plan-review` | A `plan-review` artifact with `verdict = approved`. |
 | any `completed` state | A valid `summaries` row. |
-| `merged` | Plus `commit_sha`, plus an approving `code-review` artifact at the current `max(artifacts.review_round)`; plus an approving `visual-review` artifact iff `needs_visual_review`; plus an auth check per `merge_authority`. "At the tip commit" includes any sha the tip declares it supersedes (§6d). The code-review clause has two alternative satisfiers: `historical_verification` (§6b, env-gated) and `merge_override` (§6c, reason mandatory) — **neither satisfies the `needs_approval` auth check.** |
+| `merged` | Plus `commit_sha`, plus an approving `code-review` artifact at the current `max(artifacts.review_round)`; plus an approving `visual-review` artifact iff `needs_visual_review`; plus an auth check per `merge_authority`. "At the tip commit" includes any sha the tip declares it supersedes (§6d). The code-review clause has two alternative satisfiers: `historical_verification` (§6b, env-gated) and `merge_override` (§6c, reason mandatory) — **neither satisfies the `needs_approval` auth check**, which requires a person-recorded `merge_approval` (§6e). An approving `lgtm_with_nits` additionally blocks when it records any finding graded `medium` or above (§6a). |
 | `backlog` from in-progress | No live `assignments` row. |
 
 `POST …/transition?dry_run=true` validates and returns the would-be rejection without mutating.

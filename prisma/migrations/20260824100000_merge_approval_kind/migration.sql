@@ -1,0 +1,35 @@
+-- `ArtifactKind`.'merge_approval' — a person's recorded decision that a
+-- specific piece of work may land.
+--
+-- ── The defect this closes ───────────────────────────────────────────────
+--
+-- `Item.mergeAuthority = 'needs_approval'` is meant to mean "a human decides
+-- whether this lands". Before this kind existed the merge gate had no row
+-- that recorded such a decision, so it read the nearest available fact
+-- instead: an approving `code_review` whose `createdByType` is `person`.
+--
+-- Those are not the same act. `createdByType` records who WROTE an artifact,
+-- not who authorised a merge. So the only way to satisfy a hold was to record
+-- a review as a person — which the guard's own refusal message explicitly
+-- told callers NOT to do, because it credits a human with a review an agent
+-- performed and destroys the one signal separating a merge a human looked at
+-- from one that was stamped.
+--
+-- A requirement whose only satisfier is an act the system itself calls
+-- dishonest is not a requirement. The observed consequence was a hold that
+-- did not hold: an item was explicitly held for a person's decision on a
+-- customer-facing change and the change landed four minutes later, with the
+-- decision never made.
+--
+-- Its own kind rather than a flag on `code_review`, for the reason every kind
+-- in this enum is a kind: the claim it makes — "a named person decided this
+-- may ship" — must not be readable as a review by anything looking at the row
+-- later, and a flag is a distinction every existing reader ignores by
+-- default. It also makes the ordinary case expressible for the first time: a
+-- person authorising work that an agent reviewed, without either of them
+-- having to claim the other's act.
+--
+-- Additive only. No existing row changes meaning, and no backfill is
+-- performed: a historical `code_review` recorded by a person is left exactly
+-- as it is, recording what it always recorded.
+ALTER TYPE "ArtifactKind" ADD VALUE IF NOT EXISTS 'merge_approval';

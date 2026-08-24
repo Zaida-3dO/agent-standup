@@ -255,10 +255,24 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     const agentOnly = await mergeFails(id);
     expect(agentOnly.guard).toBe("merge.requires_authorisation");
 
+    // Recording the review a second time as a person does NOT clear it: a
+    // review states the code is sound, not that a human decided it may land,
+    // and `createdByType` records who wrote the artifact either way.
     await runtime.call("record_artifact", {
       itemId: id,
       kind: "code_review",
       verdict: "lgtm",
+      commitSha: "sha-1",
+      createdByType: "person",
+      createdById: "user-a",
+    });
+    const stillHeld = await mergeFails(id);
+    expect(stillHeld.guard).toBe("merge.requires_authorisation");
+
+    // The person's recorded DECISION is what clears it (SCHEMA.md §6e).
+    await runtime.call("record_artifact", {
+      itemId: id,
+      kind: "merge_approval",
       commitSha: "sha-1",
       createdByType: "person",
       createdById: "user-a",

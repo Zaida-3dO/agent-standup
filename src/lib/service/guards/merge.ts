@@ -21,12 +21,24 @@
 // **Round-currency and commit-currency are checked together, not
 // separately** — the composition gap review round 1 found. Round-scoping
 // alone lets a *newer, unreviewed* commit land at the same round as an
-// already-approved review, so `merge.requires_approving_code_review` and
-// `merge.requires_authorisation`'s `needs_approval` branch both require
-// their approving artifact to match the current review round **and** the
-// current tip commit (`hasApprovingArtifactAtCurrentRoundAndTip` /
-// `hasPersonApprovedCodeReviewAtCurrentRoundAndTip`) — see each function's
-// own doc for the exact scenario this closes.
+// already-approved review, so `merge.requires_approving_code_review`
+// requires its approving artifact to match the current review round **and**
+// the current tip commit (`approvingArtifactAtCurrentRoundAndTip`) — see
+// that function's own doc for the exact scenario this closes.
+//
+// **The severity clause reads the artifact the gate came to rest on**, not a
+// separately-queried "latest review" — `./merge-findings.ts`. Resolving the
+// approving row once and asking it several questions is what stops two
+// clauses reasoning about two different artifacts, which is the shape both
+// regressions above took.
+//
+// **Authorisation is a different question from review, and reads a different
+// row.** `merge.requires_authorisation`'s `needs_approval` branch reads a
+// person-recorded `merge_approval` (`./merge-approval.ts`, SCHEMA.md §6e),
+// never the `code_review`. Reading a review's `created_by_type` would
+// conflate who WROTE a review with who AUTHORISED a merge, leaving the clause
+// satisfiable only by an act this guard's own message calls dishonest — which
+// is a hold that does not hold.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import {
   currentTipCommitSha,
@@ -35,12 +47,15 @@ import {
   tipCommitLineage,
 } from "./artifact-tip";
 import { historicalVerificationSatisfies } from "./historical-verification";
+import { MERGE_APPROVAL_KIND, personHasApprovedMerge } from "./merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH, mergeOverrideSatisfies } from "./merge-override";
 import {
-  approvingArtifactAtCurrentRoundAndTip,
-  currentReviewRound,
-  hasApprovingArtifactAtCurrentRoundAndTip,
-} from "./merge-review-round";
+  BLOCKING_SEVERITY_FLOOR,
+  SEVERITY_GATED_VERDICT,
+  blockingFindings,
+  describeBlockingFindings,
+} from "./merge-findings";
+import { approvingArtifactAtCurrentRoundAndTip, currentReviewRound } from "./merge-review-round";
 import { APPROVING_VERDICTS, requiresLinkedFollowUp } from "../../verdicts";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement"]);
@@ -200,11 +215,12 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
         { fields: ["state"] },
       );
     }
-    const atCurrentRoundAndTip = await hasApprovingArtifactAtCurrentRoundAndTip(
+    const resolvedApproval = await approvingArtifactAtCurrentRoundAndTip(
       input.db,
       input.item.id,
       "code_review",
     );
+    const atCurrentRoundAndTip = resolvedApproval !== null;
     if (!atCurrentRoundAndTip) {
       const round = await currentReviewRound(input.db, input.item.id);
       const tip = await currentTipCommitSha(input.db, input.item.id);
@@ -225,6 +241,47 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
           " amend), that is not staleness: record the landed commit artifact with `supersedesSha`" +
           " set to the reviewed sha, and this approval carries forward without a new review." +
           ` ${OVERRIDE_REMEDY}`,
+        { fields: ["state"] },
+      );
+    }
+
+    // ── The severity clause ───────────────────────────────────────────────
+    //
+    // Graded against `resolvedApproval` — the very artifact the three checks
+    // above came to rest on — and not against a separately-queried "latest
+    // review". That is the whole point of resolving the row once: a second
+    // query could grade a different artifact from the one being relied on,
+    // which is the composition bug regressions (1) and (2) in this file's
+    // header both were.
+    //
+    // **Placed last, after the override and the historical alternative have
+    // already returned, and that ordering is deliberate.** Both of those are
+    // alternatives to *having a review at all*; when either satisfies, there
+    // is no resolved approving review whose findings could be graded, so
+    // there is nothing here to say. It also means neither can be used to
+    // launder a blocking finding: they return early precisely when no
+    // approval is being relied on, whereas this clause only ever fires when
+    // one IS. An override recorded on an item that also carries a
+    // `lgtm_with_nits` with a MEDIUM does skip this check — correctly and by
+    // construction, because that is a named human judgement, permanently
+    // recorded and countable, that the remaining findings do not block. That
+    // is the same thing the hatch already does for a missing review, and
+    // `needs_approval` remains unaffected by it either way.
+    const blocking = blockingFindings(resolvedApproval.verdict, resolvedApproval.findings);
+    if (blocking.length > 0) {
+      return guardRejected(
+        `The approving code_review is ${SEVERITY_GATED_VERDICT}, which claims only nits remain, ` +
+          `but it records ${blocking.length} finding${blocking.length === 1 ? "" : "s"} graded ` +
+          `${BLOCKING_SEVERITY_FLOOR} or above:
+${describeBlockingFindings(blocking)}
+` +
+          `A ${BLOCKING_SEVERITY_FLOOR}-or-worse finding under ${SEVERITY_GATED_VERDICT} blocks ` +
+          "exactly as changes_required does — the verdict says the remainder is cosmetic and the " +
+          "findings say otherwise. Either fix them and get a re-review at the new commit, or, if " +
+          "they genuinely do not block this change, re-review recording the verdict that matches " +
+          "what was found: lgtm if they are not real, or lgtm_with_followups with a linked " +
+          "follow-up item if they are real but belong in separate work. Do not simply re-grade " +
+          "the findings downward to clear this.",
         { fields: ["state"] },
       );
     }
@@ -290,41 +347,42 @@ export const mergeRequiresVisualReviewGuard: Guard = {
  *     header — "never refuse a pair outright"), so this rejects until the
  *     required evidence exists rather than making `merged` unreachable for
  *     the item. §16 has no artifact kind for "a human approved the merge" —
- *     the nearest recorded fact is the approving `code_review` artifact this
- *     same transition already requires, so this clause is satisfied by that
- *     artifact having been recorded by a **person**, not an agent
- *     (`created_by_type`), which is the one place §16's requirement actually
- *     has a row to point at. **Deliberately the same artifact
- *     `merge.requires_approving_code_review` requires — scoped to the
- *     current review round AND the current tip commit, not "a person ever
- *     approved any round"** — see
- *     `hasPersonApprovedCodeReviewAtCurrentRoundAndTip`'s own doc for the two
- *     composition bugs this closes: without the round scope, a person's
- *     approval at an earlier round and an agent-only approval at the current
- *     round could each satisfy a different one of these two guards; without
- *     the tip scope too, a person's approval could sit at the current round
- *     but for a commit a newer, same-round commit has since superseded.
- *     Either gap lets the item merge with no human having reviewed what
- *     actually shipped.
+ *     it is satisfied by a **`merge_approval` artifact recorded by a
+ *     person** at the item's tip commit — SCHEMA.md §6e,
+ *     `./merge-approval.ts`.
  *
- *     **The refusal names two things, and the second matters as much as the
- *     first.** (1) A standing authorisation — a person saying "merge this
- *     class of work without asking me each time" — is expressed by setting
- *     the item's `merge_authority` to `pre_approved`, not by anything in the
- *     transition request. A caller who holds one otherwise reads this refusal
- *     as "go and fetch a human" and stalls on work that was already
- *     authorised. Worth stating because the default cuts against it: an item
- *     minted by an agent lands on `needs_approval`, so the rows most likely
- *     to be covered by a standing grant are exactly the ones that do not
- *     announce it. (2) The guard is trivially satisfiable by recording the
- *     `code_review` artifact with `created_by_type: person` — and that is
- *     **wrong**, because that field records who *wrote* the artifact, not
- *     who permitted the merge. Doing it puts a person's name on a review an
- *     agent performed and destroys the only signal separating a merge a
- *     human actually looked at from one that was stamped. A message that
- *     leaves a tempting-but-wrong escape hatch unmentioned is relying on
- *     every caller to work out on its own that the obvious route is the
- *     dishonest one.
+ *     **It deliberately does not read the `code_review` artifact**, however
+ *     it was recorded. `created_by_type` records who *wrote* an artifact, not
+ *     who *permitted* a merge, so satisfying a hold that way means recording
+ *     a review as a person — which this guard's own refusal message tells
+ *     callers, in terms, not to do. A requirement whose only satisfier is an
+ *     act the system calls dishonest is a dead end, and its effect is a hold
+ *     that does not hold: an item held for a person's decision on a
+ *     customer-facing change can land minutes later with the decision never
+ *     made. Reading a separate kind also makes the ordinary case expressible
+ *     — a person authorising work an agent reviewed, without either claiming
+ *     the other's act.
+ *
+ *     The composition bugs the review clauses guard against do not arise
+ *     here: they concern a person's *review* being resolved to a different
+ *     artifact from the one the code-review clause relies on, and these two
+ *     clauses share no artifact to disagree about. The tip scope is kept for
+ *     its own reason — a decision is about a specific state of the code —
+ *     and a round scope is deliberately not applied, since a reviewer opening
+ *     a new round should not expire a human's decision at the same commit.
+ *     See `./merge-approval.ts`.
+ *
+ *     **The refusal still names the standing-authorisation route.** A person
+ *     saying "merge this class of work without asking me each time" is
+ *     expressed by setting the item's `merge_authority` to `pre_approved`,
+ *     not by anything in the transition request. A caller who holds one
+ *     otherwise reads this refusal as "go and fetch a human" and stalls on
+ *     work that was already authorised. Worth stating because the default
+ *     cuts against it: an item minted by an agent lands on `needs_approval`,
+ *     so the rows most likely to be covered by a standing grant are exactly
+ *     the ones that do not announce it. It also still warns off the
+ *     tempting-but-wrong route of recording the review as a person, which no
+ *     longer satisfies this clause at all.
  *   - `agent_judgement` — DECISIONS.md §9: "the agent decides at the gate
  *     ... and must record a one-line rationale". No schema column or event
  *     payload carries this yet (row #27, the transition operation itself,
@@ -347,18 +405,32 @@ export const mergeRequiresAuthorisationGuard: Guard = {
     }
 
     if (authority === "needs_approval") {
-      const approvedByPerson = await hasPersonApprovedCodeReviewAtCurrentRoundAndTip(
-        input.db,
-        input.item.id,
-      );
-      if (!approvedByPerson) {
+      const approval = await personHasApprovedMerge(input.db, input.item.id);
+      if (!approval.satisfied) {
+        const tip = await currentTipCommitSha(input.db, input.item.id);
         return guardRejected(
-          "merge_authority is needs_approval — a person must record the approving code_review " +
-            "artifact at the current review round and tip commit before this item can merge. " +
-            "If a person already authorised this work in advance, that belongs on the item, not " +
-            'in this request: set mergeAuthority to "pre-approved" with update_item, then retry. ' +
-            "Do not instead record the review artifact as a person — created_by_type says who " +
-            "WROTE it, so doing that credits a human with a review an agent performed.",
+          "merge_authority is needs_approval — this item is held for a person's decision, and " +
+            "no agent can supply it. " +
+            (approval.staleApprovalExists
+              ? "A person did approve this item, but at a commit it has since moved past" +
+                (tip ? ` (current tip ${tip})` : "") +
+                ". The work changed after the decision was made, so the decision does not " +
+                "carry over: go back to them with what changed and record a fresh " +
+                `${MERGE_APPROVAL_KIND} naming the current commit.`
+              : `A person must record a ${MERGE_APPROVAL_KIND} artifact naming the commit to be ` +
+                `merged${tip ? ` (tip is ${tip})` : ""} before this item can merge.`) +
+            " This is a decision, not a review: a person approving work an agent reviewed is the " +
+            "ordinary case, and it does not require them to have performed the review. Do NOT " +
+            "record the code_review as a person instead — created_by_type says who WROTE the " +
+            "artifact, so that credits a human with a review an agent performed and is not an " +
+            "authorisation at all. A merge_override does not satisfy this clause either; it " +
+            "widens what counts as review evidence, never who may authorise. If a person has " +
+            "already authorised this class of work in advance, that is a standing grant and " +
+            // The hyphenated spelling deliberately: that is what `update_item`
+            // accepts (`pre_approved` is the DB enum, not the API value), and
+            // a remedy naming a value the operation refuses is the
+            // unreachable-remedy failure #243 fixed elsewhere in this file.
+            'belongs on the item: set mergeAuthority to "pre-approved" with update_item.',
           { fields: ["state"] },
         );
       }
@@ -509,87 +581,6 @@ export const mergeRequiresLinkedFollowUpGuard: Guard = {
     return guardOk;
   },
 };
-
-interface ApprovingArtifactRow {
-  createdByType: string;
-  commitSha: string | null;
-}
-
-/**
- * Whether the item's approving `code_review` artifact **at the current
- * review round and the current tip commit** was recorded by a person rather
- * than an agent.
- *
- * Deliberately scoped to round **and** tip, not "any approved round ever" —
- * two composition bugs, found the same way (review round 1), both closed
- * here:
- *
- *   1. An earlier version of this function checked every round, on the
- *      reasoning that "an agent could not launder a person's earlier
- *      sign-off through a private route this guard fails to see." That
- *      reasoning was backwards: it let the *opposite* case through
- *      unnoticed — a person's approval from an *earlier* round while the
- *      current round was only ever approved by an agent, letting the item
- *      merge with no human having reviewed the code that actually shipped.
- *   2. Scoping to round alone is still not enough, because round-currency
- *      and commit-currency are different axes (`merge-review-round.ts`'s
- *      `hasApprovingArtifactAtCurrentRoundAndTip` doc): a person's approval
- *      could sit at the current round but for a commit a newer,
- *      still-same-round `commit` artifact has since superseded, while a
- *      *different*, agent-authored artifact at that same round is the one
- *      that actually matches the tip and satisfies
- *      `merge.requires_approving_code_review`. Requiring the person's
- *      approval to match round **and** tip ties this check to the exact
- *      same artifact that guard requires, so there is no artifact it
- *      accepts that this one could accept a different one for instead.
- *
- * See `tests/merge-guards.test.ts`'s "person-approved at an earlier round,
- * agent-only at the current round" case for regression (1), and the tip
- * commit case for regression (2).
- */
-async function hasPersonApprovedCodeReviewAtCurrentRoundAndTip(
-  db: GuardInput["db"],
-  itemId: string,
-): Promise<boolean> {
-  const round = await currentReviewRound(db, itemId);
-  const rows = await db.$queryRawUnsafe<ApprovingArtifactRow[]>(
-    // `"verdict" = ANY(...)` rather than `= 'approved'`: review is tiered
-    // (SCHEMA.md §6a) and all three `lgtm` tiers are approvals. A person who
-    // signs off with `lgtm_with_nits` has authorised the merge just as much
-    // as one who signs off with `lgtm` — reading only the single legacy
-    // label would make a human sign-off invisible to this clause purely
-    // because of which tier they chose.
-    `SELECT "createdByType", "commitSha"
-       FROM "Artifact"
-      WHERE "itemId" = $1 AND "kind" = 'code_review' AND "verdict" = ANY($3::"Verdict"[])
-        AND "createdByType" = 'person' AND "reviewRound" = $2
-      ORDER BY "createdAt" DESC, "id" DESC
-      LIMIT 1`,
-    itemId,
-    round,
-    APPROVING_VERDICTS,
-  );
-  const approval = rows[0];
-  if (!approval) {
-    return false;
-  }
-  const tip = await currentTipCommitSha(db, itemId);
-  // The same lineage reading `approvingArtifactAtCurrentRoundAndTip` uses,
-  // and it has to be the same or the two clauses could accept different
-  // artifacts — the exact class of composition bug regressions (1) and (2)
-  // above were. A person who reviewed the branch tip that was then
-  // squash-merged has reviewed the code that shipped; refusing them because
-  // the forge rewrote the sha would make the human-approval clause
-  // unsatisfiable in precisely the workflow it most needs to work in.
-  if (approval.commitSha === tip) {
-    return true;
-  }
-  if (approval.commitSha === null) {
-    return false;
-  }
-  const lineage = await tipCommitLineage(db, itemId);
-  return lineage.has(approval.commitSha);
-}
 
 /** All five merge guards, for the registration module to install in one call. */
 export const MERGE_GUARDS: readonly Guard[] = [
