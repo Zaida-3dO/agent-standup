@@ -143,3 +143,53 @@ export function groupVerificationsByItem(
 export function isUnverifiedOrigin(originType: string): boolean {
   return originType === "source";
 }
+
+/** The `originType` whose state arrived by copy — the SQL half of `isUnverifiedOrigin`. */
+const UNVERIFIED_ORIGIN_SQL = `"originType" = 'source'::"OriginType"`;
+
+/** Whether a `historical_verification` exists for the row — the SQL half of "someone has looked". */
+const HAS_VERIFICATION_SQL = `EXISTS (
+     SELECT 1 FROM "Artifact" a
+     WHERE a."itemId" = "Item"."id"
+       AND a."kind" = 'historical_verification'::"ArtifactKind"
+   )`;
+
+/** The three trust positions a board can be filtered to — see `get-board.ts`'s schema. */
+export type TrustFilter = "trusted" | "unverified" | "verified";
+
+/**
+ * The `WHERE` fragment for one trust position.
+ *
+ * **Defined here, beside the predicate the BADGE is drawn from, on purpose.**
+ * The acceptance criterion for the filter is that it agrees with the
+ * marking: what a trust-filtered board returns must be exactly what renders
+ * marked. Two independent spellings of "unverified" — one in a renderer and
+ * one in a query — is precisely how a filter and a badge come to disagree,
+ * and the disagreement would be invisible because each is individually
+ * correct. So `isUnverifiedOrigin` and `UNVERIFIED_ORIGIN_SQL` sit four
+ * lines apart and any change has to walk past both.
+ *
+ * Takes no parameters and interpolates no caller input — the three values
+ * are a closed enum validated by the operation's schema before this is
+ * reached, and the returned string is a constant chosen by a `switch`. There
+ * is no injection surface here; nothing from the request reaches the SQL.
+ *
+ * `verified` is `imported AND checked` rather than merely `checked`: a row
+ * created by this product's own state machine has nothing to verify, so a
+ * stray `historical_verification` against one must not make it appear in a
+ * list whose whole meaning is "imported rows somebody has since confirmed".
+ */
+export function trustCondition(filter: TrustFilter): string {
+  switch (filter) {
+    case "unverified":
+      return `(${UNVERIFIED_ORIGIN_SQL} AND NOT ${HAS_VERIFICATION_SQL})`;
+    case "verified":
+      return `(${UNVERIFIED_ORIGIN_SQL} AND ${HAS_VERIFICATION_SQL})`;
+    case "trusted":
+      // The exact complement of `unverified`, written as its negation
+      // rather than as an independently-derived condition so the two
+      // provably partition the item space: every row is in exactly one of
+      // them, and a row can never be missing from both.
+      return `NOT (${UNVERIFIED_ORIGIN_SQL} AND NOT ${HAS_VERIFICATION_SQL})`;
+  }
+}

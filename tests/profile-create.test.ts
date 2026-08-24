@@ -3,6 +3,7 @@
 // tests/profile-state.test.ts's fetchPeople coverage.
 import { describe, expect, it, vi } from "vitest";
 import { createErrorMessage, createPerson, generatePersonId } from "@/lib/profile/create";
+import { personSwatch } from "@/lib/design/person-colour";
 import type { Profile } from "@/lib/profile/types";
 
 const created: Profile = {
@@ -39,8 +40,33 @@ describe("createPerson", () => {
       expect.objectContaining({ method: "PATCH" }),
     );
     const [, init] = fakeFetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({ displayName: "Ope" });
+    // T22 — `colour` travels with the name, so a profile created through
+    // the picker arrives with one rather than sitting at `colour: null`
+    // until someone opens the admin grid.
+    expect(JSON.parse(init.body as string)).toEqual({
+      displayName: "Ope",
+      colour: personSwatch("fixed-id"),
+    });
     expect(result).toEqual(created);
+  });
+
+  it("derives the colour from the id it generated, not from the typed name", async () => {
+    // Keyed on the id so a later rename cannot move the colour. Two
+    // creations with the SAME name and different ids must differ; the same
+    // id must be stable.
+    const bodies: string[] = [];
+    const fakeFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      bodies.push(init.body as string);
+      return Promise.resolve({ ok: true, json: async () => ({ person: created }) });
+    });
+    await createPerson("Ope", fakeFetch as unknown as typeof fetch, () => "id-one");
+    await createPerson("Ope", fakeFetch as unknown as typeof fetch, () => "id-one");
+    const [first, second] = bodies.map((b) => JSON.parse(b) as { colour: string });
+    expect(first!.colour).toBe(second!.colour);
+    expect(first!.colour).toBe(personSwatch("id-one"));
+    // A hex the API will accept and the admin grid can display — not a
+    // `var()` expression that only resolves inside this app's stylesheet.
+    expect(first!.colour).toMatch(/^#[0-9a-f]{6}$/);
   });
 
   it("URL-encodes the generated id in the path", async () => {

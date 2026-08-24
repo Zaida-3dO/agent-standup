@@ -47,6 +47,7 @@ describe("the board's query parameter names", () => {
       "kind",
       "level",
       "project",
+      "trust",
       "search",
     ]);
   });
@@ -70,6 +71,10 @@ describe("the board's query parameter names", () => {
       "level",
       // One project's whole subtree.
       "project",
+      // Whether a row's state can be taken on faith. Marked on every card
+      // since the trust badge landed; listed here because a marking nobody
+      // can filter by is a capability the board cannot actually reach.
+      "trust",
       "search",
     ];
     for (const filter of serviceFilters) {
@@ -115,6 +120,50 @@ describe("parseBoardQuery", () => {
   it("drops a priority outside the vocabulary rather than passing it through", () => {
     expect(parseBoardQuery("priority=P9").filters.priority).toBeUndefined();
     expect(parseBoardQuery("kind=elephant").filters.kind).toBeUndefined();
+  });
+
+  // The trust axis (MILESTONES.md #131). Held to the same URL contract as
+  // every other axis: it round-trips, it survives a paste, and a value
+  // outside its vocabulary is dropped rather than forwarded to an API that
+  // would refuse it with a status the reader cannot act on.
+  it("carries trust through the round trip, so a trust-filtered board is linkable", () => {
+    for (const value of ["trusted", "unverified", "verified"]) {
+      const query = parseBoardQuery(`trust=${value}`);
+      expect(query.filters.trust).toBe(value);
+      // Re-emitting reproduces the same address — which is what makes a
+      // pasted URL give back the same board, and what lets a saved view of
+      // it match by string equality.
+      expect(boardQueryString(query)).toBe(`trust=${value}`);
+    }
+  });
+
+  it("drops a trust value outside the vocabulary rather than passing it through", () => {
+    expect(parseBoardQuery("trust=maybe").filters.trust).toBeUndefined();
+    // …and the board that produces is simply unfiltered on that axis,
+    // rather than an error page.
+    expect(boardQueryString(parseBoardQuery("trust=maybe"))).toBe("");
+  });
+
+  it("emits trust in the one fixed position, whatever order it arrived in", () => {
+    // Two spellings of one board would break the saved-view marker, which
+    // decides "you are looking at this view" by comparing query strings.
+    const a = boardQueryString(parseBoardQuery("trust=verified&area=web&priority=P0"));
+    const b = boardQueryString(parseBoardQuery("priority=P0&trust=verified&area=web"));
+    expect(a).toBe(b);
+    expect(a).toBe("area=web&priority=P0&trust=verified");
+  });
+
+  it("counts trust as a narrowed axis, so the clear control offers to undo it", () => {
+    expect(activeFilterCount(parseBoardQuery("trust=unverified").filters)).toBe(1);
+  });
+
+  it("sends trust on the request as well as showing it in the address", () => {
+    // The address and the API share one vocabulary; a filter applied to one
+    // and not the other is how a board comes to disagree with its own URL.
+    const params = boardRequestParams(parseBoardQuery("trust=unverified"), {
+      column: "backlog",
+    });
+    expect(params.get("trust")).toBe("unverified");
   });
 
   it("treats an empty or whitespace-only value as no filter at all", () => {

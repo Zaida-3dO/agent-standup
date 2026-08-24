@@ -84,6 +84,36 @@
   border-color: var(--text-muted);
 }
 
+/* T22 — the ACTIVE profile.
+
+   Selection gets a channel of its own, separate from the person's colour.
+   The tile's `border-color` is identity and is set inline per person; this
+   paints a ring OUTSIDE that border with `box-shadow`, so the two never
+   compete for the same pixels and neither can mask the other.
+
+   `--accent` deliberately: it is the one hue in the system that means
+   "chosen" everywhere else, and it is not in the `--area-hue-*` set a
+   person's colour is drawn from, so an active tile can never be confused
+   with a merely-colourful one. `box-shadow` rather than `outline` because
+   `outline` is reserved for focus (`globals.css` §11) — a tile that was
+   both current and focused would otherwise have one indicator overwrite
+   the other. */
+.tileCurrent {
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
+/* Colour is never the only carrier — the label says it in words too. */
+.currentLabel {
+  padding: 0.0625rem 0.375rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .avatar {
   display: flex;
   align-items: center;

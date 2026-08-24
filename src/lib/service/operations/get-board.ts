@@ -224,6 +224,7 @@ import {
   NEWEST_VERIFICATION_SQL,
   groupVerificationsByItem,
   isUnverifiedOrigin,
+  trustCondition,
   type ItemVerification,
   type RawVerificationRow,
 } from "../items/trust-view";
@@ -373,6 +374,42 @@ const inputSchema = z
     actor: z.string().min(1).optional(),
     /** Free-text, case-insensitive substring match over `title` and `body`. */
     search: z.string().min(1).optional(),
+    /**
+     * Whether a row's `state` can be taken on faith — the filter half of
+     * MILESTONES.md #131's trust marking.
+     *
+     * #131 shipped the marker as OUTPUT only: every board entry carries
+     * `trust`, and an unverifiable row renders a badge and a dashed border.
+     * But "show me only the rows I can trust" — the entire reason for
+     * marking them — could not be asked, because no filter accepted the
+     * axis. A capability that can be seen and not asked for is the same
+     * defect #75 exists to fix one level up.
+     *
+     * Three values rather than a boolean, because the underlying fact has
+     * three positions and collapsing them would make one unreachable:
+     *
+     *   - `trusted` — the row's state came from this product's own state
+     *     machine (`originType <> 'source'`), OR it was imported and someone
+     *     has since recorded a `historical_verification` against it. This is
+     *     "what the badge does not mark".
+     *   - `unverified` — imported AND never checked. Exactly the set the
+     *     "Imported" badge and the dashed border render, so the filter and
+     *     the marking agree by construction.
+     *   - `verified` — imported and checked. A strict subset of `trusted`,
+     *     offered separately because "someone actually looked at this" is a
+     *     different and stronger claim than "this never needed looking at",
+     *     and the reconciliation work #131 exists to support is precisely
+     *     the work of moving rows from `unverified` into it.
+     *
+     * **A project is never matched by any of them.** A project has no stored
+     * state to distrust (DECISIONS.md §13c) — its column is derived on read
+     * — which is why `get-board` pushes `trust: null` for every project
+     * rather than computing one. Filtering on an axis a project does not
+     * have would otherwise silently drop every project from a trust-filtered
+     * board while appearing to narrow it, so this narrows the ITEM list and
+     * the project walk is left alone, exactly as `level` is.
+     */
+    trust: z.enum(["trusted", "unverified", "verified"]).optional(),
     /**
      * What to order a page by (MILESTONES.md #75). Defaults to `created`,
      * the order every board page was served in before this existed — a
@@ -626,6 +663,27 @@ export const getBoard = defineOperation({
       );
       sharedValues.push(`%${escapeLikePattern(input.search)}%`);
       paramIndex++;
+    }
+
+    // The trust filter (#131's second half). A condition on the row plus an
+    // `EXISTS` against `Artifact`, both spelled in `trust-view.ts` beside
+    // the predicate the badge itself uses — see `trustCondition` for why
+    // they must not be written twice.
+    //
+    // **Consumes no parameter placeholder.** The value is a closed enum the
+    // schema has already validated, so the fragment is a constant chosen by
+    // a `switch` and nothing from the request is interpolated. That also
+    // means `paramIndex` is deliberately NOT advanced here — advancing it
+    // for a condition that binds no value is exactly how the hand-counted
+    // `$N` scheme below (and the frozen `statesParam`) would come to point
+    // at the wrong parameter.
+    //
+    // A `shared` condition, so — like `level` — it narrows the item list
+    // and never reaches the project subtree walk. A project has no trust
+    // position at all (`trust: null`), so filtering one on this axis would
+    // be asking a question the row cannot answer.
+    if (input.trust !== undefined) {
+      shared.push(trustCondition(input.trust));
     }
 
     // The level filter — a narrowing on the stored `depth` column, applied

@@ -946,4 +946,105 @@ describeIfDb("get_board against Postgres", () => {
       expect(projectEntry?.trust).toBeNull();
     });
   });
+
+  // The `trust` FILTER, as distinct from the trust marker above.
+  //
+  // The acceptance criterion is that the filter agrees with the badge: what
+  // a trust-filtered board returns is exactly what renders marked. So each
+  // case builds all three positions in one area and asserts which ids come
+  // back — a filter that returned everything, or nothing, fails every one.
+  describe("the trust filter", () => {
+    /** One area holding a trusted, an unverified and a verified item. */
+    async function trustFixture(area: string) {
+      const project = await createItem({ area });
+      const trusted = await createItem({ area, parentId: project.id, originType: "auto" });
+      const unverified = await createItem({ area, parentId: project.id, originType: "source" });
+      const verified = await createItem({ area, parentId: project.id, originType: "source" });
+      await runtime.call("record_artifact", {
+        itemId: verified.id,
+        kind: "historical_verification",
+        // Required: a verification that does not name the code it read
+        // cannot be confirmed by anyone else, and `record_artifact` refuses
+        // one without it.
+        commitSha: "commit-trust",
+        body: "Checked against the live system.",
+        createdByType: "person",
+        createdById: "user-a",
+      });
+      return { trusted: trusted.id, unverified: unverified.id, verified: verified.id };
+    }
+
+    async function idsFor(area: string, trust?: string): Promise<string[]> {
+      const board = await wholeBoard(trust === undefined ? { area } : { area, trust });
+      return [...board.backlog, ...board.in_progress, ...board.waiting, ...board.completed]
+        .filter((e) => e.item.kind !== "project")
+        .map((e) => e.item.id)
+        .sort();
+    }
+
+    it("returns exactly the imported-and-unchecked rows — the set the badge marks", async () => {
+      const f = await trustFixture("trust-filter-unverified");
+      expect(await idsFor("trust-filter-unverified", "unverified")).toEqual([f.unverified]);
+    });
+
+    it("returns exactly the imported-and-checked rows", async () => {
+      const f = await trustFixture("trust-filter-verified");
+      expect(await idsFor("trust-filter-verified", "verified")).toEqual([f.verified]);
+    });
+
+    it("treats a checked import as trusted, alongside a row this system authored", async () => {
+      // The distinction that makes three positions necessary rather than a
+      // boolean: `verified` is a strict SUBSET of `trusted`, so a checked
+      // import appears in both.
+      const f = await trustFixture("trust-filter-trusted");
+      expect(await idsFor("trust-filter-trusted", "trusted")).toEqual(
+        [f.trusted, f.verified].sort(),
+      );
+    });
+
+    it("partitions the board — trusted and unverified together are the whole of it", async () => {
+      // `trusted` is written as the negation of `unverified`, so no row can
+      // be missing from both or present in both. Asserted rather than
+      // assumed, because an independently-derived condition would look
+      // correct and silently drop rows that satisfy neither.
+      const area = "trust-filter-partition";
+      await trustFixture(area);
+      const all = await idsFor(area);
+      const split = [
+        ...(await idsFor(area, "trusted")),
+        ...(await idsFor(area, "unverified")),
+      ].sort();
+      expect(split).toEqual(all);
+    });
+
+    it("narrows nothing when no trust is named", async () => {
+      const f = await trustFixture("trust-filter-absent");
+      expect(await idsFor("trust-filter-absent")).toEqual(
+        [f.trusted, f.unverified, f.verified].sort(),
+      );
+    });
+
+    it("refuses a value outside the vocabulary rather than ignoring it", async () => {
+      await expect(
+        runtime.call("get_board", { column: "backlog", trust: "maybe" }),
+      ).rejects.toThrow();
+    });
+
+    it("composes with another filter rather than overriding it", async () => {
+      // A filter that silently won out over its neighbours would pass every
+      // single-axis case above.
+      const f = await trustFixture("trust-filter-compose");
+      const board = (await runtime.call("get_board", {
+        area: "trust-filter-compose",
+        trust: "unverified",
+        // The fixture's rows are direct children of a project, so `task` is
+        // their kind. Naming the kind they actually have keeps this case
+        // about composition rather than about depth.
+        kind: "task",
+        column: "backlog",
+        limit: 200,
+      })) as BoardOutput;
+      expect(board.columns.backlog.entries.map((e) => e.item.id)).toEqual([f.unverified]);
+    });
+  });
 });

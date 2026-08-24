@@ -134,6 +134,41 @@ describe("every filter the service accepts is reachable from the bar", () => {
     expect(byId(shown, "board-filter-project")).toBeDefined();
   });
 
+  // The trust axis. Off by default like `project` — see
+  // `DEFAULT_VISIBLE_FILTERS` for why — so the thing worth proving is that
+  // it is REACHABLE: turning it on renders a working control, and choosing
+  // a value narrows the board.
+  it("renders a trust control once it is turned on, so trust can be asked for", () => {
+    const off = bar();
+    expect(byId(off, "board-filter-trust")).toBeUndefined();
+    const on = bar({ visibleFilters: [...DEFAULT_VISIBLE_FILTERS, "trust"] });
+    const select = byId(on, "board-filter-trust");
+    expect(select).toBeDefined();
+    // Every position is offered, plus the "Any" that widens it again.
+    const values = [...walk(select!.children as never)]
+      .filter((el) => el.type === "option")
+      .map((el) => (el.props as { value?: unknown }).value);
+    expect(values).toEqual(["", "trusted", "unverified", "verified"]);
+  });
+
+  it("reports the chosen trust value on the axis it was chosen for", () => {
+    // The single-character change this catches: passing a different key to
+    // `onFilterChange`, which would silently narrow some other axis.
+    const changes: Array<[string, unknown]> = [];
+    const tree = bar({
+      visibleFilters: [...DEFAULT_VISIBLE_FILTERS, "trust"],
+      onFilterChange: (key: string, value: unknown) => changes.push([key, value]),
+    });
+    const select = byId(tree, "board-filter-trust") as unknown as {
+      onChange: (event: { target: { value: string } }) => void;
+    };
+    select.onChange({ target: { value: "unverified" } });
+    expect(changes).toEqual([["trust", "unverified"]]);
+    // …and choosing "Any" clears it rather than filtering on an empty string.
+    select.onChange({ target: { value: "" } });
+    expect(changes[1]).toEqual(["trust", undefined]);
+  });
+
   it("gives every select an 'Any' option, so a narrowed axis can be widened again", () => {
     // Without it, a reader who filters by area can never clear that filter
     // from the control that set it — the most common way a filter bar traps

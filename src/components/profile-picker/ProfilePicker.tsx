@@ -24,12 +24,29 @@
 // flag, the error) lives in the thin container that renders this — see
 // `AppShell.tsx`.
 import type { Profile } from "@/lib/profile/types";
+import { personColour } from "@/lib/design/person-colour";
 import styles from "./ProfilePicker.module.css";
 
 export interface ProfilePickerProps {
   readonly people: readonly Profile[];
   readonly onChoose: (profile: Profile) => void;
   readonly onClose?: () => void;
+  /**
+   * The active profile, if any — T22.
+   *
+   * **Selection is rendered on its own channel, never on the person's
+   * colour.** The tile's border is the person's identity, so before this
+   * existed the active profile rendered plain grey whenever its `colour` was
+   * unset while an inactive one glowed pink — selection signalled by the one
+   * colour that does not mean selection. The active tile now carries a
+   * separate `--accent` ring, a "Current" label and `aria-current`, none of
+   * which any inactive tile can ever show whatever colour it happens to
+   * have.
+   *
+   * `null`/absent means nothing is active, which is the initial picker: no
+   * tile marks itself, rather than the first one doing so by default.
+   */
+  readonly activeProfileId?: string | null;
   /** Whether the create form is open. Forced open (and rendered without a way to collapse it) when `people` is empty — see the header. */
   readonly createOpen: boolean;
   /** What is typed into the create form's name field. */
@@ -51,6 +68,7 @@ export function ProfilePicker({
   people,
   onChoose,
   onClose,
+  activeProfileId,
   createOpen,
   createDraft,
   creating,
@@ -83,21 +101,44 @@ export function ProfilePicker({
         )}
         {!empty && (
           <ul className={styles.grid}>
-            {people.map((person) => (
-              <li key={person.id}>
-                <button
-                  type="button"
-                  className={styles.tile}
-                  style={person.colour ? { borderColor: person.colour } : undefined}
-                  onClick={() => onChoose(person)}
-                >
-                  <span className={styles.avatar} aria-hidden="true">
-                    {person.avatar ?? initialOf(person.displayName)}
-                  </span>
-                  <span className={styles.name}>{person.displayName}</span>
-                </button>
-              </li>
-            ))}
+            {people.map((person) => {
+              // T22. Two separate facts, deliberately on two separate
+              // channels: the border says WHO (identity), the ring and the
+              // label say WHICH (state). Painting selection with the
+              // person's own colour is what made an inactive pink tile
+              // outrank the active colourless one.
+              const current = activeProfileId != null && person.id === activeProfileId;
+              return (
+                <li key={person.id}>
+                  <button
+                    type="button"
+                    className={`${styles.tile} ${current ? styles.tileCurrent : ""}`}
+                    // Every person has a colour, stored or derived — see
+                    // `personColour`. No tile renders without an identity
+                    // colour, so a plain grey tile never reads as a
+                    // meaningful state.
+                    style={{ borderColor: personColour(person) }}
+                    // The non-visual half of the same signal. Without it a
+                    // screen-reader user got NO indication of which profile
+                    // was active while a sighted user got a misleading one
+                    // — WCAG 4.1.2. `undefined` rather than `"false"` so
+                    // the attribute is simply absent on inactive tiles.
+                    aria-current={current ? "true" : undefined}
+                    onClick={() => onChoose(person)}
+                  >
+                    <span className={styles.avatar} aria-hidden="true">
+                      {person.avatar ?? initialOf(person.displayName)}
+                    </span>
+                    <span className={styles.name}>{person.displayName}</span>
+                    {/* A third channel, and the only one that survives both
+                        monochrome rendering and a colour-blind reader: the
+                        word itself. `globals.css` treats colour as never the
+                        sole carrier of a fact. */}
+                    {current && <span className={styles.currentLabel}>Current</span>}
+                  </button>
+                </li>
+              );
+            })}
             {!showCreateForm && (
               <li>
                 <button

@@ -49,6 +49,7 @@ const FILTER_LABELS: Record<keyof BoardFilters, string> = {
   kind: "Kind",
   level: "Level",
   project: "Project",
+  trust: "Trust",
   search: "Search",
 };
 
@@ -82,6 +83,20 @@ export const FILTER_VISIBILITY_CHOICES: readonly FilterVisibilityChoice[] =
  * tenth control on an eight-control row, it is reached far more often by
  * clicking a project card than by hunting a select, and a reader who wants
  * it can turn it on once and keep it.
+ *
+ * **`trust` is not in the default set either, for the same reason** — and
+ * this is the one judgement call in wiring it up, so it is stated rather
+ * than left implicit. Trust matters intensely during a reconciliation pass
+ * and not at all on an ordinary day, which is exactly the shape `project`
+ * has: a control worth having, not worth spending a permanent slot on. It
+ * is one tick away in the picker, and it is reachable by URL regardless.
+ *
+ * The alternative — showing it by default — would put a tenth select on the
+ * row for every reader in order to serve an occasional task, which is the
+ * crowding the picker was built to relieve. Note that an unverifiable row
+ * still MARKS itself on every board whether or not this control is visible;
+ * what the picker gates is the ability to narrow BY it, never the reader's
+ * awareness that the distinction exists.
  */
 export const DEFAULT_VISIBLE_FILTERS: readonly (keyof BoardFilters)[] = [
   "area",
