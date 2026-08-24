@@ -25,7 +25,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, isServiceError, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, resolveSettings, SETTINGS_REGISTRY } from "@/lib/settings";
-import { judgeEviction, type EvictionInputs } from "@/lib/claim-eviction";
+import { evictStaleHolders, judgeEviction, type EvictionInputs } from "@/lib/claim-eviction";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -94,12 +94,12 @@ describe("judgeEviction — what counts as evidence that a holder is gone", () =
   // -- the second, independent signal --------------------------------------
 
   it("treats a recent tool call as being seen, even with an ancient heartbeat", () => {
-    // **The case the whole design turns on.** In this tree the hook does
-    // not stamp `lastActive`; the only writer is the `heartbeat` operation,
-    // which agents are told is usually unnecessary. So a working builder's
-    // `lastActive` is frozen at its claim, and reading that column alone
-    // would evict it mid-run. Its tool calls are the signal that actually
-    // moves.
+    // **The case the whole design turns on.** For a session that neither
+    // runs the hook nor calls `heartbeat`, `lastActive` is frozen at its
+    // claim, so reading that column alone would evict it mid-run while its
+    // tool calls are the signal that actually moves. (A session whose hook
+    // flushes now stamps `lastActive` too — see `record_tool_calls` — but
+    // this judgement must stay correct for the one that does not.)
     //
     // A mutant that drops `lastToolCallAt` from the max — reading only the
     // heartbeat — turns this row back into "evictable" and fails here.
@@ -197,9 +197,10 @@ describe("the eviction threshold is declared once, as a setting", () => {
     const dead = SETTINGS_REGISTRY["liveness.dead_after_seconds"];
 
     // The gap is the point, not the exact number. The sweep's thresholds
-    // assume `lastActive` is stamped on every tool call; nothing stamps it
-    // here, so reusing `dead_after_seconds` for eviction would take claims
-    // from sessions that are merely working.
+    // assume `lastActive` is stamped on every tool call; a session running
+    // no hook and never calling `heartbeat` stamps it never, so reusing
+    // `dead_after_seconds` for eviction would take claims from sessions
+    // that are merely working.
     expect(evict.default).toBeGreaterThan(dead.default as number);
 
     // Lowering it evicts live holders, so it relaxes an enforcement in the
@@ -224,6 +225,32 @@ describe("the eviction threshold is declared once, as a setting", () => {
     expect(help).toContain("heartbeat");
     expect(help).toContain("tool call");
     expect(help).toContain("takeover");
+    // The caveat must name *which* sessions are exposed now that the hook's
+    // flush stamps `last_active`. "Liveness may not be written" was true of
+    // everyone before; saying it unqualified now would overstate the risk
+    // and invite lowering the threshold for the wrong reason.
+    expect(help).toContain("no hook");
+  });
+
+  it("does not describe a process check in any liveness setting's help text", () => {
+    // There is no process check — `stale_after_seconds` used to say one
+    // "comes first". An operator reading that reasons about their claims
+    // surviving on evidence the system never gathers, which is the whole of
+    // the liveness-docs defect. A mutant restoring that phrasing fails here.
+    for (const key of [
+      "liveness.stale_after_seconds",
+      "liveness.dead_after_seconds",
+      "liveness.evict_after_seconds",
+    ] as const) {
+      const help = SETTINGS_REGISTRY[key].help.toLowerCase();
+      expect(help).not.toContain("process check comes first");
+      expect(help).not.toMatch(/a process check[^.]*\bfallback\b/);
+    }
+    // And the one that used to make the claim now states the negative
+    // outright, so the correction cannot be silently dropped.
+    expect(SETTINGS_REGISTRY["liveness.stale_after_seconds"].help.toLowerCase()).toContain(
+      "no process check",
+    );
   });
 });
 
@@ -250,6 +277,13 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
 
   afterEach(async () => {
     await prisma.toolCall.deleteMany({});
+    // `Run` before `Assignment`: a case that drives the real
+    // `record_tool_calls` ingest opens a run against the holder's
+    // assignment (§11 — a run is one agent's turn on one item), and
+    // `Run_assignmentId_fkey` then refuses the assignment delete. Without
+    // this the failure surfaces in *every following case* rather than the
+    // one that wrote the row, which is how it first presented.
+    await prisma.run.deleteMany({});
     await prisma.event.deleteMany({});
     await prisma.assignment.deleteMany({});
     await prisma.item.deleteMany({});
@@ -443,6 +477,44 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
     expect(working.releasedAt).toBeNull();
   });
 
+  it("does NOT evict a working holder whose only signal is a REAL telemetry flush", async () => {
+    // The end-to-end version of the case above, and the one that proves the
+    // liveness fix rather than assuming it. Every other test here seeds
+    // `ToolCall` rows by hand, which demonstrates that eviction *reads* the
+    // second signal but says nothing about whether anything ever *writes*
+    // one. This drives the actual ingest — `record_tool_calls`, the
+    // operation the hook's spool flushes into — and then contends.
+    //
+    // The holder is seeded quiet for an hour and the threshold set to 600s,
+    // so it is comfortably evictable on arrival. What saves it is the flush
+    // alone. Remove the `lastActive` stamp from `record_tool_calls` and
+    // this fails, because the batch then leaves the assignment untouched.
+    const itemId = await seedItem();
+    const holderId = await seedHolder(itemId, "session-flushing", 3_600);
+
+    const before = await prisma.assignment.findUniqueOrThrow({ where: { id: holderId } });
+    expect(before.lastActive.getTime()).toBe(before.claimedAt.getTime());
+
+    await runtimeEvictingAfter(600).call("record_tool_calls", {
+      sessionId: "session-flushing",
+      // An hour-old `ts`, deliberately: the flush is what proves liveness,
+      // not the age of the calls inside it. A stamp taking the caller's
+      // timestamp would leave this holder looking an hour quiet and it
+      // would be evicted below.
+      calls: [{ tool: "Bash", ts: new Date(Date.now() - 3_600_000).toISOString() }],
+    });
+
+    await expect(
+      runtimeEvictingAfter(600).call("claim", contendingClaim(itemId)),
+    ).rejects.toSatisfy((error: unknown) => isServiceError(error));
+
+    const after = await prisma.assignment.findUniqueOrThrow({ where: { id: holderId } });
+    expect(after.releasedAt).toBeNull();
+    expect(after.liveness).toBe("running");
+    expect(after.lastActive.getTime()).toBeGreaterThan(after.claimedAt.getTime());
+    expect(await prisma.event.count({ where: { itemId, type: "release" } })).toBe(0);
+  });
+
   it("leaves the original refusal intact when nothing is stale enough to take", async () => {
     // The refusal a caller acts on is "who holds this and under which
     // rule". A message about eviction instead would send the caller to fix
@@ -589,5 +661,104 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
     const mate = await prisma.assignment.findUniqueOrThrow({ where: { id: mateId } });
     expect(mate.releasedAt).toBeNull();
     expect(mate.liveness).toBe("running");
+  });
+
+  /**
+   * `FOR UPDATE OF a` — the row lock that serialises a holder's heartbeat
+   * against the judge-then-release window.
+   *
+   * **Why this direction works when the obvious one does not.** The earlier
+   * attempt (recorded in the module, and the reason this was left untested)
+   * raced a heartbeat *inward* — starting eviction, then firing a competing
+   * statement at it. That cannot reach the window: the racing statement can
+   * only land once `evictStaleHolders` has returned, by which point the
+   * release `UPDATE` holds a row lock of its own, so the racer blocks with
+   * or without `FOR UPDATE`. It measured the write lock and reported it as
+   * the read lock.
+   *
+   * This races the *other way*. A competing transaction takes the row lock
+   * **first** and holds it; only then does eviction run. Now the question
+   * is entirely about eviction's own read: a locking read must wait for the
+   * holder to commit, and a plain `SELECT` reads straight through it under
+   * Read Committed. That is observable from outside the function, with no
+   * seam, no test-only hook and no change to production shape — so the
+   * "restructure or accept it untested" choice this row was raised to make
+   * turns out not to be forced.
+   *
+   * **The holder here is deliberately NOT evictable, and that is the whole
+   * trick.** This was measured, not assumed: with a *stale* holder the test
+   * passes with and without the lock, because the judgement says "evict",
+   * the release `UPDATE` runs, and *that* statement blocks on the rival's
+   * lock — 1211ms unlocked versus 1219ms locked, indistinguishable. It
+   * would have been the previous attempt's mistake wearing a new shape,
+   * measuring the write lock again. With a live holder the judgement
+   * returns `recently_seen`, no `UPDATE` is ever issued, and the read is
+   * the only statement that can touch the row: 2ms unlocked versus a
+   * timeout locked. So the assertion below is about `FOR UPDATE OF a` and
+   * nothing else.
+   *
+   * `lock_timeout` turns the wait into a definite, fast failure rather than
+   * a sleep: with the lock the statement is cancelled by Postgres, without
+   * it the read completes immediately. No fixed sleep, no polling of
+   * `pg_stat_activity`, and the assertion is on which of those two happened.
+   */
+  it("takes a ROW LOCK on its read, so a concurrent writer serialises against it", async () => {
+    const itemId = await seedItem();
+    // Quiet for 5s against a 60s threshold below — live, so nothing is
+    // released and the read stands alone. See the note above.
+    const holderId = await seedHolder(itemId, "session-locked", 5);
+
+    // A second connection: the lock has to be held by a genuinely
+    // concurrent transaction, and Prisma's interactive transaction runs on
+    // one connection from its own pool.
+    const rival = new PrismaClient({ datasourceUrl: scratchUrl });
+    let releaseRival: () => void = () => {};
+    const rivalMayFinish = new Promise<void>((resolve) => (releaseRival = resolve));
+    let rivalHasLock: () => void = () => {};
+    const lockTaken = new Promise<void>((resolve) => (rivalHasLock = resolve));
+
+    const rivalTx = rival.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `SELECT "id" FROM "Assignment" WHERE "id" = $1 FOR UPDATE`,
+        holderId,
+      );
+      rivalHasLock();
+      await rivalMayFinish;
+    });
+
+    try {
+      await lockTaken;
+
+      let blocked = false;
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Short, so a genuine block fails fast instead of hanging the
+          // suite. Postgres cancels the statement; it does not return rows.
+          await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '1500ms'`);
+          await evictStaleHolders(tx as never, {
+            itemId,
+            evictAfterSeconds: 60,
+            bySessionId: "session-newcomer",
+          });
+        });
+      } catch (error) {
+        // 55P03 lock_not_available / "canceling statement due to lock
+        // timeout" — the read waited, which is the property under test.
+        blocked = /lock timeout|55P03|canceling statement/i.test(String(error));
+      }
+
+      // **This is the assertion that dies when `FOR UPDATE OF a` is
+      // removed.** Without the lock the read passes straight through the
+      // rival's uncommitted row and the eviction completes in milliseconds.
+      expect(blocked).toBe(true);
+
+      // And nothing was released while blocked — the judgement never ran.
+      const held = await prisma.assignment.findUniqueOrThrow({ where: { id: holderId } });
+      expect(held.releasedAt).toBeNull();
+    } finally {
+      releaseRival();
+      await rivalTx;
+      await rival.$disconnect();
+    }
   });
 });
