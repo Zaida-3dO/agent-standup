@@ -45,10 +45,20 @@ import {
 import { surfaceForTransport } from "@/lib/surfaces";
 import { HOOK_VARIANTS, HOOK_PROTOCOL } from "@/lib/build-constants";
 import { ensureNameForSession } from "@/lib/agent-names";
+import { resolveMachine } from "../machine-identity";
 
 const inputSchema = z
   .object({
     sessionId: z.string().min(1),
+    /**
+     * The machine this session believes it is running on.
+     *
+     * Still required, and still the value stored on a transport that proves
+     * nothing (the CLI's `direct` binding). On an authenticated transport
+     * the machine the token proved wins over this — see
+     * `../machine-identity.ts` for the three cases and why a contradiction
+     * is an override rather than a refusal.
+     */
     machine: z.string().min(1),
     /**
      * The variant the session wants, overriding the one its transport
@@ -91,7 +101,25 @@ export type RegisterSessionInput = z.infer<typeof inputSchema>;
 
 export interface RegisterSessionOutput {
   readonly sessionId: string;
+  /**
+   * The machine actually recorded — the one the token proved, when the
+   * transport proved one, rather than necessarily the one the body sent.
+   */
   readonly machine: string;
+  /**
+   * How `machine` was established: `proved` when a token resolved to it,
+   * `declared` when nothing was proved and the caller's word was taken.
+   */
+  readonly machineSource: "proved" | "declared";
+  /**
+   * The machine the body claimed, when it contradicted the proved one and
+   * was discarded. `null` on every ordinary registration.
+   *
+   * Reported rather than dropped so a launcher sending a stale hostname can
+   * discover it from the handshake it already makes, instead of from a
+   * stored value quietly disagreeing with what it sent.
+   */
+  readonly machineOverrode: string | null;
   /** The transport the adapter stamped — what the session actually arrived over. */
   readonly transport: SessionTransport;
   /** The hook variant this session should install. */
@@ -239,6 +267,13 @@ export const registerSession = defineOperation({
     const { variant, overridden } = resolveVariant(stamped, input.hookVariant);
     const hookVersion = input.hookVersion ?? null;
 
+    // The proved machine beats the declared one — this is the consumer the
+    // proved/declared split exists for. See `../machine-identity.ts` for
+    // the three cases, and in particular why "nothing proved" (the `direct`
+    // binding) is stored as declared rather than treated as a
+    // contradiction.
+    const machine = resolveMachine(ctx.caller, input.machine);
+
     await ctx.db.$executeRawUnsafe(
       `INSERT INTO "Session" (
          "id", "machine", "transport", "hookVariant", "hookVariantOverridden",
@@ -270,7 +305,7 @@ export const registerSession = defineOperation({
          "driveMode" = COALESCE(EXCLUDED."driveMode", "Session"."driveMode"),
          "lastSeenAt" = NOW()`,
       input.sessionId,
-      input.machine,
+      machine.machine,
       transportToStored(stamped),
       variant,
       overridden,
@@ -308,7 +343,9 @@ export const registerSession = defineOperation({
 
     return {
       sessionId: input.sessionId,
-      machine: input.machine,
+      machine: machine.machine,
+      machineSource: machine.source,
+      machineOverrode: machine.overrode,
       transport: stamped,
       hookVariant: variant,
       hookVariantOverridden: overridden,
