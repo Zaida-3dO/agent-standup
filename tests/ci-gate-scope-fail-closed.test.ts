@@ -45,7 +45,7 @@ const GATES = [
   {
     job: "mutation-testing-gate",
     output: "source",
-    checkName: "Mutation testing (required)",
+    checkName: "Mutation testing gate (required)",
   },
 ] as const;
 

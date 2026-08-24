@@ -464,7 +464,32 @@ jobs:
           key: mutation-incremental-${{ runner.os }}-${{ github.run_id }}
 
   mutation-testing-gate:
-    name: Mutation testing (required)
+    # **"gate", not "Mutation testing".** This job never mutation-tests
+    # anything; it reads another job's `result` and decides a verdict. A name
+    # of the form "Mutation testing (required): pass" would assert, to anyone
+    # scanning the check list, that this diff's tests are proven to kill
+    # mutants — while the mutation job is switched off repo-wide until pre-GA
+    # (issue #166) and this gate passes in ~3s having verified nothing.
+    #
+    # The name is the only part of this a reader sees without clicking
+    # through, so it is the only place the distinction can be made for free.
+    # The conclusion cannot carry it: a workflow job reports `success` or
+    # `failure` and nothing else — GitHub Actions has no way to emit the
+    # `neutral` conclusion that would express "did not run", and even via the
+    # Checks API a `neutral` required check does not satisfy branch
+    # protection, so it would block every pull request rather than inform
+    # anyone. Renaming plus a job summary is what is actually available.
+    #
+    # Renaming is safe *for this job specifically*: unlike `Build & test`,
+    # `Actionlint (required)` and `Docker build (required)`, this context is
+    # NOT in branch protection on `main` (verified via `gh api` — see
+    # docs/merge-queue-runbook.md, which says so too). No protection rule
+    # matches this name, so it is free to describe the job accurately —
+    # naming it for the work it does not do would be the only cost, and that
+    # cost is paid by every reader. `docker-build-gate` has
+    # the same defect and deliberately keeps its name for exactly the
+    # opposite reason — see the comment there. `docs/ci-required-checks.md`.
+    name: Mutation testing gate (required)
     # `build-and-test` is here because the branches below read its result to
     # tell the two skip reasons apart. A `needs` context only carries jobs
     # named here — an unnamed job's `result` is the empty string, which
@@ -482,9 +507,21 @@ jobs:
           echo "That means this gate cannot tell whether mutation testing needed to run, so"
           echo "it fails rather than passing on an unverified scope. Check the 'changes' job."
           exit 1
+      # Every passing branch below writes to `$GITHUB_STEP_SUMMARY` as well as
+      # to the log. The summary is rendered on the run's own page, so "this
+      # verified nothing" is visible to someone who followed the check
+      # without reading step output. Without it, a required check that did
+      # not execute is indistinguishable from one that ran and passed.
       - name: Pass — no source files changed
         if: needs.changes.outputs.source == 'false'
-        run: echo "No src/**/*.ts(x) files changed, skipping mutation testing"
+        run: |
+          echo "No src/**/*.ts(x) files changed, skipping mutation testing"
+          {
+            echo "### Mutation testing gate: passed without running"
+            echo
+            echo "No \`src/**/*.ts(x)\` files changed, so there was nothing to mutate."
+            echo "**This gate has verified nothing about any code.**"
+          } >> "$GITHUB_STEP_SUMMARY"
       # `skipped` and `failure` are different facts and this gate has to tell
       # them apart, because only one of them is a statement about the code.
       #
@@ -530,13 +567,35 @@ jobs:
           echo "Mutation testing is limited to workflow_dispatch runs, so it did not run here."
           echo "This gate passes on that configuration, and has verified nothing about the code."
           echo "Turning it back on is a pre-GA gate — see docs/plans/BEFORE-GA.md and issue #166."
+          {
+            echo "### Mutation testing gate: passed without running"
+            echo
+            echo "Mutation testing is limited to \`workflow_dispatch\` runs, so it did not run here."
+            echo "That is a deliberate repo-wide setting (issue #166, a 22–57 min CI tax), not a fault."
+            echo
+            echo "**This gate has verified nothing about the code in this pull request.**"
+            echo "It reports the configuration, not the diff — a green tick here is not evidence"
+            echo "that this diff's tests kill mutants. Verify that by hand for load-bearing logic."
+            echo
+            echo "Re-enabling it is tracked in \`docs/plans/BEFORE-GA.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Pass — mutation testing did not run, and the suite it follows is already red
         if: >-
           needs.changes.outputs.source == 'true' &&
           needs.mutation-testing.result == 'skipped' &&
           github.event_name == 'workflow_dispatch' &&
           needs.build-and-test.result != 'success'
-        run: echo "Mutation testing did not run. It follows 'Build & test', which is required and reports that failure itself."
+        run: |
+          echo "Mutation testing did not run. It follows 'Build & test', which is required and reports that failure itself."
+          {
+            echo "### Mutation testing gate: passed without running"
+            echo
+            echo "Mutation testing did not run because \`Build & test\` did not succeed."
+            echo "That failure is already reported by \`Build & test\`, which is itself required —"
+            echo "failing here too would point you at the wrong job."
+            echo
+            echo "**This gate has verified nothing about the code.** Fix \`Build & test\` first."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Fail — mutation testing was skipped for an unrecognised reason
         if: >-
           needs.changes.outputs.source == 'true' &&
@@ -572,6 +631,22 @@ jobs:
           cache-to: type=gha,mode=max
 
   docker-build-gate:
+    # **The name is deliberately NOT changed, and that is a constraint rather
+    # than an oversight.** This job has the same shape as
+    # `mutation-testing-gate` — it never builds an image, and on a pull
+    # request touching no Docker files it passes in ~4s through the "Docker
+    # files not changed" branch. But `Docker build (required)` is a *required
+    # status check context in branch protection on `main`*
+    # (docs/merge-queue-runbook.md), and branch protection matches on the
+    # context NAME. Renaming it here would leave protection waiting on a
+    # context that no run ever posts again: every pull request would block,
+    # repo-wide, until an admin edited the rule.
+    #
+    # So renaming this one is a two-part change — workflow and repository
+    # settings, in that order, by someone with admin rights — and the
+    # workflow half alone is strictly worse than doing nothing. The job
+    # summary below carries the honesty fix instead, which needs no settings
+    # change. See `docs/ci-required-checks.md`.
     name: Docker build (required)
     needs: [changes, docker-build]
     if: always()
@@ -587,7 +662,14 @@ jobs:
           exit 1
       - name: Pass — Docker files not changed
         if: needs.changes.outputs.docker == 'false'
-        run: echo "No Docker-relevant files changed, skipping docker-build"
+        run: |
+          echo "No Docker-relevant files changed, skipping docker-build"
+          {
+            echo "### Docker build gate: passed without building"
+            echo
+            echo "No Docker-relevant files changed, so the image was not built."
+            echo "**No image was built and nothing about the Dockerfile was verified by this run.**"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Fail — docker-build failed
         if: needs.changes.outputs.docker == 'true' && needs.docker-build.result != 'success'
         run: exit 1

@@ -12,6 +12,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+// Reused rather than re-implemented: these walk the YAML structurally, and a
+// second copy would be a second thing to keep correct. `ci-mutation-gate`
+// owns them and tests them directly.
+import { extractJobBlock, extractStepBlock } from "./ci-mutation-gate.test";
 
 /**
  * The real, git-tracked repo root — not `import.meta.dirname`, which under
@@ -123,5 +127,49 @@ describe("ci.yml docker paths-filter — package.json/package-lock.json coverage
         "docker-compose.prod.yml",
       ]),
     );
+  });
+});
+
+// ── The gate's "did not build" pass has to be legible as such ───────────
+//
+// `docker-build-gate` passes in ~4s on a pull request touching no Docker
+// files, and in the check list that is indistinguishable from a run that
+// really built the image. Its conclusion cannot express the difference —
+// a workflow job reports only `success`/`failure`, and GitHub Actions
+// cannot emit a `neutral` conclusion — so the job summary carries it.
+//
+// **The check's NAME is deliberately unchanged here**, unlike
+// `mutation-testing-gate`: `Docker build (required)` is a required status
+// check context in branch protection on `main`
+// (`docs/merge-queue-runbook.md`), and protection matches on the name.
+// Renaming it in the workflow alone would leave protection waiting forever
+// on a context no run posts, blocking every pull request. That makes the
+// rename an admin settings change, not a code change.
+describe("the docker gate's no-op pass states that nothing was built", () => {
+  const GATE = extractJobBlock(
+    readFileSync(path.join(repoRoot(), ".github", "workflows", "ci.yml"), "utf8"),
+    "docker-build-gate",
+  );
+
+  it("finds the gate job and does not run vacuously", () => {
+    expect(GATE).not.toBe("");
+  });
+
+  // Fails if `>> "$GITHUB_STEP_SUMMARY"` is dropped from the skip branch,
+  // restoring a green tick that says nothing about what it checked.
+  it("writes a job summary on the branch that skips the build", () => {
+    const step = extractStepBlock(GATE, "needs.changes.outputs.docker == 'false'");
+    expect(step, "no step is guarded by the docker == 'false' condition").not.toBe("");
+    expect(step).toContain("GITHUB_STEP_SUMMARY");
+    // States the absence, rather than merely existing. Fails if the wording
+    // is softened into something that reads as a successful build.
+    expect(step.toLowerCase()).toContain("no image was built");
+  });
+
+  // The name is load-bearing for branch protection. Fails if someone
+  // "fixes" it to match the mutation gate's rename without also editing the
+  // repository settings — which would block every pull request.
+  it("keeps the exact required-context name branch protection matches on", () => {
+    expect(GATE).toContain("name: Docker build (required)");
   });
 });
