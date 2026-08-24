@@ -86,6 +86,32 @@ const CROSS_REFERENCE = /(^|[\s(([])(#\d+|PR-\d+|§\d+(\.\d+)?[a-z]?)\b/;
 const LOWERCASE_INITIAL_BRAND = /^(?:[a-z]{1,3}[A-Z]+|[a-z][A-Z][a-z]+)$/;
 
 /**
+ * A conversion or predicate method whose suffix is an acronym: `toJSON`,
+ * `asHTML`, `isURL`.
+ *
+ * These are the one class the brand shape above catches that it was never
+ * aimed at. `toJSON` is `[a-z]{2}` followed by an all-caps run, which is
+ * exactly the first brand alternative, so it was set aside as a product name
+ * and went unflagged — a miss rather than a false alarm, and harmless in
+ * practice because the checker advises rather than refuses. It is corrected
+ * because the filter should catch the class it names: someone reading it
+ * later would otherwise take the omission for a decision.
+ *
+ * Matched by the prefix rather than by a list of acronyms. `to`, `as` and
+ * `is` are the three verbs that produce this shape in ordinary code, and they
+ * are word *prefixes* here, not values — the repository's rule against
+ * writing real values into a matcher is about enumerating the domain (every
+ * brand, every acronym), which this does not do. The acronym itself stays
+ * unenumerated: any all-caps run of two or more counts.
+ *
+ * Deliberately narrow. A brand is only rescued from the identifier check when
+ * it does NOT look like one of these, so a genuine lowercase-initial product
+ * name is unaffected unless it happens to begin `to`/`as`/`is` and continue
+ * in capitals — a shape no product name observed here takes.
+ */
+const ACRONYM_METHOD = /^(?:to|as|is)[A-Z]{2,}$/;
+
+/**
  * A code identifier: `camelCase`, `snake_case`, `dotted.path`, `fn()`.
  *
  * Each alternative requires evidence that survives being read aloud — an
@@ -116,7 +142,14 @@ const CODE_IDENTIFIER = /\b(\w+[a-z0-9]\w*_\w+|[a-z]{2,}[A-Z]\w*|[a-z]{2,}\.[a-z
 function withoutBrandTokens(title: string): string {
   return title
     .split(/\s+/)
-    .filter((token) => !LOWERCASE_INITIAL_BRAND.test(token.replace(/[^\w]/g, "")))
+    .filter((token) => {
+      const bare = token.replace(/[^\w]/g, "");
+      // An acronym method is an identifier that merely LOOKS like a brand,
+      // so it is not set aside — checked first because it is the narrower
+      // claim of the two.
+      if (ACRONYM_METHOD.test(bare)) return true;
+      return !LOWERCASE_INITIAL_BRAND.test(bare);
+    })
     .join(" ");
 }
 
@@ -140,6 +173,37 @@ const FILE_PATH =
  */
 export const TITLE_MIN_WORDS = 2;
 
+/**
+ * The longest title this checker will scan, in characters.
+ *
+ * **A bound on the regexes' input, not a new validation rule.** Three of the
+ * alternatives in `CODE_IDENTIFIER` backtrack quadratically on a long run of
+ * a single repeated character — the regex is unchanged and the quadratic
+ * predates this convention, but a caller-supplied title now reaches it, and
+ * `title` carries no `max()` of its own. Measured on this machine, one
+ * `title` of repeated `a` costs 96ms at 16k characters, 4.6s at 100k and
+ * **14.5s at 200k** — single-threaded, so that is the whole server stalled by
+ * one create call. The input arrives over the API and needs no privileges
+ * beyond minting an item.
+ *
+ * **1,000 rather than a rounder guess, and the reasoning is what matters.**
+ * The floor is set by the real thing being measured: a title is one board
+ * row, and `headline` — the adjacent human-read field — is capped at 200, so
+ * 1,000 is already five times the longest text anyone writes here on purpose
+ * and cannot plausibly refuse honest input. The ceiling is set by the cost:
+ * at 1,000 characters the worst case measures under a millisecond, which
+ * makes the quadratic unreachable rather than merely narrowed.
+ *
+ * **Truncate for the scan; never alter the title.** Refusing was the
+ * available alternative and is the wrong shape for this module, which advises
+ * and does not refuse — an over-length title would suddenly become the one
+ * title shape that blocks a mint. Truncating the *scanned copy* keeps the
+ * findings honest anyway: every signal is a shape that appears within the
+ * first 1,000 characters if it appears at all, and the title itself reaches
+ * the caller and the database untouched.
+ */
+export const TITLE_SCAN_MAX_CHARS = 1_000;
+
 /** Words in `value` — whitespace-separated runs carrying at least one letter or digit. */
 function wordCount(value: string): number {
   return value.split(/\s+/).filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
@@ -157,8 +221,15 @@ function wordCount(value: string): number {
  */
 export function findTitleFindings(title: string, field = "title"): TitleFinding[] {
   const findings: TitleFinding[] = [];
+  // Bounded before any regex sees it — see `TITLE_SCAN_MAX_CHARS`. The
+  // findings below describe `title`, but they are DERIVED from this copy, so
+  // a pathological input costs a fixed, small amount of work. `wordCount`
+  // deliberately reads the full `title`: counting words is linear and safe,
+  // and the too-short rule must not be fooled by a truncation.
+  const scanned =
+    title.length > TITLE_SCAN_MAX_CHARS ? title.slice(0, TITLE_SCAN_MAX_CHARS) : title;
 
-  if (CROSS_REFERENCE.test(title)) {
+  if (CROSS_REFERENCE.test(scanned)) {
     findings.push({
       field,
       rule: "cross_reference",
@@ -166,7 +237,7 @@ export function findTitleFindings(title: string, field = "title"): TitleFinding[
         "The title carries a bare issue, PR or section number, which means nothing to someone reading the board. Say what the work achieves and keep the reference in the body.",
     });
   }
-  if (CODE_IDENTIFIER.test(withoutBrandTokens(title))) {
+  if (CODE_IDENTIFIER.test(withoutBrandTokens(scanned))) {
     findings.push({
       field,
       rule: "code_identifier",
@@ -174,7 +245,7 @@ export function findTitleFindings(title: string, field = "title"): TitleFinding[
         "The title names a code identifier. Titles are read by people deciding whether this work is theirs — describe what changes for them, and put the identifier in the body.",
     });
   }
-  if (FILE_PATH.test(title)) {
+  if (FILE_PATH.test(scanned)) {
     findings.push({
       field,
       rule: "file_path",

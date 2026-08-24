@@ -20,6 +20,7 @@ import {
   titleAdviceFor,
   TITLE_CONVENTION_RULE,
   TITLE_MIN_WORDS,
+  TITLE_SCAN_MAX_CHARS,
 } from "@/lib/item-title";
 
 /** The rule ids a title tripped, which is what a caller matches on. */
@@ -248,5 +249,88 @@ describe("the convention as callers read it", () => {
     // the drift `complete_item`'s contract interpolates its caps to avoid.
     const [finding] = findTitleFindings("Inbox");
     expect(finding?.message).toContain(String(TITLE_MIN_WORDS));
+  });
+});
+
+describe("the brand pre-filter catches only the class it names", () => {
+  // The pre-filter exists to rescue lowercase-initial PRODUCT names from the
+  // identifier check. It also absorbed `to*`/`as*`/`is*` acronym methods,
+  // which are identifiers and should be flagged — `toJSON` is two lower-case
+  // letters and an all-caps run, structurally identical to the brand shape.
+  // A miss rather than a false alarm, but the filter should catch the class
+  // it names.
+  const ACRONYM_METHODS = [
+    "Make toJSON handle a null body",
+    "asHTML drops the trailing newline",
+    "isURL rejects a valid address",
+  ];
+
+  for (const title of ACRONYM_METHODS) {
+    it(`flags an acronym method: ${JSON.stringify(title)}`, () => {
+      // Fails if the acronym exception is removed — the brand shape swallows
+      // these again and the checker says nothing.
+      expect(rulesFor(title)).toContain("code_identifier");
+    });
+  }
+
+  it("still leaves a genuine lowercase-initial product name alone", () => {
+    // The other side of the same edit, restated here so the exception cannot
+    // be widened into the false-positive class the pre-filter exists to
+    // prevent. Fails if `ACRONYM_METHOD` loses its `to|as|is` anchor and
+    // starts matching any lower-then-caps token.
+    expect(findTitleFindings("iOS share sheet is blank")).toEqual([]);
+    expect(findTitleFindings("eSIM activation fails to complete")).toEqual([]);
+  });
+});
+
+describe("a pathological title cannot stall the checker", () => {
+  // `CODE_IDENTIFIER` backtracks quadratically on a long run of one repeated
+  // character. The regex is unchanged and the quadratic predates the
+  // convention; what changed is that a caller-supplied title reaches it, and
+  // `title` has no length cap of its own. Measured before the bound: 4.6s at
+  // 100k characters and 14.5s at 200k, single-threaded, from one API call.
+  it("scans a 200k-character worst case in well under a second", () => {
+    // The exact shape that triggers the backtracking: a long run of one
+    // letter with no delimiter, ending in a character that fails the match.
+    const pathological = `${"a".repeat(200_000)}!`;
+
+    // Timed against a BASELINE measured in the same process rather than
+    // against a wall-clock constant. The suite runs 348 files concurrently
+    // against one Postgres, so absolute timings vary with load; the ratio
+    // does not. Without the bound this input costs ~14.5s while the short
+    // control costs microseconds — a gap of many thousands — so a 1000x
+    // ceiling separates "bounded" from "quadratic" by three orders of
+    // magnitude while staying immune to a busy machine.
+    const control = `${"a".repeat(200)}!`;
+    const controlStarted = performance.now();
+    for (let i = 0; i < 100; i++) findTitleFindings(control);
+    const controlCost = Math.max(performance.now() - controlStarted, 0.01);
+
+    const started = performance.now();
+    findTitleFindings(pathological);
+    const elapsed = performance.now() - started;
+
+    expect(elapsed).toBeLessThan(controlCost * 1000);
+  });
+
+  it("still reports the findings a long title genuinely has", () => {
+    // The bound must not turn into "long titles are exempt". A title that
+    // exceeds the scan window and carries a real identifier inside the
+    // window is still flagged.
+    //
+    // Fails if the truncation is applied to the wrong end, or if an
+    // over-length title short-circuits to an empty list.
+    const longTitle = `Fix appendEvent for good ${"and again ".repeat(300)}`;
+    expect(longTitle.length).toBeGreaterThan(TITLE_SCAN_MAX_CHARS);
+    expect(rulesFor(longTitle)).toContain("code_identifier");
+  });
+
+  it("counts words over the whole title, not just the scanned window", () => {
+    // `wordCount` reads the full string on purpose: counting is linear, and
+    // a truncated count could report a long title as too short. Fails if the
+    // word count is taken from the scanned copy.
+    const longButWordy = "word ".repeat(400).trim();
+    expect(longButWordy.length).toBeGreaterThan(TITLE_SCAN_MAX_CHARS);
+    expect(rulesFor(longButWordy)).not.toContain("too_short");
   });
 });
