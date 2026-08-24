@@ -14,7 +14,7 @@
 // startup-time answer rather than a 404 discovered by a user, and nothing
 // above it — no command, no dispatcher — ever sees a path or a status code.
 import type { Rejection, ServiceErrorCode } from "@/lib/service";
-import { SERVICE_ERROR_CODES } from "@/lib/service";
+import { SERVICE_ERROR_CODES, faultContext } from "@/lib/service";
 import { log, newRequestId } from "@/lib/log";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
 import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
@@ -415,7 +415,13 @@ export function createHttpBinding({
 
       if (!response.ok) {
         const { rejection, message } = rejectionFromBody(parsed, response.status);
-        if (rejection.code === "internal") {
+        // `faultContext` on the *code*, not on an error object: this
+        // binding never holds one. The body has already been reduced to a
+        // `Rejection` rebuilt from JSON, which is exactly why `faultFor`
+        // exists as a free function alongside the getter. No
+        // `internalKind` here, and not by omission — the cause stayed in
+        // the server's process and was never on the wire to classify.
+        if (faultContext(rejection.code).fault === "server") {
           // Either the server itself failed, or it answered with a body
           // this build does not recognise — and the second is invisible
           // from the terminal, which sees only "the server refused". The
@@ -426,6 +432,7 @@ export function createHttpBinding({
             binding: "http",
             operation,
             status: response.status,
+            ...faultContext(rejection.code),
           });
         } else {
           log.debug("The server refused the command.", {
@@ -435,6 +442,7 @@ export function createHttpBinding({
             operation,
             status: response.status,
             code: rejection.code,
+            ...faultContext(rejection.code),
             ...(rejection.guard === undefined ? {} : { guard: rejection.guard }),
           });
         }

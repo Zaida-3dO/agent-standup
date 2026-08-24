@@ -9,7 +9,7 @@
 // which route caught it.
 import { NextResponse } from "next/server";
 import { log } from "@/lib/log";
-import { toServiceError, type ServiceErrorCode } from "@/lib/service";
+import { faultContext, toServiceError, type ServiceErrorCode } from "@/lib/service";
 import { authenticatedCaller, withRequestId } from "../_shared/respond";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
@@ -62,10 +62,15 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
   const serviceError = toServiceError(error);
   const status = STATUS_BY_CODE[serviceError.code];
   const rejection = serviceError.toRejection();
-  if (serviceError.code === "internal") {
+  // `fault` rather than `code === "internal"`, so this responder and the
+  // service runtime cannot come to disagree about which codes mean the
+  // server broke. It puts `not_implemented` on this branch — a route
+  // answering a call this build cannot serve is an operator's problem.
+  if (serviceError.fault === "server") {
     log.error("Request failed unexpectedly.", {
       transport: "http",
       ...(requestId === undefined ? {} : { requestId }),
+      ...faultContext(serviceError),
       err: serviceError,
     });
   }

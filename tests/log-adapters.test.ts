@@ -51,6 +51,10 @@ describe("the MCP adapter", () => {
     expect(record?.transport).toBe("mcp-stdio");
     expect(record?.requestId).toBeTypeOf("string");
     expect(JSON.stringify(record)).toContain("ECONNREFUSED");
+    // The fault axis, so one filter over a mixed stream finds this line
+    // whichever adapter wrote it (MILESTONES.md #97).
+    expect(record?.fault).toBe("server");
+    expect(record?.internalKind).toBe("unexpected");
   });
 
   test("keeps the cause OUT of the tool result the agent reads", async () => {
@@ -62,6 +66,13 @@ describe("the MCP adapter", () => {
     expect(JSON.stringify(result)).not.toContain(SECRET);
     expect(JSON.stringify(result)).not.toContain("ECONNREFUSED");
     expect(result.structuredContent?.code).toBe("internal");
+    // The log-only decision, as an assertion. `internalKind` is an
+    // operator's field: it is a fact about the installation, and the
+    // caller's response is identical for every bucket. If it ever appears
+    // here, the redaction boundary moved without anyone deciding to.
+    expect(result.structuredContent).not.toHaveProperty("internalKind");
+    expect(result.structuredContent).not.toHaveProperty("fault");
+    expect(JSON.stringify(result)).not.toContain("internalKind");
   });
 
   test("logs a refusal at DEBUG, naming the rule that fired", async () => {
@@ -75,6 +86,10 @@ describe("the MCP adapter", () => {
     expect(record?.level).toBe("debug");
     expect(record?.code).toBe("guard_rejected");
     expect(record?.guard).toBe("merge.requires_commit");
+    expect(record?.fault).toBe("caller");
+    // No sub-bucket on a refusal: there is no server failure to classify,
+    // and an omitted key is one less empty field to read past.
+    expect(record).not.toHaveProperty("internalKind");
     // Not at error — a refusal is the system working.
     expect(oneRecord(logs.stderr(), "MCP tool call failed unexpectedly.")).toBeUndefined();
   });
