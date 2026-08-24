@@ -358,12 +358,25 @@ export const getProjects = defineOperation({
     }
 
     // Archived descendants are counted by no rollup number — applied to
-    // **both** arms of the recursion, which is what makes an archived
-    // subtree disappear whole rather than leaving its grandchildren
-    // attached to a root through a parent that is itself uncounted. A
-    // filter on the seed alone would keep counting the children of an
-    // archived child; one on the recursive arm alone would keep counting
-    // the archived child itself.
+    // **both** arms of the recursion, because each arm is the only one that
+    // can reach a different row.
+    //
+    // The seed arm covers an archived *direct child* of a project: it is
+    // found by the seed and never by the recursion, so dropping the filter
+    // there counts it. The recursive arm covers an archived row deeper
+    // down — the smallest case is an archived **grandchild under a live
+    // child**, which the seed never sees, so dropping the filter there
+    // counts it no matter what the seed does.
+    //
+    // Note that an archived *mid* node needs no separate argument: the seed
+    // filter excludes it, and excluding it from the seed also stops the
+    // recursion descending through it, so its whole subtree drops with it.
+    // That is why the grandchild-under-a-live-parent case is the one that
+    // pins the recursive arm — the recursion has to actually run through a
+    // *live* parent for that filter to be the thing doing the work.
+    // Covered by "does not count an archived grandchild under a live
+    // child" in tests/item-archive.test.ts, which is the test that fails
+    // when this filter is removed from the `UNION ALL` half alone.
     const descendantFilter = input.includeArchived ? "" : ` AND i.${NOT_ARCHIVED_CONDITION}`;
 
     // **The whole rollup, in one statement.**

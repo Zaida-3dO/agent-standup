@@ -20,9 +20,11 @@ import {
   SHIPPED_CHAR_CAP,
   SHIPPED_MAX,
   SIMILARITY_REJECT_AT,
+  WATCH_FOR_CHAR_CAP,
   WATCH_FOR_MAX,
   WHAT_TO_TEST_MAX,
   WHAT_TO_TEST_MIN,
+  WHAT_TO_TEST_TEXT_CHAR_CAP,
   findJargonHits,
   isTooSimilar,
   jaccardSimilarity,
@@ -703,6 +705,110 @@ describe("validateSummaryShape rejects malformed entries instead of throwing", (
     );
     expect(issues.some((i) => i.field === "what_to_test" && i.rule === "entry_shape")).toBe(true);
     expect(issues.some((i) => i.field === "shipped" && i.rule === "max_length")).toBe(true);
+  });
+});
+
+/**
+ * Indexes in issue messages name the array the *caller* sent.
+ *
+ * Malformed entries are dropped from the list the length and jargon checks
+ * read, so those checks run over a compacted array. Numbering a complaint
+ * by its position in that compacted array renames every entry after a
+ * malformed one — the caller is then told about an index they did not send
+ * that value at, while the entry genuinely at that index has already drawn
+ * a different complaint. Two contradictory messages about one index, and
+ * silence about the real offender.
+ *
+ * These tests assert on the index inside the message, which nothing else in
+ * this file does: the existing coverage asserts on `field` and `rule`, and
+ * that is exactly why the shift survived.
+ */
+describe("issue messages name the caller's own entry index", () => {
+  it("an over-long shipped entry after a malformed one is named at its real index", () => {
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate(),
+        shipped: [123, "x".repeat(SHIPPED_CHAR_CAP + 1)],
+      } as unknown as SummaryCandidate,
+      "merged",
+    );
+
+    const tooLong = issues.filter((i) => i.field === "shipped" && i.rule === "max_length");
+    expect(tooLong).toHaveLength(1);
+    expect(tooLong[0]!.message).toContain("shipped[1]");
+    expect(tooLong[0]!.message).not.toContain("shipped[0]");
+
+    // The shape complaint keeps index 0, so the two messages address
+    // different entries rather than contradicting each other.
+    const shape = issues.filter((i) => i.field === "shipped" && i.rule === "entry_shape");
+    expect(shape).toHaveLength(1);
+    expect(shape[0]!.message).toContain("shipped[0]");
+  });
+
+  it("two dropped entries shift a later index by two, and it is still reported correctly", () => {
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate(),
+        shipped: [null, 7, "x".repeat(SHIPPED_CHAR_CAP + 1)],
+      } as unknown as SummaryCandidate,
+      "merged",
+    );
+
+    const tooLong = issues.filter((i) => i.field === "shipped" && i.rule === "max_length");
+    expect(tooLong).toHaveLength(1);
+    expect(tooLong[0]!.message).toContain("shipped[2]");
+  });
+
+  it("an over-long watch_for entry after a malformed one is named at its real index", () => {
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate(),
+        watch_for: [null, "x".repeat(WATCH_FOR_CHAR_CAP + 1)],
+      } as unknown as SummaryCandidate,
+      "merged",
+    );
+
+    const tooLong = issues.filter((i) => i.field === "watch_for" && i.rule === "max_length");
+    expect(tooLong).toHaveLength(1);
+    expect(tooLong[0]!.message).toContain("watch_for[1]");
+  });
+
+  it("a typed not_done entry after a malformed one is named at its real index", () => {
+    // The typed-field collector compacts independently of the string one,
+    // so it needs its own pin: both the cap complaint and the `reason`
+    // complaint are labelled from the same preserved index.
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate(),
+        not_done: [
+          "a bare string",
+          { text: "x".repeat(NOT_DONE_TEXT_CHAR_CAP + 1), reason: "made-up" },
+        ],
+      } as unknown as SummaryCandidate,
+      "merged",
+    );
+
+    const tooLong = issues.filter((i) => i.field === "not_done" && i.rule === "max_length");
+    expect(tooLong).toHaveLength(1);
+    expect(tooLong[0]!.message).toContain("not_done[1]");
+
+    const reason = issues.filter((i) => i.field === "not_done" && i.rule === "reason");
+    expect(reason).toHaveLength(1);
+    expect(reason[0]!.message).toContain("not_done[1].reason");
+  });
+
+  it("a typed what_to_test entry after a malformed one is named at its real index", () => {
+    const issues = validateSummaryShape(
+      {
+        ...baseCandidate({ user_facing: true, how_verified: undefined }),
+        what_to_test: ["a bare string", { text: "x".repeat(WHAT_TO_TEST_TEXT_CHAR_CAP + 1) }],
+      } as unknown as SummaryCandidate,
+      "research_done",
+    );
+
+    const tooLong = issues.filter((i) => i.field === "what_to_test" && i.rule === "max_length");
+    expect(tooLong).toHaveLength(1);
+    expect(tooLong[0]!.message).toContain("what_to_test[1]");
   });
 });
 
