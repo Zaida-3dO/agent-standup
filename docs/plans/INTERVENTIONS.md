@@ -182,3 +182,65 @@ say otherwise.
 **Where the detection code lives is the implementer's call** — the ordinary conventions of this
 repository, decided when the engine is built rather than settled in advance here. This document
 governs *what* is detected and *what happens*, not the file layout.
+
+---
+
+## Scoring: is any of this worth it?
+
+Everything above describes what is detected and what happens. None of it says whether a given entry
+was *worth* detecting — and the catalogue only ever grows, because every incident appends an entry
+and nothing has ever removed one. Entries have shipped that were unsatisfiable by construction, and
+entries have shipped whose message named a remedy the same guard then refused. Both were found by a
+person hitting them.
+
+**The loop, in four parts** (`src/lib/interventions/scoring.ts`, `survey.ts`, `capture.ts`):
+
+1. **A firing is captured** with what the session was doing and, crucially, **the message it was
+   shown**. The message is most of what is being judged: a correct detection with a bad message and a
+   wrong detection both earn a low score, and they have opposite fixes — reword it, or delete it. A
+   row holding only an entry id cannot tell them apart.
+2. **A session-end survey asks for a 1–5 score**, on genuine wind-down rather than at any turn
+   boundary. A `Stop` is necessary but not sufficient: no live crew, nothing scheduled to wake the
+   session, and a real quiet period. An unknown idle time stays silent, because a survey that fired
+   on unknown would fire on every stop.
+3. **Scores aggregate per entry** and the report names the ones worth reading.
+4. **A 1 is a removal signal**, not merely a low score.
+
+### The scale
+
+| Score | Meaning |
+|---|---|
+| **5** | Would have gone down the wrong path and wasted a lot of tokens, or done something incorrect, without it |
+| **4** | Saved time or tokens, but nothing dangerous was about to happen |
+| **3** | Neutral — it helped, but the answer was reachable anyway |
+| **2** | Did not help; incorrect or misleading, and cost time |
+| **1** | Actively wrong or harmful — a block that had to be routed around. Remove it |
+
+**The wording is load-bearing and lives in one place** (`INTERVENTION_SCORE_MEANINGS`), which the
+survey prompt renders from rather than restating. A tidied paraphrase — "very useful / useful /
+neutral / unhelpful / harmful" — reads like the same scale and is not one: 4 and 3 are separated by
+*whether the answer was reachable anyway*, not by degree of usefulness, and 1 carries a request
+rather than a sentiment. A rater handed the tidy version scores the same firing differently, and
+every aggregate keeps computing while meaning something else.
+
+### Two flag triggers, not one
+
+An entry is flagged when its **mean is at or below 2.5**, *or* when **any rater scored it 1** —
+either one, both subject to a minimum of three ratings so one bad afternoon cannot retire an entry.
+
+The second trigger is the one that matters and a mean-only report would miss it. An entry can be
+right on nine firings and harmful on the tenth, averaging a comfortable 4.6; the harm is usually a
+detection firing outside its intended scope, and averaging it away is exactly how such an entry stays
+shipped. A single 1 is a rater saying it did active harm, which is worth a look regardless of how
+well it does the rest of the time.
+
+### Keeping it cheap
+
+Rating that costs more than the guard saves defeats itself, so the ask is bounded structurally rather
+than by asking politely: **one item per entry** (the entry is what is being judged, not the call),
+**at most five per survey**, and **a fixed JSON reply** that needs no model call to interpret. A note
+is optional and one line — worth adding on a low score, because that is where "wrong detection" and
+"bad message" have to be told apart.
+
+Unrated firings stay unrated and can be asked about at a later wind-down, rather than being forced
+into one oversized survey that gets a column of 3s.

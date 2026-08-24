@@ -1064,3 +1064,147 @@ model Session {
 
   @@index([lastSeenAt])
 }
+
+// ── Intervention firings and their scores ────────────────────────────────
+//
+// The evidence loop for the catalogue (`docs/plans/INTERVENTIONS.md`). The
+// guard surface only ever grows: every incident adds an entry and nothing
+// has ever removed one, because there has been no record of whether a given
+// entry earned its cost. These two tables are that record.
+//
+// **Two tables rather than a score column, for the same reason `Run` and
+// `RunScore` are two.** A firing is a fact the server observed and it is
+// written on the hook path; a score is a judgement made later, by a
+// different actor, about that fact — and it may never arrive at all. A
+// nullable column would make "not yet rated" and "rated and then cleared"
+// the same value, and the whole point is to distinguish an entry nobody has
+// judged from one judged unhelpful.
+
+// What an intervention did on the call it fired on.
+//
+// `nothing` is recorded too: the catalogue's own guidance is to observe a
+// new entry silently before it starts talking, and an entry in that state
+// still wants its firing rate known.
+enum InterventionOutcome {
+  // Recorded, said nothing.
+  silent
+  // Advised. The call proceeded.
+  nudged
+  // Refused the call outright.
+  blocked
+  // Refused, and the caller proceeded anyway with a written reason. The
+  // most diagnostic outcome on this list: an override is the caller saying
+  // in the moment that the refusal was wrong, which is the same claim a
+  // score of 1 makes later. Where the two disagree, the disagreement is
+  // itself worth reading.
+  overridden
+}
+
+// One firing of one catalogue entry.
+//
+// Written on the hook decision path, which is the highest-volume path in
+// the system — so this row is deliberately small, written once per finding
+// that actually triggered, and never read on that path.
+//
+// **`entryId` is a plain string with no foreign key**, matching how
+// `Setting` rows for interventions are keyed. The catalogue is code-backed
+// and designed to shed entries: a retired entry's firings must survive it,
+// because "this entry scored 1 forty times and we removed it" is precisely
+// the history this table exists to keep. A constraint against a code
+// catalogue could not be expressed anyway.
+model InterventionEvent {
+  id            BigInt  @id @default(autoincrement())
+  // The catalogue entry that fired, e.g. `I10`. Not a foreign key — see
+  // above.
+  entryId       String  @map("entry_id")
+  // The session it fired on, and the root of that session's tree. Both,
+  // because a survey is answered by the session that experienced the
+  // intervention while an orchestrator reviewing its crew's session wants
+  // the whole tree — the same distinction `registered_processes` draws.
+  sessionId     String  @map("session_id")
+  rootSessionId String? @map("root_session_id")
+  // The item in play, when there was one. Nullable and unconstrained by
+  // design: plenty of interventions fire on a session holding no claim, and
+  // that is a normal firing rather than a defective row.
+  itemId        String? @map("item_id")
+
+  ts DateTime @default(now()) @db.Timestamptz(3)
+
+  outcome InterventionOutcome
+  // The level as resolved for this firing, after any override. Stored
+  // rather than looked up, because the entry's configured level may have
+  // been changed since — and a score is a judgement about what actually
+  // happened, not about the current configuration.
+  level   String
+  phase   String
+
+  // What the agent was doing, for the survey to quote back. Without these
+  // a rater is asked to score a bare entry id without recalling the call it
+  // which is the difference between a survey that gets honest answers and
+  // one that gets a column of 3s.
+  tool           String?
+  // Truncated by the writer, never stored whole: a command can be a
+  // multi-kilobyte heredoc and this table sits on the hot path.
+  command        String? @db.Text
+  // The message the session was actually shown. Stored because the message
+  // is most of what is being judged — the kill-guard firing that scored 1
+  // was a correct detection whose message named a remedy it then refused,
+  // and a score against the entry alone could not have told those apart.
+  message        String? @db.Text
+  // The reason a caller wrote when overriding. The catalogue says the value
+  // of an overridable block is the recorded reason rather than the friction.
+  overrideReason String? @map("override_reason") @db.Text
+
+  scores InterventionScore[]
+
+  @@index([entryId, ts])
+  @@index([sessionId, ts])
+  @@index([rootSessionId, ts])
+  @@map("intervention_events")
+}
+
+// Who rated a firing. The same split `RunScore` draws between the agent's
+// own assessment and a person's, kept apart because they answer differently
+// and a mean over both would hide exactly the disagreement worth seeing.
+enum InterventionRaterType {
+  agent
+  person
+}
+
+// One 1–5 score for one firing.
+//
+// The scale is the owner's, and its wording is load-bearing rather than
+// decorative — see `INTERVENTION_SCORE_MEANINGS` in
+// `src/lib/interventions/scoring.ts`, which is the single place it is
+// written. **A 1 is an explicit removal signal**, not merely the low end of
+// a range.
+model InterventionScore {
+  id      String            @id @default(uuid())
+  eventId BigInt            @map("event_id")
+  event   InterventionEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  raterType InterventionRaterType @map("rater_type")
+  // Who rated it — a session id for an agent, a person id for a person.
+  raterId   String?               @map("rater_id")
+
+  // 1–5. Constrained in the database as well as in the parser, because a
+  // score outside the scale would silently skew every aggregate that reads
+  // it and aggregates are the entire product of this table.
+  score Int
+  // One short line, optional. The corpus this design was checked against
+  // shows why it is worth having: two firings that both deserve a low score
+  // can deserve it for opposite reasons — the detection was wrong, or the
+  // detection was right and the message was undiscoverable — and only the
+  // second is fixed by rewording. A score alone cannot tell a maintainer
+  // which they are looking at.
+  note  String? @db.Text
+
+  ratedAt DateTime @default(now()) @map("rated_at") @db.Timestamptz(3)
+
+  // One score per rater per firing. A rater changing its mind updates the
+  // row rather than adding a second, so an aggregate cannot be moved by one
+  // rater voting twice.
+  @@unique([eventId, raterType, raterId])
+  @@index([eventId])
+  @@map("intervention_scores")
+}

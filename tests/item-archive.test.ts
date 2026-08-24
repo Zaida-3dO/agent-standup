@@ -1126,6 +1126,18 @@ describeIfDb("delete_item", () => {
         // shape as the detail reads above. `loop_list`, which does range
         // over an item's loops, is swept rather than exempted.
         "loop_get",
+        // Aggregates intervention firings per catalogue entry. It ranges
+        // over `intervention_events` and `intervention_scores` and returns
+        // counts keyed by entry id — the same "ranges over no items" reason
+        // as `get_costs` beside it. `item_id` is recorded on a firing, but
+        // it is never selected, joined to `Item`, or used to narrow the
+        // report: an entry's score is a fact about the guard, not about the
+        // work that happened to be in play when it fired. So an archived
+        // item cannot leak through it, and — the direction that would
+        // matter more — an archived item's firings must still count toward
+        // its entry's score, because the guard fired and was rated whatever
+        // later became of the row.
+        "get_intervention_scores",
       ]);
 
       // Arguments per read. A read absent from this map fails the guard
