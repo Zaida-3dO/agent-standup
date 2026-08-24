@@ -14,17 +14,91 @@
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 
-// One random token per test-file evaluation, appended to every scratch
-// database name in that file. Named for what's being tested, never for who
-// or what ran it (this repo is public — see CLAUDE.md's "Private project
-// names"). The token lets two environments hitting the same Postgres server
-// at once — a developer's machine and CI, or two CI runs — share it without
-// colliding on a database name.
-const runToken = randomBytes(3).toString("hex");
+/**
+ * The prefix every scratch database name carries. Shared by the sweeper in
+ * `scripts/sweep-scratch-databases.mjs`, which must match the same shape.
+ */
+const SCRATCH_PREFIX = "agent_standup_test_";
+
+/**
+ * Environment variable carrying the token that identifies ONE test run.
+ *
+ * Set by `tests/helpers/global-setup.ts` before any worker starts, and
+ * inherited by every worker process from there.
+ */
+export const RUN_TOKEN_ENV_VAR = "TEST_RUN_TOKEN";
+
+/**
+ * One random token per test RUN, appended to every scratch database name in
+ * that run. Named for what's being tested, never for who or what ran it (this
+ * repo is public — see CLAUDE.md's "Private project names"). The token lets
+ * two environments hitting the same Postgres server at once — a developer's
+ * machine and CI, or two CI runs — share it without colliding on a name.
+ *
+ * Read from the environment rather than generated per process, and that
+ * distinction is what makes cleanup possible. Vitest runs each test file in
+ * its own worker process, so a module-level `randomBytes` gives every FILE a
+ * different token, and the run as a whole has no shared identity: nothing can
+ * afterwards say which databases belonged to it. Since teardown is per-file
+ * `afterAll`, any worker killed before it gets there — Ctrl-C, OOM, a hard
+ * timeout, a crash — leaks its database with nothing able to reclaim it. That
+ * is how ~670 of them accumulated by 2026-08-24.
+ *
+ * With one token for the whole run, `global-teardown.ts` can sweep exactly
+ * the databases this run created and nothing else, whatever happened to the
+ * individual workers.
+ *
+ * Falls back to a locally-generated token when unset, so a single test file
+ * run directly (no global setup) still works — it just cannot be swept by
+ * token afterwards, which is why the standalone sweeper also has an age-based
+ * guard.
+ */
+const runToken = process.env[RUN_TOKEN_ENV_VAR] ?? randomBytes(3).toString("hex");
 
 /** Builds a scratch-database name: `agent_standup_test_<purpose>_<random>`. */
 export function scratchDatabaseName(purpose: string): string {
-  return `agent_standup_test_${purpose}_${runToken}`;
+  return `${SCRATCH_PREFIX}${purpose}_${runToken}`;
+}
+
+/**
+ * Drops every scratch database belonging to `token`, regardless of which
+ * worker created it or whether that worker ever reached its `afterAll`.
+ *
+ * Scoped to the token on purpose: it is the one thing that distinguishes this
+ * run's databases from a concurrently-running suite's. A broader match — the
+ * `agent_standup_test_` prefix alone — would sweep another run's databases out
+ * from under it, which is exactly the mistake that destroyed two databases on
+ * 2026-08-24.
+ *
+ * Returns the names it dropped, so the caller can report a leak rather than
+ * hiding it: on a clean run every file drops its own database and this finds
+ * nothing.
+ */
+export async function dropScratchDatabasesForToken(
+  databaseUrl: string,
+  token: string,
+): Promise<string[]> {
+  const client = new Client({ connectionString: adminUrl(databaseUrl) });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ datname: string }>(
+      `select datname from pg_database
+        where datname like $1 and datname like $2
+        order by datname`,
+      [`${SCRATCH_PREFIX}%`, `%\\_${token}`],
+    );
+    const dropped: string[] = [];
+    for (const { datname } of rows) {
+      // FORCE is right here (unlike in the standalone sweeper): these are this
+      // run's OWN databases, and a worker that died may have left a connection
+      // behind that nothing else will ever close.
+      await client.query(`DROP DATABASE IF EXISTS ${JSON.stringify(datname)} WITH (FORCE)`);
+      dropped.push(datname);
+    }
+    return dropped;
+  } finally {
+    await client.end();
+  }
 }
 
 /**
@@ -66,9 +140,8 @@ export function withDatabaseName(databaseUrl: string, name: string): string {
  * Name of the pre-migrated template database, created once per test run by
  * `tests/helpers/global-setup.ts` and cloned by `createMigratedScratchDatabase`
  * below. Read from the environment rather than recomputed here: the global
- * setup and the test workers are separate processes, so they cannot share a
- * module-level random token (the `runToken` above is per-process, and would
- * differ between them).
+ * setup and the test workers are separate processes, and the template's name
+ * uses a token of its own that a worker has no way to reproduce.
  */
 const TEMPLATE_ENV_VAR = "TEST_TEMPLATE_DATABASE";
 
