@@ -399,3 +399,107 @@ describe("the verbs are a closed set", () => {
     expect(isHookVerb("RUN")).toBe(false);
   });
 });
+
+// ── The write-path ceiling (row 636f640b) ──────────────────────────────
+//
+// The bug these cover: `trimSpool` and `DEFAULT_MAX_RECORDS` existed, were
+// tested, and were reachable **only from the flush path**. In a deployment
+// whose hook never flushes, that is a ceiling the code plainly contains and
+// never applies — the spool observed at 47,511 records against a documented
+// limit of 20,000. So the property under test is not "trimming works"
+// (`hook-spool.test.ts` has that); it is that *appending* enforces it.
+describe("the spool is bounded by the append path, not only by the flush", () => {
+  /** A spool pre-filled with `count` valid records. */
+  function filledSpool(count: number) {
+    const lines: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      lines.push(
+        serialiseRecord({
+          sessionId: "session-a",
+          ts: new Date(NOW + index).toISOString(),
+          tool: "Bash",
+        } as SpooledToolCall),
+      );
+    }
+    return memorySpool(lines.join(""));
+  }
+
+  it("drops the oldest records once the spool is over its ceiling", () => {
+    const spool = filledSpool(10);
+    // The counter reports a multiple of the interval, so this append is the
+    // one that also enforces the ceiling.
+    spoolEvent(payload(), spool, NOW, {
+      appendCounter: () => 4,
+      trimInterval: 2,
+      maxRecords: 5,
+    });
+
+    const { records } = readSpool(spool.text());
+    expect(records).toHaveLength(5);
+    // The *newest* survive: the record just appended must be the last one,
+    // and the oldest of the eleven must be gone. Dropping from the newest
+    // end would make a full spool silently stop recording, which looks
+    // identical to one that is working.
+    expect(records[records.length - 1]?.tool).toBe("Bash");
+    // The five kept are the newest five of the eleven. The pre-filled
+    // records carry ascending `ts` values from `NOW`, so the oldest six
+    // (offsets 0-5) must be gone and offset 6 must be the first survivor.
+    // Asserted on the *pre-filled* timestamps specifically: the appended
+    // record's own `ts` is `NOW`, so testing for `NOW`'s absence would fail
+    // on the record that is supposed to survive.
+    expect(records[0]?.ts).toBe(new Date(NOW + 6).toISOString());
+    expect(records.map((record) => record.ts)).not.toContain(new Date(NOW + 5).toISOString());
+  });
+
+  it("leaves the spool alone on an append that is not a trim point", () => {
+    const spool = filledSpool(10);
+    spoolEvent(payload(), spool, NOW, {
+      // 3 % 2 !== 0, so this append only appends.
+      appendCounter: () => 3,
+      trimInterval: 2,
+      maxRecords: 5,
+    });
+
+    // Eleven, not five: the ceiling is paced, so an ordinary append pays
+    // only for the append. This is the assertion that would fail if the
+    // pacing were dropped and every call trimmed — which would put a whole
+    // file read and rewrite on the critical path of every tool call.
+    expect(readSpool(spool.text()).records).toHaveLength(11);
+  });
+
+  it("does not trim when no counter is supplied", () => {
+    const spool = filledSpool(10);
+    spoolEvent(payload(), spool, NOW, { maxRecords: 5 });
+    expect(readSpool(spool.text()).records).toHaveLength(11);
+  });
+
+  it("still records the call when trimming the spool throws", () => {
+    // The ordering that makes this safe: the append happens *before* the
+    // trim, so a failing trim loses the housekeeping, never the record it
+    // was called to make room for. A spool that can be appended to but not
+    // rewritten must not cost a measurement.
+    let text = "";
+    const spool: SpoolStore = {
+      append: (line) => {
+        text += line;
+      },
+      read: () => text,
+      replace: () => {
+        throw new Error("read-only");
+      },
+    };
+
+    const record = spoolEvent(payload(), spool, NOW, {
+      appendCounter: () => 2,
+      trimInterval: 1,
+      maxRecords: 0,
+    });
+
+    // `spoolEvent` reports `undefined` on a failed write, and the throw is
+    // caught by its existing guard — so what is asserted is the thing that
+    // matters downstream: the verdict path is untouched and the record was
+    // written to the file before the failure.
+    expect(record).toBe(undefined);
+    expect(readSpool(text).records).toHaveLength(1);
+  });
+});

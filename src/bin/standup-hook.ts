@@ -19,7 +19,10 @@ import { runHook } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";
 import { HOOK_EXIT } from "@/lib/hook/response";
 import { spoolEvent } from "@/lib/cli/hook-command";
-import { fileSpool, spoolPath } from "@/lib/cli/spool-file";
+import { fileSpool, fileAppendCounter, spoolPath } from "@/lib/cli/spool-file";
+import { flushSpool } from "@/lib/hook/flush";
+import { createHttpFlush } from "@/lib/hook/flush-http";
+import { parseHookPayload } from "@/lib/hook/payload";
 // The version this script declares it speaks (SCHEMA.md §21). It lives in
 // its own module rather than here because this file's body runs on import —
 // it reads stdin to the end — so a constant exported from it could not be
@@ -77,9 +80,106 @@ async function main(): Promise<number> {
   if (rendered.stdout !== "") process.stdout.write(rendered.stdout);
   if (rendered.stderr !== "") process.stderr.write(rendered.stderr);
 
-  spoolEvent(stdin, fileSpool(spoolPath(env)), now);
+  const spool = fileSpool(spoolPath(env));
+  spoolEvent(stdin, spool, now, { appendCounter: fileAppendCounter(spoolPath(env)) });
+
+  // ── The drain (MILESTONES.md #88's "batched flush") ───────────────────
+  //
+  // Until this existed the `http` variant had **no flush path at all**:
+  // `flush-http.ts` was built and tested, but its only caller was the
+  // `standup hook flush` CLI verb, which nothing in a hook-only
+  // installation invokes. Telemetry was therefore collected diligently,
+  // written forever and read by nobody — 28 MB in ten days on the machine
+  // that found it.
+  //
+  // It hangs off `Stop` rather than off a daemon, a scheduler or a
+  // per-call send, because `Stop` is already an event this script is
+  // installed for and already parses. That satisfies #88's requirement
+  // that the flush be *batched and off the critical path* by construction
+  // rather than by promise: a `Stop` fires once at the end of an agent's
+  // turn, after the last tool call has returned, so nothing is waiting on
+  // the tool-call path for it. Sending per `PostToolUse` would be the
+  // per-call connection §13f exists to forbid.
+  if (isStop(stdin)) await drain(spool, baseUrl, env);
 
   return rendered.exitCode;
+}
+
+/** Whether this payload is the end-of-turn event the drain hangs off. */
+function isStop(stdin: string): boolean {
+  const parsed = parseHookPayload(stdin);
+  return parsed.ok && parsed.event.eventType === "Stop";
+}
+
+/**
+ * Sends what has spooled, and never lets that matter to the hook.
+ *
+ * **This function cannot fail.** Every failure mode of a flush — an
+ * unreachable server, a refused shape, a timeout, an unwritable spool — is
+ * swallowed here, because the alternative is a hook that delays or breaks a
+ * session over telemetry. That is the trade stated plainly: *lost telemetry
+ * is much cheaper than a hung session.* `flushSpool` already never throws
+ * and `createHttpFlush` already collapses every failure to `false`; the
+ * `try` is the belt to their braces, covering the filesystem calls around
+ * them that have no such guarantee.
+ *
+ * The spool is rewritten only when the flush changed it, and only with what
+ * the server did **not** acknowledge — `flushSpool` is at-least-once by
+ * design, so a record is dropped from the file only after something took
+ * it. A failed flush leaves the file exactly as it was, to be retried on
+ * the next `Stop`.
+ */
+async function drain(
+  spool: ReturnType<typeof fileSpool>,
+  baseUrl: string | undefined,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  // With no server there is nothing to drain to. The write-path ceiling in
+  // `spoolEvent` is what bounds the file in that case, which is why the
+  // cap is not conditional on the drain being configured.
+  if (baseUrl === undefined || baseUrl === "") return;
+
+  try {
+    const text = spool.read();
+    if (text === undefined || text.length === 0) return;
+
+    const result = await flushSpool({
+      spoolText: text,
+      send: createHttpFlush({
+        baseUrl,
+        fetch: globalThis.fetch as never,
+        // The ingest authenticates unconditionally, so a tokenless flush is
+        // a permanent `401` and the spool would fill to its ceiling in
+        // silence. Read from the environment for the same reason the URL
+        // is: this script is configured by the thing that installs it.
+        ...(env.STANDUP_TOKEN === undefined || env.STANDUP_TOKEN.trim() === ""
+          ? {}
+          : { token: env.STANDUP_TOKEN.trim() }),
+        ...(flushTimeoutMs(env) === undefined ? {} : { timeoutMs: flushTimeoutMs(env) as number }),
+      }),
+    });
+
+    // Nothing acknowledged and nothing dropped means the file is unchanged,
+    // and rewriting it would be a full write of identical bytes.
+    if (result.sent === 0 && result.dropped === 0 && result.skipped === 0) return;
+    spool.replace(result.remaining);
+  } catch {
+    // Deliberately silent. A message on stderr here would be written into
+    // the transcript of every turn whose server is down, which is noise
+    // about a subsystem the session does not depend on. `standup hook
+    // status` is where someone asks how much is waiting.
+  }
+}
+
+/** An override for the flush timeout, for an installation that needs a shorter one. */
+function flushTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.STANDUP_FLUSH_TIMEOUT_MS?.trim();
+  if (raw === undefined || raw === "") return undefined;
+  const parsed = Number(raw);
+  // A non-numeric or negative override is ignored rather than being allowed
+  // to become `NaN`, which `AbortSignal.timeout` would reject and which
+  // would turn a typo in an env var into a flush that never runs.
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 try {

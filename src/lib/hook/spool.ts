@@ -165,6 +165,47 @@ export function trimSpool(
   return { records: records.slice(dropped), dropped };
 }
 
+/**
+ * How many appends may happen between enforcements of the ceiling.
+ *
+ * The write path is an append with no read (see the header), so it cannot
+ * notice that the file has grown past `DEFAULT_MAX_RECORDS` — noticing
+ * costs a read and a rewrite, which is the per-tool-call cost the whole
+ * design exists to avoid. Enforcing every `N` appends pays that cost once
+ * per `N` calls instead, which bounds the file at a small, predictable
+ * overshoot rather than not at all.
+ *
+ * The consequence to state plainly: the spool is bounded at roughly
+ * `DEFAULT_MAX_RECORDS + this`, not exactly `DEFAULT_MAX_RECORDS`. That
+ * slack is the price of keeping the common path a bare append, and it is
+ * the right trade — a ceiling overshot by a bounded amount is a bounded
+ * file, whereas a ceiling checked on every call would put a read, a parse
+ * and a full rewrite in front of every tool call an agent makes.
+ */
+export const DEFAULT_TRIM_INTERVAL = 1_000;
+
+/**
+ * Whether this append is the one that should also enforce the ceiling.
+ *
+ * Driven by a count the caller already has rather than by the file's size,
+ * because asking the filesystem how big the spool is would be a stat on the
+ * critical path — cheaper than a read, but still a syscall per tool call to
+ * answer a question that only matters once per thousand.
+ *
+ * A non-positive interval trims on every append. That is a legitimate
+ * configuration ("keep it exact, I will pay for it") and is handled rather
+ * than guarded against, for the reason `trimSpool` handles a non-positive
+ * ceiling: a special case whose only effect is to make a deliberate value
+ * mean something other than what it says.
+ */
+export function shouldTrimOnAppend(
+  appendCount: number,
+  interval: number = DEFAULT_TRIM_INTERVAL,
+): boolean {
+  if (interval <= 1) return true;
+  return appendCount % Math.floor(interval) === 0;
+}
+
 /** Splits records into flush-sized batches. */
 export function batches(
   records: readonly SpooledToolCall[],

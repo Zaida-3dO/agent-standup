@@ -44,7 +44,15 @@ import { runHook, type RunHookOptions } from "@/lib/hook/run";
 import { parseHookPayload } from "@/lib/hook/payload";
 import { buildRecord, type SpooledToolCall } from "@/lib/hook/spool-record";
 import { readReportedPaths, readReportedUsage } from "@/lib/hook/usage";
-import { serialiseRecord, readSpool } from "@/lib/hook/spool";
+import {
+  serialiseRecord,
+  readSpool,
+  serialiseSpool,
+  trimSpool,
+  shouldTrimOnAppend,
+  DEFAULT_MAX_RECORDS,
+  DEFAULT_TRIM_INTERVAL,
+} from "@/lib/hook/spool";
 import { flushSpool, type SendBatch } from "@/lib/hook/flush";
 import type { RenderedResponse } from "@/lib/hook/response";
 import { EXIT, malformed, ok, type Envelope, type ExitCode } from "./envelope";
@@ -89,6 +97,9 @@ export interface HookCommandOptions {
   readonly send?: SendBatch;
   readonly batchSize?: number;
   readonly maxRecords?: number;
+  /** Paces the write-path ceiling. Only `run` uses it. See `SpoolCeilingOptions`. */
+  readonly appendCounter?: () => number;
+  readonly trimInterval?: number;
 }
 
 /**
@@ -101,6 +112,28 @@ export interface HookCommandOptions {
 export type HookCommandOutcome =
   | { readonly kind: "hook-response"; readonly response: RenderedResponse }
   | { readonly kind: "envelope"; readonly envelope: Envelope; readonly exitCode: ExitCode };
+
+/**
+ * What `spoolEvent` needs to keep the spool bounded.
+ *
+ * Optional in full: a caller that passes nothing gets exactly the previous
+ * behaviour (append, never trim), which keeps this additive for the
+ * `standup hook run` path whose ceiling the flush already enforces.
+ */
+export interface SpoolCeilingOptions {
+  /**
+   * How many appends this process has made, including the one just made.
+   *
+   * A function rather than a number because the count has to advance per
+   * append, and the entry point that owns the count is the only thing that
+   * can say what it is. See `../cli/spool-file.ts` for the persistent
+   * counter the hook script uses — a per-process count would never reach
+   * the interval, since the hook script is a fresh process per tool call.
+   */
+  readonly appendCounter?: () => number;
+  readonly maxRecords?: number;
+  readonly trimInterval?: number;
+}
 
 /**
  * Spools one event, if it is worth spooling.
@@ -122,6 +155,7 @@ export function spoolEvent(
   raw: string,
   spool: SpoolStore,
   now: number,
+  options?: SpoolCeilingOptions,
 ): SpooledToolCall | undefined {
   const parsed = parseHookPayload(raw);
   if (!parsed.ok) return undefined;
@@ -147,10 +181,52 @@ export function spoolEvent(
 
   try {
     spool.append(serialiseRecord(record));
+    enforceCeiling(spool, options);
   } catch {
     return undefined;
   }
   return record;
+}
+
+/**
+ * Keeps the spool under its ceiling, occasionally.
+ *
+ * This is the write path's half of a ceiling that already existed but could
+ * only ever be reached from the *flush* path (`../hook/flush.ts`). That was
+ * the bug: in a deployment whose hook never flushes, `trimSpool` is real,
+ * tested and unreachable, and the file grows without limit while the code
+ * plainly contains a limit. A ceiling enforced only by the path that may
+ * never run is not a ceiling.
+ *
+ * It runs once every `trimInterval` appends rather than on every one,
+ * because a bare append is the entire performance argument in
+ * `../hook/spool.ts`. The cost is a bounded overshoot, documented on
+ * `DEFAULT_TRIM_INTERVAL`.
+ *
+ * **Every failure is swallowed by the caller's `try`, and that is
+ * deliberate.** Trimming is housekeeping on a measurement; it must never
+ * cost a tool call. Note the ordering: the append happens *before* this, so
+ * a trim that throws loses the trim, never the record it was called to make
+ * room for.
+ */
+function enforceCeiling(spool: SpoolStore, options: SpoolCeilingOptions | undefined): void {
+  const interval = options?.trimInterval ?? DEFAULT_TRIM_INTERVAL;
+  const counter = options?.appendCounter;
+  // With no counter there is nothing to pace against. Trimming on every
+  // append instead would silently put a whole-file read and rewrite on the
+  // critical path of every tool call — the one thing this file's design
+  // forbids — so the honest response to a missing counter is to leave the
+  // ceiling to the flush path.
+  if (counter === undefined) return;
+  if (!shouldTrimOnAppend(counter(), interval)) return;
+
+  const text = spool.read();
+  const { records } = readSpool(text);
+  const trimmed = trimSpool(records, options?.maxRecords ?? DEFAULT_MAX_RECORDS);
+  // Rewriting an unchanged file would be a full write of identical bytes,
+  // and this runs while an agent is waiting.
+  if (trimmed.dropped === 0) return;
+  spool.replace(serialiseSpool(trimmed.records));
 }
 
 /**
@@ -174,7 +250,11 @@ export async function runHookCommand(options: HookCommandOptions): Promise<HookC
       ...(options.hook?.enforcement === undefined ? {} : { enforcement: options.hook.enforcement }),
     });
 
-    spoolEvent(stdin, options.spool, options.now);
+    spoolEvent(stdin, options.spool, options.now, {
+      ...(options.appendCounter === undefined ? {} : { appendCounter: options.appendCounter }),
+      ...(options.maxRecords === undefined ? {} : { maxRecords: options.maxRecords }),
+      ...(options.trimInterval === undefined ? {} : { trimInterval: options.trimInterval }),
+    });
     return { kind: "hook-response", response };
   }
 

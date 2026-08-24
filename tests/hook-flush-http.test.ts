@@ -173,3 +173,46 @@ describe("the request is bounded in time", () => {
     expect(DEFAULT_FLUSH_TIMEOUT_MS).toBeGreaterThan(0);
   });
 });
+
+// ── The bearer token (row 636f640b) ────────────────────────────────────
+//
+// `POST /api/tool-calls` authenticates unconditionally. A flush that sends
+// no token is refused `401`, and `401` is `4xx` — which `isPermanent`
+// classifies as permanent, correctly. So a tokenless flush against an
+// authenticating deployment is the quietest failure available: every batch
+// rejected forever, the spool filling to its ceiling and dropping its
+// oldest records, and nothing anywhere saying why.
+describe("the flush authenticates when the deployment requires it", () => {
+  it("sends the token as a bearer credential", async () => {
+    const { fetch, calls } = stubFetch(201);
+    const send = createHttpFlush({
+      baseUrl: "https://standup.example",
+      fetch,
+      token: "t-secret",
+    });
+
+    await send(BATCH);
+    expect(calls[0]?.init.headers.authorization).toBe("Bearer t-secret");
+  });
+
+  it("sends no authorization header at all when there is no token", async () => {
+    // Absent rather than empty: an `Authorization: Bearer ` with nothing
+    // after it is a *malformed* credential, which a server may refuse
+    // differently from an absent one. A deployment with no tokens
+    // configured is still supported.
+    const { fetch, calls } = stubFetch(201);
+    const send = createHttpFlush({ baseUrl: "https://standup.example", fetch });
+
+    await send(BATCH);
+    expect(calls[0]?.init.headers.authorization).toBe(undefined);
+  });
+
+  it("treats a blank token as no token rather than sending an empty bearer", () => {
+    const { fetch, calls } = stubFetch(201);
+    const send = createHttpFlush({ baseUrl: "https://standup.example", fetch, token: "" });
+
+    return send(BATCH).then(() => {
+      expect(calls[0]?.init.headers.authorization).toBe(undefined);
+    });
+  });
+});
