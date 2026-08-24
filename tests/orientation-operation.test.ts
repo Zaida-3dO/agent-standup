@@ -462,4 +462,156 @@ describeIfDb("orientation against Postgres", () => {
     expect(roles.get("session-multi-orch")).toBe("orchestrator");
     expect(roles.get("session-multi-builder")).toBe("builder");
   });
+
+  describe("truncation is announced, never silent", () => {
+    /**
+     * Reads `orientation` until at least `count` events are visible.
+     *
+     * Same reason as `orientationUntilChanged` above, and the same bound:
+     * `readSinceBounded` holds a row back until the oldest transaction
+     * concurrent with it anywhere on the Postgres SERVER commits, and this
+     * suite shares that server with every other DB file in the run. A
+     * truncation assertion needs a known number of events to be visible, so
+     * waiting for them is the honest way to assert it — polling on the
+     * PRECONDITION, never on the property under test, which is asserted once
+     * below and must hold the first time it is read.
+     */
+    async function orientationWithAtLeast(
+      itemId: string,
+      count: number,
+      input: Record<string, unknown> = {},
+    ): Promise<{ whatChanged: readonly { id: string }[]; whatChangedTruncated: boolean }> {
+      for (let attempt = 0; attempt < 150; attempt++) {
+        const result = (await runtime.call("orientation", {
+          itemId,
+          since: "0",
+          limit: 100,
+          ...input,
+        })) as { whatChanged: readonly { id: string }[]; whatChangedTruncated: boolean };
+        if (result.whatChanged.length >= count) return result;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(
+        `orientation for ${itemId} never showed ${count} events after ~30s — ` +
+          `a genuine bug, not just horizon lag.`,
+      );
+    }
+
+    // The load-bearing property of the whole bounded-reads change, and the
+    // one thing that had no test at all. The failure mode if these flags
+    // regress is not an error — it is `orientation` quietly returning a
+    // partial answer the caller cannot tell is partial, which is exactly
+    // what `response-size.ts` refuses to do and states its reasons for
+    // refusing. A silent truncation is a regression INTO the behaviour this
+    // codebase has explicitly rejected, so it is pinned here.
+
+    it("sets whatChangedTruncated when there are more events than `limit`, and keeps the flag false when there are not", async () => {
+      // Both directions in one test on purpose: a flag hardwired to `true`
+      // passes a truncated-case assertion just as well as a correct one.
+      //
+      // Fails on `>` -> `>=` (the untruncated case would start announcing
+      // truncation), on a hardwired `true` or `false`, and on dropping the
+      // flag from the response.
+      const item = await makeItem({ title: "Truncation subject" });
+      for (let i = 0; i < 4; i++) await appendCheckpoint(item.id, `checkpoint ${i}`);
+
+      // Wait for the events to clear the visibility horizon FIRST, so the
+      // assertions below are about truncation and not about timing.
+      const wholeResult = await orientationWithAtLeast(item.id, 3);
+      expect(wholeResult.whatChangedTruncated).toBe(false);
+      expect(wholeResult.whatChanged.length).toBeGreaterThan(2);
+
+      const truncatedResult = (await runtime.call("orientation", {
+        itemId: item.id,
+        since: "0",
+        limit: 2,
+      })) as { whatChanged: readonly unknown[]; whatChangedTruncated: boolean };
+
+      expect(truncatedResult.whatChangedTruncated).toBe(true);
+      expect(truncatedResult.whatChanged).toHaveLength(2);
+
+      // **The exact-fit boundary, which is where an off-by-one lives.** A
+      // page holding precisely as many events as exist is NOT truncated —
+      // nothing was withheld. Asserting only the loose cases above would let
+      // `>` become `>=`, which announces truncation on a complete response
+      // and teaches callers to distrust a flag that is crying wolf.
+      const exactCount = wholeResult.whatChanged.length;
+      const exactFit = (await runtime.call("orientation", {
+        itemId: item.id,
+        since: "0",
+        limit: exactCount,
+      })) as { whatChanged: readonly unknown[]; whatChangedTruncated: boolean };
+
+      expect(exactFit.whatChanged).toHaveLength(exactCount);
+      expect(exactFit.whatChangedTruncated).toBe(false);
+    });
+
+    it("keeps the NEWEST events when it truncates, not the oldest", async () => {
+      // `slice(-limit)` rather than `slice(0, limit)`. This is the half a
+      // boolean flag cannot express: a caller told "truncated" still has to
+      // be able to trust that what it DID get is the recent end.
+      //
+      // Fails if the slice flips to `slice(0, limit)` — the returned ids
+      // would then be the oldest two rather than the newest two.
+      const item = await makeItem({ title: "Newest-events subject" });
+      for (let i = 0; i < 4; i++) await appendCheckpoint(item.id, `ordered checkpoint ${i}`);
+
+      const all = await orientationWithAtLeast(item.id, 3);
+
+      const bounded = (await runtime.call("orientation", {
+        itemId: item.id,
+        since: "0",
+        limit: 2,
+      })) as { whatChanged: readonly { id: string }[]; whatChangedTruncated: boolean };
+
+      expect(bounded.whatChangedTruncated).toBe(true);
+      const newestTwo = all.whatChanged.slice(-2).map((e) => e.id);
+      expect(bounded.whatChanged.map((e) => e.id)).toEqual(newestTwo);
+    });
+
+    it("sets crewTruncated when more crew are live than `limit`, and false when they fit", async () => {
+      // The crew list is bounded on the DISPLAY copy only — `liveAssignments`
+      // stays unbounded because the claim guards must see every live row.
+      // This pins that the display bound announces itself.
+      //
+      // Fails on `>` -> `>=`, on a hardwired flag, or if the bound is moved
+      // onto `liveAssignments` itself (the guards' correctness aside, the
+      // untruncated assertion below would start failing).
+      const item = await makeItem({ title: "Crew truncation subject" });
+      await claim({
+        itemId: item.id,
+        role: "orchestrator",
+        holderType: "agent",
+        holderId: "crew-trunc-orch",
+        sessionId: "session-trunc-orch",
+        machine: "laptop",
+      });
+      await claim({
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-trunc-builder",
+        sessionId: "session-trunc-builder",
+        parentSessionId: "session-trunc-orch",
+        rootSessionId: "session-trunc-orch",
+        machine: "laptop",
+      });
+
+      const bounded = (await runtime.call("orientation", {
+        itemId: item.id,
+        limit: 1,
+      })) as { crew: readonly unknown[]; crewTruncated: boolean };
+
+      expect(bounded.crewTruncated).toBe(true);
+      expect(bounded.crew).toHaveLength(1);
+
+      const whole = (await runtime.call("orientation", {
+        itemId: item.id,
+        limit: 50,
+      })) as { crew: readonly unknown[]; crewTruncated: boolean };
+
+      expect(whole.crewTruncated).toBe(false);
+      expect(whole.crew).toHaveLength(2);
+    });
+  });
 });

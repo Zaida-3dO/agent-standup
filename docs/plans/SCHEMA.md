@@ -660,7 +660,7 @@ replaced**, because a reader who clicks a dead link stops trusting the links tha
 So a PR is a recorded fact: an artifact of kind `pull_request` whose `ref` is the URL, written by
 whoever opened it — at the one moment the URL is in hand and free to record.
 
-Three properties keep the promise that no dead link is ever emitted:
+Four properties keep the promise that no dead link is ever emitted:
 
 1. **The URL is refused at the write if it is missing or not `http(s)`.** `ref` is a generic column
    shared with screenshots, so a path, a bare PR number or a sentence are realistic values. A
@@ -676,6 +676,24 @@ Three properties keep the promise that no dead link is ever emitted:
    recording `"closed by review"` would read as open. The *read* is deliberately more forgiving
    (unrecognised prose reads as `open`), because rows written before this vocabulary existed cannot
    be refused retrospectively and one legacy row should cost one link, not the whole report.
+4. **A same-millisecond tie resolves to `closed`.** "The newest row" in (2) needs `createdAt` to
+   order two rows, and `createdAt` is `Timestamptz(3)` — millisecond precision — while `Artifact.id`
+   is a random uuid with no sequence behind it. Two artifacts written back-to-back therefore *do*
+   share a timestamp (measured at 75% of back-to-back writes on one machine), and with the uuid as
+   the only tie-break an open/closed pair at one timestamp resolved to the closed row 51% of the
+   time. So the read ranks `closed` above `open` at equal timestamps before falling back to the id.
+
+   **The direction is the point.** The two errors are not symmetric: suppressing a link for a PR
+   that is really open costs one extra click to the branch — the fallback this report renders
+   whenever no PR was recorded at all — whereas emitting a link for a PR that is really closed is
+   precisely the dead link this section promises never to emit. A tie is resolved pessimistically
+   and deterministically rather than by chance.
+
+   The residue this leaves is stated rather than hidden: **two artifacts at the same millisecond
+   with the same status are ordered by a random uuid**, and that remains arbitrary. It is harmless
+   where the rows agree — both say `open`, or both say `closed`, so the report reads the same either
+   way — but a reader relying on artifact ordering for anything finer than this status should not
+   assume the last row is recoverable at millisecond granularity.
 
 `merged` is deliberately not a status. A merged PR's item reaches `merged` on its own, and a link to
 a merged PR is still a live link — so it would be a third value that no reader branches on

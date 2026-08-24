@@ -29,7 +29,12 @@ import { InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
-import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
+import {
+  FINDING_SEVERITIES,
+  InvalidFindingError,
+  findingsShapeRefusal,
+  parseFindings,
+} from "@/lib/findings";
 import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib/pull-requests";
 import { currentReviewRound } from "../guards/merge-review-round";
 import { MERGE_APPROVAL_KIND } from "../guards/merge-approval";
@@ -143,6 +148,35 @@ const inputSchema = z
           /** Optional free-form location — a file, a line, a route. Never parsed. */
           where: z.string().optional(),
         }),
+        {
+          // **Zod refuses this field before `parseFindings` ever runs, so
+          // the worked-shape message has to live here too.** `ServiceRuntime`
+          // calls `input.safeParse` ahead of the handler body, which means an
+          // MCP or HTTP caller who sends a JSON-encoded string — the exact
+          // near-miss `describeReceived` was written to name — used to read
+          // Zod's generic "Expected array, received string" and never see the
+          // sentence telling them to `JSON.parse` it first.
+          //
+          // The message is borrowed from the shared constant rather than
+          // restated, so the two doors cannot drift apart.
+          //
+          // An `errorMap` and NOT `invalid_type_error`, because the latter is
+          // a fixed string and this message has to describe *what arrived* —
+          // "a JSON-encoded string" versus "a number" is the entire value of
+          // it, and a static string could only say one of them. `ctx.data`
+          // carries the real value, so `describeReceived` can name it.
+          //
+          // Scoped to the wrong-type issue on this node alone. An issue
+          // *inside* a well-formed array — a bad `severity`, an empty `text`
+          // — keeps Zod's own text and its precise `findings.0.severity`
+          // path, which is more useful to a caller than this whole-field
+          // sentence would be; only the "the field itself is not an array"
+          // case is rewritten.
+          errorMap: (issue, ctx) =>
+            issue.code === z.ZodIssueCode.invalid_type && issue.expected === "array"
+              ? { message: findingsShapeRefusal(ctx.data) }
+              : { message: ctx.defaultError },
+        },
       )
       .nullable()
       .optional(),

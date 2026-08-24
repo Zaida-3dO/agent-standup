@@ -158,10 +158,43 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // of the payload.
   get_item_detail:
     "`loop_list` for this item's loops, or `get_item` with `full: false` for the slim record",
+  // **Now names `limit`, which is the parameter that actually bounds this
+  // response.** The advice here predated `orientation` gaining a working
+  // `limit`, so it could only redirect a caller to a different call — the
+  // same class of stale advice as the `get_events` line above, which used to
+  // recommend a remedy that did not reach the operation. `whatChanged`,
+  // `crew` and the open loops are all bounded by that one parameter, so a
+  // caller refused for size can lower it and get an answer to the question
+  // they actually asked, with the truncation announced rather than silent.
+  // The other two routes stay, in order of what they recover: the loops are
+  // frequently *why* a long-lived item does not fit, and `get_item` remains
+  // the way to read the item alone.
   orientation:
-    "`loop_list` for this item's loops, or `get_item` for the item itself, rather than its whole context",
-  my_work: "a smaller `limit`",
+    "a smaller `limit`, which bounds the events, crew and loops it returns, or `loop_list` for this item's loops, or `get_item` for the item itself",
+  // **`my_work` has no `limit`, and telling a caller to lower one was the
+  // same stale-advice defect as the `orientation` line above.** Its only
+  // input is `sessionId`; it returns every item this session holds a live
+  // assignment on, deliberately unpaged, because "what am I holding" has no
+  // useful partial answer. So the remedy is not a parameter — it is holding
+  // less. A response this size means the session is holding far more than a
+  // session can be working, which is itself the thing to fix, and `release`
+  // is the call that fixes it.
+  my_work:
+    "`release` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer",
 };
+
+/**
+ * The narrower call advised for `operation`, or `undefined` if it has none.
+ *
+ * Exported so the suite can check the table against the operations it
+ * describes rather than against a copy of itself. The failure mode being
+ * guarded is advice that outlives its operation — a line recommending a
+ * `limit` to a read that has none — which no assertion on a hardcoded
+ * string would catch for an entry added later.
+ */
+export function narrowerCallFor(operation: string): string | undefined {
+  return NARROWER_CALL[operation];
+}
 
 /**
  * The refusal a caller reads.
@@ -180,7 +213,7 @@ export function responseTooLargeMessage(
   size: number,
   surface: CallSurface | undefined,
 ): string {
-  const narrower = NARROWER_CALL[operation];
+  const narrower = narrowerCallFor(operation);
   const remedy =
     narrower === undefined
       ? `Ask for less, or use ${invocationFor("search", surface)} to find one specific item.`
