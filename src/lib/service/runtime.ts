@@ -9,6 +9,7 @@
 // cannot be implemented inside one adapter and missing from another.
 import type { z } from "zod";
 import { toServiceError, InvalidInputError, NotFoundError } from "./errors";
+import { faultContext } from "./fault-context";
 // A read whose response will not fit refuses rather than overflowing the
 // caller it was read in (MILESTONES.md #115).
 import { enforceResponseSize } from "./response-size";
@@ -154,11 +155,19 @@ export class ServiceRuntime {
       // refusals there are — a catch around the transaction alone would
       // leave exactly those two invisible, which is the shape of the hole
       // this row exists to close.
-      if (serviceError.code === "internal") {
+      //
+      // Split on `fault` rather than on `code === "internal"` so the rule
+      // lives in one table (`FAULT_BY_CODE`) instead of being restated at
+      // each site that asks the question. It puts `not_implemented` on
+      // this branch, which is the point: a build answering a call it cannot
+      // serve is not the caller's mistake, and it is the kind of fault an
+      // operator has to see at the default threshold.
+      if (serviceError.fault === "server") {
         log.error("Service call failed unexpectedly.", {
           requestId,
           operation: name,
           ...callerContext(caller),
+          ...faultContext(serviceError),
           err: serviceError,
         });
       } else {
@@ -166,6 +175,7 @@ export class ServiceRuntime {
           requestId,
           operation: name,
           code: serviceError.code,
+          ...faultContext(serviceError),
           ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
         });
       }

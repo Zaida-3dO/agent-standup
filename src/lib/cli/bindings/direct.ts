@@ -11,7 +11,7 @@
 // binding is still an adapter, and "every adapter is a thin shell over a
 // service call" applies to the binding that happens to run in the same
 // process as the service just as much as to the one that does not.
-import { isRehearsalRollback, toServiceError } from "@/lib/service";
+import { faultContext, isRehearsalRollback, toServiceError } from "@/lib/service";
 import { log, newRequestId } from "@/lib/log";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
 
@@ -113,11 +113,12 @@ export function createDirectBinding({ service, sessionId, actor }: DirectBinding
         // `standup ... --json | jq` must not receive a log line, and a
         // shell pipeline is the most likely thing in this whole application
         // to mistake one for a result.
-        if (serviceError.code === "internal") {
+        if (serviceError.fault === "server") {
           log.error("Command failed unexpectedly.", {
             requestId,
             transport: caller.transport,
             operation,
+            ...faultContext(serviceError),
             err: serviceError,
           });
         } else {
@@ -126,6 +127,7 @@ export function createDirectBinding({ service, sessionId, actor }: DirectBinding
             transport: caller.transport,
             operation,
             code: serviceError.code,
+            ...faultContext(serviceError),
             ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
           });
         }

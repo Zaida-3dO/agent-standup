@@ -29,7 +29,7 @@
 // imports no database client; the service caller arrives as a parameter, so
 // this module has no way to construct one even if a handler wanted to.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { listOperations, toServiceError, type AnyOperation } from "@/lib/service";
+import { faultContext, listOperations, toServiceError, type AnyOperation } from "@/lib/service";
 import { exposedOperations } from "@/lib/adapters/waivers";
 import type { AdapterName } from "@/lib/adapters/registry";
 import { log, newRequestId } from "@/lib/log";
@@ -237,11 +237,15 @@ export async function callTool(
     );
   } catch (error) {
     const serviceError = toServiceError(error);
-    if (serviceError.code === "internal") {
+    // Split on `fault`, the same table every other adapter uses, so an
+    // operator filtering one stream on `fault:server` sees MCP failures
+    // beside HTTP ones rather than having to know each adapter's spelling.
+    if (serviceError.fault === "server") {
       log.error("MCP tool call failed unexpectedly.", {
         requestId,
         transport,
         tool: name,
+        ...faultContext(serviceError),
         err: serviceError,
       });
     } else {
@@ -250,6 +254,7 @@ export async function callTool(
         transport,
         tool: name,
         code: serviceError.code,
+        ...faultContext(serviceError),
         ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
       });
     }

@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { newRequestId, REQUEST_ID_KEY } from "@/lib/log";
 import {
+  NotImplementedError,
   ServiceRuntime,
   defineOperation,
   type ServiceContext,
@@ -229,6 +230,11 @@ describe("ServiceRuntime logging", () => {
       expect(failed?.requestId).toBeTypeOf("string");
       // The cause reached the log, which is the entire point of the row.
       expect(JSON.stringify(failed)).toContain("ECONNREFUSED");
+      // And the fault axis names it as the server's, with the coarse
+      // bucket beneath it — the fields that make "is anything broken"
+      // answerable as a query rather than by reading stacks.
+      expect(failed?.fault).toBe("server");
+      expect(failed?.internalKind).toBe("unexpected");
     } finally {
       cleanup();
     }
@@ -243,6 +249,7 @@ describe("ServiceRuntime logging", () => {
       const refused = oneRecord(logs.stderr(), "Service call refused.");
       expect(refused?.level).toBe("debug");
       expect(refused?.code).toBe("not_found");
+      expect(refused?.fault).toBe("caller");
       // And crucially NOT at error.
       expect(oneRecord(logs.stderr(), "Service call failed unexpectedly.")).toBeUndefined();
     } finally {
@@ -260,6 +267,36 @@ describe("ServiceRuntime logging", () => {
     try {
       await expect(runtime.call(op.name, { password: "hunter2-do-not-log-me" })).rejects.toThrow();
       expect(JSON.stringify(logs.stderr())).not.toContain("hunter2-do-not-log-me");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("logs a NOT_IMPLEMENTED at error, not on the caller-refusal branch", async () => {
+    // `not_implemented` is unfixable by the caller — `EXIT_BY_CODE` says
+    // so by putting it on EXIT.FAILURE — so a build answering a call it
+    // cannot serve is an operator's problem. On the `debug` branch it
+    // would be invisible at the default threshold, which is why the fault
+    // axis and not the bare code decides the level.
+    const op = defineOperation({
+      name: "scratch_unimplemented",
+      kind: "read",
+      summary: "Not built yet.",
+      input: z.object({}).passthrough(),
+      async handler() {
+        throw new NotImplementedError("This build does not serve that.");
+      },
+    });
+    const { runtime, cleanup } = testRuntime({ [op.name]: op });
+    try {
+      await expect(runtime.call(op.name, {})).rejects.toThrow();
+      const failed = oneRecord(logs.stderr(), "Service call failed unexpectedly.");
+      expect(failed?.level).toBe("error");
+      expect(failed?.fault).toBe("server");
+      // No sub-bucket: there is no wrapped cause to classify, and an
+      // invented one would claim a database failure that did not happen.
+      expect(failed).not.toHaveProperty("internalKind");
+      expect(oneRecord(logs.stderr(), "Service call refused.")).toBeUndefined();
     } finally {
       cleanup();
     }

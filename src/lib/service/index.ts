@@ -12,14 +12,24 @@ export {
   InvalidInputError,
   NotFoundError,
   NotImplementedError,
+  INTERNAL_KINDS,
   SERVICE_ERROR_CODES,
+  SERVICE_FAULTS,
   ServiceError,
+  classifyCause,
+  faultFor,
   isServiceError,
   toServiceError,
+  type InternalKind,
   type Rejection,
   type ServiceErrorCode,
   type ServiceErrorOptions,
+  type ServiceFault,
 } from "./errors";
+
+// The context every log line about a refusal carries, so the five places
+// that write one cannot drift about what a failure is called.
+export { faultContext } from "./fault-context";
 
 // A read that will not fit refuses rather than overflowing the caller it was
 // read in (MILESTONES.md #115). Exported so an adapter can name the ceiling
