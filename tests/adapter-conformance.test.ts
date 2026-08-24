@@ -42,6 +42,7 @@ import { ADAPTER_NAMES } from "@/lib/adapters";
 import { ADAPTER_WAIVERS, waiversFor } from "@/lib/adapters/waivers";
 import {
   buildDriverMap,
+  cliArgvDriver,
   cliOperations,
   httpOperations,
   listDrivers,
@@ -109,6 +110,17 @@ interface ConformanceCase {
   /** Built per driver, so a case can reference a row seeded for it. */
   readonly input: () => unknown;
   readonly expect: "accepted" | "rejected";
+  /**
+   * The same call, as words a person types.
+   *
+   * Supplied only where the command line's own translation layer is part of
+   * what the case is comparing — a flag that has to become a number, a
+   * positional that has to become a typed JSON scalar. With it, the `cli`
+   * driver runs `runCommand` and `parseArgs`/`buildInput` are inside the
+   * comparison; without it, the case reaches the binding directly, exactly
+   * as before.
+   */
+  readonly argv?: (input: Record<string, unknown>) => readonly string[];
 }
 
 describeIfDb("adapter conformance — every way in agrees", () => {
@@ -180,7 +192,6 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     });
     const directBinding = createDirectBinding({ service: runtime });
     const exposedByHttp = httpOperations();
-    const exposedByCli = cliOperations();
 
     const toOutcome = async (
       binding: typeof httpBinding,
@@ -203,11 +214,18 @@ describeIfDb("adapter conformance — every way in agrees", () => {
           exposes: (operation) => exposedByHttp.has(operation),
           invoke: (operation, input) => toOutcome(httpBinding, operation, input),
         },
-        cli: {
-          name: "cli",
-          exposes: (operation) => exposedByCli.has(operation),
+        // Driven from `argv` wherever the running case supplies one, so
+        // the command line's own input building is inside the comparison
+        // rather than beneath it. `currentArgv` is set by the runner
+        // immediately before each invocation: the driver interface is
+        // deliberately `(operation, input)` for every adapter, so the one
+        // adapter that needs a second spelling of the same case reads it
+        // from here rather than widening the interface for all four.
+        cli: cliArgvDriver({
+          binding: directBinding,
+          argvFor: (input) => currentArgv?.(input),
           invoke: (operation, input) => toOutcome(directBinding, operation, input),
-        },
+        }),
       }),
     );
   }, 60_000);
@@ -241,6 +259,13 @@ describeIfDb("adapter conformance — every way in agrees", () => {
   // A task, for the cases that transition — a project's state derives from
   // its children and cannot be moved directly.
   let seededTaskId = "";
+
+  // The argv spelling of the case under invocation, or `undefined`
+  // for a case that has none. Set by the runner around each driver call
+  // rather than passed through `invoke`, so that all four drivers keep the
+  // identical `(operation, input)` signature — the property that makes the
+  // map typed by `AdapterName` and the completeness assertion possible.
+  let currentArgv: ConformanceCase["argv"];
 
   const cases: readonly ConformanceCase[] = [
     {
@@ -284,6 +309,71 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       name: "list_items refuses a priority outside the enum",
       operation: "list_items",
       input: () => ({ priority: "P9" }),
+      expect: "rejected",
+    },
+    {
+      // **The `--limit` bug, as a case.** `limit` is declared `z.number()`,
+      // and a command-line flag is always a string — so before
+      // `numericFlag` existed the command line sent `"3"`, the schema
+      // refused it as `invalid_input`, and the identical operation was fine
+      // over HTTP, MCP and the service layer. It survived because every
+      // adapter was exercised against `list_items` separately and none was
+      // compared to another on an input carrying a number.
+      //
+      // The `argv` spelling is what makes this case load-bearing: without
+      // it the `cli` driver is handed `{ limit: 3 }` already typed, which
+      // is the one input that cannot reproduce the bug.
+      name: "list_items accepts a numeric limit",
+      operation: "list_items",
+      input: () => ({ limit: 3 }),
+      argv: (input) => ["item", "list", "--limit", String(input.limit)],
+      expect: "accepted",
+    },
+    {
+      // The refusing half of the same flag, so the conversion is pinned in
+      // both directions. A non-numeric `--limit` must be refused by every
+      // adapter — and refused as `invalid_input`, not accepted as a string
+      // and not silently coerced to `0` (`Number("")` is `0`, which is why
+      // `numericFlag` trims and checks for emptiness first).
+      name: "list_items refuses a limit that is not a number",
+      operation: "list_items",
+      input: () => ({ limit: "abc" }),
+      argv: () => ["item", "list", "--limit", "abc"],
+      expect: "rejected",
+    },
+    {
+      // **The `put_setting` boolean bug, as a case.** `model_picker.enabled`
+      // is declared `z.boolean()`. Over HTTP a JSON body carries `true` as
+      // a boolean and it was accepted; the command line had no typing step,
+      // so `standup config set … true` sent the string `"true"` and was
+      // refused. The operation was tested at the CLI layer and at the
+      // service layer and never once across adapters, which is why it
+      // survived five releases.
+      //
+      // `model_picker.enabled` deliberately, not `budget.enabled`: the
+      // latter is declared `sensitive`, so the command line's confirmation
+      // gate refuses it without `--confirm` and the case would compare a
+      // CLI-only safety refusal against three acceptances — a real
+      // divergence, but not this one, and it would mask the bug under test.
+      name: "put_setting accepts a boolean for a boolean setting",
+      operation: "put_setting",
+      input: () => ({ key: "model_picker.enabled", value: true }),
+      argv: (input) => ["config", "set", String(input.key), "true"],
+      expect: "accepted",
+    },
+    {
+      // The refusing half: a string is not a boolean, and every adapter
+      // must say so. This is the case that fails if a future "helpful"
+      // adapter-side coercion starts turning `"yes"` into `true` for its
+      // own callers only.
+      name: "put_setting refuses a string for a boolean setting",
+      operation: "put_setting",
+      input: () => ({ key: "model_picker.enabled", value: "yes" }),
+      // Quoted so `parseSettingValue`'s JSON parse yields the *string*
+      // "yes" rather than falling back to the raw word — the input every
+      // other adapter is sending, which is what makes this a comparison
+      // rather than four adapters being asked different questions.
+      argv: (input) => ["config", "set", String(input.key), '"yes"'],
       expect: "rejected",
     },
     {
@@ -356,7 +446,9 @@ describeIfDb("adapter conformance — every way in agrees", () => {
         // decides whether the waiver is legitimate, and running the case
         // here would report a divergence the waiver already explains.
         if (!driver.exposes(testCase.operation)) continue;
+        currentArgv = testCase.argv;
         const outcome = await driver.invoke(testCase.operation, testCase.input());
+        currentArgv = undefined;
         collected.push({
           driver: driver.name,
           caseName: testCase.name,

@@ -20,6 +20,7 @@
 // Postgres would mean the controls skip in exactly the runs where somebody
 // is moving fast enough to break the harness.
 import { describe, expect, it } from "vitest";
+import { cliArgvDriver } from "@/lib/conformance/drivers";
 import {
   checkAcceptAndReject,
   checkCompleteness,
@@ -266,5 +267,91 @@ describe("assertion 4 — adapter completeness", () => {
     );
     expect(findings).toHaveLength(1);
     expect(findings[0]?.message).toContain("exposes it anyway");
+  });
+});
+
+/**
+ * The command-line driver's argv path — the control that keeps it real.
+ *
+ * **Why this exists, and what it is guarding against specifically.** The
+ * four case-table entries added for the `--limit` and `put_setting` bugs
+ * only fail while a bug is present: against correct source, driving the
+ * command line from `argv` and driving it from an already-typed input
+ * object produce the identical outcome, so a `cliArgvDriver` that quietly
+ * ignored `argv` and always took the binding path would still pass every
+ * one of them. That was confirmed by mutation rather than reasoned about:
+ * a driver whose argv branch is mutated into an unconditional
+ * `options.invoke(...)` leaves the whole conformance suite green.
+ *
+ * So this pins the wiring itself: given a case that supplies `argv`, the
+ * driver must run the real `runCommand` path — the one where `parseArgs`
+ * and `buildInput` live — and must NOT hand the input object to the
+ * binding. Without it the argv path is decoration that only the presence of
+ * a bug distinguishes from nothing.
+ *
+ * No database and no service: the binding is a stub that records what it
+ * was asked, because the claim here is about which code path ran, not about
+ * what the service decided.
+ */
+describe("the command-line driver runs argv through the real command path", () => {
+  /** A binding that records the operation and input it was handed. */
+  function recordingBinding() {
+    const calls: { operation: string; input: unknown }[] = [];
+    return {
+      calls,
+      binding: {
+        name: "direct" as const,
+        async invoke(operation: string, input: unknown) {
+          calls.push({ operation, input });
+          return { ok: true as const, data: {} };
+        },
+      },
+    };
+  }
+
+  it("parses argv and builds the input, rather than passing the case's input through", async () => {
+    const { calls, binding } = recordingBinding();
+    const driver = cliArgvDriver({
+      binding,
+      // `item list --limit 3` — the flag arrives as the string "3" and
+      // `numericFlag` inside `buildInput` is what must turn it into 3.
+      argvFor: () => ["item", "list", "--limit", "3"],
+      invoke: async () => {
+        throw new Error("the binding-level path must not run for a case that supplies argv");
+      },
+    });
+
+    const outcome = await driver.invoke("list_items", { limit: 3 });
+
+    expect(outcome).toEqual({ accepted: true });
+    expect(calls).toHaveLength(1);
+    // The operation name came from the command table's lookup of the words
+    // `item list`, not from the argument passed to `invoke`.
+    expect(calls[0]?.operation).toBe("list_items");
+    // The load-bearing assertion: a **number**, produced by the adapter's
+    // own conversion. A driver that skipped argv would have passed the
+    // case's input object through instead, and a `numericFlag` that
+    // regressed to passing the raw flag through would make this `"3"`.
+    expect((calls[0]?.input as { limit?: unknown }).limit).toBe(3);
+  });
+
+  it("falls back to the binding-level path for a case with no argv spelling", async () => {
+    const { calls, binding } = recordingBinding();
+    let fellBack = false;
+    const driver = cliArgvDriver({
+      binding,
+      argvFor: () => undefined,
+      invoke: async () => {
+        fellBack = true;
+        return { accepted: true as const };
+      },
+    });
+
+    await driver.invoke("get_item", { id: "abc" });
+
+    // The positive control's mirror: a case with no argv must still be run,
+    // not silently dropped, and must not reach `runCommand`.
+    expect(fellBack).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });

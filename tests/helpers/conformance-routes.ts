@@ -61,6 +61,10 @@ async function loadRoutes(): Promise<readonly RouteEntry[]> {
     string,
     unknown
   >;
+  const setting = (await import("@/app/api/settings/[key]/route")) as unknown as Record<
+    string,
+    unknown
+  >;
 
   const built: readonly RouteEntry[] = [
     {
@@ -85,6 +89,18 @@ async function loadRoutes(): Promise<readonly RouteEntry[]> {
       pattern: /^\/api\/items\/([^/]+)\/transition$/,
       handlers: { POST: handlerFrom(transition, "POST", "/api/items/[id]/transition") },
       params: ["id"],
+    },
+    {
+      // The settings routes, for the `put_setting` cases. A setting key
+      // contains dots (`model_picker.enabled`) but never a slash, so the
+      // same `[^/]+` group that captures an item id captures it correctly.
+      pattern: /^\/api\/settings\/([^/]+)$/,
+      handlers: {
+        GET: handlerFrom(setting, "GET", "/api/settings/[key]"),
+        PUT: handlerFrom(setting, "PUT", "/api/settings/[key]"),
+        DELETE: handlerFrom(setting, "DELETE", "/api/settings/[key]"),
+      },
+      params: ["key"],
     },
     {
       pattern: /^\/api\/items\/([^/]+)$/,
