@@ -23,6 +23,26 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
 };
 
 /**
+ * The structured extras a refusal carries, when it has any.
+ *
+ * `toRejection()` is deliberately the *comparable* part of a refusal — what
+ * the adapter conformance suite asserts is identical across adapters — and
+ * `details` is excluded from it by construction. That exclusion is right for
+ * conformance and wrong for the client: a `conflict` that knows the item's
+ * actual current state would render as a 409 that does not say what it is,
+ * leaving the one fact the caller needs in order to retry parseable only out
+ * of prose.
+ *
+ * So `details` is spread alongside the rejection rather than into it: the
+ * comparable shape is untouched, and every existing envelope key keeps its
+ * meaning. `ServiceErrorOptions.details` is documented as never containing
+ * credentials, which is what makes it renderable at all.
+ */
+function detailsOf(error: { readonly details?: Readonly<Record<string, unknown>> }) {
+  return error.details === undefined ? {} : { details: error.details };
+}
+
+/**
  * Renders any thrown value as the JSON error envelope this adapter uses, with
  * the mapped status.
  *
@@ -50,7 +70,10 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
     });
   }
   return withRequestId(
-    NextResponse.json({ error: { message: serviceError.message, ...rejection } }, { status }),
+    NextResponse.json(
+      { error: { message: serviceError.message, ...rejection, ...detailsOf(serviceError) } },
+      { status },
+    ),
     requestId,
   );
 }
