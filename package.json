@@ -69,7 +69,8 @@
     "zod": "^3.24.0"
   },
   "overrides": {
-    "qs": "^6.15.2"
+    "qs": "^6.15.2",
+    "deepmerge-ts": "^8.0.2"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^9.6.1",
