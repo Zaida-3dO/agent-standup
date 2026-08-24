@@ -11,7 +11,7 @@
 // registration so every adapter (HTTP now, MCP and the command line later)
 // reaches the same atomic write through the same door.
 import { z } from "zod";
-import { ConflictError, GuardRejectedError, NotFoundError } from "../errors";
+import { ConflictError, GuardRejectedError, InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import {
@@ -47,7 +47,17 @@ const inputSchema = z
     parentSessionId: z.string().min(1).nullable().optional(),
     /** Omitted = this session is the root of its own crew (SCHEMA.md §2). */
     rootSessionId: z.string().min(1).nullable().optional(),
-    machine: z.string().min(1),
+    /**
+     * The machine this claim runs on.
+     *
+     * Optional since MILESTONES.md #111: a session states its machine once,
+     * at registration, and `Session.machine` holds it — so a claim from a
+     * registered session inherits it rather than restating a constant on
+     * every call. Naming it explicitly still wins, and it stays required in
+     * substance for an *unregistered* session, which has no row to inherit
+     * from: that call is refused by name rather than storing a guess.
+     */
+    machine: z.string().min(1).optional(),
     pid: z.number().int().nullable().optional(),
     branch: z.string().min(1).nullable().optional(),
     worktree: z.string().min(1).nullable().optional(),
@@ -83,6 +93,53 @@ export interface ClaimResult extends Assignment {
    * reclaim would put that discovery arbitrarily far from the act.
    */
   readonly evicted: readonly EvictedClaim[];
+}
+
+/**
+ * The machine to record on a claim: the one the call names, else the one
+ * the session registered with (MILESTONES.md #111).
+ *
+ * ── Why the session row rather than `ctx.caller.machine` ───────────────
+ *
+ * The proved machine would be the stronger source, and `register_session`
+ * now prefers it (`../machine-identity.ts`). It is deliberately *not* used
+ * here, because a claim's machine answers a different question than a
+ * request's does: `Assignment.machine` records where the claimed work is
+ * running, and an orchestrator on one machine may legitimately record a
+ * claim for a subagent it spawned — the transport would prove the
+ * orchestrator's machine and be wrong about the work. The session row is
+ * the right fallback because it is that session's own declaration of where
+ * it runs, which is exactly what the claim is asserting.
+ *
+ * ── Why an unregistered session is refused rather than defaulted ────────
+ *
+ * `Assignment.machine` is a non-null column and there is no honest value
+ * to invent for a session that never said. A placeholder would put a lie in
+ * the fleet view — a claim listed as running somewhere it is not — and the
+ * fleet view exists to answer "where is this work". So the refusal names
+ * both routes out, since either genuinely fixes it.
+ */
+async function resolveClaimMachine(
+  ctx: ServiceContext,
+  input: ClaimOperationInput,
+): Promise<string> {
+  if (input.machine !== undefined) return input.machine;
+
+  const rows = await ctx.db.$queryRawUnsafe<{ machine: string }[]>(
+    `SELECT "machine" FROM "Session" WHERE "id" = $1`,
+    input.sessionId,
+  );
+  const machine = rows[0]?.machine;
+  if (machine === undefined) {
+    throw new InvalidInputError(
+      `This claim omitted \`machine\` and session ${input.sessionId} has not ` +
+        `registered, so there is no declared machine to inherit. Either register the ` +
+        `session (\`register_session\`), which is how a machine is stated once and ` +
+        `reused, or pass \`machine\` on this call.`,
+      { fields: ["machine"] },
+    );
+  }
+  return machine;
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -124,6 +181,13 @@ export const claim = defineOperation({
     // cannot act on the second.
     await assertSessionMayClaim(ctx, input.sessionId);
 
+    // The machine, from the claim or from what the session registered with
+    // (#111). Read after `assertSessionMayClaim` so a claim that is going
+    // to be refused for its registration is told *that*, rather than being
+    // told its machine is unresolvable — which is the same fact stated less
+    // usefully, since registering fixes both.
+    const machine = await resolveClaimMachine(ctx, input);
+
     const claimInput = {
       itemId: input.itemId,
       role: input.role as Role,
@@ -133,7 +197,7 @@ export const claim = defineOperation({
       sessionId: input.sessionId,
       parentSessionId: input.parentSessionId ?? null,
       rootSessionId: input.rootSessionId ?? null,
-      machine: input.machine,
+      machine,
       pid: input.pid ?? null,
       branch: input.branch ?? null,
       worktree: input.worktree ?? null,

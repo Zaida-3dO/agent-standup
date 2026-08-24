@@ -27,7 +27,11 @@
 
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import {
+  TEST_MACHINE,
+  authenticatedRequest,
+  stubAuthEnvironment,
+} from "./helpers/authenticated-requests";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -110,7 +114,12 @@ describeIfDb("POST /api/sessions/{id}/register", () => {
 
       // …and the row that was actually written is the one the path named.
       const attacker = await prisma.session.findUniqueOrThrow({ where: { id: "attacker" } });
-      expect(attacker.machine).toBe("attacker-machine");
+      // Its machine is the one the *token* proved, not the one the body
+      // sent: this request authenticates as `TEST_MACHINE`, so the declared
+      // `attacker-machine` is discarded (`machine-identity.ts`). The
+      // property under test here is the id the row was written under, which
+      // the path decides; the machine is checked in `machine-identity.test.ts`.
+      expect(attacker.machine).toBe(TEST_MACHINE);
 
       const payload = (await response.json()) as { registration: { sessionId: string } };
       expect(payload.registration.sessionId).toBe("attacker");
