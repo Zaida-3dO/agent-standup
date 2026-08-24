@@ -44,6 +44,39 @@
 // row per descendant — the shape `get_projects` explicitly avoids — or
 // lose the depth the counts need.
 //
+// ── Archived descendants, and the line this read draws ──────────────────
+//
+// **Resolvability and counting are separate questions, and this read
+// answers them differently** (MILESTONES.md #137, the same defect #241
+// fixed one level up in `get_projects`).
+//
+// The top-level lookup deliberately carries **no** archive predicate: this
+// is a by-id detail read, and resolving the row you asked for by id is the
+// point. #241 established that hiding archived rows from by-id reads breaks
+// a load-bearing guarantee — a stale link has to land somewhere real — and
+// `get_project_detail` is exempted from the archive sweep in
+// `tests/item-archive.test.ts` on exactly that ground.
+//
+// Its **aggregates** are a different matter. A detail page that resolves an
+// archived project is correct; one that reports twelve children when three
+// of them are archived is not, because the archive is the installation
+// saying those rows should never have existed. So every subtree query below
+// filters archived descendants while the lookup above does not.
+//
+// Four queries carry the predicate, and the two recursive ones carry it on
+// **both arms**: filtering only the seed keeps counting the children of an
+// archived child, and filtering only the recursive arm keeps counting the
+// archived child itself. Either alone leaves a page whose total disagrees
+// with the tree beneath it.
+//
+// The `activity` walk is the one deliberate asymmetry. It is seeded with
+// the project's *own* row (`"id" = $1`, not `"parentId" = $1`), so its seed
+// stays unfiltered for the same reason the lookup does — the events of the
+// project you asked for are part of resolving it, and an archived project's
+// activity feed is frequently the thing that explains the archive. Its
+// recursive arm is filtered, so an archived *descendant's* events stop
+// appearing.
+//
 // ── The repair advice, and why the server owns it ───────────────────────
 //
 // A childless project is structurally stuck: it has no state to transition
@@ -67,6 +100,7 @@ import { NotFoundError } from "../errors";
 import { ITEM_STATES, type ItemStateValue } from "../state-machine/states";
 import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
 import { isHistoricalVerificationEnabled } from "../guards/historical-verification-enabled";
+import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import {
   LIVE_BOARD_ASSIGNMENTS_SQL,
   groupBoardAssignmentsByItem,
@@ -222,6 +256,25 @@ const inputSchema = z
      * see the module header.
      */
     childLimit: z.number().int().min(1).max(500).default(200),
+    /**
+     * Whether to include archived descendants in the children list, the
+     * rollup counts, the blocked list and the activity feed.
+     *
+     * Defaults to `false`, following `get_projects` and `list_areas`: an
+     * archived row is the installation saying it should never have existed,
+     * so it is not a child and it is counted by no rollup number.
+     *
+     * It widens **every** aggregate together rather than one of them,
+     * deliberately — a flag that restored archived children to the list but
+     * not to `total` (or the reverse) would produce a page whose numbers
+     * disagreed with the rows underneath them, which is the same class of
+     * wrong number this predicate exists to remove.
+     *
+     * **It does not affect the top-level lookup, which has no archive
+     * predicate to relax** — an archived project resolves by id at either
+     * setting. See the module header.
+     */
+    includeArchived: z.boolean().default(false),
   })
   .strict();
 
@@ -287,7 +340,7 @@ export const getProjectDetail = defineOperation({
   name: "get_project_detail",
   kind: "read",
   summary:
-    "One project in full: its derived column together with the distribution of its children by state and the single child that caused that reading, its direct children, every blocked descendant at any depth, live crew, recent subtree activity, and whether a childless project can be repaired to a closeable item or only to a transitionable one.",
+    "One project in full: its derived column together with the distribution of its children by state and the single child that caused that reading, its direct children, every blocked descendant at any depth, live crew, recent subtree activity, and whether a childless project can be repaired to a closeable item or only to a transitionable one. Archived descendants are excluded from the children list and from every rollup number — pass includeArchived to audit them. An archived project itself still resolves by id.",
   // Stryker restore all
   input: inputSchema,
   contract: {
@@ -299,6 +352,10 @@ export const getProjectDetail = defineOperation({
       {
         fields: ["activityLimit", "childLimit"],
         rule: "Both bounded. blockedChildren is deliberately NOT bounded by childLimit — a blocked child hidden by paging is the one failure this read exists to prevent.",
+      },
+      {
+        fields: ["includeArchived"],
+        rule: "Defaults to false: an archived descendant is not a child and is counted by no rollup number. Pass it to audit what was archived — it widens the children list, the counts, the blocked list and the activity feed together, so the page's numbers always agree with the rows beneath them. It does not affect whether the project itself resolves: an archived project is returned by id either way.",
       },
     ],
     example: { id: "a-project-id", activityLimit: 30 },
@@ -341,13 +398,24 @@ export const getProjectDetail = defineOperation({
       );
     }
 
+    // Archived descendants are counted by none of the aggregates below —
+    // see the module header. Parameterless by construction, so it can be
+    // appended to any condition without disturbing `$n` numbering.
+    const descendantFilter = input.includeArchived ? "" : ` AND i.${NOT_ARCHIVED_CONDITION}`;
+    // The same predicate for the two statements that alias the item table as
+    // something other than `i` — the direct-child SELECT (`c`) and the
+    // blocked-descendant join (`d`). Separate constants rather than a
+    // string replace, so an alias change is a compile-time edit here rather
+    // than a filter that silently stops matching.
+    const childFilter = input.includeArchived ? "" : ` AND c.${NOT_ARCHIVED_CONDITION}`;
+
     // The subtree rollup — one statement, the same recursive shape
     // `get_projects` walks, narrowed to this root.
     const rollupRows = await ctx.db.$queryRawUnsafe<RawRollupRow[]>(
       `WITH RECURSIVE subtree AS (
-           SELECT i."id" FROM "Item" i WHERE i."parentId" = $1
+           SELECT i."id" FROM "Item" i WHERE i."parentId" = $1${descendantFilter}
            UNION ALL
-           SELECT i."id" FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
+           SELECT i."id" FROM "Item" i JOIN subtree s ON i."parentId" = s."id"${descendantFilter}
          )
          SELECT max(d."updatedAt") AS "lastChildActivity",
            count(d."id")::bigint AS "total",
@@ -389,15 +457,22 @@ export const getProjectDetail = defineOperation({
         childStates: string[] | null;
       }[]
     >(
+      // `kids` carries no archive predicate on purpose. It feeds only
+      // `descendants`, and the outer SELECT's own `childFilter` already
+      // drops an archived direct child from the result — so a predicate here
+      // could not change a single returned row. It was written with one and
+      // removed after the mutant proved it unkillable: a filter that cannot
+      // affect output is not a safety net, it is a line asserting a
+      // guarantee it does not provide.
       `WITH RECURSIVE kids AS (
-           SELECT "id" FROM "Item" WHERE "parentId" = $1
+           SELECT i."id" FROM "Item" i WHERE i."parentId" = $1
          ),
          descendants AS (
            SELECT i."id", i."parentId" AS "rootId", i."state"
-           FROM "Item" i WHERE i."parentId" IN (SELECT "id" FROM kids)
+           FROM "Item" i WHERE i."parentId" IN (SELECT "id" FROM kids)${descendantFilter}
            UNION ALL
            SELECT i."id", d."rootId", i."state"
-           FROM "Item" i JOIN descendants d ON i."parentId" = d."id"
+           FROM "Item" i JOIN descendants d ON i."parentId" = d."id"${descendantFilter}
          )
          SELECT c."id", c."title", c."headline", c."kind"::text AS "kind",
                 c."state"::text AS "state", c."priority"::text AS "priority",
@@ -407,7 +482,7 @@ export const getProjectDetail = defineOperation({
                 array_remove(array_agg(d."state"::text), NULL) AS "childStates"
            FROM "Item" c
            LEFT JOIN descendants d ON d."rootId" = c."id"
-          WHERE c."parentId" = $1
+          WHERE c."parentId" = $1${childFilter}
           GROUP BY c."id", c."title", c."headline", c."kind", c."state", c."priority",
                    c."area", c."repo", c."blockedReason", c."updatedAt", c."createdAt"
           ORDER BY c."createdAt" ASC, c."id" ASC
@@ -418,6 +493,14 @@ export const getProjectDetail = defineOperation({
 
     // Every blocked descendant at any depth — NOT filtered from `children`,
     // and not bounded by `childLimit`. See the module header.
+    //
+    // The `blocked` WHERE below carries no archive predicate of its own, on
+    // purpose: both arms of the `subtree` walk are already filtered, so no
+    // archived row reaches that join to be tested. One was written there and
+    // removed once the mutant proved it unkillable — a filter that cannot
+    // change the output asserts a guarantee it does not provide. The
+    // exclusion is covered by "does not report an archived descendant as a
+    // blocked child", which fails when the seed's filter is dropped.
     const blockedRows = await ctx.db.$queryRawUnsafe<
       {
         id: string;
@@ -430,9 +513,9 @@ export const getProjectDetail = defineOperation({
       }[]
     >(
       `WITH RECURSIVE subtree AS (
-           SELECT "id" FROM "Item" WHERE "parentId" = $1
+           SELECT i."id" FROM "Item" i WHERE i."parentId" = $1${descendantFilter}
            UNION ALL
-           SELECT i."id" FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
+           SELECT i."id" FROM "Item" i JOIN subtree s ON i."parentId" = s."id"${descendantFilter}
          )
          SELECT d."id", d."title", d."state"::text AS "state", d."blockedReason",
                 d."blockedOnType"::text AS "blockedOnType", d."area", d."updatedAt"
@@ -458,10 +541,15 @@ export const getProjectDetail = defineOperation({
         itemTitle: string;
       }[]
     >(
+      // The seed is the project's OWN row (`"id" = $1`), so it carries no
+      // archive predicate — the same by-id resolvability the top-level
+      // lookup preserves, and an archived project's own activity is usually
+      // what explains the archive. Only the recursive arm is filtered, so an
+      // archived descendant's events stop appearing. See the module header.
       `WITH RECURSIVE subtree AS (
            SELECT "id" FROM "Item" WHERE "id" = $1
            UNION ALL
-           SELECT i."id" FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
+           SELECT i."id" FROM "Item" i JOIN subtree s ON i."parentId" = s."id"${descendantFilter}
          )
          SELECT e."id"::text AS "id", e."ts", e."type"::text AS "type",
                 e."actorType"::text AS "actorType", e."actorId", e."body",

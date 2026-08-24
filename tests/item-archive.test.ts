@@ -623,6 +623,363 @@ describeIfDb("delete_item", () => {
       expect(withRoot.projects.map((p) => p.id)).toContain(project.id);
     });
 
+    // ── get_project_detail: the same leak one level down ─────────────────
+    //
+    // This read is in `EXEMPT` below, and correctly so — it resolves one
+    // project **by id**, the same shape and reason as `get_item_detail`. But
+    // the sweep's exemption is about *resolvability*, and these are about
+    // *counting*: a page that resolves an archived project is right, while
+    // one reporting twelve children when three are archived is not.
+    //
+    // Because the sweep skips this operation entirely, none of the
+    // assertions below are covered by it. They are the only thing standing
+    // between these four queries and a silent regression, so each one names
+    // the single predicate whose removal makes it fail — and each targets a
+    // *different* predicate, since a single "detail hides it" assertion
+    // would let three of the four regress unnoticed.
+    //
+    // Fails if the descendant filter is dropped from either arm of the
+    // rollup CTE in get-project-detail.ts.
+    it("does not count an archived descendant in get_project_detail's rollup", async () => {
+      const project = await call<Created>("create_project", base("Detail root", "archive-pd-roll"));
+      const task = await call<Created>("create_task", {
+        ...base("Detail child", "archive-pd-roll"),
+        projectId: project.id,
+      });
+
+      const before = await call<{ total: number; counts: Record<string, number> }>(
+        "get_project_detail",
+        { id: project.id },
+      );
+      expect(before.total).toBe(1);
+
+      await call("delete_item", { id: task.id, reason: GOOD_REASON });
+
+      const after = await call<{
+        total: number;
+        childless: boolean;
+        progress: number | null;
+        derived: { counts: Record<string, number> };
+      }>("get_project_detail", { id: project.id });
+      expect(after.total).toBe(0);
+      // The `count(*) FILTER (...)` columns are a separate mechanism from
+      // `count(d."id")`, so a fix to one and not the other is real and
+      // silent — the same pairing #241 asserts on the grid.
+      expect(Object.values(after.derived.counts).reduce((a, b) => a + b, 0)).toBe(0);
+      // Its only child is archived, so the project is now honestly childless
+      // and `progress` is null rather than a ratio of nothing.
+      expect(after.childless).toBe(true);
+      expect(after.progress).toBeNull();
+    });
+
+    // The grandchild case, which the assertion above cannot see: it is what
+    // separates a predicate on *both* arms from one on the seed only.
+    // Archiving the middle child must remove the grandchild from the count
+    // too, because the recursion should never descend through an archived
+    // row. Fails if the filter is dropped from the recursive arm alone.
+    it("does not count the children of an archived child in get_project_detail", async () => {
+      const project = await call<Created>("create_project", base("Deep root", "archive-pd-deep"));
+      const middle = await call<Created>("create_task", {
+        ...base("Deep middle", "archive-pd-deep"),
+        projectId: project.id,
+      });
+      await call<Created>("create_subtask", {
+        ...base("Deep leaf", "archive-pd-deep"),
+        taskId: middle.id,
+      });
+
+      const before = await call<{ total: number }>("get_project_detail", { id: project.id });
+      expect(before.total).toBe(2);
+
+      await call("delete_item", {
+        id: middle.id,
+        reason: GOOD_REASON,
+        acknowledgeReferences: true,
+      });
+
+      // Both the archived child AND its surviving leaf are gone from the
+      // count: the leaf is only reachable through an archived parent, so a
+      // walk that still descends through it reports 1 here.
+      const after = await call<{ total: number }>("get_project_detail", { id: project.id });
+      expect(after.total).toBe(0);
+    });
+
+    // The recursive arm of the rollup, isolated from its seed.
+    //
+    // The grandchild case above archives the *middle* row, which the seed
+    // predicate alone already stops the walk at — so it does not distinguish
+    // the two arms, and the recursive one could be dropped with every
+    // assertion so far still green (confirmed by running that mutant). Here
+    // the archived row is the **grandchild**, reached through a live child:
+    // the seed never sees it, so only the recursive arm's predicate can
+    // exclude it. Fails if that arm loses the filter.
+    it("does not count an archived grandchild reached through a live child", async () => {
+      const project = await call<Created>("create_project", base("Arm root", "archive-pd-arm"));
+      const child = await call<Created>("create_task", {
+        ...base("Arm child", "archive-pd-arm"),
+        projectId: project.id,
+      });
+      const grandchild = await call<Created>("create_subtask", {
+        ...base("Arm grandchild", "archive-pd-arm"),
+        taskId: child.id,
+      });
+
+      const before = await call<{ total: number }>("get_project_detail", { id: project.id });
+      expect(before.total).toBe(2);
+
+      await call("delete_item", { id: grandchild.id, reason: GOOD_REASON });
+
+      // The live child remains counted; only the archived grandchild goes.
+      const after = await call<{ total: number }>("get_project_detail", { id: project.id });
+      expect(after.total).toBe(1);
+    });
+
+    // The children *list* is a second statement with its own `WHERE`, so it
+    // regresses independently of the rollup above. Fails if `childFilter` is
+    // dropped from the direct-child SELECT in get-project-detail.ts.
+    it("does not list an archived direct child in get_project_detail's children", async () => {
+      const project = await call<Created>("create_project", base("List root", "archive-pd-list"));
+      const keep = await call<Created>("create_task", {
+        ...base("List keeper", "archive-pd-list"),
+        projectId: project.id,
+      });
+      const ghost = await call<Created>("create_task", {
+        ...base("List ghost", "archive-pd-list"),
+        projectId: project.id,
+      });
+      await call("delete_item", { id: ghost.id, reason: GOOD_REASON });
+
+      const detail = await call<{ children: { id: string }[] }>("get_project_detail", {
+        id: project.id,
+      });
+      const ids = detail.children.map((c) => c.id);
+      expect(ids).not.toContain(ghost.id);
+      // The survivor is still listed, so this is a predicate and not a
+      // filter that emptied the list wholesale.
+      expect(ids).toContain(keep.id);
+    });
+
+    // A child's own `total`/`merged` come from the `descendants` CTE, which
+    // is a third mechanism again — the row stays listed while its numbers go
+    // wrong. Fails if the filter is dropped from either arm of that CTE.
+    it("does not inflate a listed child's own subtree count in get_project_detail", async () => {
+      const project = await call<Created>("create_project", base("Nest root", "archive-pd-nest"));
+      const child = await call<Created>("create_task", {
+        ...base("Nest child", "archive-pd-nest"),
+        projectId: project.id,
+      });
+      const grandchild = await call<Created>("create_subtask", {
+        ...base("Nest grandchild", "archive-pd-nest"),
+        taskId: child.id,
+      });
+
+      const before = await call<{ children: { id: string; total: number }[] }>(
+        "get_project_detail",
+        { id: project.id },
+      );
+      expect(before.children.find((c) => c.id === child.id)?.total).toBe(1);
+
+      await call("delete_item", { id: grandchild.id, reason: GOOD_REASON });
+
+      const after = await call<{ children: { id: string; total: number }[] }>(
+        "get_project_detail",
+        { id: project.id },
+      );
+      // The child is still listed — only its rolled-up count changes.
+      expect(after.children.map((c) => c.id)).toContain(child.id);
+      expect(after.children.find((c) => c.id === child.id)?.total).toBe(0);
+    });
+
+    // The recursive arm of the per-child `descendants` CTE, isolated from
+    // its seed for the same reason as the rollup arm above: the test before
+    // this one archives a row the seed already excludes, so the recursive
+    // arm could be dropped and stay green. Here the archived row sits one
+    // level deeper again — a great-grandchild of the project, reached
+    // through a live grandchild — so only the recursive arm can exclude it.
+    // Fails if that arm loses the filter.
+    it("does not inflate a child's subtree count via an archived great-grandchild", async () => {
+      const project = await call<Created>("create_project", base("Deep arm", "archive-pd-deeparm"));
+      const child = await call<Created>("create_task", {
+        ...base("Deep arm child", "archive-pd-deeparm"),
+        projectId: project.id,
+      });
+      const grandchild = await call<Created>("create_subtask", {
+        ...base("Deep arm grandchild", "archive-pd-deeparm"),
+        taskId: child.id,
+      });
+      const greatGrandchild = await call<Created>("create_subtask", {
+        ...base("Deep arm great-grandchild", "archive-pd-deeparm"),
+        taskId: grandchild.id,
+      });
+
+      const before = await call<{ children: { id: string; total: number }[] }>(
+        "get_project_detail",
+        { id: project.id },
+      );
+      expect(before.children.find((c) => c.id === child.id)?.total).toBe(2);
+
+      await call("delete_item", { id: greatGrandchild.id, reason: GOOD_REASON });
+
+      const after = await call<{ children: { id: string; total: number }[] }>(
+        "get_project_detail",
+        { id: project.id },
+      );
+      // The live grandchild is still counted; only the archived row below it
+      // is gone — 1, not 2 and not 0.
+      expect(after.children.find((c) => c.id === child.id)?.total).toBe(1);
+    });
+
+    // The activity feed is a fifth statement, and the only one whose seed is
+    // deliberately left unfiltered — it is seeded with the project's OWN row
+    // (`"id" = $1`), so filtering it would stop an archived project's feed
+    // resolving, which is the by-id guarantee this read keeps. Its recursive
+    // arm is filtered, so a descendant's events drop out. Fails if that arm
+    // loses the filter.
+    it("does not report an archived descendant's events in the activity feed", async () => {
+      const project = await call<Created>("create_project", base("Feed root", "archive-pd-feed"));
+      const task = await call<Created>("create_task", {
+        ...base("Feed child", "archive-pd-feed"),
+        projectId: project.id,
+      });
+      // A note gives the child an event of its own that is unmistakably
+      // attributable — the creation event alone would also work, but this
+      // makes what is being excluded explicit.
+      await call("note", { itemId: task.id, body: "an event on a row about to be archived" });
+
+      const before = await call<{ activity: { itemId: string }[] }>("get_project_detail", {
+        id: project.id,
+        activityLimit: 200,
+      });
+      expect(before.activity.map((a) => a.itemId)).toContain(task.id);
+
+      await call("delete_item", { id: task.id, reason: GOOD_REASON });
+
+      const after = await call<{ activity: { itemId: string }[] }>("get_project_detail", {
+        id: project.id,
+        activityLimit: 200,
+      });
+      expect(after.activity.map((a) => a.itemId)).not.toContain(task.id);
+      // The project's own events are still there — the seed is unfiltered,
+      // so this is a predicate on descendants and not a feed that emptied.
+      expect(after.activity.map((a) => a.itemId)).toContain(project.id);
+    });
+
+    // `blockedChildren` is the question the page is opened to answer, and it
+    // is a fourth statement with its own `WHERE`. An archived blocked row is
+    // the worst one to show: it sends a reader to chase work the
+    // installation has said should not exist. Fails if `blockedFilter` is
+    // dropped from the blocked-descendant query.
+    it("does not report an archived descendant as a blocked child", async () => {
+      const project = await call<Created>("create_project", base("Block root", "archive-pd-block"));
+      const task = await call<Created>("create_task", {
+        ...base("Block child", "archive-pd-block"),
+        projectId: project.id,
+      });
+      await call("transition_item", {
+        id: task.id,
+        to: "blocked",
+        fields: {
+          blocked_reason: "waiting on an upstream decision that never arrived",
+          blocked_on_type: "external_process",
+        },
+      });
+
+      const before = await call<{ blockedChildren: { id: string }[] }>("get_project_detail", {
+        id: project.id,
+      });
+      expect(before.blockedChildren.map((b) => b.id)).toContain(task.id);
+
+      await call("delete_item", { id: task.id, reason: GOOD_REASON });
+
+      const after = await call<{ blockedChildren: { id: string }[] }>("get_project_detail", {
+        id: project.id,
+      });
+      expect(after.blockedChildren.map((b) => b.id)).not.toContain(task.id);
+    });
+
+    // The recursive arm of the blocked walk, isolated from its seed — the
+    // third and last arm needing its own case, for the reason the two above
+    // do: the test before this archives a *direct* child, which the seed
+    // already excludes, so the recursive arm could be dropped and stay
+    // green. Here the archived blocked row is a **grandchild** under a live
+    // child, so only the recursive arm can exclude it. Fails if that arm
+    // loses the filter.
+    it("does not report an archived blocked grandchild under a live child", async () => {
+      const project = await call<Created>(
+        "create_project",
+        base("Deep block", "archive-pd-dblock"),
+      );
+      const child = await call<Created>("create_task", {
+        ...base("Deep block child", "archive-pd-dblock"),
+        projectId: project.id,
+      });
+      const grandchild = await call<Created>("create_subtask", {
+        ...base("Deep block grandchild", "archive-pd-dblock"),
+        taskId: child.id,
+      });
+      await call("transition_item", {
+        id: grandchild.id,
+        to: "blocked",
+        fields: {
+          blocked_reason: "waiting on an upstream decision that never arrived",
+          blocked_on_type: "external_process",
+        },
+      });
+
+      const before = await call<{ blockedChildren: { id: string }[] }>("get_project_detail", {
+        id: project.id,
+      });
+      expect(before.blockedChildren.map((b) => b.id)).toContain(grandchild.id);
+
+      await call("delete_item", { id: grandchild.id, reason: GOOD_REASON });
+
+      const after = await call<{ blockedChildren: { id: string }[] }>("get_project_detail", {
+        id: project.id,
+      });
+      expect(after.blockedChildren.map((b) => b.id)).not.toContain(grandchild.id);
+    });
+
+    // The escape hatch, asserted on the list and the counts together so it
+    // cannot regress into widening one while leaving the other filtered.
+    // Fails if `includeArchived` stops being threaded to the CTEs.
+    it("returns archived descendants from get_project_detail when includeArchived is passed", async () => {
+      const project = await call<Created>("create_project", base("Audit root", "archive-pd-audit"));
+      const task = await call<Created>("create_task", {
+        ...base("Audit child", "archive-pd-audit"),
+        projectId: project.id,
+      });
+      await call("delete_item", { id: task.id, reason: GOOD_REASON });
+
+      const audited = await call<{
+        total: number;
+        childless: boolean;
+        children: { id: string }[];
+      }>("get_project_detail", { id: project.id, includeArchived: true });
+      expect(audited.total).toBe(1);
+      expect(audited.childless).toBe(false);
+      expect(audited.children.map((c) => c.id)).toContain(task.id);
+    });
+
+    // The counterpart to the `get_item` assertion below, and the reason this
+    // read is exempt from the sweep: the aggregates are filtered, but the
+    // project itself must still resolve by id. Fails if a
+    // `NOT_ARCHIVED_CONDITION` is ever added to the top-level lookup in
+    // get-project-detail.ts — the one change this row explicitly must not
+    // make.
+    it("still resolves an archived project by id, which is why it is sweep-exempt", async () => {
+      const project = await call<Created>("create_project", base("Gone root", "archive-pd-byid"));
+      await call("delete_item", {
+        id: project.id,
+        reason: GOOD_REASON,
+        acknowledgeReferences: true,
+      });
+
+      const detail = await call<{ project: { id: string } }>("get_project_detail", {
+        id: project.id,
+      });
+      expect(detail.project.id).toBe(project.id);
+    });
+
     // `get_item` by id is the deliberate exception, and it is asserted
     // rather than left implied: the row is kept so that a stale link still
     // resolves, and a read that refused would defeat the reason for keeping

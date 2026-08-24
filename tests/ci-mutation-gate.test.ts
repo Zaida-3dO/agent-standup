@@ -120,7 +120,7 @@ describe("the block this test reads", () => {
     // Guards the guard: every assertion below is about the contents of
     // GATE, so an empty GATE would make several of them trivially true.
     expect(GATE).not.toBe("");
-    expect(GATE).toContain("Mutation testing (required)");
+    expect(GATE).toContain("Mutation testing gate (required)");
   });
 
   it("scopes to the gate rather than the whole workflow", () => {
@@ -337,5 +337,93 @@ describe("extractStepBlock", () => {
       "        run: echo \"needs.changes.outputs.docker != 'true'\"",
     ].join("\n");
     expect(extractStepBlock(echoOnly, "needs.changes.outputs.docker != 'true'")).toBe("");
+  });
+});
+
+// ── A pass that verified nothing has to say so where it is seen ─────────
+//
+// The gate's conclusion cannot carry this. A workflow job reports `success`
+// or `failure` and nothing else — there is no way to emit the `neutral`
+// conclusion that would mean "did not run", and a `neutral` required check
+// would not satisfy branch protection anyway, so it would block every pull
+// request rather than inform anyone. What is left is the check's NAME and
+// its job summary, and these assert both.
+//
+// Each assertion below names the single edit that would make it fail, per
+// this file's own convention.
+describe("a branch that passes without verifying anything says so in the job summary", () => {
+  /** The gate's passing branches, by the condition that selects each. */
+  const PASSING_BRANCHES = [
+    // No source changed — nothing to mutate.
+    "needs.changes.outputs.source == 'false'",
+    // Switched off repo-wide until pre-GA (issue #166).
+    "github.event_name != 'workflow_dispatch'",
+    // Build & test is red, which is reported by that check instead.
+    "needs.build-and-test.result != 'success'",
+  ] as const;
+
+  // Fails if `>> "$GITHUB_STEP_SUMMARY"` is dropped from any passing branch
+  // — which is precisely the regression that would restore a green tick
+  // carrying no visible statement about what it checked.
+  it.each(PASSING_BRANCHES)("writes a job summary on the branch guarded by %s", (condition) => {
+    const step = extractStepBlock(GATE, condition);
+    expect(step, `no step in the gate is guarded by ${condition}`).not.toBe("");
+    expect(step).toContain("GITHUB_STEP_SUMMARY");
+  });
+
+  /**
+   * Just the `{ ... } >> "$GITHUB_STEP_SUMMARY"` block of a step — the part
+   * that reaches the run page — with the plain `echo` log lines above it
+   * excluded.
+   *
+   * **Scoping this is what makes the next assertion able to fail.** Its
+   * first draft searched the whole step, and these steps also carry a log
+   * line from #244 reading "has verified nothing about the code". That line
+   * satisfied the assertion on its own, so gutting the *summary's* claim to
+   * "This gate completed successfully" left the suite green — confirmed by
+   * running that mutant. The test was checking that the step mentioned the
+   * phrase somewhere, which is not the claim being made.
+   */
+  function summaryBlockOf(step: string): string {
+    const lines = step.split("\n");
+    const open = lines.findIndex((line) => line.trim() === "{");
+    if (open === -1) return "";
+    const close = lines.findIndex(
+      (line, index) => index > open && line.includes('>> "$GITHUB_STEP_SUMMARY"'),
+    );
+    if (close === -1) return "";
+    return lines.slice(open, close + 1).join("\n");
+  }
+
+  // The summary has to state the absence of verification, not merely exist.
+  // Fails if the wording inside the summary block is softened to something
+  // that reads as a pass — that statement is the whole point of the block.
+  it.each(PASSING_BRANCHES)(
+    "states plainly that nothing was verified, on the branch guarded by %s",
+    (condition) => {
+      const summary = summaryBlockOf(extractStepBlock(GATE, condition));
+      expect(
+        summary,
+        `no $GITHUB_STEP_SUMMARY block on the branch guarded by ${condition}`,
+      ).not.toBe("");
+      expect(summary.toLowerCase()).toContain("verified nothing");
+    },
+  );
+
+  // The name is the only part a reader sees without clicking through, and
+  // "Mutation testing (required): pass" asserted that mutants had been
+  // killed. Fails if the job is renamed back to claim it runs the testing.
+  it("is named as a gate rather than as the testing it does not perform", () => {
+    expect(GATE).toContain("name: Mutation testing gate (required)");
+    // The bare old name must not reappear: it is the claim being corrected.
+    expect(GATE).not.toContain("name: Mutation testing (required)");
+  });
+
+  // The failing branches must NOT be softened into summary-only reporting.
+  // Fails if `exit 1` is removed from the unrecognised-skip branch — the
+  // one that refuses to guess why the job did not run.
+  it("still fails, rather than merely reporting, on an unrecognised skip", () => {
+    const step = extractStepBlock(GATE, "needs.build-and-test.result == 'success'");
+    expect(step).toContain("exit 1");
   });
 });

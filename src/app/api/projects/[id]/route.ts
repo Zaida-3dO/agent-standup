@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../../items/respond";
+import { parseBooleanParam } from "../../_shared/query";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
@@ -32,6 +33,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (activityLimit !== null) input.activityLimit = Number(activityLimit);
   const childLimit = url.searchParams.get("childLimit");
   if (childLimit !== null) input.childLimit = Number(childLimit);
+  // Archived descendants are off by default, the same shape as the
+  // collection route's flag and parsed rather than forwarded raw for the
+  // same reason. It does not affect whether an archived project itself
+  // resolves here — that is a by-id read and always does.
+  const includeArchived = url.searchParams.get("includeArchived");
+  if (includeArchived !== null) input.includeArchived = parseBooleanParam(includeArchived);
 
   try {
     const detail = await service.call("get_project_detail", input, { caller });
