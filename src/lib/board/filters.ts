@@ -39,6 +39,18 @@ export const BOARD_FILTER_KINDS = ["project", "task", "subtask"] as const;
 export const BOARD_FILTER_PRIORITIES = ["P0", "P1", "P2", "P3"] as const;
 
 /**
+ * The `trust` vocabulary — whether a row's state can be taken on faith
+ * (MILESTONES.md #131).
+ *
+ * Identical to `get_board`'s own enum, and deliberately so: the address bar
+ * and the API share one vocabulary (see `BOARD_FILTER_PARAMS`), so a value
+ * that reads well in a URL is the same value the operation validates. See
+ * that schema for what each position means and why there are three rather
+ * than a boolean.
+ */
+export const BOARD_FILTER_TRUST = ["trusted", "unverified", "verified"] as const;
+
+/**
  * The deepest level the bar offers as a level of its own. Everything at or
  * below it is offered as one bucket — see `BOARD_LEVEL_CHOICES`.
  */
@@ -127,6 +139,14 @@ export interface BoardFilters {
   readonly level?: BoardLevelFilter;
   /** One project id — the board is scoped to that project's whole subtree. */
   readonly project?: string;
+  /**
+   * Whether a row's state can be taken on faith (MILESTONES.md #131).
+   *
+   * Absent means no trust narrowing — unlike `level`, this has no default,
+   * because a board that silently hid unverifiable rows would be hiding
+   * exactly the rows the marking exists to draw attention to.
+   */
+  readonly trust?: (typeof BOARD_FILTER_TRUST)[number];
   /** Free-text. See `get-board.ts` for what this does and does not do. */
   readonly search?: string;
 }
@@ -156,6 +176,12 @@ export const BOARD_FILTER_PARAMS = [
   "kind",
   "level",
   "project",
+  // Appended AFTER the existing axes rather than inserted among them.
+  // `boardQueryString` emits in this order and a saved view is matched by
+  // string equality, so re-ordering this list would change the address of
+  // every already-saved view and silently stop each one marking itself
+  // current. New axes go on the end.
+  "trust",
   "search",
 ] as const satisfies readonly (keyof BoardFilters)[];
 
@@ -370,6 +396,15 @@ export function parseBoardQuery(input: string | QueryParamSource): BoardQuery {
   const kind = readParam(params, "kind");
   if (kind !== undefined && (BOARD_FILTER_KINDS as readonly string[]).includes(kind)) {
     filters.kind = kind as BoardFilters["kind"];
+  }
+  // Validated against the closed vocabulary here, unlike `state`, because
+  // this list is short, fixed, and already duplicated in the operation's
+  // schema — so a hand-edited `trust=maybe` is dropped and renders an
+  // unfiltered board rather than being forwarded to an API that would
+  // refuse it with a 400 the reader cannot act on.
+  const trust = readParam(params, "trust");
+  if (trust !== undefined && (BOARD_FILTER_TRUST as readonly string[]).includes(trust)) {
+    filters.trust = trust as BoardFilters["trust"];
   }
   // `state` is not validated against the twelve-value vocabulary here. The
   // list lives in the service layer and in `@/lib/design/tokens`, and a

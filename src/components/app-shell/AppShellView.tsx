@@ -177,6 +177,13 @@ export function AppShellView({
             people={people}
             onChoose={choose}
             onClose={closePicker}
+            // T22 — this is the SWITCH picker, opened from the top bar
+            // while a profile is already active, so it is the one place
+            // "which of these am I?" is a live question. The
+            // initial picker above passes nothing, because nothing is
+            // active there and marking a tile would be a claim that is
+            // simply false.
+            activeProfileId={activeProfile.id}
             createOpen={createOpen}
             createDraft={createDraft}
             creating={creating}

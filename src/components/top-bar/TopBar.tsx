@@ -22,6 +22,7 @@
 import Link from "next/link";
 import { Menu, Search } from "lucide-react";
 import type { Profile } from "@/lib/profile/types";
+import { personColour } from "@/lib/design/person-colour";
 import type { Crumb } from "@/lib/nav/breadcrumb";
 import { DensityToggle } from "./DensityToggle";
 import type { Density } from "@/lib/nav/density";
@@ -120,7 +121,11 @@ export function TopBar({
           >
             <span
               className={styles.avatar}
-              style={activeProfile.colour ? { background: activeProfile.colour } : undefined}
+              // T22 — every person has a colour, stored or derived, so a
+              // profile nobody has recoloured still paints as itself rather
+              // than as the default grey. Identity only; the top bar shows
+              // exactly one profile, so nothing here signals selection.
+              style={{ background: personColour(activeProfile) }}
               aria-hidden="true"
             >
               {activeProfile.avatar ?? initialOf(activeProfile.displayName)}

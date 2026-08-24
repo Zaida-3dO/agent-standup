@@ -23,6 +23,7 @@ import { Search, SlidersHorizontal, X } from "lucide-react";
 import {
   BOARD_FILTER_KINDS,
   BOARD_FILTER_PRIORITIES,
+  BOARD_FILTER_TRUST,
   BOARD_LEVEL_CHOICES,
   BOARD_LEVEL_TOP_BUCKET,
   BOARD_SORT_KEYS,
@@ -105,6 +106,27 @@ const SORT_LABELS: Record<BoardSortKey, string> = {
   name: "Name",
   created: "Created",
   updated: "Last updated",
+};
+
+/**
+ * What each trust position is called in the menu.
+ *
+ * **Not `humanise()`d from the stored word**, unlike `state` and `kind`,
+ * because the bare words mislead here. "Unverified" reads as a claim about
+ * the WORK — that nobody has reviewed the task — when the actual claim is
+ * about the ROW: its state was copied in from another system and has never
+ * been checked against reality. The wording says which of those it means,
+ * matching the badge's own tooltip ("Imported from an external store — this
+ * state has never been checked against the live system").
+ *
+ * A `Record` over the vocabulary, so a fourth trust position would be a type
+ * error here until it is given wording, rather than rendering as raw
+ * `undefined` in a menu.
+ */
+const TRUST_LABELS: Record<(typeof BOARD_FILTER_TRUST)[number], string> = {
+  trusted: "Trusted",
+  unverified: "Imported, unchecked",
+  verified: "Imported, checked",
 };
 
 /**
@@ -491,6 +513,23 @@ export function BoardFilterBarView({
             value={query.filters.project}
             options={projects}
             onChange={(value) => onFilterChange("project", value)}
+          />
+        )}
+        {shows("trust") && (
+          <AxisSelect
+            id="board-filter-trust"
+            label="Trust"
+            value={query.filters.trust}
+            // Labelled for what each position MEANS to a reader rather than
+            // with the stored word. "Unverified" alone reads as a property
+            // of the work ("nobody has reviewed this task"), when the claim
+            // is narrower and about the row itself: its state was copied in
+            // and never checked. `TRUST_LABELS` carries the wording; see
+            // there. `AxisSelect` supplies the "Any" entry every other
+            // control on this bar has, so a board narrowed by trust can be
+            // widened from the control that narrowed it.
+            options={BOARD_FILTER_TRUST.map((value) => ({ value, label: TRUST_LABELS[value] }))}
+            onChange={(value) => onFilterChange("trust", value as BoardFilters["trust"])}
           />
         )}
         {shows("level") && (

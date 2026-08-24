@@ -11,6 +11,7 @@ import type { Profile } from "@/lib/profile/types";
 import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 
 const userA: Profile = { id: "user-a", displayName: "User A", avatar: null, colour: null };
+const userB: Profile = { id: "user-b", displayName: "User B", avatar: null, colour: "#00ff00" };
 
 function baseProps(overrides: Partial<AppShellViewProps> = {}): AppShellViewProps {
   return {
@@ -97,6 +98,31 @@ describe("AppShellView", () => {
       .filter((c) => typeof c === "string")
       .join(" ");
     expect(text).toContain("page content");
+  });
+
+  // T22 — the SUPPLY site, not the rendering. `ProfilePicker` decides how a
+  // current tile looks and is covered in
+  // `tests/profile-selection-signal.test.ts`; what is asserted here is that
+  // the shell actually hands it the active id. Without this, deleting the
+  // `activeProfileId={activeProfile.id}` line leaves every picker test green
+  // while no tile is ever marked in the running app — which is exactly the
+  // failure mode the saved-view highlight shipped with.
+  it("tells the switch picker WHICH profile is active", () => {
+    const element = AppShellView(
+      baseProps({ people: [userA, userB], activeProfile: userB, pickerOpen: true }),
+    );
+    const picker = findOneByType(element, ProfilePicker);
+    // `userB`, not `people[0]` — a hard-coded first profile would pass an
+    // assertion that only ever activated userA.
+    expect((picker.props as { activeProfileId?: unknown }).activeProfileId).toBe(userB.id);
+  });
+
+  it("marks nothing on the INITIAL picker, where no profile is active yet", () => {
+    // `activeProfile` is null here, so there is no honest answer to "which
+    // one are you" — passing an id would be a claim that is simply false.
+    const element = AppShellView(baseProps({ people: [userA], activeProfile: null }));
+    const picker = findOneByType(element, ProfilePicker);
+    expect((picker.props as { activeProfileId?: unknown }).activeProfileId ?? null).toBeNull();
   });
 
   it("the top bar's switch action is wired to openPicker", () => {

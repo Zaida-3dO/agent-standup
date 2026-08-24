@@ -19,6 +19,7 @@
 // this repo's test harness runs `environment: "node"` (`vitest.config.ts`).
 import type { Profile } from "./types";
 import { uiApiPath } from "@/lib/ui-proxy/path";
+import { personSwatch } from "@/lib/design/person-colour";
 
 /** Generates a fresh person id. Exported so a test can assert the PATCH targets exactly what this returns, without depending on `crypto.randomUUID()`'s own format. */
 export function generatePersonId(): string {
@@ -39,7 +40,17 @@ export async function createPerson(
   const response = await fetchImpl(uiApiPath(`/api/people/${encodeURIComponent(id)}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ displayName }),
+    // **`colour` is sent, not left to default — T22.** This request used to
+    // carry `displayName` alone, so every profile created through the
+    // picker (the primary flow, and the only one on first run) got
+    // `colour: null` permanently unless someone later happened to open
+    // `/admin/people`. Derived from the id rather than picked by the
+    // reader, following the precedent `area-colour.ts` set for the same
+    // problem: an unbounded, auto-created set gets a deterministic colour
+    // instead of a form field nobody wants to fill in. The reader can still
+    // change it in the admin grid — this only removes "no colour at all" as
+    // a starting state.
+    body: JSON.stringify({ displayName, colour: personSwatch(id) }),
   });
   if (!response.ok) {
     const message = await createErrorMessageFrom(response);

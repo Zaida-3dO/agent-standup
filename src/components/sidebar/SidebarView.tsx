@@ -13,6 +13,7 @@ import { X } from "lucide-react";
 import type { NavCounts } from "@/lib/nav/counts";
 import { SidebarNav } from "./SidebarNav";
 import { SavedViewLinks, type SavedViewLink } from "./SavedViewLinks";
+import { CurrentHrefProbe } from "./CurrentHrefProbe";
 import styles from "./Sidebar.module.css";
 
 export interface SidebarViewProps {
@@ -28,7 +29,16 @@ export interface SidebarViewProps {
    * sidebar exactly as it was rather than a section reading "no views".
    */
   readonly savedViews?: readonly SavedViewLink[];
-  /** The full path AND query being rendered, so a pinned view can mark itself current. */
+  /**
+   * The full path AND query being rendered, so a pinned view can mark
+   * itself current.
+   *
+   * **Optional, and normally NOT passed.** When it is absent the sidebar
+   * reads the address itself, through `CurrentHrefProbe` — see below for
+   * why that is a probe rather than a prop from the shell. Supplying it
+   * explicitly overrides the probe, which is what lets a test drive the
+   * highlight without a router.
+   */
   readonly currentHref?: string | null;
 }
 
@@ -50,7 +60,21 @@ export function SidebarView({
       <aside className={styles.rail} aria-label="Main navigation">
         <div className={styles.brand}>Agent Standup</div>
         <SidebarNav pathname={pathname} counts={counts} />
-        <SavedViewLinks views={savedViews} currentHref={currentHref} />
+        {/* The address is read HERE, at the point of use, rather than
+            handed down from the shell. `AppShell` is rendered by the root
+            layout, so a `useSearchParams()` there would opt every page in
+            the app out of static rendering — it was tried while saved
+            views were being built, broke the build, and was backed out.
+            The probe carries its own suspense boundary, so the cost lands
+            on this one highlight. An explicitly supplied `currentHref`
+            still wins, for tests. */}
+        {currentHref === undefined ? (
+          <CurrentHrefProbe>
+            {(href) => <SavedViewLinks views={savedViews} currentHref={href} />}
+          </CurrentHrefProbe>
+        ) : (
+          <SavedViewLinks views={savedViews} currentHref={currentHref} />
+        )}
       </aside>
 
       {sheetOpen && (
@@ -80,11 +104,20 @@ export function SidebarView({
                 it just navigated to, so leaving it open would hide the
                 result of the reader's own action. */}
             <SidebarNav pathname={pathname} counts={counts} onNavigate={onCloseSheet} />
-            <SavedViewLinks
-              views={savedViews}
-              currentHref={currentHref}
-              onNavigate={onCloseSheet}
-            />
+            {/* Same probe as the rail — see its comment there. */}
+            {currentHref === undefined ? (
+              <CurrentHrefProbe>
+                {(href) => (
+                  <SavedViewLinks views={savedViews} currentHref={href} onNavigate={onCloseSheet} />
+                )}
+              </CurrentHrefProbe>
+            ) : (
+              <SavedViewLinks
+                views={savedViews}
+                currentHref={currentHref}
+                onNavigate={onCloseSheet}
+              />
+            )}
           </div>
         </div>
       )}

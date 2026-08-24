@@ -6,6 +6,7 @@
 // test, without a DOM.
 import { describe, expect, it } from "vitest";
 import { ProfilePicker, type ProfilePickerProps } from "@/components/profile-picker/ProfilePicker";
+import { personColour } from "@/lib/design/person-colour";
 import type { Profile } from "@/lib/profile/types";
 import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 
@@ -77,10 +78,19 @@ describe("ProfilePicker — choosing an existing profile", () => {
     expect((tile.props as { style?: { borderColor?: string } }).style?.borderColor).toBe("#00ff00");
   });
 
-  it("leaves the tile's style undefined when the profile has no colour", () => {
+  // **Deliberately inverted by T22.** This used to assert that a profile
+  // with no colour got no `style` at all — i.e. that it fell through to the
+  // stylesheet's grey. That was the defect: a colourless tile beside a
+  // coloured one reads as unselected, so the ACTIVE profile could render
+  // grey while an inactive one glowed. Every profile now has an identity
+  // colour, derived from its id when none is stored, and selection is
+  // carried on its own channel (`tests/profile-selection-signal.test.ts`).
+  it("gives a colourless profile a derived border colour, rather than none at all", () => {
     const element = ProfilePicker(baseProps({ people: [userA] }));
     const tile = findAllByType(element, "button")[0]!;
-    expect((tile.props as { style?: unknown }).style).toBeUndefined();
+    expect((tile.props as { style?: { borderColor?: string } }).style?.borderColor).toBe(
+      personColour(userA),
+    );
   });
 
   it("renders NO close button when onClose is not provided — the initial, uncancellable picker", () => {
