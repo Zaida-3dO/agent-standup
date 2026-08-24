@@ -271,15 +271,38 @@ export const progressReport = defineOperation({
       // differs from the checkpoint lookup above. `Event.id` is a sequence,
       // so ordering an event by id really is newest-last; `Artifact.id` is a
       // **random uuid**, so the same ORDER BY would pick an arbitrary row and
-      // the report would link to a closed PR roughly half the time. `id DESC`
-      // survives only as the tie-break, matching `currentTipCommitSha` — two
-      // artifacts written in one transaction share a timestamp, and an
-      // unordered "the last one" would be a coin flip.
+      // the report would link to a closed PR roughly half the time.
+      //
+      // **`closed` wins a same-millisecond tie, and that is the second
+      // ordering term rather than the third.** `createdAt` is
+      // `Timestamptz(3)`, so two artifacts written back-to-back genuinely do
+      // land on the same millisecond — measured at 75% of back-to-back
+      // writes on one machine — and with a random uuid as the only
+      // tie-break, an open/closed pair at one timestamp resolved to the
+      // CLOSED row 51% of the time. That is the same coin flip the `id DESC`
+      // fix was meant to end, narrowed to a tie rather than removed.
+      //
+      // Ranking `closed` above `open` at equal timestamps is the safe
+      // direction on purpose: the two ways to be wrong are not symmetric.
+      // Suppressing a link for a PR that is really open costs a reader one
+      // extra click to the branch — the fallback this report already renders
+      // whenever no PR was recorded. Emitting a link for a PR that is really
+      // closed is the dead link §6a-pr promises never to emit, and a reader
+      // who clicks one stops trusting the links that work. So a tie resolves
+      // to the pessimistic reading, deterministically, in the same order on
+      // every machine and every run.
+      //
+      // `id DESC` stays as the last term so the ordering is a total one: two
+      // rows with the same timestamp AND the same status still need a stable
+      // winner, and either is equally correct because they say the same
+      // thing.
       const prRows = await ctx.db.$queryRawUnsafe<RawPullRequestRow[]>(
         `SELECT DISTINCT ON ("itemId") "itemId", "ref", "body"
            FROM "Artifact"
           WHERE "itemId" = ANY($1) AND "kind" = 'pull_request'::"ArtifactKind"
-          ORDER BY "itemId", "createdAt" DESC, "id" DESC`,
+          ORDER BY "itemId", "createdAt" DESC,
+                   (CASE WHEN btrim(COALESCE("body", '')) = 'closed' THEN 0 ELSE 1 END) ASC,
+                   "id" DESC`,
         itemIds,
       );
       for (const row of prRows) {

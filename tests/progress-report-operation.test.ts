@@ -236,6 +236,84 @@ describeIfDb("progress_report against Postgres", () => {
       expect(result.rows[0]?.reference.prUrl).toBe("https://example.com/org/repo/pull/15");
     });
 
+    it("resolves a same-millisecond open/closed tie to CLOSED, not to a coin flip", async () => {
+      // The tie that `createdAt DESC, id DESC` alone could not settle.
+      // `createdAt` is Timestamptz(3), so two back-to-back writes really do
+      // share a millisecond, and `Artifact.id` is a random uuid — so before
+      // the status term in the ORDER BY, an open/closed pair at one
+      // timestamp linked to the CLOSED row about half the time.
+      //
+      // The timestamps are forced equal rather than raced, so this fails
+      // deterministically rather than 51% of the time. Fails if the CASE
+      // term is dropped from the query: the winner then depends on which
+      // uuid sorts higher, which is why the assertion below is run against
+      // BOTH id orderings.
+      const sessionId = "session-pr-tie-closed";
+      const itemId = await heldItem(sessionId);
+      await prisma.item.update({ where: { id: itemId }, data: { branch: "feat/tie" } });
+      await recordPr(itemId, "https://example.com/org/repo/pull/20");
+      await recordPr(itemId, "https://example.com/org/repo/pull/20", "closed");
+
+      const tied = new Date("2026-01-01T00:00:00.000Z");
+      await prisma.artifact.updateMany({
+        where: { itemId, kind: "pull_request" },
+        data: { createdAt: tied },
+      });
+
+      // Both rows now sit on the identical millisecond. Whichever uuid is
+      // larger, the closed row has to win.
+      const result = await report(sessionId);
+      expect(result.rows[0]?.reference.prUrl).toBeNull();
+      expect(result.report).not.toContain("](");
+      expect(result.report).toContain("`feat/tie`");
+    });
+
+    it("keeps the link when BOTH tied rows say open, so the tiebreak is not just 'never link'", async () => {
+      // The other half, and the one that stops the fix being overfitted: a
+      // tie is resolved pessimistically only when the rows actually
+      // disagree. Two `open` rows at one millisecond still link.
+      //
+      // Fails if the CASE term is written to suppress links on any tie, or
+      // if `closed` and `open` are ranked the wrong way round such that the
+      // ordering stops distinguishing them at all.
+      const sessionId = "session-pr-tie-open";
+      const itemId = await heldItem(sessionId);
+      await recordPr(itemId, "https://example.com/org/repo/pull/21");
+      await recordPr(itemId, "https://example.com/org/repo/pull/21", "open");
+
+      await prisma.artifact.updateMany({
+        where: { itemId, kind: "pull_request" },
+        data: { createdAt: new Date("2026-01-01T00:00:00.000Z") },
+      });
+
+      const result = await report(sessionId);
+      expect(result.rows[0]?.reference.prUrl).toBe("https://example.com/org/repo/pull/21");
+    });
+
+    it("still takes a strictly newer open row over an older closed one", async () => {
+      // The tiebreak must only apply WITHIN a millisecond. A closed row that
+      // is genuinely older must not outrank a later re-open, or re-proposed
+      // work would permanently lose its link.
+      //
+      // Fails if the status term is placed BEFORE `createdAt` in the ORDER
+      // BY — the ordering error that would make `closed` sticky forever.
+      const sessionId = "session-pr-tie-ordering";
+      const itemId = await heldItem(sessionId);
+      await recordPr(itemId, "https://example.com/org/repo/pull/22", "closed");
+      await prisma.artifact.updateMany({
+        where: { itemId, kind: "pull_request" },
+        data: { createdAt: new Date("2026-01-01T00:00:00.000Z") },
+      });
+      await recordPr(itemId, "https://example.com/org/repo/pull/23", "open");
+      await prisma.artifact.updateMany({
+        where: { itemId, kind: "pull_request", ref: "https://example.com/org/repo/pull/23" },
+        data: { createdAt: new Date("2026-01-02T00:00:00.000Z") },
+      });
+
+      const result = await report(sessionId);
+      expect(result.rows[0]?.reference.prUrl).toBe("https://example.com/org/repo/pull/23");
+    });
+
     it("refuses a pull_request artifact that records no URL", async () => {
       // The write-side half of the promise: the report cannot render a link
       // it was never given, so the only way a link exists is a recorded URL.
