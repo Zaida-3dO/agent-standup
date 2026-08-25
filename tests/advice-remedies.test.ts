@@ -130,6 +130,59 @@ describe("the check fails on a reintroduced instance", () => {
     expect(defects[0]).toMatchObject({ kind: "operation", named: "merge_item" });
   });
 
+  // The recall widening. The verb-of-invocation rule missed a tool named as
+  // a *route* rather than as an imperative, and the corpus really uses that
+  // construction — `progress_report` says "the way to raise one is
+  // `loop_add`". Both halves are pinned: that a dead tool in this shape is
+  // now caught, and that the live operations in the same sentence are not
+  // flagged, because the whole value of this class is that it is right when
+  // it fires.
+  it("catches a dead tool named as a route, with no verb of invocation", () => {
+    const defects = findAdviceDefects([
+      {
+        operation: "progress_report",
+        source: "reintroduced",
+        text: "the way to clear one is `loop_resolve`",
+      },
+    ]);
+    expect(defects).toHaveLength(1);
+    expect(defects[0]).toMatchObject({ kind: "operation", named: "loop_resolve" });
+  });
+
+  it("spares the live operations the same route phrasing names", () => {
+    // Verbatim from `progress_report`'s own rule. Both names are
+    // registered, so the widened pattern must match them and report
+    // nothing — this is the control that fails if the widening ever starts
+    // deciding on name shape instead of on the registry.
+    const defects = findAdviceDefects([
+      {
+        operation: "progress_report",
+        source: "reintroduced",
+        text:
+          "They are not authored — they are the item's OPEN LOOPS, so the way to raise one " +
+          "is `loop_add` and the way to clear one is `loop_close`.",
+      },
+    ]);
+    expect(defects).toEqual([]);
+  });
+
+  it("reads each route in a two-route sentence, not just the last", () => {
+    // The bounded gap in the route pattern, pinned. `[a-z ]+` between "the
+    // way to" and "is" cannot cross a backtick, so both halves of
+    // `progress_report`'s real sentence are read independently. A greedy
+    // `.+` there consumes the first route whole and leaves only the second
+    // — which silently halves the class's recall on exactly the sentence
+    // it was added for, and reports one defect where there are two.
+    const defects = findAdviceDefects([
+      {
+        operation: "progress_report",
+        source: "reintroduced",
+        text: "the way to raise one is `loop_raise` and the way to clear one is `loop_resolve`",
+      },
+    ]);
+    expect(defects.map((defect) => defect.named).sort()).toEqual(["loop_raise", "loop_resolve"]);
+  });
+
   it("catches a contract rule about a field its operation does not have", () => {
     // The structured check, exercised through the same shape a real rule
     // has. `findRuleFieldDefects` reads the live registry, so this proves
@@ -212,6 +265,44 @@ describe("the check does not fire on advice that is correct", () => {
           operation: "record_artifact",
           source: "live",
           text: "a `code_review` at `lgtm_with_nits` still blocks on a `pull_request`",
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("spares the three correct names no registry lookup can vouch for", () => {
+    // **The control against the obvious widening**, and the reason the
+    // tool-name class still keys on an invocation phrase rather than on
+    // "snake_case token the registry does not know".
+    //
+    // That widening was measured against the live corpus and reports these
+    // three, all false, all verbatim from real advice:
+    //
+    //   - `item_id` is real but lives at `summary.not_done[].item_id` —
+    //     two levels below the input, past the documented one-level walk.
+    //   - `commit_sha` is a free-form key inside `complete_item`'s open
+    //     `fields` bag, so no schema can vouch for it, by construction.
+    //   - `open_loops` names a section of the progress report, not a field.
+    //
+    // If a future change starts deciding this class on name shape, this
+    // test goes red rather than the corpus quietly acquiring three false
+    // reports.
+    expect(
+      findAdviceDefects([
+        {
+          operation: "complete_item",
+          source: "live",
+          text: "every reason except `descoped` requires an `item_id` naming a real item",
+        },
+        {
+          operation: "complete_item",
+          source: "live",
+          text: "`fields` carries extras other guards on this transition need (a `commit_sha`, for instance)",
+        },
+        {
+          operation: "progress_report",
+          source: "live",
+          text: "anything either cap withholds is counted at the foot of the report and listed in full by `open_loops`",
         },
       ]),
     ).toEqual([]);
