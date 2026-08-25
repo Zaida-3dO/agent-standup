@@ -53,12 +53,15 @@ import {
 } from "@/lib/board/filter-options";
 import { fetchSavedViews } from "@/lib/board/saved-views-client";
 import type { SavedViews } from "@/lib/board/saved-views";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { BoardView } from "./BoardView";
 import { BoardFilterBar } from "./BoardFilterBar";
+import { DragLayer } from "./DragLayer";
 
 export function Board() {
   const { activeProfile } = useProfile();
   const router = useRouter();
+  const reducedMotion = useReducedMotion();
   const searchParams = useSearchParams();
 
   // **The URL is the filter state, not a mirror of it** (#75). There is no
@@ -256,6 +259,20 @@ export function Board() {
         ? { status: "loading" }
         : { status: "loaded", board: drag.board };
 
+  // The four callbacks the two transports share. Named here rather than
+  // written inline twice so the pointer drag and the native drag cannot
+  // drift into calling different things — they are literally the same
+  // functions, folded into the same reducer in `@/lib/board/drag-state`.
+  const onCardDragStart = useCallback(
+    (itemId: string) => applyDrag((current) => dragStarted(current, itemId)),
+    [applyDrag],
+  );
+  const onCardDragEnd = useCallback(() => applyDrag((current) => dragEnded(current)), [applyDrag]);
+  const onDragEnter = useCallback(
+    (column: BoardColumnId) => applyDrag((current) => draggedOver(current, column)),
+    [applyDrag],
+  );
+
   return (
     <>
       <BoardFilterBar
@@ -264,42 +281,55 @@ export function Board() {
         views={savedViews}
         onViewsChange={setSavedViews}
       />
-      <BoardView
-        loadState={loadState}
-        personId={activeProfile?.id ?? null}
-        now={now}
-        // The two props that make a filtered-to-nothing column say so. They
-        // have existed on `BoardView` and `BoardColumn` since #123 built the
-        // shared states, with nothing passing them — this is the caller they
-        // were waiting for, and `emptinessOf` already decides when the
-        // `filtered` kind applies. No new state component was written.
-        filtered={filtered}
-        onClearFilter={() =>
-          router.replace(boardHref(withoutFilters(boardQuery)), { scroll: false })
-        }
-        onRetry={() => {
-          // Both writes together: the board shows its loading state from this
-          // press, and the nonce re-runs the load effect.
-          setStatus("loading");
-          setErrorMessage("");
-          setReloadNonce((n) => n + 1);
-        }}
-        paging={{
-          onShowMore,
-          loadingColumns,
-          errors: pageErrors,
-        }}
-        drag={{
-          onCardDragStart: (itemId) => applyDrag((current) => dragStarted(current, itemId)),
-          onCardDragEnd: () => applyDrag((current) => dragEnded(current)),
-          onDragEnter: (column) => applyDrag((current) => draggedOver(current, column)),
-          onDrop,
-          overColumn: drag.overColumn,
-          pendingItemId: drag.pendingItemId,
-          refusal: drag.refusal,
-          onDismissRefusal: () => applyDrag((current) => refusalDismissed(current)),
-        }}
-      />
+      {/* The pointer/keyboard transport wraps the board (T6-A, T6-B). It
+          renders its children unchanged and adds the overlay that follows
+          the cursor — the native HTML5 drag underneath is untouched. */}
+      <DragLayer
+        board={drag.board}
+        onDragStart={onCardDragStart}
+        onDragOver={onDragEnter}
+        onDragCancel={onCardDragEnd}
+        onDrop={onDrop}
+        reducedMotion={reducedMotion}
+      >
+        <BoardView
+          pointerDrag
+          loadState={loadState}
+          personId={activeProfile?.id ?? null}
+          now={now}
+          // The two props that make a filtered-to-nothing column say so. They
+          // have existed on `BoardView` and `BoardColumn` since #123 built the
+          // shared states, with nothing passing them — this is the caller they
+          // were waiting for, and `emptinessOf` already decides when the
+          // `filtered` kind applies. No new state component was written.
+          filtered={filtered}
+          onClearFilter={() =>
+            router.replace(boardHref(withoutFilters(boardQuery)), { scroll: false })
+          }
+          onRetry={() => {
+            // Both writes together: the board shows its loading state from this
+            // press, and the nonce re-runs the load effect.
+            setStatus("loading");
+            setErrorMessage("");
+            setReloadNonce((n) => n + 1);
+          }}
+          paging={{
+            onShowMore,
+            loadingColumns,
+            errors: pageErrors,
+          }}
+          drag={{
+            onCardDragStart,
+            onCardDragEnd,
+            onDragEnter,
+            onDrop,
+            overColumn: drag.overColumn,
+            pendingItemId: drag.pendingItemId,
+            refusal: drag.refusal,
+            onDismissRefusal: () => applyDrag((current) => refusalDismissed(current)),
+          }}
+        />
+      </DragLayer>
     </>
   );
 }

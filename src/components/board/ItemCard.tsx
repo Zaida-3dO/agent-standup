@@ -35,6 +35,35 @@ export interface ItemCardProps {
   readonly onDragEnd?: () => void;
   /** True while this card's move is in flight — see `Board.module.css`'s `.cardPending`. */
   readonly pending?: boolean;
+  /**
+   * The pointer/keyboard drag handle (T6-A), supplied by `DraggableCard`.
+   *
+   * **Absent by default, and everything below still works without it** —
+   * which is the point. This card is hook-free so a test can call it as a
+   * plain function, so the drag library's hook is called in the wrapper and
+   * hands its output down as this one plain prop. `undefined` here is the
+   * board as it was: native HTML5 drag only.
+   */
+  readonly dragHandle?: DragHandle;
+}
+
+/**
+ * What `useDraggable` produces, described in plain React terms.
+ *
+ * Deliberately NOT imported from `dnd-kit` — this component knows only that
+ * something gave it a ref, some attributes and some listeners. Keeping the
+ * type structural is what lets the card be constructed in a test with a
+ * hand-written object, and what would let the library be swapped without
+ * touching this file.
+ */
+export interface DragHandle {
+  readonly ref: (element: HTMLElement | null) => void;
+  /** Pointer and keyboard event handlers, spread onto the card. */
+  readonly listeners: Record<string, unknown>;
+  /** ARIA and tabindex values that make the card a keyboard-reachable drag source. */
+  readonly attributes: Record<string, unknown>;
+  /** True while this card is the one in hand. */
+  readonly isDragging: boolean;
 }
 
 /**
@@ -48,7 +77,15 @@ function waitingReason(entry: BoardEntry): string | null {
   return null;
 }
 
-export function ItemCard({ entry, needsYou, now, onDragStart, onDragEnd, pending }: ItemCardProps) {
+export function ItemCard({
+  entry,
+  needsYou,
+  now,
+  onDragStart,
+  onDragEnd,
+  pending,
+  dragHandle,
+}: ItemCardProps) {
   const tone = waitingTone(entry);
   const reason = waitingReason(entry);
   const toneClass = tone === "amber" ? styles.toneAmber : tone === "red" ? styles.toneRed : "";
@@ -64,15 +101,29 @@ export function ItemCard({ entry, needsYou, now, onDragStart, onDragEnd, pending
   const distinctHeadline = hasDistinctHeadline(entry.item);
   const unverified = entry.trust?.unverifiedOrigin === true;
 
+  // True while THIS card is the one in hand during a pointer or keyboard
+  // drag. The card left behind in the column is dimmed to a ghost, because
+  // the thing following the cursor is now the card — two solid copies of the
+  // same card on screen would leave it ambiguous which one is real.
+  const dragging = dragHandle?.isDragging === true;
+
   return (
     <li
-      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""} ${unverified ? styles.cardUnverified : ""}`
+      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""} ${unverified ? styles.cardUnverified : ""} ${dragging ? styles.cardDragging : ""}`
         .replace(/\s+/g, " ")
         .trim()}
       data-tone={tone ?? undefined}
       data-draggable={draggable}
       data-pending={pending ? true : undefined}
       data-unverified={unverified ? true : undefined}
+      data-dragging={dragging ? true : undefined}
+      // The pointer/keyboard handle, when one was supplied. Spread BEFORE
+      // the native attributes below so that `draggable` and the native
+      // handlers always win: the two transports coexist, and the existing
+      // native contract is the one every current test asserts on.
+      ref={dragHandle?.ref}
+      {...(dragHandle?.attributes ?? {})}
+      {...(dragHandle?.listeners ?? {})}
       draggable={draggable}
       onDragStart={
         draggable
