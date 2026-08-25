@@ -549,6 +549,144 @@ describeIfDb("runs and cost — the ingest's rollup against Postgres", () => {
       expect(result.unpricedModels).toContain("vendor-unconfigured");
     });
 
+    // ── T19's three additional groupings ────────────────────────────────
+
+    it("groups a subtask's spend under its root project, not its parent", async () => {
+      // The case that decides whether `project` means anything. Grouping by
+      // `parentId` would pass a two-level tree and file this subtask's cost
+      // under the *task*, so the tree here is deliberately three deep: the
+      // only key that is correct is the root, and `parentId` would return
+      // the middle row instead.
+      counter += 1;
+      const projectId = `proj-${counter}`;
+      const taskId = `task-${counter}`;
+      await prisma.item.create({
+        data: {
+          id: projectId,
+          kind: "project",
+          title: "p",
+          body: "b",
+          state: "executing",
+          originType: "auto",
+          area: "test-area",
+          mergeAuthority: "needs_approval",
+          depth: 0,
+        },
+      });
+      await prisma.item.create({
+        data: {
+          id: taskId,
+          kind: "task",
+          title: "t",
+          body: "b",
+          state: "executing",
+          originType: "auto",
+          area: "test-area",
+          mergeAuthority: "needs_approval",
+          parentId: projectId,
+          depth: 1,
+        },
+      });
+      const subtaskId = await seedItem();
+      await prisma.item.update({
+        where: { id: subtaskId },
+        data: { parentId: taskId, depth: 2, kind: "subtask" },
+      });
+
+      const sessionId = `session-proj-${counter}`;
+      await claim(subtaskId, sessionId);
+      await record(sessionId, [call({ model: "vendor-cheap", inputTokens: 1_000_000 })]);
+
+      const result = (await runtime.call("get_costs", {
+        groupBy: "project",
+      })) as GetCostsOutput;
+      const mine = result.groups.find((g) => g.key === projectId);
+      expect(mine).toBeDefined();
+      expect(mine!.cost).toBeCloseTo(1, 6);
+      // The intermediate task must NOT be a key — if it is, the walk stopped
+      // at the parent instead of continuing to the root.
+      expect(result.groups.map((g) => g.key)).not.toContain(taskId);
+    });
+
+    it("groups a project's own runs under itself", async () => {
+      // A root's `rootId` is its own id, so work booked directly against a
+      // project belongs to that project rather than to `null`. Without the
+      // seed row in the recursive walk this key would come back null.
+      counter += 1;
+      const projectId = `proj-solo-${counter}`;
+      await prisma.item.create({
+        data: {
+          id: projectId,
+          kind: "project",
+          title: "p",
+          body: "b",
+          state: "executing",
+          originType: "auto",
+          area: "test-area",
+          mergeAuthority: "needs_approval",
+          depth: 0,
+        },
+      });
+      const sessionId = `session-solo-${counter}`;
+      await claim(projectId, sessionId);
+      await record(sessionId, [call({ model: "vendor-dear", inputTokens: 1_000_000 })]);
+
+      const result = (await runtime.call("get_costs", {
+        groupBy: "project",
+      })) as GetCostsOutput;
+      const mine = result.groups.find((g) => g.key === projectId);
+      expect(mine?.cost).toBeCloseTo(10, 6);
+    });
+
+    it("buckets spend by UTC day, splitting runs that fall either side of midnight", async () => {
+      // Two runs deliberately straddling a UTC midnight. A truncation in the
+      // server's local zone would put both in one bucket whenever that zone
+      // is not UTC, and would still pass a same-day assertion — so the two
+      // instants are 40 minutes apart across the boundary rather than hours.
+      const { sessionId, itemId } = await heldSession();
+      await record(sessionId, [
+        call({
+          model: "vendor-cheap",
+          inputTokens: 1_000_000,
+          ts: "2026-03-01T23:40:00.000Z",
+        }),
+      ]);
+      await prisma.item.update({ where: { id: itemId }, data: { state: "in_review" } });
+      await record(sessionId, [
+        call({
+          model: "vendor-cheap",
+          inputTokens: 3_000_000,
+          ts: "2026-03-02T00:20:00.000Z",
+        }),
+      ]);
+
+      const result = (await runtime.call("get_costs", {
+        groupBy: "day",
+        itemId,
+      })) as GetCostsOutput;
+      const byDay = Object.fromEntries(result.groups.map((g) => [g.key, g.cost]));
+      expect(byDay["2026-03-01"]).toBeCloseTo(1, 6);
+      expect(byDay["2026-03-02"]).toBeCloseTo(3, 6);
+    });
+
+    it("groups spend by the model that served it", async () => {
+      // Two models on one item, so the item grouping cannot distinguish them
+      // and only the model grouping can. The rates differ by 10x, so a total
+      // attributed to the wrong model is visible in the figure, not just the
+      // key.
+      const { sessionId, itemId } = await heldSession();
+      await record(sessionId, [call({ model: "vendor-cheap", inputTokens: 1_000_000 })]);
+      await record(sessionId, [call({ model: "vendor-dear", inputTokens: 1_000_000 })]);
+
+      const result = (await runtime.call("get_costs", {
+        groupBy: "model",
+        itemId,
+      })) as GetCostsOutput;
+      const byModel = Object.fromEntries(result.groups.map((g) => [g.key, g.cost]));
+      expect(byModel["vendor-cheap"]).toBeCloseTo(1, 6);
+      expect(byModel["vendor-dear"]).toBeCloseTo(10, 6);
+    });
+
     it("bounds a time window on startedAt", async () => {
       const { sessionId, itemId } = await heldSession();
       await record(sessionId, [call({ model: "vendor-cheap" })]);
