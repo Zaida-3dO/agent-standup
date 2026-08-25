@@ -27,11 +27,42 @@ import type { TransactionHandle } from "@/lib/service/context";
 import { InvalidInputError } from "@/lib/service/errors";
 import { defaultSnapshot } from "@/lib/settings";
 
-/** A transaction handle that fails loudly if the operation ever queries it. */
+/**
+ * Recognises the displacement lookup — the one read a `PreToolUse` makes
+ * whatever it is running.
+ *
+ * Matched on the `superseded` liveness filter rather than on the table name,
+ * because several of this operation's reads are against `Assignment` and
+ * only this one is unconditional. Matching the table would silently excuse
+ * the claim read as well, which is the exact query the cost cases below
+ * exist to forbid.
+ */
+function isDisplacementLookup(query: string): boolean {
+  return query.includes(`FROM "Assignment"`) && query.includes(`'superseded'`);
+}
+
+/**
+ * A transaction handle that fails loudly if the operation queries it for
+ * anything **other than** whether the calling session has been displaced.
+ *
+ * That one read is answered — with no rows, the ordinary case — rather than
+ * forbidden, because it is not part of the property these cases protect.
+ * The property is that a call which could not be the subject of any finding
+ * assembles no context: no claim read, no artifact read, no settings read.
+ * Displacement is a fact about the *session* and is deliberately not gated
+ * on the command, so folding it into the same prohibition would be asserting
+ * that a feature which exists does not.
+ *
+ * It is answered narrowly for the same reason `callWithSettings` refuses to
+ * be a permissive stub: a handle that answered everything would let a
+ * genuine regression in context assembly pass silently, and that regression
+ * is invisible in behaviour and shows up only as load.
+ */
 function untouchableHandle(): TransactionHandle {
   return {
-    $queryRawUnsafe: async () => {
-      throw new Error("hook_decision must not touch the database");
+    $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+      if (isDisplacementLookup(query)) return [] as T;
+      throw new Error(`hook_decision must not touch the database: ${query}`);
     },
     $executeRawUnsafe: async () => {
       throw new Error("hook_decision must not touch the database");
@@ -74,6 +105,9 @@ async function callWithSettings(
   const handle: TransactionHandle = {
     $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
       if (query.includes(`FROM "settings"`)) return rows as T;
+      // The unconditional session read, answered for the reason given on
+      // `untouchableHandle`: it is not what these cases are about.
+      if (isDisplacementLookup(query)) return [] as T;
       throw new Error(`hook_decision must not touch the database: ${query}`);
     },
     $executeRawUnsafe: async () => {
@@ -103,6 +137,12 @@ function worldHandle(world: {
   commits?: { commitSha: string }[];
   /** Approving `code_review` artifacts, by the commit they approve. */
   approvals?: { commitSha: string | null; round: number }[];
+  /**
+   * A superseded assignment for the calling session, when the world is one
+   * where its claim was taken. Absent in almost every case, which is the
+   * ordinary session.
+   */
+  displaced?: { itemId: string; supersededBy: string | null; releasedAt: Date | null };
 }): TransactionHandle {
   const commits = world.commits ?? [];
   const approvals = world.approvals ?? [];
@@ -112,6 +152,15 @@ function worldHandle(world: {
 
   return {
     $queryRawUnsafe: async <T = unknown>(query: string, ...values: unknown[]): Promise<T> => {
+      // Checked before the claim read, which is also against `Assignment`.
+      // A world describes a session that holds a claim, not one that has
+      // been displaced, so this answers empty unless the world says
+      // otherwise — and answering it here is what keeps the claim branch
+      // from returning a claim row to a query that asked a different
+      // question.
+      if (isDisplacementLookup(query)) {
+        return (world.displaced === undefined ? [] : [world.displaced]) as T;
+      }
       if (query.includes(`FROM "Assignment"`)) {
         return (world.claim === undefined ? [] : [world.claim]) as T;
       }
