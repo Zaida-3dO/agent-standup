@@ -254,6 +254,21 @@ export interface EvictionJudgement {
   readonly unseenForSeconds: number | null;
   /** Which signal was most recent. Reported so a refusal can say what it read. */
   readonly lastSeenSignal: "heartbeat" | "tool_call" | null;
+  /**
+   * The holder declared a hook version and then emitted no signal at all
+   * since claiming — a registration that misreports what the session can do.
+   *
+   * **This is a description of the holder, not a decision about it.** It is
+   * never an input to the verdict: such a holder is `evictable` on the
+   * ordinary evidence, and treating the discrepancy as a reason to protect
+   * it would make declaring a hook you do not run strictly better than
+   * declaring nothing, which is an incentive to misreport.
+   *
+   * `false` on every other path, including a signal-less holder that is
+   * exempt (`never_signalled`) — that one declared nothing, so there is no
+   * discrepancy between what it said and what it did.
+   */
+  readonly declaredHookNeverSignalled: boolean;
 }
 
 export interface EvictionInputs {
@@ -303,7 +318,12 @@ export function judgeEviction(input: EvictionInputs): EvictionJudgement {
   // Reported without consulting the clock at all, because no amount of
   // elapsed time could change the answer.
   if (input.releasedAt !== null || input.liveness === "superseded") {
-    return { verdict: "already_released", unseenForSeconds: null, lastSeenSignal: null };
+    return {
+      verdict: "already_released",
+      unseenForSeconds: null,
+      lastSeenSignal: null,
+      declaredHookNeverSignalled: false,
+    };
   }
 
   // The most recent of the two signals. `lastActive` is always present (it
@@ -326,7 +346,17 @@ export function judgeEviction(input: EvictionInputs): EvictionJudgement {
   // database on insert, so requiring both means no single bad timestamp can
   // manufacture an eviction on a claim that was made moments ago.
   if (unseenForSeconds < input.evictAfterSeconds || claimAgeSeconds < input.evictAfterSeconds) {
-    return { verdict: "recently_seen", unseenForSeconds, lastSeenSignal };
+    // Deliberately `false` even for a declared-but-silent holder inside the
+    // threshold. The discrepancy is only a fact once enough time has passed
+    // that a hook would certainly have flushed; before that, silence from a
+    // freshly-claimed session is ordinary and reporting it would cry wolf on
+    // every claim made in the last four hours.
+    return {
+      verdict: "recently_seen",
+      unseenForSeconds,
+      lastSeenSignal,
+      declaredHookNeverSignalled: false,
+    };
   }
 
   // Condition 4 — the holder must be a session that *would* have been seen
@@ -354,10 +384,35 @@ export function judgeEviction(input: EvictionInputs): EvictionJudgement {
     lastSeenMs <= input.claimedAt.getTime() && input.lastToolCallAt === null;
 
   if (hasNeverSignalled && input.holderHookVersion === null) {
-    return { verdict: "never_signalled", unseenForSeconds, lastSeenSignal: null };
+    return {
+      verdict: "never_signalled",
+      unseenForSeconds,
+      lastSeenSignal: null,
+      declaredHookNeverSignalled: false,
+    };
   }
 
-  return { verdict: "evictable", unseenForSeconds, lastSeenSignal };
+  // The same silence, from a session whose registration said it had a hook.
+  // This does NOT change the verdict — such a holder is evicted, exactly as
+  // before — but it is a materially different eviction and the difference is
+  // reported rather than left for a reader to re-derive from timestamps.
+  //
+  // The two are not the same event. An ordinary eviction says a session that
+  // was demonstrably being seen stopped being seen, which is evidence it
+  // died. This one says a session declared a mechanism for being seen and
+  // then never used it once — so the eviction rests on a signal whose
+  // absence was never explained, and the registration is the thing that is
+  // wrong. On this deployment that is a reachable configuration rather than
+  // a fanciful one: the hook is provisioned per-machine, it fails open, and
+  // a session on an unprovisioned machine declares a version it will never
+  // honour. Nothing else reports that discrepancy, so the eviction is the
+  // one moment the server is certain of it and it is stated here.
+  return {
+    verdict: "evictable",
+    unseenForSeconds,
+    lastSeenSignal,
+    declaredHookNeverSignalled: hasNeverSignalled,
+  };
 }
 
 /** One holder's row, plus the independent signal, as the eviction pass reads it. */
@@ -519,7 +574,17 @@ export async function evictStaleHolders(
         `most recent signal ${judgement.lastSeenSignal ?? "none"}), so the claim by session ` +
         `${args.bySessionId} reclaimed it. If that session is in fact still running, it is NOT ` +
         `stopped — nothing refuses its tool calls — and two sessions may now believe they own ` +
-        `this item.`,
+        `this item.` +
+        (judgement.declaredHookNeverSignalled
+          ? ` NOTE: that session registered hook version ${row.holderHookVersion} but has ` +
+            `emitted no signal at all since claiming — no heartbeat, and no tool call ever. ` +
+            `A hook reports every tool call, so a registration naming one and then producing ` +
+            `nothing is a session whose hook is not actually running (commonly an ` +
+            `unprovisioned machine: the hook fails open, so nothing else reports this). Its ` +
+            `silence was therefore never evidence about whether it was alive, and this ` +
+            `eviction may have taken the claim from a working session. Treat the registration ` +
+            `as the defect.`
+          : ""),
     });
 
     evicted.push({

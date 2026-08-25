@@ -138,6 +138,61 @@ describeIfDb("my_work against Postgres", () => {
     expect(result.hooked).toBe(true);
   });
 
+  // ── The declaration, checked against whether anything bore it out ─────
+  //
+  // `hooked` reports what the session said. On a deployment where the hook
+  // is provisioned per machine and fails open, a session can say it has one
+  // and never run it — so `hooked: true` alone cannot be read as "something
+  // was watching", which is the very thing `hooked` exists to let a reader
+  // decide.
+
+  it("reports a session that declared a hook and has never sent a tool call as silent", async () => {
+    // The misreporting shape: a registration naming a version, and no
+    // telemetry from it anywhere. `hooked` stays `true` — the declaration
+    // is a real fact and this does not overwrite it — while the new field
+    // says nothing corroborates it. Hardcoding `declaredHookSilent: false`
+    // fails this.
+    await registerSessions(prisma, ["session-declared-silent"]);
+
+    const result = (await runtime.call("my_work", { sessionId: "session-declared-silent" })) as {
+      hooked: boolean;
+      declaredHookSilent: boolean;
+    };
+    expect(result.hooked).toBe(true);
+    expect(result.declaredHookSilent).toBe(true);
+  });
+
+  it("stops reporting a declared session as silent once one tool call arrives", async () => {
+    // The controlled comparison, and what stops the field being a constant
+    // `true` for every registered session. One `ToolCall` row is proof the
+    // hook runs; the correlation is on `sessionId` alone, so it counts
+    // whether or not the session holds a claim. Dropping the `EXISTS`
+    // subquery, or ignoring its result, passes the test above and fails
+    // this one.
+    await registerSessions(prisma, ["session-declared-and-flushed"]);
+    await prisma.toolCall.create({
+      data: { sessionId: "session-declared-and-flushed", tool: "Read", paths: [] },
+    });
+
+    const result = (await runtime.call("my_work", {
+      sessionId: "session-declared-and-flushed",
+    })) as { hooked: boolean; declaredHookSilent: boolean };
+    expect(result.hooked).toBe(true);
+    expect(result.declaredHookSilent).toBe(false);
+  });
+
+  it("does not report an unregistered session as silent — it declared nothing", async () => {
+    // A session with no declaration has nothing to contradict, so flagging
+    // it would blame it for being honest about having no hook. Dropping the
+    // `hooked &&` guard makes this `true` and fails.
+    const result = (await runtime.call("my_work", { sessionId: "session-never-registered" })) as {
+      hooked: boolean;
+      declaredHookSilent: boolean;
+    };
+    expect(result.hooked).toBe(false);
+    expect(result.declaredHookSilent).toBe(false);
+  });
+
   it("answers whether the session is hooked even when it holds nothing", async () => {
     // The case a join onto the assignments would have lost. A session
     // holding no work still has a hook or still does not, and that is

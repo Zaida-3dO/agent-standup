@@ -83,6 +83,33 @@ export interface MyWorkOutput {
    * way of being wrong about the same question.
    */
   readonly hooked: boolean;
+  /**
+   * `true` when this session declared a hook version and this installation
+   * has never received a single tool call from it.
+   *
+   * **`hooked` answers what the session said; this answers whether anything
+   * bore it out.** They are different questions and only look like one
+   * question while every registration is honest. A session that declares a
+   * hook it does not run reports `hooked: true` — the declaration is real —
+   * and a reader taking that as "something was watching" is trusting the
+   * same thing `hooked` exists to stop them trusting, one level up.
+   *
+   * That configuration is reachable rather than theoretical here: the hook
+   * is provisioned per machine, and it **fails open**, so a session on a
+   * machine without it declares a version, emits nothing, and nothing
+   * anywhere reports the discrepancy. This is that report.
+   *
+   * **It is evidence of a misreporting registration, not of an idle
+   * session**, and the distinction is what keeps it from crying wolf: a
+   * hooked session reports its tool calls, and a session calling `my_work`
+   * has by definition made at least one call — so for a genuinely hooked
+   * session this is `false` as soon as its first flush lands. It stays
+   * `true` only while the hook is silent for a session that promised one.
+   *
+   * Necessarily `false` when `hooked` is `false`: a session that declared
+   * nothing has made no claim to contradict.
+   */
+  readonly declaredHookSilent: boolean;
 }
 
 interface RawSessionAssignmentRow extends RawItemRow {
@@ -168,8 +195,20 @@ export const myWork = defineOperation({
     // precisely the case a join would lose. A session holding nothing still
     // has a hook, or still does not, and that is worth knowing about the
     // session a reviewer is looking at, held work or not.
-    const sessionRows = await ctx.db.$queryRawUnsafe<{ hookVersion: number | null }[]>(
-      `SELECT "hookVersion" FROM "Session" WHERE "id" = $1`,
+    // `EXISTS` rather than a count or a MAX: the question is only whether
+    // this installation has ever heard from this session's hook, and an
+    // existence test lets Postgres stop at the first row instead of walking
+    // a busy session's whole telemetry history to compute a number nothing
+    // reads. Correlated on `sessionId` alone — deliberately not scoped to
+    // the claim or to a time window, because a hook reports every tool call
+    // whether or not the session holds anything, so ANY row is proof the
+    // hook runs, and that is exactly the claim being checked.
+    const sessionRows = await ctx.db.$queryRawUnsafe<
+      { hookVersion: number | null; hasToolCall: boolean }[]
+    >(
+      `SELECT s."hookVersion",
+              EXISTS (SELECT 1 FROM "ToolCall" t WHERE t."sessionId" = s."id") AS "hasToolCall"
+         FROM "Session" s WHERE s."id" = $1`,
       input.sessionId,
     );
 
@@ -178,6 +217,12 @@ export const myWork = defineOperation({
     // alone so an absent row and a present-but-null column take the same
     // path instead of one being `undefined` and the other `null`.
     const hooked = (sessionRows[0]?.hookVersion ?? null) !== null;
+
+    // Only meaningful for a session that declared something. An absent row
+    // yields `hooked: false` above and must yield `false` here too — there
+    // is no declaration for the missing telemetry to contradict — so the
+    // `hooked &&` is load-bearing rather than defensive.
+    const declaredHookSilent = hooked && sessionRows[0]?.hasToolCall !== true;
 
     const items: MyWorkEntry[] = rows.map((row) => ({
       item: toItemRecord(row),
@@ -193,6 +238,6 @@ export const myWork = defineOperation({
       },
     }));
 
-    return { sessionId: input.sessionId, items, hooked };
+    return { sessionId: input.sessionId, items, hooked, declaredHookSilent };
   },
 });
