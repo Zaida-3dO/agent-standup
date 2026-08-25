@@ -29,7 +29,7 @@
 // read only the context handed to them, they return a verdict, and they
 // emit nothing.
 
-import { isBroadProcessKill, isMergeAttempt } from "./commands";
+import { isBroadProcessKill, isMergeAttempt, isWorkRecordingCommand } from "./commands";
 import type { Intervention, InterventionContext, InterventionVerdict } from "./types";
 
 /**
@@ -73,7 +73,7 @@ const broadGitAddOnSharedCheckout: Intervention = {
       "⚠️ Do not proceed until you have read this. This `git add` stages every modified file in a " +
       "checkout that other sessions are working in right now — their uncommitted work would be " +
       "committed under your name and attributed to your change. Stage your own files explicitly " +
-      "by path.",
+      "by path. If the broad add is genuinely what you want, say why: the reason is recorded.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
@@ -370,6 +370,164 @@ const checkoutHeldByAnotherCrew: Intervention = {
 };
 
 /**
+ * **I13** — work is being recorded against no item at all.
+ *
+ * The entry with the most expensive incident behind it, in the owner's own
+ * account of a five-crew night: *"PR2+3 was never minted as a task. I
+ * dispatched that crew — the most valuable PR of the five — without a task
+ * existing. Nobody caught it because the follow-up task had a similar
+ * name."* Five parallel crews were being tracked in a person's head rather
+ * than against the board, so the board drifted from reality **without
+ * anything failing loudly** — which is the failure this whole product
+ * exists to remove.
+ *
+ * ── Half the catalogue entry, deliberately ─────────────────────────────
+ *
+ * The catalogue asks for two signals. This builds one of them.
+ *
+ * The half **not** built is the near-match: an artifact recorded against an
+ * item whose title merely resembles the one the caller meant. That needs a
+ * similarity threshold nobody has chosen, and every available choice is
+ * wrong in a way that matters — too loose refuses correct calls on a board
+ * where "Build the X" and "Review the X" are ordinary neighbouring titles,
+ * and too tight never fires. A guessed threshold on a `block` would refuse
+ * real work, so it stays unbuilt with its reason recorded rather than
+ * shipping as a number picked to look reasonable.
+ *
+ * The half built here needs no threshold at all: either the session holds a
+ * claim or it does not, and that is a row rather than a judgement.
+ *
+ * ── Why a nudge and not a block ────────────────────────────────────────
+ *
+ * The catalogue asks for `nudge (prominent)`, and that is right for a
+ * reason worth stating: **an unminted commit is not a wrong commit.** The
+ * work is usually good — in the incident it was the most valuable PR of the
+ * five — and refusing it would delete nothing but the record of it. What is
+ * missing is the board row, and the remedy is to create one, which is a
+ * thing the caller does *alongside* the commit rather than instead of it.
+ * A block would also fire on every operator commit in every repository this
+ * server watches, which is the "fires and annoys" failure that earns an
+ * entry a 1.
+ *
+ * ── Why `holdsClaim === false` and never `itemId === undefined` ────────
+ *
+ * They look interchangeable and are not. `itemId` is absent both when the
+ * session holds nothing *and* when the assembler never looked, because
+ * assembly is gated on the call's shape. Keying on it would fire on every
+ * call the gate declined to look up — most calls in the system. The
+ * dedicated field is written only by a lookup that ran.
+ */
+const workRecordedAgainstNoItem: Intervention = {
+  id: "work-recorded-against-no-item",
+  source: "builtin",
+  summary: "A commit or push from a session that holds no item, so the work is on no board row.",
+  phase: "pre",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "You are recording work while holding no item, so nothing on the board knows this exists. " +
+      "Create a task for it with `create_task` and claim that, or say plainly that this commit " +
+      "is not task work.",
+    prominent:
+      "⚠️ This commit is being made by a session that holds no item — the board has no row for " +
+      "this work, so it exists only in this session. That is how a valuable change goes missing: " +
+      "nothing is tracking it and nothing will notice it stalled. Mint it now with `create_task` " +
+      "and `claim` the result, or state plainly that this is not task work.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!isWorkRecordingCommand(context.command)) return { triggered: false };
+    // Strictly `false`. `undefined` means the lookup did not run, and
+    // nudging a session about a claim nobody asked about would fire on
+    // every call the assembly gate declined — the failure that teaches a
+    // session to ignore the guard.
+    if (context.holdsClaim !== false) return { triggered: false };
+    return { triggered: true, data: { command: context.command } };
+  },
+};
+
+/**
+ * **I14** — an orchestrator that has quietly become the builder.
+ *
+ * Requested by the owner as *"you are doing work you should probably be
+ * delegating to a subagent"*. The drift is the finding, not any single
+ * call: an orchestrator reads and edits its way through a change the crew
+ * it should have spawned never gets spawned for.
+ *
+ * ── It supersedes a pattern-matching hook, and that is the argument ────
+ *
+ * The catalogue records that this overlaps `fm-always-delegate-nudge` in
+ * the installation it came from **and supersedes it**. That hook matches
+ * write-shaped commands against a path allowlist — the approach #125
+ * retired — and it fires on a single call, which is wrong in both
+ * directions: one edit is often exactly the right call, and the research
+ * reads before a dispatch are the job rather than a lapse. What a path
+ * allowlist structurally cannot see is the thing that actually decides the
+ * question: whether this session holds its item **as an orchestrator**.
+ * That is a column, and it is why this entry belongs server-side.
+ *
+ * ── Cumulative, and why the threshold is not a guess ───────────────────
+ *
+ * The signal is a count of hands-on calls over a recent window, which is
+ * `../telemetry/shape.ts`'s existing reading rather than a second one
+ * invented here — the same `isWriteTool` classification, the same window,
+ * the same `unknown` answer on too small a sample. Reusing it matters for a
+ * reason beyond tidiness: a threshold this entry chose for itself would
+ * drift from the one `get_session_shape` reports, and a session told it is
+ * "elevated" by one reading and normal by another has been given noise.
+ *
+ * **`unknown` is not `elevated`.** A session a few calls old has not
+ * established anything, and firing there would nudge every orchestrator on
+ * its opening moves — the failure that teaches a reader to skip the digest.
+ *
+ * ── A digest nudge, addressed to the orchestrator ──────────────────────
+ *
+ * `digest` rather than `immediate` because nothing here is urgent to the
+ * second and the drift is by definition already underway; the catalogue's
+ * own argument is that a batch arriving at a natural juncture gets acted on
+ * while a trickle gets skipped. `post`, because it describes what a session
+ * has already been doing — there is no single call to refuse, and refusing
+ * an edit that is legitimately the orchestrator's own would be exactly the
+ * wrongness the superseded hook was retired for.
+ */
+const orchestratorDoingTheWork: Intervention = {
+  id: "orchestrator-doing-the-work",
+  source: "builtin",
+  summary: "A session holding its item as orchestrator that is accumulating hands-on edits itself.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "digest",
+  messages: {
+    plain:
+      "You are holding this item as an orchestrator and have been editing files yourself for a " +
+      "while. Spawn a crewmate for the rest of it, or release the item and claim it as a builder " +
+      "so the board reflects who is doing the work.",
+    prominent:
+      "⚠️ You claimed this item as an orchestrator and have since been doing the building " +
+      "yourself — the crew you would have dispatched has not been spawned, and the board still " +
+      "reads as though one is working. Either spawn a crewmate for the remaining work, or " +
+      "release and re-claim this item as a builder so what the board says is true.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    // The role is the whole point of the entry: an ordinary builder editing
+    // files is doing its job, and only a session that took the item as an
+    // orchestrator can be drifting away from having dispatched it.
+    if (context.claimedRole !== "orchestrator") return { triggered: false };
+    // `undefined` is "too little evidence to say" and `normal` is "looked,
+    // and it is fine". Neither is a finding — treating unknown as elevated
+    // would nudge every orchestrator on its first few calls.
+    if (context.handsOnWork !== "elevated") return { triggered: false };
+    return {
+      triggered: true,
+      ...(context.itemId === undefined ? {} : { data: { itemId: context.itemId } }),
+    };
+  },
+};
+
+/**
  * The built-in entries, in a fixed order.
  *
  * Fixed rather than incidental so that findings come back in the same order
@@ -385,8 +543,10 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   broadGitAddOnSharedCheckout,
   broadProcessKill,
   checkoutHeldByAnotherCrew,
+  workRecordedAgainstNoItem,
   finishedWithNoReviewer,
   reviewWithoutApprovalAtTip,
+  orchestratorDoingTheWork,
 ];
 
 /**
@@ -412,7 +572,14 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
     missing:
       "whether a row is unblocked. The dependency graph that decides it is prose in a milestone " +
       "document, not a relation between items, so 'the graph says this is available' is not a " +
-      "question this schema can be asked.",
+      "question this schema can be asked. `Item.blockedOnType` admits `person`, " +
+      "`external_process` and `time` and has no `item` member, so one row cannot even be " +
+      "recorded as waiting on another. Revisited deliberately rather than inherited: building " +
+      "the graph to serve one digest nudge would be the largest piece of work in the catalogue " +
+      "commissioned on the weakest evidence, and if the graph is worth having it is worth " +
+      "having for the board's own ordering, as its own row. The cheap substitute — treating an " +
+      "item with no open children as unblocked — was rejected too, because it would fire on " +
+      "every leaf in the backlog, which is most of the board.",
   },
   {
     id: "I3",
@@ -450,21 +617,6 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
     missing: "a spend signal. It waits on what M7's telemetry exposes, which is not built yet.",
   },
   {
-    id: "I13",
-    missing:
-      "nothing structural — a claim or artifact appearing for a session holding no item is " +
-      "answerable from the assignment table. It is unbuilt because the near-match half of the " +
-      "entry (an artifact recorded against a similarly-titled item) needs a similarity threshold " +
-      "nobody has chosen, and a guess would refuse correct calls.",
-  },
-  {
-    id: "I14",
-    missing:
-      "a cumulative view of a session's own tool calls. The rows exist, but reaching them from a " +
-      "predicate means the context assembler carrying a windowed count on every call — which is " +
-      "the per-call cost the assembly gate exists to avoid, and it needs a cheaper shape first.",
-  },
-  {
     id: "I16",
     missing:
       "the size of the directory a search is rooted at. The server cannot see the caller's " +
@@ -493,8 +645,12 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "which tools a given job requires. The tool list a subagent was spawned with is on the " +
       "spawn; that a reviewer on a UI territory needed a browser is a per-role judgement, and a " +
       "rule that fires on every subagent without one would fire on every subagent that correctly " +
-      "had none. The `agent-standup` half is the tractable one — a spawned agent that records " +
-      "nothing is visible without knowing anything about the territory.",
+      "had none. The `agent-standup` half reads as the tractable one and is not, on this schema: " +
+      "no column records the tool list a session was spawned with, and the hook event carries " +
+      "only the tool being called, so the sole available proxy is that an agent has recorded " +
+      "nothing. That fires on every agent which legitimately had nothing to record — a scout, a " +
+      "short crew, one that failed early — which is a guard that costs more than it saves. What " +
+      "would make it buildable is the spawn's tool list being recorded at dispatch.",
   },
   {
     id: "I20",

@@ -216,6 +216,15 @@ export const hookDecision = defineOperation({
       sessionId: input.sessionId,
       ...(input.tool === undefined ? {} : { tool: input.tool }),
       ...(input.command === undefined ? {} : { command: input.command }),
+      // The phase decides whether I14's window is read at all — it is a
+      // `post` entry, so on a `PreToolUse` the reading would be paying for a
+      // verdict the registry is never going to ask for.
+      phase: canBlock ? "pre" : "post",
+      handsOn: {
+        minimumSample: ctx.settings.values["shape.minimum_sample"],
+        editThreshold: ctx.settings.values["interventions.hands_on_edit_threshold"],
+        window: ctx.settings.values["interventions.hands_on_window"],
+      },
     });
 
     // The installation's own configuration, read only when a finding is

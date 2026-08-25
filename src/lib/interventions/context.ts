@@ -46,9 +46,10 @@
 import type { TransactionHandle } from "@/lib/service/context";
 import { currentTipCommitSha } from "@/lib/service/guards/artifact-tip";
 import { hasApprovingArtifactAtCurrentRoundAndTip } from "@/lib/service/guards/merge-review-round";
-import { isMergeAttempt } from "./commands";
+import { isWriteTool } from "@/lib/telemetry/shape";
+import { isMergeAttempt, isWorkRecordingCommand } from "./commands";
 import { isBroadGitAdd } from "./builtins";
-import type { InterventionContext } from "./types";
+import type { InterventionContext, InterventionPhase } from "./types";
 
 /**
  * What the call might need looked up.
@@ -64,9 +65,28 @@ export interface ContextNeeds {
   readonly approval: boolean;
   /** Whether another live crew holds this checkout — I15, one query over `Assignment`. */
   readonly occupancy: boolean;
+  /**
+   * How much hands-on editing this session has been doing — I14, one
+   * windowed query over `ToolCall`.
+   *
+   * The most expensive thing this assembler can ask for, and the only need
+   * that is **not** decided by the command's shape: I14 asks what a session
+   * has been doing lately, which no single command can answer. It is gated
+   * instead on the *phase* and then, inside `assembleContext`, on the
+   * session actually holding its item as an orchestrator — a column the
+   * assignment query has already fetched by that point. So the window is
+   * read only for orchestrator-held sessions on `post` events, and never on
+   * the `PreToolUse` path that decides whether a call may proceed.
+   */
+  readonly handsOn: boolean;
 }
 
-const NOTHING: ContextNeeds = { assignment: false, approval: false, occupancy: false };
+const NOTHING: ContextNeeds = {
+  assignment: false,
+  approval: false,
+  occupancy: false,
+  handsOn: false,
+};
 
 /**
  * Tools whose whole purpose is to modify a file in the checkout.
@@ -84,6 +104,19 @@ function isCheckoutWrite(tool: string | undefined): boolean {
 }
 
 /**
+ * Tools that constitute hands-on work — I14's tool gate.
+ *
+ * The shape module's own classification (`isWriteTool`), imported rather
+ * than restated so a tool added there is counted here without anyone
+ * remembering to. `Bash` is deliberately absent for the same reason it is
+ * absent from `CHECKOUT_WRITE_TOOLS`: it is overwhelmingly reads, and
+ * putting the window read behind it would gate on nothing.
+ */
+function isHandsOnTool(tool: string | undefined): boolean {
+  return tool !== undefined && isWriteTool(tool);
+}
+
+/**
  * Decides what this call could possibly need, from the command text alone.
  *
  * Reads no state, so it cannot itself be the expensive thing. Errs towards
@@ -97,7 +130,30 @@ function isCheckoutWrite(tool: string | undefined): boolean {
  * (`docs/plans/INTERVENTIONS.md` I12). So it appears in no branch here, and
  * that is the design rather than an omission.
  */
-export function needs(command: string | undefined, tool?: string): ContextNeeds {
+export function needs(
+  command: string | undefined,
+  tool?: string,
+  phase?: InterventionPhase,
+): ContextNeeds {
+  // I14 is the one need no command can imply — it asks what the session has
+  // been doing lately, not what it is doing now.
+  //
+  // **Gated on the phase AND the tool, because the phase alone is not a
+  // gate.** Roughly half of all hook events are `PostToolUse`, so keying on
+  // it by itself would put the assignment query on every `ls`, every
+  // `Read` and every `git status` — the per-call cost on the highest-volume
+  // path that this whole function exists to avoid. The suite catches it:
+  // `hook-decision-operation.test.ts` answers with a handle that throws on
+  // any unexpected query, and a phase-only gate fails seven of its cases.
+  //
+  // The tool half is sound rather than merely cheap. I14's finding is an
+  // accumulation of *edits*, so a `post` event for a read can never be the
+  // call that carries the count over its threshold — the reading would be
+  // identical on the next edit, and deferring it there costs nothing while
+  // keeping every read off the query path. A third and narrower gate lives
+  // in `assembleContext`, which reads the window only once the assignment
+  // row has shown the session holds its item as an orchestrator.
+  const handsOn = phase === "post" && isHandsOnTool(tool);
   // I15 turns on no command shape at all — it asks who else holds the
   // checkout — so its gate is the *tool* rather than the command text.
   //
@@ -119,19 +175,27 @@ export function needs(command: string | undefined, tool?: string): ContextNeeds 
   const occupancy = isCheckoutWrite(tool);
 
   if (command === undefined || command.trim() === "") {
-    return occupancy ? { assignment: true, approval: false, occupancy: true } : NOTHING;
+    return occupancy || handsOn
+      ? { assignment: true, approval: false, occupancy, handsOn }
+      : NOTHING;
   }
 
   // A merge attempt is the only shape that needs to know whether an
   // approval sits at the tip, and it needs the assignment first in order to
   // know *which item's* tip to ask about.
-  if (isMergeAttempt(command)) return { assignment: true, approval: true, occupancy };
+  if (isMergeAttempt(command)) return { assignment: true, approval: true, occupancy, handsOn };
 
   // A broad `git add` needs to know whether the checkout is shared, which
   // is the claim's `worktree` — no artifact question is involved.
-  if (isBroadGitAdd(command)) return { assignment: true, approval: false, occupancy };
+  if (isBroadGitAdd(command)) return { assignment: true, approval: false, occupancy, handsOn };
 
-  return occupancy ? { assignment: true, approval: false, occupancy: true } : NOTHING;
+  // I13 needs only to know whether this session holds a claim at all, which
+  // the assignment lookup answers on its own — no artifact question and no
+  // occupancy question are involved.
+  if (isWorkRecordingCommand(command))
+    return { assignment: true, approval: false, occupancy, handsOn };
+
+  return occupancy || handsOn ? { assignment: true, approval: false, occupancy, handsOn } : NOTHING;
 }
 
 /** The one row shape the claim lookup reads. */
@@ -144,6 +208,8 @@ interface AssignmentRow {
   rootSessionId: string;
   /** The repository the claimed item belongs to. Null when the item names none. */
   repo: string | null;
+  /** The role the claim was taken in — I14's first and cheapest gate. */
+  role: string;
   /**
    * The machine the claim was taken on.
    *
@@ -181,8 +247,16 @@ export async function assembleContext(options: {
   readonly sessionId: string;
   readonly tool?: string;
   readonly command?: string;
+  /**
+   * Which side of the call this is. Absent behaves as `pre`, which is the
+   * cautious reading: the `post`-only window read stays unmade rather than
+   * being made speculatively for a caller that did not say.
+   */
+  readonly phase?: InterventionPhase;
+  /** I14's thresholds. Handed in, like every other threshold in this system. */
+  readonly handsOn?: HandsOnThresholds;
 }): Promise<InterventionContext> {
-  const { db, sessionId, tool, command } = options;
+  const { db, sessionId, tool, command, phase, handsOn } = options;
 
   const base: InterventionContext = {
     sessionId,
@@ -190,7 +264,7 @@ export async function assembleContext(options: {
     ...(command === undefined ? {} : { command }),
   };
 
-  const wanted = needs(command, tool);
+  const wanted = needs(command, tool, phase);
   if (!wanted.assignment) return base;
 
   // The session's live claim, and the item and repository behind it. One
@@ -203,6 +277,7 @@ export async function assembleContext(options: {
             a."rootSessionId"   AS "rootSessionId",
             i."state"::text     AS "state",
             i."repo"            AS "repo",
+            a."role"::text      AS "role",
             r."defaultBranch"   AS "defaultBranch",
             a."machine"         AS "machine"
        FROM "Assignment" a
@@ -219,10 +294,18 @@ export async function assembleContext(options: {
   // running commands — and it is not an error. It leaves every item-shaped
   // field absent, which is exactly right: there is no item to say anything
   // about.
-  if (claim === undefined) return base;
+  //
+  // **`holdsClaim` is the exception, and it is I13's whole signal.** The
+  // lookup ran and came back empty, so "this session holds nothing" is a
+  // fact established rather than a question skipped — which is precisely
+  // the distinction `itemId`'s absence cannot carry, because that is also
+  // what a call the gate never looked up looks like.
+  if (claim === undefined) return { ...base, holdsClaim: false };
 
   const withClaim: InterventionContext = {
     ...base,
+    holdsClaim: true,
+    claimedRole: claim.role,
     itemId: claim.itemId,
     itemState: claim.state,
     // A claim records the worktree it was taken in. A non-empty value means
@@ -241,7 +324,21 @@ export async function assembleContext(options: {
     ? { ...withClaim, ...(await occupancyFor(db, claim)) }
     : withClaim;
 
-  if (!wanted.approval) return withOccupancy;
+  // I14 — how much of the work this session has been doing itself.
+  //
+  // **The role test is the gate, and it is why this query is affordable.**
+  // `wanted.handsOn` only established that the phase could ask; this is
+  // where the question is actually narrowed, against a column the
+  // assignment query above has already fetched. A builder, a reviewer, a
+  // scout and an unclaimed session all skip the window entirely, so the
+  // read lands only on sessions holding an item as an orchestrator — a
+  // small minority of claims and a smaller minority of calls.
+  const withHandsOn =
+    wanted.handsOn && claim.role === "orchestrator"
+      ? { ...withOccupancy, handsOnWork: await handsOnWorkFor(db, sessionId, handsOn) }
+      : withOccupancy;
+
+  if (!wanted.approval) return withHandsOn;
 
   // The merge gate's own primitives, reused rather than reimplemented. If
   // this asked the question differently from the guard that enforces it at
@@ -252,7 +349,7 @@ export async function assembleContext(options: {
   const approved = await hasApprovingArtifactAtCurrentRoundAndTip(db, claim.itemId, "code_review");
 
   return {
-    ...withOccupancy,
+    ...withHandsOn,
     // With no commit artifact at all there is no tip for an approval to be
     // at, so "is there an approval at tip" has no true answer and the field
     // stays absent. An item nobody has committed to is not an item somebody
@@ -260,6 +357,78 @@ export async function assembleContext(options: {
     ...(tip === null ? {} : { hasApprovalAtTip: approved }),
     ...(claim.defaultBranch === null ? {} : { defaultBranch: claim.defaultBranch }),
   };
+}
+
+/**
+ * The thresholds I14's reading is taken against.
+ *
+ * Handed in rather than read from a settings resolver here, for the same
+ * reason `ShapeThresholds` is (`../telemetry/shape.ts`): this module is on
+ * the service side and the caller already holds the resolver, and passing
+ * them makes every threshold visible at the call site of a test rather than
+ * mocked behind one.
+ */
+export interface HandsOnThresholds {
+  /** Fewer calls than this in the window and the answer is `unknown`. */
+  readonly minimumSample: number;
+  /** Edits at or above this, within the window, read as elevated. */
+  readonly editThreshold: number;
+  /** How many recent calls the reading is taken over. */
+  readonly window: number;
+}
+
+/**
+ * How much hands-on editing a session has been doing lately — I14.
+ *
+ * ── Why this counts edits rather than reusing `readSessionShape` ───────
+ *
+ * `../telemetry/shape.ts` is reused for what it actually measures — the
+ * `isWriteTool` classification is imported rather than restated, so a tool
+ * added there is counted here without anyone remembering to. What is not
+ * reused is `readShare`, and the reason is that it answers a different
+ * question: it reports the *proportion* of a session that is reading, and
+ * I14 is about an absolute amount of editing.
+ *
+ * The distinction decides real cases. An orchestrator that reads forty
+ * files to brief a crew and edits three has a low read share by nobody's
+ * definition of a problem — it is doing its job well. An orchestrator that
+ * makes twenty edits and no reads has a read share of zero and is exactly
+ * the drift this entry exists to catch. Keyed on the proportion, the first
+ * fires and the second may not; keyed on the count, both come out right.
+ *
+ * ── `unknown` is a real answer ─────────────────────────────────────────
+ *
+ * Below the minimum sample this returns `"unknown"`, which the predicate
+ * treats as no finding. That is deliberate and it is the same reading the
+ * shape module uses: a session a few calls old has established nothing, and
+ * a guard that fired there would nudge every orchestrator on its opening
+ * moves — which is how a digest teaches its reader to skip it.
+ */
+async function handsOnWorkFor(
+  db: TransactionHandle,
+  sessionId: string,
+  thresholds: HandsOnThresholds | undefined,
+): Promise<"unknown" | "normal" | "elevated"> {
+  // No thresholds means the caller did not configure this reading, and a
+  // count compared against a number nobody chose is not a finding. Answered
+  // `unknown` rather than defaulted, because inventing a threshold here is
+  // exactly the "silently wrong" shape the catalogue keeps retreating from.
+  if (thresholds === undefined) return "unknown";
+
+  const rows = await db.$queryRawUnsafe<{ tool: string }[]>(
+    `SELECT "tool"
+       FROM "ToolCall"
+      WHERE "sessionId" = $1
+      ORDER BY "ts" DESC, "id" DESC
+      LIMIT $2`,
+    sessionId,
+    thresholds.window,
+  );
+
+  if (rows.length < thresholds.minimumSample) return "unknown";
+
+  const edits = rows.filter((row) => isWriteTool(row.tool)).length;
+  return edits >= thresholds.editThreshold ? "elevated" : "normal";
 }
 
 /**

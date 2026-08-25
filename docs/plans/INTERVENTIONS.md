@@ -89,7 +89,7 @@ which is the failure this design exists to avoid.
 Status: blank = not built · `built` = live in the registry.
 
 **A `built` entry is live; it is not necessarily the whole entry as written here.** Detection is
-bounded by what the server can actually observe, and three of the entries below are shipped against a
+bounded by what the server can actually observe, and five of the entries below are shipped against a
 narrower signal than their description asks for — I1 keys on the item's own state rather than on a
 builder's report, and I7 on the same, because the PR fields it would really read (`mergeable`,
 `mergeStateStatus`) are not collected by anything. **I15 fires on a write into the checkout, not on a
@@ -102,6 +102,24 @@ the second is the intended arrangement; and it fires only for a session that its
 because the checkout is identified through that claim. Each says so in its own row. The alternative was
 to ship a predicate that quietly never fires, and an entry that cannot trigger is worse than an
 absent one: it reads as coverage on the settings page and provides none.
+
+**I13 ships as half of itself, and the half is named.** It fires when a session records work — a
+`git commit` or a `git push` — while holding no item at all, which is a row rather than a judgement.
+The near-match half of the entry (an artifact recorded against an item whose title merely resembles
+the intended one) is **not** built, because it needs a similarity threshold nobody has chosen and
+every available choice is wrong in a way that matters: loose enough to catch a real near-miss also
+refuses the ordinary case where *"Build the X"* and *"Review the X"* are neighbouring rows. It is
+also shipped as `pre` rather than the `post` catalogued here — the same call is the moment the
+finding is worth saying, and a `pre` nudge reaches the caller while it can still mint the row rather
+than after the commit exists.
+
+**I14 counts edits, not read share, and the distinction is deliberate.** It reuses the existing
+`isWriteTool` classification (`src/lib/telemetry/shape.ts`) but not `readShare`, which measures a
+*proportion*: an orchestrator that reads forty files to brief a crew and edits three has a low read
+share and is doing its job well, while one that makes twenty edits and no reads is exactly the drift
+the entry describes. Keyed on the proportion those two come out backwards. It is also gated twice —
+on the `post` phase, and then on the claim being held as `orchestrator` — so the windowed query lands
+only on orchestrator-held sessions and never on the blocking path.
 
 **The unbuilt entries carry their reason in code**, in `UNIMPLEMENTED_CATALOGUE_ENTRIES`
 (`src/lib/interventions/builtins.ts`), naming the signal that is missing rather than the feature. A
@@ -117,8 +135,8 @@ silently dropped from both.
 | **I3** | **A claim held by a session that has gone quiet** while its holder is demonstrably working elsewhere. Distinct from the liveness sweep (#99/#130), which reclaims *dead* sessions — this is about a live session sitting on work it is not doing | `post` | `orchestrator` | nudge | digest | |
 | **I4** | **A subagent reported complete and the orchestrator has not started the next step.** The handoff that silently does not happen | `post` | `orchestrator` | nudge | digest | |
 | **I5** | **A reviewer returned `lgtm_with_followups`, a merge was requested, and no item was ever minted for the follow-ups.** The follow-ups are agreed, recorded, and then quietly dropped — the most expensive entry on this list, because the work was already understood | `post` | `orchestrator` | nudge (prominent) | immediate | |
-| **I13** | **A crew was dispatched against work that was never minted.** A claim, a branch or a commit artifact appears for a session holding no item, or a `record_artifact` names an item whose title is a near-match for the one the caller meant rather than the one it hit. From the owner's own account of a five-crew night (`interventions.md`): *"PR2+3 was never minted as a task. I dispatched that crew — the most valuable PR of the five — without a task existing. Nobody caught it because the follow-up task had a similar name."* The same session then recorded a commit artifact against the wrong item, and there is no delete operation to take it back. **Both are one root cause, and it is the one this whole product exists to remove:** five parallel crews were being tracked in a person's head rather than against the board, so the board drifted from reality without anything failing loudly. **The rule to encode is *mint before you dispatch*, not after** — a dispatch is the moment the item becomes the only thing that knows the work exists. Detectable from claim and artifact writes against a session with no held item, which the server already records. From `feedback/interventions.md` | `post` | `orchestrator` | nudge (prominent) | immediate | |
-| **I14** | **An orchestrator is doing the work itself.** Reads and edits to repository files accumulating on a session that holds an item as `orchestrator`, rather than a spawn. Detectable from the tool-call stream #50 already ingests: a cumulative count of edits and repository reads over the last several calls, which distinguishes a burst of hands-on work from the reads an orchestrator legitimately does to brief a crew. **Deliberately a nudge and deliberately cumulative**, because the single-call version of this check is wrong in both directions — one edit is often the right call, and research reads before a dispatch are the job. What is worth catching is the drift, where an orchestrator has quietly become the builder and the crew it should have spawned never gets spawned. Requested by the owner as *"you are doing work you should probably be delegating to a subagent"*. **Overlaps `fm-always-delegate-nudge` in the installation this came from and supersedes it** — that hook matches on write-shaped commands outside a path allowlist, which is the pattern-matching approach #125 retired. From `feedback/interventions.md` | `post` | `orchestrator` | nudge | digest | |
+| **I13** | **A crew was dispatched against work that was never minted.** A claim, a branch or a commit artifact appears for a session holding no item, or a `record_artifact` names an item whose title is a near-match for the one the caller meant rather than the one it hit. From the owner's own account of a five-crew night (`interventions.md`): *"PR2+3 was never minted as a task. I dispatched that crew — the most valuable PR of the five — without a task existing. Nobody caught it because the follow-up task had a similar name."* The same session then recorded a commit artifact against the wrong item, and there is no delete operation to take it back. **Both are one root cause, and it is the one this whole product exists to remove:** five parallel crews were being tracked in a person's head rather than against the board, so the board drifted from reality without anything failing loudly. **The rule to encode is *mint before you dispatch*, not after** — a dispatch is the moment the item becomes the only thing that knows the work exists. Detectable from claim and artifact writes against a session with no held item, which the server already records. From `feedback/interventions.md` | `pre` | `orchestrator` | nudge (prominent) | immediate | `built` |
+| **I14** | **An orchestrator is doing the work itself.** Reads and edits to repository files accumulating on a session that holds an item as `orchestrator`, rather than a spawn. Detectable from the tool-call stream #50 already ingests: a cumulative count of edits and repository reads over the last several calls, which distinguishes a burst of hands-on work from the reads an orchestrator legitimately does to brief a crew. **Deliberately a nudge and deliberately cumulative**, because the single-call version of this check is wrong in both directions — one edit is often the right call, and research reads before a dispatch are the job. What is worth catching is the drift, where an orchestrator has quietly become the builder and the crew it should have spawned never gets spawned. Requested by the owner as *"you are doing work you should probably be delegating to a subagent"*. **Overlaps `fm-always-delegate-nudge` in the installation this came from and supersedes it** — that hook matches on write-shaped commands outside a path allowlist, which is the pattern-matching approach #125 retired. From `feedback/interventions.md` | `post` | `orchestrator` | nudge | digest | `built` |
 
 ### Hygiene — the tidy-up nobody remembers
 

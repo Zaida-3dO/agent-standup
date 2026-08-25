@@ -144,6 +144,40 @@ export interface InterventionContext {
    */
   readonly defaultBranch?: string;
   /**
+   * Whether this session holds a live claim on any item — I13.
+   *
+   * Distinct from `itemId` being present, and the distinction is the entry.
+   * `itemId` is absent both when the session holds nothing *and* when the
+   * assembler never asked, because the assembly is gated on the call being
+   * able to need it. A predicate keyed on `itemId === undefined` would
+   * therefore fire on every unclaimed call the gate declined to look up —
+   * which is most calls in the system. This field is written only by a
+   * lookup that actually ran, so `false` means "asked, and it holds
+   * nothing" rather than "did not ask".
+   */
+  readonly holdsClaim?: boolean;
+  /**
+   * The role this session holds its item in, when it holds one — I14.
+   *
+   * `Assignment.role`, carried through as a plain string rather than as the
+   * schema's enum: this module is the boundary an external predicate reads,
+   * and a value it can compare against a literal is worth more here than a
+   * type it would have to import. A role this build does not recognise is
+   * therefore not an error — it arrives as itself and matches nothing.
+   */
+  readonly claimedRole?: string;
+  /**
+   * How much hands-on editing this session has been doing lately — I14.
+   *
+   * The existing shape reading (`../telemetry/shape.ts`), not a second
+   * measure invented for this entry, so that a session is never told it is
+   * elevated by one reading and normal by another. `"unknown"` is a real
+   * answer meaning too little evidence, and a predicate must not read it as
+   * `"normal"` — the distinction is the whole reason that vocabulary has
+   * three values rather than two.
+   */
+  readonly handsOnWork?: "unknown" | "normal" | "elevated";
+  /**
    * Another live crew already holding this same checkout — I15.
    *
    * Present only when one exists, and it describes a *different* root

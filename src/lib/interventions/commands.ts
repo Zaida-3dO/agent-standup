@@ -152,3 +152,45 @@ export function isBroadProcessKill(command: string): boolean {
   // did. A list of pids is scoped however long it is.
   return parsed.targets.some((target) => target.kind === "executable");
 }
+
+/**
+ * Whether a command records work permanently — I13's recognition half.
+ *
+ * Two shapes, and both are deliberate:
+ *
+ *   - `git commit` — the moment work stops being scratch and becomes
+ *     something with a sha that a board row would want to point at.
+ *   - `git push` — the moment it leaves the machine. Counted separately
+ *     because a session can commit locally for a while quite reasonably and
+ *     only later decide the work is real; a push is the point where that
+ *     question has been answered.
+ *
+ * Explicitly NOT counted: `git commit --amend` and `--dry-run`. An amend
+ * rewrites a commit that already exists, so if the work was unminted the
+ * nudge was already due at the original commit and repeating it at every
+ * amend is how a guard becomes noise. A dry run writes nothing at all.
+ *
+ * Under-matches by construction, like everything else here: `gh pr create`
+ * is not included even though it plainly records work, because its absence
+ * costs one un-nudged call while a wrong match costs a spurious nudge on
+ * the busiest verb a builder runs.
+ */
+export function isWorkRecordingCommand(command: string): boolean {
+  return splitStatements(command).some((statement) => {
+    const trimmed = statement.trim();
+
+    if (invokesGitSubcommand(trimmed, "commit")) {
+      // An amend rewrites a commit that already exists and a dry run writes
+      // nothing. Neither is the moment work first becomes permanent.
+      if (/\s--(amend|dry-run)\b/.test(trimmed)) return false;
+      return true;
+    }
+
+    if (invokesGitSubcommand(trimmed, "push")) {
+      if (/\s--dry-run\b/.test(trimmed)) return false;
+      return true;
+    }
+
+    return false;
+  });
+}
