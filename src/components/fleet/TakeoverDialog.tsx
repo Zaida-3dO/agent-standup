@@ -65,8 +65,13 @@ export function TakeoverDialog({
         >
           {submitting ? "Taking over…" : "Confirm takeover"}
         </button>
+        {/* Names what the assignment will still be — the house convention
+            for a dismiss control (see `ArchiveAction`'s header). "Cancel"
+            here would read as cancelling the *work*, which is a recorded
+            act elsewhere in the product and emphatically not what closing
+            this dialog does: the current holder simply keeps it. */}
         <button type="button" className={styles.takeoverCancelButton} onClick={onCancel}>
-          Cancel
+          Leave it with them
         </button>
       </div>
     </div>

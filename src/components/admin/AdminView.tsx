@@ -94,7 +94,11 @@ export function AdminView(props: AdminViewProps) {
               className={`${styles.button} ${styles.buttonPrimary}`}
               onClick={props.onToggleCreate}
             >
-              {props.createOpen ? "Cancel" : `New ${kind.singular}`}
+              {/* Closing the create form discards a draft; it does not cancel
+                  anything that exists. Matches `QuickCreateDialog`'s dismiss
+                  label — the same act on the other create path — per the
+                  convention in `ArchiveAction`'s header. */}
+              {props.createOpen ? "Discard draft" : `New ${kind.singular}`}
             </button>
           )}
         </div>

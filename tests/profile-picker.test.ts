@@ -96,7 +96,7 @@ describe("ProfilePicker — choosing an existing profile", () => {
   it("renders NO close button when onClose is not provided — the initial, uncancellable picker", () => {
     const element = ProfilePicker(baseProps({ people: [userA] }));
     const closeButtons = findAllByType(element, "button").filter(
-      (el) => (el.props as { "aria-label"?: string })["aria-label"] === "Cancel",
+      (el) => (el.props as { "aria-label"?: string })["aria-label"] === "Close profile picker",
     );
     expect(closeButtons.length).toBe(0);
   });
@@ -112,7 +112,7 @@ describe("ProfilePicker — choosing an existing profile", () => {
       }),
     );
     const closeButtons = findAllByType(element, "button").filter(
-      (el) => (el.props as { "aria-label"?: string })["aria-label"] === "Cancel",
+      (el) => (el.props as { "aria-label"?: string })["aria-label"] === "Close profile picker",
     );
     expect(closeButtons.length).toBe(1);
     (closeButtons[0]!.props as { onClick: () => void }).onClick();
@@ -136,7 +136,7 @@ describe("ProfilePicker — T13's empty state is a create form, not a message", 
   it("the empty-state create form has no cancel button — there is nothing to cancel back to", () => {
     const element = ProfilePicker(baseProps({ people: [] }));
     const cancelButtons = findAllByType(element, "button").filter(
-      (el) => (el.props as { children?: unknown }).children === "Cancel",
+      (el) => (el.props as { children?: unknown }).children === "Discard draft",
     );
     expect(cancelButtons.length).toBe(0);
   });
@@ -268,7 +268,7 @@ describe("ProfilePicker — create is also reachable once profiles exist", () =>
       baseProps({ people: [userA], createOpen: true, onToggleCreate: () => (toggled = true) }),
     );
     const cancelButton = findAllByType(element, "button").find(
-      (el) => (el.props as { children?: unknown }).children === "Cancel",
+      (el) => (el.props as { children?: unknown }).children === "Discard draft",
     );
     expect(cancelButton).toBeTruthy();
     (cancelButton!.props as { onClick: () => void }).onClick();

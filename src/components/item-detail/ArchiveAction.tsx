@@ -34,9 +34,25 @@
 //      someone who was not there. A dialog leaves nothing behind.
 //
 // So the shape is: a plain text button that opens a form, a reason box that
-// must be filled before the archive control is enabled, and a Cancel beside
+// must be filled before the archive control is enabled, and a way out beside
 // it. Three deliberate acts — open, compose, submit — none of which is a
 // double-click away from the one before.
+//
+// ── Why the way out is "Keep it" and not "Cancel" ───────────────────────
+//
+// This panel is the one place the product asks a person to tell **archiving**
+// apart from **cancelling**, and they are genuinely different: archiving says
+// the row should not exist, cancelling records a decision that real work is
+// not being done. `CancelAction` sits directly beside this component with a
+// button reading "Cancel this work" — a recorded act.
+//
+// A dismiss button labelled "Cancel" here would spend that same word on a
+// third meaning — "close this form, do nothing" — on the one view whose whole
+// job is teaching the distinction. So the convention this file and
+// `CancelAction` both follow is: **a dismiss control names what the thing
+// will still be afterwards, never the verb of a neighbouring act.** "Keep it"
+// here, "Keep it open" on the cancel form. Both say the row survives
+// untouched, and neither can be misread as performing anything.
 //
 // **Restore is a single button, and that asymmetry is the point.** Restoring
 // puts a row back where it was; the failure mode of an accidental restore is a
@@ -256,8 +272,12 @@ export function ArchiveAction({
           >
             {busy ? "Archiving…" : "Archive this item"}
           </button>
+          {/* "Keep it", not "Cancel" — see this file's header. "Cancel this
+              work" is a recorded act on this same panel, and spending the
+              word on "close the form" here would blur the one distinction
+              this view exists to teach. */}
           <button type="button" disabled={busy} onClick={onCancel} data-region="archive-cancel">
-            Cancel
+            Keep it
           </button>
         </div>
         {refusal}

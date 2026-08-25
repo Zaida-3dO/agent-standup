@@ -129,13 +129,19 @@ export function InlineEditField({
       <button type="button" className={styles.inlineEditButton} disabled={saving} onClick={onSave}>
         Save
       </button>
+      {/* "Discard edit", not "Cancel". This renders on the item detail page,
+          the same view that carries "Cancel this work" — a recorded decision
+          that work is not being done. Two controls a few hundred pixels
+          apart, one of which throws away a half-typed title and the other of
+          which stops the work, must not share a verb. See `ArchiveAction`'s
+          header for the convention. */}
       <button
         type="button"
         className={styles.inlineEditButton}
         disabled={saving}
         onClick={onCancel}
       >
-        Cancel
+        Discard edit
       </button>
       {advice !== null && <span className={styles.inlineEditAdvice}>{advice}</span>}
       {error !== null && (

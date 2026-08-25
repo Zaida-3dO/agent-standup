@@ -278,8 +278,12 @@ export function QuickCreateDialog({
             >
               {submitting ? "Creating…" : `Create ${spec.kind}`}
             </button>
+            {/* Names the outcome rather than borrowing "Cancel" — the house
+                convention set in `ArchiveAction`'s header. Nothing has been
+                minted yet, so the honest description of dismissing this form
+                is that the draft is discarded. */}
             <button type="button" className={styles.cancelButton} onClick={onCancel}>
-              Cancel
+              Discard draft
             </button>
           </div>
         </form>
