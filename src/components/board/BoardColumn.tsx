@@ -67,6 +67,27 @@ export interface BoardColumnProps {
   readonly filtered?: boolean;
   /** Clears that filter — offered by the filtered-to-nothing state. */
   readonly onClearFilter?: () => void;
+  /**
+   * The pointer-drag drop-target ref (T6-A), supplied by `DroppableColumn`.
+   * Absent leaves the column with only its native `onDrop` — see this
+   * component's hook-free note and `DragLayer.tsx`'s header.
+   */
+  readonly dropRef?: (element: HTMLElement | null) => void;
+  /**
+   * True while a dragged card is over this column, so it can show where the
+   * card will land. Distinct from `isDropTarget`, which tints the whole
+   * column: this draws the actual landing site among the cards.
+   */
+  readonly showPlaceholder?: boolean;
+  /**
+   * The card component to render (T6-A). `DroppableColumn` passes
+   * `DraggableCard` — the hook-holding wrapper that registers each card with
+   * the drag library; absent renders the plain hook-free `ItemCard`.
+   *
+   * Injected rather than imported so this component still has no knowledge
+   * of `dnd-kit` and stays callable as a plain function in a test.
+   */
+  readonly cardComponent?: typeof ItemCard;
 }
 
 /** The singular noun a column's states talk about. */
@@ -90,6 +111,9 @@ export function BoardColumn({
   loading,
   filtered,
   onClearFilter,
+  dropRef,
+  showPlaceholder,
+  cardComponent,
 }: BoardColumnProps) {
   const entries = section.entries;
   // Waiting accepts no drops at all — both its states need fields a drag
@@ -110,6 +134,11 @@ export function BoardColumn({
     filtered: filtered === true,
   });
   const more = hasMore(section);
+  // The plain card, or the drag-registered one. Same component underneath —
+  // `DraggableCard` renders `ItemCard` with one extra prop — so a test
+  // walking this tree for `ItemCard` still finds every card when no drag
+  // layer is mounted, which is every existing test.
+  const Card = cardComponent ?? ItemCard;
 
   return (
     <section
@@ -117,6 +146,9 @@ export function BoardColumn({
       aria-label={columnTitle(column)}
       data-column={column}
       data-drop-target={highlighted ? true : undefined}
+      // The pointer-drag drop target, when one was registered. The native
+      // handlers below are untouched and still fire for a browser drag.
+      ref={dropRef}
       // `preventDefault` on dragOver is what makes an element a drop target
       // at all — the HTML drag-and-drop default is to refuse the drop, so
       // without it `onDrop` never fires and a card silently springs back
@@ -182,17 +214,29 @@ export function BoardColumn({
         {loading === true ? (
           <LoadingState rows={3} label={`${columnTitle(column)} column`} />
         ) : emptiness !== null ? (
-          <EmptyState
-            kind={emptiness}
-            noun={COLUMN_NOUN}
-            total={columnCount(section)}
-            onClearFilter={onClearFilter}
-            onLoad={emptiness === "withheld" && onShowMore ? () => onShowMore(column) : undefined}
-          />
+          // **The placeholder wins over the empty state while a card is
+          // held here.** An empty column is exactly where a landing site
+          // matters most — there are no cards to imply where the drop goes
+          // — and "nothing here yet" is the wrong thing to say about a
+          // column that is about to receive something. The empty state
+          // returns the moment the card leaves.
+          showPlaceholder === true ? (
+            <ul className={styles.cards}>
+              <li className={styles.dropPlaceholder} data-drop-placeholder aria-hidden="true" />
+            </ul>
+          ) : (
+            <EmptyState
+              kind={emptiness}
+              noun={COLUMN_NOUN}
+              total={columnCount(section)}
+              onClearFilter={onClearFilter}
+              onLoad={emptiness === "withheld" && onShowMore ? () => onShowMore(column) : undefined}
+            />
+          )
         ) : (
           <ul className={styles.cards}>
             {entries.map((entry) => (
-              <ItemCard
+              <Card
                 key={entry.item.id}
                 entry={entry}
                 needsYou={needsYou(entry, personId)}
@@ -202,6 +246,17 @@ export function BoardColumn({
                 pending={pendingItemId === entry.item.id}
               />
             ))}
+            {/* The landing site (T6-A) — where the card will go if it is
+                released now. Rendered LAST because that is where the drop
+                actually puts it: `relocate` appends the moved entry to the
+                target column's entries, so a placeholder drawn anywhere
+                else would promise a position the drop does not deliver.
+                Only ever rendered on a column that accepts drops, since
+                `showPlaceholder` comes from `DroppableColumn`, which does
+                not register Waiting at all. */}
+            {showPlaceholder === true && (
+              <li className={styles.dropPlaceholder} data-drop-placeholder aria-hidden="true" />
+            )}
           </ul>
         )}
         {/* A failed *page* request, not a failed board load — the column

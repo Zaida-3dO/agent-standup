@@ -16,6 +16,7 @@ import type { BoardColumnId } from "@/lib/board/types";
 import { BOARD_COLUMNS, needsYouCount, waitingSplit } from "@/lib/board/view";
 import { ErrorState } from "@/components/states/ErrorState";
 import { BoardColumn } from "./BoardColumn";
+import { DroppableColumn } from "./DroppableColumn";
 import { NeedsYouBadge } from "./NeedsYouBadge";
 import styles from "./Board.module.css";
 
@@ -39,6 +40,16 @@ export interface BoardViewProps {
   readonly filtered?: boolean;
   /** Clears that filter. */
   readonly onClearFilter?: () => void;
+  /**
+   * True when the pointer-drag layer is mounted around this board (T6-A),
+   * which is what decides whether the columns are the plain hook-free
+   * component or the `dnd-kit`-registered wrapper.
+   *
+   * **A flag rather than the components themselves**, so `BoardView` stays
+   * callable as a plain function in a test with no library and no DOM: left
+   * absent, this renders exactly the tree it has always rendered.
+   */
+  readonly pointerDrag?: boolean;
 }
 
 /** Everything the drag interaction needs, grouped so `BoardView` threads one prop rather than seven. */
@@ -86,6 +97,7 @@ export function BoardView({
   onRetry,
   filtered,
   onClearFilter,
+  pointerDrag,
 }: BoardViewProps) {
   if (loadState.status === "error") {
     return (
@@ -123,6 +135,13 @@ export function BoardView({
 
   const board = loadState.board;
   const split = waitingSplit(board);
+  // The plain column, or the one registered with the drag library. Chosen
+  // once here rather than branched at each of the four call sites — and it
+  // is the SAME component underneath either way, since `DroppableColumn`
+  // renders `BoardColumn` with two extra props. A test that walks this tree
+  // looking for `BoardColumn` still finds four of them when `pointerDrag`
+  // is absent, which is every existing test.
+  const Column = drag !== undefined && pointerDrag === true ? DroppableColumn : BoardColumn;
 
   return (
     <div className={styles.board}>
@@ -142,7 +161,7 @@ export function BoardView({
       )}
       <div className={styles.columns}>
         {BOARD_COLUMNS.map((column) => (
-          <BoardColumn
+          <Column
             key={column}
             column={column}
             section={board[column]}
