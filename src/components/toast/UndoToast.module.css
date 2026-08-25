@@ -1,0 +1,125 @@
+/* The undo toast (T18), painted entirely from the token layer
+   (`src/app/globals.css`). No literal colour appears in this file. */
+
+/* Bottom-left, not bottom-right and not centred. The right edge is where a
+   scrollbar and the board's own rightmost column live, and the centre
+   covers content. Bottom-left is the quietest corner of every screen in
+   this app. */
+.toast {
+  position: fixed;
+  bottom: 1.25rem;
+  left: 1.25rem;
+  /* Above the app chrome, below the quick-create backdrop (z-index 60) —
+     a dialog the person has deliberately opened should not be covered by
+     a report of something they already finished. */
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  max-width: min(26rem, calc(100vw - 2.5rem));
+  padding: 0.7rem 0.75rem 0.7rem 0.9rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.55rem;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* An error reads differently from a confirmation at a glance, before the
+   sentence is read. Left border rather than a background wash: the toast
+   already has an overlay surface, and tinting the whole panel would fight
+   the shadow token. */
+.toast[data-phase="error"] {
+  border-left-width: 3px;
+  border-left-color: var(--accent-border);
+}
+
+.message {
+  flex: 1;
+  margin: 0;
+}
+
+/* Why there is no button — a capability gap, not an expiry. Muted, because
+   it is an explanation rather than the headline. */
+.reason {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* The message and the reason stack; the buttons sit beside them, so this
+   is the second column of the flex row above and owns its own layout. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.undo {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.35rem;
+  background: var(--accent-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.undo:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* The countdown is information, not emphasis — it should not compete with
+   the word "Undo", which is what the person is aiming at. */
+.countdown {
+  color: var(--text-secondary);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.undo:hover .countdown {
+  color: var(--accent-fg);
+}
+
+.dismiss {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+/* The toast appears without motion for anyone who has asked for that. The
+   default is a short rise, which is what makes it read as arriving rather
+   than as having always been there. */
+@media (prefers-reduced-motion: no-preference) {
+  .toast {
+    animation: toast-rise 140ms ease-out;
+  }
+}
+
+@keyframes toast-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

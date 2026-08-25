@@ -25,6 +25,7 @@ import { DEFAULT_DENSITY, densityClass, writeStoredDensity, type Density } from 
 import { fetchSavedViews } from "@/lib/board/saved-views-client";
 import { savedViewLinksFrom } from "@/lib/nav/saved-view-links";
 import type { SavedViewLink } from "@/components/sidebar/SavedViewLinks";
+import { UndoToastHost } from "@/components/toast";
 import { AppShellView } from "./AppShellView";
 
 /**
@@ -205,7 +206,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       density={density}
       onToggleDensity={onToggleDensity}
     >
-      {children}
+      {/* T18's undo host — the single mount point for the toast, and the
+          provider every surface calls `useUndo().offer(...)` through. It
+          wraps `children` rather than the whole shell so the toast is
+          available to every page while the shell's own prop flow is
+          untouched; the toast itself is `position: fixed`, so where it sits
+          in the tree does not affect where it renders. */}
+      <UndoToastHost>{children}</UndoToastHost>
     </AppShellView>
   );
 }
