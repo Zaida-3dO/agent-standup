@@ -57,8 +57,28 @@ export interface DropDeps {
   readonly write: (next: DragState) => void;
   /** Schedules a state update against the newest state — the async results use this. */
   readonly update: (fn: (current: DragState) => DragState) => void;
-  /** Asks the server to move the item. */
-  readonly move: (itemId: string, column: BoardColumnId) => Promise<MoveResult>;
+  /**
+   * Asks the server to move the item.
+   *
+   * `expectedFrom` is the precondition that turns a lost race into a 409
+   * instead of a silent overwrite. It is **the server's last reported state
+   * for this item**, read off the pre-move entry rather than derived from the
+   * column the card was dragged out of: a guard that landed the item
+   * somewhere unrequested makes those two disagree, and the column-derived
+   * guess would then name a state the item was never in — which is the one
+   * thing a conflict message must not do, since the whole value of the 409
+   * arm is that it reports where the item *actually* is.
+   *
+   * Passed as `undefined` when there is no pre-move entry to read it from,
+   * which is the honest value: the server treats an absent precondition as
+   * "move it from wherever it sits". `dropped` returns a request only when it
+   * also captured a `pendingOriginal`, so a real drop never takes that path.
+   */
+  readonly move: (
+    itemId: string,
+    column: BoardColumnId,
+    expectedFrom?: string,
+  ) => Promise<MoveResult>;
   /**
    * Offers the completed move back to the person, so they can undo it.
    *
@@ -147,7 +167,14 @@ export function handleDrop(deps: DropDeps, column: BoardColumnId): Promise<void>
   // was moved *to*, making the undo a no-op that looks like it worked.
   const original = outcome.state.pendingOriginal;
 
-  return deps.move(itemId, target).then((result) => {
+  // **Read off the pre-move entry, not off the column.** `original` is the
+  // entry as the last board read reported it, captured by `dropped` before
+  // the optimistic move overwrote the card — so its `state` is the server's
+  // own word for where this item is, which is exactly what the precondition
+  // has to compare against. Deriving it from the source column instead would
+  // reconstruct the UI's belief, and a guard that moved the item elsewhere
+  // would make the resulting 409 name a state that never existed.
+  return deps.move(itemId, target, original?.item.state).then((result) => {
     // **The conflict branch reconciles; every other refusal reverts.** The
     // difference is not cosmetic: a conflict means the item really did move,
     // so putting the card back where this client last saw it would be a

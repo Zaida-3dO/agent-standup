@@ -52,7 +52,7 @@ const anItem = {
 describe("requestMove", () => {
   it("POSTs the target state for the column to the transition endpoint", () => {
     const impl = stubFetch(200, { item: anItem });
-    return requestMove("a", "in_progress", impl).then(() => {
+    return requestMove("a", "in_progress", undefined, impl).then(() => {
       expect(impl.calls).toHaveLength(1);
       expect(impl.calls[0]!.url).toBe("/api/ui/items/a/transition");
       expect(impl.calls[0]!.method).toBe("POST");
@@ -61,8 +61,54 @@ describe("requestMove", () => {
       // `repo` and the blocked/paused fields — none of which are in the
       // slim write response the writes now default to (#107). Dropping the
       // flag would blank all of them until the next board read.
+      // No `expectedFrom` when the caller named none — and `undefined` is
+      // *omitted* by `JSON.stringify` rather than sent as `null`, which is
+      // the behaviour the server's "no precondition" path expects.
       expect(impl.calls[0]!.body).toEqual({ to: TARGET_STATE.in_progress, full: true });
     });
+  });
+
+  it("sends expectedFrom when given one, so the server can refuse a lost race", async () => {
+    // `applyTransition` raises `StaleTransitionError` only when the caller
+    // supplied an `expectedFrom` — without it a stale move is applied and
+    // answered 200, silently overwriting whoever moved the item first.
+    const impl = stubFetch(200, { item: anItem });
+    await requestMove("a", "in_progress", "on_deck", impl);
+    expect(impl.calls[0]!.body).toEqual({
+      to: TARGET_STATE.in_progress,
+      full: true,
+      expectedFrom: "on_deck",
+    });
+  });
+
+  it("omits expectedFrom entirely rather than sending null when there is none", async () => {
+    // The distinction is not cosmetic: an absent key is the "no precondition"
+    // the validator already understands, while an explicit `null` is a value
+    // it would have to reject — so serialising the missing case as `null`
+    // would turn a legitimate move into a 400.
+    const impl = stubFetch(200, { item: anItem });
+    await requestMove("a", "in_progress", undefined, impl);
+    expect(Object.keys(impl.calls[0]!.body as Record<string, unknown>)).not.toContain(
+      "expectedFrom",
+    );
+  });
+
+  it("returns the 409's conflict details, which only an expectedFrom can provoke", async () => {
+    // The 409 arm was unreachable in production for as long as the board sent
+    // no precondition. This proves the parsing half; the wiring files prove a
+    // real drag actually asks for it.
+    const impl = stubFetch(409, {
+      error: {
+        message: "a is in in_review, not on_deck.",
+        code: "conflict",
+        fields: ["expectedFrom"],
+        details: { itemId: "a", expectedFrom: "on_deck", currentState: "in_review" },
+      },
+    });
+    const result = await requestMove("a", "in_progress", "on_deck", impl);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.conflict).toEqual({ currentState: "in_review", expectedFrom: "on_deck" });
   });
 
   it("refuses a column with no reachable state WITHOUT calling the server", async () => {
@@ -70,14 +116,14 @@ describe("requestMove", () => {
     // far, so refusing here keeps a wiring mistake from reaching the server
     // as a malformed request.
     const impl = stubFetch(200, { item: anItem });
-    const result = await requestMove("a", "waiting", impl);
+    const result = await requestMove("a", "waiting", undefined, impl);
     expect(result.ok).toBe(false);
     expect(impl.calls).toHaveLength(0);
   });
 
   it("percent-encodes the id so a slash cannot address a different route", async () => {
     const impl = stubFetch(200, { item: anItem });
-    await requestMove("a/b", "backlog", impl);
+    await requestMove("a/b", "backlog", undefined, impl);
     expect(impl.calls[0]!.url).toBe("/api/ui/items/a%2Fb/transition");
   });
 
@@ -85,6 +131,7 @@ describe("requestMove", () => {
     const result = await requestMove(
       "a",
       "in_progress",
+      undefined,
       stubFetch(200, { item: { ...anItem, state: "blocked" } }),
     );
     expect(result.ok).toBe(true);
@@ -99,6 +146,7 @@ describe("requestMove", () => {
     const result = await requestMove(
       "a",
       "completed",
+      undefined,
       stubFetch(422, { error: { message: "A summary is required." } }),
     );
     expect(result.ok).toBe(false);
@@ -107,14 +155,14 @@ describe("requestMove", () => {
   });
 
   it("reports a project refusal (403) in terms of what to do instead", async () => {
-    const result = await requestMove("p", "in_progress", stubFetch(403, {}));
+    const result = await requestMove("p", "in_progress", undefined, stubFetch(403, {}));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.message).toContain("children");
   });
 
   it("reports a vanished item (404)", async () => {
-    const result = await requestMove("gone", "completed", stubFetch(404, {}));
+    const result = await requestMove("gone", "completed", undefined, stubFetch(404, {}));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.message).toContain("could not be found");
@@ -124,7 +172,7 @@ describe("requestMove", () => {
     // Modelled as an ordinary refusal so the caller handles it on the same
     // path — a thrown error here would leave the card showing a move that
     // was never saved.
-    const result = await requestMove("a", "completed", failingFetch);
+    const result = await requestMove("a", "completed", undefined, failingFetch);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.message).toContain("could not be reached");
@@ -133,7 +181,7 @@ describe("requestMove", () => {
   it("treats a 200 carrying no item as a refusal rather than a success", async () => {
     // There is nothing truthful to settle the board on, so the card has to
     // go back rather than keep the optimistic guess.
-    const result = await requestMove("a", "completed", stubFetch(200, {}));
+    const result = await requestMove("a", "completed", undefined, stubFetch(200, {}));
     expect(result.ok).toBe(false);
   });
 
@@ -144,7 +192,7 @@ describe("requestMove", () => {
         status: 500,
         json: () => Promise.reject(new Error("not json")),
       } as unknown as Response)) as unknown as typeof fetch;
-    const result = await requestMove("a", "completed", impl);
+    const result = await requestMove("a", "completed", undefined, impl);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.message).toContain("500");

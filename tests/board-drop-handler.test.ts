@@ -86,7 +86,7 @@ function columnOf(board: Board, itemId: string): BoardColumnId | null {
 function host(initial: DragState, result?: MoveResult) {
   let current = initial;
   const queued: ((current: DragState) => DragState)[] = [];
-  const moves: { itemId: string; column: BoardColumnId }[] = [];
+  const moves: { itemId: string; column: BoardColumnId; expectedFrom?: string }[] = [];
   const flush = () => {
     while (queued.length > 0) {
       current = queued.shift()!(current);
@@ -100,21 +100,23 @@ function host(initial: DragState, result?: MoveResult) {
     update: (fn) => {
       queued.push(fn);
     },
-    move: vi.fn((itemId: string, column: BoardColumnId): Promise<MoveResult> => {
-      moves.push({ itemId, column });
-      return Promise.resolve(
-        result ?? {
-          ok: true,
-          entry: {
-            item: item({ state: "executing" }),
-            column,
-            assignments: [],
-            trust: null,
-            subtasks: null,
+    move: vi.fn(
+      (itemId: string, column: BoardColumnId, expectedFrom?: string): Promise<MoveResult> => {
+        moves.push({ itemId, column, expectedFrom });
+        return Promise.resolve(
+          result ?? {
+            ok: true,
+            entry: {
+              item: item({ state: "executing" }),
+              column,
+              assignments: [],
+              trust: null,
+              subtasks: null,
+            },
           },
-        },
-      );
-    }),
+        );
+      },
+    ),
   };
   return {
     deps,
@@ -144,8 +146,27 @@ describe("handleDrop — a drop actually reaches the server", () => {
     const pending = handleDrop(h.deps, "in_progress");
 
     expect(pending).not.toBeNull();
-    expect(h.moves).toEqual([{ itemId: "a", column: "in_progress" }]);
+    // `expectedFrom` is the pre-move entry's state — the fixture's card sits
+    // in Backlog as `on_deck`, which is what the last board read reported.
+    expect(h.moves).toEqual([{ itemId: "a", column: "in_progress", expectedFrom: "on_deck" }]);
     await pending;
+  });
+
+  it("passes the PRE-MOVE state as expectedFrom, not the state it is moving to", async () => {
+    // The precondition only works if it names where the item was. Handing the
+    // *target* state instead would make the server compare a state to itself
+    // — permanently satisfied, so a lost race would still be applied and
+    // answered 200, which is the silent overwrite this row exists to close.
+    //
+    // Read off `pendingOriginal` rather than the source column, because a
+    // guard can leave an item in a state whose column is not the one it is
+    // drawn in; the column would then name a state the item was never in.
+    const h = host(pickedUp());
+    await handleDrop(h.deps, "in_progress");
+
+    expect(h.moves[0]?.expectedFrom).toBe("on_deck");
+    expect(h.moves[0]?.expectedFrom).not.toBe("executing");
+    expect(h.moves[0]?.expectedFrom).not.toBe("in_progress");
   });
 
   it("issues the request even when EVERY state updater is deferred indefinitely", async () => {
@@ -257,9 +278,16 @@ describe("handleDrop — a drop actually reaches the server", () => {
     h.deps.write(dragStarted(h.state(), "a"));
     const second = handleDrop(h.deps, "completed");
 
+    // **The second drop's `expectedFrom` is `executing`, not `on_deck`, and
+    // that is right.** The first drop's optimistic move is on the board by
+    // the time the second is picked up, so `executing` is both what this
+    // client believes and what the first request asks the server to store.
+    // Sending `on_deck` for the second move would fail its precondition
+    // against a server that did exactly what it was asked, and the person
+    // would see their own first drag reported as someone else's conflict.
     expect(h.moves).toEqual([
-      { itemId: "a", column: "in_progress" },
-      { itemId: "a", column: "completed" },
+      { itemId: "a", column: "in_progress", expectedFrom: "on_deck" },
+      { itemId: "a", column: "completed", expectedFrom: "executing" },
     ]);
     await Promise.all([first, second]);
     // The later drop wins; the earlier answer is stale and ignored.
