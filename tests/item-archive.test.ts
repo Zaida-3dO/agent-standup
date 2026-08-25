@@ -1032,6 +1032,61 @@ describeIfDb("delete_item", () => {
       expect(item.archivedAt).not.toBeNull();
       expect(item.archivedReason).toBe(GOOD_REASON);
     });
+    // The timeline is the other deliberate exception, and — like `get_item`
+    // above — it is asserted rather than left implied, because exempting it
+    // from the sweep leaves it unchecked in either direction.
+    //
+    // The claim being pinned is that an archived item's **history survives
+    // the archiving**. `delete_item` withholds the row from item reads; it
+    // is not a deletion, and the diagnostic question a timeline answers —
+    // "what happened across the fleet last night" — is answered wrongly if
+    // the events of everything since archived have vanished from it. The
+    // archive event itself is the row most worth keeping, since it carries
+    // the reason.
+    //
+    // Fails if a `NOT_ARCHIVED_CONDITION` (or any `i."archivedAt" IS NULL`)
+    // is added to get-activity.ts's `LEFT JOIN "Item"`, in either the join
+    // predicate or the where clause.
+    it("still reports an archived item's events, because history is not erased", async () => {
+      const { taskId } = await projectWithTask("activity-history");
+      await call("delete_item", { id: taskId, reason: GOOD_REASON });
+
+      const timeline = await call<{
+        events: { itemId: string | null; type: string; body: string | null }[];
+        // `full`, because `body` is deliberately not in the slim column set
+        // — and the reason is the assertion below: the archive event's
+        // reason lives in `body`.
+      }>("get_activity", { itemId: [taskId], limit: 200, full: true });
+      const mine = timeline.events.filter((event) => event.itemId === taskId);
+      // The creation event predates the archiving, so its presence is the
+      // evidence that archiving withheld the item rather than its ledger.
+      expect(mine.length).toBeGreaterThan(0);
+      // The archive event is a `field_change` carrying the reason as its
+      // body (delete-item.ts). Asserting the reason rather than the type is
+      // what makes this specific — `field_change` alone would also match the
+      // ordinary edits every item accumulates.
+      expect(mine.map((event) => event.body)).toContain(GOOD_REASON);
+    });
+
+    // The corollary, and the half a reader is more likely to doubt: the
+    // title is joined from `Item`, which the archiving did not remove, so
+    // an archived item's row is still legible rather than an opaque id.
+    // This is the same thing `get_events` already does through its own
+    // title lookup, which is why both are exempt on the same argument.
+    //
+    // Fails if the `LEFT JOIN "Item"` is dropped, or if `itemTitle` is
+    // nulled out for archived rows.
+    it("still names an archived item on its timeline rows, rather than showing a bare id", async () => {
+      const { taskId } = await projectWithTask("activity-title");
+      await call("delete_item", { id: taskId, reason: GOOD_REASON });
+
+      const timeline = await call<{
+        events: { itemId: string | null; itemTitle: string | null }[];
+      }>("get_activity", { itemId: [taskId], limit: 200 });
+      const titled = timeline.events.find((event) => event.itemId === taskId);
+      expect(titled?.itemTitle).toBeTruthy();
+    });
+
     // The test that makes the claim structural rather than a list.
     //
     // Every assertion above names one read, which certifies exactly the
@@ -1154,6 +1209,33 @@ describeIfDb("delete_item", () => {
         // its entry's score, because the guard fired and was rated whatever
         // later became of the row.
         "get_intervention_scores",
+        // Reads the append-only ledger, the same class as `get_events`
+        // above and exempt for the same reason: an archived item's events
+        // stay readable on purpose — the row is withheld from item reads,
+        // not erased from history — and the archive event carrying the
+        // reason is the most useful row in it. A timeline that silently
+        // dropped every event of an archived item would misreport what
+        // happened on the night being diagnosed, which is the one job it
+        // has.
+        //
+        // It joins `Item` for `title` and `area`, so an archived item's
+        // title does reach a caller through it. That is deliberate and is
+        // exactly what `get_events` already does with its own title lookup
+        // — an event whose item is only an opaque id is unreadable, and the
+        // id is in the row regardless. The `item_archived` test below pins
+        // this direction, since exempting it here means the sweep does not.
+        "get_activity",
+        // Resolves one session **by id** and reports that session's own
+        // assignments, tool calls and newest ledger slice. Two reasons it
+        // is exempt rather than swept, and they point the same way: it
+        // ranges over `Session`, `Assignment`, `ToolCall`, `Run` and
+        // `Event` keyed on a session id rather than over items; and the
+        // item-shaped rows it does return are that session's *work
+        // history*, which archiving an item does not undo. A session that
+        // spent an afternoon on a task now archived did still spend it, and
+        // a page that hid the fact would misreport what the agent did —
+        // which is the one question this read answers.
+        "get_session_detail",
       ]);
 
       // Arguments per read. A read absent from this map fails the guard

@@ -1,17 +1,24 @@
 // `get_costs` — MILESTONES.md #53: "Aggregation: cost per item, per session,
 // **per stage**." SCHEMA.md §11 (`runs`), §10 (`tool_calls.state_at`).
 //
-// ── One operation, three groupings, chosen by the caller ────────────────
+// ── One operation, six groupings, chosen by the caller ─────────────────
 //
-// The row names three aggregations, and three operations would have been
-// the obvious reading. They are one because the *only* thing that differs
-// between them is the column in the `GROUP BY`: the source table, the four
-// sums, the cost recomputation, the time bound and the response shape are
-// identical. Three copies of that would be three places for the cost
+// The rows name several aggregations, and one operation each would have
+// been the obvious reading. They are one because the *only* thing that
+// differs between them is the column in the `GROUP BY`: the source table,
+// the four sums, the cost recomputation, the time bound and the response
+// shape are identical. Six copies of that would be six places for the cost
 // arithmetic to drift, and drift is precisely what #52's "always
 // recomputable" is guarding against — a per-item total that disagrees with
 // a per-session total covering the same runs is worse than either being
 // absent, because both look authoritative.
+//
+// `item`, `session` and `stage` are #53's three. `project`, `day` and
+// `model` are T19's, which asks for spend readable by project and plotted
+// over time. They are additions to this enum rather than a second
+// operation for exactly the drift reason above: a per-project total that
+// disagreed with the sum of its items' totals would be indefensible, and
+// the only way to guarantee it cannot is for both to be this code.
 //
 // `groupBy` is a closed enum rather than a column name, so a caller cannot
 // reach a column the operation did not intend to group by, and a new
@@ -57,12 +64,13 @@ import { pricesFrom } from "../telemetry/runs";
 /**
  * What a total may be grouped by.
  *
- * The three §53 names, and no fourth. `stage` is the item state the runs
- * were attributed to — `Run.stateAt`, carried up from `ToolCall.stateAt` at
+ * A closed set: #53's three plus T19's three, and no seventh without a
+ * deliberate addition here. `stage` is the item state the runs were
+ * attributed to — `Run.stateAt`, carried up from `ToolCall.stateAt` at
  * ingest, which §10 records as "the stage this work was attributed to"
  * rather than an exact per-call reading.
  */
-export const COST_GROUPINGS = ["item", "session", "stage"] as const;
+export const COST_GROUPINGS = ["item", "session", "stage", "project", "day", "model"] as const;
 
 export type CostGrouping = (typeof COST_GROUPINGS)[number];
 
@@ -73,12 +81,63 @@ export type CostGrouping = (typeof COST_GROUPINGS)[number];
  * grouping is a closed enum, so this map is total, and the column names
  * reaching the query are literals from this file rather than anything that
  * travelled over a wire.
+ *
+ * ── The three groupings added for T19, and why each is not just a column ──
+ *
+ * `project` is the only one needing a join, and the join is not to
+ * `parentId`. Nesting is unbounded (SCHEMA.md §1; `items.max_depth` is a
+ * runaway guard, not a depth of two), so a subtask's project is its **root
+ * ancestor**, not its parent — grouping by `parentId` would file a
+ * subtask's spend under its parent task and report a project total that
+ * omitted every run below the first level. The recursive walk that finds
+ * the root is `PROJECT_ROOT_CTE`; this entry names the column that CTE
+ * exposes.
+ *
+ * `day` is `startedAt` truncated in **UTC**, named explicitly rather than
+ * left to the server's `TimeZone`. A report whose bucket boundaries move
+ * with the connection's timezone is one whose daily totals differ between
+ * two readers, and the ledger's instants are stored as `timestamptz`, so
+ * UTC is the one boundary every reader can agree on and reproduce. A
+ * reader wanting local days re-buckets from the returned instants; a
+ * reader given server-local days cannot recover UTC ones.
+ *
+ * `model` groups by the column the cost is already computed per — which
+ * makes it the one grouping where `unpricedRuns` is exactly as coarse as
+ * the group itself: a model group is either wholly priced or wholly not.
  */
 const GROUP_COLUMN: Record<CostGrouping, string> = {
-  item: '"itemId"',
-  session: '"sessionId"',
-  stage: '"stateAt"::text',
+  item: 'r."itemId"',
+  session: 'r."sessionId"',
+  stage: 'r."stateAt"::text',
+  project: 'p."rootId"',
+  day: `to_char(date_trunc('day', r."startedAt" AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`,
+  model: 'r."model"',
 };
+
+/**
+ * Walks each item up to its root ancestor, so a run can be grouped by the
+ * project it ultimately belongs to.
+ *
+ * Written as a walk from every item rather than a walk down from every
+ * project because the direction that terminates cheaply is upward: each
+ * row has exactly one parent, so the recursion is one path per item and
+ * bounded by the tree's depth, whereas downward branches.
+ *
+ * A root is `"parentId" IS NULL`, which is also the item's own id when the
+ * item *is* a project — so a run attributed directly to a project groups
+ * under itself rather than under null, and a project's total includes work
+ * booked against the project row as well as against its children.
+ */
+const PROJECT_ROOT_CTE = `WITH RECURSIVE up AS (
+       SELECT "id", "parentId", "id" AS "rootId" FROM "Item"
+       UNION ALL
+       SELECT u."id", i."parentId", i."id" AS "rootId"
+       FROM up u JOIN "Item" i ON i."id" = u."parentId"
+     ),
+     roots AS (
+       SELECT DISTINCT ON ("id") "id", "rootId"
+       FROM up WHERE "parentId" IS NULL
+     )`;
 
 /**
  * The most groups returned in one response.
@@ -207,7 +266,7 @@ export const getCosts = defineOperation({
   name: "get_costs",
   kind: "read",
   summary:
-    "Totals token counts and recomputed cost across runs, grouped by item, session or stage.",
+    "Totals token counts and recomputed cost across runs, grouped by item, project, session, stage, day or model.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetCostsInput): Promise<GetCostsOutput> {
@@ -228,23 +287,36 @@ export const getCosts = defineOperation({
       params.push(value);
       return `$${params.length}`;
     };
-    if (input.since) conditions.push(`"startedAt" >= ${bind(input.since)}`);
-    if (input.until) conditions.push(`"startedAt" < ${bind(input.until)}`);
-    if (input.itemId) conditions.push(`"itemId" = ${bind(input.itemId)}`);
+    if (input.since) conditions.push(`r."startedAt" >= ${bind(input.since)}`);
+    if (input.until) conditions.push(`r."startedAt" < ${bind(input.until)}`);
+    if (input.itemId) conditions.push(`r."itemId" = ${bind(input.itemId)}`);
     const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`;
 
+    // The root-ancestor walk is joined **only** for `groupBy: "project"`.
+    // It is a recursive pass over every item, so paying for it on a
+    // grouping that never reads its column would make five of the six
+    // groupings slower to serve the sixth. A LEFT JOIN because a run's
+    // `itemId` is not a foreign key that is guaranteed resolvable here —
+    // an unresolvable one groups under `null`, which `fold` already
+    // treats as a real group rather than dropping.
+    const isProject = input.groupBy === "project";
+    const cte = isProject ? PROJECT_ROOT_CTE : "";
+    const join = isProject ? `LEFT JOIN roots p ON p."id" = r."itemId"` : "";
+
     const rows = await ctx.db.$queryRawUnsafe<RunCostRow[]>(
-      `SELECT ${GROUP_COLUMN[input.groupBy]} AS "key",
-              "model",
-              SUM("inputTokens")::bigint      AS "inputTokens",
-              SUM("outputTokens")::bigint     AS "outputTokens",
-              SUM("cacheWriteTokens")::bigint AS "cacheWriteTokens",
-              SUM("cacheReadTokens")::bigint  AS "cacheReadTokens",
-              SUM("toolCallCount")::int       AS "toolCallCount",
-              COUNT(*)::int                   AS "runs"
-       FROM "Run"
+      `${cte}
+       SELECT ${GROUP_COLUMN[input.groupBy]} AS "key",
+              r."model"                         AS "model",
+              SUM(r."inputTokens")::bigint      AS "inputTokens",
+              SUM(r."outputTokens")::bigint     AS "outputTokens",
+              SUM(r."cacheWriteTokens")::bigint AS "cacheWriteTokens",
+              SUM(r."cacheReadTokens")::bigint  AS "cacheReadTokens",
+              SUM(r."toolCallCount")::int       AS "toolCallCount",
+              COUNT(*)::int                     AS "runs"
+       FROM "Run" r
+       ${join}
        ${where}
-       GROUP BY 1, "model"`,
+       GROUP BY 1, r."model"`,
       ...params,
     );
 

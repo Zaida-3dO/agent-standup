@@ -9,7 +9,7 @@
 //
 // Only the fields the overnight report actually renders are modelled.
 
-/** One group's totals — a session, an item or a stage, chosen by `groupBy`. */
+/** One group's totals — an item, project, session, stage, day or model, chosen by `groupBy`. */
 export interface CostGroup {
   readonly key: string | null;
   readonly runs: number;
@@ -25,7 +25,7 @@ export interface CostGroup {
 
 /** The whole `GET /api/costs` response. */
 export interface CostsPayload {
-  readonly groupBy: "item" | "session" | "stage";
+  readonly groupBy: "item" | "session" | "stage" | "project" | "day" | "model";
   readonly groups: readonly CostGroup[];
   /** True when there were more groups than the limit returned — the total below is then a floor, not the whole figure. */
   readonly truncated: boolean;

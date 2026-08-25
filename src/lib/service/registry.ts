@@ -72,6 +72,10 @@ import { getProjectDetail } from "./operations/get-project-detail";
 // Since your last visit (MILESTONES.md #38): the ledger slice, and the
 // per-profile read state that decides what in it is new to you.
 import { getEvents } from "./operations/get-events";
+// The fleet-wide timeline (T19): the same ledger, scrolled *backwards* and
+// filtered. A sibling of `get_events` rather than a flag on it — the two
+// page in opposite directions, and that operation's header says why.
+import { getActivity } from "./operations/get-activity";
 import { markEventSeen } from "./operations/mark-event-seen";
 // The detail read behind the item view (MILESTONES.md #72) — one item's
 // subtask tree, artifacts, history and summary in a single consistent read.
@@ -159,6 +163,10 @@ import { recordToolCalls } from "./operations/record-tool-calls";
 // Session shape (MILESTONES.md #54): the read side of the same rows — how a
 // session's recent work is going, as opposed to what it cost.
 import { getSessionShape } from "./operations/get-session-shape";
+// One session end to end (T19): the record of what an agent did, as opposed
+// to #54's judgement of how it is behaving. Reuses `get_costs`' arithmetic
+// for its spend figure rather than computing a second one.
+import { getSessionDetail } from "./operations/get-session-detail";
 // Cost (MILESTONES.md #53): the other read over those rows — what the work
 // cost, totalled per item, per session and per stage.
 import { getCosts } from "./operations/get-costs";
@@ -200,6 +208,7 @@ export const OPERATION_REGISTRY = {
   [getProjectDetail.name]: getProjectDetail,
   [getFleet.name]: getFleet,
   [getEvents.name]: getEvents,
+  [getActivity.name]: getActivity,
   [markEventSeen.name]: markEventSeen,
   [getItemDetail.name]: getItemDetail,
   [getItemHistory.name]: getItemHistory,
@@ -259,6 +268,7 @@ export const OPERATION_REGISTRY = {
   [recordToolCalls.name]: recordToolCalls,
   [getSessionShape.name]: getSessionShape,
   [getCosts.name]: getCosts,
+  [getSessionDetail.name]: getSessionDetail,
   [registerSession.name]: registerSession,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;

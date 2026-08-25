@@ -1,0 +1,208 @@
+/* `/cost` paints its own surface for the same reason the board and the
+   since-view do: every colour here is chosen for a dark background, so this
+   sets the background those colours assume rather than depending on a
+   page-level one it does not control. */
+.panel {
+  padding: 1.25rem;
+  min-height: 100%;
+  background: var(--surface-app);
+  color: var(--text-primary);
+}
+
+.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  padding: 1.25rem;
+  max-width: 40rem;
+  margin: 0 auto;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.head {
+  margin: 0 0 1rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0 0 1.25rem;
+}
+
+.controlGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.chip,
+.chipActive {
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.chip:hover {
+  color: var(--text-primary);
+}
+
+/* Opaque rather than translucent, for the legibility reason the board's
+   badges give: a translucent fill composites against whatever is behind it
+   and would turn pale-on-pale wherever the page is not dark. */
+.chipActive {
+  background: var(--accent, #3b82f6);
+  border-color: var(--accent, #3b82f6);
+  color: #fff;
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0.9rem 1rem;
+  margin: 0 0 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+}
+
+.summaryFigure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.summaryLabel {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.summaryValue {
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The honesty notice. Deliberately not styled as an error — a partial total
+   is the normal state of this screen while M7's ingest rows are unbuilt, and
+   painting it red would train readers to ignore it. */
+.notice {
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--warning, #d97706);
+  border-radius: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.noticeTitle {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.noticeList {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.noticeList li + li {
+  margin-top: 0.25rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.caption {
+  text-align: left;
+  padding-bottom: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.table th,
+.table td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.table thead th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.keyCell {
+  position: relative;
+  font-weight: 400;
+  max-width: 22rem;
+}
+
+.key {
+  position: relative;
+  z-index: 1;
+  overflow-wrap: anywhere;
+}
+
+/* A missing key is a real group, not an omission — it reads as prose rather
+   than as an id, and is dimmed so it is not mistaken for one. */
+.keyMissing {
+  position: relative;
+  z-index: 1;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* The share bar sits behind the label rather than in its own column, so a
+   long id still gets the full width to wrap into. */
+.bar {
+  position: absolute;
+  left: 0;
+  bottom: 0.15rem;
+  height: 2px;
+  background: var(--accent, #3b82f6);
+  opacity: 0.7;
+}
+
+/* The marker beside a partially-priced figure. Carries a title attribute
+   with the count, so the asterisk is explicable on hover rather than being
+   an unexplained glyph. */
+.partial {
+  margin-left: 0.15rem;
+  color: var(--warning, #d97706);
+  cursor: help;
+}
