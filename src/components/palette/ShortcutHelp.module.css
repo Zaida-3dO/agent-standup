@@ -1,0 +1,125 @@
+/* The `?` shortcut sheet (T18), painted entirely from the token layer
+   (`src/app/globals.css`). No literal colour appears in this file.
+
+   Shares the palette's z-index of 70 and the reasoning behind it — see
+   `CommandPalette.module.css`. The two are never open at once (the host
+   holds one `overlay` value, not two flags), so they do not stack against
+   each other and giving them different layers would state a precedence
+   that can never be observed. */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 5rem 1rem 1rem;
+  overflow-y: auto;
+  background: var(--surface-scrim);
+}
+
+.sheet {
+  width: 100%;
+  max-width: 32rem;
+  padding: 1.15rem 1.25rem 1.25rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.6rem;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.close {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.group {
+  margin-bottom: 1rem;
+}
+
+.groupHeading {
+  margin: 0 0 0.4rem;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.list {
+  margin: 0;
+}
+
+.entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.28rem 0;
+}
+
+/* Fixed width, so every label starts at the same column and the sheet reads
+   as two columns rather than as ragged prose. */
+.keys {
+  flex: none;
+  display: flex;
+  gap: 0.25rem;
+  width: 5.5rem;
+  margin: 0;
+}
+
+.key {
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.25rem;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.75rem;
+}
+
+.label {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+}
+
+.note {
+  margin: 0.5rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}

@@ -71,6 +71,14 @@ export interface AppShellViewProps {
   readonly onCloseNav?: () => void;
   readonly density?: Density;
   readonly onToggleDensity?: () => void;
+  /**
+   * T18's two top-strip affordances, passed straight through to `TopBar`.
+   * Optional, so this view stays callable with the props it had — and so
+   * `TopBar` falls back to its honest disabled placeholder rather than
+   * rendering a live-looking control with no handler behind it.
+   */
+  readonly onOpenPalette?: () => void;
+  readonly onOpenCreate?: () => void;
   readonly children: ReactNode;
 }
 
@@ -98,6 +106,8 @@ export function AppShellView({
   onCloseNav,
   density,
   onToggleDensity,
+  onOpenPalette,
+  onOpenCreate,
   children,
 }: AppShellViewProps) {
   if (error) {
@@ -171,6 +181,8 @@ export function AppShellView({
           density={density}
           onToggleDensity={onToggleDensity}
           onOpenNav={onOpenNav}
+          onOpenPalette={onOpenPalette}
+          onOpenCreate={onOpenCreate}
         />
         {pickerOpen && (
           <ProfilePicker

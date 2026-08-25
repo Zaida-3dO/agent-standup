@@ -26,7 +26,8 @@ import { fetchSavedViews } from "@/lib/board/saved-views-client";
 import { savedViewLinksFrom } from "@/lib/nav/saved-view-links";
 import type { SavedViewLink } from "@/components/sidebar/SavedViewLinks";
 import { UndoToastHost } from "@/components/toast";
-import { AppShellView } from "./AppShellView";
+import { PaletteHost, usePalette } from "@/components/palette";
+import { AppShellView, type AppShellViewProps } from "./AppShellView";
 
 /**
  * Stands in for a path the router has not resolved yet, so the sheet's
@@ -188,31 +189,67 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [createDraft, creating, profile]);
 
   return (
-    <AppShellView
-      {...profile}
-      pathname={pathname}
-      createOpen={createOpen}
-      createDraft={createDraft}
-      creating={creating}
-      createError={createError}
-      onToggleCreate={onToggleCreate}
-      onCreateDraftChange={setCreateDraft}
-      onCreateSubmit={onCreateSubmit}
-      counts={counts}
-      savedViews={savedViews}
-      navOpen={navOpen}
-      onOpenNav={onOpenNav}
-      onCloseNav={onCloseNav}
-      density={density}
-      onToggleDensity={onToggleDensity}
-    >
-      {/* T18's undo host — the single mount point for the toast, and the
+    // **T18's palette host wraps the whole view, not just `children`.**
+    // `UndoToastHost` (T18-A) wraps `children` alone and is right to: the
+    // only thing that needs it is a page offering an undo. The palette is
+    // different because its two visible affordances — the `+` and the
+    // search control — live in `TopBar`, which `AppShellView` renders as a
+    // SIBLING of `children`. A host wrapping `children` would leave those
+    // buttons outside its provider, `usePalette()` in them would resolve to
+    // the no-op default, and both would render looking live while doing
+    // nothing at all.
+    //
+    // Wrapping the view also puts the palette above the profile picker,
+    // which is deliberate in one direction only: the overlays render at
+    // z-index 70 and the picker at 100, so the picker still covers them
+    // (see `CommandPalette.module.css`). Being inside the provider does not
+    // make an overlay visible — only `open()` does, and nothing calls it
+    // from the picker.
+    <PaletteHost>
+      <AppShellViewWithPalette
+        {...profile}
+        pathname={pathname}
+        createOpen={createOpen}
+        createDraft={createDraft}
+        creating={creating}
+        createError={createError}
+        onToggleCreate={onToggleCreate}
+        onCreateDraftChange={setCreateDraft}
+        onCreateSubmit={onCreateSubmit}
+        counts={counts}
+        savedViews={savedViews}
+        navOpen={navOpen}
+        onOpenNav={onOpenNav}
+        onCloseNav={onCloseNav}
+        density={density}
+        onToggleDensity={onToggleDensity}
+      >
+        {/* T18-A's undo host — the single mount point for the toast, and the
           provider every surface calls `useUndo().offer(...)` through. It
           wraps `children` rather than the whole shell so the toast is
           available to every page while the shell's own prop flow is
           untouched; the toast itself is `position: fixed`, so where it sits
           in the tree does not affect where it renders. */}
-      <UndoToastHost>{children}</UndoToastHost>
-    </AppShellView>
+        <UndoToastHost>{children}</UndoToastHost>
+      </AppShellViewWithPalette>
+    </PaletteHost>
   );
+}
+
+/**
+ * `AppShellView` with the palette's two handlers read from context.
+ *
+ * A separate component rather than reading `usePalette()` in `AppShell`,
+ * because `AppShell` is the thing that RENDERS `PaletteHost` — a hook call
+ * there would read the context from above the provider and get the no-op
+ * default, which is the exact failure this indirection exists to avoid.
+ * A child of the provider is the only place the real value is in scope.
+ *
+ * It stays a thin pass-through with no branching of its own, so
+ * `AppShellView` remains hook-free and directly testable
+ * (`tests/app-shell-view.test.ts`).
+ */
+function AppShellViewWithPalette(props: AppShellViewProps) {
+  const { openPalette, openCreate } = usePalette();
+  return <AppShellView {...props} onOpenPalette={openPalette} onOpenCreate={openCreate} />;
 }

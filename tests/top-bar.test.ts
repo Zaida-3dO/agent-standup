@@ -191,3 +191,125 @@ describe("DensityToggle", () => {
     );
   });
 });
+
+describe("TopBar — the palette and create affordances (T18)", () => {
+  /** A button located by its accessible name, never by position. */
+  function buttonNamed(element: ReactNode, label: string) {
+    return [...walk(element)].find((el) => {
+      if (el.type !== "button") return false;
+      return (el.props as { "aria-label"?: string })["aria-label"] === label;
+    });
+  }
+
+  it("keeps the search control disabled and honestly labelled with no handler", () => {
+    // The placeholder was written honest on purpose: a control that looks
+    // live and does nothing teaches a reader the feature is broken rather
+    // than absent. That has to survive a caller that supplies no palette.
+    const bar = TopBar({ activeProfile: userA, onSwitchProfile: () => {} });
+    const search = buttonNamed(bar, "Search — not available yet");
+    expect(search).toBeDefined();
+    expect((search?.props as { disabled?: boolean }).disabled).toBe(true);
+  });
+
+  it("makes the search control live and renames it once a palette is mounted", () => {
+    const bar = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenPalette: () => {},
+    });
+    // The placeholder name is gone, not merely joined by a second one — a
+    // control announcing "not available yet" while being clickable is worse
+    // than either state alone.
+    expect(buttonNamed(bar, "Search — not available yet")).toBeUndefined();
+    const search = buttonNamed(bar, "Search and run commands");
+    expect(search).toBeDefined();
+    expect((search?.props as { disabled?: boolean }).disabled).toBe(false);
+  });
+
+  it("drops the not-available tooltip once the control is live", () => {
+    // A live button carrying `title="Search is not available yet"` would
+    // contradict its own accessible name on hover.
+    const live = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenPalette: () => {},
+    });
+    expect(
+      (buttonNamed(live, "Search and run commands")?.props as { title?: string }).title,
+    ).toBeUndefined();
+
+    const placeholder = TopBar({ activeProfile: userA, onSwitchProfile: () => {} });
+    expect(
+      (buttonNamed(placeholder, "Search — not available yet")?.props as { title?: string }).title,
+    ).toBe("Search is not available yet");
+  });
+
+  it("advertises the chord only on the live control", () => {
+    // The `<kbd>` tells someone who has never pressed `?` that the palette
+    // exists. Printing it on a disabled placeholder would advertise a
+    // shortcut that does nothing.
+    const live = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenPalette: () => {},
+    });
+    const liveKbds = [...walk(live)].filter((el) => el.type === "kbd");
+    expect(liveKbds).toHaveLength(1);
+
+    const placeholder = TopBar({ activeProfile: userA, onSwitchProfile: () => {} });
+    expect([...walk(placeholder)].filter((el) => el.type === "kbd")).toHaveLength(0);
+  });
+
+  it("opens the palette when the search control is pressed", () => {
+    let opened = 0;
+    const bar = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenPalette: () => void opened++,
+    });
+    const search = buttonNamed(bar, "Search and run commands");
+    (search?.props as { onClick?: () => void }).onClick?.();
+    expect(opened).toBe(1);
+  });
+
+  it("renders no create button without a handler behind it", () => {
+    const bar = TopBar({ activeProfile: userA, onSwitchProfile: () => {} });
+    expect(buttonNamed(bar, "Create an item")).toBeUndefined();
+  });
+
+  it("renders the visible create affordance the row asks for", () => {
+    // Acceptance criterion 1: the dialog is reachable by a visible
+    // affordance as well as by a keyboard path.
+    const bar = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenCreate: () => {},
+    });
+    expect(buttonNamed(bar, "Create an item")).toBeDefined();
+  });
+
+  it("opens quick create when the create button is pressed", () => {
+    let opened = 0;
+    const bar = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenCreate: () => void opened++,
+    });
+    const create = buttonNamed(bar, "Create an item");
+    (create?.props as { onClick?: () => void }).onClick?.();
+    expect(opened).toBe(1);
+  });
+
+  it("keeps the two controls distinct, so one press cannot serve both", () => {
+    const seen: string[] = [];
+    const bar = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenPalette: () => seen.push("palette"),
+      onOpenCreate: () => seen.push("create"),
+    });
+    (buttonNamed(bar, "Search and run commands")?.props as { onClick?: () => void }).onClick?.();
+    (buttonNamed(bar, "Create an item")?.props as { onClick?: () => void }).onClick?.();
+    expect(seen).toEqual(["palette", "create"]);
+  });
+});
