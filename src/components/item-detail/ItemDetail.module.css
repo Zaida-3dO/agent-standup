@@ -1145,3 +1145,106 @@ details[open] > .disclosureSummary .disclosureHint::before {
   color: var(--text-muted);
   font-size: 0.82rem;
 }
+
+/* ── Archive and restore (the affordance #274's reversibility was built for) ──
+   Given a treatment distinct from every other action on this page: the start
+   control is quiet and the archived notice is loud. That asymmetry is
+   deliberate — the danger is not in *finding* the archive control, it is in
+   pressing it without meaning to, and in failing to notice a row is already
+   archived. So the control that acts is understated and the state it produces
+   is impossible to miss. */
+.archiveStart {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+
+.archiveStartHint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.archiveForm {
+  margin: 0.75rem 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--state-blocked-fg);
+  border-radius: var(--radius-sm);
+}
+
+.archiveLabel {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.archiveReasonInput {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.archiveHint {
+  margin: var(--space-2) 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.archiveButtons {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* The archived state, made unmissable — see the block comment above. A person
+   can arrive here by a stale link with no idea the row is archived, and the
+   page otherwise looks exactly like a live item. */
+.archivedNotice {
+  margin: 0.75rem 0;
+  padding: var(--space-3);
+  border: 1px solid var(--state-blocked-fg);
+  border-radius: var(--radius-sm);
+  background: var(--trust-unverified-bg);
+}
+
+.archivedHeading {
+  margin: 0 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.archivedReason {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.archiveError {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  border-left: 3px solid var(--state-blocked-fg);
+}
+
+/* `pre-wrap` because these messages are the server's own sentences and some of
+   them are long — the inbound-references refusal lists every child, holder and
+   deferred review by id. Collapsing that to one clipped line would hide the
+   part the person has to read in order to decide. */
+.archiveErrorMessage {
+  margin: 0 0 var(--space-2);
+  color: var(--state-blocked-fg);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}
+
+.archiveSuperseded {
+  margin: 0 0 var(--space-2);
+  font-size: 0.82rem;
+}

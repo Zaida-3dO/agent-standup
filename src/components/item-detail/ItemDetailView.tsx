@@ -54,6 +54,7 @@ import { TrustBadge } from "@/components/chips/TrustBadge";
 import { VerifyStateAction, type VerifyStateStatus } from "./VerifyStateAction";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
 import { StatusBlock } from "./StatusBlock";
+import { ArchiveAction, type ArchiveActionState } from "./ArchiveAction";
 import { InlineEditField } from "./InlineEditField";
 import { ChipLink } from "./ChipLink";
 import { statusSummary } from "@/lib/item-detail/status";
@@ -112,6 +113,15 @@ export interface ItemDetailViewProps {
    * Defaults to idle so a caller that does not wire it still renders the
    * button — same convention as `agentState`.
    */
+  /**
+   * Archive and restore — the affordance `restore_item` was built for.
+   *
+   * Optional like every other action on this view, and for the same
+   * documented reason: a caller that wires no handlers gets a read-only
+   * page rather than controls that do nothing when pressed. `ItemDetailView`
+   * is rendered in tests and fragments that have no container behind them.
+   */
+  readonly archive?: ItemDetailArchiveProps;
   readonly verifyStateStatus?: VerifyStateStatus;
   /**
    * Records a check of the item's `state` — `agrees` or `disagrees` with
@@ -152,6 +162,17 @@ function panel(tab: DetailTab, active: boolean, children: ReactNode) {
   );
 }
 
+/** Everything the archive/restore affordance needs, as one prop rather than seven. */
+export interface ItemDetailArchiveProps {
+  readonly state: ArchiveActionState;
+  readonly onBeginArchive: () => void;
+  readonly onCancel: () => void;
+  readonly onReasonChange: (reason: string) => void;
+  readonly onArchive: () => void;
+  readonly onRestore: () => void;
+  readonly onAcknowledge: () => void;
+}
+
 export function ItemDetailView({
   loadState,
   activeTab = DEFAULT_TAB,
@@ -171,6 +192,7 @@ export function ItemDetailView({
   hasOlderHistory = false,
   verifyStateStatus = { status: "idle" },
   onVerifyState,
+  archive,
 }: ItemDetailViewProps) {
   if (loadState.status === "error") {
     return (
@@ -366,6 +388,30 @@ export function ItemDetailView({
           the reader who already guessed which tab to open; the question is
           asked of every item, on arrival, before anything else. */}
       <StatusBlock item={item} column={column} status={status} now={now} edit={edit} />
+
+      {/* ABOVE the tabs for the same reason the status block is, and one of
+          its own. An archived item is still served at this URL by design —
+          that is how a stale link lands somewhere real rather than at a hole
+          — so a reader can be standing on an archived row with nothing else
+          on the page saying so. The notice has to be where they are already
+          looking, not inside a tab they have no reason to open.
+
+          Rendered only when the caller wired handlers, the read-only rule
+          `onVerifyState` and `onLoadAgentView` already follow. */}
+      {archive && (
+        <ArchiveAction
+          archived={item.archivedAt !== null}
+          archivedReason={item.archivedReason}
+          supersededById={item.supersededById}
+          state={archive.state}
+          onBeginArchive={archive.onBeginArchive}
+          onCancel={archive.onCancel}
+          onReasonChange={archive.onReasonChange}
+          onArchive={archive.onArchive}
+          onRestore={archive.onRestore}
+          onAcknowledge={archive.onAcknowledge}
+        />
+      )}
 
       <TabStrip
         activeTab={activeTab}
