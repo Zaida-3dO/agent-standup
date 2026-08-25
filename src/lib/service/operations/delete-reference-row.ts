@@ -179,8 +179,12 @@ async function deleteReferenceRow(
 // in the direction that matters:
 //
 // `tests/service-registry.test.ts` finds every operation by regex over this
-// directory's source — `defineOperation({ name: "…"` — precisely so that the
-// check "cannot consult the thing it is checking". An operation whose name
+// directory's source — it looks for a `defineOperation` call opening with a
+// literal `name:` — precisely so that the check "cannot consult the thing it
+// is checking". (Spelled out rather than quoted verbatim on purpose: both
+// scanners match that literal anywhere on a line, so quoting it in prose
+// makes this comment itself read as a fourth, unannotated declaration.
+// `check:operation-metadata` fails on it.) An operation whose name
 // arrives as a variable is invisible to that scan, so a future operation in
 // this file could be declared, never registered, and the canonical-registry
 // test would still pass. The same is true of
