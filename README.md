@@ -84,17 +84,18 @@ loudly (without stopping the process) in production.
 
 Useful scripts:
 
-| Command                           | What it does                                                                                                                    |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`                     | Next.js dev server                                                                                                              |
-| `npm run build` / `npm start`     | Production build / run it                                                                                                       |
-| `npm run typecheck`               | `tsc --noEmit`                                                                                                                  |
-| `npm run lint` / `npm run format` | ESLint / Prettier (`:check` variants exist for CI)                                                                              |
-| `npm test`                        | Vitest                                                                                                                          |
-| `npm run db:migrate`              | Create/apply a dev migration (`prisma migrate dev`)                                                                             |
-| `npm run db:deploy`               | Apply committed migrations without prompting (`prisma migrate deploy`)                                                          |
-| `npm run db:check-drift`          | Fail if `schema.prisma` and `prisma/migrations` disagree — needs `SHADOW_DATABASE_URL` pointed at an empty, disposable Postgres |
-| `npm run db:studio`               | Prisma Studio                                                                                                                   |
+| Command                           | What it does                                                                                                                                                           |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`                     | Next.js dev server                                                                                                                                                     |
+| `npm run build` / `npm start`     | Production build / run it                                                                                                                                              |
+| `npm run typecheck`               | `tsc --noEmit`                                                                                                                                                         |
+| `npm run lint` / `npm run format` | ESLint / Prettier (`:check` variants exist for CI)                                                                                                                     |
+| `npm test`                        | Vitest, wrapped so a failing run cannot look green — it also fails on the printed summary, so an empty or failing run is caught even through a pipe. **Use this one.** |
+| `npm run test:raw`                | Bare `vitest run`. Careful: `... \| tail` reports the pipe's exit status, not vitest's                                                                                 |
+| `npm run db:migrate`              | Create/apply a dev migration (`prisma migrate dev`)                                                                                                                    |
+| `npm run db:deploy`               | Apply committed migrations without prompting (`prisma migrate deploy`)                                                                                                 |
+| `npm run db:check-drift`          | Fail if `schema.prisma` and `prisma/migrations` disagree — needs `SHADOW_DATABASE_URL` pointed at an empty, disposable Postgres                                        |
+| `npm run db:studio`               | Prisma Studio                                                                                                                                                          |
 
 The initial baseline migration (the whole schema in one shot — see
 [`SCHEMA.md`](docs/plans/SCHEMA.md)) lives in `prisma/migrations/`. CI applies it to a

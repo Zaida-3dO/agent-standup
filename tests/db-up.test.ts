@@ -187,6 +187,55 @@ describe("a missing Prisma client is reported as itself", () => {
     expect(prismaClientProblem(() => ({ PrismaClient: class {} }))).toBeNull();
   });
 
+  it("catches the placeholder that only fails when CONSTRUCTED", () => {
+    // The state that defeated the original type-only check, on 2026-08-25: a
+    // worktree whose client imported cleanly and exported a `PrismaClient`
+    // function, so this guard reported ready — and then five test files died
+    // on `did not initialize yet` anyway. A check on the export's type cannot
+    // distinguish this placeholder from the real client; only calling it can.
+    const load = () => ({
+      PrismaClient: class {
+        constructor() {
+          throw new Error(
+            '@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again.',
+          );
+        }
+      },
+    });
+    expect(prismaClientProblem(load)).toBe("ungenerated");
+  });
+
+  it("re-throws a construction error that is NOT about generation", () => {
+    // Reporting every construction failure as "ungenerated" would be the same
+    // bug in the other direction: it sends the reader to a `prisma generate`
+    // that fixes nothing and hides the actual objection.
+    const load = () => ({
+      PrismaClient: class {
+        constructor() {
+          throw new Error("Invalid datasource URL scheme");
+        }
+      },
+    });
+    expect(() => prismaClientProblem(load)).toThrow(/Invalid datasource URL scheme/);
+  });
+
+  it("does not open a database connection while probing", () => {
+    // The probe passes a deliberately unreachable URL, which is safe only
+    // because a real client stores it and connects lazily. If that ever stops
+    // being true this check would start doing I/O — and hang or fail in a
+    // no-database environment like the `Static checks & build` CI job.
+    let received: unknown;
+    const load = () => ({
+      PrismaClient: class {
+        constructor(options: unknown) {
+          received = options;
+        }
+      },
+    });
+    expect(prismaClientProblem(load)).toBeNull();
+    expect(received).toMatchObject({ datasourceUrl: expect.stringContaining("127.0.0.1:1") });
+  });
+
   it("names the exact command in the advice, for both problems", () => {
     // The whole point of the check: one sentence that fixes it, rather than
     // six failures that read as defects in the code under test.
