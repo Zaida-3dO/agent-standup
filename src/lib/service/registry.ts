@@ -139,6 +139,7 @@ import { listPeople } from "./operations/list-people";
 // nothing could populate until this row; see the operation's header for the
 // three capabilities that were dead as a result.
 import { updatePerson } from "./operations/update-person";
+import { deleteRepo, deleteArea, deletePerson } from "./operations/delete-reference-row";
 import { hookDecision } from "./operations/hook-decision";
 // The evidence loop for the intervention catalogue (`docs/plans/INTERVENTIONS.md`).
 // The guard surface only ever grew, because nothing recorded whether an entry
@@ -243,10 +244,12 @@ export const OPERATION_REGISTRY = {
   [getRepo.name]: getRepo,
   [createRepo.name]: createRepo,
   [updateRepo.name]: updateRepo,
+  [deleteRepo.name]: deleteRepo,
   [listAreas.name]: listAreas,
   [getArea.name]: getArea,
   [createArea.name]: createArea,
   [updateArea.name]: updateArea,
+  [deleteArea.name]: deleteArea,
   [listMachines.name]: listMachines,
   [readiness.name]: readiness,
   [getMachine.name]: getMachine,
@@ -257,6 +260,7 @@ export const OPERATION_REGISTRY = {
   [getCrewName.name]: getCrewName,
   [listPeople.name]: listPeople,
   [updatePerson.name]: updatePerson,
+  [deletePerson.name]: deletePerson,
   [hookDecision.name]: hookDecision,
   [recordIntervention.name]: recordIntervention,
   [scoreIntervention.name]: scoreIntervention,

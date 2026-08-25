@@ -240,3 +240,62 @@
   font-size: var(--text-3xs);
   font-style: italic;
 }
+
+/* ── The phone flow (#76, narrowed) ──────────────────────────────────────
+   Standup is the other half of the two glanceable jobs this page pair
+   exists for: it is what gets read first thing, on a phone, before anyone
+   is at a desk.
+
+   `.grid` asks for `minmax(20rem, 1fr)` — a 320px minimum — inside a page
+   that already spends `2 * var(--space-6)` on padding. At 320px that
+   cannot fit, and `auto-fit` will not shrink a track below its stated
+   minimum, so the demand becomes horizontal overflow rather than a
+   narrower column. Below 640px the minimum is dropped entirely and the
+   blocks stack, which is the right shape anyway: these are four
+   independent summaries, not a comparison.
+
+   Measured in a real browser against the real compiled stylesheet, before
+   this block existed: 320px overflowed by 24px (scrollWidth 344) and eight
+   tap targets rendered under 44px, the links between 17px and 38px tall.
+   360px and 390px did NOT overflow — the overflow is a 320px-only defect,
+   and the tap targets are what was wrong at every phone width. After:
+   no overflow at 320/360/390, and six of the eight targets at 44px.
+
+   The two still under 44px are the project-strip title links, left
+   deliberately: raising them would force the fixed `3rem` bar and `2.5rem`
+   percent columns onto their own line, which costs the at-a-glance
+   comparison the strip exists for. They sit beside a 44px "Open projects"
+   link that reaches the same place. */
+@media (max-width: 640px) {
+  .page {
+    padding: var(--space-4);
+  }
+
+  .grid {
+    /* A single column, stated as 1fr rather than as a smaller `minmax`,
+       so there is no minimum left to overflow at any width. */
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .itemLink,
+  .seeAll {
+    /* These are the block's tap targets. Everything else on this page is
+       read, not touched. */
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .itemLink {
+    /* Real task titles are long and must wrap rather than push the card. */
+    overflow-wrap: anywhere;
+  }
+
+  .projectStripItem {
+    /* The 6rem title / 4rem bar / 2.5rem percent triple is 12.5rem of fixed
+       demand plus gaps; at 320px inside a padded card that is most of the
+       width. The title takes what is left and the bar keeps a usable size. */
+    grid-template-columns: minmax(0, 1fr) 3rem 2.5rem;
+  }
+}
