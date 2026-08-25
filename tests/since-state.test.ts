@@ -4,6 +4,7 @@
 // does to the feed in hand.
 import { describe, expect, it } from "vitest";
 import {
+  appendPage,
   applySeen,
   buildFeedQuery,
   fetchFeed,
@@ -276,5 +277,83 @@ describe("sinceErrorMessageFrom", () => {
     expect(sinceErrorMessageFrom({ weird: true })).toBe("Could not load what's new.");
     expect(sinceErrorMessageFrom("a string")).toBe("Could not load what's new.");
     expect(sinceErrorMessageFrom(null)).toBe("Could not load what's new.");
+  });
+});
+
+describe("appendPage — continuing from the server's cursor (row 3c25e600)", () => {
+  it("keeps what was on screen and adds the new page after it", () => {
+    const first = feed({ events: [event({ id: "1" })], cursor: "1", unseenCount: 1 });
+    const next = feed({ events: [event({ id: "2" })], cursor: "2", unseenCount: 1 });
+
+    const merged = appendPage(first, next);
+
+    // Order matters: `get_events` pages forward by ascending id, so the
+    // continuation belongs after what is already shown.
+    expect(merged.events.map((e) => e.id)).toEqual(["1", "2"]);
+  });
+
+  it("advances the cursor to the continuation's, so the next page follows on", () => {
+    const first = feed({ events: [event({ id: "1" })], cursor: "1" });
+    const next = feed({ events: [event({ id: "2" })], cursor: "2" });
+
+    // A cursor that does not advance re-requests the same page forever.
+    expect(appendPage(first, next).cursor).toBe("2");
+  });
+
+  it("recomputes the unseen count rather than adding the two together", () => {
+    // The AC3 defect in its pure form. Both events are unseen and "1"
+    // arrives on both pages, so a sum gives 3 where the truth is 2.
+    const first = feed({ events: [event({ id: "1" })], cursor: "1", unseenCount: 1 });
+    const next = feed({
+      events: [event({ id: "1" }), event({ id: "2" })],
+      cursor: "2",
+      unseenCount: 2,
+    });
+
+    const merged = appendPage(first, next);
+
+    expect(merged.events).toHaveLength(2);
+    expect(merged.unseenCount).toBe(2);
+  });
+
+  it("counts a seen event as seen when recomputing", () => {
+    const first = feed({ events: [event({ id: "1", seen: true })], cursor: "1", unseenCount: 0 });
+    const next = feed({ events: [event({ id: "2" })], cursor: "2", unseenCount: 1 });
+
+    expect(appendPage(first, next).unseenCount).toBe(1);
+  });
+
+  it("does not let a re-delivered event overwrite a locally-marked seen flag", () => {
+    // The server does not know about a `seen` set locally while the page was
+    // in flight, so the row already held has to win.
+    const first = feed({ events: [event({ id: "1", seen: true })], cursor: "1", unseenCount: 0 });
+    const next = feed({ events: [event({ id: "1", seen: false })], cursor: "2", unseenCount: 1 });
+
+    const merged = appendPage(first, next);
+
+    expect(merged.events).toHaveLength(1);
+    expect(merged.events[0]!.seen).toBe(true);
+    expect(merged.unseenCount).toBe(0);
+  });
+
+  it("takes the horizon and firstVisit from the newer response", () => {
+    // The horizon moves forward as transactions commit; the later read is
+    // the one that knows where it is now.
+    const first = feed({ events: [event({ id: "1" })], cursor: "1", horizon: "10" });
+    const next = feed({ events: [event({ id: "2" })], cursor: "2", horizon: "20" });
+
+    expect(appendPage(first, next).horizon).toBe("20");
+  });
+
+  it("returns a new feed rather than mutating the one in hand", () => {
+    // The caller holds this in React state, where an in-place edit would not
+    // re-render.
+    const first = feed({ events: [event({ id: "1" })], cursor: "1", unseenCount: 1 });
+    const next = feed({ events: [event({ id: "2" })], cursor: "2", unseenCount: 1 });
+
+    appendPage(first, next);
+
+    expect(first.events.map((e) => e.id)).toEqual(["1"]);
+    expect(first.cursor).toBe("1");
   });
 });

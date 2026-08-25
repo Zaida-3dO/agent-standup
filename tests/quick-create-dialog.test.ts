@@ -330,3 +330,76 @@ describe("handlers", () => {
     expect(textOf(tree)).toContain("No such project: proj-9.");
   });
 });
+
+describe("the area field suggests existing areas without constraining (row 6b2fb637)", () => {
+  /** The `<input>` bound to the area field. */
+  function areaInput(tree: ReactElement): Record<string, unknown> {
+    const input = findAllByType(tree, "input").find(
+      (element) => (element.props as { id?: string }).id === "quick-create-area",
+    );
+    return (input?.props ?? {}) as Record<string, unknown>;
+  }
+
+  function datalists(tree: ReactElement): ReactElement[] {
+    return findAllByType(tree, "datalist");
+  }
+
+  it("offers every existing area as an option", () => {
+    const tree = render({ areaSuggestions: ["web", "api", "infra"] });
+
+    const list = datalists(tree)[0];
+    expect(list).toBeDefined();
+    const options = findAllByType(list!, "option").map(
+      (option) => (option.props as { value?: string }).value,
+    );
+    expect(options).toEqual(["web", "api", "infra"]);
+  });
+
+  it("points the input at the suggestion list, so a browser actually offers it", () => {
+    // The half that makes the datalist reachable: an unreferenced `<datalist>`
+    // renders nothing a person can see. Deleting the `list` attribute leaves
+    // the options in the tree and the feature entirely absent from the UI,
+    // which is exactly the kind of silent break this pins.
+    const tree = render({ areaSuggestions: ["web"] });
+
+    const list = datalists(tree)[0]!;
+    expect(areaInput(tree).list).toBe((list.props as { id?: string }).id);
+  });
+
+  it("stays a text input, so a new area can still be typed", () => {
+    // The acceptance criterion this row states as a NEGATIVE: areas must not
+    // become a closed enum. Find-or-create is deliberate — SCHEMA.md §23.1
+    // argues that blocking it is friction on the most common operation in the
+    // system. A `<select>` here would "fix" duplicates by deleting the
+    // feature, so this fails if the field is ever turned into one.
+    const tree = render({ areaSuggestions: ["web"] });
+
+    expect(areaInput(tree).value).toBe("web");
+    const selectIds = findAllByType(tree, "select").map(
+      (element) => (element.props as { id?: string }).id,
+    );
+    expect(selectIds).not.toContain("quick-create-area");
+  });
+
+  it("still accepts a value that is not in the suggestions", () => {
+    // Typing a genuinely new area calls `onChange` exactly as before. A
+    // datalist that filtered input would break the create path for every
+    // first use of a new area.
+    const onChange = vi.fn();
+    const tree = render({ areaSuggestions: ["web"], onChange });
+
+    const handler = areaInput(tree).onChange as (event: { target: { value: string } }) => void;
+    handler({ target: { value: "a-brand-new-area" } });
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ area: "a-brand-new-area" }));
+  });
+
+  it("renders no datalist at all when there is nothing to suggest", () => {
+    // An empty datalist is a control that opens onto nothing. Both the
+    // default (a caller that passes none) and an explicit empty list.
+    expect(datalists(render())).toHaveLength(0);
+    expect(datalists(render({ areaSuggestions: [] }))).toHaveLength(0);
+    // And the input does not point at a list that is not there.
+    expect(areaInput(render()).list).toBeUndefined();
+  });
+});

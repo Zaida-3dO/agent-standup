@@ -94,8 +94,17 @@ export function ProfilePicker({
     >
       <div className={styles.panel} onClick={(event) => event.stopPropagation()}>
         <h1 className={styles.heading}>Who&apos;s working?</h1>
+        {/* An "×" that closes an overlay is a close affordance, so its
+            accessible name is "Close" — matching `ShortcutHelp`'s. It was
+            "Cancel", which told a screen-reader user this cancelled
+            something; nothing is cancelled by dismissing the picker. */}
         {onClose && (
-          <button type="button" className={styles.close} onClick={onClose} aria-label="Cancel">
+          <button
+            type="button"
+            className={styles.close}
+            onClick={onClose}
+            aria-label="Close profile picker"
+          >
             ×
           </button>
         )}
@@ -189,6 +198,9 @@ export function ProfilePicker({
               >
                 {creating ? "Creating…" : "Create profile"}
               </button>
+              {/* Closes the create-profile form; nothing has been created
+                  yet, so this discards a draft. Matches the other create
+                  paths per the convention in `ArchiveAction`'s header. */}
               {!empty && (
                 <button
                   type="button"
@@ -196,7 +208,7 @@ export function ProfilePicker({
                   disabled={creating}
                   onClick={onToggleCreate}
                 >
-                  Cancel
+                  Discard draft
                 </button>
               )}
             </div>

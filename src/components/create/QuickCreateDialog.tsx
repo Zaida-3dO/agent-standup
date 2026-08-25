@@ -50,6 +50,29 @@ export interface QuickCreateDialogProps {
   readonly onChange: (draft: QuickCreateDraft) => void;
   readonly onSubmit: () => void;
   readonly onCancel: () => void;
+  /**
+   * The areas that already exist, offered as suggestions while typing
+   * (row 6b2fb637).
+   *
+   * **A `<datalist>`, deliberately — not a `<select>`.** Areas are free text
+   * with find-or-create, and that is a property worth keeping: a person can
+   * name a new area without an admin step, which SCHEMA.md §23.1 argues for
+   * explicitly ("blocking that is friction on the most common operation in
+   * the system"). A closed vocabulary would fix the duplicate problem by
+   * removing the feature.
+   *
+   * What was missing is that nothing surfaced an existing near-match at the
+   * moment of typing, so `website` got created beside `web` silently — and a
+   * split vocabulary silently splits the board, projects, list and search
+   * filters that all share `areaFilterCondition`. A datalist is the smallest
+   * thing that fixes that: typing `web` shows `web` already exists, while
+   * still accepting a genuinely new name.
+   *
+   * Optional and defaulted to empty, so a caller that has not loaded them
+   * (or whose load failed) renders exactly what it rendered before rather
+   * than breaking the create path over a suggestion list.
+   */
+  readonly areaSuggestions?: readonly string[];
 }
 
 /** The id each field's label and error are tied together by. */
@@ -57,6 +80,7 @@ const FIELD_IDS = {
   kind: "quick-create-kind",
   title: "quick-create-title",
   area: "quick-create-area",
+  areaList: "quick-create-area-suggestions",
   priority: "quick-create-priority",
   parent: "quick-create-parent",
 } as const;
@@ -76,6 +100,7 @@ export function QuickCreateDialog({
   onChange,
   onSubmit,
   onCancel,
+  areaSuggestions = [],
 }: QuickCreateDialogProps) {
   const spec = CREATE_KINDS[draft.kind];
   const issues = blockingIssues(draft);
@@ -195,8 +220,21 @@ export function QuickCreateDialog({
             value={draft.area}
             placeholder="web, api, infra…"
             aria-invalid={areaIssue !== null}
+            // Suggests without constraining: a datalist offers what exists
+            // and still accepts anything typed, which is what keeps
+            // find-or-create working. See `areaSuggestions`.
+            list={areaSuggestions.length > 0 ? FIELD_IDS.areaList : undefined}
             onChange={(event) => onChange({ ...draft, area: event.target.value })}
           />
+          {/* Rendered only when there is something to suggest — an empty
+              datalist is a dropdown arrow that opens onto nothing. */}
+          {areaSuggestions.length > 0 && (
+            <datalist id={FIELD_IDS.areaList} data-region="area-suggestions">
+              {areaSuggestions.map((area) => (
+                <option key={area} value={area} />
+              ))}
+            </datalist>
+          )}
           {areaIssue !== null && (
             <p className={styles.fieldError} role="alert">
               {areaIssue.message}
@@ -278,8 +316,12 @@ export function QuickCreateDialog({
             >
               {submitting ? "Creating…" : `Create ${spec.kind}`}
             </button>
+            {/* Names the outcome rather than borrowing "Cancel" — the house
+                convention set in `ArchiveAction`'s header. Nothing has been
+                minted yet, so the honest description of dismissing this form
+                is that the draft is discarded. */}
             <button type="button" className={styles.cancelButton} onClick={onCancel}>
-              Cancel
+              Discard draft
             </button>
           </div>
         </form>

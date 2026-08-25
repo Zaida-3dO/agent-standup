@@ -40,6 +40,7 @@ import type { ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { QuickCreateDialog } from "@/components/create/QuickCreateDialog";
 import { emptyDraft, submitCreate, type QuickCreateDraft } from "@/lib/create/state";
+import { fetchAreaNames } from "@/lib/board/filter-options";
 import {
   commandsFor,
   matchCommands,
@@ -169,6 +170,11 @@ export function PaletteHost({ children }: { children: ReactNode }) {
   const [item, setItem] = useState<PaletteItem | null>(null);
 
   const [draft, setDraft] = useState<QuickCreateDraft>(() => emptyDraft());
+  // The existing area vocabulary, offered as suggestions in the create form
+  // (row 6b2fb637) so a person about to type `website` sees that `web`
+  // already exists. Suggestions only — the field stays free text, because
+  // find-or-create is a feature and not the bug.
+  const [areaSuggestions, setAreaSuggestions] = useState<readonly string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -272,6 +278,28 @@ export function PaletteHost({ children }: { children: ReactNode }) {
     body.style.overflow = "hidden";
     return () => {
       body.style.overflow = previous;
+    };
+  }, [overlay]);
+
+  // Loaded when the create overlay opens, not on mount: most sessions never
+  // open this dialog, and a vocabulary read on every page load to populate a
+  // form nobody is looking at is a request nobody asked for. Re-read on each
+  // open rather than cached, so an area created since the last open appears.
+  //
+  // **A failed read leaves the form fully usable**, exactly as
+  // `fetchFilterOptions` treats the same endpoint: `fetchAreaNames` resolves
+  // to an empty list rather than throwing, an empty list renders no datalist
+  // at all, and the field was free text to begin with. Losing a suggestion
+  // list must never cost somebody the ability to create an item.
+  useEffect(() => {
+    if (overlay !== "create") return;
+    let cancelled = false;
+    void fetchAreaNames().then((names) => {
+      if (cancelled) return;
+      setAreaSuggestions(names);
+    });
+    return () => {
+      cancelled = true;
     };
   }, [overlay]);
 
@@ -507,6 +535,7 @@ export function PaletteHost({ children }: { children: ReactNode }) {
                 onChange={setDraft}
                 onSubmit={onCreateSubmit}
                 onCancel={close}
+                areaSuggestions={areaSuggestions}
               />
             </div>
           )}
