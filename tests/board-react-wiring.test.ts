@@ -335,7 +335,55 @@ describe("Board, mounted in real React", () => {
     expect(transitionCalls[0]?.url).toContain("/api/ui/items/item-a/transition");
     // `full: true` — the board needs the whole record to reconcile the card
     // it just moved; see `board/move.ts` and `tests/board-move.test.ts`.
-    expect(transitionCalls[0]?.body).toEqual({ to: "executing", full: true });
+    //
+    // `expectedFrom: "on_deck"` is the card's state in the mounted fixture,
+    // i.e. the state the *server* reported at the last board read — see the
+    // dedicated case below for why this key being present is load-bearing.
+    expect(transitionCalls[0]?.body).toEqual({
+      to: "executing",
+      full: true,
+      expectedFrom: "on_deck",
+    });
+  });
+
+  it("sends expectedFrom from a real drag, so a lost race is refused rather than overwriting", async () => {
+    // **The assertion that closes the silent-overwrite defect.**
+    //
+    // `applyTransition` raises `StaleTransitionError` only when the caller
+    // supplied an `expectedFrom` (`state-machine/transition.ts`): without the
+    // key the server moves the item from whatever state it holds and answers
+    // 200. A drag that loses a race therefore overwrites the other session in
+    // silence, and every 409 path the board owns — `conflictDetailsFrom`,
+    // `conflictEntry`, `moveConflicted`, the 409 arm of `refusalMessage` —
+    // is unreachable code that cannot run in production.
+    //
+    // **Why this assertion belongs in this file specifically.** A test of
+    // `requestMove` alone proves the parameter is serialised when passed; a
+    // test of `handleDrop` alone proves the seam forwards what it is handed.
+    // Neither can fail if the *component* stops supplying it, and the
+    // composition is exactly where the defect lived. This drives the real
+    // `Board` under StrictMode through a real drag to the real stubbed
+    // network, so it fails if any link in that chain drops the key.
+    //
+    // **The value is checked, not just the presence.** `expectedFrom` has to
+    // be the server's reported state for the card — `on_deck` in the fixture
+    // — and asserting only `toHaveProperty` would pass for a caller that sent
+    // the *target* state, or the source column's name, either of which makes
+    // the precondition compare the wrong two things and never fire.
+    await mountBoard();
+    await dragCardTo("in_progress");
+
+    expect(transitionCalls).toHaveLength(1);
+    const body = transitionCalls[0]?.body as Record<string, unknown> | undefined;
+    expect(body).toBeDefined();
+    expect(Object.keys(body ?? {})).toContain("expectedFrom");
+    expect(body?.expectedFrom).toBe("on_deck");
+    // Not the destination, and not the column id. Named explicitly because
+    // both are plausible wrong answers a refactor could reach for, and both
+    // would leave the precondition permanently satisfied or permanently
+    // broken rather than doing its job.
+    expect(body?.expectedFrom).not.toBe("executing");
+    expect(body?.expectedFrom).not.toBe("in_progress");
   });
 
   it("moves the card in the rendered board as well as sending the request", async () => {

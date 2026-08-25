@@ -54,10 +54,32 @@ interface TransitionBody {
  * item and the column asked for — not from the optimistic guess. If a guard
  * ever lands the item somewhere other than the requested state, the item it
  * returns says so, and the card reconciles to that.
+ *
+ * `expectedFrom` is the precondition that makes a losing race a 409 rather
+ * than a silent overwrite (MILESTONES.md #257). **It must be the state the
+ * server last reported for this item** — the pre-move entry's `item.state`,
+ * captured by `dropped` before the optimistic move overwrote it — and never
+ * the column the card is being dragged *from*. Those usually agree, but a
+ * guard that landed the item somewhere unrequested makes the UI's guess name
+ * a state the item was never in, which would turn an honest conflict message
+ * into a confidently wrong one.
+ *
+ * Optional because one caller genuinely has no precondition to state: the
+ * `TARGET_STATE`-null guard above returns before any request, and a host with
+ * no pre-move entry (`pendingOriginal === null`) has nothing truthful to
+ * send. Omitted is the honest value there — see the body for why not `null`.
  */
 export async function requestMove(
   itemId: string,
   column: BoardColumnId,
+  // **`expectedFrom` sits before `fetchImpl` on purpose.** `Board.tsx` hands
+  // `requestMove` to `handleDrop` as `deps.move` directly, and that signature
+  // is `(itemId, column, expectedFrom?)` — so putting the injected `fetch`
+  // third would line the precondition up with the `fetchImpl` slot and pass a
+  // state string where a `fetch` is expected. Tests supplying only a stub
+  // fetch pass `undefined` here explicitly, which is the honest "no
+  // precondition" value anyway.
+  expectedFrom?: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<MoveResult> {
   const to = TARGET_STATE[column];
@@ -81,7 +103,20 @@ export async function requestMove(
       // `area`, `repo` and the blocked/paused fields. Settling a card on
       // the slim shape would blank all of those until the next board read.
       // This is the caller the `full` flag exists for.
-      body: JSON.stringify({ to, full: true }),
+      // **`expectedFrom` is the precondition, and omitting it is not a
+      // smaller version of sending it — it is a different request.**
+      // `applyTransition` raises `StaleTransitionError` only when the caller
+      // supplied one (`state-machine/transition.ts`), so a request without it
+      // asks the server to move the item from wherever it happens to be. A
+      // drag that lost a race then gets a 200 and silently overwrites the
+      // other session's move, and every 409 path below — `conflictDetailsFrom`,
+      // `conflictEntry`, `moveConflicted` — is unreachable by construction.
+      //
+      // Sent only when the caller could name a state. `undefined` is omitted
+      // by `JSON.stringify` rather than serialised as `null`, which matters:
+      // `null` is a value the validator would have to reject, while an absent
+      // key is the "no precondition" the server already understands.
+      body: JSON.stringify({ to, full: true, expectedFrom }),
     });
   } catch {
     // The request never reached the server — a refusal all the same, and

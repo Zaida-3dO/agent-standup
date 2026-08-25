@@ -381,6 +381,28 @@ describe("a conflicting move, mounted in real React", () => {
     });
   }
 
+  it("asks the server for the precondition that can produce this 409 at all", async () => {
+    // **Without this case the whole block below is a fiction.** The stub
+    // returns 409 because `conflictNextTransition` is set, not because the
+    // request earned one — so both cases here passed while the real board
+    // sent no `expectedFrom` and the server, per
+    // `state-machine/transition.ts`, could only ever have answered 200.
+    //
+    // This asserts the request carries the key that makes the refusal
+    // reachable against a real server, and that its value is the state the
+    // server last reported (`on_deck`) — which is also the `expectedFrom` the
+    // stubbed envelope above echoes back, so the fixture and the request
+    // describe the same race rather than two unrelated ones.
+    await mountBoard();
+    conflictNextTransition = true;
+    await dragCardToInProgress();
+
+    expect(transitionCalls.length).toBeGreaterThan(0);
+    const body = transitionCalls[0]?.body as Record<string, unknown> | undefined;
+    expect(Object.keys(body ?? {})).toContain("expectedFrom");
+    expect(body?.expectedFrom).toBe("on_deck");
+  });
+
   it("names who moved it, where to, and how long ago", async () => {
     // The row's third criterion, end to end: the 409's `details` and the live
     // feed's slice have to meet in the component for this sentence to exist.
