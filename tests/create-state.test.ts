@@ -10,6 +10,7 @@ import {
   canSubmit,
   createPath,
   emptyDraft,
+  isPristine,
   submitCreate,
   titlePreview,
   type QuickCreateDraft,
@@ -93,6 +94,34 @@ describe("blockingIssues", () => {
 
   it("never asks a project for a parent", () => {
     expect(blockingIssues(draft({ kind: "project", parent: "" }))).toEqual([]);
+  });
+});
+
+describe("isPristine", () => {
+  it("is true for the draft the dialog opens on", () => {
+    expect(isPristine(emptyDraft("task"))).toBe(true);
+    expect(isPristine(emptyDraft("subtask"))).toBe(true);
+  });
+
+  it("is false once any typed field carries anything", () => {
+    expect(isPristine({ ...emptyDraft("task"), title: "x" })).toBe(false);
+    expect(isPristine({ ...emptyDraft("task"), area: "web" })).toBe(false);
+    expect(isPristine({ ...emptyDraft("subtask"), parent: "item-1" })).toBe(false);
+  });
+
+  it("ignores the fields that open on a default rather than blank", () => {
+    // `kind` and `priority` are never evidence of engagement — they always
+    // hold a value, so counting them would make this permanently false and
+    // the errors would be back on arrival.
+    expect(isPristine({ ...emptyDraft("task"), kind: "project" })).toBe(true);
+    expect(isPristine({ ...emptyDraft("task"), priority: "P0" })).toBe(true);
+  });
+
+  it("does not treat whitespace as pristine", () => {
+    // A space is something the person typed. `blockingIssues` trims, so the
+    // title is still refused — and now the refusal is shown, which is right:
+    // they engaged with the field and the result is not acceptable.
+    expect(isPristine({ ...emptyDraft("task"), title: " " })).toBe(false);
   });
 });
 

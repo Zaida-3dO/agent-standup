@@ -45,7 +45,6 @@ import {
   ticked,
   undoPressed,
   undoSettled,
-  type UndoPlan,
   type UndoToastState,
   type UndoableAction,
 } from "@/lib/undo";
@@ -120,11 +119,22 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
     return () => clearInterval(id);
   }, [offeredAction]);
 
+  // The stored state, readable synchronously by an event handler.
+  //
+  // Every write to `state` writes here too, and the two never diverge —
+  // this is not a second source of truth, it is the same value in a form a
+  // handler can read *before* the next render. `onUndo` needs that: see its
+  // comment for why deriving the decision inside an updater is the defect
+  // this ref exists to remove.
+  const latestState = useRef<UndoToastState>(idleToast);
+
   const offer = useCallback((action: UndoableAction) => {
     // Stamp the clock at offer time so the window measures from the
     // action, and reset the tick so the first countdown frame is right.
     setNow(Date.now());
-    setState(actionOffered(action));
+    const offered = actionOffered(action);
+    latestState.current = offered;
+    setState(offered);
   }, []);
 
   // `offer` is stable, so this context value never changes identity and
@@ -139,29 +149,65 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
 
   const onUndo = useCallback(() => {
     const pressedAt = Date.now();
-    let planToRun: UndoPlan | null = null;
-    setState((current) => {
-      // Checked against `current` — the STORED state, which may still say
-      // `offered` for an action that `visible` has already expired. That is
-      // safe rather than a gap: `undoPressed` re-checks the window itself
-      // against `pressedAt`, so an expired action is refused here on its
-      // own merits and does not depend on the render having caught up.
-      const next = undoPressed(current, pressedAt);
-      // `undoPressed` returns the state unchanged when the press must not
-      // take effect (wrong phase, expired, double press). Comparing
-      // identity is how this knows whether to send anything.
-      if (next !== current && next.phase === "undoing") planToRun = inverseOf(next.action);
-      return next;
-    });
-    if (planToRun === null) return;
+    // **Decided BEFORE `setState`, from a ref — not inside the updater.**
+    //
+    // This is the shape of #128, which shipped once already in
+    // `Board.tsx`: a value assigned inside a `setState` updater and read on
+    // the line after it. An updater is not a callback that runs when you
+    // call it. React 19 evaluates one eagerly only when no update is
+    // already pending on the fiber, and defers it otherwise; and under
+    // StrictMode it additionally invokes it **twice**, so a second pass
+    // sees a `current` this handler has already advanced. Either way the
+    // outer variable is still `null` on the next line, the early return
+    // fires, and **no request is ever sent** — while the state has already
+    // moved to `undoing`, leaving the toast stuck on "Undoing…" forever.
+    //
+    // `latestState` is the escape from that: a ref is readable *now*,
+    // synchronously, so the decision to send is made from a value the
+    // handler actually has rather than from one it hopes an updater will
+    // have written by the time it looks. The updater below becomes what an
+    // updater is required to be — a pure function of its argument, safe to
+    // invoke any number of times.
+    //
+    // Read from the STORED state, which may still say `offered` for an
+    // action `visible` has already expired. That is safe rather than a gap:
+    // `undoPressed` re-checks the window against `pressedAt`, so an expired
+    // action is refused on its own merits and does not depend on the render
+    // having caught up.
+    const next = undoPressed(latestState.current, pressedAt);
+    // `undoPressed` returns the state unchanged when the press must not take
+    // effect (wrong phase, expired, double press). Comparing identity is how
+    // this knows whether to send anything.
+    if (next === latestState.current || next.phase !== "undoing") return;
+    const plan = inverseOf(next.action);
+    // A press on an action with no inverse must not send an empty request.
+    // The button is not rendered in that case (`showUndo` requires an
+    // available plan), so this is a guard on the impossible rather than a
+    // branch anyone reaches — but `runUndo` would otherwise be handed a plan
+    // it cannot execute.
+    if (!plan.available) return;
+
+    // Both the ref and the state advance together, so a second press in the
+    // same tick reads `undoing` and is refused by the check above rather
+    // than racing a re-render.
+    latestState.current = next;
+    setState(next);
+
     const id = ++requestId.current;
-    void runUndo(planToRun).then((outcome) => {
+    void runUndo(plan).then((outcome) => {
       if (id !== requestId.current) return;
-      setState((current) => undoSettled(current, outcome));
+      setState((current) => {
+        const settled = undoSettled(current, outcome);
+        latestState.current = settled;
+        return settled;
+      });
     });
   }, []);
 
-  const onDismiss = useCallback(() => setState(idleToast), []);
+  const onDismiss = useCallback(() => {
+    latestState.current = idleToast;
+    setState(idleToast);
+  }, []);
 
   // Both derived from the pure layer. `plan` is what decides whether the
   // button renders; `secondsLeft` is the countdown, rounded up so it shows
