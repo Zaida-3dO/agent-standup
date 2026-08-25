@@ -31,6 +31,20 @@ const anArchive: UndoableAction = {
   itemTitle: "A duplicate",
 };
 
+/**
+ * An action with no inverse.
+ *
+ * A no-op move rather than an archive, because an archive HAS an inverse
+ * (`restore_item`): pressing undo on one is accepted, so an archive here
+ * would make the "ignores a press" test pass for the wrong reason.
+ */
+const aNoOpMove: UndoableAction = {
+  kind: "state-change",
+  at: 1_000,
+  move: { itemId: "item-9", from: "executing", to: "executing" },
+  itemTitle: "Went nowhere",
+};
+
 const offered = actionOffered(anAction);
 
 describe("offering an action", () => {
@@ -74,10 +88,18 @@ describe("pressing undo", () => {
   });
 
   it("ignores a press on an action with no inverse", () => {
-    // An archive is offered (the confirmation is worth showing) but must
+    // A no-op move is offered (the confirmation is worth showing) but must
     // never send anything.
+    const noOpOffered = actionOffered(aNoOpMove);
+    expect(undoPressed(noOpOffered, 1_000)).toBe(noOpOffered);
+  });
+
+  it("accepts a press on an archive, which now has an inverse", () => {
+    // The other half of the pair above, and the reason the fixture had to
+    // change: this asserts the archive branch is genuinely live rather than
+    // simply removed from the ignored set.
     const archiveOffered = actionOffered(anArchive);
-    expect(undoPressed(archiveOffered, 1_000)).toBe(archiveOffered);
+    expect(undoPressed(archiveOffered, 1_000).phase).toBe("undoing");
   });
 
   it("does nothing from idle", () => {

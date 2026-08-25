@@ -12,6 +12,8 @@ export {
   type ItemMove,
   type UndoPlan,
   type UndoStep,
+  type UndoTransitionStep,
+  type UndoRestoreStep,
   type UndoableAction,
 } from "./actions";
 export { describeAction, itemCount, stateLabel } from "./describe";

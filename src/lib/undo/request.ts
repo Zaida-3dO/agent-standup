@@ -104,6 +104,30 @@ export function staleMessage(currentState: string | null): string {
 }
 
 /**
+ * Where one step goes and what it carries.
+ *
+ * Split out so `sendStep` below holds exactly one copy of the request,
+ * response and error handling — all of which are identical for both kinds.
+ * The only thing that differs between undoing a move and undoing an archive
+ * is the URL and the body, so that is the only thing that varies here.
+ */
+function requestFor(step: UndoStep): { path: string; body: string } {
+  if (step.kind === "restore") {
+    return {
+      path: `/api/items/${encodeURIComponent(step.itemId)}/restore`,
+      // No `expectedFrom` equivalent: a restore does not move the item, so
+      // there is no state for a staleness check to compare against. See
+      // `UndoRestoreStep`.
+      body: "{}",
+    };
+  }
+  return {
+    path: `/api/items/${encodeURIComponent(step.itemId)}/transition`,
+    body: JSON.stringify({ to: step.to, expectedFrom: step.expectedFrom }),
+  };
+}
+
+/**
  * Sends one step.
  *
  * `full: false` (the default, so it is simply not sent): unlike a board
@@ -112,16 +136,14 @@ export function staleMessage(currentState: string | null): string {
  * fetch fields nothing here reads.
  */
 async function sendStep(step: UndoStep, fetchImpl: typeof fetch): Promise<UndoOutcome> {
+  const { path, body } = requestFor(step);
   let response: Response;
   try {
-    response = await fetchImpl(
-      uiApiPath(`/api/items/${encodeURIComponent(step.itemId)}/transition`),
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ to: step.to, expectedFrom: step.expectedFrom }),
-      },
-    );
+    response = await fetchImpl(uiApiPath(path), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
   } catch {
     // The request never reached the server. Reported as a failure rather
     // than a stale item: nothing is known about where the item is, and

@@ -51,7 +51,7 @@ function stubFetch(
 
 const onePlan: UndoPlan = {
   available: true,
-  steps: [{ itemId: "item-1", to: "executing", expectedFrom: "in_review" }],
+  steps: [{ kind: "transition", itemId: "item-1", to: "executing", expectedFrom: "in_review" }],
 };
 
 /** The envelope `StaleTransitionError` produces through the items routes. */
@@ -84,8 +84,8 @@ describe("every undo request carries its precondition", () => {
       {
         available: true,
         steps: [
-          { itemId: "item-1", to: "executing", expectedFrom: "in_review" },
-          { itemId: "item-2", to: "on_deck", expectedFrom: "in_review" },
+          { kind: "transition", itemId: "item-1", to: "executing", expectedFrom: "in_review" },
+          { kind: "transition", itemId: "item-2", to: "on_deck", expectedFrom: "in_review" },
         ],
       },
       fetchImpl,
@@ -136,8 +136,8 @@ describe("a 409 is surfaced, never retried", () => {
       {
         available: true,
         steps: [
-          { itemId: "item-1", to: "executing", expectedFrom: "in_review" },
-          { itemId: "item-2", to: "on_deck", expectedFrom: "in_review" },
+          { kind: "transition", itemId: "item-1", to: "executing", expectedFrom: "in_review" },
+          { kind: "transition", itemId: "item-2", to: "on_deck", expectedFrom: "in_review" },
         ],
       },
       fetchImpl,
@@ -241,8 +241,8 @@ describe("the unhappy paths", () => {
       {
         available: true,
         steps: [
-          { itemId: "item-1", to: "executing", expectedFrom: "in_review" },
-          { itemId: "item-2", to: "on_deck", expectedFrom: "in_review" },
+          { kind: "transition", itemId: "item-1", to: "executing", expectedFrom: "in_review" },
+          { kind: "transition", itemId: "item-2", to: "on_deck", expectedFrom: "in_review" },
         ],
       },
       fetchImpl,

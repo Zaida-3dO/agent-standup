@@ -28,6 +28,21 @@ const anArchive: UndoableAction = {
   itemTitle: "A duplicate",
 };
 
+/**
+ * An action that genuinely has no inverse.
+ *
+ * A no-op move rather than an archive, which is what this was before
+ * `restore_item` landed. An archive now HAS an inverse, so using one to test
+ * the no-inverse rendering would assert nothing — the button would be drawn
+ * and the tests below would be checking the wrong branch.
+ */
+const aNoOpMove: UndoableAction = {
+  kind: "state-change",
+  at: 1_000,
+  move: { itemId: "item-9", from: "executing", to: "executing" },
+  itemTitle: "Went nowhere",
+};
+
 /** Renders the toast the way the host does — plan derived from the action. */
 function render(state: UndoToastState, secondsLeft: number | null = 7, onUndo = () => {}) {
   const action = state.phase === "offered" ? state.action : null;
@@ -105,7 +120,7 @@ describe("an offered, undoable action", () => {
 });
 
 describe("an action with no inverse", () => {
-  const tree = render(actionOffered(anArchive));
+  const tree = render(actionOffered(aNoOpMove));
 
   it("renders NO undo button at all", () => {
     // Absent, not disabled — a button that cannot act should not be
@@ -114,11 +129,31 @@ describe("an action with no inverse", () => {
   });
 
   it("still confirms what happened", () => {
-    expect(textOf(tree)).toContain("A duplicate");
+    expect(textOf(tree)).toContain("Went nowhere");
   });
 
   it("explains why it cannot be undone", () => {
-    expect(textOf(tree)).toContain("cannot be undone");
+    expect(textOf(tree)).toContain("did not change anything");
+  });
+});
+
+describe("an archive, which now has an inverse", () => {
+  // The user-visible defect this change exists to fix: the toast offered
+  // after an archive used to render a confirmation with no button, because
+  // `inverseOf` correctly reported the inverse was unavailable. It is drawn
+  // now, and pressing it restores the row.
+  const tree = render(actionOffered(anArchive));
+
+  it("renders an undo button", () => {
+    expect(undoButtons(tree)).toHaveLength(1);
+  });
+
+  it("still names the item it archived", () => {
+    expect(textOf(tree)).toContain("A duplicate");
+  });
+
+  it("does not tell the person it cannot be undone", () => {
+    expect(textOf(tree)).not.toContain("cannot be undone");
   });
 });
 

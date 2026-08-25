@@ -227,24 +227,26 @@ describe("UndoToastHost, mounted in real React under StrictMode", () => {
     expect(transitionCalls).toHaveLength(1);
   });
 
-  it("shows an archive's confirmation with no Undo button, and does not collapse it", async () => {
-    // The MEDIUM, asserted through the composition rather than on `ticked`
-    // alone. `ticked` used to AND the window with `inverseOf(...).available`,
-    // which is permanently false for an archive, so the first tick collapsed
-    // the toast to idle and the confirmation was never seen at all.
+  it("shows an archive's confirmation WITH an Undo button, and does not collapse it", async () => {
+    // Two claims in one, because they failed independently before.
     //
-    // Widening `ticked`'s check to also require an available inverse fails
-    // this: the toast is absent rather than present-without-a-button.
+    // The toast must not collapse: `ticked` used to AND the window with
+    // `inverseOf(...).available`, which was permanently false for an
+    // archive, so the first tick drove the toast to idle and the
+    // confirmation was never seen. That is still asserted here — the
+    // no-op-move test below keeps the same guard on the branch that is
+    // genuinely un-undoable.
+    //
+    // And the button must be there: an archive's inverse is `restore_item`
+    // now, so the confirmation-with-no-button that this row was raised for
+    // is the failure rather than the expectation.
     await mountWith(anArchive(Date.now()));
 
     const toast = container.querySelector('[data-phase="offered"]');
     expect(toast).not.toBeNull();
     expect(toast?.textContent).toContain("A card");
-    // No button, because there is genuinely nothing to press — and the reason
-    // is stated rather than the toast merely looking truncated — this is the
-    // `unavailableReason` branch, and this test is what keeps it reachable.
-    expect(undoButton()).toBeNull();
-    expect(toast?.textContent).toContain("Archiving cannot be undone");
+    expect(undoButton()).not.toBeNull();
+    expect(toast?.textContent).not.toContain("cannot be undone");
   });
 
   it("shows a no-op move's confirmation with no Undo button", async () => {
