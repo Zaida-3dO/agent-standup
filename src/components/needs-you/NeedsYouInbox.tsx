@@ -71,7 +71,11 @@ export function NeedsYouInbox() {
       if (item === null) return;
       setDecideError(null);
       setDecidingId(itemId);
-      void action({ itemId, reason: item.reason, personId })
+      // `expectedFrom` is the row's own `state` as the last load reported it
+      // — the server's value, not one derived from `reason` here. That makes
+      // a decision taken against a list which has gone stale a 409 rather
+      // than a silent overwrite; see `decide.ts`'s header.
+      void action({ itemId, reason: item.reason, personId, expectedFrom: item.state })
         .then((result) => {
           setDecidingId(null);
           if (!result.ok) {

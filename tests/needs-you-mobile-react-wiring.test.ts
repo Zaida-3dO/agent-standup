@@ -218,6 +218,18 @@ describe("deciding from the inbox", () => {
       expect(write.url).not.toContain("first-row");
     }
     expect(writes[0]!.body).toMatchObject({ verdict: "lgtm" });
+
+    // The transition carries the row's OWN server-reported state as its
+    // precondition (#257/#292). Asserted here rather than only in
+    // `needs-you-decide.test.ts` because this is the seam that test cannot
+    // see: `decide.ts` is handed an `expectedFrom` and can only be trusted to
+    // forward it, while it is this component that decides where the value
+    // comes from. A call site passing the target (`"merged"`), or a state
+    // derived from `reason` rather than read from the row, still reaches the
+    // right item with the right verdict and is invisible above.
+    const transition = writes.find((write) => write.url.includes("/transition"));
+    expect(transition).toBeDefined();
+    expect(transition!.body).toMatchObject({ to: "merged", expectedFrom: "in_review" });
   });
 
   it("denies the row that was pressed, and does not approve it", async () => {
