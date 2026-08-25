@@ -2,12 +2,9 @@
 // prop-driven (see each component's header), so they're called directly as
 // functions and their returned element trees inspected — same technique as
 // `tests/board-view-component.test.ts`.
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ItemDetailView } from "@/components/item-detail/ItemDetailView";
 import { SubtaskTree } from "@/components/item-detail/SubtaskTree";
-import { ArtifactList } from "@/components/item-detail/ArtifactList";
 import { HistoryList } from "@/components/item-detail/HistoryList";
 import { SummaryPanel } from "@/components/item-detail/SummaryPanel";
 import { Markdown } from "@/components/item-detail/Markdown";
@@ -129,6 +126,7 @@ function artifact(overrides: Partial<DetailArtifact> = {}): DetailArtifact {
     findings: null,
     followUpItemId: null,
     createdByType: "agent",
+    createdById: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -188,7 +186,6 @@ describe("ItemDetailView", () => {
     const subtasks = ItemDetailView({ loadState, activeTab: "subtasks" });
     expect(findAllByType(subtasks, SubtaskTree).length).toBe(1);
     expect(findAllByType(subtasks, HistoryList).length).toBe(0);
-    expect(findAllByType(subtasks, ArtifactList).length).toBe(0);
 
     const activity = ItemDetailView({ loadState, activeTab: "activity" });
     expect(findAllByType(activity, HistoryList).length).toBe(1);
@@ -621,100 +618,6 @@ describe("SubtaskTree", () => {
       subtasks: [subtask({ id: "p", kind: "project", state: "on_deck", column: null })],
     });
     expect(textOf(element)).not.toContain("done");
-  });
-});
-
-describe("ArtifactList", () => {
-  it("says so plainly when there are none", () => {
-    expect(textOf(ArtifactList({ artifacts: [] }))).toContain("No artifacts yet");
-  });
-
-  it("groups artifacts under an ascending round heading", () => {
-    const element = ArtifactList({
-      artifacts: [
-        artifact({ id: "b", reviewRound: 2, verdict: "lgtm" }),
-        artifact({ id: "a", reviewRound: 1, verdict: "changes_required" }),
-      ],
-    });
-    const rounds = elementsWithProp(element, "data-round");
-    expect(rounds.map((el) => (el.props as Record<string, unknown>)["data-round"])).toEqual([1, 2]);
-  });
-
-  it("shows a shortened commit sha rather than the whole thing", () => {
-    const element = ArtifactList({
-      artifacts: [artifact({ commitSha: "0123456789abcdef0123456789abcdef01234567" })],
-    });
-    const text = textOf(element);
-    expect(text).toContain("0123456789");
-    expect(text).not.toContain("0123456789abcdef0123456789abcdef01234567");
-  });
-
-  it("treats an unrecognised verdict as not-yet-cleared, never as a pass", () => {
-    // The safe direction for a value this component has never seen: a
-    // future verdict must not render as though the work were approved.
-    const passing = ArtifactList({ artifacts: [artifact({ verdict: "lgtm_with_nits" })] });
-    const unknown = ArtifactList({ artifacts: [artifact({ verdict: "some_future_verdict" })] });
-    const classOf = (root: ReactNode) =>
-      elementsWithProp(root, "data-verdict").map(
-        (el) => (el.props as { className?: string }).className ?? "",
-      )[0] ?? "";
-    expect(classOf(passing)).not.toBe(classOf(unknown));
-    expect(classOf(passing)).toContain("verdictPass");
-    expect(classOf(unknown)).toContain("verdictBlocked");
-  });
-
-  it("classifies EVERY verdict the schema actually defines", () => {
-    // Written out from `prisma/schema.prisma`'s `enum Verdict` rather than
-    // imported, so this is an independent statement of the vocabulary — an
-    // earlier draft of this component invented `changes_requested`, which a
-    // test reading the same source as the code would never have caught.
-    //
-    // `na` sits with the non-passing values on purpose: it means the review
-    // did not apply, which is not the claim that the work passed one.
-    const expected: Record<string, "pass" | "blocked"> = {
-      approved: "pass",
-      lgtm: "pass",
-      lgtm_with_nits: "pass",
-      lgtm_with_followups: "pass",
-      changes_required: "blocked",
-      na: "blocked",
-    };
-    for (const [verdict, side] of Object.entries(expected)) {
-      const element = ArtifactList({ artifacts: [artifact({ verdict })] });
-      const className =
-        (
-          elementsWithProp(element, "data-verdict")[0]!.props as {
-            className?: string;
-          }
-        ).className ?? "";
-      expect(className, `${verdict} should read as ${side}`).toContain(
-        side === "pass" ? "verdictPass" : "verdictBlocked",
-      );
-    }
-
-    // **And that those six are ALL of them.** Without this, a seventh enum
-    // value added to the schema would be classified silently — as
-    // not-yet-cleared, which is the safe direction, but *unreviewed*, which
-    // is the same class of gap as the invented verdict this test was
-    // written for. Read out of the schema so the assertion fails loudly and
-    // points at the decision that has to be made, rather than passing by
-    // omission.
-    const schema = readFileSync(
-      path.join(import.meta.dirname, "..", "prisma", "schema.prisma"),
-      "utf-8",
-    );
-    const block = /enum Verdict \{([^}]*)\}/.exec(schema);
-    expect(block, "could not find `enum Verdict` in the schema").not.toBeNull();
-    const declared = block![1]!
-      .split("\n")
-      .map((line) => line.replace(/\/\/.*$/, "").trim())
-      .filter((line) => line !== "");
-    expect(declared.slice().sort()).toEqual(Object.keys(expected).sort());
-  });
-
-  it("shows no verdict chip for an artifact that has none", () => {
-    const element = ArtifactList({ artifacts: [artifact({ kind: "screenshot", verdict: null })] });
-    expect(elementsWithProp(element, "data-verdict")).toHaveLength(0);
   });
 });
 

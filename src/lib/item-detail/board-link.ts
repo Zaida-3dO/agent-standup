@@ -4,57 +4,69 @@
 // back to `/board` narrowed to that one value — "what else is in this
 // area" becomes one click instead of a filter rebuilt by hand.
 //
-// **The parameter names here are not invented.** `/board`'s filter bar
-// (MILESTONES.md #75) reads its query string with `parseBoardQuery`, and
-// its own module header states the contract explicitly: "the parameter
-// names below are load-bearing across features … a chip on an item's
-// detail page … links back to a board narrowed to that chip, and it does
-// so by building one of these query strings." `tests/board-filters-url.test.ts`
-// asserts the eight names literally for exactly that reason.
+// **This module encodes nothing of its own.** It is a thin adapter over
+// `@/lib/board/filters`, which owns the board's URL contract
+// (MILESTONES.md #75); every address here is built by that module's
+// `boardHref`.
 //
-// **Why this file exists instead of importing `boardHref` from
-// `@/lib/board/filters`.** At the time this tab was built, the module that
-// owns that contract (`feat/board-filter-sort-search`, MILESTONES.md #75)
-// had not landed on `main` — it exists only as a sibling branch. Importing
-// a module that is not on `main` is not an option, so this is a narrow,
-// independent implementation of the documented contract: eight query
-// parameters, the same names, the same board path. Once #75 merges, this
-// module becomes a thin re-export of `boardHref`/`BoardFilters` rather than
-// its own encoder — the two are already identical in shape by construction
-// (see the test suite this file's own tests were written against, quoted
-// in the module comments above).
-//
-// The single-character failure mode this exists to catch: a chip that
-// links to a URL the board does not actually filter on is worse than a
-// plain, unlinked chip — it reads as navigation and silently does nothing.
-export type BoardLinkFilter =
-  "area" | "repo" | "assignee" | "actor" | "priority" | "state" | "kind" | "search";
+// **Why one encoder and not two agreeing ones.** The board decides "you
+// are looking at this saved view" by comparing address strings for
+// equality, so the *exact* string is load-bearing and not merely the set of
+// parameters. Two independent encoders can agree on every input and still
+// diverge the moment one gains an axis or changes emission order — and the
+// failure is silent: a chip that links to a URL the board does not filter
+// on reads as navigation and does nothing. Delegating to `boardHref` makes
+// that class of drift unrepresentable rather than merely tested against.
+import {
+  BOARD_FILTER_PARAMS,
+  boardHref,
+  emptyBoardQuery,
+  type BoardFilters,
+} from "@/lib/board/filters";
 
-/** The eight axes, in the fixed order `/board`'s own encoder emits them — see the header. */
-export const BOARD_LINK_PARAMS: readonly BoardLinkFilter[] = [
-  "area",
-  "repo",
-  "assignee",
-  "actor",
-  "priority",
-  "state",
-  "kind",
-  "search",
-];
+/**
+ * The chip-linkable axes.
+ *
+ * A subset of the board's filter vocabulary rather than a restatement:
+ * `level` and `project` are board-shaped narrowings with no single chip to
+ * carry them, and `trust` is a property of a row rather than a value a chip
+ * displays. Derived from `BoardFilters` by key, so an axis renamed on the
+ * board is a type error here rather than a dead link.
+ */
+export type BoardLinkFilter = Extract<
+  keyof BoardFilters,
+  "area" | "repo" | "assignee" | "actor" | "priority" | "state" | "kind" | "search"
+>;
+
+/**
+ * The eight axes, in the fixed order `/board`'s own encoder emits them.
+ *
+ * Filtered from `BOARD_FILTER_PARAMS` rather than listed again, so the
+ * order is the board's order by construction — a property held by the type
+ * system rather than by a test that has to be remembered.
+ */
+export const BOARD_LINK_PARAMS: readonly BoardLinkFilter[] = BOARD_FILTER_PARAMS.filter(
+  (name): name is BoardLinkFilter => name !== "level" && name !== "project" && name !== "trust",
+);
 
 /**
  * The board's address, narrowed to one filter.
  *
  * A blank or whitespace-only value produces the unfiltered board rather
- * than a query string that would ask the API for `area=` — the same rule
- * `readParam` in the board's own filter codec applies, so a chip with
- * nothing to say about (an item with no `repo`) degrades to a plain link
- * rather than a broken one.
+ * than a query string that would ask the API for `area=` — `boardHref`
+ * omits an empty value for the same reason `readParam` drops one, so a chip
+ * with nothing to say about (an item with no `repo`) degrades to a plain
+ * link rather than a broken one.
+ *
+ * The narrowing is applied to `emptyBoardQuery()`, whose default `level`
+ * emits no parameter — so the address stays the short one-parameter string
+ * a chip should produce, and is byte-identical to the one the board's own
+ * filter bar builds for the same selection.
  */
 export function boardLinkFor(filter: BoardLinkFilter, value: string): string {
-  const trimmed = value.trim();
-  if (trimmed === "") return "/board";
-  const params = new URLSearchParams();
-  params.set(filter, trimmed);
-  return `/board?${params.toString()}`;
+  const base = emptyBoardQuery();
+  return boardHref({
+    ...base,
+    filters: { ...base.filters, [filter]: value.trim() },
+  });
 }

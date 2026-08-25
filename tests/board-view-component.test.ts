@@ -621,6 +621,10 @@ describe("ItemCard", () => {
       });
       const badge = findOneByType(card, TrustBadge);
       expect((badge.props as { verified: boolean }).verified).toBe(true);
+      // The card must forward WHICH holder checked, not only their type
+      // (T25 #3). The server has carried `checkedById` all along; the card
+      // dropped it on the floor. Fails if that prop stops being passed.
+      expect((badge.props as { checkedById?: string | null }).checkedById).toBe("crew-1");
     });
 
     // Fails if the dashed-border class is applied unconditionally, or never.

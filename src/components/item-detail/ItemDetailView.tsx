@@ -285,6 +285,7 @@ export function ItemDetailView({
               verified={verification !== null}
               checkedAt={verification?.checkedAt}
               checkedByType={verification?.checkedByType}
+              checkedById={verification?.checkedById}
             />
           </div>
         )}

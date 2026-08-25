@@ -139,6 +139,17 @@ export interface ItemDetailArtifact {
   readonly followUpItemId: string | null;
   /** `person` or `agent` — who produced this artifact. See the select in the handler for why it is surfaced. */
   readonly createdByType: string;
+  /**
+   * *Which* person or agent produced it — the id, where one was recorded.
+   *
+   * `createdByType` alone answers "a person or an agent", which is the
+   * question the merge gate asks. A reader asking "can I trust this state"
+   * is asking a different one — *who* checked — and for a marking whose
+   * whole job is to say whether a row can be taken on faith, an anonymous
+   * check is most of the way to no check. Nullable because the column is:
+   * an artifact can be written without a holder id attached.
+   */
+  readonly createdById: string | null;
   readonly createdAt: string;
 }
 
@@ -236,6 +247,7 @@ interface RawArtifactRow {
   findings: unknown;
   followUpItemId: string | null;
   createdByType: string;
+  createdById: string | null;
   createdAt: Date;
 }
 
@@ -374,7 +386,7 @@ export const getItemDetail = defineOperation({
       // record that cannot be read is not an audit trail.
       `SELECT "id", "kind"::text AS "kind", "verdict"::text AS "verdict", "reviewRound",
               "commitSha", "ref", "body", "findings", "followUpItemId",
-              "createdByType"::text AS "createdByType", "createdAt"
+              "createdByType"::text AS "createdByType", "createdById", "createdAt"
        FROM "Artifact" WHERE "itemId" = $1
        ORDER BY "reviewRound" ASC, "createdAt" ASC`,
       id,
@@ -390,6 +402,7 @@ export const getItemDetail = defineOperation({
       findings: row.findings ?? null,
       followUpItemId: row.followUpItemId,
       createdByType: row.createdByType,
+      createdById: row.createdById,
       createdAt: row.createdAt.toISOString(),
     }));
 
