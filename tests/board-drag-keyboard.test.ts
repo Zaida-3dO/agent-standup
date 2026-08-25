@@ -189,31 +189,41 @@ describe("the silent announcer says nothing at all", () => {
 
 // ── The component's wiring ────────────────────────────────────────────
 //
-// These few claims are about how `DragLayer.tsx` wires the pieces above
-// into `dnd-kit`, which is a fact about the file rather than about any
-// value it exports — so they are read from source. Weaker than the
-// behavioural assertions above, and the handoff says so: a browser
-// reviewer is asked to confirm what a screen reader actually hears.
+// These claims are about how `DragLayer.tsx` hands the pieces above to
+// `dnd-kit` — a fact about the file rather than about any value it
+// exports, so they are read from its source text. This is deliberately
+// the WEAKEST check in this file: it proves the wiring is spelled
+// correctly, not that a screen reader hears the right thing or that a
+// press moves a column. The handoff says so and asks a browser reviewer
+// to confirm both directly.
 //
-// `readFileSync` at module scope rather than through a bundler import,
-// because the file is a client component this harness cannot load.
-const DRAG_LAYER_SOURCE = readFileSync(
-  path.resolve(import.meta.dirname, "../src/components/board/DragLayer.tsx"),
-  "utf8",
-);
+// **The working file is read, not the committed blob**, so an uncommitted
+// edit that broke the wiring still fails here. The one situation that
+// makes the text unreadable is a mutation run: Stryker executes the suite
+// against an INSTRUMENTED copy of every file in its mutate scope, and a
+// substring assertion against rewritten source fails for reasons that
+// have nothing to do with the mutant. That case is detected and skipped
+// LOUDLY rather than quietly tolerated — the behavioural tests above are
+// what carry the mutation gate, and they call real values.
+const DRAG_LAYER_PATH = path.resolve(import.meta.dirname, "../src/components/board/DragLayer.tsx");
+const DRAG_LAYER_RAW = readFileSync(DRAG_LAYER_PATH, "utf8");
 
 /**
- * The component's CODE, with comments removed.
+ * True when the source has been rewritten by Stryker's instrumenter.
  *
- * Necessary rather than tidy: that file documents the defect it fixes by
- * quoting the broken expression (`announcements: undefined`), so a
- * substring search over the raw text would find the defect in the very
- * comment explaining that it is gone — and the assertion below would fail
- * on a correct file.
+ * Its instrumentation injects a global mutant-selector (`__stryker__`)
+ * and wraps every expression in a switch on it, so its presence is an
+ * unambiguous marker and cannot appear in the real component.
  */
-const DRAG_LAYER = DRAG_LAYER_SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ 	]*\/\/.*$/gm, "");
+const INSTRUMENTED = DRAG_LAYER_RAW.includes("__stryker__");
 
-describe("the component wires up one announcer and a stepping sensor", () => {
+// Comments stripped: the file documents the defect it fixes by quoting
+// the broken expression (`announcements: undefined`), so a substring
+// search over the raw text would find the defect in the very comment
+// explaining that it is gone.
+const DRAG_LAYER = DRAG_LAYER_RAW.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ 	]*\/\/.*$/gm, "");
+
+describe.skipIf(INSTRUMENTED)("the component wires up one announcer and a stepping sensor", () => {
   it("does NOT pass `announcements: undefined`, which selects the defaults", () => {
     // `dnd-kit` destructures with a default
     // (`announcements = defaultAnnouncements`), so a property explicitly
