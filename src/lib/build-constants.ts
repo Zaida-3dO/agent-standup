@@ -78,11 +78,14 @@ export const HOOK_PROTOCOL: Readonly<Record<HookVariant, ProtocolRange>> = Objec
  */
 export const SHIPPED_HOOK_PROTOCOL_VERSION = 1;
 
-/**
- * The published version of this build.
- *
- * Read from `package.json` at build time by the release pipeline
- * (`scripts/version-from-tag.mjs`); the literal here is what a working tree
- * that has never been released reports.
- */
-export const APP_VERSION = "0.1.0";
+// No `APP_VERSION` is declared here, deliberately.
+//
+// The version this build reports lives in exactly one place —
+// `src/lib/build-info.ts` — and it is read from the environment the release
+// pipeline sets, never written as a literal. A checked-in version constant
+// is a value someone has to remember to bump, and one nobody bumps is
+// indistinguishable from one that is correct: it reads as an answer while
+// being a placeholder, which is precisely what makes "what version is
+// running" unanswerable. Everything else in this module is a protocol
+// number that genuinely is fixed by the source, which is why those belong
+// here and a version does not.

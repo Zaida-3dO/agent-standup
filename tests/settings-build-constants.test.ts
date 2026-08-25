@@ -8,7 +8,7 @@
 // some values must not be readable from the application.
 import { describe, expect, it } from "vitest";
 import {
-  APP_VERSION,
+  appVersion,
   HOOK_PROTOCOL,
   renderBootstrapVariables,
   renderBuildConstants,
@@ -33,7 +33,7 @@ describe("the build constants §17.6 declares", () => {
     expect(Object.isFrozen(HOOK_PROTOCOL.http)).toBe(true);
   });
 
-  it("renders the five rows §17.6's table lists", () => {
+  it("renders the rows §17.6's table lists, plus the running revision", () => {
     const names = renderBuildConstants().map((row) => row.name);
     expect(names).toEqual([
       "HOOK_PROTOCOL.http.current",
@@ -41,6 +41,11 @@ describe("the build constants §17.6 declares", () => {
       "HOOK_PROTOCOL.cli.current",
       "HOOK_PROTOCOL.cli.min_supported",
       "APP_VERSION",
+      // The sha is what actually identifies the code — `main` is routinely
+      // ahead of what is deployed, because images publish only from tagged
+      // releases. This row is what lets a reader of the panel check which
+      // commit is serving without a shell on the deploy host.
+      "APP_REVISION",
     ]);
   });
 
@@ -52,11 +57,47 @@ describe("the build constants §17.6 declares", () => {
   });
 
   it("shows a visible marker rather than a blank when the version is not set", () => {
-    // A panel rendering an empty version reads as broken rather than as
-    // "not a released build".
-    const version = renderBuildConstants().find((row) => row.name === "APP_VERSION");
-    expect(version?.value).toBe(APP_VERSION);
-    expect(version?.value).not.toBe("");
+    // Asserts a LITERAL, not `appVersion()`. Comparing the rendered row
+    // against the same function the renderer calls would pass however
+    // broken that function was — the shape of hollow test that let
+    // `APP_VERSION` sit at a placeholder through twelve releases.
+    const original = process.env.APP_VERSION;
+    try {
+      delete process.env.APP_VERSION;
+      const version = renderBuildConstants().find((row) => row.name === "APP_VERSION");
+      expect(version?.value).toBe("0.0.0-dev");
+    } finally {
+      if (original === undefined) delete process.env.APP_VERSION;
+      else process.env.APP_VERSION = original;
+    }
+  });
+
+  it("renders the version the build actually baked in", () => {
+    // The other half, and the one that proves the panel is wired to the
+    // environment at all rather than to a constant: set a version nothing
+    // else in the repo mentions and require the row to carry it.
+    const original = process.env.APP_VERSION;
+    try {
+      process.env.APP_VERSION = "9.9.9-from-the-build";
+      const version = renderBuildConstants().find((row) => row.name === "APP_VERSION");
+      expect(version?.value).toBe("9.9.9-from-the-build");
+      expect(appVersion()).toBe("9.9.9-from-the-build");
+    } finally {
+      if (original === undefined) delete process.env.APP_VERSION;
+      else process.env.APP_VERSION = original;
+    }
+  });
+
+  it("renders the revision the build actually baked in", () => {
+    const original = process.env.APP_REVISION;
+    try {
+      process.env.APP_REVISION = "0123456789abcdef0123456789abcdef01234567";
+      const row = renderBuildConstants().find((entry) => entry.name === "APP_REVISION");
+      expect(row?.value).toBe("0123456789abcdef0123456789abcdef01234567");
+    } finally {
+      if (original === undefined) delete process.env.APP_REVISION;
+      else process.env.APP_REVISION = original;
+    }
   });
 });
 
