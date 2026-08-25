@@ -55,11 +55,11 @@ describe("fetchBoardColumn", () => {
     //
     // The level is sent for a STRONGER version of that reason: `get_board`
     // has no default for it at all, so a request that omitted it would ask
-    // for an unnarrowed board and every project would appear in the item
-    // list beside the work inside it. `exclude:0` is the board's default,
-    // and the request is where that default becomes real.
+    // for an unnarrowed board — every project beside the work inside it, and
+    // every subtask beside the card that counts it. `include:1` is the
+    // board's default, and the request is where that default becomes real.
     expect(requested).toBe(
-      "/api/ui/board?column=completed&level=exclude%3A0&sort=created&direction=desc",
+      "/api/ui/board?column=completed&level=include%3A1&sort=created&direction=desc",
     );
   });
 

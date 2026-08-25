@@ -293,7 +293,8 @@ const inputSchema = z
      *   - `exclude` — everything BUT these levels.
      *
      * Absent means no level narrowing at all. The board's *own* default is
-     * `exclude [0]` ("everything except projects"), but that default is the
+     * `include [1]` ("the tasks, without the projects above them or the
+     * subtasks beneath"), but that default is the
      * reader-facing one and lives in the URL codec: an operation that
      * defaulted it here would make an unfiltered read impossible to ask for,
      * and would silently change what every existing caller — the CLI, a

@@ -196,8 +196,10 @@ describe("an axis that is narrowing the board cannot be hidden", () => {
     // permanently un-hideable, which is the opposite of the rule.
     expect(canHide("level", { level: defaultLevelFilter() })).toBe(true);
     // ...but a level the reader chose IS narrowing, and locks the control on
-    // screen exactly like any other set axis.
-    expect(canHide("level", { level: { mode: "include", levels: [1] } })).toBe(false);
+    // screen exactly like any other set axis. `include:2` rather than
+    // `include:1`, which IS the default and so is covered by the assertion
+    // above — asserting on it here would test the opposite of this case.
+    expect(canHide("level", { level: { mode: "include", levels: [2] } })).toBe(false);
   });
 
   it("turning an axis on always works, whatever the filters say", () => {

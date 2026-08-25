@@ -3,14 +3,14 @@
 //
 // ── The problem this exists to solve ────────────────────────────────────
 //
-// Nesting is unbounded (SCHEMA.md §1), and until now every level of it
-// competed for the same space: a task and the four subtasks under it were
-// five peer cards in one column, so a column's height measured how finely
-// the work had been broken down rather than how much of it there was. The
-// board's answer is to show the parent only and let it *say* what is
-// beneath it — which needs a count the board never had. `BoardEntry` was
-// exactly `{item, column, assignments, trust}`; nothing in it could answer
-// "how many, and how many are done".
+// Nesting is unbounded (SCHEMA.md §1), so without a rule about depth every
+// level of it competes for the same space: a task and the four subtasks
+// under it are five peer cards in one column, and a column's height then
+// measures how finely the work has been broken down rather than how much of
+// it there is. The board's answer is to show the parent only and let it
+// *say* what is beneath it, which takes a number no other field on
+// `BoardEntry` can supply — none of `item`, `column`, `assignments` or
+// `trust` can answer "how many, and how many are done".
 //
 // ── One statement for the whole page, not one per card ──────────────────
 //
@@ -73,8 +73,8 @@ import { STATES_BY_COLUMN } from "../board/columns";
  * What one card says about the work beneath it.
  *
  * `null` on a `BoardEntry` means "this card has no descendants at all" —
- * see `subtaskRollupsFor`, which returns no row for a childless card, and
- * `BoardEntry.subtasks` for why absence is modelled rather than a zero.
+ * `SUBTASK_ROLLUP_SQL` returns no row for a childless card, and
+ * `BoardEntry.subtasks` says why absence is modelled rather than a zero.
  */
 export interface SubtaskRollup {
   /** Every descendant at any depth, archived ones excluded. Always at least 1 — a card with none has no rollup. */

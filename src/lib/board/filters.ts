@@ -90,14 +90,31 @@ export interface BoardLevelFilter {
 }
 
 /**
- * The board's level filter when the URL says nothing: everything except
- * projects.
+ * The board's level filter when the URL says nothing: **level 1 only** —
+ * the tasks, with neither the projects above them nor the subtasks beneath.
  *
  * **A default rather than "no filter"**, and the distinction is the whole
- * design. A project's row on the board is a rollup of its subtree, so a
- * default board that listed every project alongside the work inside it would
- * double-count the same work in two places. A reader who genuinely wants
- * projects in the list asks for them, and the URL then says so.
+ * design. Every level of an unbounded tree (SCHEMA.md §1) was competing for
+ * the same column: a project, the task inside it and the four subtasks
+ * inside that were six peer cards describing one piece of work, so a
+ * column's height measured how finely the work had been broken down rather
+ * than how much of it there was. Both exclusions are the same argument
+ * applied in the two directions:
+ *
+ *   - **Projects (level 0)** are a rollup of their subtree, so listing one
+ *     beside the work inside it counts that work twice.
+ *   - **Subtasks (level 2 and below)** are work already counted by the card
+ *     above them, which states how many it holds — see
+ *     `BoardEntry.subtasks`. That badge is what makes this exclusion honest
+ *     rather than a hiding: what a card does not show, it accounts for.
+ *
+ * A reader who genuinely wants either asks for them, and the URL then says
+ * so. `include` mode is the way to see one specific depth on its own.
+ *
+ * **`levelIsDefault` is what keeps this expressible in an address.** The
+ * default is written into no URL, so changing it changes what an existing
+ * bookmark with no `level` parameter shows — which is correct, because such
+ * an address is asking for "the board", not for a frozen filter.
  *
  * Declared here rather than in `get_board`'s schema deliberately: the
  * operation defaults nothing, so a caller that names no level still gets an
@@ -105,7 +122,7 @@ export interface BoardLevelFilter {
  * existing non-board caller receives from a call it did not change.
  */
 export function defaultLevelFilter(): BoardLevelFilter {
-  return { mode: "exclude", levels: [0] };
+  return { mode: "include", levels: [1] };
 }
 
 /**
@@ -116,9 +133,10 @@ export function defaultLevelFilter(): BoardLevelFilter {
  * would then mean different things while looking identical.
  *
  * **`level` is the one exception to that sentence, and it is deliberate.**
- * Absent means the board's default of `exclude(0)`, not "unfiltered", and
+ * Absent means the board's default of `include(1)`, not "unfiltered", and
  * `parseBoardQuery` resolves it to that default. See `defaultLevelFilter`
- * for why a default board hides projects, and `levelIsDefault` for how an
+ * for why a default board hides both the projects above level 1 and the
+ * subtasks below it, and `levelIsDefault` for how an
  * address avoids carrying a parameter that says only what absence already
  * said.
  */
@@ -134,7 +152,7 @@ export interface BoardFilters {
   readonly kind?: (typeof BOARD_FILTER_KINDS)[number];
   /**
    * Which tree levels to show. Absent means the board default,
-   * `exclude(0)` — never "no level narrowing".
+   * `include(1)` — never "no level narrowing".
    */
   readonly level?: BoardLevelFilter;
   /** One project id — the board is scoped to that project's whole subtree. */
