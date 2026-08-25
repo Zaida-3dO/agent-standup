@@ -64,6 +64,10 @@ export function pressesToCross(distance: number, step: number): number {
  * paint, or in a test with no DOM. It is a whole column's worth at a
  * typical width rather than the library's 25px, so the degraded case is
  * still usable rather than silently reverting to the defect.
+ *
+ * The `gap > 0` test rejects a negative or non-finite gap; at exactly zero
+ * both branches add nothing, so that boundary is deliberately not load
+ * bearing and no test can distinguish it.
  */
 export function horizontalStep(columnWidth: number, gap: number, fallback = 300): number {
   if (!Number.isFinite(columnWidth) || columnWidth <= 0) return fallback;
@@ -83,9 +87,13 @@ export function horizontalStep(columnWidth: number, gap: number, fallback = 300)
 export function nextColumn(from: BoardColumnId, direction: -1 | 1): BoardColumnId | null {
   const index = BOARD_COLUMNS.indexOf(from);
   if (index === -1) return null;
-  const target = index + direction;
-  if (target < 0 || target >= BOARD_COLUMNS.length) return null;
-  return BOARD_COLUMNS[target] ?? null;
+  // Off either end of the array reads as `undefined`, which is exactly the
+  // "there is no such column" this returns `null` for — so the bounds are
+  // enforced by the lookup itself rather than by a separate range check
+  // restating the array's length. An explicit `target < 0 || target >=
+  // length` here would be unreachable: every input it rejects, the lookup
+  // below already answers the same way.
+  return BOARD_COLUMNS[index + direction] ?? null;
 }
 
 /**
