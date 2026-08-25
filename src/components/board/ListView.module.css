@@ -1,0 +1,281 @@
+/* The list view's surface — MILESTONES.md T6 §3.
+
+   Every colour comes from the token layer (`src/app/globals.css`), never
+   from a literal, for the reason `Board.module.css` gives at its head:
+   `--surface-app` and `--text-primary` are contrasted against each other by
+   construction and `tests/design-tokens-contrast.test.ts` holds them to it.
+   A component painting its own background to keep its own text legible is
+   re-solving that problem on every surface.
+
+   **The density decisions are the substance of this file**, so they are
+   stated rather than left implicit. The row this implements says a 68-item
+   column is "the wrong shape entirely"; the list's job is to make sixty-
+   eight rows ordinary. That means:
+
+     - one line per row by default, so a screenful is ~20 rows rather than
+       ~6 cards,
+     - fixed column positions, so a reader scanning for every P0 reads down
+       one narrow strip instead of across sixty-eight cards, and
+     - no card chrome — no per-row border, shadow or radius. Sixty-eight
+       bordered boxes is sixty-eight rectangles to visually parse; a single
+       hairline between rows is enough to separate them and costs 1px. */
+
+/* The height chain the kanban establishes in `Board.module.css` is
+   deliberately NOT repeated here.
+
+   That file sets `html`/`body`/`main` to a flex column so the board can be
+   bounded and its columns scroll independently. Those are `:global` rules on
+   the app frame, and CSS Modules emit them whenever the module is imported —
+   which for the kanban is exactly when the board is on screen.
+
+   The list wants the opposite arrangement: it scrolls as ONE document,
+   because the whole point of a list over four columns is that the reader
+   moves through a single sequence rather than four independent scroll
+   contexts. So this file establishes no chain and bounds nothing, and the
+   page scrolls normally. */
+.list {
+  padding: 1.25rem;
+  background: var(--surface-app);
+  color: var(--text-primary);
+}
+
+/* Same surface as `.list` — the loading and error states are the list
+   before it has anything to show, so they must not flash a different colour
+   of page underneath. */
+.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  padding: 1.25rem;
+  background: var(--surface-app);
+  color: var(--text-muted);
+}
+
+/* "Showing N of M" — the list's headline fact, and the one thing a reader
+   needs before concluding the list is complete. Muted rather than
+   emphasised: it is context for everything below, not a heading. */
+.summary {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.section {
+  margin: 0 0 1.75rem;
+}
+
+/* The section heading stays put while its rows scroll past.
+
+   A 68-row section is taller than the viewport, so without this a reader
+   who has scrolled into the middle of it has no way to tell which column
+   they are looking at — which is the kanban's one genuine advantage (the
+   heading is always visible above its column) and would otherwise be lost
+   in the list. `position: sticky` restores it for the cost of one
+   declaration.
+
+   The background is opaque and matches the page, because a sticky element
+   composites over the rows sliding underneath it — a transparent heading
+   would have row text passing through it. */
+.sectionTitle {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0;
+  background: var(--surface-app);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* The server's counted total (MILESTONES.md #123) — subdued, because it is
+   a quantity rather than a name and should not compete with the heading. */
+.sectionCount {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.table {
+  width: 100%;
+  /* Collapsed so the row separator below is a single hairline rather than
+     two adjacent borders with a gap between them. */
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+/* The column headers. Small, muted and uppercase — they are a legend for
+   the columns, read once, not content to be read per row. */
+.table thead th {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+/* One hairline between rows, and none around them — see this file's header
+   for why sixty-eight bordered boxes is the thing being avoided. */
+.row {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.row:hover {
+  background: var(--surface-raised);
+}
+
+.row td {
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+}
+
+/* The amber/red split, carried into the list — SCHEMA.md §1.1 makes it a
+   property of the data, so a layout that dropped it would show a paused and
+   a blocked row as the same thing.
+
+   Painted from the same `-border` role of the two states' triplets that
+   `Board.module.css`'s `.toneAmber`/`.toneRed` use, so the chip on the row,
+   this edge, and the kanban's card edge are three renderings of ONE
+   declaration and cannot drift apart.
+
+   A left edge rather than a row background: a tinted row would fight the
+   hover state and the needs-you marker below for the same surface, and at
+   68 rows a wall of tinted backgrounds is exactly the "wall of colour in
+   which P0 stops meaning anything" that `PriorityChip` warns about. */
+.row[data-tone="amber"] td:first-child {
+  box-shadow: inset 3px 0 0 var(--state-paused-border);
+}
+
+.row[data-tone="red"] td:first-child {
+  box-shadow: inset 3px 0 0 var(--state-blocked-border);
+}
+
+/* A row that needs the active reader.
+
+   Marked with a weight change rather than a colour, deliberately: the tone
+   edge above already owns colour on this row, and a second colour channel
+   would make a blocked-and-mine row ambiguous between the two meanings.
+   Weight is an independent channel, so both can be true at once and each
+   still reads. */
+.row[data-needs-you="true"] .rowTitle {
+  font-weight: 650;
+}
+
+/* ── Column widths ───────────────────────────────────────────────────────
+
+   The four metadata columns are held to a fixed width and the title takes
+   whatever is left. That is what makes the columns scannable as columns: a
+   reader looking for every P0 needs "priority" to be at the same x on row 3
+   and row 63, which `width: auto` on five columns does not give — the table
+   would size each column to its widest content and shift the strip. */
+.colState {
+  width: 8.5rem;
+}
+
+.colPriority {
+  width: 5rem;
+}
+
+/* No width — this column absorbs the remainder, which is what keeps the
+   metadata strips fixed. */
+.colTitle {
+  min-width: 0;
+}
+
+.colArea {
+  width: 9rem;
+}
+
+.colOwner {
+  width: 12rem;
+}
+
+.rowTitle {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.rowTitle:hover {
+  text-decoration: underline;
+}
+
+/* The source title, shown only when a headline is standing in for it.
+   Smaller and muted — it is provenance (which PR or issue produced this
+   row), not the row's name. */
+.rowSourceTitle {
+  display: block;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
+/* Why a Waiting row is waiting. Clamped to two lines: a blocked reason can
+   run to a paragraph, and one long reason pushing a row to six lines tall
+   would undo the density the whole layout exists for. */
+.rowReason {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* A project row's stand-in for the state chip — a project's own `state` is
+   a creation leftover (DECISIONS.md §13c), so the cell says what the row IS
+   rather than printing a reading nobody wrote. */
+.projectMark {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rowRepo {
+  display: block;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+
+.owner {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.ownerName {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ownerAge {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+
+.showMore {
+  margin-top: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.showMore:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}

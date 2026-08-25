@@ -1,0 +1,48 @@
+/* The kanban/list switch — MILESTONES.md T6 §3.
+
+   A segmented control: two options in one bordered group, with the active
+   one filled. The shared border is what makes them read as one choice
+   rather than as two unrelated links that happen to sit side by side.
+
+   Colours come from the token layer (`src/app/globals.css`) so the control
+   is legible on whichever surface the bar is painted on — see
+   `Board.module.css`'s header for why a component painting its own
+   background to guarantee its own contrast is the wrong shape of fix. */
+.toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+}
+
+.option {
+  padding: 0.25rem 0.7rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+/* The separator between the two options — drawn on the second rather than
+   as a border on both, so the group's own border is not doubled at the
+   edges. */
+.option + .option {
+  border-left: 1px solid var(--border-control);
+}
+
+.option:hover {
+  background: var(--surface-raised);
+}
+
+/* The active option.
+
+   **Filled, not merely coloured.** A colour change alone does not survive
+   greyscale or the commoner forms of colour blindness, and this control has
+   exactly two options — so if the distinction fails, the reader cannot tell
+   which layout they are looking at from the control at all. A fill is a
+   pre-attentive channel that survives both, the same reasoning
+   `PriorityChip` gives for being filled where `StateChip` is outlined. */
+.option[data-active="true"] {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-weight: 600;
+}
