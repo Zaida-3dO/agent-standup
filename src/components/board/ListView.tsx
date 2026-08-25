@@ -39,7 +39,35 @@ import { AreaChip } from "@/components/chips/AreaChip";
 import { TrustBadge } from "@/components/chips/TrustBadge";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { EmptyState, ErrorState, LoadingState, emptinessOf } from "@/components/states";
+import { isSelectable } from "@/lib/board/selection";
 import styles from "./ListView.module.css";
+
+/**
+ * The selection wiring — T6-E.
+ *
+ * Optional as a whole, so a `ListView` rendered without it (a test, or a
+ * future read-only surface) renders no checkbox column at all rather than a
+ * dead one. That is also what keeps every existing `ListView` test valid
+ * without change: no `selection` prop means the table has exactly the
+ * columns it had before.
+ *
+ * **The click handler takes the modifier, not a pre-decided action.** The
+ * component reports what the reader did — a click on this row, with or
+ * without shift — and the container decides what that means against the
+ * current selection. Deciding here would need the component to know the
+ * selection's anchor and the list's flattened order, which is precisely the
+ * state it is kept free of.
+ */
+export interface ListSelectionProps {
+  readonly isSelected: (id: string) => boolean;
+  readonly onToggle: (id: string, shiftKey: boolean) => void;
+  /** Ticks/unticks every selectable row the list renders. */
+  readonly onSelectAll: (select: boolean) => void;
+  /** True when every selectable row shown is selected — drives the header box. */
+  readonly allSelected: boolean;
+  /** True when some but not all are — drives the indeterminate mark. */
+  readonly someSelected: boolean;
+}
 
 export interface ListViewProps {
   readonly loadState: BoardLoadState;
@@ -57,6 +85,8 @@ export interface ListViewProps {
   readonly onRetry?: () => void;
   /** Per-section paging, keyed by column exactly as the kanban's is. */
   readonly paging?: ListPagingProps;
+  /** Row selection for bulk actions (T6-E). Absent renders no checkbox column. */
+  readonly selection?: ListSelectionProps;
 }
 
 /**
@@ -106,6 +136,7 @@ export function ListView({
   onClearFilter,
   onRetry,
   paging,
+  selection,
 }: ListViewProps) {
   if (loadState.status === "error") {
     return (
@@ -178,6 +209,36 @@ export function ListView({
               <table className={styles.table}>
                 <thead>
                   <tr>
+                    {/* The select-all box, once per section — because each
+                        section is its own table, and a box in one table's
+                        header that ticked another table's rows would be
+                        lying about its scope. It ticks every selectable row
+                        the list RENDERS, across all four sections, which
+                        the label says outright; see `selectAll` for why it
+                        is deliberately not the counted total. */}
+                    {selection && (
+                      <th scope="col" className={styles.colSelect}>
+                        <input
+                          type="checkbox"
+                          className={styles.checkbox}
+                          checked={selection.allSelected}
+                          // `indeterminate` is a DOM property with no HTML
+                          // attribute, so React cannot set it from JSX. The
+                          // ref callback is the documented way, and the
+                          // alternative — a third visual state faked with
+                          // CSS — would not reach the accessibility tree,
+                          // where the mixed state is the part that matters.
+                          ref={(node) => {
+                            if (node) {
+                              node.indeterminate = selection.someSelected && !selection.allSelected;
+                            }
+                          }}
+                          onChange={(event) => selection.onSelectAll(event.target.checked)}
+                          aria-label="Select all shown rows"
+                          data-testid="list-select-all"
+                        />
+                      </th>
+                    )}
                     {/* The header row is what makes the aligned columns
                         legible as columns rather than as a coincidence of
                         spacing. `scope="col"` so a screen reader announces
@@ -217,7 +278,47 @@ export function ListView({
                         // states the mapping once.
                         {...(tone ? { "data-tone": tone } : {})}
                         {...(mine ? { "data-needs-you": "true" } : {})}
+                        {...(selection?.isSelected(entry.item.id)
+                          ? { "data-selected": "true" }
+                          : {})}
                       >
+                        {selection && (
+                          <td className={styles.colSelect}>
+                            {/* A project gets an empty cell, not a disabled
+                                box: it has no state to transition
+                                (DECISIONS.md §13c), so a checkbox would
+                                offer a gesture that could only ever be
+                                refused. The column still exists on the row
+                                so the table's cells stay aligned. */}
+                            {isSelectable(entry) && (
+                              <input
+                                type="checkbox"
+                                className={styles.checkbox}
+                                checked={selection.isSelected(entry.item.id)}
+                                // **The modifier is read off the click, and
+                                // passed up.** `onChange` alone cannot see
+                                // it — the shift key is a property of the
+                                // pointer event, not of the change — so the
+                                // range gesture is wired through `onClick`,
+                                // which fires on both mouse and keyboard
+                                // activation and carries `shiftKey` for
+                                // both. `onChange` is left off deliberately:
+                                // wiring both would toggle twice per click.
+                                onClick={(event) =>
+                                  selection.onToggle(entry.item.id, event.shiftKey)
+                                }
+                                // React warns on a `checked` input with no
+                                // `onChange`. The handler above is what
+                                // actually drives the state; this satisfies
+                                // the controlled-input contract without
+                                // adding a second toggle path.
+                                onChange={() => {}}
+                                aria-label={`Select ${primaryLine(entry.item)}`}
+                                data-testid={`list-select-${entry.item.id}`}
+                              />
+                            )}
+                          </td>
+                        )}
                         <td className={styles.colState}>
                           {/* A project's own `state` is a creation leftover
                               and NOT its column (`get-board.ts` says so

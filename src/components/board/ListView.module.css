@@ -253,6 +253,64 @@
 
    The remainder only stays generous because the reflow below now measures
    the right box; the two changes are one fix and neither works alone. */
+/* The select column — T6-E.
+
+   A stated `width` like the other metadata columns, because under
+   `table-layout: fixed` only a stated width binds (see the block comment
+   above) and an unstated one would compete with `.colTitle` for the
+   remainder — which is the one column that must not give ground.
+
+   **Narrow enough to be free.** 2.5rem holds a checkbox and its click
+   target and nothing else; the whole justification for the list is density,
+   and a selection column that cost a chip's width would be paid for by the
+   title on every one of sixty-eight rows.
+
+   Note the tone edge above is anchored to `td.colState` **by class, not
+   position**, so adding a column in front of it does not move the edge —
+   that comment predicted exactly this change and is why nothing here needs
+   to touch it. */
+.colSelect {
+  width: 2.5rem;
+}
+
+/* The checkbox itself.
+
+   `accent-color` rather than a hand-drawn box: the native control already
+   has the focus ring, the indeterminate rendering and the keyboard contract
+   that a `<div role="checkbox">` would have to reimplement, and the
+   indeterminate state in particular is the one a reimplementation reliably
+   drops from the accessibility tree.
+
+   The touch target is grown with padding rather than by sizing the box up,
+   so the tick stays proportionate to the row's 0.8rem text while still
+   being hittable. */
+.checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.checkbox:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* A selected row.
+
+   A background rather than a border: the tone edge owns the row's left edge
+   (see above) and the needs-you marker owns font weight, so those two
+   channels are already spoken for. A subtle surface lift is the remaining
+   one that does not collide, and it has to survive `:hover` — a selected
+   row the cursor is over must still read as selected, which is why this
+   sits after `.row:hover` in source order rather than relying on
+   specificity alone. */
+.row[data-selected="true"],
+.row[data-selected="true"]:hover {
+  background: var(--accent-bg);
+}
+
 .colState {
   width: 8.5rem;
 }

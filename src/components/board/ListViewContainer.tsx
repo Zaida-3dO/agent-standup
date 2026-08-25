@@ -40,8 +40,25 @@ import {
 } from "@/lib/board/filter-options";
 import { fetchSavedViews } from "@/lib/board/saved-views-client";
 import type { SavedViews } from "@/lib/board/saved-views";
+import { listEntries } from "@/lib/board/list";
+import {
+  emptySelection,
+  isSelected as isRowSelected,
+  rangeFrom,
+  reconcile,
+  selectAll,
+  selectableIds,
+  selectedEntries,
+  selectionSize,
+  toggle,
+  type Selection,
+} from "@/lib/board/selection";
+import { describeBulkOutcome, runBulkTransition, type BulkOutcome } from "@/lib/board/bulk";
+import { useUndo } from "@/components/toast";
+import { stateLabel } from "@/lib/undo";
 import { BoardFilterBar } from "./BoardFilterBar";
 import { ListView } from "./ListView";
+import { BulkActionBar, type BulkAction, type BulkReport } from "./BulkActionBar";
 
 export function ListViewContainer() {
   const { activeProfile } = useProfile();
@@ -95,6 +112,48 @@ export function ListViewContainer() {
     boardRef.current = next;
     setBoard(next);
   }, []);
+
+  // ── Selection and bulk actions (T6-E) ──────────────────────────────
+  //
+  // **The ref is the authoritative copy; `selection` is what renders** —
+  // the same arrangement `boardRef` above uses, and for a sharper reason.
+  //
+  // Every selection gesture is a function of the CURRENT selection: a
+  // toggle needs to know whether the row is already in it, a shift-click
+  // needs its anchor, and a bulk needs the whole set. The tempting way to
+  // get that is to compute it inside a `setSelection` updater, which is the
+  // defect that has shipped three times in this repo — React defers an
+  // updater whenever a lane is already pending on the fiber (and this
+  // component always has one: the mount-time `fetchBoard().then(...)`), and
+  // StrictMode invokes it twice. A value assigned in there and read on the
+  // next line is not reliably set, and `scripts/check-updater-side-effects.mjs`
+  // exists because of it.
+  //
+  // So the handlers below read `selectionRef.current` **synchronously,
+  // before** calling `setSelection`, compute the next value with the pure
+  // functions in `@/lib/board/selection`, and pass a plain VALUE to the
+  // setter rather than an updater. There is nothing left inside an updater
+  // to be deferred, which is what makes the defect structurally absent here
+  // rather than merely avoided.
+  const [selection, setSelectionState] = useState<Selection>(() => emptySelection());
+  const selectionRef = useRef<Selection>(selection);
+  /** The single write path — advances the ref synchronously and schedules the render. */
+  const applySelection = useCallback((next: Selection) => {
+    selectionRef.current = next;
+    setSelectionState(next);
+  }, []);
+
+  /** The bulk in flight, or null. Drives the bar's progress and disables its buttons. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  /** What the last finished bulk did. Survives the selection being cleared. */
+  const [report, setReport] = useState<BulkReport | null>(null);
+  // Guards against a second bulk starting while one is running. Held as a
+  // ref rather than derived from `progress`, because the check happens in
+  // the same tick as the click and `progress` would still be the previous
+  // render's value.
+  const runningRef = useRef(false);
+
+  const { offer } = useUndo();
 
   // **`boardQuery` is in the dependency list**, so changing a filter or the
   // sort re-reads the list — the whole of "the filter is applied", with no
@@ -191,6 +250,155 @@ export function ListViewContainer() {
     [applyBoard, boardQuery],
   );
 
+  // ── The selection's handlers ───────────────────────────────────────
+
+  /** Every row the list renders, flat, in the order the reader sees them. */
+  const rows = useMemo(() => listEntries(board), [board]);
+  /** The ids a reader may select — projects excluded (see `isSelectable`). */
+  const selectable = useMemo(() => selectableIds(rows), [rows]);
+
+  /**
+   * Drop from the selection anything the board omits.
+   *
+   * **This is the "survives what it should, clears when it should" rule**,
+   * and it lives in one effect so there is one answer rather than one per
+   * path. A filter change, a page, a retry and a completed bulk all end in
+   * a new `board`, and all of them go through here: a row still shown keeps
+   * its tick, a row that has gone loses it. The alternative — clearing on
+   * every load — would throw away a selection every time the reader pressed
+   * "show more", which is precisely when a large selection is being built.
+   *
+   * `reconcile` returns the SAME object when nothing changed, so this
+   * settles after one pass instead of re-triggering itself.
+   */
+  useEffect(() => {
+    const next = reconcile(selectionRef.current, selectable);
+    if (next !== selectionRef.current) applySelection(next);
+  }, [selectable, applySelection]);
+
+  /**
+   * A click on a row's checkbox.
+   *
+   * The shift-modifier decides which pure function applies; both are
+   * computed from the ref, synchronously, before the setter is called.
+   */
+  const onToggle = useCallback(
+    (id: string, shiftKey: boolean) => {
+      const current = selectionRef.current;
+      applySelection(shiftKey ? rangeFrom(current, id, selectable) : toggle(current, id));
+    },
+    [applySelection, selectable],
+  );
+
+  const onSelectAll = useCallback(
+    (select: boolean) => {
+      applySelection(selectAll(selectable, select));
+    },
+    [applySelection, selectable],
+  );
+
+  const onClearSelection = useCallback(() => {
+    applySelection(emptySelection());
+    // The report goes with it: it describes a selection the reader has
+    // just dismissed, and leaving it on screen next to an empty bar would
+    // report a result with nothing to connect it to.
+    setReport(null);
+  }, [applySelection]);
+
+  /**
+   * Run a bulk action against the current selection.
+   *
+   * **The selection is resolved to entries here, once, from the ref** — not
+   * inside an updater, and not from a render-time value that a click in the
+   * same tick could have superseded. `selectedEntries` intersects it with
+   * the board that is actually loaded, so a row that has left the view
+   * cannot be acted on even if its id is still in the set.
+   */
+  const onBulkAction = useCallback(
+    (action: BulkAction) => {
+      if (runningRef.current) return;
+      const chosen = selectedEntries(selectionRef.current, listEntries(boardRef.current));
+      if (chosen.length === 0) return;
+
+      const label = stateLabel(action.to);
+      // **The confirm is a real gate, and it is only on the destructive
+      // one.** `window.confirm` rather than a bespoke modal: this is one
+      // yes/no question with no state of its own, and the palette's overlay
+      // machinery would have to be taught about it for no gain the reader
+      // can see. It names the count, because the count is the thing that
+      // makes a mis-click expensive.
+      if (action.confirm) {
+        const noun = chosen.length === 1 ? "1 item" : `${chosen.length} items`;
+        if (!window.confirm(`Move ${noun} to ${label}? You can undo this.`)) return;
+      }
+
+      runningRef.current = true;
+      setReport(null);
+      setProgress({ done: 0, total: chosen.length });
+
+      void runBulkTransition(chosen, action.to, fetch, (done) => {
+        setProgress({ done, total: chosen.length });
+      })
+        .then((outcome: BulkOutcome) => {
+          // **The undo is offered for the items that actually moved, and
+          // only those.** Handing the whole selection over would offer to
+          // put back rows that were never moved — `inverseOf` filters
+          // no-ops per item, and a refused row has no `from`/`to` pair to
+          // filter, so including it would be inventing a move.
+          //
+          // Offered only when something moved: `inverseOf` returns an
+          // unavailable plan for a bulk whose moves are all no-ops
+          // (`tests/undo-actions.test.ts` asserts exactly that), and the
+          // toast would then show a button that cannot work. Not offering
+          // is the honest form of the same fact.
+          if (outcome.moved.length > 0) {
+            offer({
+              kind: "bulk",
+              at: Date.now(),
+              to: action.to,
+              moves: outcome.moved,
+            });
+          }
+
+          setReport({
+            message: describeBulkOutcome(outcome, label),
+            refused: outcome.refused.map((refusal) => ({
+              title: refusal.title,
+              // The state the server said it is actually in, when it said
+              // so — that is what makes the refusal checkable against the
+              // row rather than a shrug.
+              detail:
+                refusal.currentState === null
+                  ? refusal.message
+                  : `now in ${stateLabel(refusal.currentState)}`,
+            })),
+          });
+
+          // **The selection clears only for the rows that moved.** The
+          // refused ones stay ticked, which is the useful behaviour: they
+          // are exactly the rows the reader may want to retry or look at,
+          // and clearing them would make the reader re-find them against a
+          // report that names them by title.
+          const movedIds = new Set(outcome.moved.map((move) => move.itemId));
+          const current = selectionRef.current;
+          const kept = new Set<string>();
+          for (const id of current.ids) if (!movedIds.has(id)) kept.add(id);
+          applySelection({
+            ids: kept,
+            anchor: current.anchor !== null && kept.has(current.anchor) ? current.anchor : null,
+          });
+
+          // Re-read the board so the moved rows appear where they now are.
+          setReloadNonce((n) => n + 1);
+        })
+        .finally(() => {
+          runningRef.current = false;
+          setProgress(null);
+        });
+    },
+    [applySelection, offer],
+  );
+
   const loadState: BoardLoadState =
     status === "error"
       ? { status: "error", message: errorMessage }
@@ -228,6 +436,28 @@ export function ListViewContainer() {
           setReloadNonce((n) => n + 1);
         }}
         paging={{ onShowMore, loadingColumns, errors: pageErrors }}
+        selection={{
+          isSelected: (id) => isRowSelected(selection, id),
+          onToggle,
+          onSelectAll,
+          // **Both computed against the SELECTABLE rows, not every row.** A
+          // list whose only unselected row is a project would otherwise
+          // never show the header box as checked, because the project can
+          // never be ticked — the box would sit permanently indeterminate
+          // and "select all" would appear not to have worked.
+          allSelected: selectable.length > 0 && selectionSize(selection) >= selectable.length,
+          someSelected: selectionSize(selection) > 0,
+        }}
+      />
+      {/* Below the list, so it does not push the rows the reader is
+          selecting. It is `position: sticky; bottom: 0`, so it stays
+          reachable without covering the top of the list. */}
+      <BulkActionBar
+        count={selectionSize(selection)}
+        onAction={onBulkAction}
+        onClear={onClearSelection}
+        progress={progress}
+        report={report}
       />
     </>
   );

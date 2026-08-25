@@ -1,0 +1,156 @@
+/* The bulk action bar — T6-E.
+
+   Every colour comes from the token layer (`src/app/globals.css`), never
+   from a literal, for the reason `ListView.module.css` gives at its head:
+   `--surface-*` and `--text-*` are contrasted against each other by
+   construction and `tests/design-tokens-contrast.test.ts` holds them to it. */
+
+.bar {
+  /* **Sticky to the bottom of the list, not fixed to the viewport.**
+
+     Fixed would float it over the sidebar and the top bar, which belong to
+     the shell rather than to this view, and would leave it on screen when
+     the reader scrolls to a part of the page the selection has nothing to
+     do with. Sticky keeps it attached to the list it acts on while still
+     following the reader down sixty-eight rows — which is the whole point,
+     since the selection is built at the top and applied from wherever the
+     reader ends up. */
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+
+  /* `--surface-raised` rather than `--surface-panel`: this sits ON the list
+     and has to read as being in front of it, which is the one distinction
+     the raised token exists to make. */
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-overlay);
+}
+
+.count {
+  font-size: 0.85rem;
+  font-weight: 600;
+  /* Fixed minimum so the bar does not jitter horizontally as the count
+     changes width between "1 selected" and "12 selected" — a bar that
+     shifts under the cursor while the reader is clicking is a bar that
+     causes mis-clicks. */
+  min-width: 7ch;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.action,
+.danger,
+.clear {
+  /* 32px minimum height: `globals.css` compact mode shrinks the space
+     tokens but explicitly says compact "is not a licence to break the
+     touch-target floor". */
+  min-height: 32px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.action {
+  border: 1px solid var(--border-control);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.action:hover:not(:disabled) {
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+}
+
+/* **Cancel is drawn as a danger action.**
+
+   It reads as ending work rather than moving it, and it is the one button
+   here whose effect a reader would describe as destructive. The colour is
+   the `wont_do` state's own border token rather than a new red: the state
+   vocabulary already has a colour for "this work is not happening", and
+   inventing a second one would put two reds in front of a reader that mean
+   the same thing. */
+.danger {
+  border: 1px solid var(--state-wont_do-border, var(--border-strong));
+  background: transparent;
+  color: var(--state-wont_do-fg, var(--text-secondary));
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--state-wont_do-bg, var(--surface-overlay));
+}
+
+.clear {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  text-decoration: underline;
+}
+
+.clear:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.action:disabled,
+.danger:disabled,
+.clear:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.action:focus-visible,
+.danger:focus-visible,
+.clear:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.status {
+  /* Takes the full width so a report with a refusal list wraps below the
+     controls rather than squeezing them. */
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* Empty until something is announced — no reserved height, so a bar with
+   nothing to say costs nothing. */
+.status:empty {
+  display: none;
+}
+
+.refusals {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.refusedTitle {
+  color: var(--text-primary);
+}
+
+.refusedTitle::after {
+  content: " — ";
+  color: var(--text-faint);
+}
+
+.refusedDetail {
+  color: var(--text-muted);
+}
