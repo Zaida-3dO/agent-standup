@@ -178,3 +178,79 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* ── The phone flow (#76, narrowed) ──────────────────────────────────────
+   Morning triage genuinely happens on a phone and merge approval genuinely
+   happens in a gap, so the two jobs this page exists for have to work at
+   390px. Measured in a real browser before this block existed: 43px of
+   horizontal overflow at 320px, 3px at 360px, and Approve/Deny rendering
+   73x27 and 55x27 against a 44px touch minimum.
+
+   The overflow came from `.rowMain`'s `min-width: 20rem` — a 320px floor
+   inside a 320px viewport that already spends 32px on padding and 2px on
+   borders. `flex-basis` alone does not shrink below `min-width`, which is
+   why the row could not reflow no matter what the basis said. */
+@media (max-width: 640px) {
+  .panel {
+    padding: var(--space-4);
+  }
+
+  .row {
+    /* Stack rather than justify: at this width the meta column has nowhere
+       to sit beside the title, and letting it wrap produced a ragged row
+       whose buttons landed under a different item's text. */
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .rowMain,
+  .rowMeta {
+    /* `min-width: 0` is the load-bearing half. A flex item's default
+       `min-width: auto` refuses to shrink below its content, so the 20rem
+       floor above survived every basis change until this was added. */
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .rowMeta {
+    /* The decision belongs under the thing being decided, reading
+       left-to-right, not right-aligned off the end of it. */
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  .title {
+    /* A long title is the common case, not the exception — every row on
+       this page is a real task title. A long one already clears 44px by
+       wrapping to two lines; `min-height` is here for the SHORT one, which
+       otherwise renders a 22px tap target for the same navigation. */
+    overflow-wrap: anywhere;
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .actions {
+    gap: var(--space-3);
+  }
+
+  .approve,
+  .deny {
+    /* Thumb-sized. 44px is the smallest target that is reliably hit with a
+       thumb, and approving the wrong item is not a recoverable mis-tap. */
+    min-height: 44px;
+    padding: 0 var(--space-4);
+    font-size: var(--text-xs);
+  }
+
+  .reviewLink {
+    /* The link is a tap target too, and at 17px high it was the smallest
+       thing on the page. `inline-flex` + `align-items` keeps the text
+       vertically centred once it has a height. */
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
