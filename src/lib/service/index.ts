@@ -252,6 +252,17 @@ export {
   type GetCostsOutput,
 } from "./operations/get-costs";
 
+// The fleet-wide timeline (T19) — the ledger read backwards and filtered.
+export {
+  getActivity,
+  SLIM_ACTIVITY_COLUMNS,
+  FULL_ACTIVITY_COLUMNS,
+  type ActivityEvent,
+  type ActivityEventFull,
+  type GetActivityInput,
+  type GetActivityOutput,
+} from "./operations/get-activity";
+
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
 // (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,
