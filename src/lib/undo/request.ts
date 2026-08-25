@@ -110,11 +110,18 @@ export function staleMessage(currentState: string | null): string {
  * response and error handling — all of which are identical for both kinds.
  * The only thing that differs between undoing a move and undoing an archive
  * is the URL and the body, so that is the only thing that varies here.
+ *
+ * It returns the URL already through `uiApiPath` rather than a bare path for
+ * `sendStep` to wrap. Both forms would behave identically, but only this one
+ * keeps each `/api/` literal syntactically inside the wrapper, which is what
+ * `tests/ui-proxy-paths.test.ts` checks — a literal that reaches `fetch`
+ * unwrapped arrives at the API with no credential, and that guard reads the
+ * source text rather than tracing the value.
  */
-function requestFor(step: UndoStep): { path: string; body: string } {
+function requestFor(step: UndoStep): { url: string; body: string } {
   if (step.kind === "restore") {
     return {
-      path: `/api/items/${encodeURIComponent(step.itemId)}/restore`,
+      url: uiApiPath(`/api/items/${encodeURIComponent(step.itemId)}/restore`),
       // No `expectedFrom` equivalent: a restore does not move the item, so
       // there is no state for a staleness check to compare against. See
       // `UndoRestoreStep`.
@@ -122,7 +129,7 @@ function requestFor(step: UndoStep): { path: string; body: string } {
     };
   }
   return {
-    path: `/api/items/${encodeURIComponent(step.itemId)}/transition`,
+    url: uiApiPath(`/api/items/${encodeURIComponent(step.itemId)}/transition`),
     body: JSON.stringify({ to: step.to, expectedFrom: step.expectedFrom }),
   };
 }
@@ -136,10 +143,10 @@ function requestFor(step: UndoStep): { path: string; body: string } {
  * fetch fields nothing here reads.
  */
 async function sendStep(step: UndoStep, fetchImpl: typeof fetch): Promise<UndoOutcome> {
-  const { path, body } = requestFor(step);
+  const { url, body } = requestFor(step);
   let response: Response;
   try {
-    response = await fetchImpl(uiApiPath(path), {
+    response = await fetchImpl(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body,
