@@ -31,7 +31,7 @@
 //
 // The rule that turns a hash into a tab is `tabFromHash`, a plain function
 // in `@/lib/item-detail/tabs` so it is tested without a browser.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchItemDetail,
   fetchItemHistory,
@@ -55,6 +55,15 @@ import { bodyFor, type VerifyStateStatus } from "./VerifyStateAction";
 import { useProfile } from "@/lib/profile/ProfileProvider";
 import { ItemDetailView } from "./ItemDetailView";
 import type { AgentPanelState } from "./AgentPanel";
+import type { ArchiveActionState } from "./ArchiveAction";
+import {
+  submitArchive,
+  submitRestore,
+  archiveReasonIsValid,
+  ARCHIVE_REFERENCES_GUARD,
+  RESTORE_SUPERSEDED_GUARD,
+} from "@/lib/item-detail/archive-state";
+import { useUndo } from "@/components/toast";
 
 export interface ItemDetailContainerProps {
   readonly itemId: string;
@@ -289,6 +298,209 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   });
   const { activeProfile } = useProfile();
 
+  // ── Archive and restore ──────────────────────────────────────
+  //
+  // The affordance `restore_item` was built for. See `ArchiveAction.tsx` for
+  // why archiving is a reason form rather than a confirm dialog, and
+  // `@/lib/item-detail/archive-state.ts` for why every refusal reaches the
+  // person as the server's own sentence.
+  const [archiveState, setArchiveState] = useState<ArchiveActionState>({ status: "idle" });
+  const { offer } = useUndo();
+
+  /**
+   * The current archive state, readable synchronously by an event handler.
+   *
+   * **This is the discipline that stops a defect this repo has shipped three
+   * times.** `onArchive` has to know what reason was typed, and `onAcknowledge`
+   * which refusal it is acknowledging — both of which live in `archiveState`,
+   * and both of which are needed *at the moment of the click*, not on the
+   * render after. Deriving them inside a `setArchiveState` updater is exactly
+   * the shape that failed in `Board.tsx` and again in `UndoToastHost.tsx`: an
+   * updater is not a callback that runs when you call it. React evaluates one
+   * eagerly only when no update is already pending on the fiber and defers it
+   * otherwise, and StrictMode invokes it twice — so a value assigned inside it
+   * is not reliably set on the next line, the early return fires, and no
+   * request is ever sent.
+   *
+   * A ref is readable now. Every write to `archiveState` writes here too, so
+   * this is the same value in a form a handler can read, not a second source
+   * of truth. `scripts/check-updater-side-effects.mjs` keeps it that way
+   * mechanically, and `tests/item-archive-react-wiring.test.ts` proves the
+   * composition works under real React.
+   */
+  const latestArchiveState = useRef<ArchiveActionState>({ status: "idle" });
+
+  /** Writes both, together, so the ref can never lag the state it mirrors. */
+  const applyArchiveState = useCallback((next: ArchiveActionState) => {
+    latestArchiveState.current = next;
+    setArchiveState(next);
+  }, []);
+
+  const onBeginArchive = useCallback(() => {
+    applyArchiveState({ status: "composing", reason: "" });
+  }, [applyArchiveState]);
+
+  const onCancelArchive = useCallback(() => {
+    applyArchiveState({ status: "idle" });
+  }, [applyArchiveState]);
+
+  const onArchiveReasonChange = useCallback(
+    (reason: string) => {
+      applyArchiveState({ status: "composing", reason });
+    },
+    [applyArchiveState],
+  );
+
+  /**
+   * Re-reads the item after an archive or restore landed.
+   *
+   * The page re-reads rather than patching `archivedAt` locally, because both
+   * writes change what the row *is* — the archived notice depends on
+   * `archivedReason` and `supersededById`, neither of which the client can
+   * invent. Matches what `onSaveEdit` above already does after a successful
+   * write, for the same reason: one source of truth for what the server says.
+   */
+  const reloadDetail = useCallback(() => {
+    fetchItemDetail(itemId)
+      .then((detail) => setLoadState({ status: "loaded", detail }))
+      .catch(() => {
+        // The write already succeeded. A failed re-read leaves the page
+        // showing the pre-write value until the next natural reload rather
+        // than surfacing an error for something that worked.
+      });
+  }, [itemId]);
+
+  /**
+   * Sends the archive, and — on success — **offers the undo**.
+   *
+   * That `offer` call is the point of this whole affordance. The undo spine is
+   * complete and, without this caller, unreachable: `inverseOf` derives a real
+   * `UndoRestoreStep` for `kind: "archive"`, `runUndo` posts it to
+   * `/api/items/{id}/restore`, and `UndoToast` renders the button — but
+   * nothing else in the product ever constructs an `archive` action, so none
+   * of it can run. This is its only caller.
+   *
+   * Offered **after** the write is accepted, per `UndoApi.offer`'s contract,
+   * so the toast never promises to undo something that did not happen.
+   */
+  const runArchive = useCallback(
+    (reason: string, acknowledgeReferences: boolean) => {
+      if (loadState.status !== "loaded") return;
+      const { item } = loadState.detail;
+      applyArchiveState({ status: "submitting" });
+      submitArchive(item.id, {
+        reason,
+        ...(acknowledgeReferences ? { acknowledgeReferences: true } : {}),
+      })
+        .then((outcome) => {
+          if (!outcome.ok) {
+            applyArchiveState({
+              status: "error",
+              message: outcome.message,
+              guard: outcome.guard,
+              supersededById: outcome.supersededById,
+              // The typed reason survives the refusal — see `ArchiveActionState`.
+              reason,
+            });
+            return;
+          }
+          applyArchiveState({ status: "idle" });
+          // `at` is stamped here so the undo window measures from the moment
+          // the write landed.
+          offer({
+            kind: "archive",
+            at: Date.now(),
+            itemId: item.id,
+            itemTitle: item.title,
+          });
+          reloadDetail();
+        })
+        .catch(() => {
+          applyArchiveState({
+            status: "error",
+            message: "Could not archive this item. Try again.",
+            guard: null,
+            supersededById: null,
+            reason,
+          });
+        });
+    },
+    [loadState, applyArchiveState, offer, reloadDetail],
+  );
+
+  const onArchive = useCallback(() => {
+    // Read from the ref, synchronously — see `latestArchiveState`. The reason
+    // submitted is the one on screen at the moment of the click.
+    const current = latestArchiveState.current;
+    if (current.status !== "composing" && current.status !== "error") return;
+    if (!archiveReasonIsValid(current.reason)) return;
+    runArchive(current.reason, false);
+  }, [runArchive]);
+
+  const runRestore = useCallback(
+    (acknowledgeSuperseded: boolean) => {
+      if (loadState.status !== "loaded") return;
+      const { item } = loadState.detail;
+      applyArchiveState({ status: "submitting" });
+      submitRestore(item.id, acknowledgeSuperseded ? { acknowledgeSuperseded: true } : {})
+        .then((outcome) => {
+          if (!outcome.ok) {
+            applyArchiveState({
+              status: "error",
+              message: outcome.message,
+              guard: outcome.guard,
+              supersededById: outcome.supersededById,
+              // Nothing is composed for a restore; the field belongs to the
+              // archive form and is empty here rather than absent, so the
+              // state stays one shape.
+              reason: "",
+            });
+            return;
+          }
+          applyArchiveState({ status: "idle" });
+          reloadDetail();
+        })
+        .catch(() => {
+          applyArchiveState({
+            status: "error",
+            message: "Could not restore this item. Try again.",
+            guard: null,
+            supersededById: null,
+            reason: "",
+          });
+        });
+    },
+    [loadState, applyArchiveState, reloadDetail],
+  );
+
+  const onRestore = useCallback(() => {
+    runRestore(false);
+  }, [runRestore]);
+
+  /**
+   * Retries the refused call with the acknowledgement the person just read.
+   *
+   * Which call to retry is decided from the **refusing guard**, not from the
+   * item's archived flag. The two normally agree, but the guard is the thing
+   * that actually knows what was attempted: a superseded refusal can only have
+   * come from a restore, and a references refusal only from an archive.
+   * Reading the guard means this cannot send the wrong verb if the row's state
+   * and the pending refusal ever disagree.
+   */
+  const onAcknowledge = useCallback(() => {
+    const current = latestArchiveState.current;
+    if (current.status !== "error") return;
+    if (current.guard === RESTORE_SUPERSEDED_GUARD) {
+      runRestore(true);
+      return;
+    }
+    if (current.guard === ARCHIVE_REFERENCES_GUARD) {
+      runArchive(current.reason, true);
+    }
+    // Any other guard is not acknowledgeable and the control is not rendered
+    // for it (`isAcknowledgeable`), so there is nothing to do here.
+  }, [runArchive, runRestore]);
+
   useEffect(() => {
     let cancelled = false;
     fetchItemDetail(itemId)
@@ -433,6 +645,15 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
       }}
       verifyStateStatus={verifyStateStatus}
       onVerifyState={onVerifyState}
+      archive={{
+        state: archiveState,
+        onBeginArchive,
+        onCancel: onCancelArchive,
+        onReasonChange: onArchiveReasonChange,
+        onArchive,
+        onRestore,
+        onAcknowledge,
+      }}
     />
   );
 }

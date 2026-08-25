@@ -182,6 +182,35 @@ export interface DetailItem {
    * `TrustInfo` for what a `source` origin means for the trust marker.
    */
   readonly originType: "person" | "source" | "auto";
+  /**
+   * ISO 8601 — when this row was archived, or null while it is live.
+   *
+   * **This is what decides whether the page offers Archive or Restore**, so
+   * it has to be readable here rather than inferred. It was absent from this
+   * type for the same reason `headline` above was: `get_item_detail` returns
+   * the whole `ItemRecord` and `fetchItemDetail` passes `detail.item` through
+   * wholesale, so the field has always been on the wire and only the
+   * client-side type omitted it. Widening the type is the entire change.
+   *
+   * An archived item is still reachable at `/items/{id}` by design —
+   * `get_item` and `get_item_detail` apply no archived filter, precisely so a
+   * stale link lands somewhere real (see `delete_item`'s header). This page is
+   * therefore the one place a person can be standing on an archived row, which
+   * makes it the only place a Restore control belongs.
+   */
+  readonly archivedAt: string | null;
+  /** Why it was archived, as given by whoever archived it. Null while live. */
+  readonly archivedReason: string | null;
+  /**
+   * The surviving row this one was archived in favour of, when one was named.
+   *
+   * Shown beside the archived notice so a reader who arrived by a stale link
+   * is sent somewhere live rather than left on a dead end — which is the whole
+   * reason `delete_item` records the pointer. It also survives a restore:
+   * `restore_item` deliberately does not clear it, because the judgement that
+   * this work was taken up elsewhere was still made.
+   */
+  readonly supersededById: string | null;
 }
 
 /** The whole detail payload, as `GET /api/items/{id}/detail` returns it. */
