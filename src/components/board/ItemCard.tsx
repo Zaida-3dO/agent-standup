@@ -112,6 +112,7 @@ export function ItemCard({ entry, needsYou, now, onDragStart, onDragEnd, pending
             verified={entry.trust.verification !== null}
             checkedAt={entry.trust.verification?.checkedAt}
             checkedByType={entry.trust.verification?.checkedByType}
+            checkedById={entry.trust.verification?.checkedById}
           />
         )}
       </div>

@@ -147,6 +147,14 @@ export function latestVerdict(artifacts: readonly DetailArtifact[]): string | nu
 export interface DetailVerification {
   readonly checkedAt: string;
   readonly checkedByType: string;
+  /**
+   * *Which* holder ran the check, where the artifact recorded one.
+   *
+   * Null is an ordinary case rather than a defect — an artifact can be
+   * written with a type but no id — so a reader must render its absence as
+   * "a person" rather than as a missing name.
+   */
+  readonly checkedById: string | null;
   readonly body: string | null;
   readonly commitSha: string | null;
 }
@@ -186,6 +194,7 @@ export function newestVerification(
   return {
     checkedAt: best.createdAt,
     checkedByType: best.createdByType,
+    checkedById: best.createdById,
     body: best.body,
     commitSha: best.commitSha,
   };

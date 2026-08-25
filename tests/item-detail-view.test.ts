@@ -48,6 +48,7 @@ function artifact(overrides: Partial<DetailArtifact> = {}): DetailArtifact {
     findings: null,
     followUpItemId: null,
     createdByType: "agent",
+    createdById: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -303,6 +304,7 @@ describe("newestVerification", () => {
         kind: "historical_verification",
         createdAt: "2026-01-01T00:00:00.000Z",
         createdByType: "person",
+        createdById: "ope",
         body: "Checked — state matches.",
         commitSha: "abc123",
       }),
@@ -310,9 +312,41 @@ describe("newestVerification", () => {
     expect(newestVerification(artifacts)).toEqual({
       checkedAt: "2026-01-01T00:00:00.000Z",
       checkedByType: "person",
+      checkedById: "ope",
       body: "Checked — state matches.",
       commitSha: "abc123",
     });
+  });
+
+  // The join this closes: the badge could say a PERSON checked but not
+  // WHICH person. Fails if the mapper drops `checkedById` or hardcodes it —
+  // an exact-shape `toEqual` above would catch a drop, but this pins the
+  // value travelling from the artifact rather than merely being present.
+  it("carries which holder ran the check, not only their type", () => {
+    const artifacts = [
+      artifact({
+        kind: "historical_verification",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdByType: "agent",
+        createdById: "gary",
+      }),
+    ];
+    expect(newestVerification(artifacts)?.checkedById).toBe("gary");
+  });
+
+  // An artifact may carry a type with no id. That must read as an ordinary
+  // absence, not as a missing field — fails if the mapper coerces null to
+  // a placeholder string or to the type.
+  it("keeps a null holder id null rather than inventing one", () => {
+    const artifacts = [
+      artifact({
+        kind: "historical_verification",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdByType: "agent",
+        createdById: null,
+      }),
+    ];
+    expect(newestVerification(artifacts)?.checkedById).toBeNull();
   });
 
   // Fails if the newest-by-createdAt selection is reversed or picks by array position instead.

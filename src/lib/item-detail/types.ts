@@ -84,6 +84,16 @@ export interface DetailArtifact {
   readonly followUpItemId: string | null;
   /** `person` or `agent` — who produced this artifact. Needed to say "verified by a person" vs "by an agent" on a `historical_verification` (MILESTONES.md #131). */
   readonly createdByType: string;
+  /**
+   * *Which* person or agent produced it. Null where the column carries no
+   * holder id.
+   *
+   * `createdByType` says a person checked; this says which one, and for a
+   * badge whose whole job is "can I trust this state" that is most of the
+   * value — an anonymous check is barely distinguishable from no check,
+   * because nobody can be asked what they found.
+   */
+  readonly createdById: string | null;
   readonly createdAt: string;
 }
 

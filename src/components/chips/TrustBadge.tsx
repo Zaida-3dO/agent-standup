@@ -29,6 +29,15 @@ export interface TrustBadgeProps {
   /** `person` or `agent` — who ran the newest check. Present only once `verified` is true. */
   readonly checkedByType?: string;
   /**
+   * *Which* person or agent ran it, where the artifact recorded an id.
+   *
+   * Optional independently of `checkedByType`, because the two are stored
+   * independently: an artifact can name a type with no id. When it is
+   * absent the badge falls back to the type alone ("by a person") rather
+   * than claiming an unknown checker — the weaker sentence is the true one.
+   */
+  readonly checkedById?: string | null;
+  /**
    * True when a `historical_verification` exists for this item — i.e.
    * someone has actually looked, whatever they found. False renders the
    * plain "Imported" marking the row header asks for.
@@ -47,11 +56,32 @@ export interface TrustBadgeProps {
  * is the reader's job once they open the item; this badge only answers "has
  * anyone looked".
  */
-export function TrustBadge({ checkedAt, checkedByType, verified }: TrustBadgeProps) {
+/**
+ * Who ran the check, in words — the `by …` clause of the tooltip.
+ *
+ * Names the holder where one was recorded, and degrades to the type alone
+ * where one was not. The id is preferred over the type because "checked by
+ * gary" is a claim a reader can follow up and "checked by an agent" is not,
+ * which is the whole difference this badge exists to carry. An id with no
+ * type still names somebody, so it is not gated on the type being present.
+ */
+export function verifierPhrase(
+  checkedByType: string | undefined,
+  checkedById: string | null | undefined,
+): string {
+  if (checkedById !== undefined && checkedById !== null && checkedById !== "") {
+    return checkedById;
+  }
+  if (checkedByType === undefined || checkedByType === "") return "";
+  return checkedByType === "person" ? "a person" : "an agent";
+}
+
+export function TrustBadge({ checkedAt, checkedByType, checkedById, verified }: TrustBadgeProps) {
   const tokens = trustTokens();
   const label = verified ? "Verified" : "Imported";
+  const verifier = verifierPhrase(checkedByType, checkedById);
   const title = verified
-    ? `Checked ${checkedAt ?? "at an unrecorded time"}${checkedByType ? ` by ${checkedByType === "person" ? "a person" : "an agent"}` : ""}`
+    ? `Checked ${checkedAt ?? "at an unrecorded time"}${verifier === "" ? "" : ` by ${verifier}`}`
     : "Imported from an external store — this state has never been checked against the live system.";
 
   return (
