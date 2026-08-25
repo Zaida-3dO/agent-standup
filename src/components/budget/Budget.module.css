@@ -258,3 +258,236 @@
   color: #fecaca;
   font-size: 0.8rem;
 }
+
+/* ── The editor ────────────────────────────────────────────────────────
+   MILESTONES.md #87. Same palette as the read-only card above, so the
+   editor reads as the same page with its values in fields rather than as a
+   different screen. */
+
+.windowControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: flex-end;
+  margin: 0 0 0.85rem;
+}
+
+.fieldRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.fieldLabel {
+  color: #a1a1aa;
+  font-size: 0.75rem;
+}
+
+.input,
+.select {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.3rem;
+  background: #18181b;
+  color: #e4e4e7;
+  font: inherit;
+  font-size: 0.8rem;
+  min-width: 6rem;
+}
+
+.input:focus,
+.select:focus {
+  outline: 2px solid #60a5fa;
+  outline-offset: 1px;
+}
+
+/* The three boundary forms, side by side where there is room so the reader
+   can compare them — which is exactly what a crossing asks them to do. */
+.boundaryForms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 0.85rem;
+}
+
+.boundaryFields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.4rem;
+  background: #1c1c1f;
+}
+
+/* A boundary implicated in a crossing. Marked on the whole group rather
+   than one input, because a crossing is a fault of this boundary against
+   another — there is no single box that is wrong. The left bar is what
+   carries the meaning for anyone who cannot separate the border colours. */
+.fieldsImplicated {
+  border-color: #dc2626;
+  border-left-width: 4px;
+  background: #2a1215;
+}
+
+.boundaryLegend {
+  padding: 0 0.25rem;
+  color: #e4e4e7;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.entries {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.entry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  align-items: flex-end;
+  padding: 0.45rem 0.55rem;
+  border: 1px dashed #3f3f46;
+  border-radius: 0.3rem;
+}
+
+.entryNumber {
+  width: 100%;
+  color: #a1a1aa;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.primaryButton,
+.secondaryButton,
+.removeButton {
+  padding: 0.35rem 0.7rem;
+  border-radius: 0.3rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.primaryButton {
+  border: 1px solid #2563eb;
+  background: #1d4ed8;
+  color: #eff6ff;
+}
+
+.primaryButton:disabled {
+  border-color: #3f3f46;
+  background: #27272a;
+  color: #71717a;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  border: 1px solid #3f3f46;
+  background: #27272a;
+  color: #e4e4e7;
+  align-self: flex-start;
+}
+
+.removeButton {
+  border: 1px solid #7f1d1d;
+  background: transparent;
+  color: #fca5a5;
+}
+
+.addWindow {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin: 1rem 0 0;
+  padding: 0.75rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.4rem;
+}
+
+.fieldError {
+  margin: 0;
+  color: #fecaca;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+.saveBar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 1rem 0 0;
+}
+
+/* The reason Save is disabled sits beside the button, never in a tooltip:
+   a disabled control whose reason is hidden is what sends somebody back to
+   editing raw JSON. */
+.saveBlocked {
+  color: #fca5a5;
+  font-size: 0.8rem;
+}
+
+.saveOk {
+  color: #86efac;
+  font-size: 0.8rem;
+}
+
+.saveError {
+  color: #fecaca;
+  font-size: 0.8rem;
+}
+
+.incomplete {
+  margin: 0.5rem 0 0;
+  color: #fcd34d;
+  font-size: 0.8rem;
+}
+
+/* The two numbers that are the wrong way round, read out at the moment of
+   the first collision — so the crossing is checkable rather than asserted. */
+.collisionReadout {
+  margin: 0.6rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid #7f1d1d;
+}
+
+.collisionReadoutTitle {
+  margin: 0 0 0.3rem;
+  color: #fecaca;
+  font-size: 0.8rem;
+}
+
+.readingImplicated {
+  color: #fca5a5;
+  font-weight: 600;
+}
+
+.collisionHeight {
+  margin: 0.35rem 0 0;
+  color: #fecaca;
+  font-size: 0.75rem;
+}
+
+/* A refused save, because somebody else wrote first. `role="alert"` in the
+   markup — this is the one message on the page that appears without the
+   reader having done anything to the field it concerns. */
+.conflict {
+  margin: 1rem 0 0;
+  padding: 0.75rem;
+  border: 1px solid #b45309;
+  border-radius: 0.4rem;
+  background: #2a1f10;
+  color: #fde68a;
+  font-size: 0.85rem;
+}
+
+.conflictTitle {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+}
