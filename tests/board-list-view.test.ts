@@ -48,7 +48,7 @@ function entry(
   overrides: Partial<BoardItem> = {},
   extra: Partial<Omit<BoardEntry, "item" | "column">> = {},
 ): BoardEntry {
-  return { item: item(overrides), column, assignments: [], trust: null, ...extra };
+  return { item: item(overrides), column, assignments: [], trust: null, subtasks: null, ...extra };
 }
 
 /**

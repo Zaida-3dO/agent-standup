@@ -228,6 +228,12 @@ import {
   type ItemVerification,
   type RawVerificationRow,
 } from "../items/trust-view";
+import {
+  SUBTASK_ROLLUP_SQL,
+  groupSubtaskRollupsByItem,
+  type RawSubtaskRollupRow,
+  type SubtaskRollup,
+} from "../items/subtask-rollup";
 
 /** A card's trust position — see `trust-view.ts`. */
 export interface TrustInfo {
@@ -497,6 +503,29 @@ export interface BoardEntry {
    * shapes carry `originType`.
    */
   readonly trust: TrustInfo | null;
+  /**
+   * How much work sits underneath this card — every descendant at any
+   * depth, and how many of them are finished.
+   *
+   * **`null` means nothing is underneath it, and that is not the same as
+   * zero.** A card with no children has no progress to report, so a badge
+   * reading "0 subtasks · 0 done" would be a sentence about work that does
+   * not exist — the same distinction `get_projects` draws by returning
+   * `progress: null` rather than `0` for a childless project. Modelling it
+   * as an absent value forces a renderer to decide rather than letting it
+   * print a plausible wrong thing without noticing.
+   *
+   * Populated for every kind, project included. A project's card already
+   * derives its column from its subtree, so the count is the same subtree
+   * stated as a number, and withholding it there would make the one row
+   * whose children are most certainly hidden the one row that would not say
+   * so.
+   *
+   * Counted in one recursive statement for the whole response rather than
+   * per card — see `subtask-rollup.ts`, which also carries why the archive
+   * predicate sits on both arms of that recursion.
+   */
+  readonly subtasks: SubtaskRollup | null;
 }
 
 /**
@@ -856,7 +885,11 @@ export const getBoard = defineOperation({
         // `trust` is `null` outright: a project's `state` is a creation
         // leftover, not a fact anyone could verify (DECISIONS.md §13c) —
         // there is no "state is a lie" question to ask of it.
-        list.push({ item, column, assignments: [], trust: null });
+        // `subtasks` is filled by the same whole-response pass as
+        // `assignments`, below — a project's rollup is counted exactly like
+        // any other card's, over the subtree its column was just derived
+        // from.
+        list.push({ item, column, assignments: [], trust: null, subtasks: null });
         projectEntries.set(column, list);
       }
     }
@@ -964,6 +997,10 @@ export const getBoard = defineOperation({
           // `verification` needs the join, so both wait for that pass
           // rather than half-filling `trust` here and half there.
           trust: null,
+          // Likewise: the descendant count needs a recursive walk keyed on
+          // every card in the response at once, so it cannot be known until
+          // the pages are assembled.
+          subtasks: null,
         }));
         nextCursor = hasMore ? (entries[entries.length - 1]?.item.id ?? null) : null;
       }
@@ -1019,6 +1056,18 @@ export const getBoard = defineOperation({
       );
       const verificationsByItem = groupVerificationsByItem(verificationRows);
 
+      // How much work each card hides, in the same shape as the two passes
+      // above: **one** recursive statement keyed on every entry id at once,
+      // never a walk per card. The board's default now shows one level, so
+      // every card's children are hidden by it and this is what accounts
+      // for them — see `subtask-rollup.ts` for the recursion, and for why
+      // archived descendants are excluded on both of its arms.
+      const rollupRows = await ctx.db.$queryRawUnsafe<RawSubtaskRollupRow[]>(
+        SUBTASK_ROLLUP_SQL,
+        [...new Set(entryIds)],
+      );
+      const rollupsByItem = groupSubtaskRollupsByItem(rollupRows);
+
       for (const column of requested) {
         board[column] = {
           ...board[column],
@@ -1040,6 +1089,12 @@ export const getBoard = defineOperation({
                     unverifiedOrigin: isUnverifiedOrigin(entry.item.originType),
                     verification: verificationsByItem.get(entry.item.id) ?? null,
                   },
+            // `?? null` is what makes "nothing underneath this" an absent
+            // rollup rather than a zeroed one — the query returns no row at
+            // all for a card with no live descendants, and a badge reading
+            // "0 subtasks" would be a claim about work that does not exist.
+            // See `BoardEntry.subtasks`.
+            subtasks: rollupsByItem.get(entry.item.id) ?? null,
           })),
         };
       }

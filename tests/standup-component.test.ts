@@ -145,6 +145,7 @@ describe("InFlightBlock", () => {
             },
           ],
           trust: null,
+          subtasks: null,
         },
       ],
     });
