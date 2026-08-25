@@ -36,6 +36,75 @@ describe("baseCommands", () => {
     expect(kinds).toContain("create");
     expect(kinds).toContain("help");
   });
+
+  it("gives every row a distinct id", () => {
+    // The id is what React keys the list on and what a test names a row by.
+    // Two rows sharing one would make the second unreachable in both.
+    const ids = baseCommands().map((command) => command.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every((id) => id !== "")).toBe(true);
+  });
+});
+
+describe("the synonyms a person actually reaches for", () => {
+  // Exercised through `matchCommands`, which is how a person meets them —
+  // asserting the `keywords` array directly would pass whether or not the
+  // matcher ever consulted it.
+  const all = baseCommands();
+
+  /** The ids a query surfaces from the real command list. */
+  function idsFor(query: string): readonly string[] {
+    return matchCommands(all, query).map((command) => command.id);
+  }
+
+  it("finds the standup page by the word home, which its label does not contain", () => {
+    // "Go to Standup" contains no "home". Only the keyword can match it.
+    const standup = all.find((command) => command.id === "go-standup");
+    expect(standup?.label).not.toContain("home");
+    expect(idsFor("home")).toContain("go-standup");
+  });
+
+  it("does not attach the home synonym to every other destination", () => {
+    // The condition is `route.id === "standup"`. Inverting or truthifying it
+    // would make every Go-to row answer to "home".
+    const found = idsFor("home");
+    expect(found).toEqual(["go-standup"]);
+  });
+
+  it("finds create by new, add and mint", () => {
+    for (const word of ["new", "add", "mint"]) {
+      expect(idsFor(word), `"${word}" should reach the create row`).toContain("create");
+    }
+  });
+
+  it("finds the help sheet by keys", () => {
+    const help = all.find((command) => command.id === "help");
+    expect(help?.label).not.toContain("keys");
+    expect(idsFor("keys")).toContain("help");
+  });
+
+  it("finds a state row by move and by transition", () => {
+    const withItem = commandsFor({ itemId: "item-1", itemState: "executing" });
+    for (const word of ["move", "transition"]) {
+      const found = matchCommands(withItem, word).map((command) => command.id);
+      expect(found, `"${word}" should reach the state rows`).toContain("state-merged");
+    }
+  });
+
+  it("finds a state row by the state's own value", () => {
+    // `merged` is in the label too, but `plan_review` is not — the label
+    // reads "plan review", so only the keyword carries the raw value.
+    const withItem = commandsFor({ itemId: "item-1", itemState: "executing" });
+    const found = matchCommands(withItem, "plan_review").map((command) => command.id);
+    expect(found).toEqual(["state-plan_review"]);
+  });
+
+  it("gives every state row a distinct id naming its own state", () => {
+    for (const command of stateCommands("executing")) {
+      if (command.intent.kind !== "change-state") throw new Error("expected a state row");
+      expect(command.id).toBe(`state-${command.intent.to}`);
+    }
+  });
 });
 
 describe("stateCommands", () => {
@@ -91,6 +160,23 @@ describe("matchCommands", () => {
   it("returns everything for an empty or whitespace query, so the palette browses", () => {
     expect(matchCommands(table, "")).toHaveLength(2);
     expect(matchCommands(table, "   ")).toHaveLength(2);
+  });
+
+  it("returns the very same list on an empty query, rather than a filtered copy", () => {
+    // The guard is `if (needle === "") return commands`. Removing it would
+    // still return both rows here — every string contains "" — so a length
+    // check alone cannot tell the guard from its absence. Identity can.
+    expect(matchCommands(table, "")).toBe(table);
+  });
+
+  it("matches a row with no keywords at all", () => {
+    // `command.keywords ?? []` is the only thing standing between an
+    // undefined `keywords` and a thrown `.some` of undefined.
+    const noKeywords: readonly Command[] = [
+      { id: "bare", label: "Bare row", group: "Actions", intent: { kind: "create" } },
+    ];
+    expect(matchCommands(noKeywords, "bare").map((c) => c.id)).toEqual(["bare"]);
+    expect(matchCommands(noKeywords, "zzz")).toHaveLength(0);
   });
 
   it("matches on the label, case-insensitively", () => {

@@ -226,6 +226,40 @@ describe("TopBar — the palette and create affordances (T18)", () => {
     expect((search?.props as { disabled?: boolean }).disabled).toBe(false);
   });
 
+  it("drops the not-available tooltip once the control is live", () => {
+    // A live button carrying `title="Search is not available yet"` would
+    // contradict its own accessible name on hover.
+    const live = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenPalette: () => {},
+    });
+    expect(
+      (buttonNamed(live, "Search and run commands")?.props as { title?: string }).title,
+    ).toBeUndefined();
+
+    const placeholder = TopBar({ activeProfile: userA, onSwitchProfile: () => {} });
+    expect(
+      (buttonNamed(placeholder, "Search — not available yet")?.props as { title?: string }).title,
+    ).toBe("Search is not available yet");
+  });
+
+  it("advertises the chord only on the live control", () => {
+    // The `<kbd>` tells someone who has never pressed `?` that the palette
+    // exists. Printing it on a disabled placeholder would advertise a
+    // shortcut that does nothing.
+    const live = TopBar({
+      activeProfile: userA,
+      onSwitchProfile: () => {},
+      onOpenPalette: () => {},
+    });
+    const liveKbds = [...walk(live)].filter((el) => el.type === "kbd");
+    expect(liveKbds).toHaveLength(1);
+
+    const placeholder = TopBar({ activeProfile: userA, onSwitchProfile: () => {} });
+    expect([...walk(placeholder)].filter((el) => el.type === "kbd")).toHaveLength(0);
+  });
+
   it("opens the palette when the search control is pressed", () => {
     let opened = 0;
     const bar = TopBar({

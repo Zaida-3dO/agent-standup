@@ -177,6 +177,43 @@ describe("CommandPalette", () => {
     expect(closed).toBe(1);
   });
 
+  it("marks the unselected rows explicitly false, not merely absent", () => {
+    // `aria-selected` must be present on EVERY option in a listbox — a row
+    // with the attribute missing is not "not selected", it is a row a
+    // screen reader cannot describe. An assertion that only checked the
+    // selected row would pass with `aria-selected={index === selectedIndex
+    // ? true : undefined}`.
+    const options = elementsWithProp(renderPalette({ selectedIndex: 1 }), "role", "option");
+    const flags = options.map((el) => (el.props as { "aria-selected"?: boolean })["aria-selected"]);
+    expect(flags).toEqual([false, true, false]);
+  });
+
+  it("gives the selected row a different class from the rest", () => {
+    // The highlight is what the eye follows to know what Enter will run.
+    const options = elementsWithProp(renderPalette({ selectedIndex: 2 }), "role", "option");
+    const classes = options.map((el) => (el.props as { className?: string }).className);
+    expect(classes[2]).not.toBe(classes[0]);
+    expect(classes[0]).toBe(classes[1]);
+  });
+
+  it("selects the row the pointer moved over, by its own index", () => {
+    // Wired to the wrong index this would still fire, so the assertion is
+    // on WHICH index arrived rather than on it having been called.
+    const selected: number[] = [];
+    const tree = renderPalette({ onSelect: (index) => selected.push(index) });
+    const options = elementsWithProp(tree, "role", "option");
+    (options[2]?.props as { onMouseMove?: () => void }).onMouseMove?.();
+    (options[0]?.props as { onMouseMove?: () => void }).onMouseMove?.();
+    expect(selected).toEqual([2, 0]);
+  });
+
+  it("shows the state a change-state row will move to, beside its label", () => {
+    const tree = renderPalette();
+    // The row's own metadata badge — "merged", read off the intent rather
+    // than parsed back out of the label.
+    expect(textOf(tree)).toContain("merged");
+  });
+
   it("keeps focus in the input by leaving every option out of the tab order", () => {
     const options = elementsWithProp(renderPalette(), "role", "option");
     for (const option of options) {
