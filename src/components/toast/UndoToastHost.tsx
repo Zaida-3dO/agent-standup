@@ -37,17 +37,23 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import {
+  NO_SUSPENSION,
   actionOffered,
   idleToast,
   inverseOf,
   remainingMs,
+  resumed,
   runUndo,
+  suspended,
   ticked,
   undoPressed,
   undoSettled,
+  windowClock,
+  type Suspension,
   type UndoToastState,
   type UndoableAction,
 } from "@/lib/undo";
+import { usePalette } from "@/components/palette";
 import { UndoToast } from "./UndoToast";
 
 /** What a surface anywhere in the app can do with undo. */
@@ -91,6 +97,124 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
   // something else re-renders.
   const [now, setNow] = useState(() => Date.now());
 
+  // **Whether a modal overlay is covering this toast right now.**
+  //
+  // Read from the palette's context rather than from a prop or a DOM query.
+  // `AppShell` mounts `PaletteHost` OUTSIDE `UndoToastHost`, so this host is
+  // inside that provider and the hook resolves to the real value; outside a
+  // provider it is `NO_PALETTE.overlayOpen`, which is `false`, so a toast
+  // rendered on its own is never suppressed by a modal that is not there.
+  //
+  // The nesting is load-bearing and was worth checking rather than assuming:
+  // a hook pointed the other way round would have read the no-op default
+  // forever and this whole file would have been silently inert.
+  const { overlayOpen } = usePalette();
+
+  // **Time the window did not get to spend.** See `@/lib/undo/suspension`
+  // for why the countdown freezes instead of running out behind the scrim.
+  //
+  // Held as state, written from an effect's asynchronous continuation, and
+  // TAGGED with the action it belongs to — the three-part shape this repo
+  // uses wherever a fact has to be recorded at a moment rather than derived
+  // from props (`Cost.tsx` tags by request key, `AppShell` by path).
+  //
+  // The tag is what removes the reset that would otherwise have to live in
+  // `offer`: a suspension accumulated for a previous action is simply not
+  // the current one's, so it is ignored during render rather than cleared
+  // by a second writer. Two writers of the same fact would disagree the
+  // first time an offer landed in the same tick as an overlay change.
+  const [banked, setBanked] = useState<{
+    readonly action: UndoableAction | null;
+    readonly suspension: Suspension;
+  } | null>(null);
+
+  // The stored action, read before any window maths. Taken from `state`
+  // rather than from `visible`, which depends on the suspension this feeds.
+  const offeredForWindow = state.phase === "offered" ? state.action : null;
+
+  // The suspension recorded for the current action, or none yet.
+  //
+  // **The tag is not re-checked here**, and that is deliberate rather than an
+  // omission: the effect below rewrites `banked` whenever `offeredForWindow`
+  // changes (it is a dependency), and it resets the accumulated time when it
+  // does. So a `banked` whose `action` disagrees with the current one cannot
+  // survive a render — a second comparison here would be a branch no input
+  // can reach, which is dead code that reads like a safety net. Hand-mutating
+  // it away changed no test, which is how it was found; the reset that IS
+  // load-bearing lives in the effect and is covered by
+  // "does not carry one action's suspended time into the next action's
+  // window".
+  const suspension = banked?.suspension ?? NO_SUSPENSION;
+
+  // **Opening and closing the suspension interval.**
+  //
+  // The clock is read here, at the moment the overlay actually changed,
+  // rather than during render — a render is not an event, and `Date.now()`
+  // in a render body is what `react-hooks/purity` refuses.
+  //
+  // The writes sit in a `queueMicrotask` continuation so no `setState` is
+  // reachable synchronously from the effect body, which is what
+  // `react-hooks/set-state-in-effect` asks for and what `BudgetWindows.tsx`
+  // does with its promise chain. `cancelled` guards the unmount race the
+  // same way.
+  //
+  // `suspended` and `resumed` are total and idempotent, so the updaters
+  // below are pure functions of their argument — safe to defer or
+  // double-invoke, which is the discipline
+  // `scripts/check-updater-side-effects.mjs` enforces. The timestamp is
+  // captured OUTSIDE the updater, so what is banked is the instant this
+  // effect observed rather than whenever React got round to running it.
+  useEffect(() => {
+    const at = Date.now();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setBanked((current) => {
+        // A suspension belonging to a different action starts again from
+        // zero, so each offer is measured against its own window.
+        const base =
+          current !== null && current.action === offeredForWindow
+            ? current.suspension
+            : NO_SUSPENSION;
+        return {
+          action: offeredForWindow,
+          suspension: overlayOpen ? suspended(base, at) : resumed(base, at),
+        };
+      });
+      // The clock jumps forward by however long the overlay was up, so the
+      // next render measures against a `windowClock` that has not moved.
+      // Without this the frozen countdown would keep showing its stale
+      // `now` until the interval produced a tick.
+      if (!overlayOpen) setNow(at);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [overlayOpen, offeredForWindow]);
+
+  const effectiveNow = windowClock(now, suspension);
+
+  // **The suspension a click handler can read synchronously.**
+  //
+  // `onUndo` re-checks the window against the clock at the moment of the
+  // press, and that check must subtract suspended time or it contradicts
+  // what the toast is showing: after a dialog has been up a while, a frozen
+  // countdown reading "6s" would be refused by a check still measuring
+  // against the wall. The button would be visible, claiming time remaining,
+  // and do nothing — the exact failure this change exists to remove,
+  // reintroduced one layer down.
+  //
+  // Written in an effect rather than during render (`react-hooks/refs`
+  // forbids the latter) and read only from an event handler, which is the
+  // ref discipline the rule is protecting. It lags render by one commit,
+  // which cannot matter here: the button is not in the document until the
+  // overlay has closed and the toast has re-rendered, so there is no press
+  // this could serve with a stale value.
+  const suspensionAtPress = useRef<Suspension>(NO_SUSPENSION);
+  useEffect(() => {
+    suspensionAtPress.current = suspension;
+  }, [suspension]);
+
   // **Expiry is derived during render, not written by an effect.** The
   // stored `state` is what the person last *did*; `visible` is what that
   // amounts to at `now`. Computing it here rather than in a
@@ -101,7 +225,7 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
   //
   // `ticked` is total and returns the state unchanged when nothing has
   // expired, so this is a pure function of two values already in hand.
-  const visible = ticked(state, now);
+  const visible = ticked(state, effectiveNow);
 
   // The offered action, if the toast is showing one — the only phase with
   // a live window. Read off `visible`, so an expired action is already
@@ -115,9 +239,14 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
   // moment the toast stops counting rather than on the next tick.
   useEffect(() => {
     if (offeredAction === null) return;
+    // Not while suspended, either. The countdown is frozen, so re-rendering
+    // four times a second would repaint an unchanging number behind a
+    // dialog — and `effectiveNow` is deliberately constant across those
+    // ticks, so there is genuinely nothing for them to do.
+    if (overlayOpen) return;
     const id = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(id);
-  }, [offeredAction]);
+  }, [offeredAction, overlayOpen]);
 
   // The stored state, readable synchronously by an event handler.
   //
@@ -131,7 +260,14 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
   const offer = useCallback((action: UndoableAction) => {
     // Stamp the clock at offer time so the window measures from the
     // action, and reset the tick so the first countdown frame is right.
-    setNow(Date.now());
+    const at = Date.now();
+    setNow(at);
+    // **The suspension is NOT reset here.** `foldSuspension` keys it on the
+    // offered action's identity and starts a clean window the moment it sees
+    // a new one — including the suspended-from-birth case where an overlay is
+    // already open. Resetting here as well would be a second writer of the
+    // same fact, and the two would disagree the first time an offer arrived
+    // in the same tick as an overlay change.
     const offered = actionOffered(action);
     latestState.current = offered;
     setState(offered);
@@ -171,10 +307,14 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
     //
     // Read from the STORED state, which may still say `offered` for an
     // action `visible` has already expired. That is safe rather than a gap:
-    // `undoPressed` re-checks the window against `pressedAt`, so an expired
+    // `undoPressed` re-checks the window against the press's own corrected
+    // clock (see `latestSuspension`), so an expired
     // action is refused on its own merits and does not depend on the render
     // having caught up.
-    const next = undoPressed(latestState.current, pressedAt);
+    const next = undoPressed(
+      latestState.current,
+      windowClock(pressedAt, suspensionAtPress.current),
+    );
     // `undoPressed` returns the state unchanged when the press must not take
     // effect (wrong phase, expired, double press). Comparing identity is how
     // this knows whether to send anything.
@@ -218,18 +358,27 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
   // "1s" for the whole final second rather than "0s".
   const plan = offeredAction === null ? null : inverseOf(offeredAction);
   const secondsLeft =
-    offeredAction === null ? null : Math.ceil(remainingMs(offeredAction, now) / 1000);
+    offeredAction === null ? null : Math.ceil(remainingMs(offeredAction, effectiveNow) / 1000);
 
   return (
     <UndoContext.Provider value={api}>
       {children}
-      <UndoToast
-        state={visible}
-        plan={plan}
-        secondsLeft={secondsLeft}
-        onUndo={onUndo}
-        onDismiss={onDismiss}
-      />
+      {/* **Not rendered at all while a modal is open.** Rendering it hidden
+        would leave the affordance in the accessibility tree — a `role="status"`
+        region announcing an Undo button that a person using a screen reader
+        would then be unable to reach, which is the same defect this fixes
+        wearing different clothes. The window is frozen for exactly this
+        interval, so nothing is lost by the absence: the toast comes back
+        with the time it had left. */}
+      {overlayOpen ? null : (
+        <UndoToast
+          state={visible}
+          plan={plan}
+          secondsLeft={secondsLeft}
+          onUndo={onUndo}
+          onDismiss={onDismiss}
+        />
+      )}
     </UndoContext.Provider>
   );
 }

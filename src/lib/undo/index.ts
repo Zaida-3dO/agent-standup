@@ -17,6 +17,14 @@ export {
   type UndoableAction,
 } from "./actions";
 export { describeAction, itemCount, stateLabel } from "./describe";
+export {
+  NO_SUSPENSION,
+  resumed,
+  suspended,
+  suspendedMs,
+  windowClock,
+  type Suspension,
+} from "./suspension";
 export { runUndo, staleMessage, type UndoOutcome } from "./request";
 export {
   actionOffered,
