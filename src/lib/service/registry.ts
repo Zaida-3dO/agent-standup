@@ -163,6 +163,10 @@ import { recordToolCalls } from "./operations/record-tool-calls";
 // Session shape (MILESTONES.md #54): the read side of the same rows — how a
 // session's recent work is going, as opposed to what it cost.
 import { getSessionShape } from "./operations/get-session-shape";
+// One session end to end (T19): the record of what an agent did, as opposed
+// to #54's judgement of how it is behaving. Reuses `get_costs`' arithmetic
+// for its spend figure rather than computing a second one.
+import { getSessionDetail } from "./operations/get-session-detail";
 // Cost (MILESTONES.md #53): the other read over those rows — what the work
 // cost, totalled per item, per session and per stage.
 import { getCosts } from "./operations/get-costs";
@@ -264,6 +268,7 @@ export const OPERATION_REGISTRY = {
   [recordToolCalls.name]: recordToolCalls,
   [getSessionShape.name]: getSessionShape,
   [getCosts.name]: getCosts,
+  [getSessionDetail.name]: getSessionDetail,
   [registerSession.name]: registerSession,
   [backfill.name]: backfill,
 } as const satisfies Record<string, AnyOperation>;

@@ -263,6 +263,20 @@ export {
   type GetActivityOutput,
 } from "./operations/get-activity";
 
+// One session end to end (T19).
+export {
+  getSessionDetail,
+  SLIM_CALL_COLUMNS,
+  FULL_CALL_COLUMNS,
+  type SessionDetailSession,
+  type SessionDetailAssignment,
+  type SessionDetailToolCall,
+  type SessionDetailToolCallFull,
+  type SessionDetailEvent,
+  type GetSessionDetailInput,
+  type GetSessionDetailOutput,
+} from "./operations/get-session-detail";
+
 // Summaries (MILESTONES.md #21): the static validators row #27's
 // transition-and-complete operation will call directly. The guard itself
 // (`summaryRequiredGuard`, `SUMMARY_REQUIRED_GUARD_ID`,
