@@ -349,20 +349,59 @@ export function enumValuesForField(
  *
  * Requiring a verb of invocation is the honest narrowing. "call
  * `merge_item`" is unambiguously a tool reference; a bare `` `code_review` ``
- * in prose is not. This under-reports — advice naming a dead tool without a
- * verb is missed — and under-reporting is the correct direction for a check
- * whose false positives would be indistinguishable from its true ones.
+ * in prose is not. This under-reports, and under-reporting is the correct
+ * direction for a check whose false positives would be indistinguishable
+ * from its true ones.
+ *
+ * **The recall gap was measured before it was narrowed, and the obvious fix
+ * was rejected on evidence.** Resolving every backticked `snake_case` token
+ * against the registry — flagging only what is neither a registered
+ * operation nor any known field or enum member — sounds like it should
+ * inherit the zero-false-positive property the parameter and enum-value
+ * classes have. Against the live corpus it does not: it reports **three**
+ * defects, all false. `item_id` is real but sits at
+ * `summary.not_done[].item_id`, two levels below the input and past the
+ * documented one-level walk; `commit_sha` is a free-form key inside
+ * `complete_item`'s open `fields` bag, so no schema can ever vouch for it;
+ * `open_loops` names a section of the progress report rather than a field.
+ * All three are correct prose, and the registry cannot exonerate any of
+ * them — so that widening reintroduces the first draft's failure in
+ * miniature and is deliberately not taken.
+ *
+ * **What IS taken is a second phrasing of invocation**, which keeps the
+ * identification basis exactly where it is — an explicit statement that the
+ * name is something to call — while covering a construction the corpus
+ * actually uses. `progress_report` says "the way to raise one is
+ * `loop_add` and the way to clear one is `loop_close`": both are tool
+ * references and neither carries a verb of invocation next to the name, so
+ * a rule keyed only on the verb cannot see either. It matches two real
+ * operations and flags nothing.
+ *
+ * **`use` was tried here and rejected**, on the same evidence footing as
+ * `with` above: it matches `complete_item`'s "use the `decision` field",
+ * where `decision` is a real field being described rather than a tool being
+ * named, so adding it flags correct advice.
  */
+const CALLING_PATTERNS: readonly RegExp[] = [
+  // A verb of invocation immediately before the name.
+  /(?:\bcall\b|\bcalling\b|\brun\b|\binvoke\b|\bvia\b)\s+(?:an?\s+|the\s+)?`([a-z][a-z0-9_]*)`/gi,
+  // "the way to <do something> is `tool`" — an invocation stated as a
+  // route rather than as an imperative. The `[a-z ]+` between is bounded
+  // to lowercase words so it cannot leap a sentence boundary or a
+  // backtick and attach the verb to a name it does not govern.
+  /\bthe way to [a-z ]+ is\s+`([a-z][a-z0-9_]*)`/gi,
+];
+
 function calledNames(text: string): readonly { name: string; at: number }[] {
   const found: { name: string; at: number }[] = [];
-  for (const match of text.matchAll(
-    /(?:\bcall\b|\bcalling\b|\brun\b|\binvoke\b|\bvia\b)\s+(?:an?\s+|the\s+)?`([a-z][a-z0-9_]*)`/gi,
-  )) {
-    const name = match[1];
-    if (name === undefined) continue;
-    found.push({ name, at: match.index ?? 0 });
+  for (const pattern of CALLING_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      const name = match[1];
+      if (name === undefined) continue;
+      found.push({ name, at: match.index ?? 0 });
+    }
   }
-  return found;
+  return found.sort((a, b) => a.at - b.at);
 }
 
 /** Every operation the registry declares, for a sweep to iterate. */
