@@ -27,11 +27,42 @@ import type { TransactionHandle } from "@/lib/service/context";
 import { InvalidInputError } from "@/lib/service/errors";
 import { defaultSnapshot } from "@/lib/settings";
 
-/** A transaction handle that fails loudly if the operation ever queries it. */
+/**
+ * Recognises the displacement lookup — the one read a `PreToolUse` makes
+ * whatever it is running.
+ *
+ * Matched on the `superseded` liveness filter rather than on the table name,
+ * because several of this operation's reads are against `Assignment` and
+ * only this one is unconditional. Matching the table would silently excuse
+ * the claim read as well, which is the exact query the cost cases below
+ * exist to forbid.
+ */
+function isDisplacementLookup(query: string): boolean {
+  return query.includes(`FROM "Assignment"`) && query.includes(`'superseded'`);
+}
+
+/**
+ * A transaction handle that fails loudly if the operation queries it for
+ * anything **other than** whether the calling session has been displaced.
+ *
+ * That one read is answered — with no rows, the ordinary case — rather than
+ * forbidden, because it is not part of the property these cases protect.
+ * The property is that a call which could not be the subject of any finding
+ * assembles no context: no claim read, no artifact read, no settings read.
+ * Displacement is a fact about the *session* and is deliberately not gated
+ * on the command, so folding it into the same prohibition would be asserting
+ * that a feature which exists does not.
+ *
+ * It is answered narrowly for the same reason `callWithSettings` refuses to
+ * be a permissive stub: a handle that answered everything would let a
+ * genuine regression in context assembly pass silently, and that regression
+ * is invisible in behaviour and shows up only as load.
+ */
 function untouchableHandle(): TransactionHandle {
   return {
-    $queryRawUnsafe: async () => {
-      throw new Error("hook_decision must not touch the database");
+    $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+      if (isDisplacementLookup(query)) return [] as T;
+      throw new Error(`hook_decision must not touch the database: ${query}`);
     },
     $executeRawUnsafe: async () => {
       throw new Error("hook_decision must not touch the database");
@@ -51,6 +82,7 @@ type Answer = {
   reason: string | null;
   canBlock: boolean;
   findings: readonly { id: string; level: string; timing: string; messages: { plain: string } }[];
+  enforcement?: { status: string; detail: string };
 };
 
 async function call(input: Record<string, unknown>): Promise<Answer> {
@@ -74,6 +106,9 @@ async function callWithSettings(
   const handle: TransactionHandle = {
     $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
       if (query.includes(`FROM "settings"`)) return rows as T;
+      // The unconditional session read, answered for the reason given on
+      // `untouchableHandle`: it is not what these cases are about.
+      if (isDisplacementLookup(query)) return [] as T;
       throw new Error(`hook_decision must not touch the database: ${query}`);
     },
     $executeRawUnsafe: async () => {
@@ -103,6 +138,12 @@ function worldHandle(world: {
   commits?: { commitSha: string }[];
   /** Approving `code_review` artifacts, by the commit they approve. */
   approvals?: { commitSha: string | null; round: number }[];
+  /**
+   * A superseded assignment for the calling session, when the world is one
+   * where its claim was taken. Absent in almost every case, which is the
+   * ordinary session.
+   */
+  displaced?: { itemId: string; supersededBy: string | null; releasedAt: Date | null };
 }): TransactionHandle {
   const commits = world.commits ?? [];
   const approvals = world.approvals ?? [];
@@ -112,6 +153,15 @@ function worldHandle(world: {
 
   return {
     $queryRawUnsafe: async <T = unknown>(query: string, ...values: unknown[]): Promise<T> => {
+      // Checked before the claim read, which is also against `Assignment`.
+      // A world describes a session that holds a claim, not one that has
+      // been displaced, so this answers empty unless the world says
+      // otherwise — and answering it here is what keeps the claim branch
+      // from returning a claim row to a query that asked a different
+      // question.
+      if (isDisplacementLookup(query)) {
+        return (world.displaced === undefined ? [] : [world.displaced]) as T;
+      }
       if (query.includes(`FROM "Assignment"`)) {
         return (world.claim === undefined ? [] : [world.claim]) as T;
       }
@@ -572,5 +622,102 @@ describe("what rides back with the answer", () => {
       { eventType: "PreToolUse", sessionId: "s1", tool: "Bash", command: "git merge feature" },
     );
     expect(blocked.findings.some((finding) => finding.timing === "immediate")).toBe(true);
+  });
+});
+
+describe("what the answer says about the session itself", () => {
+  // The half that carries the notice to a displaced session. Everything else
+  // in this file is about the *call*; these are about whether the session
+  // should be making one at all, and they are asserted here because this is
+  // the only place the field is actually put on the wire — a resolver that
+  // works and an operation that never attaches its result would pass every
+  // other case in the suite.
+
+  const displacedWorld = {
+    displaced: {
+      itemId: "item-taken",
+      supersededBy: "session-taker",
+      releasedAt: new Date("2026-01-02T03:04:05.000Z"),
+    },
+  };
+
+  it("carries the notice on an ordinary allow, which is the call it will arrive on", async () => {
+    // The load-bearing case. A displaced agent's next call is overwhelmingly
+    // likely to be something nothing objects to, so attaching the notice only
+    // to a refusal would deliver it exactly when it was least needed.
+    const answer = await callAgainst(displacedWorld, {
+      eventType: "PreToolUse",
+      sessionId: "session-displaced",
+      tool: "Read",
+    });
+
+    expect(answer.decision).toBe("allow");
+    expect(answer.enforcement?.status).toBe("displaced");
+    // Who and when, which are the two facts that let it hand over rather than
+    // merely stop.
+    expect(answer.enforcement?.detail).toContain("item-taken");
+    expect(answer.enforcement?.detail).toContain("session-taker");
+    expect(answer.enforcement?.detail).toContain("2026-01-02T03:04:05.000Z");
+  });
+
+  it("says nothing about a session whose claim is intact", async () => {
+    // The value that matters most on the highest-volume path: an absent field
+    // is what the hook reads as "nothing said about this session". Anything
+    // else here would refuse every call in the system.
+    const answer = await callAgainst(
+      {},
+      { eventType: "PreToolUse", sessionId: "s1", tool: "Read" },
+    );
+
+    expect(answer.enforcement).toBeUndefined();
+  });
+
+  it("still carries the notice when the call is also being blocked", async () => {
+    // The two answers are independent: one is about the command, the other
+    // about the session. A block must not swallow the notice, or a displaced
+    // session that happened to run a guarded command would be told only that
+    // the command was refused.
+    const answer = await callAgainst(
+      { ...displacedWorld, claim: undefined },
+      {
+        eventType: "PreToolUse",
+        sessionId: "session-displaced",
+        tool: "Bash",
+        command: "pkill -f node",
+      },
+    );
+
+    expect(answer.decision).toBe("block");
+    expect(answer.enforcement?.status).toBe("displaced");
+  });
+
+  it("does not look at all on a phase that could not act on the answer", async () => {
+    // The cost gate, asserted as behaviour rather than trusted. A
+    // `PostToolUse` describes a call that has already run, so the lookup is
+    // skipped entirely — and the handle proves it by throwing if it is not.
+    const refusing: TransactionHandle = {
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        if (isDisplacementLookup(query)) {
+          throw new Error("a post-tool event must not pay for the displacement lookup");
+        }
+        return [] as T;
+      },
+      $executeRawUnsafe: async () => {
+        throw new Error("hook_decision must not write");
+      },
+    };
+    const service = new ServiceRuntime({
+      transaction: (body) => body(refusing),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+
+    const answer = (await service.call("hook_decision", {
+      eventType: "PostToolUse",
+      sessionId: "session-displaced",
+      tool: "Read",
+    })) as unknown as Answer;
+
+    expect(answer.decision).toBe("allow");
+    expect(answer.enforcement).toBeUndefined();
   });
 });

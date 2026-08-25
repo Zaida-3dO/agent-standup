@@ -57,15 +57,25 @@
 // ── What it costs, which is the reason for the shape of `assembleContext` ──
 //
 // A decision made on every tool call is the highest-volume path in the
-// system, and this operation stayed a dumb pipe touching no table for
-// exactly that reason. It still touches no table for the overwhelming
-// majority of calls: `assembleContext` gates every query behind a
-// command-shape test that runs against a string already in memory, so a
-// `Read`, an `ls` or an `Edit` costs precisely what it did before — one
-// parse and a walk over five predicates. A query happens only for a command
-// that could actually be the subject of a finding, which is rare by
-// construction. The operation is therefore still declared `kind: "read"`,
-// and now honestly so rather than vacuously.
+// system, and this operation is shaped around that. `assembleContext` gates
+// every query it makes behind a command-shape test that runs against a
+// string already in memory, so a `Read`, an `ls` or an `Edit` reaches no
+// table through it at all — a query happens only for a command that could
+// actually be the subject of a finding, which is rare by construction.
+//
+// **The one read that is not gated on the command is the displacement
+// check**, and the asymmetry is deliberate rather than an oversight. Whether
+// a session still owns its work is a fact about the *session*; a displaced
+// agent's next call is overwhelmingly likely to be something ordinary, so a
+// command-shape gate would skip precisely the case the check exists for. It
+// is gated on the phase instead — only `PreToolUse`, the only phase that can
+// act on the answer — and costs one lookup on an index that already exists
+// for the claim read. See `../session-displacement.ts` for the full
+// accounting.
+//
+// So a `PreToolUse` costs at most one index lookup, while a `PostToolUse`
+// and a `Stop` pay nothing for it at all. The operation is declared
+// `kind: "read"`, and honestly so.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
@@ -83,6 +93,7 @@ import {
   type InterventionFinding,
   type InterventionOverride,
 } from "@/lib/interventions/types";
+import { displacementFor, type SessionEnforcementPayload } from "../session-displacement";
 
 const EVENT_TYPES = ["PreToolUse", "PostToolUse", "Stop"] as const;
 
@@ -138,6 +149,23 @@ export interface HookDecisionOperationOutput {
    * on the reader's behalf and hiding the other half.
    */
   readonly findings: readonly InterventionFinding[];
+  /**
+   * What the server holds true about the calling session itself, when that
+   * is anything other than the ordinary case.
+   *
+   * Absent for almost every call, and absent rather than `null` or a
+   * `status: "active"` object, because the hook reads an absent field as
+   * "nothing said about this session" and proceeds. Saying `active`
+   * explicitly would be a claim this operation cannot make — it looks for
+   * one specific fact, not for every reason a session might be unfit to
+   * act.
+   *
+   * This is a fact about the *session* rather than about the call, which is
+   * why it sits beside `decision` instead of arriving as a finding: a
+   * finding is the registry's verdict on what was run, and no command a
+   * displaced session could run would be the reason to stop it.
+   */
+  readonly enforcement?: SessionEnforcementPayload;
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -167,6 +195,21 @@ export const hookDecision = defineOperation({
     if (input.eventType === "Stop") {
       return { decision: "allow", reason: null, canBlock, findings: [] };
     }
+
+    // Whether this session still owns the work it is doing — see
+    // `../session-displacement.ts` for why the answer travels here and what
+    // it costs.
+    //
+    // **Gated on the phase, and only on the phase.** Displacement is a fact
+    // about the session, so it cannot be gated on the command's shape the
+    // way the intervention context gates its own reads: a displaced agent's
+    // next call is overwhelmingly likely to be an ordinary `Read`, which is
+    // precisely the call such a gate would skip. The phase costs nothing to
+    // test and is the honest limit — a `PostToolUse` describes a call that
+    // has already run, and the hook independently refuses to block on it, so
+    // a notice sent there would be discarded on arrival rather than acted
+    // on.
+    const enforcement = canBlock ? await displacementFor(ctx.db, input.sessionId) : undefined;
 
     const context = await assembleContext({
       db: ctx.db,
@@ -201,9 +244,18 @@ export const hookDecision = defineOperation({
       return { decision: "allow", reason: null, canBlock, findings };
     }
 
+    // Carried on the allow paths as well as the block, because the two
+    // answer different questions. `decision` is about the command;
+    // `enforcement` is about whether this session should be running at all,
+    // and a displaced session's next call is far more likely to be something
+    // ordinary that nothing objects to than something a rule refuses. Only
+    // attaching it to a refusal would mean the notice arrived exactly when
+    // it was least needed.
+    const displaced = enforcement === undefined ? {} : { enforcement };
+
     const strongest = strongestLevel(findings);
     if (!isBlockingLevel(strongest)) {
-      return { decision: "allow", reason: reasonFor(findings), canBlock, findings };
+      return { decision: "allow", reason: reasonFor(findings), canBlock, findings, ...displaced };
     }
 
     // Blocked. The reason names only the findings that actually block:
@@ -216,6 +268,7 @@ export const hookDecision = defineOperation({
       reason: reasonFor(blocking),
       canBlock,
       findings,
+      ...displaced,
     };
   },
 });
