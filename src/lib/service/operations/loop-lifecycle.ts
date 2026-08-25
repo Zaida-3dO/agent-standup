@@ -44,7 +44,7 @@ import { GuardRejectedError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
-import { deriveLoops, type DerivedLoop } from "@/lib/open-loops";
+import { deriveLoops, LOOP_KINDS, type DerivedLoop, type LoopKind } from "@/lib/open-loops";
 import { loopEventsFor, requireItemExists } from "./loop-shared";
 
 const ACTOR_TYPES = ["person", "agent", "system"] as const;
@@ -119,6 +119,19 @@ const editInput = z
     itemId: z.string().min(1),
     loopId: z.string().trim().min(1),
     text: z.string().trim().min(1, "loop text is required"),
+    /**
+     * Reclassify the loop, for one filed under the wrong kind.
+     *
+     * **Optional, and omitting it PRESERVES the current kind** — it does not
+     * reset to `work`. JSON cannot distinguish "not supplied" from
+     * "cleared", so the fold treats an absent kind as "no statement made"
+     * and only a kind actually sent changes anything (see `deriveLoops`).
+     * Reclassifying to `work` is therefore an explicit `kind: "work"`.
+     *
+     * This is how a note-shaped loop is corrected without deleting it: the
+     * loose end stays in the record, it just stops counting as work.
+     */
+    kind: z.enum(LOOP_KINDS).optional(),
     actorType: z.enum(ACTOR_TYPES).optional(),
     actorId: z.string().min(1).nullable().optional(),
     sessionId: z.string().min(1).nullable().optional(),
@@ -131,6 +144,10 @@ export interface LoopEdited {
   readonly loopId: string;
   /** The text the loop had before this edit — returned so the change is legible in the response. */
   readonly previousText: string;
+  /** The kind the loop had before this edit. Unchanged when the edit did not supply one. */
+  readonly previousKind: LoopKind;
+  /** The kind the loop carries after this edit. */
+  readonly kind: LoopKind;
   readonly event: AppendedEvent;
 }
 
@@ -147,12 +164,16 @@ export const loopEdit = defineOperation({
   name: "loop_edit",
   kind: "write",
   summary:
-    "Rewrites an open loop's text, for a loose end whose wording has been refined. Keeps the loop's original openedAt; the previous wording stays in the ledger.",
+    "Rewrites an open loop's text, for a loose end whose wording has been refined, and optionally reclassifies it with kind. Keeps the loop's original openedAt; the previous wording stays in the ledger. Omitting kind leaves the loop's current kind alone.",
   contract: {
     rules: [
       {
         fields: ["loopId"],
         rule: "The loop must exist on the item and must not have been deleted. A closed loop may be edited — correcting the record of something resolved is legitimate.",
+      },
+      {
+        fields: ["kind"],
+        rule: 'Omitting `kind` PRESERVES the loop\'s current kind rather than resetting it to `work` — only a kind actually sent changes the classification. Reclassify to work by sending `kind: "work"` explicitly.',
       },
     ],
   },
@@ -188,11 +209,25 @@ export const loopEdit = defineOperation({
       assignmentId: actor.assignmentId,
       type: "open_loop_edited",
       // `{loopId, text}` — the same shape as the opening event, so the fold
-      // substitutes one for the other without a second parser.
-      payload: { loopId: input.loopId, text: input.text },
+      // substitutes one for the other without a second parser. `kind` is
+      // included only when the caller supplied one: an absent key is what
+      // the fold reads as "this edit made no statement about the kind", and
+      // writing the resolved kind unconditionally would turn every reword
+      // into a kind assertion.
+      payload: {
+        loopId: input.loopId,
+        text: input.text,
+        ...(input.kind === undefined ? {} : { kind: input.kind }),
+      },
     });
 
-    return { loopId: input.loopId, previousText: loop.text, event };
+    return {
+      loopId: input.loopId,
+      previousText: loop.text,
+      previousKind: loop.kind,
+      kind: input.kind ?? loop.kind,
+      event,
+    };
   },
 });
 

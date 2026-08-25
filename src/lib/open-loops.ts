@@ -39,6 +39,8 @@
 export interface OpenLoop {
   readonly loopId: string;
   readonly text: string;
+  /** What this loop is tracking. `work` for every loop written before the field existed. */
+  readonly kind: LoopKind;
   /** ISO timestamp of the `open_loop` event. */
   readonly openedAt: string;
   /** The event id of the `open_loop`, stringified — `bigint` cannot cross a JSON boundary. */
@@ -144,6 +146,7 @@ export function deriveOpenLoops(events: readonly LoopEventLike[]): OpenLoop[] {
     .map((loop) => ({
       loopId: loop.loopId,
       text: loop.text,
+      kind: loop.kind,
       openedAt: loop.openedAt,
       eventId: loop.eventId,
     }));
@@ -185,6 +188,85 @@ export const LOOP_EVENT_TYPES = [
 /** Where a loop stands. A `deleted` loop is withheld from every ordinary read. */
 export type LoopStatus = "open" | "closed" | "deleted";
 
+// ── What a loop IS, as opposed to where it stands ───────────────────────
+//
+// A tracker whose open-loop count includes notes, indexes and messages to
+// people misreports progress, and it misreports it in the optimistic
+// direction only for the people reading counts. Ope's objection, verbatim:
+// "every loop or task should be tracking real work to be done, not a
+// reference or a note". On one item roughly one loop in six was a note, an
+// index, a status marker or correspondence, and "the actual open loops"
+// answered 22 when the number of pieces of work was materially smaller.
+//
+// **Why a kind rather than a detector.** The alternative considered was
+// matching note-shaped text on write and nudging. It was rejected on the
+// reporter's own argument: a note-shaped loop and a terse real one look
+// alike from outside — several genuine work loops open with a status line
+// before getting to the ask — so a detector firing on real work teaches
+// people to ignore it, which is worse than not having one. A kind fixes the
+// measurable harm (counts that lie) without guessing intent.
+//
+// **Why this is a payload field and not a column.** There is no loop row to
+// put a column on. A loop is a pair of events correlated by
+// `payload.loopId` (SCHEMA.md §3a), so `kind` lives beside `text` in the
+// opening event and is resolved by the fold — exactly how `text` itself
+// already works. That is also what makes this migration-free: no enum label
+// is added (a kind change reuses `open_loop_edited`), no column is added,
+// and no existing row is rewritten.
+
+/**
+ * What a loop is tracking.
+ *
+ * - `work` — a piece of work someone will do. The default, and what a loop
+ *   was always meant to be.
+ * - `note` — a reference, an index, a status marker: worth remembering,
+ *   not worth doing. Excluded from open-loop counts by default.
+ * - `blocked_on_person` — a real pending thing that is waiting on a human
+ *   rather than on code. **Counted as work**, see `countsAsWork`.
+ */
+export const LOOP_KINDS = ["work", "note", "blocked_on_person"] as const;
+
+export type LoopKind = (typeof LOOP_KINDS)[number];
+
+/** The kind a loop has when nothing says otherwise. */
+export const DEFAULT_LOOP_KIND: LoopKind = "work";
+
+/**
+ * Reads a loop kind out of an event payload, falling back to `work`.
+ *
+ * **Absent means `work`, and that is what makes this migration-free.** Every
+ * loop written before this field existed has no `kind` in its payload, and
+ * resolves here to exactly the meaning it always carried — so no row is
+ * rewritten and no existing loop changes what it counts as.
+ *
+ * An *unrecognised* kind also falls back rather than throwing, matching the
+ * read path's standing posture (see `deriveLoops`): this runs on data the
+ * fold is only trying to describe, and a payload written by a newer build
+ * carrying a kind this one does not know must not make the item's loops
+ * permanently unreadable. The write path is where a bad kind is refused,
+ * by the schema enum.
+ */
+export function parseLoopKind(value: unknown): LoopKind {
+  return typeof value === "string" && (LOOP_KINDS as readonly string[]).includes(value)
+    ? (value as LoopKind)
+    : DEFAULT_LOOP_KIND;
+}
+
+/**
+ * Whether a loop counts toward "how much is still open on this item".
+ *
+ * **`blocked_on_person` counts, and that is the whole subtlety of this
+ * function.** It is tempting to read the split as work-versus-everything-
+ * else, but a loop blocked on a human is the *most* pending thing an item
+ * can carry — it will not move at all without someone being nudged.
+ * Excluding it would make an item stalled awaiting an answer report zero
+ * open loops, which is the same misreporting this field exists to fix,
+ * pointed the opposite way. Only `note` is genuinely not-work.
+ */
+export function countsAsWork(kind: LoopKind): boolean {
+  return kind !== "note";
+}
+
 /**
  * One loop with its whole lifecycle resolved — the shape `loop_list` and
  * `loop_get` report. A superset of `OpenLoop`.
@@ -193,6 +275,12 @@ export interface DerivedLoop {
   readonly loopId: string;
   /** The current text: the newest edit's, or the opening event's where never edited. */
   readonly text: string;
+  /**
+   * What this loop is tracking: the newest edit that *supplied* one, or the
+   * opening event's, or `work`. An edit that changes only the text leaves
+   * this alone — see `deriveLoops`.
+   */
+  readonly kind: LoopKind;
   readonly status: LoopStatus;
   /** ISO timestamp of the `open_loop` event — never moved by an edit. */
   readonly openedAt: string;
@@ -279,8 +367,25 @@ function loopIdOf(event: LoopEventLike): string | null {
 export function deriveLoops(events: readonly LoopEventLike[]): DerivedLoop[] {
   const closedAt = new Map<string, string>();
   const deleted = new Map<string, { ts: string; reason: string | null }>();
-  /** loopId -> the newest edit seen, by event id. */
+  /** loopId -> the newest edit that supplied TEXT, by event id. */
   const edits = new Map<string, { id: bigint; text: string; ts: string }>();
+  /**
+   * loopId -> the newest edit that supplied a KIND, by event id.
+   *
+   * **Deliberately a second map, not a field on the one above.** An edit may
+   * carry text, or a kind, or both, and the two have to resolve
+   * independently: an edit that only rewords must not reset the kind back to
+   * the default, and an edit that only reclassifies must not be thrown away
+   * for having no text. Folding them into one "newest edit wins" record does
+   * exactly that, because the newest edit's *absent* field would overwrite
+   * an older edit's present one.
+   *
+   * JSON cannot distinguish "not supplied" from "cleared", so the rule is
+   * that an absent `kind` on an edit **preserves** whatever the loop already
+   * had. Resetting to `work` is available by sending `kind: "work"`
+   * explicitly, which is a statement rather than an omission.
+   */
+  const kindEdits = new Map<string, { id: bigint; kind: LoopKind }>();
 
   for (const event of events) {
     const loopId = loopIdOf(event);
@@ -299,9 +404,22 @@ export function deriveLoops(events: readonly LoopEventLike[]): DerivedLoop[] {
       }
     } else if (event.type === "open_loop_edited") {
       const payload = event.payload as Record<string, unknown>;
+      const id = BigInt(event.id);
+
+      // The kind is read BEFORE the text guard below, and that ordering is
+      // the fix for a silent no-op. This branch used to `continue` on an
+      // edit with no usable text, which would have discarded a
+      // reclassification outright — the write would succeed, return a
+      // receipt, and change nothing a reader could see.
+      if (payload.kind !== undefined) {
+        const previousKind = kindEdits.get(loopId);
+        if (previousKind === undefined || id > previousKind.id) {
+          kindEdits.set(loopId, { id, kind: parseLoopKind(payload.kind) });
+        }
+      }
+
       const text = payload.text;
       if (typeof text !== "string" || text.trim() === "") continue;
-      const id = BigInt(event.id);
       const previous = edits.get(loopId);
       if (previous === undefined || id > previous.id) {
         edits.set(loopId, { id, text, ts: toIso(event.ts) });
@@ -327,6 +445,9 @@ export function deriveLoops(events: readonly LoopEventLike[]): DerivedLoop[] {
     const gone = deleted.get(loopId) ?? null;
     const closed = closedAt.get(loopId) ?? null;
     const edit = edits.get(loopId);
+    // The newest edit that named a kind, else what the loop opened as, else
+    // `work` — which is every loop written before the field existed.
+    const kind = kindEdits.get(loopId)?.kind ?? parseLoopKind(event.payload.kind);
     // Deletion outranks closure. A loop that should never have existed is
     // not also "resolved", and reporting it closed would put a resolution in
     // the record that nobody reached.
@@ -335,6 +456,7 @@ export function deriveLoops(events: readonly LoopEventLike[]): DerivedLoop[] {
     loops.push({
       loopId,
       text: edit?.text ?? text,
+      kind,
       status,
       openedAt: toIso(event.ts),
       editedAt: edit?.ts ?? null,

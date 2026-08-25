@@ -46,7 +46,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { checkpointHeadline } from "../items/checkpoint-headline";
 import { NOT_ARCHIVED_CONDITION } from "../items/row";
-import { deriveOpenLoops } from "@/lib/open-loops";
+import { countsAsWork, deriveOpenLoops } from "@/lib/open-loops";
 import { groupLoopEventsByItem, loopEventsForMany } from "./loop-shared";
 import {
   DONE_STATES,
@@ -359,9 +359,17 @@ export const progressReport = defineOperation({
       // while every test stayed green.
       const loopRows = await loopEventsForMany(ctx, itemIds);
       for (const [itemId, events] of groupLoopEventsByItem(loopRows)) {
+        // Notes are excluded here for the reason `orientation` excludes
+        // them: this is a progress read, and a loose-end list padded with
+        // references and status markers overstates what is outstanding.
+        // `blocked_on_person` is kept — `countsAsWork` treats a loop
+        // waiting on a human as work, because it is the most pending thing
+        // an item can carry.
         loops.set(
           itemId,
-          deriveOpenLoops(events).map((loop) => loop.text),
+          deriveOpenLoops(events)
+            .filter((loop) => countsAsWork(loop.kind))
+            .map((loop) => loop.text),
         );
       }
     }

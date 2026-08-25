@@ -21,7 +21,7 @@ import {
 import { checkpointHeadline } from "../items/checkpoint-headline";
 import { readSinceBounded, type EventRow } from "../../events";
 import { liveAssignments, type Assignment } from "../../claims";
-import { deriveOpenLoops, type OpenLoop } from "../../open-loops";
+import { countsAsWork, deriveOpenLoops, type OpenLoop } from "../../open-loops";
 import { previewText } from "./loop-reads";
 import { loopEventsFor } from "./loop-shared";
 
@@ -211,6 +211,17 @@ export interface OrientationOutput {
     readonly loopsTruncated: boolean;
     /** True when at least one returned loop's text was cut to its preview length. */
     readonly loopTextTruncated: boolean;
+    /**
+     * How many open loops were held back for being notes rather than work
+     * (`kind: note`).
+     *
+     * Named rather than silently dropped: a reader has no way to tell "this
+     * item has three loose ends" from "three loose ends and two notes you
+     * are not being shown", and a count that shrank with no explanation is
+     * the same failure as a truncation a caller cannot detect. Read them
+     * with `loop_list { includeNonWork: true }`.
+     */
+    readonly nonWorkExcluded: number;
   };
   /** Live assignments on this item — who is on it and in what role (SCHEMA.md §2). */
   readonly crew: readonly Assignment[];
@@ -395,7 +406,18 @@ export const orientation = defineOperation({
     // *complete* loop-event slice in `id` order, so a copy that omitted an
     // event type would not fail loudly — it would report a closed or
     // deleted loop as open.
-    const allLoops = deriveOpenLoops(await loopEventsFor(ctx, input.itemId));
+    // **Notes are excluded from the count, and the number held back is
+    // reported.** This is the read a resuming session uses to judge how much
+    // is still outstanding, so a list padded with references and status
+    // markers misreports progress in the optimistic direction. Loops blocked
+    // on a person are NOT held back — `countsAsWork` treats them as work,
+    // because a loop waiting on a human is the most pending thing an item
+    // can carry. Reported rather than silently dropped, for the reason the
+    // truncation flags beside it are: a partial result a caller cannot
+    // identify as partial is worse than none.
+    const everyLoop = deriveOpenLoops(await loopEventsFor(ctx, input.itemId));
+    const allLoops = everyLoop.filter((loop) => countsAsWork(loop.kind));
+    const nonWorkExcluded = everyLoop.length - allLoops.length;
     // Bounded by the same `limit` that bounds `whatChanged` and `crew`, and
     // each text cut to a preview. Both bounds are reported rather than left
     // to be inferred, for the reason the other two are: a partial result a
@@ -428,7 +450,7 @@ export const orientation = defineOperation({
       crewTruncated,
       changedSince: since.toString(),
       horizon: horizon.toString(),
-      openLoops: { notDone, children, loops, loopsTruncated, loopTextTruncated },
+      openLoops: { notDone, children, loops, loopsTruncated, loopTextTruncated, nonWorkExcluded },
       crew,
     };
   },

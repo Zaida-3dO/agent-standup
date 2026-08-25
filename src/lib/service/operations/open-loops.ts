@@ -18,7 +18,13 @@ import { InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
-import { deriveOpenLoops, type LoopEventLike } from "@/lib/open-loops";
+import {
+  deriveOpenLoops,
+  DEFAULT_LOOP_KIND,
+  LOOP_KINDS,
+  type LoopEventLike,
+  type LoopKind,
+} from "@/lib/open-loops";
 import { loopEventsFor } from "./loop-shared";
 
 const ACTOR_TYPES = ["person", "agent", "system"] as const;
@@ -119,6 +125,16 @@ const addInput = z
      * merge two different loops that happened to be phrased identically.
      */
     loopId: z.string().trim().min(1).optional(),
+    /**
+     * What this loop is tracking. Defaults to `work`.
+     *
+     * `note` exists so a reference, an index or a status marker has an
+     * honest home instead of inflating the count of work outstanding, and
+     * `blocked_on_person` so a real pending thing waiting on a human is not
+     * forced to choose between the wrong category and no record at all.
+     * `blocked_on_person` still counts as work; `note` does not.
+     */
+    kind: z.enum(LOOP_KINDS).default(DEFAULT_LOOP_KIND),
     actorType: z.enum(ACTOR_TYPES).optional(),
     actorId: z.string().min(1).nullable().optional(),
     sessionId: z.string().min(1).nullable().optional(),
@@ -129,6 +145,8 @@ export type LoopAddInput = z.infer<typeof addInput>;
 
 export interface LoopAdded {
   readonly loopId: string;
+  /** The kind recorded — returned so a caller that relied on the default can see which it got. */
+  readonly kind: LoopKind;
   readonly event: AppendedEvent;
 }
 
@@ -141,7 +159,11 @@ export interface LoopAdded {
 export const loopAdd = defineOperation({
   name: "loop_add",
   kind: "write",
-  summary: "Records a loose end on an item — something unresolved that is not itself a work item.",
+  summary:
+    "Records a loose end on an item — a piece of work that still needs doing but is not big enough to be its own item. " +
+    "Loops track WORK, not notes: a reference, an index or a status marker belongs in the repo (CLAUDE.md, a MEMORY.md) " +
+    "or in a `note` on the item, not here. Pass kind: note for one recorded here anyway, so it stays out of the count " +
+    "of work outstanding, or kind: blocked_on_person for something real that is waiting on a human.",
   // Stryker restore all
   input: addInput,
   async handler(ctx: ServiceContext, input: LoopAddInput): Promise<LoopAdded> {
@@ -201,12 +223,12 @@ export const loopAdd = defineOperation({
       },
       assignmentId: actor.assignmentId,
       type: "open_loop",
-      payload: { loopId, text: input.text },
+      payload: { loopId, text: input.text, kind: input.kind },
     });
 
     // The generated id is returned because the caller otherwise has no way to
     // learn it, and without it the loop it just opened can never be closed.
-    return { loopId, event };
+    return { loopId, kind: input.kind, event };
   },
 });
 

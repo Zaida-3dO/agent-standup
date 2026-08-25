@@ -231,13 +231,13 @@ describe("deriveOpenLoops, expressed over deriveLoops", () => {
     expect(deriveOpenLoops([opened(1, "loop-a", "x"), closed(2, "loop-a")])).toEqual([]);
   });
 
-  it("returns only the four fields its own shape declares", () => {
+  it("returns only the five fields its own shape declares", () => {
     // `OpenLoop` is a narrower type than `DerivedLoop`, and its consumers
     // render it. Killed by spreading the derived loop instead of naming the
-    // four fields, which would leak `status`/`deletedReason` into a shape
+    // five fields, which would leak `status`/`deletedReason` into a shape
     // that does not declare them.
     const loop = deriveOpenLoops([opened(1, "loop-a", "untested")])[0]!;
-    expect(Object.keys(loop).sort()).toEqual(["eventId", "loopId", "openedAt", "text"]);
+    expect(Object.keys(loop).sort()).toEqual(["eventId", "kind", "loopId", "openedAt", "text"]);
   });
 });
 

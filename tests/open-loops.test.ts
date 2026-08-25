@@ -35,6 +35,10 @@ describe("deriving which loops are still open", () => {
     expect(loops).toEqual([
       {
         loopId: "loop-a",
+        // A payload with no `kind` — every loop written before the field
+        // existed — folds to `work`. This is the whole of the "no migration
+        // and nothing breaks" claim, asserted rather than assumed.
+        kind: "work",
         text: "the retry path is untested",
         openedAt: T0.toISOString(),
         eventId: "1",

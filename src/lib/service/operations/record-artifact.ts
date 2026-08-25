@@ -111,7 +111,36 @@ const inputSchema = z
      * of the branch it squashed.
      */
     supersedesSha: z.string().trim().min(1).nullable().optional(),
-    body: z.string().nullable().optional(),
+    /**
+     * Prose on nine kinds — and a status enum on the tenth.
+     *
+     * **On `pull_request`, `body` is the PR's status and must be one of
+     * `open` or `closed`**, not a description of the change. The guard that
+     * enforces it is good and stays; what was missing is that the constraint
+     * was discoverable only by violating it. One field shared across ten
+     * kinds, free text for nine of them, and nothing at the call site said
+     * which one was different — so a caller reading the schema could not
+     * see it, and a `body` that happened to read `"open"` for the wrong
+     * reason would have been accepted and meant something unintended.
+     *
+     * A separate `status` field would be cleaner and is deliberately not
+     * what was built: `body` already carries the status on existing
+     * `pull_request` rows, so moving it is a breaking change to data that
+     * is append-only and cannot be rewritten.
+     *
+     * A PR that has closed is recorded as a NEW `pull_request` row with
+     * `body: "closed"` — artifacts are append-only, so the row that opened
+     * it is never edited.
+     */
+    body: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "Free text on every artifact kind EXCEPT `pull_request`, where it is the PR's " +
+          `status and must be one of: ${PULL_REQUEST_STATUSES.join(", ")}. Record a PR that ` +
+          "has closed as a new pull_request artifact rather than editing the one that opened it.",
+      ),
     ref: z.string().trim().min(1).nullable().optional(),
     /** Which browser session a visual review ran in (§6) — an opaque string to the core. */
     browserSession: z.string().trim().min(1).nullable().optional(),
@@ -378,6 +407,21 @@ const RECORD_ARTIFACT_CONTRACT = {
     {
       fields: ["verdict", "kind"],
       rule: "Only `plan_review`, `code_review` and `visual_review` take a verdict; any other kind must leave it unset or `na`.",
+    },
+  ],
+  // A second complete call, for the reason `OperationContract.examples`
+  // exists: one example is not enough when a field's MEANING varies by
+  // another field. `body` is prose in the `example` below and a status enum
+  // here, and a caller shown only the review shape will copy prose into a
+  // `pull_request` body and be refused.
+  examples: [
+    {
+      itemId: "b1f0c3d2-0000-4000-8000-000000000000",
+      kind: "pull_request",
+      ref: "https://github.com/Zaida-3dO/agent-standup/pull/254",
+      body: "open",
+      createdByType: "agent",
+      createdById: "builder-4c7",
     },
   ],
   example: {

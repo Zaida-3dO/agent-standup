@@ -62,7 +62,32 @@ export const takeover = defineOperation({
   name: "takeover",
   kind: "write",
   summary:
-    "Takes an item from another session. Free if that session is dead; requires force plus a written reason if it may be alive.",
+    "Takes an item from another session. Free if that session is dead; requires force plus a written reason if it may be alive. Releases the holder's claim but does NOT assign the item to you — call claim next — and does not stop the displaced session.",
+  contract: {
+    rules: [
+      {
+        fields: ["itemId"],
+        rule: "A takeover RELEASES the previous assignment; it does NOT assign the item to the caller. Call `claim` immediately afterwards, through the front door — until you do, you hold nothing, and a checkpoint will not attribute to you. Claiming is deliberately not folded in: it has its own guards, and a takeover that also claimed would be two operations wearing one name.",
+      },
+      {
+        fields: ["fromSessionId"],
+        rule: "This does NOT stop the displaced session. Nothing refuses its tool calls, so it keeps its context, its running subagents and its write access — it simply stops appearing as the holder. If it may still be running, TELL IT DIRECTLY; the board will otherwise show one crew where two are working.",
+      },
+      {
+        fields: ["force", "reason"],
+        rule: "Both are required when the holder may still be alive (liveness `running` or `stalled`) and neither is needed when it is judged dead. Whether the holder is alive is a fact about the database, not about the input, which is why the schema cannot mark them required.",
+      },
+    ],
+    example: {
+      itemId: "b1f0c3d2-0000-4000-8000-000000000000",
+      fromSessionId: "cd1575a9",
+      bySessionId: "725c8167",
+      holderType: "agent",
+      holderId: "poe-3f1",
+      force: true,
+      reason: "Ope asked me to take this item; the holder has not checkpointed in two hours.",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: TakeoverOperationInput): Promise<TakeoverResult> {

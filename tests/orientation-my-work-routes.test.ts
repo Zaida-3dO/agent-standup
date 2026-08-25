@@ -130,12 +130,19 @@ describeIfDb("orientation and my-work HTTP routes against Postgres", () => {
       // The two truncation flags travel beside them because `loops` is
       // bounded in count and in text: a caller has to be able to tell a
       // short list from a cut one, and on this item neither bound was hit.
+      //
+      // `nonWorkExcluded` travels with them for the same reason and is
+      // asserted here rather than only in the operation's own tests: it is a
+      // third way the list can be shorter than the item's real loop count,
+      // so a caller reading the transport payload has to be able to see it.
+      // Zero on this item, which has no loops at all.
       expect(payload.openLoops).toEqual({
         notDone: [],
         children: [],
         loops: [],
         loopsTruncated: false,
         loopTextTruncated: false,
+        nonWorkExcluded: 0,
       });
       expect(payload.crew).toEqual([]);
     });
