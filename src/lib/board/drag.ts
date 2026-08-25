@@ -234,6 +234,13 @@ export function refusalMessage(status: number, serverMessage: string | null): st
     return "That item's column is derived from its children, so it cannot be moved on its own. Move the children instead.";
   }
   if (status === 404) return "That item could not be found.";
+  // **409 is the multiplayer refusal** (T17): the item moved between this
+  // client reading it and the request landing. A specific sentence naming who
+  // moved it and where is built by `@/lib/live/conflict`, which needs the
+  // live feed's recent events; this is the fallback for when the 409 carried
+  // no readable details, and it still says the one thing that makes the
+  // refusal make sense rather than reading as a bug.
+  if (status === 409) return "Someone else changed this item first. The board has been updated.";
   if (status === 422) return "That move was refused.";
   return `That move could not be saved (the server returned ${status}).`;
 }

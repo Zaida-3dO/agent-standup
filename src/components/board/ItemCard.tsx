@@ -36,6 +36,23 @@ export interface ItemCardProps {
   /** True while this card's move is in flight — see `Board.module.css`'s `.cardPending`. */
   readonly pending?: boolean;
   /**
+   * True for a moment after **someone else** changed this item (T17).
+   *
+   * The board is a multiplayer surface: cards move because another session
+   * moved them, and without a mark the motion is silent — things rearrange
+   * and nobody saw why, which reads as the board being unreliable rather
+   * than as a teammate having done something. This is the mark.
+   *
+   * A prop rather than state inside the card, for the same reason `pending`
+   * and `expanded` are: this component is hook-free so it can be called as a
+   * plain function in a test (see the header), so the *timing* — how long the
+   * mark lasts — is the board's business and the appearance is this one's.
+   *
+   * Reduced motion is honoured in CSS (`.cardChanged`), not here: the mark
+   * stays, its animation does not.
+   */
+  readonly changed?: boolean;
+  /**
    * The pointer/keyboard drag handle (T6-A), supplied by `DraggableCard`.
    *
    * **Absent by default, and everything below still works without it** —
@@ -138,6 +155,7 @@ export function ItemCard({
   onDragStart,
   onDragEnd,
   pending,
+  changed,
   dragHandle,
   expanded,
   onToggleExpanded,
@@ -168,12 +186,13 @@ export function ItemCard({
 
   return (
     <li
-      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""} ${unverified ? styles.cardUnverified : ""} ${dragging ? styles.cardDragging : ""}`
+      className={`${styles.card} ${toneClass} ${pending ? styles.cardPending : ""} ${changed ? styles.cardChanged : ""} ${unverified ? styles.cardUnverified : ""} ${dragging ? styles.cardDragging : ""}`
         .replace(/\s+/g, " ")
         .trim()}
       data-tone={tone ?? undefined}
       data-draggable={draggable}
       data-pending={pending ? true : undefined}
+      data-changed={changed ? true : undefined}
       data-unverified={unverified ? true : undefined}
       data-dragging={dragging ? true : undefined}
       // The pointer/keyboard handle, when one was supplied. Spread BEFORE

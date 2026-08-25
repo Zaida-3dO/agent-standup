@@ -345,6 +345,35 @@
   opacity: 0.65;
 }
 
+/* A card **someone else** just changed (T17, part 3).
+
+   The board is multiplayer: cards move because another session moved them,
+   and an unmarked rearrangement is motion nobody can account for — which
+   reads as the board being unreliable rather than as a teammate working. A
+   brief highlight makes the change perceptible without demanding attention,
+   then gets out of the way.
+
+   Implemented as a fading `box-shadow` ring rather than a background change,
+   so it composes with the tone borders (`.toneAmber`/`.toneRed`) and the
+   dashed `.cardUnverified` outline instead of competing with them — a card
+   can be paused, unverified and just-changed at once, and all three still
+   read.
+
+   The class is removed by the board after the animation's own duration, so
+   nothing here depends on `animation-fill-mode` to stop showing. */
+.cardChanged {
+  animation: cardChangedFade 2s ease-out;
+}
+
+@keyframes cardChangedFade {
+  from {
+    box-shadow: 0 0 0 2px var(--color-accent, #4c8dff);
+  }
+  to {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+
 /* A card whose `state` arrived by copy from an external store and has never
    been checked (MILESTONES.md #131) — the dashed border `globals.css` §6
    promises alongside the `TrustBadge`. Applied to the card's WHOLE outline
@@ -754,5 +783,17 @@ button.subtaskToggle:focus-visible {
 
   .dropPlaceholder {
     animation: none;
+  }
+
+  /* The change highlight (T17) keeps its *meaning* under reduced motion and
+     loses its *motion*: a static ring for the same window the animation
+     would have lasted, rather than nothing at all. Suppressing it entirely
+     would take the multiplayer signal away from exactly the readers who
+     asked not to be surprised by movement — they are the ones who most need
+     to be told a card moved by itself. The board removes the class on the
+     same timer either way. */
+  .cardChanged {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--color-accent, #4c8dff);
   }
 }

@@ -165,3 +165,45 @@ export function moveRefused(state: DragState, sequence: number, message: string)
     refusal: message,
   };
 }
+
+/**
+ * The server refused because **someone else moved the item first** — T17's
+ * conflict case, and the one refusal that must not revert.
+ *
+ * **Why this is not `moveRefused` with a nicer sentence.** An ordinary
+ * refusal means the move did not happen, so the card belongs exactly where it
+ * was and `revertMove` puts it back. A conflict means the item *did* move —
+ * by someone else, to a state this client did not ask for — so putting the
+ * card back where this client last saw it would show a position that is also
+ * wrong, and would show it confidently. The card is instead settled on the
+ * state the server reported in the 409's `details.currentState`, which is the
+ * newest fact anyone here has.
+ *
+ * **The column is recomputed from that state by the caller**, not guessed
+ * here: the state-to-column mapping lives in the service layer and this
+ * module cannot import it (`npm run check:db-imports`), so the caller passes
+ * the settled entry. When it cannot build one — the item is not on this
+ * board, or its new state maps to a column the board does not show — `entry`
+ * is `null` and the card is simply left where the optimistic move put it,
+ * with the message explaining why; the live feed's own refetch is what
+ * corrects it a moment later. That is a brief inconsistency rather than a
+ * confident wrong answer.
+ *
+ * Staleness is checked exactly as the other two results check it: a conflict
+ * answering an older move must not clobber a newer one.
+ */
+export function moveConflicted(
+  state: DragState,
+  sequence: number,
+  message: string,
+  entry: BoardEntry | null,
+): DragState {
+  if (isStale(state, sequence)) return state;
+  return {
+    ...state,
+    board: entry === null ? state.board : reconcile(state.board, entry),
+    pendingItemId: null,
+    pendingOriginal: null,
+    refusal: message,
+  };
+}

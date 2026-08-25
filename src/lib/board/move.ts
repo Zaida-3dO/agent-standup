@@ -14,10 +14,28 @@
 import type { BoardColumnId, BoardEntry, BoardItem } from "./types";
 import { TARGET_STATE, networkRefusalMessage, refusalMessage } from "./drag";
 import { uiApiPath } from "@/lib/ui-proxy/path";
+import { conflictDetailsFrom, type ConflictDetails } from "@/lib/live/conflict";
 
 export type MoveResult =
   | { readonly ok: true; readonly entry: BoardEntry }
-  | { readonly ok: false; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly message: string;
+      /**
+       * Present only when the server refused with a 409 whose `details` this
+       * client could read — i.e. someone else moved the item first (T17).
+       *
+       * **A separate field rather than a flag on the message**, because the
+       * two refusals call for opposite treatment of the card. An ordinary
+       * refusal means the move did not happen and the card belongs where it
+       * was, so it reverts. A conflict means the item genuinely moved — just
+       * not by this person — so reverting would put the card somewhere that
+       * is *also* wrong, and would do it while the board's own live feed is
+       * about to correct it. `currentState` is what the card settles on
+       * instead.
+       */
+      readonly conflict?: ConflictDetails;
+    };
 
 /** The error envelope every items route answers with (`src/app/api/items/respond.ts`). */
 interface ErrorBody {
@@ -75,14 +93,42 @@ export async function requestMove(
     // A guard's own rejection text names the field it wants, so it is worth
     // far more than anything invented here. A body that cannot be read at
     // all falls back to the status.
+    //
+    // **The body is read once and used twice.** `response.json()` can only be
+    // consumed once, so the parsed value feeds both the message and the
+    // conflict details — reading it a second time would throw and silently
+    // lose the attribution this row exists to provide.
     let serverMessage: string | null = null;
+    let body: unknown = null;
     try {
-      const body = (await response.json()) as ErrorBody;
-      const message = body.error?.message;
+      body = await response.json();
+      const message = (body as ErrorBody).error?.message;
       if (typeof message === "string") serverMessage = message;
     } catch {
       serverMessage = null;
+      body = null;
     }
+
+    // A 409 is the multiplayer refusal: someone else moved the item between
+    // this client reading it and this request landing. `conflictDetailsFrom`
+    // returns null for a 409 whose details cannot be read, which falls back
+    // to the ordinary refusal — a confidently wrong conflict message would
+    // be worse than a generic one.
+    if (response.status === 409) {
+      const conflict = conflictDetailsFrom(body);
+      if (conflict !== null) {
+        // The message is deliberately left to the caller, which is the only
+        // layer holding the live feed's recent events and therefore the only
+        // one that can name who moved it. `refusalMessage` remains the
+        // fallback when there is nothing to attribute it to.
+        return {
+          ok: false,
+          message: refusalMessage(response.status, serverMessage),
+          conflict,
+        };
+      }
+    }
+
     return { ok: false, message: refusalMessage(response.status, serverMessage) };
   }
 
