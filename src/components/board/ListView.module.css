@@ -106,6 +106,21 @@
      two adjacent borders with a gap between them. */
   border-collapse: collapse;
   font-size: 0.875rem;
+  /* **`fixed`, and this is the declaration that actually stops the
+     horizontal overflow.**
+
+     Under the default `auto` layout the browser sizes columns to their
+     CONTENT and a stated `width` is only a suggestion, so a long unbroken
+     title or a wide owner name pushes the table past `width: 100%` and the
+     page scrolls sideways — 273px of it at 390px wide, against the
+     kanban's zero. `fixed` makes the first row's widths binding and holds
+     the table to its container, which is the only way `width: 100%` means
+     what it says.
+
+     It is also what makes the metadata strips genuinely fixed: under
+     `auto` the strip's x-position drifts row to row with content, which is
+     the scannability this layout was chosen for. */
+  table-layout: fixed;
 }
 
 /* The column headers. Small, muted and uppercase — they are a legend for
@@ -134,6 +149,11 @@
 .row td {
   padding: 0.4rem 0.6rem;
   vertical-align: top;
+  /* `table-layout: fixed` will not break a long unbroken token on its own —
+     it lets the content spill out of the cell instead. A title can carry a
+     URL or a branch name with no spaces in it, so a cell is told it may
+     break one rather than let it push the row wide. */
+  overflow-wrap: anywhere;
 }
 
 /* The amber/red split, carried into the list — SCHEMA.md §1.1 makes it a
@@ -148,12 +168,22 @@
    A left edge rather than a row background: a tinted row would fight the
    hover state and the needs-you marker below for the same surface, and at
    68 rows a wall of tinted backgrounds is exactly the "wall of colour in
-   which P0 stops meaning anything" that `PriorityChip` warns about. */
-.row[data-tone="amber"] td:first-child {
+   which P0 stops meaning anything" that `PriorityChip` warns about.
+
+   **Anchored to `.colState` rather than to `td:first-child`.** Both
+   select the same cell, but only the class says WHY that cell: the
+   state column is the row's leading edge and is the one column kept at
+   every width. A positional selector would follow whatever happened to be
+   first if the columns were ever reordered, and would keep matching a cell
+   that a narrow-width rule had hidden — painting the edge onto nothing
+   while still looking correct in the stylesheet. The tone edge is the
+   paused/blocked distinction itself (SCHEMA.md §1.1), so it is worth
+   spending a class to make it non-positional. */
+.row[data-tone="amber"] td.colState {
   box-shadow: inset 3px 0 0 var(--state-paused-border);
 }
 
-.row[data-tone="red"] td:first-child {
+.row[data-tone="red"] td.colState {
   box-shadow: inset 3px 0 0 var(--state-blocked-border);
 }
 
@@ -168,36 +198,148 @@
   font-weight: 650;
 }
 
-/* ── Column widths ───────────────────────────────────────────────────────
+/* ── Column widths ───────────────────────────────────────────
 
-   The four metadata columns are held to a fixed width and the title takes
+   The four metadata columns are held to a width and the title takes
    whatever is left. That is what makes the columns scannable as columns: a
    reader looking for every P0 needs "priority" to be at the same x on row 3
    and row 63, which `width: auto` on five columns does not give — the table
-   would size each column to its widest content and shift the strip. */
+   would size each column to its widest content and shift the strip.
+
+   **`max-width`, not `width`, and that distinction is what keeps this
+   layout dense.** A `width` on four columns is a floor as much as a
+   ceiling: the metadata strips hold their full 34.5rem at every viewport,
+   so the one flexible column absorbs the entire squeeze and the title
+   falls to 201px at 1024px — narrower than the usually-empty OWNER column
+   beside it. Titles then wrap to four and five lines and rows grow to
+   200–290px tall, which makes the dense list LESS dense than
+   the kanban it exists to replace.
+
+   `max-width` lets each metadata column give ground proportionally once
+   there is not enough room, so the title keeps a workable share instead of
+   being the only column that yields. The floor below is what stops it
+   yielding to nothing. */
 .colState {
   width: 8.5rem;
+  max-width: 8.5rem;
 }
 
 .colPriority {
   width: 5rem;
+  max-width: 5rem;
 }
 
-/* No width — this column absorbs the remainder, which is what keeps the
-   metadata strips fixed. */
+/* The title column's floor.
+
+   Everything else on the row is a chip or a short label and degrades
+   gracefully when squeezed; the title is prose and does not. This is the
+   guarantee that the column the reader actually reads never falls below a
+   legible measure — without it, `table-layout` is free to hand the
+   remainder to whichever column has the widest content. */
 .colTitle {
-  min-width: 0;
+  min-width: 14rem;
 }
 
 .colArea {
   width: 9rem;
+  max-width: 9rem;
 }
 
 .colOwner {
   width: 12rem;
+  max-width: 12rem;
 }
 
+/* ── Narrow viewports ────────────────────────────────────────
+
+   The kanban reflows at 900px and 560px (`Board.module.css`) and this file
+   matches it. Without a reflow the table overflows its viewport by 273px
+   at 390px where the kanban overflows by zero: a table whose columns sum
+   to more than the viewport does not wrap — it scrolls sideways, and a
+   horizontally scrolling list of sixty-eight rows is worse than either
+   layout it is choosing between.
+
+   The columns are dropped rather than shrunk, weakest signal first. Each
+   dropped fact stays on the row — the AREA cell's chip moves into the
+   title cell's own stack below — so nothing is lost; it simply stops being
+   a column. */
+@media (max-width: 900px) {
+  /* OWNER goes first: it is the widest column at 12rem and the most often
+     empty, so it costs the most and carries the least. */
+  .colOwner,
+  .row td.colOwner {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  /* AREA and PRIORITY follow. The area chip is restated inside the title
+     cell (`.rowMeta`) at this width, and priority survives as the row's
+     own leading marker rather than a column of its own. */
+  .colArea,
+  .row td.colArea {
+    display: none;
+  }
+
+  .list {
+    padding: 0.75rem;
+  }
+
+  .row td {
+    padding: 0.4rem 0.4rem;
+  }
+
+  /* With two columns gone the title needs no floor — and at 390px a 14rem
+     floor is itself wider than the viewport's content box, which would
+     reintroduce exactly the overflow this block removes. */
+  .colTitle {
+    min-width: 0;
+  }
+
+  /* The AREA column's facts, now that the column itself is gone. Declared
+     in the same block that hides it so the two cannot be separated. */
+  .rowMeta {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.15rem;
+    flex-wrap: wrap;
+  }
+}
+
+/* The facts that stop being columns at narrow widths, restated inside the
+   title cell so the row still carries them. Hidden at full width, where the
+   real columns are showing and this would be a duplicate.
+
+   Its narrow-width counterpart lives in the `560px` block above, with the
+   column it stands in for — the rule that hides AREA and the rule that
+   reveals its replacement belong together, so a future edit cannot drop one
+   and leave the fact showing nowhere at all. */
+.rowMeta {
+  display: none;
+}
+
+/* The row's title.
+
+   **Clamped to two lines**, which is the other half of the density fix.
+   Narrowing a column does not by itself bound a row's height: a long title
+   in a narrow cell simply wraps further, and that is how rows reached
+   200–290px tall — the measured symptom that made the dense list less
+   dense than the kanban. The width rules above stop the title column being
+   squeezed to 201px; this stops whatever width it does get from turning a
+   long title into a five-line row.
+
+   Two rather than one: a single line truncates most real titles on this
+   board mid-phrase, and the row this view exists for is one where the
+   reader is scanning titles to choose between them. The full title stays
+   available as the link's own text for a screen reader, and the row links
+   to the item. */
 .rowTitle {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   color: var(--text-primary);
   text-decoration: none;
 }

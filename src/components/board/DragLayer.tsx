@@ -37,6 +37,7 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   DndContext,
   DragOverlay,
+  KeyboardCode,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -44,6 +45,13 @@ import {
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
+  type KeyboardCoordinateGetter,
+  // The library's own announcement contract. `silentAnnouncements` below is
+  // typed against it — its handlers declare `string | undefined`, which is
+  // what makes returning `undefined` a supported "say nothing" rather than a
+  // trick, and typing the constant means an edit that returns a string is
+  // caught here instead of on a screen reader.
+  type Announcements,
 } from "@dnd-kit/core";
 import { BOARD_COLUMNS, type Board, type BoardColumnId, type BoardEntry } from "@/lib/board/types";
 import { findEntry } from "@/lib/board/drag";
@@ -55,8 +63,47 @@ import {
   movedOverMessage,
   pickedUpMessage,
 } from "@/lib/board/drag-announce";
+import { horizontalStep, SILENT_ANNOUNCEMENTS, VERTICAL_STEP_PX } from "@/lib/board/drag-keyboard";
 import { DragCardPreview } from "./DragCardPreview";
 import styles from "./Board.module.css";
+
+/**
+ * A whole column per left/right press, instead of the library's 25px.
+ *
+ * The defect (`@/lib/board/drag-keyboard` states it in full): with no
+ * `coordinateGetter`, `KeyboardSensor` moves 25px per press, so crossing
+ * one of this board's columns took about twelve presses.
+ *
+ * The step is MEASURED rather than assumed, from the collision rects the
+ * sensor is already given — the columns are `repeat(4, minmax(0, 1fr))`, so
+ * whichever droppable is under the drag measures the pitch for all of them,
+ * and a measured step keeps working when the viewport changes the column
+ * width (including at the 900px and 560px reflows, where the grid drops to
+ * two columns and then one). `horizontalStep`'s fallback covers the case
+ * where nothing has been measured yet.
+ */
+const boardCoordinateGetter: KeyboardCoordinateGetter = (
+  event,
+  { currentCoordinates, context },
+) => {
+  const width = context.collisionRect?.width;
+  // The gap between columns, from the same `1rem` the grid declares. Read
+  // as a number here rather than from the stylesheet because the sensor has
+  // no element to resolve a custom property against.
+  const step = horizontalStep(typeof width === "number" ? width : Number.NaN, 16);
+  switch (event.code) {
+    case KeyboardCode.Right:
+      return { ...currentCoordinates, x: currentCoordinates.x + step };
+    case KeyboardCode.Left:
+      return { ...currentCoordinates, x: currentCoordinates.x - step };
+    case KeyboardCode.Down:
+      return { ...currentCoordinates, y: currentCoordinates.y + VERTICAL_STEP_PX };
+    case KeyboardCode.Up:
+      return { ...currentCoordinates, y: currentCoordinates.y - VERTICAL_STEP_PX };
+    default:
+      return undefined;
+  }
+};
 
 /** True when an id is one of the board's columns — a drop can land anywhere, so this is checked. */
 function isBoardColumn(id: unknown): id is BoardColumnId {
@@ -117,8 +164,10 @@ export function DragLayer({
     }),
     // T6-B: the same moves, from the keyboard alone. This sensor is what
     // turns the board's primary action from mouse-only into something
-    // reachable without a pointer at all.
-    useSensor(KeyboardSensor),
+    // reachable without a pointer at all — and the coordinate getter is
+    // what makes it usable rather than merely possible, at one column per
+    // press instead of the library default's twelve presses per column.
+    useSensor(KeyboardSensor, { coordinateGetter: boardCoordinateGetter }),
   );
 
   const activeEntry: BoardEntry | null = useMemo(
@@ -196,11 +245,25 @@ export function DragLayer({
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
-      // The library ships its own screen-reader announcements. They are
-      // suppressed in favour of the live region below because the default
-      // wording is generic ("draggable item 3 was moved over droppable area
-      // 2") and this board can say the card's title and the column's name.
-      accessibility={{ announcements: undefined }}
+      // The library ships its own screen-reader announcements, and they are
+      // replaced here by the live region below, which can say the card's
+      // title and the column's name instead of an id.
+      //
+      // **`silentAnnouncements`, and NOT `{ announcements: undefined }`.**
+      // That spelling reads as suppression and does the exact opposite:
+      // the library destructures with a default
+      // (`announcements = defaultAnnouncements`), and a property explicitly
+      // set to `undefined` takes that default just as an absent one does.
+      // So the defaults stayed on, and they are `assertive` and interpolate
+      // `active.id` — meaning a screen reader read out a raw UUID
+      // ("Picked up draggable item 4f8a…") and, being assertive, INTERRUPTED
+      // the polite region below mid-sentence. Two announcers, and the one
+      // that won was the unreadable one.
+      //
+      // Handlers returning `undefined` are the supported way to say
+      // nothing: `useAnnouncement`'s `announce` ignores a nullish value, so
+      // the library's region stays empty and only ours speaks.
+      accessibility={{ announcements: SILENT_ANNOUNCEMENTS satisfies Announcements }}
     >
       {children}
       {/* Portalled out of the columns' `overflow` troughs — a card dragged
