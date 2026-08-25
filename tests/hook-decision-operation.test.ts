@@ -82,6 +82,7 @@ type Answer = {
   reason: string | null;
   canBlock: boolean;
   findings: readonly { id: string; level: string; timing: string; messages: { plain: string } }[];
+  enforcement?: { status: string; detail: string };
 };
 
 async function call(input: Record<string, unknown>): Promise<Answer> {
@@ -621,5 +622,102 @@ describe("what rides back with the answer", () => {
       { eventType: "PreToolUse", sessionId: "s1", tool: "Bash", command: "git merge feature" },
     );
     expect(blocked.findings.some((finding) => finding.timing === "immediate")).toBe(true);
+  });
+});
+
+describe("what the answer says about the session itself", () => {
+  // The half that carries the notice to a displaced session. Everything else
+  // in this file is about the *call*; these are about whether the session
+  // should be making one at all, and they are asserted here because this is
+  // the only place the field is actually put on the wire — a resolver that
+  // works and an operation that never attaches its result would pass every
+  // other case in the suite.
+
+  const displacedWorld = {
+    displaced: {
+      itemId: "item-taken",
+      supersededBy: "session-taker",
+      releasedAt: new Date("2026-01-02T03:04:05.000Z"),
+    },
+  };
+
+  it("carries the notice on an ordinary allow, which is the call it will arrive on", async () => {
+    // The load-bearing case. A displaced agent's next call is overwhelmingly
+    // likely to be something nothing objects to, so attaching the notice only
+    // to a refusal would deliver it exactly when it was least needed.
+    const answer = await callAgainst(displacedWorld, {
+      eventType: "PreToolUse",
+      sessionId: "session-displaced",
+      tool: "Read",
+    });
+
+    expect(answer.decision).toBe("allow");
+    expect(answer.enforcement?.status).toBe("displaced");
+    // Who and when, which are the two facts that let it hand over rather than
+    // merely stop.
+    expect(answer.enforcement?.detail).toContain("item-taken");
+    expect(answer.enforcement?.detail).toContain("session-taker");
+    expect(answer.enforcement?.detail).toContain("2026-01-02T03:04:05.000Z");
+  });
+
+  it("says nothing about a session whose claim is intact", async () => {
+    // The value that matters most on the highest-volume path: an absent field
+    // is what the hook reads as "nothing said about this session". Anything
+    // else here would refuse every call in the system.
+    const answer = await callAgainst(
+      {},
+      { eventType: "PreToolUse", sessionId: "s1", tool: "Read" },
+    );
+
+    expect(answer.enforcement).toBeUndefined();
+  });
+
+  it("still carries the notice when the call is also being blocked", async () => {
+    // The two answers are independent: one is about the command, the other
+    // about the session. A block must not swallow the notice, or a displaced
+    // session that happened to run a guarded command would be told only that
+    // the command was refused.
+    const answer = await callAgainst(
+      { ...displacedWorld, claim: undefined },
+      {
+        eventType: "PreToolUse",
+        sessionId: "session-displaced",
+        tool: "Bash",
+        command: "pkill -f node",
+      },
+    );
+
+    expect(answer.decision).toBe("block");
+    expect(answer.enforcement?.status).toBe("displaced");
+  });
+
+  it("does not look at all on a phase that could not act on the answer", async () => {
+    // The cost gate, asserted as behaviour rather than trusted. A
+    // `PostToolUse` describes a call that has already run, so the lookup is
+    // skipped entirely — and the handle proves it by throwing if it is not.
+    const refusing: TransactionHandle = {
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        if (isDisplacementLookup(query)) {
+          throw new Error("a post-tool event must not pay for the displacement lookup");
+        }
+        return [] as T;
+      },
+      $executeRawUnsafe: async () => {
+        throw new Error("hook_decision must not write");
+      },
+    };
+    const service = new ServiceRuntime({
+      transaction: (body) => body(refusing),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+
+    const answer = (await service.call("hook_decision", {
+      eventType: "PostToolUse",
+      sessionId: "session-displaced",
+      tool: "Read",
+    })) as unknown as Answer;
+
+    expect(answer.decision).toBe("allow");
+    expect(answer.enforcement).toBeUndefined();
   });
 });
