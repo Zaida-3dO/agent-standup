@@ -55,6 +55,8 @@ import { VerifyStateAction, type VerifyStateStatus } from "./VerifyStateAction";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
 import { StatusBlock } from "./StatusBlock";
 import { ArchiveAction, type ArchiveActionState } from "./ArchiveAction";
+import { CancelAction, type CancelActionState } from "./CancelAction";
+import { isAlreadyClosed } from "@/lib/item-detail/cancel-state";
 import { InlineEditField } from "./InlineEditField";
 import { ChipLink } from "./ChipLink";
 import { statusSummary } from "@/lib/item-detail/status";
@@ -122,6 +124,12 @@ export interface ItemDetailViewProps {
    * is rendered in tests and fragments that have no container behind them.
    */
   readonly archive?: ItemDetailArchiveProps;
+  /**
+   * The cancel affordance, wired the same optional way `archive` is and for
+   * the same reason — a view rendered without a container behind it shows no
+   * control rather than a control that does nothing.
+   */
+  readonly cancel?: ItemDetailCancelProps;
   readonly verifyStateStatus?: VerifyStateStatus;
   /**
    * Records a check of the item's `state` — `agrees` or `disagrees` with
@@ -162,6 +170,15 @@ function panel(tab: DetailTab, active: boolean, children: ReactNode) {
   );
 }
 
+/** Everything the cancel affordance needs, as one prop rather than five. */
+export interface ItemDetailCancelProps {
+  readonly state: CancelActionState;
+  readonly onBegin: () => void;
+  readonly onDismiss: () => void;
+  readonly onDecisionChange: (decision: string) => void;
+  readonly onCancelItem: () => void;
+}
+
 /** Everything the archive/restore affordance needs, as one prop rather than seven. */
 export interface ItemDetailArchiveProps {
   readonly state: ArchiveActionState;
@@ -193,6 +210,7 @@ export function ItemDetailView({
   verifyStateStatus = { status: "idle" },
   onVerifyState,
   archive,
+  cancel,
 }: ItemDetailViewProps) {
   if (loadState.status === "error") {
     return (
@@ -398,19 +416,56 @@ export function ItemDetailView({
 
           Rendered only when the caller wired handlers, the read-only rule
           `onVerifyState` and `onLoadAgentView` already follow. */}
+      {/* ── Closing this item: two acts, presented as two acts ───────────
+
+          Cancel comes FIRST, and the order is an argument rather than a
+          layout choice. It is the commoner and the safer of the two — the
+          distinction the whole pair exists for is "I had this task, I wanted
+          to do it, I decided not to; that's cancel, not archive" — and until
+          this block existed only archive had a control, so the destructive
+          act was the one a person found. Putting the likelier-correct act
+          first is what stops archive being chosen for being the only thing on
+          screen.
+
+          They are separated by a rule rather than stacked flush, because four
+          buttons in one undivided group is precisely the "two buttons that
+          look alike" failure both components are written to avoid. Neither is
+          offered on an archived row: the archived notice stands alone there,
+          and cancelling a hidden row is not an act with a meaning. */}
+      {cancel && item.archivedAt === null && (
+        <div className={styles.closingActions} data-region="closing-actions">
+          <CancelAction
+            alreadyClosed={isAlreadyClosed(item.state)}
+            state={item.state}
+            cancelState={cancel.state}
+            onBegin={cancel.onBegin}
+            onDismiss={cancel.onDismiss}
+            onDecisionChange={cancel.onDecisionChange}
+            onCancelItem={cancel.onCancelItem}
+          />
+        </div>
+      )}
+
       {archive && (
-        <ArchiveAction
-          archived={item.archivedAt !== null}
-          archivedReason={item.archivedReason}
-          supersededById={item.supersededById}
-          state={archive.state}
-          onBeginArchive={archive.onBeginArchive}
-          onCancel={archive.onCancel}
-          onReasonChange={archive.onReasonChange}
-          onArchive={archive.onArchive}
-          onRestore={archive.onRestore}
-          onAcknowledge={archive.onAcknowledge}
-        />
+        <div
+          className={
+            // The divider is only meaningful when something sits above it.
+            cancel && item.archivedAt === null ? styles.closingActionsDivider : undefined
+          }
+        >
+          <ArchiveAction
+            archived={item.archivedAt !== null}
+            archivedReason={item.archivedReason}
+            supersededById={item.supersededById}
+            state={archive.state}
+            onBeginArchive={archive.onBeginArchive}
+            onCancel={archive.onCancel}
+            onReasonChange={archive.onReasonChange}
+            onArchive={archive.onArchive}
+            onRestore={archive.onRestore}
+            onAcknowledge={archive.onAcknowledge}
+          />
+        </div>
       )}
 
       <TabStrip
