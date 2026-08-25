@@ -1066,6 +1066,15 @@ describeIfDb("delete_item", () => {
         holderType: "agent",
         holderId: "sweep-agent",
       });
+      // Moved to `plan_review` before archiving so `get_needs_you` — which
+      // admits every item at that state — has something to leak if it can.
+      // Written directly for the same reason the claim above is made first:
+      // a sweep that checks a read against a set the read would never have
+      // returned anyway is a green test that proves nothing.
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "state" = 'plan_review'::"ItemState" WHERE "id" = $1`,
+        task.id,
+      );
       await call("delete_item", {
         id: task.id,
         reason: GOOD_REASON,
@@ -1126,6 +1135,13 @@ describeIfDb("delete_item", () => {
         // shape as the detail reads above. `loop_list`, which does range
         // over an item's loops, is swept rather than exempted.
         "loop_get",
+        // Reads one item's ledger **by id**, the same shape and the same
+        // reason as `get_item_detail` beside it: reaching an archived item
+        // by its id still resolves, and its history is exactly the audit
+        // trail of how it came to be archived. It ranges over no set of
+        // items, so there is nothing here for it to leak *into* — the id
+        // has to be known already.
+        "get_item_history",
         // Aggregates intervention firings per catalogue entry. It ranges
         // over `intervention_events` and `intervention_scores` and returns
         // counts keyed by entry id — the same "ranges over no items" reason
@@ -1156,6 +1172,11 @@ describeIfDb("delete_item", () => {
         // archived task here was deliberately claimed before archiving, so
         // this is a real check and not a trivially empty one.
         get_fleet: {},
+        // Ranges over items across three states, so it is swept rather than
+        // exempted. The sweep's task sits at `plan_review`, which this read
+        // admits outright — so an archived row that slipped past the
+        // `archivedAt IS NULL` condition on that arm would show up here.
+        get_needs_you: { personId: "sweep-person" },
         loop_list: { itemId: project.id },
         list_areas: {},
         list_repos: {},

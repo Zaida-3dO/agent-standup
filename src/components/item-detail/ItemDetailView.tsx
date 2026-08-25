@@ -28,6 +28,7 @@
 // from a section that failed to load.
 import type { ReactNode } from "react";
 import type { DetailLoadState } from "@/lib/item-detail/state";
+import type { DetailHistoryEntry } from "@/lib/item-detail/types";
 import {
   artifactsForTab,
   currentTipCommitSha,
@@ -93,6 +94,20 @@ export interface ItemDetailViewProps {
   readonly historyPage?: number;
   readonly onHistoryPageChange?: (page: number) => void;
   /**
+   * History fetched from the server *beyond* the detail payload's window
+   * (T24), appended after it. Separate from `detail.history` so the
+   * snapshot the rest of the screen was drawn from stays identifiable —
+   * see `ItemDetailContainer`'s own note on why the two are not merged
+   * upstream.
+   */
+  readonly olderHistory?: readonly DetailHistoryEntry[];
+  /** Asks for the next page of older entries. */
+  readonly onLoadOlderHistory?: () => void;
+  readonly loadingOlderHistory?: boolean;
+  readonly olderHistoryError?: string | null;
+  /** Whether anything older than what is shown remains to be fetched. */
+  readonly hasOlderHistory?: boolean;
+  /**
    * The "confirm state" action's own submit state (MILESTONES.md #131).
    * Defaults to idle so a caller that does not wire it still renders the
    * button — same convention as `agentState`.
@@ -149,6 +164,11 @@ export function ItemDetailView({
   onHistoryTypeFilterChange,
   historyPage = 0,
   onHistoryPageChange,
+  olderHistory = [],
+  onLoadOlderHistory,
+  loadingOlderHistory = false,
+  olderHistoryError = null,
+  hasOlderHistory = false,
   verifyStateStatus = { status: "idle" },
   onVerifyState,
 }: ItemDetailViewProps) {
@@ -391,8 +411,22 @@ export function ItemDetailView({
         "activity",
         activeTab === "activity",
         <HistoryList
-          history={history}
-          truncated={historyTruncated}
+          /* The detail payload's window plus every older page fetched
+             since, in one newest-first list. Concatenated here rather than
+             in the container so `detail.history` stays exactly what the
+             server sent for the snapshot. */
+          history={olderHistory.length === 0 ? history : [...history, ...olderHistory]}
+          /* The static "this is only the newest N" notice is shown only
+             while there is genuinely no way to reach the rest. Once the
+             reader can fetch older pages, the pager's own "Load older"
+             affordance says it better — and leaving both up would tell a
+             reader the entries are unreachable while offering a button
+             that reaches them. */
+          truncated={historyTruncated && !hasOlderHistory && olderHistory.length === 0}
+          onLoadOlder={onLoadOlderHistory}
+          loadingOlder={loadingOlderHistory}
+          olderError={olderHistoryError}
+          hasOlder={hasOlderHistory}
           typeFilter={historyTypeFilter}
           onTypeFilterChange={onHistoryTypeFilterChange}
           page={historyPage}

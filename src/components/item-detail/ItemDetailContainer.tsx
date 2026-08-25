@@ -34,10 +34,12 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   fetchItemDetail,
+  fetchItemHistory,
   detailErrorMessageFrom,
   type DetailLoadState,
 } from "@/lib/item-detail/state";
 import { DEFAULT_TAB, hashForTab, tabFromHash, type DetailTab } from "@/lib/item-detail/tabs";
+import type { DetailHistoryEntry } from "@/lib/item-detail/types";
 import { fetchAgentView, agentViewErrorMessageFrom } from "@/lib/item-detail/orientation-state";
 import {
   fieldForEdit,
@@ -114,6 +116,31 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   const [historyTypeFilter, setHistoryTypeFilter] = useState<EventType | null>(null);
   const [historyPage, setHistoryPage] = useState(0);
 
+  // ── Older history, fetched from the server on demand (T24) ───────────
+  //
+  // The detail response carries the newest window of the ledger. Entries
+  // older than that window are reached by asking the server for them:
+  // `get_item_history` pages the same table with a keyset cursor, so a
+  // timeline of any depth is walkable from this screen.
+  //
+  // These hold the pages fetched *beyond* that window, appended in order,
+  // plus the cursor to continue from. They are deliberately separate from
+  // `loadState`: the detail payload is one coherent snapshot of the whole
+  // screen (see `get_item_detail`'s header) and folding later pages into it
+  // would quietly make it a mixture of snapshots while still looking like
+  // one. Kept apart, the older pages are plainly what they are — a
+  // continuation read, appended to the end of a list that is already
+  // ordered newest-first.
+  const [olderHistory, setOlderHistory] = useState<readonly DetailHistoryEntry[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  // Set only when a continuation page has come back reporting no next
+  // cursor. Distinct from `historyCursor === null`, which is also the
+  // *initial* value — conflating the two would render "no more history"
+  // before a single older page had been asked for.
+  const [exhaustedHistory, setExhaustedHistory] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState<string | null>(null);
+
   const onHistoryTypeFilterChange = useCallback((type: EventType | null) => {
     setHistoryTypeFilter(type);
     // A filter change can leave a page number past the end of the now
@@ -121,6 +148,55 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
     // not render as empty beneath a filter that has matches.
     setHistoryPage(0);
   }, []);
+
+  /**
+   * Fetches the next page of older history and appends it.
+   *
+   * The cursor starts as the id of the **oldest entry already on screen**,
+   * so the first continuation picks up exactly where the detail payload's
+   * window ended — no gap and no repetition. Thereafter it is whatever the
+   * previous page returned.
+   *
+   * Guarded against re-entry (`loadingOlder`) because the pager can be
+   * clicked again before a page lands, and two in-flight reads from the
+   * same cursor would append the same entries twice.
+   */
+  const onLoadOlderHistory = useCallback(() => {
+    if (loadingOlder) return;
+    if (loadState.status !== "loaded") return;
+    const loadedHistory = loadState.detail.history;
+    const cursor =
+      historyCursor ??
+      olderHistory[olderHistory.length - 1]?.id ??
+      loadedHistory[loadedHistory.length - 1]?.id;
+    if (cursor === undefined) return;
+    setLoadingOlder(true);
+    setOlderError(null);
+    fetchItemHistory(itemId, { cursor })
+      .then((page) => {
+        setLoadingOlder(false);
+        setOlderHistory((existing) => [...existing, ...page.entries]);
+        setHistoryCursor(page.nextCursor);
+        if (page.nextCursor === null) setExhaustedHistory(true);
+      })
+      .catch((err: unknown) => {
+        setLoadingOlder(false);
+        setOlderError(detailErrorMessageFrom(err));
+      });
+  }, [loadingOlder, loadState, historyCursor, olderHistory, itemId]);
+
+  /**
+   * Whether the ledger holds anything older than what is on screen.
+   *
+   * Before any continuation, the detail payload's `historyTruncated` is the
+   * only evidence — it is exactly the "there is more" fact
+   * `get_item_detail` reads one row past its cap to establish. Once a
+   * continuation has come back, the server's `nextCursor` supersedes it.
+   */
+  const hasOlderHistory =
+    !exhaustedHistory &&
+    (olderHistory.length > 0 ||
+      (loadState.status === "loaded" && loadState.detail.historyTruncated));
 
   // ── Inline edit — title, headline, priority, area (M10 T10) ───────────
   //
@@ -331,6 +407,19 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
       onHistoryTypeFilterChange={onHistoryTypeFilterChange}
       historyPage={historyPage}
       onHistoryPageChange={setHistoryPage}
+      olderHistory={olderHistory}
+      onLoadOlderHistory={onLoadOlderHistory}
+      loadingOlderHistory={loadingOlder}
+      olderHistoryError={olderError}
+      /* Whether anything older than what is on screen remains.
+         BEFORE the first continuation, the only evidence is the detail
+         payload's own `historyTruncated`. AFTER one, the server's
+         `nextCursor` is authoritative and `historyCursor` holds it — null
+         means the ledger is exhausted. The two cases are distinguished by
+         `exhaustedHistory`, which is set only once a page has come back,
+         so an unfetched `historyCursor` of null is never mistaken for
+         "there is no more". */
+      hasOlderHistory={hasOlderHistory}
       edit={{
         editingField,
         draft,

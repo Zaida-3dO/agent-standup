@@ -6,23 +6,27 @@
 // or a type filter *means* has to be a plain function to be directly
 // testable at all. `HistoryList.tsx` renders what these decide.
 //
-// ── Why this is client-side windowing over a capped read, not real paging ─
+// ── What this module pages, and what the server pages (T24) ─────────────
 //
-// `get_item_detail`'s `historyLimit` is a **cap on the newest N rows**, not
-// a cursor — there is no `offset`/`before` the API accepts (SCHEMA.md #72's
-// operation deliberately reads history in the same transaction as the rest
-// of the detail payload, so paging it independently would mean a second
-// read outside that transaction's snapshot). With up to 500 rows on one
-// item, loading a "page" therefore means slicing the array this module
-// already has, not issuing a second request — which is also why a filter
-// is applied AFTER the slice into pages: filtering first and paging the
-// filtered result would change page boundaries every time the filter
+// These functions window an array **the caller already holds**: they decide
+// which of the loaded entries are on screen, and nothing about which
+// entries exist to load.
+//
+// Reaching further down the ledger is the server's job.
+// `get_item_history` is a keyset-paged read of the same table, and
+// `ItemDetailContainer` fetches older pages from it on demand and appends
+// them to what the detail payload delivered. The two are complementary —
+// the server decides what is available, these decide what is displayed.
+//
+// The ordering rule below is unchanged and still load-bearing: a filter is
+// applied AFTER the slice into pages, because filtering first and paging
+// the filtered result would change page boundaries every time the filter
 // changed, which is the one thing a paginated list must not do underfoot.
 //
-// A ledger with more than `historyLimit` entries (`truncated`, per the
-// operation's own doc) still cannot show its oldest rows from this screen —
-// that gap is real and is called out in `HistoryList`'s truncation notice,
-// not hidden by this module pretending to page past it.
+// `HistoryList`'s truncation notice now renders only when there is
+// genuinely no way to reach the older entries — once a continuation is
+// available, the "load older" control says it better than a notice
+// claiming they are unreachable.
 import type { DetailHistoryEntry } from "./types";
 import type { EventType } from "@/lib/events";
 

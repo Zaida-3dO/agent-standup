@@ -39,6 +39,19 @@ export interface HistoryListProps {
   readonly page?: number;
   /** Called with the page a reader picked. */
   readonly onPageChange?: (page: number) => void;
+  /**
+   * Fetches the next page of entries older than the ones loaded (T24).
+   * Undefined on a caller that does not wire it, in which case no "load
+   * older" affordance renders at all — the same "defaulted, not required"
+   * convention the props above follow.
+   */
+  readonly onLoadOlder?: () => void;
+  /** True while a page of older entries is in flight. */
+  readonly loadingOlder?: boolean;
+  /** A failed continuation read, shown beside the control while the list stays on screen. */
+  readonly olderError?: string | null;
+  /** Whether anything older than what is loaded remains on the server. */
+  readonly hasOlder?: boolean;
 }
 
 /**
@@ -128,6 +141,10 @@ export function HistoryList({
   onTypeFilterChange,
   page = 0,
   onPageChange,
+  onLoadOlder,
+  loadingOlder = false,
+  olderError = null,
+  hasOlder = false,
 }: HistoryListProps) {
   const present = eventTypesPresent(history);
   const filtered = filterByType(history, typeFilter);
@@ -184,6 +201,29 @@ export function HistoryList({
                   `historyLimit` window — a filter that leaves three matches
                   in a 100-row window is one page, not four. */}
               {pager(page, filtered.length, onPageChange)}
+
+              {/* Server-side continuation (T24). The pager above moves
+                  within what is loaded; this fetches what is not. Rendered
+                  only when the server has said there is more, so it never
+                  offers to fetch a page that does not exist. */}
+              {hasOlder && onLoadOlder && (
+                <div className={styles.historyPager}>
+                  <button
+                    type="button"
+                    className={styles.historyPagerButton}
+                    disabled={loadingOlder}
+                    onClick={onLoadOlder}
+                    data-loading-older={loadingOlder}
+                  >
+                    {loadingOlder ? "Loading…" : "Load older entries"}
+                  </button>
+                </div>
+              )}
+              {olderError !== null && (
+                <p className={styles.truncated} role="alert">
+                  {olderError}
+                </p>
+              )}
             </>
           )}
 
