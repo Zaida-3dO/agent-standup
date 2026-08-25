@@ -15,7 +15,7 @@ import type { BoardLoadState } from "@/lib/board/state";
 import type { BoardColumnId } from "@/lib/board/types";
 import { BOARD_COLUMNS, needsYouCount, waitingSplit } from "@/lib/board/view";
 import { ErrorState } from "@/components/states/ErrorState";
-import { BoardColumn } from "./BoardColumn";
+import { BoardColumn, type SubtaskExpansion } from "./BoardColumn";
 import { DroppableColumn } from "./DroppableColumn";
 import { NeedsYouBadge } from "./NeedsYouBadge";
 import styles from "./Board.module.css";
@@ -34,6 +34,12 @@ export interface BoardViewProps {
   readonly drag?: BoardDragProps;
   /** The per-column paging wiring. Absent leaves every column unpaged. */
   readonly paging?: BoardPagingProps;
+  /**
+   * The subtask disclosure wiring — grouped for the same reason `paging` and
+   * the drag props are. Absent leaves every card collapsed with no
+   * disclosure control.
+   */
+  readonly expansion?: SubtaskExpansion;
   /** Retries the initial board load, offered by the error state. */
   readonly onRetry?: () => void;
   /** True when a filter is narrowing the board — lets an empty column say the filter did it. */
@@ -94,6 +100,7 @@ export function BoardView({
   now,
   drag,
   paging,
+  expansion,
   onRetry,
   filtered,
   onClearFilter,
@@ -179,6 +186,7 @@ export function BoardView({
             onShowMore={paging?.onShowMore}
             loadingMore={paging?.loadingColumns[column] === true}
             pageError={paging?.errors[column] ?? null}
+            expansion={expansion}
             filtered={filtered}
             onClearFilter={onClearFilter}
           />

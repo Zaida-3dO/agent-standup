@@ -272,9 +272,6 @@ describeIfDb("a board card counts the work beneath it", () => {
           datasourceUrl: scratchUrl,
           log: [{ emit: "event", level: "query" }],
         });
-        // @ts-expect-error — Prisma's `$on("query")` typing needs the log
-        // config to be statically known, which it is not through this
-        // constructor call.
         logged.$on("query", listener);
         const loggedRuntime = new ServiceRuntime({
           transaction: prismaTransactionRunner(logged),

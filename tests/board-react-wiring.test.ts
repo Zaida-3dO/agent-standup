@@ -88,7 +88,10 @@ function boardWithOneCard(): BoardData {
         column: "backlog",
         assignments: [],
         trust: null,
-        subtasks: null,
+        // A rollup, so the card renders its subtask disclosure control —
+        // the subject of the expansion case at the bottom of this file. The
+        // drag cases above are indifferent to it.
+        subtasks: { total: 2, done: 1 },
       },
     ]),
   };
@@ -109,6 +112,8 @@ function boardWithOneCard(): BoardData {
  * this file exists to test.
  */
 const transitionCalls: { url: string; body: unknown }[] = [];
+/** Every subtree-scoped board read — i.e. every subtask expansion fetch. */
+const subtaskCalls: { url: string; parentId: string }[] = [];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -118,6 +123,7 @@ beforeEach(() => {
   // `act` warns and the scheduling paths are not the ones we mean to drive.
   (globalThis as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   transitionCalls.length = 0;
+  subtaskCalls.length = 0;
   container = document.createElement("div");
   document.body.appendChild(container);
 
@@ -126,7 +132,48 @@ beforeEach(() => {
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : String(input);
       if (url.includes("/api/ui/board")) {
-        const column = new URL(url, "http://localhost").searchParams.get("column") ?? "backlog";
+        const parsed = new URL(url, "http://localhost");
+        const column = parsed.searchParams.get("column") ?? "backlog";
+        // A board read scoped to one row's subtree is an EXPANSION fetch,
+        // not the mount-time board load — `project` is the parameter that
+        // tells them apart, and recording it here is what lets the case at
+        // the bottom assert the press reached the network.
+        const scopedTo = parsed.searchParams.get("project");
+        if (scopedTo !== null) {
+          subtaskCalls.push({ url, parentId: scopedTo });
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () =>
+              Promise.resolve({
+                board: {
+                  columns: {
+                    [column]:
+                      column === "backlog"
+                        ? {
+                            entries: [
+                              {
+                                item: {
+                                  ...boardWithOneCard().backlog.entries[0]?.item,
+                                  id: "kid-1",
+                                  title: "A subtask of the card",
+                                },
+                                column: "backlog",
+                                assignments: [],
+                                trust: null,
+                                subtasks: null,
+                              },
+                            ],
+                            total: 1,
+                            nextCursor: null,
+                            withheld: false,
+                          }
+                        : { entries: [], total: 0, nextCursor: null, withheld: false },
+                  },
+                },
+              }),
+          } as Response);
+        }
         const board = boardWithOneCard();
         return Promise.resolve({
           ok: true,
@@ -259,5 +306,125 @@ describe("Board, mounted in real React", () => {
 
     const inProgress = container.querySelector<HTMLElement>('[data-column="in_progress"]');
     expect(inProgress?.textContent).toContain("A card");
+  });
+});
+
+/**
+ * The subtask disclosure, driven through real React.
+ *
+ * **Why this is here and not only in tests/board-subtask-card.test.ts.**
+ * That file proves `ItemCard` renders a button, that the button calls its
+ * handler with the right id, and that `BoardColumn` hands each card its own
+ * slice of the board's maps. Every one of those can be true while the
+ * feature is dead on the page: `Board` holds the state and issues the
+ * fetch, and nothing below it can tell whether it was wired up at all. A
+ * hand-rolled host that calls the handler directly would assert the same
+ * thing twice and prove the composition not at all — which is precisely the
+ * failure this file's header describes for the drag.
+ *
+ * So these press the actual rendered DOM node and assert on the actual
+ * network call.
+ */
+describe("expanding a card's subtasks, mounted in real React", () => {
+  /**
+   * The disclosure control as it is really rendered — never a stand-in.
+   *
+   * Searched from INSIDE the card rather than from the container: the filter
+   * bar also renders an `aria-expanded` button ("More filters"), and a
+   * document-wide selector finds that one first. A test that pressed it
+   * would report the feature broken while it worked, or — worse, had the
+   * order been the other way — pass without ever touching this control.
+   */
+  function toggle(): HTMLElement {
+    const card = container.querySelector<HTMLElement>(
+      '[data-column="backlog"] li[data-tone], [data-column="backlog"] li',
+    );
+    const button = card?.querySelector<HTMLElement>("button[aria-expanded]");
+    if (!button) {
+      throw new Error(
+        "no subtask disclosure rendered on the card — the fixture has no rollup, or the control is not wired",
+      );
+    }
+    return button;
+  }
+
+  it("renders a disclosure control for a card that has subtasks", async () => {
+    // Guards the guard, exactly as the drag block above does: if the badge
+    // stopped rendering, this fails first and names why rather than letting
+    // the cases below pass vacuously.
+    await mountBoard();
+    expect(toggle().textContent).toContain("2 subtasks");
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("fetches that card's subtasks when the control is pressed", async () => {
+    // **The composition assertion.** Nothing under `Board` can prove this:
+    // `ItemCard` only knows it called a function it was handed, and if
+    // `Board` passed no `expansion` prop at all, every unit test in
+    // tests/board-subtask-card.test.ts would still pass while a press did
+    // nothing whatsoever.
+    await mountBoard();
+    await act(async () => {
+      toggle().click();
+    });
+
+    expect(subtaskCalls).toHaveLength(4);
+    // Scoped to THIS card's subtree — a fetch that dropped the scope would
+    // return the whole board and render every item as this card's subtask.
+    expect(subtaskCalls.every((call) => call.parentId === "item-a")).toBe(true);
+    // ...and NOT narrowed to the board's level default, which would exclude
+    // the very rows being asked for and return nothing every time while
+    // looking like it worked.
+    //
+    // Asserted as "the level that arrived widens", not as "no level
+    // arrived": `boardRequestParams` writes a level into EVERY request by
+    // design, so absence is not a state this URL can be in, and an
+    // absence-based assertion would pass only while the request was
+    // malformed. `exclude:` is the widening form — it parses to no level
+    // filter at all server-side.
+    const levels = subtaskCalls.map((call) =>
+      new URL(call.url, "http://localhost").searchParams.get("level"),
+    );
+    expect(levels).toEqual(["exclude:", "exclude:", "exclude:", "exclude:"]);
+    // Named explicitly, because this exact value is what a `level: undefined`
+    // regression would silently put back.
+    expect(levels).not.toContain("include:1");
+  });
+
+  it("shows the fetched subtasks under the card, and reports itself as expanded", async () => {
+    // The request being issued is not the feature; the subtasks appearing is.
+    await mountBoard();
+    await act(async () => {
+      toggle().click();
+    });
+
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    const card = container.querySelector<HTMLElement>('[draggable="true"]');
+    // Nested INSIDE the parent card, which is what "expands in place" means.
+    expect(card?.textContent).toContain("A subtask of the card");
+  });
+
+  it("collapses again on a second press, without re-fetching", async () => {
+    // The cache half. A toggle that re-requested on every open would put a
+    // network round trip behind a purely visual control.
+    await mountBoard();
+    await act(async () => {
+      toggle().click();
+    });
+    const afterOpen = subtaskCalls.length;
+
+    await act(async () => {
+      toggle().click();
+    });
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    const card = container.querySelector<HTMLElement>('[draggable="true"]');
+    expect(card?.textContent).not.toContain("A subtask of the card");
+
+    await act(async () => {
+      toggle().click();
+    });
+    expect(subtaskCalls).toHaveLength(afterOpen);
+    const reopened = container.querySelector<HTMLElement>('[draggable="true"]');
+    expect(reopened?.textContent).toContain("A subtask of the card");
   });
 });

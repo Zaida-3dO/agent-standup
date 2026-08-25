@@ -28,12 +28,13 @@ import { useProfile } from "@/lib/profile/ProfileProvider";
 import {
   fetchBoard,
   fetchBoardColumn,
+  fetchSubtasks,
   boardErrorMessageFrom,
   type BoardLoadState,
 } from "@/lib/board/state";
 import { emptyBoard } from "@/lib/board/view";
 import { boardWithPage } from "@/lib/board/paging";
-import type { BoardColumnId } from "@/lib/board/types";
+import type { BoardColumnId, BoardEntry } from "@/lib/board/types";
 import { requestMove } from "@/lib/board/move";
 import { handleDrop } from "@/lib/board/drop-handler";
 import {
@@ -97,6 +98,21 @@ export function Board() {
    * the render took. Feeds each card's presence "last active" caption.
    */
   const [now, setNow] = useState(0);
+
+  // **The subtask disclosure state.** The board hides everything below level
+  // 1 and each card states how much it holds; these four are what happens
+  // when a reader opens one.
+  //
+  // Held here rather than in the card because `ItemCard` is hook-free by
+  // design (see its header), and held as four collections keyed by id rather
+  // than one object per card because that is the shape a column can hand
+  // down without allocating a per-card object on every render.
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [subtasksByParent, setSubtasksByParent] = useState<
+    ReadonlyMap<string, readonly BoardEntry[]>
+  >(() => new Map());
+  const [subtasksLoading, setSubtasksLoading] = useState<ReadonlySet<string>>(() => new Set());
+  const [subtaskErrors, setSubtaskErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
 
   // **The ref is the authoritative copy; `drag` is what renders.**
   //
@@ -210,6 +226,65 @@ export function Board() {
     [applyDrag, boardQuery],
   );
 
+  /**
+   * Opens or closes one card's subtasks, fetching them the first time.
+   *
+   * **Fetched once and kept.** A second open of the same card renders what
+   * was already fetched rather than re-requesting it: the rollup badge is
+   * the thing that has to be current on every board load, and the list
+   * behind a disclosure the reader is toggling is not worth a request per
+   * toggle. A board reload clears the cache, because the whole effect that
+   * loads the board resets this state — see the `boardQuery` effect.
+   *
+   * **A failed fetch is retried on the next open**, which falls out of
+   * caching only on success: nothing is written to `subtasksByParent` when
+   * the request throws, so the `has` check below is false again next time.
+   */
+  const onToggleExpanded = useCallback(
+    (itemId: string) => {
+      let opening = false;
+      setExpandedIds((current) => {
+        const next = new Set(current);
+        if (next.has(itemId)) {
+          next.delete(itemId);
+        } else {
+          next.add(itemId);
+          opening = true;
+        }
+        return next;
+      });
+      // Closing costs nothing and fetches nothing; an already-fetched card
+      // re-renders from what it has.
+      if (!opening || subtasksByParent.has(itemId)) return;
+
+      setSubtasksLoading((current) => new Set(current).add(itemId));
+      // Cleared on the attempt rather than on its success, for the reason
+      // `onShowMore` gives: a stale failure left on screen during a retry
+      // reports itself as the current one.
+      setSubtaskErrors((current) => {
+        const next = new Map(current);
+        next.delete(itemId);
+        return next;
+      });
+
+      void fetchSubtasks(itemId, { query: boardQuery })
+        .then((entries) => {
+          setSubtasksByParent((current) => new Map(current).set(itemId, entries));
+        })
+        .catch((err: unknown) => {
+          setSubtaskErrors((current) => new Map(current).set(itemId, boardErrorMessageFrom(err)));
+        })
+        .finally(() => {
+          setSubtasksLoading((current) => {
+            const next = new Set(current);
+            next.delete(itemId);
+            return next;
+          });
+        });
+    },
+    [boardQuery, subtasksByParent],
+  );
+
   const onDrop = useCallback(
     (column: BoardColumnId) => {
       // The decision itself lives in `handleDrop` (`@/lib/board/drop-handler`)
@@ -317,6 +392,13 @@ export function Board() {
             onShowMore,
             loadingColumns,
             errors: pageErrors,
+          }}
+          expansion={{
+            expandedIds,
+            onToggle: onToggleExpanded,
+            childrenByParent: subtasksByParent,
+            loadingIds: subtasksLoading,
+            errorsByParent: subtaskErrors,
           }}
           drag={{
             onCardDragStart,

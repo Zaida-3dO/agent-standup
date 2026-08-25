@@ -13,7 +13,7 @@
 //
 // Hook-free and prop-driven so it can be called directly in a test; see
 // `TopBar.tsx`'s header.
-import type { BoardColumnId, BoardSection } from "@/lib/board/types";
+import type { BoardColumnId, BoardEntry, BoardSection } from "@/lib/board/types";
 import { columnCount, columnTitle, needsYou, type WaitingSplit } from "@/lib/board/view";
 import { hasMore } from "@/lib/board/paging";
 import { acceptsDrop } from "@/lib/board/drag";
@@ -88,6 +88,36 @@ export interface BoardColumnProps {
    * of `dnd-kit` and stays callable as a plain function in a test.
    */
   readonly cardComponent?: typeof ItemCard;
+  /**
+   * Which cards are expanded and what is under them — see `SubtaskExpansion`.
+   *
+   * One prop rather than five parallel ones because they are one thing: a
+   * card is expanded, its children are loading, they arrived, or they
+   * failed, and those states are only meaningful together. Absent leaves
+   * every card collapsed with no disclosure control, which is the board
+   * without this feature wired up.
+   */
+  readonly expansion?: SubtaskExpansion;
+}
+
+/**
+ * The board's subtask disclosure state, as a column hands it to its cards.
+ *
+ * Keyed by item id rather than held per card because the owner is the board
+ * — `ItemCard` is hook-free (see its header), so it cannot hold this
+ * itself, and a column is just the thing passing it through.
+ */
+export interface SubtaskExpansion {
+  /** The ids in the expanded state. */
+  readonly expandedIds: ReadonlySet<string>;
+  /** Toggles one card open or closed. */
+  readonly onToggle: (itemId: string) => void;
+  /** The fetched children, by parent id. A missing key means "not fetched", which is not the same as empty. */
+  readonly childrenByParent: ReadonlyMap<string, readonly BoardEntry[]>;
+  /** The ids whose children are in flight. */
+  readonly loadingIds: ReadonlySet<string>;
+  /** Why one card's children could not be fetched, by parent id. */
+  readonly errorsByParent: ReadonlyMap<string, string>;
 }
 
 /** The singular noun a column's states talk about. */
@@ -114,6 +144,7 @@ export function BoardColumn({
   dropRef,
   showPlaceholder,
   cardComponent,
+  expansion,
 }: BoardColumnProps) {
   const entries = section.entries;
   // Waiting accepts no drops at all — both its states need fields a drag
@@ -244,6 +275,14 @@ export function BoardColumn({
                 onDragStart={onCardDragStart}
                 onDragEnd={onCardDragEnd}
                 pending={pendingItemId === entry.item.id}
+                // The disclosure state for THIS card, unpacked from the
+                // board's maps here so `ItemCard` stays a plain function of
+                // its own props and never reads a collection it is not in.
+                expanded={expansion?.expandedIds.has(entry.item.id)}
+                onToggleExpanded={expansion?.onToggle}
+                childrenLoading={expansion?.loadingIds.has(entry.item.id)}
+                childrenError={expansion?.errorsByParent.get(entry.item.id) ?? null}
+                subtaskEntries={expansion?.childrenByParent.get(entry.item.id)}
               />
             ))}
             {/* The landing site (T6-A) — where the card will go if it is
