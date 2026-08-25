@@ -74,6 +74,29 @@ export interface PaletteApi {
   readonly openPalette: () => void;
   readonly openCreate: () => void;
   readonly openHelp: () => void;
+  /**
+   * Whether a modal overlay is covering the page right now.
+   *
+   * **Why a feature that opens overlays also reports that it has.** The
+   * undo toast sits at `z-index: 50`, deliberately beneath every overlay
+   * here (60/70) so that a modal stays modal. The consequence measured in
+   * a browser is that an undo offered while one of these is open is
+   * visible through the scrim and completely unclickable —
+   * `elementFromPoint` at the centre of the button returns the backdrop.
+   *
+   * The toast cannot fix that by rendering higher without breaking the
+   * modality the layering exists to protect, so it has to know instead:
+   * it suppresses itself and freezes its window while this is true. See
+   * `@/lib/undo/suspension` for the whole argument, and `UndoToastHost`
+   * for the consumption.
+   *
+   * This is the one piece of overlay state worth exposing, and it is
+   * exposed as a single boolean rather than the `Overlay` union on
+   * purpose: a consumer that could see *which* overlay is open would
+   * start branching on it, and nothing outside this file has any business
+   * knowing the difference between the palette and the help sheet.
+   */
+  readonly overlayOpen: boolean;
 }
 
 /**
@@ -82,7 +105,16 @@ export interface PaletteApi {
  * the same reason: a missing overlay is a missing convenience, a thrown
  * error takes down the page that was trying to offer it.
  */
-const NO_PALETTE: PaletteApi = { openPalette: () => {}, openCreate: () => {}, openHelp: () => {} };
+const NO_PALETTE: PaletteApi = {
+  openPalette: () => {},
+  openCreate: () => {},
+  openHelp: () => {},
+  // No provider means no overlay this hook could know about. `false` is the
+  // truthful default rather than the convenient one: a toast reading this
+  // outside the host is on a page with no palette mounted, so nothing here
+  // is covering it.
+  overlayOpen: false,
+};
 
 const PaletteContext = createContext<PaletteApi>(NO_PALETTE);
 
@@ -186,9 +218,15 @@ export function PaletteHost({ children }: { children: ReactNode }) {
     open("create");
   }, [open]);
 
+  // Derived from the single `overlay` value, which is why that value being
+  // one field rather than three booleans matters here too: "is anything
+  // open" is one comparison that cannot drift out of step with the flags it
+  // summarises.
+  const overlayOpen = overlay !== "none";
+
   const api = useMemo<PaletteApi>(
-    () => ({ openPalette, openCreate, openHelp }),
-    [openPalette, openCreate, openHelp],
+    () => ({ openPalette, openCreate, openHelp, overlayOpen }),
+    [openPalette, openCreate, openHelp, overlayOpen],
   );
 
   const itemId = itemIdFromPath(pathname);
