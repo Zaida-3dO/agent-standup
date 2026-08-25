@@ -238,9 +238,10 @@ jobs:
           RELEASE_TAG: ${{ needs.tag.outputs.tag }}
         run: |
           set -euo pipefail
-          echo "APP_VERSION=$(node scripts/version-from-tag.mjs "$RELEASE_TAG")" >> "$GITHUB_ENV"
+
+          version="$(node scripts/version-from-tag.mjs "$RELEASE_TAG")"
           # ISO-8601 UTC, matching the format of the OCI `created` label.
-          echo "APP_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           # The sha of the tree this job actually checked out — NOT
           # `github.sha`, which is the commit the workflow was *triggered*
           # from. On a manual dispatch those differ: the `tag` job creates
@@ -249,7 +250,17 @@ jobs:
           # can move mid-run. Baking `github.sha` would report a commit the
           # image was not built from, which is a more dangerous lie than
           # the missing version this row exists to fix.
-          echo "APP_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          revision="$(git rev-parse HEAD)"
+
+          # One redirect rather than three (shellcheck SC2129). The command
+          # substitutions above run first and `set -e` aborts on any
+          # failure, so a bad tag still stops the release before anything
+          # is written.
+          {
+            echo "APP_VERSION=$version"
+            echo "APP_BUILD_TIME=$build_time"
+            echo "APP_REVISION=$revision"
+          } >> "$GITHUB_ENV"
       - uses: docker/build-push-action@v7
         with:
           context: .

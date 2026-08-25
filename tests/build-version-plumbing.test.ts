@@ -88,7 +88,11 @@ describe("the release workflow passes the build's identity to the image", () => 
     // version. A `${TAG#v}` written inline here would be a second reading
     // that can disagree about a prerelease tag.
     expect(workflow).toContain("scripts/version-from-tag.mjs");
-    expect(workflow).toMatch(/APP_VERSION=\$\(node scripts\/version-from-tag\.mjs/);
+    // The version written into the environment must be the one that script
+    // produced, so assert the assignment chain rather than just that the
+    // script is mentioned somewhere in the file.
+    expect(workflow).toMatch(/version="\$\(node scripts\/version-from-tag\.mjs "\$RELEASE_TAG"\)"/);
+    expect(workflow).toContain('echo "APP_VERSION=$version"');
   });
 
   it("takes the revision from the checked-out tree, not the triggering ref", () => {
@@ -97,7 +101,9 @@ describe("the release workflow passes the build's identity to the image", () => 
     // job checks that tag out explicitly, so the two can be different
     // commits — baking `github.sha` would report a sha the image was not
     // built from, a worse lie than the missing version this replaced.
-    expect(workflow).toMatch(/APP_REVISION=\$\(git rev-parse HEAD\)/);
+    expect(workflow).toMatch(/revision="\$\(git rev-parse HEAD\)"/);
+    expect(workflow).toContain('echo "APP_REVISION=$revision"');
+    // The mutation that matters: `github.sha` must not be what gets baked.
     expect(workflow).not.toMatch(/APP_REVISION=\$\{\{ github\.sha \}\}/);
   });
 });
