@@ -126,6 +126,11 @@ import { listAreas } from "./operations/list-areas";
 import { getArea } from "./operations/get-area";
 import { createArea } from "./operations/create-area";
 import { updateArea } from "./operations/update-area";
+// De-duplicating merge (split from row `6b2fb637`) — folds one area's
+// membership into another without colliding on `ItemArea`'s composite key
+// for an item that already holds both. See that file's header for why this
+// is not `update_area` with a flag.
+import { mergeAreas } from "./operations/merge-areas";
 import { listMachines } from "./operations/list-machines";
 import { readiness } from "./operations/readiness";
 import { getMachine } from "./operations/get-machine";
@@ -249,6 +254,7 @@ export const OPERATION_REGISTRY = {
   [getArea.name]: getArea,
   [createArea.name]: createArea,
   [updateArea.name]: updateArea,
+  [mergeAreas.name]: mergeAreas,
   [deleteArea.name]: deleteArea,
   [listMachines.name]: listMachines,
   [readiness.name]: readiness,
