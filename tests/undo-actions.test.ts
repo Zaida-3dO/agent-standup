@@ -18,8 +18,31 @@ import {
   inverseOf,
   isWithinWindow,
   remainingMs,
+  type UndoStep,
+  type UndoTransitionStep,
   type UndoableAction,
 } from "@/lib/undo";
+
+/**
+ * Narrows a step to the transition arm, failing the test if it is not one.
+ *
+ * Needed because `UndoStep` became a discriminated union when archive gained
+ * a real inverse: a restore step carries no `to` and no `expectedFrom`, so
+ * the assertions below cannot reach those fields without first establishing
+ * which kind they have.
+ *
+ * It **strengthens** the assertions rather than working around the type. The
+ * checks below were already asserting the right things; each one now also
+ * asserts that the step is a transition at all, so an `inverseOf` that
+ * started returning a restore step for a state change — which would type-check
+ * and would produce a step with the right item id — fails here instead of
+ * silently satisfying an `itemId` assertion.
+ */
+function asTransition(step: UndoStep): UndoTransitionStep {
+  expect(step.kind).toBe("transition");
+  if (step.kind !== "transition") throw new Error("expected a transition step");
+  return step;
+}
 
 /** A move with `from` and `to` deliberately distinct, so a transposition is visible. */
 const aMove = { itemId: "item-1", from: "executing", to: "in_review" } as const;
@@ -39,9 +62,9 @@ describe("inverseOf — state change", () => {
     expect(plan.steps).toHaveLength(1);
     // The whole correctness claim, asserted as two separate facts rather
     // than one object match: `to` must be the ORIGINAL `from`.
-    expect(plan.steps[0]!.to).toBe("executing");
+    expect(asTransition(plan.steps[0]!).to).toBe("executing");
     // ...and the precondition must be where the action LEFT it.
-    expect(plan.steps[0]!.expectedFrom).toBe("in_review");
+    expect(asTransition(plan.steps[0]!).expectedFrom).toBe("in_review");
     expect(plan.steps[0]!.itemId).toBe("item-1");
   });
 
@@ -51,7 +74,7 @@ describe("inverseOf — state change", () => {
     // the only thing catching it. This states the property itself.
     const plan = inverseOf(aStateChange);
     if (!plan.available) throw new Error("expected an available plan");
-    const step = plan.steps[0]!;
+    const step = asTransition(plan.steps[0]!);
     expect(step.to).not.toBe(step.expectedFrom);
     expect(step.to).toBe(aMove.from);
     expect(step.expectedFrom).toBe(aMove.to);
@@ -90,7 +113,7 @@ describe("inverseOf — bulk", () => {
     // the first move's `from` for all of them.
     const plan = inverseOf(aBulk);
     if (!plan.available) throw new Error("expected an available plan");
-    expect(plan.steps.map((step) => [step.itemId, step.to])).toEqual([
+    expect(plan.steps.map((step) => [step.itemId, asTransition(step).to])).toEqual([
       ["item-1", "executing"],
       ["item-2", "on_deck"],
       ["item-3", "planning"],
@@ -100,7 +123,7 @@ describe("inverseOf — bulk", () => {
   it("preconditions every step on the state the bulk drove them to", () => {
     const plan = inverseOf(aBulk);
     if (!plan.available) throw new Error("expected an available plan");
-    expect(plan.steps.map((step) => step.expectedFrom)).toEqual([
+    expect(plan.steps.map((step) => asTransition(step).expectedFrom)).toEqual([
       "in_review",
       "in_review",
       "in_review",
@@ -130,20 +153,39 @@ describe("inverseOf — bulk", () => {
 });
 
 describe("inverseOf — archive", () => {
-  it("is unavailable, and says why", () => {
-    // There is no unarchive path in the service layer: `delete_item` sets
-    // `archivedAt` and never clears it, and `update_item`'s schema is
-    // `.strict()` without the field. The toast shows no button rather than
-    // one that would fail.
-    const plan = inverseOf({
-      kind: "archive",
-      at: 1_000,
-      itemId: "item-1",
-      itemTitle: "A duplicate",
-    });
-    expect(plan.available).toBe(false);
-    if (plan.available) return;
-    expect(plan.reason).toContain("cannot be undone");
+  // Archive had no inverse when this file was written: nothing in the
+  // service cleared `archivedAt`, so the honest plan was an unavailable one
+  // and the toast showed no button. `restore_item` closed that gap, and
+  // these assert the inverse it now has.
+  const anArchive: UndoableAction = {
+    kind: "archive",
+    at: 1_000,
+    itemId: "item-1",
+    itemTitle: "A duplicate",
+  };
+
+  it("is available, and restores the item", () => {
+    const plan = inverseOf(anArchive);
+    expect(plan.available).toBe(true);
+    if (!plan.available) return;
+    expect(plan.steps).toHaveLength(1);
+    expect(plan.steps[0]!.itemId).toBe("item-1");
+  });
+
+  it("is a restore, NOT a transition", () => {
+    // The distinction this test exists for. A restore puts the row back in
+    // whatever state it already held, so an implementation that modelled it
+    // as a transition would have to invent a target state and would MOVE an
+    // item the person only wanted un-hidden. Asserting the discriminant
+    // catches that directly; asserting only `itemId` above would not.
+    const plan = inverseOf(anArchive);
+    if (!plan.available) throw new Error("expected an available plan");
+    const step = plan.steps[0]!;
+    expect(step.kind).toBe("restore");
+    // And it carries no state fields at all — a restore has nothing for an
+    // `expectedFrom` to guard, so their absence is part of the claim.
+    expect(step).not.toHaveProperty("to");
+    expect(step).not.toHaveProperty("expectedFrom");
   });
 });
 
@@ -187,19 +229,24 @@ describe("canUndo", () => {
     // button being shown when pressing it cannot work.
     const inWindow = 1_000;
     const expired = 1_000 + UNDO_WINDOW_MS;
-    const archive: UndoableAction = {
-      kind: "archive",
+    // A no-op move, which is the remaining action with no inverse now that
+    // archive has one. It has to be an action `inverseOf` genuinely refuses,
+    // or the "no inverse" half of this test asserts nothing — an archive
+    // here would now be available and would make the third expectation pass
+    // for the wrong reason.
+    const noOp: UndoableAction = {
+      kind: "state-change",
       at: 1_000,
-      itemId: "item-1",
-      itemTitle: "A duplicate",
+      move: { itemId: "item-1", from: "executing", to: "executing" },
+      itemTitle: "Went nowhere",
     };
 
     expect(canUndo(aStateChange, inWindow)).toBe(true);
     // Window shut, inverse fine.
     expect(canUndo(aStateChange, expired)).toBe(false);
     // Window open, no inverse.
-    expect(canUndo(archive, inWindow)).toBe(false);
+    expect(canUndo(noOp, inWindow)).toBe(false);
     // Neither.
-    expect(canUndo(archive, expired)).toBe(false);
+    expect(canUndo(noOp, expired)).toBe(false);
   });
 });

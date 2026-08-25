@@ -113,11 +113,43 @@ export type UndoableAction =
  * it goes back to, which is where the action moved it *from*. The inversion
  * is exactly that swap — see `inverseOf`.
  */
-export interface UndoStep {
+export interface UndoTransitionStep {
+  readonly kind: "transition";
   readonly itemId: string;
   readonly to: ItemStateValue;
   readonly expectedFrom: ItemStateValue;
 }
+
+/**
+ * Undoing an archive, which is `restore_item` rather than a transition.
+ *
+ * **A restore is not a move, and this type exists so that stays true.** The
+ * server puts the row back in whatever state it held when it was archived;
+ * nothing about its state changes, so there is no `to` and nothing for an
+ * `expectedFrom` to guard. Modelling it as a transition would have required
+ * inventing a target state for it, and the undo would then have *moved* an
+ * item that the person only wanted un-hidden.
+ *
+ * It carries no staleness check for the same reason. `expectedFrom` protects
+ * a transition against someone else having moved the item in the meantime;
+ * the equivalent race here is someone else having already restored the row,
+ * and `restore_item` treats that as success rather than as a conflict — the
+ * outcome the caller wanted is the outcome that holds.
+ */
+export interface UndoRestoreStep {
+  readonly kind: "restore";
+  readonly itemId: string;
+}
+
+/**
+ * One step of an undo.
+ *
+ * A discriminated union rather than a single shape with optional fields,
+ * because the two steps go to different endpoints with different bodies, and
+ * `kind` is what lets the request runner dispatch on that without inspecting
+ * which fields happen to be present.
+ */
+export type UndoStep = UndoTransitionStep | UndoRestoreStep;
 
 /**
  * What undoing an action would take.
@@ -135,21 +167,23 @@ export type UndoPlan =
 /**
  * The inverse of `action` — the transitions that would put things back.
  *
- * **Why archive has no inverse, and why that is stated rather than hidden.**
- * Archiving is `delete_item`, which sets `archivedAt` and never clears it
- * (`src/lib/service/operations/delete-item.ts`: "archive, never delete").
- * There is no unarchive operation in the service layer — `update_item`'s
- * input schema is `.strict()` and does not accept `archivedAt`, so the
- * generic edit path cannot clear it either. Undo therefore genuinely
- * cannot reverse an archive, and the honest thing is to say so and show
- * no button, rather than offer one that would fail when pressed. That is
- * the same principle an expired window follows: a button that cannot do
- * anything is worse than no button, so the capability the server lacks is
- * stated rather than papered over.
+ * **Archive now has an inverse.** It did not when this was written: there
+ * was no operation anywhere in the service that cleared `archivedAt`, so
+ * undo genuinely could not reverse an archive and this returned an
+ * unavailable plan whose reason said so — which was honest, and left a
+ * person who archived the wrong row with no way back through the product.
+ * `restore_item` closed that gap, and `archive` now returns a real plan.
  *
- * When a restore path lands, this becomes the one place that changes:
- * `archive` starts returning an available plan, and every caller — the
- * toast, the window check, the request runner — already handles it.
+ * The plan it returns is a **restore step, not a transition**, and that
+ * distinction is the substance of the change rather than an implementation
+ * detail: a restore puts the row back in whatever state it already held,
+ * so there is no state to move it to and no `expectedFrom` to check. See
+ * `UndoRestoreStep`.
+ *
+ * What has NOT changed is the principle the unavailable branch stood on: a
+ * button that cannot work is worse than no button. The two remaining
+ * unavailable cases below are still real, and are still stated rather than
+ * papered over.
  */
 export function inverseOf(action: UndoableAction): UndoPlan {
   switch (action.kind) {
@@ -166,7 +200,7 @@ export function inverseOf(action: UndoableAction): UndoPlan {
       }
       return {
         available: true,
-        steps: [{ itemId: move.itemId, to: move.from, expectedFrom: move.to }],
+        steps: [{ kind: "transition", itemId: move.itemId, to: move.from, expectedFrom: move.to }],
       };
     }
     case "bulk": {
@@ -175,16 +209,26 @@ export function inverseOf(action: UndoableAction): UndoPlan {
       // really moved and leave the rest alone.
       const steps = action.moves
         .filter((move) => move.from !== move.to)
-        .map((move) => ({ itemId: move.itemId, to: move.from, expectedFrom: move.to }));
+        .map((move) => ({
+          kind: "transition" as const,
+          itemId: move.itemId,
+          to: move.from,
+          expectedFrom: move.to,
+        }));
       if (steps.length === 0) {
         return { available: false, reason: "That did not change anything." };
       }
       return { available: true, steps };
     }
     case "archive":
+      // No no-op exclusion of the kind the two branches above carry, and
+      // none is needed: an archive that found the row already archived is
+      // still an archive the person performed, and `restore_item` reports
+      // an already-live row as a no-op success rather than as an error. So
+      // there is no case here where the button would be shown and fail.
       return {
-        available: false,
-        reason: "Archiving cannot be undone — the item is still readable by its id.",
+        available: true,
+        steps: [{ kind: "restore", itemId: action.itemId }],
       };
   }
 }
