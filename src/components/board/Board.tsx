@@ -37,6 +37,7 @@ import { boardWithPage } from "@/lib/board/paging";
 import type { BoardColumnId, BoardEntry } from "@/lib/board/types";
 import { requestMove } from "@/lib/board/move";
 import { handleDrop } from "@/lib/board/drop-handler";
+import { useUndo } from "@/components/toast";
 import {
   boardReplaced,
   dragEnded,
@@ -61,6 +62,9 @@ import { DragLayer } from "./DragLayer";
 
 export function Board() {
   const { activeProfile } = useProfile();
+  // Resolves to the host mounted in `AppShell`; outside a provider it is the
+  // documented no-op, so a `Board` rendered in a fragment still drops.
+  const { offer } = useUndo();
   const router = useRouter();
   const reducedMotion = useReducedMotion();
   const searchParams = useSearchParams();
@@ -108,6 +112,13 @@ export function Board() {
   // than one object per card because that is the shape a column can hand
   // down without allocating a per-card object on every render.
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  // The expansion set, readable synchronously by an event handler.
+  //
+  // Written together with `expandedIds` and never separately, so the two
+  // cannot diverge — this is the same value in a form a handler can read
+  // *before* the next render, not a second source of truth. `onToggleExpanded`
+  // needs that: see its comment for the defect this removes.
+  const expandedRef = useRef<ReadonlySet<string>>(expandedIds);
   const [subtasksByParent, setSubtasksByParent] = useState<
     ReadonlyMap<string, readonly BoardEntry[]>
   >(() => new Map());
@@ -233,8 +244,13 @@ export function Board() {
    * was already fetched rather than re-requesting it: the rollup badge is
    * the thing that has to be current on every board load, and the list
    * behind a disclosure the reader is toggling is not worth a request per
-   * toggle. A board reload clears the cache, because the whole effect that
-   * loads the board resets this state — see the `boardQuery` effect.
+   * toggle. The cache lives for as long as this component is mounted: the
+   * `boardQuery` effect loads a new board but does not reset the expansion
+   * state, so a filter change leaves an open card's fetched list in place.
+   * That is a stale-list window rather than a correctness problem — the
+   * rollup badge above it is re-read on every load — but it is not the
+   * "cleared on reload" this comment used to claim, and a reader relying on
+   * that claim would look for a reset that is not there.
    *
    * **A failed fetch is retried on the next open**, which falls out of
    * caching only on success: nothing is written to `subtasksByParent` when
@@ -242,17 +258,39 @@ export function Board() {
    */
   const onToggleExpanded = useCallback(
     (itemId: string) => {
-      let opening = false;
-      setExpandedIds((current) => {
-        const next = new Set(current);
-        if (next.has(itemId)) {
-          next.delete(itemId);
-        } else {
-          next.add(itemId);
-          opening = true;
-        }
-        return next;
-      });
+      // **Decided BEFORE `setExpandedIds`, from a ref — not inside the
+      // updater.**
+      //
+      // This is the shape of #128, which has now shipped three times: a value
+      // assigned inside a `setState` updater and read on the line after it.
+      // An updater is not a callback that runs when you call it. React
+      // evaluates one eagerly only when no update is already pending on the
+      // fiber and defers it otherwise — and this component always has one
+      // pending (the mount-time board load alone leaves a lane, and every
+      // `onDragEnter` adds another). Under StrictMode it is additionally
+      // invoked **twice**, so a second pass sees a `current` this handler has
+      // already advanced and takes the opposite branch. Either way the outer
+      // variable is still `false` on the next line, the early return fires,
+      // and **no request is ever sent** — leaving the card on
+      // "Loading subtasks…" with nothing in flight to end it.
+      //
+      // The ref is readable *now*, synchronously, so the decision to fetch is
+      // made from a value the handler actually has rather than from one it
+      // hopes an updater will have written by the time it looks. The updater
+      // below becomes what an updater is required to be — a pure function of
+      // its argument, safe to invoke any number of times.
+      const opening = !expandedRef.current.has(itemId);
+      const next = new Set(expandedRef.current);
+      if (opening) {
+        next.add(itemId);
+      } else {
+        next.delete(itemId);
+      }
+      // Both advance together, so a second toggle in the same tick sees the
+      // first one's result instead of racing a re-render.
+      expandedRef.current = next;
+      setExpandedIds(next);
+
       // Closing costs nothing and fetches nothing; an already-fetched card
       // re-renders from what it has.
       if (!opening || subtasksByParent.has(itemId)) return;
@@ -320,11 +358,21 @@ export function Board() {
           write: (next) => applyDrag(() => next),
           update: applyDrag,
           move: requestMove,
+          // **The undo offer — the reason a drag is reversible at all.**
+          //
+          // `offer` is the whole public surface of `@/lib/undo`, and until
+          // this line nothing in the app called it: the toast was mounted at
+          // the shell and every reference to `offer` outside its own module
+          // was a comment, so no action could ever be undone. Handed to
+          // `handleDrop` rather than called here because only that function
+          // knows both ends of the move — the pre-drop entry and the state
+          // the server confirmed.
+          offerUndo: offer,
         },
         column,
       );
     },
-    [applyDrag],
+    [applyDrag, offer],
   );
 
   const loadState: BoardLoadState =

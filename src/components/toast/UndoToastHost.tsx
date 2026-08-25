@@ -196,11 +196,15 @@ export function UndoToastHost({ children }: { children: ReactNode }) {
     const id = ++requestId.current;
     void runUndo(plan).then((outcome) => {
       if (id !== requestId.current) return;
-      setState((current) => {
-        const settled = undoSettled(current, outcome);
-        latestState.current = settled;
-        return settled;
-      });
+      // Settled the same way the press was decided: from the ref, before the
+      // `setState`, so the updater stays a pure function of its argument.
+      // Writing the ref *inside* the updater is harmless in itself, because
+      // `undoSettled` is idempotent and StrictMode's second invocation writes
+      // the same value — but it breaks the discipline `onUndo` above argues
+      // for, and the exception is what the next reader would copy.
+      const settled = undoSettled(latestState.current, outcome);
+      latestState.current = settled;
+      setState(settled);
     });
   }, []);
 
