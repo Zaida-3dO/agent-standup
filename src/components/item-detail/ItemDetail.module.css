@@ -1248,3 +1248,63 @@ details[open] > .disclosureSummary .disclosureHint::before {
   margin: 0 0 var(--space-2);
   font-size: 0.82rem;
 }
+
+/* ── Cancelling: a closing act, not a destructive one ─────────────────────
+
+   Styled deliberately *unlike* the archive controls beside it. The archive
+   block borrows `--state-blocked-fg`, the same warning tone the rest of the
+   page uses for things that need attention; cancel uses the neutral
+   `--state-cancelled-*` family the board already draws a cancelled card with.
+
+   That difference is the point, and it is doing more work than decoration. The
+   two acts have genuinely different consequences — one hides the row, the
+   other leaves it visible carrying a decision — and two controls in matching
+   warning tones would say they are the same kind of act with different labels.
+   A person choosing between them under time pressure reads the colour before
+   the sentence. Using the board's own cancelled tone also means the control
+   and the state it produces look like each other. */
+.cancelStart {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+
+.cancelStartHint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.cancelForm {
+  margin: 0.75rem 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--state-cancelled-border);
+  border-radius: var(--radius-sm);
+  background: var(--state-cancelled-bg);
+}
+
+/* The line shown instead of a control when the row is already finished. Quiet
+   on purpose: it is an explanation for something absent, not a warning. */
+.cancelClosed {
+  margin: 0.75rem 0;
+}
+
+.cancelClosedText {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* Separates the two acts on the shared panel. Without it they read as one
+   group of four buttons, which is exactly the "two buttons that look alike"
+   failure both blocks are written to avoid. */
+.closingActions {
+  margin: 0.75rem 0;
+}
+
+.closingActionsDivider {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}

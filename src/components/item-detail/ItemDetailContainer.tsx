@@ -63,6 +63,8 @@ import {
   ARCHIVE_REFERENCES_GUARD,
   RESTORE_SUPERSEDED_GUARD,
 } from "@/lib/item-detail/archive-state";
+import type { CancelActionState } from "./CancelAction";
+import { submitCancel, cancelDecisionIsValid } from "@/lib/item-detail/cancel-state";
 import { useUndo } from "@/components/toast";
 
 export interface ItemDetailContainerProps {
@@ -501,6 +503,104 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
     // for it (`isAcknowledgeable`), so there is nothing to do here.
   }, [runArchive, runRestore]);
 
+  // ── Cancelling ───────────────────────────────────────────────
+  //
+  // The other half of the pair above. `delete_item` refuses a
+  // cancellation-shaped archive reason and names `cancelled` as the call to
+  // make instead; until this existed, that advice pointed at nothing reachable
+  // from the interface. See `CancelAction.tsx` for why the two acts are
+  // presented as visibly different things, and for the argument against a
+  // reverse guard.
+  const [cancelState, setCancelState] = useState<CancelActionState>({ status: "idle" });
+
+  /**
+   * The current cancel state, readable synchronously by an event handler.
+   *
+   * The same discipline as `latestArchiveState` above, and it is load-bearing
+   * for the same reason: `onCancelItem` needs the decision that was typed *at
+   * the moment of the click*. Deriving it inside a `setCancelState` updater is
+   * the shape that has shipped three times in this repo — an updater is not a
+   * callback that runs when you call it, so the value would not be set on the
+   * next line and the early return would fire, sending nothing.
+   *
+   * `scripts/check-updater-side-effects.mjs` enforces this mechanically and
+   * `tests/item-cancel-react-wiring.test.ts` proves the composition under real
+   * React with StrictMode's double invocation live.
+   */
+  const latestCancelState = useRef<CancelActionState>({ status: "idle" });
+
+  /** Writes both, together, so the ref can never lag the state it mirrors. */
+  const applyCancelState = useCallback((next: CancelActionState) => {
+    latestCancelState.current = next;
+    setCancelState(next);
+  }, []);
+
+  const onBeginCancel = useCallback(() => {
+    applyCancelState({ status: "composing", decision: "" });
+  }, [applyCancelState]);
+
+  const onDismissCancel = useCallback(() => {
+    applyCancelState({ status: "idle" });
+  }, [applyCancelState]);
+
+  const onCancelDecisionChange = useCallback(
+    (decision: string) => {
+      applyCancelState({ status: "composing", decision });
+    },
+    [applyCancelState],
+  );
+
+  /**
+   * Sends the cancellation, and re-reads the page on success.
+   *
+   * No undo is offered, and that is deliberate rather than an omission.
+   * `offer` exists for acts whose effect is hard to see — an archive removes
+   * the row from every listing, so a person who did it by accident may not
+   * notice for a week. A cancellation leaves the row exactly where it was,
+   * visibly in the `cancelled` state with its decision on it; the mistake is
+   * self-announcing, and it is undone by transitioning the item again, which
+   * is an ordinary act on a visible row rather than a rescue.
+   */
+  const runCancel = useCallback(
+    (decision: string) => {
+      if (loadState.status !== "loaded") return;
+      const { item } = loadState.detail;
+      applyCancelState({ status: "submitting" });
+      submitCancel(item.id, { decision, expectedFrom: item.state })
+        .then((outcome) => {
+          if (!outcome.ok) {
+            applyCancelState({
+              status: "error",
+              message: outcome.message,
+              // The typed decision survives the refusal, so a rewording is an
+              // edit rather than a retype — see `CancelActionState`.
+              decision,
+            });
+            return;
+          }
+          applyCancelState({ status: "idle" });
+          reloadDetail();
+        })
+        .catch(() => {
+          applyCancelState({
+            status: "error",
+            message: "Could not cancel this item. Try again.",
+            decision,
+          });
+        });
+    },
+    [loadState, applyCancelState, reloadDetail],
+  );
+
+  const onCancelItem = useCallback(() => {
+    // Read from the ref, synchronously — see `latestCancelState`. The decision
+    // submitted is the one on screen at the moment of the click.
+    const current = latestCancelState.current;
+    if (current.status !== "composing" && current.status !== "error") return;
+    if (!cancelDecisionIsValid(current.decision)) return;
+    runCancel(current.decision);
+  }, [runCancel]);
+
   useEffect(() => {
     let cancelled = false;
     fetchItemDetail(itemId)
@@ -653,6 +753,13 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
         onArchive,
         onRestore,
         onAcknowledge,
+      }}
+      cancel={{
+        state: cancelState,
+        onBegin: onBeginCancel,
+        onDismiss: onDismissCancel,
+        onDecisionChange: onCancelDecisionChange,
+        onCancelItem,
       }}
     />
   );
