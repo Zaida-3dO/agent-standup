@@ -151,11 +151,25 @@ export interface BoardFilters {
   readonly search?: string;
 }
 
-/** Filters plus ordering — the whole of what a board URL encodes. */
+/** Filters plus ordering plus shape — the whole of what a board URL encodes. */
 export interface BoardQuery {
   readonly filters: BoardFilters;
   readonly sort: BoardSortKey;
   readonly direction: BoardSortDirection;
+  /**
+   * Which shape to draw the same rows in — the kanban or the list.
+   *
+   * **Optional, and absent means `DEFAULT_BOARD_LAYOUT`**, exactly as an
+   * absent `sort` means the default sort. Optional rather than required
+   * because every existing construction site — `projectBoardHref`, the
+   * saved views, each test fixture — builds a `BoardQuery` without knowing
+   * this key exists, and a required field would make all of them a type
+   * error for the sake of a value they all want the default of.
+   *
+   * It is NOT part of `filters`, for the reasons `BOARD_LAYOUT_PARAM`
+   * gives: a filter narrows which rows come back, and this narrows nothing.
+   */
+  readonly layout?: BoardLayout;
 }
 
 /**
@@ -187,6 +201,45 @@ export const BOARD_FILTER_PARAMS = [
 
 export const BOARD_SORT_PARAM = "sort";
 export const BOARD_DIRECTION_PARAM = "direction";
+
+/**
+ * The two shapes the same board can be drawn in — the kanban, or a dense
+ * list (MILESTONES.md T6).
+ *
+ * The list exists because a column is the wrong shape past a certain
+ * length: the store's backlog runs to 68 items, and a 68-card column is a
+ * scroll with no way to compare two rows that are not adjacent. The list is
+ * the same data — same filters, same sort, same server — in a shape where
+ * sixty-eight rows is an ordinary table rather than a problem.
+ */
+export const BOARD_LAYOUTS = ["board", "list"] as const;
+
+export type BoardLayout = (typeof BOARD_LAYOUTS)[number];
+
+/** The shape a reader gets having asked for none — the kanban, as before. */
+export const DEFAULT_BOARD_LAYOUT: BoardLayout = "board";
+
+/**
+ * The parameter the layout is carried under.
+ *
+ * **Deliberately NOT a member of `BOARD_FILTER_PARAMS`**, though it lives
+ * in the same query string, and the distinction is load-bearing in two
+ * directions:
+ *
+ *   - `boardRequestParams` walks `BOARD_FILTER_PARAMS` to build the request
+ *     to `GET /api/board`. The layout is a fact about how the client draws
+ *     the response, not about which rows the server should return, and an
+ *     unknown parameter forwarded to that operation is a 400 rather than an
+ *     ignored extra.
+ *   - `isFiltered`/`activeFilterCount` also walk that list, and they decide
+ *     whether an empty region blames a filter. Counting the layout would
+ *     put a permanent "1 filter" on an untouched list view and make an
+ *     empty column offer to clear a filter that does not exist.
+ *
+ * It sits beside `sort` and `direction` instead, which are the other two
+ * parameters that shape the view without narrowing it.
+ */
+export const BOARD_LAYOUT_PARAM = "layout";
 
 /**
  * A board with nothing narrowed and the default ordering.
@@ -427,7 +480,18 @@ export function parseBoardQuery(input: string | QueryParamSource): BoardQuery {
       ? (rawDirection as BoardSortDirection)
       : DEFAULT_BOARD_SORT_DIRECTION;
 
-  return { filters, sort, direction };
+  // Dropped rather than partially honoured when it is not one of the two,
+  // the same rule every other axis here follows: a hand-edited
+  // `layout=table` renders the kanban, which the reader can see and correct
+  // by pressing the toggle, rather than a blank region drawn by a component
+  // that does not exist.
+  const rawLayout = readParam(params, BOARD_LAYOUT_PARAM);
+  const layout: BoardLayout =
+    rawLayout !== undefined && (BOARD_LAYOUTS as readonly string[]).includes(rawLayout)
+      ? (rawLayout as BoardLayout)
+      : DEFAULT_BOARD_LAYOUT;
+
+  return { filters, sort, direction, layout };
 }
 
 /**
@@ -466,7 +530,43 @@ export function boardQueryString(query: BoardQuery): string {
   if (query.direction !== DEFAULT_BOARD_SORT_DIRECTION) {
     params.set(BOARD_DIRECTION_PARAM, query.direction);
   }
+  // Emitted last, and omitted when it is the default — the same rule the
+  // sort follows two lines above, and for the same reason: one board has
+  // one address, so the kanban keeps the short URL it has always had and
+  // every already-saved view's string is unchanged by this feature
+  // existing. A saved view is matched by string equality, so emitting
+  // `layout=board` on a default board would silently stop every saved view
+  // marking itself current.
+  //
+  // **Last rather than beside `sort`** so that a reader who saved a view
+  // before this parameter existed and one who saves the same view after get
+  // the same string.
+  if (query.layout !== undefined && query.layout !== DEFAULT_BOARD_LAYOUT) {
+    params.set(BOARD_LAYOUT_PARAM, query.layout);
+  }
   return params.toString();
+}
+
+/**
+ * The same board, drawn in the other shape — what the layout toggle
+ * navigates to.
+ *
+ * **Everything else is carried through untouched**, which is the whole of
+ * "switching layout does not lose your view": the filters, the sort and the
+ * direction are the same object, so the list renders the set the kanban was
+ * showing rather than a freshly defaulted one. That property is why this is
+ * a function over a `BoardQuery` rather than a hand-built `?layout=list` on
+ * the current path — a string built that way would carry whatever was
+ * already in the address, including a stale copy of a filter the reader had
+ * since changed.
+ */
+export function withLayout(query: BoardQuery, layout: BoardLayout): BoardQuery {
+  return { ...query, layout };
+}
+
+/** Which shape a query asks for, resolving an absent value to the default. */
+export function layoutOf(query: BoardQuery): BoardLayout {
+  return query.layout ?? DEFAULT_BOARD_LAYOUT;
 }
 
 /**

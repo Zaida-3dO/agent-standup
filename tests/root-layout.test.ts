@@ -9,6 +9,7 @@ import BoardPage from "@/app/board/page";
 import { ProfileProvider } from "@/lib/profile/ProfileProvider";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { Board } from "@/components/board/Board";
+import { BoardSurface } from "@/components/board/BoardSurface";
 import { Landing } from "@/components/landing/Landing";
 import type { ReactNode } from "react";
 import { findOneByType, walk } from "./helpers/react-element";
@@ -66,8 +67,14 @@ describe("Home", () => {
 
 describe("BoardPage", () => {
   // The kanban survives the move unchanged; only its address changed.
-  it("renders the board at /board", () => {
-    expect(findOneByType(BoardPage(), Board)).toBeDefined();
+  it("renders the board surface at /board", () => {
+    // `BoardSurface` rather than `Board` directly: `/board` serves two
+    // shapes now — the kanban and the list — and the `layout` parameter
+    // picks between them (MILESTONES.md T6 §3). The kanban is still what
+    // an unparameterised `/board` renders; the choice simply happens one
+    // level down, which is what `tests/board-list-view.test.ts` and
+    // `tests/board-layout-url.test.ts` cover.
+    expect(findOneByType(BoardPage(), BoardSurface)).toBeDefined();
   });
 
   it("adds no wrapping <main> of its own — AppShell already supplies one", () => {

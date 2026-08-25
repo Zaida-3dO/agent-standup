@@ -17,17 +17,27 @@
 // the board alone, rather than in the root layout: a boundary in the layout
 // would opt *every* page out of static rendering to serve one that needs it.
 //
-// The fallback is `null` rather than a skeleton because `Board` renders its
-// own loading state — four skeleton columns — the moment it mounts, and a
-// second, different placeholder before it would make the page flash through
-// two loading appearances on the way to one board.
+// The fallback is `null` rather than a skeleton because each layout renders
+// its own loading state the moment it mounts — the kanban four skeleton
+// columns, the list eight skeleton rows — and a second, different
+// placeholder before it would make the page flash through two loading
+// appearances on the way to one board.
+//
+// **The page renders `BoardSurface`, not `Board` directly** (MILESTONES.md
+// T6 §3). The same address now serves two shapes — the kanban and the list
+// — chosen by the `layout` parameter in the query string, and that switch
+// is what `BoardSurface` is. The address is unchanged and so is the default:
+// `/board` with no `layout` is the kanban it has always been.
+//
+// `BoardSurface` reads `useSearchParams` too, so it sits inside the same
+// suspense boundary for the same reason `Board` did.
 import { Suspense } from "react";
-import { Board } from "@/components/board/Board";
+import { BoardSurface } from "@/components/board/BoardSurface";
 
 export default function BoardPage() {
   return (
     <Suspense fallback={null}>
-      <Board />
+      <BoardSurface />
     </Suspense>
   );
 }

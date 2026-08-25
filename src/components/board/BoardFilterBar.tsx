@@ -39,6 +39,7 @@ import { savedViewNameProblem, type SavedViews } from "@/lib/board/saved-views";
 import { writeSavedViews } from "@/lib/board/saved-views-client";
 import type { FilterOptions } from "@/lib/board/filter-options";
 import { BoardFilterBarView } from "./BoardFilterBarView";
+import { LayoutToggle } from "./LayoutToggle";
 import { SavedViewsView } from "./SavedViewsView";
 
 export interface BoardFilterBarProps {
@@ -166,6 +167,14 @@ export function BoardFilterBar({ query, options, views, onViewsChange }: BoardFi
 
   return (
     <>
+      {/* The layout switch sits above the filter axes rather than among
+          them, because it is not an axis: it changes the SHAPE of the
+          result, not which rows are in it. Putting it in the row of selects
+          would imply it narrows the board, which is the same confusion
+          `BOARD_LAYOUT_PARAM` keeps it out of `BOARD_FILTER_PARAMS` to
+          avoid — and "clear filters" would then look like it should reset
+          it, which it deliberately does not. */}
+      <LayoutToggle query={query} />
       <BoardFilterBarView
         query={query}
         onFilterChange={onFilterChange}
