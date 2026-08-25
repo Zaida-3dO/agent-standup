@@ -77,6 +77,19 @@ let feedCalls: { url: string; personId: string | null }[] = [];
 let seenCalls: { eventId: string; personId: unknown }[] = [];
 /** What the next feed fetch resolves to, keyed by the `personId` the request carried. */
 let feedByPerson: Map<string | null, SinceFeed>;
+/**
+ * Continuation pages, keyed by the `since` cursor the request carried.
+ *
+ * Separate from `feedByPerson` because a paging test is specifically about
+ * the SECOND request differing from the first, and a stub that answers both
+ * from one map cannot tell them apart — it would agree with a component that
+ * re-fetched page one forever. A request carrying `since` is looked up here
+ * first; anything absent falls through to an empty page, which is also the
+ * real end-of-ledger answer.
+ */
+let pagesBySince: Map<string, SinceFeed>;
+/** Every `since` value the component put on the wire, in order. */
+let sinceParams: (string | null)[] = [];
 /** Resolvers for in-flight feed fetches, so a test can control ordering. */
 let pendingFeeds: { personId: string | null; resolve: () => void }[] = [];
 /** When true, feed fetches wait for a test to release them rather than resolving immediately. */
@@ -100,6 +113,8 @@ beforeEach(() => {
     [null, feedOf([])],
     ["person-a", feedOf([unseenEvent("10"), unseenEvent("11")])],
   ]);
+  pagesBySince = new Map<string, SinceFeed>();
+  sinceParams = [];
   container = document.createElement("div");
   document.body.appendChild(container);
 
@@ -132,8 +147,17 @@ beforeEach(() => {
         // what makes the out-of-order case below a real race rather than a
         // stub that quietly agrees with whatever the component last did.
         const personId = parsed.searchParams.get("personId");
+        const since = parsed.searchParams.get("since");
         feedCalls.push({ url, personId });
-        const feed = feedByPerson.get(personId) ?? feedOf([]);
+        sinceParams.push(since);
+        // A request carrying `since` is a continuation and must be answered
+        // from the page map — never from the first-page map, or the stub
+        // would hand back page one again and quietly bless a component that
+        // never advanced its cursor.
+        const feed =
+          since !== null
+            ? (pagesBySince.get(since) ?? feedOf([]))
+            : (feedByPerson.get(personId) ?? feedOf([]));
         const response = {
           ok: true,
           status: 200,
@@ -333,5 +357,209 @@ describe("SinceLastVisit — the seen action", () => {
     expect(rowFor("10")).toBeDefined();
     expect(markSeenButton("10")).toBeNull();
     expect(markAllButton()).toBeUndefined();
+  });
+});
+
+// ── Paging (row 3c25e600) ──────────────────────────────────────────────
+//
+// `get_events` has paged correctly since it was written; nothing consumed
+// the cursor, so the view showed one screenful and stopped. These cases are
+// the composition half of the fix, and they live here rather than in a pure
+// test for the reason this whole file exists: the interesting part is not
+// "does `appendPage` append" (a pure test covers that) but *which request
+// went out, carrying which cursor, and what the list said afterwards*.
+
+/**
+ * The pager control, if the view is offering one.
+ *
+ * Found by its `data-loading-more` attribute rather than its text, because
+ * the text is exactly what changes while a page is in flight ("Load newer
+ * entries" becomes "Loading…"). A text finder would report the busy button
+ * as ABSENT, making "the control is gone" and "the control is working"
+ * indistinguishable — which is how the first version of these tests read a
+ * label change as a disappearing button.
+ */
+function loadMoreButton(): HTMLButtonElement | undefined {
+  return container.querySelector<HTMLButtonElement>("button[data-loading-more]") ?? undefined;
+}
+
+describe("SinceLastVisit — paging past the first screenful", () => {
+  it("asks the server for the next page using the cursor it returned, not an offset", async () => {
+    // AC2, and the assertion that distinguishes real keyset paging from
+    // "fetch more and slice". The first feed's cursor is "11"; the
+    // continuation must carry exactly that on the wire.
+    pagesBySince.set("11", feedOf([unseenEvent("12"), unseenEvent("13")]));
+    await mountSince();
+
+    // The first request is not a continuation — it carries no cursor at all,
+    // which is what makes the ledger start from the beginning.
+    expect(sinceParams.every((since) => since === null)).toBe(true);
+
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+
+    expect(sinceParams.at(-1)).toBe("11");
+    // Not a limit/offset pair — the two parameters that would mean somebody
+    // reimplemented paging in the browser.
+    const lastUrl = new URL(feedCalls.at(-1)!.url, "http://localhost");
+    expect(lastUrl.searchParams.get("offset")).toBeNull();
+  });
+
+  it("appends the page rather than replacing what was on screen", async () => {
+    // The defect worth pinning: a container that sets the new page as the
+    // feed loses everything above it, and the reader watches their list
+    // shorten as they ask for more of it.
+    pagesBySince.set("11", feedOf([unseenEvent("12"), unseenEvent("13")]));
+    await mountSince();
+    expect(rows()).toHaveLength(2);
+
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+
+    expect(rows()).toHaveLength(4);
+    for (const id of ["10", "11", "12", "13"]) {
+      expect(rowFor(id)).toBeDefined();
+    }
+  });
+
+  it("counts the unseen total over everything on screen, without double-counting", async () => {
+    // AC3. `applySeen` recomputes rather than decrementing precisely so an
+    // idempotent write cannot drive the count below the truth; appending had
+    // to preserve that from the other direction. Summing the page's own
+    // `unseenCount` onto the existing one is the mutant this kills — with
+    // two unseen already shown and two arriving, a sum and a recount both
+    // give four, so the page deliberately re-delivers "11" as well.
+    pagesBySince.set("11", feedOf([unseenEvent("11"), unseenEvent("12")]));
+    await mountSince();
+    expect(container.querySelector('[aria-label="2 unseen"]')).not.toBeNull();
+
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+
+    // Three distinct events, not four: the repeated id is absorbed.
+    expect(rows()).toHaveLength(3);
+    expect(container.querySelector('[aria-label="3 unseen"]')).not.toBeNull();
+  });
+
+  it("keeps a locally-marked row seen when a later page re-delivers it as unseen", async () => {
+    // The subtle half of AC3: the server does not know about a `seen` this
+    // profile set thirty seconds ago if the page was already in flight, so
+    // an append that let the incoming row win would silently un-mark
+    // something the reader had just cleared.
+    pagesBySince.set("11", feedOf([unseenEvent("10"), unseenEvent("12")]));
+    await mountSince();
+
+    await act(async () => {
+      markSeenButton("10")?.click();
+    });
+    expect(rowFor("10")?.dataset.seen).toBe("true");
+
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+
+    expect(rowFor("10")?.dataset.seen).toBe("true");
+  });
+
+  it("marking seen still works on a row that arrived on a later page", async () => {
+    // AC3 across a page boundary: the handler is wired to the appended rows
+    // exactly as it is to the first page's, and attributed to the same
+    // profile.
+    pagesBySince.set("11", feedOf([unseenEvent("12")]));
+    await mountSince();
+
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+    await act(async () => {
+      markSeenButton("12")?.click();
+    });
+
+    expect(seenCalls).toEqual([{ eventId: "12", personId: "person-a" }]);
+    expect(rowFor("12")?.dataset.seen).toBe("true");
+  });
+
+  it("stops offering the control once a page comes back empty", async () => {
+    // `get_events` has no `nextCursor: null`; it returns the caller's own
+    // cursor on an empty slice. So an empty page is the only end-of-ledger
+    // signal there is, and a control that stays after it can only ever do
+    // nothing.
+    pagesBySince.set("11", feedOf([]));
+    await mountSince();
+    expect(loadMoreButton()).toBeDefined();
+
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+
+    expect(loadMoreButton()).toBeUndefined();
+    // Nothing was appended, and nothing was lost either.
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("disables the control while a page is in flight", async () => {
+    // The first line of defence, and the only one a reader meets. Asserted
+    // on the attribute rather than by clicking twice, because a `disabled`
+    // button swallows a synthetic `.click()` in jsdom — so a two-click test
+    // proves the attribute is set and says nothing whatever about the
+    // handler's own guard. That guard gets its own test below.
+    pagesBySince.set("11", feedOf([unseenEvent("12")]));
+    await mountSince();
+    expect(loadMoreButton()?.disabled).toBe(false);
+
+    holdFeeds = true;
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+
+    expect(loadMoreButton()?.disabled).toBe(true);
+    expect(loadMoreButton()?.dataset.loadingMore).toBe("true");
+    // The label says so too, which is the half a reader actually sees.
+    expect(loadMoreButton()?.textContent).toBe("Loading…");
+
+    await act(async () => {
+      for (const p of pendingFeeds) p.resolve();
+    });
+    expect(loadMoreButton()?.disabled).toBe(false);
+    expect(rows()).toHaveLength(3);
+  });
+
+  it("does not append one profile's page onto another profile's feed", async () => {
+    // The same guard the mark-seen path already had, on the paging path: a
+    // page requested for person-a that lands after the reader switched must
+    // not be painted onto person-b's list.
+    feedByPerson.set("person-b", feedOf([unseenEvent("20", { itemTitle: "B's item" })]));
+    pagesBySince.set("11", feedOf([unseenEvent("12")]));
+    await mountSince();
+
+    holdFeeds = true;
+    await act(async () => {
+      loadMoreButton()?.click();
+    });
+
+    activeProfileId = "person-b";
+    holdFeeds = false;
+    await act(async () => {
+      root.render(createElement(StrictMode, null, createElement(SinceLastVisit)));
+    });
+
+    // person-a's continuation now lands, after the switch.
+    await act(async () => {
+      for (const p of pendingFeeds) p.resolve();
+    });
+
+    expect(rowFor("20")).toBeDefined();
+    expect(rowFor("12")).toBeUndefined();
+    expect(rowFor("10")).toBeUndefined();
+  });
+
+  it("offers no pager on an empty feed, which has no position to continue from", async () => {
+    feedByPerson.set("person-a", feedOf([]));
+    await mountSince();
+
+    expect(loadMoreButton()).toBeUndefined();
   });
 });

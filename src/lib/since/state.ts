@@ -154,6 +154,57 @@ export function applySeen(feed: SinceFeed, eventIds: readonly string[]): SinceFe
   };
 }
 
+/**
+ * Appends a further page onto the feed already on screen.
+ *
+ * **The server's own cursor drives this; nothing is sliced client-side.**
+ * `get_events` is keyset-paged on `Event.id` (`WHERE id > since ORDER BY id
+ * ASC LIMIT n`), and its `cursor` is the slice's high-water mark taken
+ * *before* `unseenOnly` filters anything — so handing that value straight
+ * back as the next `since` is the one way to continue that cannot skip or
+ * repeat a row. Fetching a bigger page and showing part of it would be the
+ * mistake T24 (#265) removed from item history, and it re-reads the whole
+ * prefix out of Postgres every time.
+ *
+ * ── Three properties this has to preserve ───────────────────────────────
+ *
+ *   1. **`unseenCount` is recomputed, never added up.** `applySeen` already
+ *      recomputes rather than decrementing, precisely so an idempotent
+ *      `mark_event_seen` cannot drive the count below the truth. Summing
+ *      the incoming page's count onto the existing one would reintroduce
+ *      exactly that class of drift from the other direction — and it would
+ *      double-count any event that arrived on both pages.
+ *   2. **A repeated id does not duplicate a row.** The cursor makes overlap
+ *      unlikely rather than impossible: a caller that pages from a stale
+ *      cursor, or a double-invoked handler, can legitimately re-deliver an
+ *      event that is already on screen. De-duplicating by id here means a
+ *      repeat is absorbed instead of rendering the same event twice under
+ *      the same React key. The event already held wins, because it may
+ *      carry a `seen` flag this profile has since set locally, and letting
+ *      a fresh server row overwrite it would silently un-mark something the
+ *      reader just cleared.
+ *   3. **`firstVisit` and `horizon` come from the newer response.** The
+ *      horizon moves forward as transactions commit, and it is the newer
+ *      read that knows where it is now.
+ *
+ * Returns a new feed rather than mutating, like `applySeen`: the caller
+ * holds this in React state, where an in-place edit would not re-render.
+ */
+export function appendPage(feed: SinceFeed, page: SinceFeed): SinceFeed {
+  const known = new Set(feed.events.map((event) => event.id));
+  const added = page.events.filter((event) => !known.has(event.id));
+  const events = [...feed.events, ...added];
+  return {
+    ...feed,
+    events,
+    // The continuation's cursor is where the ledger has now been read to.
+    cursor: page.cursor,
+    horizon: page.horizon,
+    unseenCount: events.reduce((count, event) => (event.seen ? count : count + 1), 0),
+    firstVisit: page.firstVisit,
+  };
+}
+
 /** Turns a caught value into the message the error state shows — never a raw, possibly-unhelpful object. */
 export function sinceErrorMessageFrom(err: unknown): string {
   return err instanceof Error ? err.message : "Could not load what's new.";

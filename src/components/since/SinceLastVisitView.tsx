@@ -18,6 +18,18 @@ export interface SinceLastVisitViewProps {
   readonly personId: string | null;
   readonly onMarkSeen?: (eventId: string) => void;
   readonly onMarkAllSeen?: (eventIds: readonly string[]) => void;
+  /** Asks for the next page from the server's cursor. Absent when the caller does not page. */
+  readonly onLoadMore?: () => void;
+  /** True while a page is in flight — disables the control so a second press cannot double-fetch. */
+  readonly loadingMore?: boolean;
+  /**
+   * Whether the ledger may hold more past what is on screen.
+   *
+   * Shown only when the container says so, so the control never appears on a
+   * list that is already complete — a button whose only possible outcome is
+   * "nothing happened" teaches a reader that the feature is broken.
+   */
+  readonly hasMore?: boolean;
 }
 
 export function SinceLastVisitView({
@@ -25,6 +37,9 @@ export function SinceLastVisitView({
   personId,
   onMarkSeen,
   onMarkAllSeen,
+  onLoadMore,
+  loadingMore = false,
+  hasMore = false,
 }: SinceLastVisitViewProps) {
   if (loadState.status === "error") {
     return (
@@ -96,6 +111,25 @@ export function SinceLastVisitView({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* The pager. Rendered below the list because it continues forward
+          into newer events — `get_events` is `WHERE id > since ORDER BY id
+          ASC`, so the next page belongs after what is on screen, not before
+          it. Shown only when the container has said there is somewhere to
+          continue to. */}
+      {hasMore && onLoadMore && (
+        <div className={styles.pager}>
+          <button
+            type="button"
+            className={styles.loadMore}
+            disabled={loadingMore}
+            onClick={onLoadMore}
+            data-loading-more={loadingMore}
+          >
+            {loadingMore ? "Loading…" : "Load newer entries"}
+          </button>
+        </div>
       )}
     </section>
   );

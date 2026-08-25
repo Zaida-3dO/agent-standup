@@ -155,3 +155,31 @@
   font-size: 0.75rem;
   cursor: pointer;
 }
+
+/* The pager (row 3c25e600). Centred under the list rather than in the
+   header, because it continues the list downward — `get_events` pages
+   forward by ascending id, so the next page belongs after what is on
+   screen. Only rendered when the container says there is more, so it never
+   sits there inert on a complete list. */
+.pager {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.75rem;
+}
+
+/* Deliberately the same token set as `.markAll`: both are secondary actions
+   on this panel and neither should outrank the events themselves. */
+.loadMore {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.4rem;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.loadMore:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
