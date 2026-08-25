@@ -482,3 +482,47 @@ describe("the layout toggle", () => {
     expect(current).toEqual([undefined, "true"]);
   });
 });
+
+describe("the list states what a row holds", () => {
+  // The gap the M10 visual re-check found: the #275 rollup was added to
+  // `ItemCard` only, so on `/board?layout=list` a project holding thirty
+  // children was visually indistinguishable from a leaf — in the layout
+  // most likely to be used for large projects.
+  it("renders the rollup for a row that has one", () => {
+    // Deleting the `{entry.subtasks && …}` block, or reading a different
+    // field off the entry, is what this catches.
+    const board = boardOf({
+      backlog: [
+        entry("backlog", { id: "p1", kind: "project" }, { subtasks: { total: 30, done: 16 } }),
+      ],
+    });
+    expect(textOf(render(board))).toContain("30 subtasks · 16 done");
+  });
+
+  it("says nothing at all for a row with no children", () => {
+    // `null` and `{total: 0}` are different states and only one is ever
+    // sent (`BoardEntry.subtasks`). Rendering a badge unconditionally would
+    // print "0 subtasks" on every leaf — a claim about work that does not
+    // exist. Changing the guard to `entry.subtasks !== undefined` fails
+    // here.
+    const board = boardOf({ backlog: [entry("backlog", { id: "leaf" })] });
+    expect(textOf(render(board))).not.toContain("subtask");
+  });
+
+  it("words the count exactly as the kanban card does", () => {
+    // The two layouts must not drift apart on the same number, so both go
+    // through `subtaskSummary`. Inlining a template here — or in the
+    // component — is what this catches: singular at one, and the `done`
+    // clause omitted at zero rather than rendered as "· 0 done".
+    const one = boardOf({
+      backlog: [entry("backlog", { id: "a" }, { subtasks: { total: 1, done: 0 } })],
+    });
+    expect(textOf(render(one))).toContain("1 subtask");
+    expect(textOf(render(one))).not.toContain("0 done");
+
+    const many = boardOf({
+      backlog: [entry("backlog", { id: "b" }, { subtasks: { total: 4, done: 2 } })],
+    });
+    expect(textOf(render(many))).toContain("4 subtasks · 2 done");
+  });
+});

@@ -37,6 +37,27 @@
   padding: 1.25rem;
   background: var(--surface-app);
   color: var(--text-primary);
+
+  /* **The reflow below keys on THIS box, not on the viewport.**
+
+     The rail in `Sidebar.module.css` is 216px wide and is itself hidden at
+     `max-width: 900px` — the same breakpoint this file used to reflow at.
+     Those two facts together were the defect: between 901px and ~1140px of
+     viewport the rail is present AND the OWNER column is still shown, so
+     the table is laid out inside `viewport - 216px - 2.5rem` while the
+     media query, which can only see the viewport, believes there is room
+     for every column. At a 1024px window that leaves the table ~768px and
+     the title column ~201px — narrower than the 192px OWNER column sitting
+     empty beside it, which is the measured symptom.
+
+     A container query asks the question the layout actually needs answered:
+     not "how wide is the window" but "how wide is the box these columns
+     have to fit in". That makes the reflow correct at every rail state
+     rather than tuned to one — it fires identically when the rail is
+     present, when it is hidden below 900px, and if the rail's width is ever
+     changed, none of which a viewport breakpoint can follow. */
+  container-type: inline-size;
+  container-name: list;
 }
 
 /* Same surface as `.list` — the loading and error states are the list
@@ -206,64 +227,80 @@
    and row 63, which `width: auto` on five columns does not give — the table
    would size each column to its widest content and shift the strip.
 
-   **`max-width`, not `width`, and that distinction is what keeps this
-   layout dense.** A `width` on four columns is a floor as much as a
-   ceiling: the metadata strips hold their full 34.5rem at every viewport,
-   so the one flexible column absorbs the entire squeeze and the title
-   falls to 201px at 1024px — narrower than the usually-empty OWNER column
-   beside it. Titles then wrap to four and five lines and rows grow to
-   200–290px tall, which makes the dense list LESS dense than
-   the kanban it exists to replace.
+   **Under `table-layout: fixed`, `min-width` and `max-width` on a column
+   do nothing at all — only `width` binds.** That is not a style preference,
+   it is the algorithm: `fixed` sizes every column from the first row's
+   stated `width` and distributes what is left over, and the min/max
+   properties are not consulted. A previous fix here added
+   `.colTitle { min-width: 14rem }` as "the guarantee that the column the
+   reader actually reads never falls below a legible measure" and changed
+   the metadata columns' `width` to `max-width` so they would "give ground".
+   Neither had any effect: the floor was reported by `getComputedStyle` as
+   224px while the column rendered at 201px, and the metadata columns kept
+   their full preferred widths because a `max-width` is not a width for
+   `fixed` to bind to.
 
-   `max-width` lets each metadata column give ground proportionally once
-   there is not enough room, so the title keeps a workable share instead of
-   being the only column that yields. The floor below is what stops it
-   yielding to nothing. */
+   **So the title column states NO width at all, and that is the fix.**
+   Under `fixed`, a column with no stated `width` receives the space left
+   over after the stated ones are satisfied — so naming four constants and
+   staying silent about the fifth expresses exactly the intent ("metadata
+   gets what it needs, the title gets the rest") in the one vocabulary the
+   algorithm actually reads. A stated percentage would be worse than
+   silence: 45% plus the four constants over-subscribes the table, and
+   `fixed` resolves an over-subscription by shrinking every column
+   proportionally, so the title would end up with less than the remainder
+   it gets for free.
+
+   The remainder only stays generous because the reflow below now measures
+   the right box; the two changes are one fix and neither works alone. */
 .colState {
   width: 8.5rem;
-  max-width: 8.5rem;
 }
 
 .colPriority {
   width: 5rem;
-  max-width: 5rem;
 }
 
-/* The title column's floor.
-
-   Everything else on the row is a chip or a short label and degrades
-   gracefully when squeezed; the title is prose and does not. This is the
-   guarantee that the column the reader actually reads never falls below a
-   legible measure — without it, `table-layout` is free to hand the
-   remainder to whichever column has the widest content. */
-.colTitle {
-  min-width: 14rem;
-}
+/* `.colTitle` deliberately states no width — see the block comment above.
+   It is the one column that takes the remainder, and under
+   `table-layout: fixed` that is expressed by saying nothing rather than by
+   a `min-width` (inert) or a percentage (over-subscribes). The class still
+   exists because the cells are selected by it at narrow widths and by the
+   tests. */
 
 .colArea {
   width: 9rem;
-  max-width: 9rem;
 }
 
 .colOwner {
   width: 12rem;
-  max-width: 12rem;
 }
 
-/* ── Narrow viewports ────────────────────────────────────────
+/* ── Narrow boxes ────────────────────────────────────────────
 
-   The kanban reflows at 900px and 560px (`Board.module.css`) and this file
-   matches it. Without a reflow the table overflows its viewport by 273px
-   at 390px where the kanban overflows by zero: a table whose columns sum
-   to more than the viewport does not wrap — it scrolls sideways, and a
-   horizontally scrolling list of sixty-eight rows is worse than either
-   layout it is choosing between.
+   Without a reflow the table overflows by 273px at 390px where the kanban
+   overflows by zero: a table whose columns sum to more than its box does
+   not wrap — it scrolls sideways, and a horizontally scrolling list of
+   sixty-eight rows is worse than either layout it is choosing between.
+
+   **These are `@container`, not `@media`, and the two are not
+   interchangeable here.** The kanban reflows at viewport 900px/560px and
+   this file used to copy those numbers, but a kanban column and a table
+   column fail differently: a card stack narrows gracefully, a fixed table
+   hands the entire shortfall to one column. The numbers are therefore
+   restated against the CONTENT BOX, which is the width the columns are
+   actually competing for.
+
+   OWNER is dropped below a 900px BOX rather than a 900px viewport. With
+   the rail present that box is reached at a ~1140px window, which is
+   precisely the band the viewport rule got wrong: it kept a 192px OWNER
+   column on screen while the title fell to 93px at a 901px window.
 
    The columns are dropped rather than shrunk, weakest signal first. Each
    dropped fact stays on the row — the AREA cell's chip moves into the
    title cell's own stack below — so nothing is lost; it simply stops being
    a column. */
-@media (max-width: 900px) {
+@container list (max-width: 900px) {
   /* OWNER goes first: it is the widest column at 12rem and the most often
      empty, so it costs the most and carries the least. */
   .colOwner,
@@ -272,7 +309,7 @@
   }
 }
 
-@media (max-width: 560px) {
+@container list (max-width: 560px) {
   /* AREA and PRIORITY follow. The area chip is restated inside the title
      cell (`.rowMeta`) at this width, and priority survives as the row's
      own leading marker rather than a column of its own. */
@@ -281,19 +318,16 @@
     display: none;
   }
 
-  .list {
-    padding: 0.75rem;
-  }
-
   .row td {
     padding: 0.4rem 0.4rem;
   }
 
-  /* With two columns gone the title needs no floor — and at 390px a 14rem
-     floor is itself wider than the viewport's content box, which would
-     reintroduce exactly the overflow this block removes. */
+  /* With two columns gone the title should take everything left rather
+     than a share of it: at this width there is exactly one column of prose
+     and one narrow chip column, and a 45% cap would leave half the row
+     empty. */
   .colTitle {
-    min-width: 0;
+    width: auto;
   }
 
   /* The AREA column's facts, now that the column itself is gone. Declared
@@ -304,6 +338,38 @@
     gap: 0.4rem;
     margin-top: 0.15rem;
     flex-wrap: wrap;
+  }
+}
+
+/* The narrowest boxes: the two surviving chip columns give ground too.
+
+   At a 390px phone the box is ~366px, and STATE's 8.5rem (136px) plus
+   PRIORITY's 5rem left the title 134px — narrower than STATE itself, so the
+   one column of prose was again the smallest thing on the row. The chips
+   fit comfortably in less, so below a 420px box they take it and the title
+   keeps the difference. Measured: this is what moves the 390px title from
+   134px to 176px and makes the title the widest column at every width from
+   360px up. */
+@container list (max-width: 420px) {
+  .colState {
+    width: 5.5rem;
+  }
+
+  .colPriority {
+    width: 3.5rem;
+  }
+}
+
+/* The list's own padding stays on a VIEWPORT query.
+
+   It is a property of the page's margin at a small screen, not of the
+   column competition inside the box — and it cannot be a container query
+   on `.list` in any case: `.list` is the container itself, and an element
+   cannot be sized by a query on its own inline size without the circular
+   dependency that `container-type` exists to forbid. */
+@media (max-width: 560px) {
+  .list {
+    padding: 0.75rem;
   }
 }
 
@@ -355,6 +421,27 @@
   display: block;
   color: var(--text-faint);
   font-size: 0.78rem;
+}
+
+/* What a row holds — the subtask rollup, the same count the kanban card
+   shows (#275). Muted and small for the same reason `.rowRepo` is: it is a
+   quantity about the row, not the row's name, and at sixty-eight rows a
+   badge competing with the title would undo the scan the list exists for.
+
+   `display: block` so it takes its own line under the title rather than
+   running on after a two-line clamp, where it would appear to be part of
+   the title's last line. */
+.rowSubtasks {
+  display: block;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+
+.rowSubtaskCaret {
+  display: inline-block;
+  margin-right: 0.2rem;
+  font-size: 0.6rem;
+  line-height: 1;
 }
 
 /* Why a Waiting row is waiting. Clamped to two lines: a blocked reason can
