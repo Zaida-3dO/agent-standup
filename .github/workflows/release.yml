@@ -225,12 +225,64 @@ jobs:
             # updating `latest` — which docker-compose.prod.yml pulls by default,
             # so the deploy would silently keep serving the previous image.
             type=raw,value=latest
+      # The version this run is releasing, without its leading `v` — the
+      # same reading of the same tag that `docker/metadata-action`'s
+      # `type=semver,pattern={{version}}` takes above, and that the npm job
+      # below takes for what it publishes. Derived by the one script that
+      # owns that parse rather than by a `${TAG#v}` written here: a second
+      # place that strips the prefix is a second place that can disagree
+      # about a prerelease tag, and the script refuses anything it cannot
+      # parse instead of guessing.
+      - name: Derive the version to bake into the image
+        env:
+          RELEASE_TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          version="$(node scripts/version-from-tag.mjs "$RELEASE_TAG")"
+          # ISO-8601 UTC, matching the format of the OCI `created` label.
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # The sha of the tree this job actually checked out — NOT
+          # `github.sha`, which is the commit the workflow was *triggered*
+          # from. On a manual dispatch those differ: the `tag` job creates
+          # the tag after the run starts, and the checkout above pins
+          # `ref: needs.tag.outputs.tag` precisely because the branch tip
+          # can move mid-run. Baking `github.sha` would report a commit the
+          # image was not built from, which is a more dangerous lie than
+          # the missing version this row exists to fix.
+          revision="$(git rev-parse HEAD)"
+
+          # One redirect rather than three (shellcheck SC2129). The command
+          # substitutions above run first and `set -e` aborts on any
+          # failure, so a bad tag still stops the release before anything
+          # is written.
+          {
+            echo "APP_VERSION=$version"
+            echo "APP_BUILD_TIME=$build_time"
+            echo "APP_REVISION=$revision"
+          } >> "$GITHUB_ENV"
       - uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # What makes the running process able to answer "what is deployed".
+          #
+          # These carry the same two facts into the *process* that
+          # `steps.meta.outputs.labels` above carries into the image's OCI
+          # metadata — deliberately from the same values, so the label and
+          # the running build can never disagree. The label alone was the
+          # only honest answer before this, and reading it required a shell
+          # on the deploy host plus the right `docker inspect --format`.
+          #
+          # `APP_REVISION` is resolved by `git rev-parse HEAD` in the step
+          # above rather than from `github.sha` — see that step's comment
+          # for why the two differ on a manual dispatch.
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            APP_REVISION=${{ env.APP_REVISION }}
+            APP_BUILD_TIME=${{ env.APP_BUILD_TIME }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

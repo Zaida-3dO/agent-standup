@@ -12,6 +12,8 @@
 // themselves from the registry — a constant added here appears in the panel
 // with no edit to the page.
 
+import { currentBuildInfo } from "@/lib/build-info";
+
 /**
  * A protocol variant's two numbers. §17.6: "Two numbers per variant, not
  * one, because 'you should update' and 'I cannot talk to you' are different
@@ -36,13 +38,20 @@ export const HOOK_PROTOCOL: Readonly<Record<"http" | "cli", ProtocolVersions>> =
 /**
  * The published version of this build.
  *
- * Read from the environment at build time where the release pipeline sets it
- * (`scripts/version-from-tag.mjs` derives it from the release tag), falling
- * back to a development marker. The fallback is a visible string rather than
- * an empty one, because a panel that renders a blank version reads as broken
- * rather than as "not a released build".
+ * Delegates to `src/lib/build-info.ts` rather than reading the environment
+ * a second time here. Both this panel and `service_info` answer "what is
+ * running", and two independent readings of the same variable can disagree
+ * about the edge cases — an empty-string `APP_VERSION`, which is what
+ * Docker produces for an `ARG` nobody passed, was read as a real version by
+ * the `??` form this replaced.
+ *
+ * A getter rather than a captured value, so the panel reflects the
+ * environment at render time; `renderBuildConstants()` is a function for
+ * the same reason and its own comment explains it.
  */
-export const APP_VERSION: string = process.env.APP_VERSION ?? "0.0.0-dev";
+export function appVersion(): string {
+  return currentBuildInfo().version;
+}
 
 /** One constant, rendered for the read-only panel. */
 export interface RenderedConstant {
@@ -83,8 +92,17 @@ export function renderBuildConstants(): RenderedConstant[] {
     },
     {
       name: "APP_VERSION",
-      value: APP_VERSION,
+      value: appVersion(),
       meaning: "The published version of this build.",
+    },
+    {
+      name: "APP_REVISION",
+      value: currentBuildInfo().revision,
+      // The sha, not the tag, is what identifies the code: `main` is
+      // routinely ahead of what is deployed, because images publish only
+      // from tagged releases. This row is what lets a reader of this panel
+      // compare against `git log` without a shell on the deploy host.
+      meaning: "The git commit this build was made from.",
     },
   ];
 }

@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
+import { currentBuildInfo, type BuildInfo } from "@/lib/build-info";
 import type { ServiceContext } from "../context";
 
 /** The catalogue entry for one operation, as a caller reads it. */
@@ -19,6 +20,17 @@ export interface OperationDescriptor {
 
 export interface ServiceInfo {
   readonly operations: readonly OperationDescriptor[];
+  /**
+   * What code is actually running — version, git revision and build time.
+   *
+   * The whole point of carrying it on this read: `service_info` is the one
+   * call every adapter already exposes and every client already knows how
+   * to make, so putting the running revision here is what makes "what is
+   * deployed" answerable in a single tool call, with no shell access to
+   * the deploy host. See `src/lib/build-info.ts` for why the values come
+   * from the build rather than from a checked-in constant.
+   */
+  readonly build: BuildInfo;
   /** Settings a caller has to respect to make a valid request. */
   readonly limits: {
     readonly maxDepth: number;
@@ -78,6 +90,8 @@ export const serviceInfo = defineOperation({
     const operations = input.kind ? all.filter((entry) => entry.kind === input.kind) : all;
     return {
       operations,
+      // Read per call, not captured at module load — see `currentBuildInfo`.
+      build: currentBuildInfo(),
       limits: {
         maxDepth: ctx.settings.values["items.max_depth"],
         waitTimeoutSeconds: ctx.settings.values["crew.wait_timeout_seconds"],

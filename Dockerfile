@@ -69,6 +69,30 @@ COPY --from=build --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=build --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=build --chown=nextjs:nodejs /app/dist/hook-scripts ./dist/hook-scripts
 
+# What code this image contains, so the running process can answer "what is
+# deployed" without anyone shelling in to read an OCI label.
+#
+# These are the LAST thing in the build on purpose. Every ARG/ENV pair
+# invalidates the layers below it, so declaring them up here — after every
+# COPY and RUN — means a new sha changes exactly one trivial metadata layer
+# and reuses the whole cached build. Declared in the runner stage only:
+# earlier stages never reference them, so `npm ci` and `next build` stay
+# cached across commits.
+#
+# `.github/workflows/release.yml` passes these from the same tag and sha
+# that `docker/metadata-action` writes into the OCI labels, so the label and
+# the running process can never disagree about what was built. A build that
+# passes nothing gets empty strings, which `src/lib/build-info.ts` reads as
+# absent and reports as `0.0.0-dev` / `unknown` — deliberately not a
+# plausible version, so an unreleased build cannot be mistaken for a
+# released one.
+ARG APP_VERSION=""
+ARG APP_REVISION=""
+ARG APP_BUILD_TIME=""
+ENV APP_VERSION=$APP_VERSION
+ENV APP_REVISION=$APP_REVISION
+ENV APP_BUILD_TIME=$APP_BUILD_TIME
+
 USER nextjs
 EXPOSE 3000
 
