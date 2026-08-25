@@ -73,7 +73,7 @@ const broadGitAddOnSharedCheckout: Intervention = {
       "⚠️ Do not proceed until you have read this. This `git add` stages every modified file in a " +
       "checkout that other sessions are working in right now — their uncommitted work would be " +
       "committed under your name and attributed to your change. Stage your own files explicitly " +
-      "by path.",
+      "by path. If the broad add is genuinely what you want, say why: the reason is recorded.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
@@ -645,8 +645,12 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "which tools a given job requires. The tool list a subagent was spawned with is on the " +
       "spawn; that a reviewer on a UI territory needed a browser is a per-role judgement, and a " +
       "rule that fires on every subagent without one would fire on every subagent that correctly " +
-      "had none. The `agent-standup` half is the tractable one — a spawned agent that records " +
-      "nothing is visible without knowing anything about the territory.",
+      "had none. The `agent-standup` half reads as the tractable one and is not, on this schema: " +
+      "no column records the tool list a session was spawned with, and the hook event carries " +
+      "only the tool being called, so the sole available proxy is that an agent has recorded " +
+      "nothing. That fires on every agent which legitimately had nothing to record — a scout, a " +
+      "short crew, one that failed early — which is a guard that costs more than it saves. What " +
+      "would make it buildable is the spawn's tool list being recorded at dispatch.",
   },
   {
     id: "I20",
