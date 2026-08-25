@@ -31,6 +31,7 @@ import type { BoardColumnId, BoardEntry, ItemState } from "@/lib/board/types";
 import { listSections, listShown, listTotal } from "@/lib/board/list";
 import { waitingTone, needsYou, columnCount } from "@/lib/board/view";
 import { hasDistinctHeadline, primaryLine } from "@/lib/item-headline-display";
+import { subtaskSummary } from "./ItemCard";
 import { relativeTime } from "@/lib/projects/view";
 import { StateChip } from "@/components/chips/StateChip";
 import { PriorityChip } from "@/components/chips/PriorityChip";
@@ -261,6 +262,37 @@ export function ListView({
                               <span className={styles.rowRepo}>{entry.item.repo}</span>
                             )}
                           </span>
+                          {/* What this row holds, the same rollup the kanban
+                              card shows (#275). Rendered from
+                              `entry.subtasks`, which the board response
+                              already carries — this is display, not a new
+                              read — and through the SAME `subtaskSummary`
+                              the card uses, so the two layouts cannot
+                              start wording or pluralising the same count
+                              differently.
+
+                              A plain span, not a button: the list offers
+                              no expand-in-place, and a dead control would
+                              promise a gesture that does nothing. The row
+                              already links to the item, which is where the
+                              children are.
+
+                              Only when there IS a rollup — `subtasks` is
+                              `null` for a row with nothing beneath it, so
+                              a leaf grows no badge rather than a "0
+                              subtasks" that states a fact about no work.
+                              The caret matches the card's collapsed
+                              marker and is decorative, so it is hidden
+                              from the accessibility tree while the count
+                              itself stays readable. */}
+                          {entry.subtasks && (
+                            <span className={styles.rowSubtasks}>
+                              <span className={styles.rowSubtaskCaret} aria-hidden="true">
+                                ▸
+                              </span>
+                              {subtaskSummary(entry.subtasks)}
+                            </span>
+                          )}
                           {reason && <span className={styles.rowReason}>{reason}</span>}
                           {entry.trust && (
                             <TrustBadge
