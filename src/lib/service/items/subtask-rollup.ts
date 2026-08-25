@@ -136,22 +136,30 @@ const DONE_STATES_SQL = STATES_BY_COLUMN.completed
  * lets `null` mean "nothing underneath" without a second query to tell the
  * two apart.
  *
+ * The CTE is named `rollup_subtree` rather than `subtree` deliberately.
+ * `get_board` runs a second, unrelated recursive walk to derive a project's
+ * column, and that one calls its CTE `subtree`; two statements in one
+ * response sharing a CTE name are indistinguishable in a query log, which
+ * makes "is this one statement or one per card" unanswerable by the only
+ * evidence that can answer it. The distinct name is what lets
+ * tests/board-subtask-rollup.test.ts count this statement specifically.
+ *
  * The archive predicate appears on both arms; see the module header for why
  * each one is load-bearing on its own.
  */
-export const SUBTASK_ROLLUP_SQL = `WITH RECURSIVE subtree AS (
+export const SUBTASK_ROLLUP_SQL = `WITH RECURSIVE rollup_subtree AS (
      SELECT i."id", i."state", i."parentId" AS "rootId"
      FROM "Item" i
      WHERE i."parentId" = ANY($1::text[]) AND i.${NOT_ARCHIVED_CONDITION}
      UNION ALL
      SELECT i."id", i."state", s."rootId"
-     FROM "Item" i JOIN subtree s ON i."parentId" = s."id"
+     FROM "Item" i JOIN rollup_subtree s ON i."parentId" = s."id"
      WHERE i.${NOT_ARCHIVED_CONDITION}
    )
    SELECT s."rootId" AS "rootId",
      count(*)::bigint AS "total",
      count(*) FILTER (WHERE s."state" IN (${DONE_STATES_SQL}))::bigint AS "done"
-   FROM subtree s
+   FROM rollup_subtree s
    GROUP BY s."rootId"`;
 
 /**

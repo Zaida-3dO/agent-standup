@@ -1063,10 +1063,9 @@ export const getBoard = defineOperation({
       // every card's children are hidden by it and this is what accounts
       // for them — see `subtask-rollup.ts` for the recursion, and for why
       // archived descendants are excluded on both of its arms.
-      const rollupRows = await ctx.db.$queryRawUnsafe<RawSubtaskRollupRow[]>(
-        SUBTASK_ROLLUP_SQL,
-        [...new Set(entryIds)],
-      );
+      const rollupRows = await ctx.db.$queryRawUnsafe<RawSubtaskRollupRow[]>(SUBTASK_ROLLUP_SQL, [
+        ...new Set(entryIds),
+      ]);
       const rollupsByItem = groupSubtaskRollupsByItem(rollupRows);
 
       for (const column of requested) {

@@ -105,7 +105,13 @@ function host(initial: DragState, result?: MoveResult) {
       return Promise.resolve(
         result ?? {
           ok: true,
-          entry: { item: item({ state: "executing" }), column, assignments: [], trust: null, subtasks: null },
+          entry: {
+            item: item({ state: "executing" }),
+            column,
+            assignments: [],
+            trust: null,
+            subtasks: null,
+          },
         },
       );
     }),
@@ -162,7 +168,13 @@ describe("handleDrop — a drop actually reaches the server", () => {
         moves.push(`${itemId}->${column}`);
         return Promise.resolve({
           ok: true,
-          entry: { item: item({ state: "executing" }), column, assignments: [], trust: null, subtasks: null },
+          entry: {
+            item: item({ state: "executing" }),
+            column,
+            assignments: [],
+            trust: null,
+            subtasks: null,
+          },
         });
       },
     };
