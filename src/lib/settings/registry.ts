@@ -201,16 +201,17 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
-  // The lazy-eviction threshold. Still deliberately far above
-  // `dead_after_seconds`, but the reason has narrowed: `record_tool_calls`
-  // now stamps `lastActive` on every flush, so a session running the hook
-  // has a signal that genuinely moves while it works. What remains is the
-  // session running **no** hook and never calling `heartbeat` — for which
-  // `lastActive` is still frozen at the claim, and four hours is still the
-  // margin protecting it. The full reasoning, including why the promised
-  // process check does not exist and why a tool-call timestamp is consulted
-  // as a second signal, is in `src/lib/claim-eviction.ts`, which is the one
-  // place that policy is written down.
+  // The lazy-eviction threshold. Deliberately far above
+  // `dead_after_seconds`, and it governs holders that *have* a liveness
+  // signal and have stopped producing it. A holder that has produced no
+  // signal at all and whose registration names no hook is not judged on
+  // elapsed time in the first place — its silence is its configuration
+  // rather than evidence — so this number is not what protects it. The full
+  // reasoning, including why the promised process check does not exist, why
+  // a tool-call timestamp is consulted as a second signal, and why lowering
+  // this was never the fix for a signal-less session, is in
+  // `src/lib/claim-eviction.ts`, which is the one place that policy is
+  // written down.
   "liveness.evict_after_seconds": define({
     schema: z.number().int().positive(),
     default: 14_400,
@@ -218,10 +219,13 @@ export const SETTINGS_REGISTRY = {
     help:
       "Seconds a claim holder must go unseen before another session's claim may take the item from it. " +
       "Checked only when a competing claim actually arrives — there is no timer. " +
-      "Much larger than the dead threshold on purpose: a session running no hook and never calling " +
-      "`heartbeat` writes neither liveness signal, so its `last_active` stays frozen at the claim and " +
-      "it can look quiet for as long as its turn lasts. (A session whose hook flushes tool calls does " +
-      "stamp `last_active`, and is not exposed this way.) There is no process check. " +
+      "Much larger than the dead threshold on purpose: it is measured from `last_active` and from the " +
+      "session's most recent tool call, and a session running no hook and never calling `heartbeat` " +
+      "moves neither, so its `last_active` stays frozen at the claim. Such a holder is NOT evicted on " +
+      "this threshold at all — a session that has never emitted a signal is not judged by its silence, " +
+      "because its silence is how it was configured rather than evidence it died. It keeps its claim " +
+      "until it heartbeats once (which puts it back under this threshold) or somebody uses takeover. " +
+      "There is no process check. " +
       "Lowering this risks evicting a live agent mid-run and losing its uncommitted work; raising it " +
       "means a genuinely dead holder keeps its claim for longer. Use takeover to reclaim sooner.",
     category: "Liveness",

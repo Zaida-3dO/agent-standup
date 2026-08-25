@@ -25,14 +25,20 @@
 // the documentation says.**
 //
 // `Assignment.lastActive` is described in SCHEMA.md §2 as "stamped by the
-// hook on every tool call — free, no agent effort". **That is now true for
-// a session running the hook, and was not true when this module was
-// written.** `record_tool_calls` stamps the column on the same statement
-// that resolves the session's live assignment, so every telemetry flush is
-// a liveness signal. Before that change the only writer anywhere in the
-// source was the `heartbeat` operation, whose own summary read "Usually
-// unnecessary — the hook does it" while the hook did not — and this
-// module's conservatism was built on that fact.
+// hook on every tool call — free, no agent effort". **It is stamped by
+// `record_tool_calls`, but read that claim narrowly.** The stamp rides on
+// the statement that resolves the session's *live assignment*, so it moves
+// for a session flushing telemetry **while holding a claim**, and moves
+// nothing for a session that holds none. It is a genuine liveness signal
+// for exactly the population this module judges — claim holders — and it is
+// not the blanket guarantee §2's wording suggests. Before that change the
+// only writer anywhere in the source was the `heartbeat` operation, whose
+// own summary read "Usually unnecessary — the hook does it" while the hook
+// did not, and this module's conservatism was built on that fact.
+//
+// `ToolCall` rows are the separate half and are written unconditionally,
+// claim or no claim, which is why they are consulted here as an independent
+// signal rather than as a second reading of the stamp.
 //
 // **What has not changed: there is still no process check.**
 // `liveness.stale_after_seconds` used to say one "comes first" and that the
@@ -96,40 +102,76 @@
 //      cheap consistency check against the one input class that is not a
 //      measurement of the holder's own behaviour.
 //
-// ── The residual hole, stated because it is the one that bites ─────────
+// ── The case the three conditions could not decide, and how it is now ──
 //
-// **These three are NOT jointly sufficient in every case, and the exception
-// is precise — it is now narrower than it was, but it is not gone.**
-// `claimedAt` and `lastActive` both default to `now()` at insert. So for a
-// session running **no hook** (therefore writing no `ToolCall` rows *and*
-// never reaching the stamp in `record_tool_calls`) that also never calls
-// `heartbeat`, both terms are still computed from the same instant:
-// `unseenForSeconds == claimAgeSeconds`, and condition 3 is not an
+// **Those three were NOT jointly sufficient, and the exception was
+// precise.** `claimedAt` and `lastActive` are both `@default(now())` at
+// insert. So for a session running **no hook** (writing no `ToolCall` rows,
+// and therefore never reaching the stamp in `record_tool_calls`) that also
+// never calls `heartbeat`, both terms were computed from the same instant:
+// `unseenForSeconds == claimAgeSeconds`, and condition 3 was not an
 // independent check at all. Such a session on a single turn longer than the
-// threshold **can still be evicted while alive.**
+// threshold could be evicted while alive — the claim-age floor was the same
+// signal read twice, not a second opinion.
 //
-// What the `record_tool_calls` stamp changed is *who* is exposed, not
-// whether anyone is. A session running the hook now moves `lastActive` on
-// every flush, so it is seen, and the two terms diverge for it. The
-// residual case is the session with no hook running at all. The hook ships
-// in this repository and its flush path is complete — `flushSpool` ->
-// `POST /api/tool-calls` -> `record_tool_calls` -> this stamp — but whether
-// a given installation actually *runs* it is a deployment fact this module
-// cannot check. **So the exposure is narrowed for hooked sessions and
-// unchanged for unhooked ones**, and the threshold stays at four hours for
-// exactly that reason. Lowering it because the code path now exists, without
-// knowing that the sessions in front of it run the hook, would be the
-// cosmetic answer.
+// The fourth condition below is the answer, and it turns on a distinction
+// the previous three could not draw:
 //
-// Condition 3 still does its other job in that case — it defends against
-// clock skew, restores and imported rows, which is why it stays — but it is
-// not a second liveness signal there, and reading it as one is the mistake
-// this paragraph exists to prevent.
+//   4. **Silence is only evidence from a session that would otherwise
+//      speak.** A holder that has emitted *no* signal since it claimed, and
+//      whose registration says it has no hook to emit one with, is not
+//      quiet because it died — it is quiet because that is the only way it
+//      was ever going to be. Reading its silence as death is reading the
+//      absence of a mechanism as the absence of a session. So that holder
+//      is reported `never_signalled` and is not evicted on elapsed time.
 //
-// **The one thing a signal-less session can always do is call `heartbeat`,
-// and that is now what its description tells it to do.** That is a
-// documented, reachable escape rather than a fix, and it is deliberately
-// not counted as one here: it requires the session to know to do it.
+// **This is a statement about the holder, not about the threshold.** The
+// threshold is untouched, and lowering it was the tempting non-fix: a
+// shorter fuse on a detector that cannot see the session it is judging just
+// reaches the wrong answer sooner. What changed is that the detector now
+// declines to answer where it has no evidence, instead of treating "nothing
+// recorded" as "nothing happened".
+//
+// **What the server knows, and why `Session.hookVersion` is the right
+// column.** SCHEMA.md §21 already defines a null `hookVersion` as a session
+// that "makes no claim about what the session can enforce" — no
+// registration at all, or a registration that named no version, collapse to
+// the same fact, and `my_work` already reports exactly that collapse as its
+// `hooked` flag. This reuses that reading rather than inventing a third
+// one. A session that *did* register a hook version has a mechanism that
+// stamps `lastActive` on every flush, so its silence is a real observation
+// about a thing that should have been talking, and it is judged on elapsed
+// time exactly as before.
+//
+// **The narrowness is deliberate and is what keeps eviction working.** The
+// exemption requires BOTH halves. A holder that ever moved either signal —
+// one `heartbeat`, one flushed tool call, at any point after the claim —
+// has demonstrated it can be seen, so the exemption does not apply to it
+// and it is evicted on the ordinary evidence when it goes quiet. That is
+// the common case this mechanism exists for and it is preserved exactly: a
+// crashed builder that was flushing telemetry right up to the moment it
+// died still loses its claim at the threshold. What this rules out is
+// evicting a session for failing to produce a signal it never had.
+//
+// **What is given up, named honestly.** An unhooked session that dies
+// within its very first signal-less stretch holds its claim indefinitely
+// rather than for four hours. That is a real regression in recovery for
+// that one class, and it is the deliberate trade: the cost is a stranded
+// claim, which is visible in `my_work`, diagnosable from the assignment row
+// and recoverable by hand through `takeover` — a bounded, reversible,
+// *noticed* failure. The cost on the other side was evicting a running
+// builder, which produces two sessions that each believe they own the item
+// and is neither visible nor recoverable. The asymmetry that justified four
+// hours justifies this too, and further: it is the same argument carried to
+// the case where the evidence is not merely thin but absent.
+//
+// **The escape is unchanged and now actually matters.** A signal-less
+// session that wants its claim reclaimable can call `heartbeat` once; that
+// single stamp moves `lastActive` off `claimedAt`, retires the exemption
+// for that holder forever, and puts it back under ordinary judgement. So
+// the exemption is not a permanent hiding place — it is the default for a
+// session that has told the server nothing, and any session may leave it by
+// saying one thing.
 //
 // **What this deliberately does not do.** It does not evict a holder that
 // is merely `stalled`, and it does not treat the sweep's `dead` rung as
@@ -147,17 +189,33 @@
 // costs one sentence of written reason. The lazy path is for the unattended
 // case where nobody is there to write that sentence.
 //
-// **When the hook is actually deployed in this workspace**, this threshold
-// should come down — probably to something near `dead_after_seconds`. The
-// server half of that is done: `record_tool_calls` stamps `lastActive`, so
-// a flushing session is seen. What is still missing is the deployment —
-// nothing here runs the hook yet — and the threshold protects the sessions
-// that do not. **Lower it when signal-less sessions are the exception
-// rather than the rule, and not before**, because until then lowering it
-// trades directly against the case in the residual-hole note above. That is
-// a one-line settings change, and it is the reason this is a setting rather
-// than a constant. The default continues to encode the deployment as it
-// actually is rather than as the documentation describes it.
+// ── On lowering the threshold ──────────────────────────────────────────
+//
+// **Do not lower it on the strength of the `record_tool_calls` stamp.**
+// That reasoning stood here in an earlier revision, and it misled two
+// separate pieces of work into believing this row was closed. The stamp is
+// real, but three things that each looked like they should close the hole
+// did not, and the reason is worth stating so a fourth attempt does not
+// repeat them:
+//
+//   - Making `record_tool_calls` stamp `lastActive` helps only sessions
+//     that already hold a claim, because the statement that stamps resolves
+//     the session's live assignment and updates nothing when there is none.
+//     Those are the sessions least at risk.
+//   - Draining the hook's spool to the server helps for the same reason and
+//     with the same limit.
+//   - Wiring the hook at all does not help a session whose calls are reads:
+//     a decision path that touches no `Assignment` row stamps no column.
+//
+// None of that reaches a session running **no hook**, which is the one the
+// fourth condition is for. The threshold is therefore doing a different job
+// now than it was: it is the margin for holders that *have* a signal and
+// have gone quiet, not the sole protection for holders that never had one.
+// It could reasonably come down once the population of claim-holding
+// sessions is known to be hooked — but that is a deployment observation, to
+// be made against the registry, and condition 4 rather than this number is
+// what decides the case above. Shortening a fuse is not a fix for a
+// detector that cannot see the session it is judging.
 import { appendEvent } from "./events";
 import type { TransactionHandle } from "./service/context";
 import type { Assignment } from "./claims";
@@ -176,6 +234,14 @@ export type EvictionVerdict =
   | "already_released"
   /** Seen recently enough that eviction could interrupt live work. */
   | "recently_seen"
+  /**
+   * Has emitted no signal at all since claiming, and has no hook to emit
+   * one with — so its silence is its configuration rather than evidence of
+   * death. Distinct from `recently_seen` because the reason is different
+   * and a caller acting on it should say so: this holder will never become
+   * evictable through elapsed time alone, and `takeover` is the route.
+   */
+  | "never_signalled"
   /** Quiet long enough, and the claim is old enough for that to be meaningful. */
   | "evictable";
 
@@ -206,6 +272,20 @@ export interface EvictionInputs {
    * independent signal; see this module's header.
    */
   readonly lastToolCallAt: Date | null;
+  /**
+   * `Session.hookVersion` for the holder's session — null when it never
+   * registered, or registered without naming a version. SCHEMA.md §21 reads
+   * both as the same fact ("makes no claim about what the session can
+   * enforce"), and `my_work` collapses them the same way for its `hooked`
+   * flag.
+   *
+   * Consulted for one purpose only: deciding whether a holder that has
+   * produced no signal *could* have produced one. A session with a hook
+   * version has a mechanism that stamps `lastActive` on every flush, so its
+   * silence is an observation; a session without one was never going to
+   * stamp anything, so its silence is not.
+   */
+  readonly holderHookVersion: number | null;
   readonly now: Date;
   readonly evictAfterSeconds: number;
 }
@@ -249,6 +329,34 @@ export function judgeEviction(input: EvictionInputs): EvictionJudgement {
     return { verdict: "recently_seen", unseenForSeconds, lastSeenSignal };
   }
 
+  // Condition 4 — the holder must be a session that *would* have been seen
+  // had it been alive. Checked last, after the time terms, because it is the
+  // more expensive fact to state and only matters once elapsed time has
+  // already argued for eviction.
+  //
+  // Both halves are required, and each rules out a different mistake:
+  //
+  //   - `lastActive <= claimedAt` means the column still sits at its
+  //     `@default(now())` — the holder has produced no heartbeat, and no
+  //     telemetry flush landed while it held this claim. `<=` rather than
+  //     `===` because the two defaults are evaluated by separate
+  //     `now()` calls in one INSERT and a stamp can only ever move the
+  //     column forward; an equality test would let a sub-millisecond
+  //     ordering difference at insert decide a safety property.
+  //   - No `ToolCall` row at all. A session with telemetry has a signal
+  //     that moves whether or not it holds a claim, so its silence is real.
+  //
+  // …and then the registration must agree that there was no mechanism. A
+  // holder that reported a hook version had something that stamps on every
+  // flush; if that has produced nothing for four hours the honest reading is
+  // that the session is gone, which is the case eviction exists for.
+  const hasNeverSignalled =
+    lastSeenMs <= input.claimedAt.getTime() && input.lastToolCallAt === null;
+
+  if (hasNeverSignalled && input.holderHookVersion === null) {
+    return { verdict: "never_signalled", unseenForSeconds, lastSeenSignal: null };
+  }
+
   return { verdict: "evictable", unseenForSeconds, lastSeenSignal };
 }
 
@@ -265,6 +373,7 @@ interface HolderRow {
   lastActive: Date;
   claimedAt: Date;
   lastToolCallAt: Date | null;
+  holderHookVersion: number | null;
 }
 
 /** What one eviction released, reported so the caller can say what it did. */
@@ -345,14 +454,25 @@ export async function evictStaleHolders(
   // — 2ms unlocked vs a lock timeout locked. No seam, no test-only hook, and
   // no change to the shape of this function was needed after all.
   //
-  // `OF a` restricts the lock to the assignment; the `ToolCall` side is a
-  // correlated read, and locking it would contend with telemetry ingest for
-  // no benefit.
+  // `OF a` restricts the lock to the assignment; the `ToolCall` and
+  // `Session` sides are correlated reads, and locking them would contend
+  // with telemetry ingest and with session re-registration for no benefit.
+  //
+  // The `Session` subquery yields NULL two ways that mean the same thing —
+  // no row for that session id, or a row whose `hookVersion` is null — and
+  // both are the fact condition 4 wants ("makes no claim about what the
+  // session can enforce", SCHEMA.md §21). There is deliberately no join
+  // here: `Session` has no foreign key from `Assignment` (a ghost session
+  // holds claims without ever registering), so an inner join would silently
+  // drop exactly those holders from the pass and a left join would say the
+  // same thing as this at more width.
   const rows = await db.$queryRawUnsafe<HolderRow[]>(
     `SELECT a."id", a."itemId", a."role"::text AS "role", a."holderType", a."holderId",
             a."sessionId", a."liveness", a."releasedAt", a."lastActive", a."claimedAt",
             (SELECT MAX(t."ts") FROM "ToolCall" t WHERE t."sessionId" = a."sessionId")
-              AS "lastToolCallAt"
+              AS "lastToolCallAt",
+            (SELECT s."hookVersion" FROM "Session" s WHERE s."id" = a."sessionId")
+              AS "holderHookVersion"
      FROM "Assignment" a
      WHERE a."itemId" = $1 AND a."releasedAt" IS NULL
      FOR UPDATE OF a`,
@@ -368,6 +488,7 @@ export async function evictStaleHolders(
       lastActive: row.lastActive,
       claimedAt: row.claimedAt,
       lastToolCallAt: row.lastToolCallAt,
+      holderHookVersion: row.holderHookVersion,
       now,
       evictAfterSeconds: args.evictAfterSeconds,
     });
