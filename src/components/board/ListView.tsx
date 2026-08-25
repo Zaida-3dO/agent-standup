@@ -245,6 +245,22 @@ export function ListView({
                           {distinct && (
                             <span className={styles.rowSourceTitle}>{entry.item.title}</span>
                           )}
+                          {/* The facts that stop being columns below
+                              560px, restated here so a narrow row still
+                              carries them. CSS-only: this is always in the
+                              tree and `.rowMeta` is `display: none` at
+                              full width, where the real columns show it.
+                              Rendering it conditionally would need a
+                              viewport width during render, which this
+                              hook-free component deliberately has not got
+                              — and would make the tree differ between
+                              server and client for the same data. */}
+                          <span className={styles.rowMeta} aria-hidden="true">
+                            <AreaChip area={entry.item.area} />
+                            {entry.item.repo && (
+                              <span className={styles.rowRepo}>{entry.item.repo}</span>
+                            )}
+                          </span>
                           {reason && <span className={styles.rowReason}>{reason}</span>}
                           {entry.trust && (
                             <TrustBadge
