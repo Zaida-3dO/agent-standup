@@ -30,7 +30,7 @@
 //      toast appears with a working Undo, and that pressing it posts a
 //      restore.
 //
-// ── StrictMode, for the reason its predecessors give ────────────────────
+// ── StrictMode, so the recurring defect cannot pass here ────────────────
 //
 // Mounted under `StrictMode` so updaters are double-invoked and React's
 // deferral paths are live. Either mechanism alone reproduces the recurring
@@ -140,7 +140,8 @@ beforeEach(() => {
         } as Response);
       }
 
-      const body = init?.body === undefined ? undefined : (JSON.parse(String(init.body)) as unknown);
+      const body =
+        init?.body === undefined ? undefined : (JSON.parse(String(init.body)) as unknown);
       writes.push({ method, url, body });
 
       const chosen = url.includes("/restore") ? restoreResponse : archiveResponse;
@@ -194,7 +195,11 @@ async function mount(): Promise<void> {
               closePicker: () => {},
             } as never,
           },
-          createElement(UndoToastHost, null, createElement(ItemDetailContainer, { itemId: "item-a" })),
+          createElement(
+            UndoToastHost,
+            null,
+            createElement(ItemDetailContainer, { itemId: "item-a" }),
+          ),
         ),
       ),
     );
@@ -216,10 +221,7 @@ async function typeReason(text: string): Promise<void> {
     // React tracks the last value it set on the node and skips the change
     // event when the new value matches it, so the setter has to be called on
     // the prototype for a programmatic change to reach `onChange`.
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      "value",
-    )?.set;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
     setter?.call(box, text);
     box.dispatchEvent(new Event("input", { bubbles: true }));
   });
@@ -380,7 +382,12 @@ describe("the item detail page's archive affordance, mounted in real React", () 
     archiveResponse = {
       ok: false,
       status: 409,
-      body: { error: { message: "2 things point at this item.", guard: "items.archive_has_inbound_references" } },
+      body: {
+        error: {
+          message: "2 things point at this item.",
+          guard: "items.archive_has_inbound_references",
+        },
+      },
     };
 
     await mount();
@@ -461,7 +468,9 @@ describe("the item detail page's restore affordance, mounted in real React", () 
       button("restore-item")?.click();
     });
 
-    expect(container.querySelector('[data-region="archive-error"]')?.textContent).toContain(refusal);
+    expect(container.querySelector('[data-region="archive-error"]')?.textContent).toContain(
+      refusal,
+    );
     // The named replacement is reachable, not just quoted.
     const link = container.querySelector<HTMLAnchorElement>(
       '[data-region="archive-superseded-link"]',
@@ -499,7 +508,9 @@ describe("the item detail page's restore affordance, mounted in real React", () 
       button("restore-item")?.click();
     });
 
-    expect(container.querySelector('[data-region="archive-error"]')?.textContent).toContain(refusal);
+    expect(container.querySelector('[data-region="archive-error"]')?.textContent).toContain(
+      refusal,
+    );
     expect(button("archive-acknowledge")).toBeNull();
   });
 });
