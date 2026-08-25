@@ -54,7 +54,7 @@ function entry(
   // the API sends for an item nobody holds, so it is the honest default.
   // `trust` defaults to `null` (the project case) — a test that cares about
   // the trust marker passes it explicitly.
-  return { item: item(overrides), column, assignments: [], trust };
+  return { item: item(overrides), column, assignments: [], trust, subtasks: null };
 }
 
 /** A `BoardAssignment` fixture — presence tests below build their own list of these. */

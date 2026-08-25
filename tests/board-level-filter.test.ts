@@ -38,19 +38,23 @@ describe("the level vocabulary", () => {
 });
 
 describe("the board's default level filter", () => {
-  it("is exclude(0) — everything except projects", () => {
-    // The default the whole feature turns on. A project's row is a rollup of
-    // its own subtree, so listing every project beside the work inside it
-    // shows the same work twice.
-    expect(defaultLevelFilter()).toEqual({ mode: "exclude", levels: [0] });
+  it("is include(1) — the tasks, without the projects above or the subtasks beneath", () => {
+    // The default the whole feature turns on, and BOTH exclusions are load
+    // bearing. A project's row is a rollup of its own subtree, so listing
+    // every project beside the work inside it shows the same work twice; a
+    // subtask is work the card above it already counts and now states, so
+    // listing it separately shows that work twice too. Widening this to
+    // `exclude(0)` — the default before subtask rollups existed — puts every
+    // subtask back on the board as a peer of its own parent.
+    expect(defaultLevelFilter()).toEqual({ mode: "include", levels: [1] });
   });
 
   it("applies when the URL says nothing at all", () => {
     // Deleting the `?? defaultLevelFilter()` in `parseBoardQuery` is the
     // change this catches: an absent `level` would become "unfiltered" and
-    // every project would reappear in the item list.
-    expect(parseBoardQuery("").filters.level).toEqual({ mode: "exclude", levels: [0] });
-    expect(parseBoardQuery("area=web").filters.level).toEqual({ mode: "exclude", levels: [0] });
+    // every project AND every subtask would reappear in the item list.
+    expect(parseBoardQuery("").filters.level).toEqual({ mode: "include", levels: [1] });
+    expect(parseBoardQuery("area=web").filters.level).toEqual({ mode: "include", levels: [1] });
   });
 
   it("does not count as a narrowed axis", () => {
@@ -59,14 +63,26 @@ describe("the board's default level filter", () => {
     expect(isFiltered(parseBoardQuery("").filters)).toBe(false);
     expect(activeFilterCount(parseBoardQuery("").filters)).toBe(0);
     // ...but a level the reader actually chose does count, or the control
-    // would narrow the board while reporting nothing is applied.
-    expect(activeFilterCount(parseBoardQuery("level=include:1").filters)).toBe(1);
-    expect(isFiltered(parseBoardQuery("level=include:1").filters)).toBe(true);
+    // would narrow the board while reporting nothing is applied. `include:2`
+    // rather than `include:1` here precisely BECAUSE `include:1` is now the
+    // default: a chosen level that happens to equal the default is not a
+    // narrowing, and asserting on it would test the opposite of this case.
+    expect(activeFilterCount(parseBoardQuery("level=include:2").filters)).toBe(1);
+    expect(isFiltered(parseBoardQuery("level=include:2").filters)).toBe(true);
+  });
+
+  it("does not count as narrowed even when the reader spells it out", () => {
+    // `?level=include:1` and no `level` at all are the same board, so the
+    // address bar must not report one as filtered and the other as not —
+    // this is `levelIsDefault` doing its job across the rename of what the
+    // default IS, not just across its absence.
+    expect(isFiltered(parseBoardQuery("level=include:1").filters)).toBe(false);
+    expect(activeFilterCount(parseBoardQuery("level=include:1").filters)).toBe(0);
   });
 
   it("survives clearing every filter, because no-level-filter is not a state", () => {
     const cleared = withoutFilters(parseBoardQuery("area=web&level=include:2"));
-    expect(cleared.filters.level).toEqual({ mode: "exclude", levels: [0] });
+    expect(cleared.filters.level).toEqual({ mode: "include", levels: [1] });
   });
 });
 
@@ -119,14 +135,18 @@ describe("one filter selection has one address", () => {
     expect(levelIsDefault(defaultLevelFilter())).toBe(true);
     expect(boardQueryString(emptyBoardQuery())).toBe("");
     // A default reached by clicking rather than by loading /board is still
-    // the default, so a reader who unticked and re-ticked Projects lands
-    // back on the address they started at rather than beside it.
+    // the default, so a reader who unticked and re-ticked a level lands back
+    // on the address they started at rather than beside it.
     expect(
-      boardQueryString(withFilter(emptyBoardQuery(), "level", { mode: "exclude", levels: [0] })),
+      boardQueryString(withFilter(emptyBoardQuery(), "level", { mode: "include", levels: [1] })),
     ).toBe("");
     // ...and a NON-default level is written, or a link that carries one
     // would silently mean the default.
-    expect(boardQueryString(parseBoardQuery("level=include:1"))).toBe("level=include%3A1");
+    expect(boardQueryString(parseBoardQuery("level=include:2"))).toBe("level=include%3A2");
+    // `exclude:0` is a REAL selection now rather than the default spelling:
+    // it is the board that shows subtasks as peers again, so an address has
+    // to carry it.
+    expect(boardQueryString(parseBoardQuery("level=exclude:0"))).toBe("level=exclude%3A0");
   });
 
   it("always sends the level to the API, including the default", () => {
@@ -135,7 +155,7 @@ describe("one filter selection has one address", () => {
     // Deleting the `?? defaultLevelFilter()` in `boardRequestParams` is the
     // change this catches.
     const params = boardRequestParams(emptyBoardQuery(), { column: "backlog" });
-    expect(params.get("level")).toBe("exclude:0");
+    expect(params.get("level")).toBe("include:1");
     const narrowed = boardRequestParams(parseBoardQuery("level=include:1,2"), {
       column: "backlog",
     });
@@ -161,8 +181,8 @@ describe("a malformed level value renders a board rather than an error", () => {
     // at from a value that named no level at all.
     expect(parseLevelFilter("include:")).toBeUndefined();
     expect(parseBoardQuery("level=include:").filters.level).toEqual({
-      mode: "exclude",
-      levels: [0],
+      mode: "include",
+      levels: [1],
     });
   });
 });
@@ -170,7 +190,7 @@ describe("a malformed level value renders a board rather than an error", () => {
 describe("the project card board link", () => {
   it("scopes the board to the project and leaves the level at its default", () => {
     // The address is the SHORT spelling on purpose: an absent `level` parses
-    // to exactly `exclude:0`, and `boardQueryString` omits a default so one
+    // to exactly the default, and `boardQueryString` omits a default so one
     // board has one address. Writing it explicitly would give this link a
     // different string from the one the filter bar produces the moment the
     // reader touches any other control, which is what breaks the saved-view
@@ -178,6 +198,6 @@ describe("the project card board link", () => {
     expect(projectBoardHref("proj-1")).toBe("/board?project=proj-1");
     const reparsed = parseBoardQuery("project=proj-1");
     expect(reparsed.filters.project).toBe("proj-1");
-    expect(reparsed.filters.level).toEqual({ mode: "exclude", levels: [0] });
+    expect(reparsed.filters.level).toEqual({ mode: "include", levels: [1] });
   });
 });

@@ -51,7 +51,7 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   // These fixtures are about drag, tone and tallies; ownership is proved
   // against real data in the operation's own suites. An empty list is what
   // the API sends for an item nobody holds, so it is the honest default.
-  return { item: item(overrides), column, assignments: [], trust: null };
+  return { item: item(overrides), column, assignments: [], trust: null, subtasks: null };
 }
 
 /**
@@ -176,6 +176,7 @@ describe("the server accepts", () => {
       column: "in_progress",
       assignments: [],
       trust: null,
+      subtasks: null,
     });
 
     expect(columnOf(settled.board, "a")).toBe("in_progress");
@@ -195,6 +196,7 @@ describe("the server accepts", () => {
       column: "waiting",
       assignments: [],
       trust: null,
+      subtasks: null,
     });
 
     expect(columnOf(settled.board, "a")).toBe("waiting");
@@ -274,6 +276,7 @@ describe("two moves in quick succession", () => {
       column: "in_progress",
       assignments: [],
       trust: null,
+      subtasks: null,
     });
 
     expect(after).toBe(secondDrop);

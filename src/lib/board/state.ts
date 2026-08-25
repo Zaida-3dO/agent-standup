@@ -3,7 +3,13 @@
 // `environment: "node"` with no DOM, so the fetch shaping and the
 // loading/error/loaded branching are only directly testable as plain
 // functions. The client component is thin wiring over these.
-import { BOARD_COLUMNS, type Board, type BoardColumnId, type BoardSection } from "./types";
+import {
+  BOARD_COLUMNS,
+  type Board,
+  type BoardColumnId,
+  type BoardEntry,
+  type BoardSection,
+} from "./types";
 import { emptyBoard, emptySection } from "./view";
 import { uiApiPath } from "@/lib/ui-proxy/path";
 import { boardRequestParams, emptyBoardQuery, type BoardQuery } from "./filters";
@@ -83,6 +89,84 @@ export async function fetchBoard(
     (acc, column, index) => ({ ...acc, [column]: sections[index] ?? emptySection() }),
     board,
   );
+}
+
+/**
+ * One card's subtasks, for the disclosure control that expands it in place.
+ *
+ * **Scoped with the filters the board already has, plus `project`.** The
+ * board's `project` filter is "this row's whole subtree", which is exactly
+ * the set a card is hiding, so this needs no new server surface at all — it
+ * is the same read the board makes, narrowed to one branch of the tree.
+ *
+ * Two deliberate departures from the reader's own query:
+ *
+ *   - **`level` is widened to every level**, because the whole point of
+ *     expanding a card is to see the levels the board's default removes.
+ *
+ *     **It is widened explicitly, and `undefined` will not do it.** An
+ *     absent `level` does not mean "no narrowing" anywhere in this module:
+ *     `boardRequestParams` deliberately writes the level into every request
+ *     including the default (`get_board` itself defaults nothing, so
+ *     omitting it would widen a board read to include projects), so
+ *     `level: undefined` here emits `level=include:1` — the board's own
+ *     default — and a level-2 subtask would be excluded by the very request
+ *     asking for it. The control would return nothing, every time, while
+ *     looking like it worked.
+ *
+ *     `exclude` with no levels is the form that means "narrow by nothing":
+ *     it serialises to `exclude:`, which `parseLevelFilter` refuses as
+ *     unparseable, so `GET /api/board` passes no level to the operation at
+ *     all and every depth comes back. That is a documented round trip, not
+ *     an accident of parsing — see `parseLevelFilter`'s header, and the
+ *     route's own note that it "passes no level at all" for an absent one.
+ *   - **`includeTerminal` is forced on.** A card's badge counts finished
+ *     subtasks in its `done` figure, so a list that omitted them would show
+ *     fewer rows than the badge promised — the count and the list have to
+ *     describe the same set.
+ *
+ * The parent itself is filtered out of the result: `project` scoping returns
+ * the named row alongside its descendants, and a card listing itself as its
+ * own subtask would be nonsense.
+ *
+ * All four columns, because a subtask can be in any of them and the point is
+ * to show what is under this card, not what is under it *and* in the column
+ * the parent happens to sit in.
+ */
+export async function fetchSubtasks(
+  parentId: string,
+  options: {
+    readonly fetchImpl?: typeof fetch;
+    readonly query?: BoardQuery;
+  } = {},
+): Promise<readonly BoardEntry[]> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const base = options.query ?? emptyBoardQuery();
+  const scoped: BoardQuery = {
+    ...base,
+    filters: {
+      ...base.filters,
+      project: parentId,
+      // "Every level" — see the header. NOT `undefined`, which is this
+      // module's word for "the board default", i.e. level 1 only.
+      level: { mode: "exclude", levels: [] },
+    },
+  };
+
+  const sections = await Promise.all(
+    BOARD_COLUMNS.map(async (column) => {
+      const params = boardRequestParams(scoped, { column });
+      params.set("includeTerminal", "true");
+      const response = await fetchImpl(uiApiPath(`/api/board?${params.toString()}`));
+      if (!response.ok) {
+        throw new Error(`Could not load subtasks (GET /api/board returned ${response.status}).`);
+      }
+      const body = (await response.json()) as { board?: { columns?: Partial<Board> } };
+      return (body.board?.columns?.[column] ?? emptySection()).entries;
+    }),
+  );
+
+  return sections.flat().filter((entry) => entry.item.id !== parentId);
 }
 
 /** Turns a caught value into the message the error state shows — never a raw, possibly-unhelpful object. */

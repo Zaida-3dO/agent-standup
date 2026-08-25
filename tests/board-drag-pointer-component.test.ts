@@ -32,7 +32,7 @@ function item(overrides: Partial<BoardItem> = {}): BoardItem {
 }
 
 function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): BoardEntry {
-  return { item: item(overrides), column, assignments: [], trust: null };
+  return { item: item(overrides), column, assignments: [], trust: null, subtasks: null };
 }
 
 /** A hand-written drag handle — the shape `useDraggable` produces, with nothing from the library. */

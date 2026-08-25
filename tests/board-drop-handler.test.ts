@@ -45,7 +45,7 @@ function entry(column: BoardColumnId, overrides: Partial<BoardItem> = {}): Board
   // These fixtures are about drag, tone and tallies; ownership is proved
   // against real data in the operation's own suites. An empty list is what
   // the API sends for an item nobody holds, so it is the honest default.
-  return { item: item(overrides), column, assignments: [], trust: null };
+  return { item: item(overrides), column, assignments: [], trust: null, subtasks: null };
 }
 
 /**
@@ -105,7 +105,13 @@ function host(initial: DragState, result?: MoveResult) {
       return Promise.resolve(
         result ?? {
           ok: true,
-          entry: { item: item({ state: "executing" }), column, assignments: [], trust: null },
+          entry: {
+            item: item({ state: "executing" }),
+            column,
+            assignments: [],
+            trust: null,
+            subtasks: null,
+          },
         },
       );
     }),
@@ -162,7 +168,13 @@ describe("handleDrop — a drop actually reaches the server", () => {
         moves.push(`${itemId}->${column}`);
         return Promise.resolve({
           ok: true,
-          entry: { item: item({ state: "executing" }), column, assignments: [], trust: null },
+          entry: {
+            item: item({ state: "executing" }),
+            column,
+            assignments: [],
+            trust: null,
+            subtasks: null,
+          },
         });
       },
     };
@@ -187,6 +199,7 @@ describe("handleDrop — a drop actually reaches the server", () => {
         column: "waiting",
         assignments: [],
         trust: null,
+        subtasks: null,
       },
     });
     await handleDrop(h.deps, "in_progress");

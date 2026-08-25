@@ -5,7 +5,7 @@
 // (`tests/helpers/react-element.ts`); see `TopBar.tsx`'s header for the
 // full reasoning.
 import Link from "next/link";
-import type { BoardEntry } from "@/lib/board/types";
+import type { BoardEntry, SubtaskRollup } from "@/lib/board/types";
 import { waitingTone } from "@/lib/board/view";
 import { isDraggable } from "@/lib/board/drag";
 import { hasDistinctHeadline, primaryLine } from "@/lib/item-headline-display";
@@ -45,6 +45,40 @@ export interface ItemCardProps {
    * board as it was: native HTML5 drag only.
    */
   readonly dragHandle?: DragHandle;
+  /**
+   * Whether this card's subtasks are shown beneath it.
+   *
+   * **State, not a hook.** This component is hook-free so a test can call it
+   * as a plain function (see the header), so which cards are open is held by
+   * the board and handed down — the same shape `dragHandle` uses for the
+   * drag library's state.
+   */
+  readonly expanded?: boolean;
+  /**
+   * Called when the disclosure control is pressed, with this card's id.
+   *
+   * **Absent means no disclosure control is rendered at all**, which is what
+   * keeps a card that nobody wired up from offering a gesture that does
+   * nothing — the same rule `onDragStart` follows for the drag handle. A
+   * card with no subtasks renders no control either, because there is
+   * nothing to disclose.
+   */
+  readonly onToggleExpanded?: (itemId: string) => void;
+  /**
+   * The subtasks themselves, when this card is expanded and they have
+   * arrived.
+   *
+   * Three states, deliberately distinguishable rather than two:
+   * `undefined` (not fetched), an empty array (fetched, and the result was
+   * empty — which for a card with a rollup means something is wrong), and a
+   * populated list. A card that rendered "nothing here" while a fetch was
+   * still in flight would be stating a result it does not have.
+   */
+  readonly subtaskEntries?: readonly BoardEntry[];
+  /** True while this card's subtasks are being fetched — renders a caption rather than an empty gap. */
+  readonly childrenLoading?: boolean;
+  /** Why the subtasks could not be fetched, when that is what happened. */
+  readonly childrenError?: string | null;
 }
 
 /**
@@ -77,6 +111,26 @@ function waitingReason(entry: BoardEntry): string | null {
   return null;
 }
 
+/**
+ * The badge's text — "3 subtasks · 2 done", singular where it should be.
+ *
+ * A named function rather than a template inline in the tree so it can be
+ * asserted on directly: the pluralisation and the `done` clause are the two
+ * things most likely to be quietly wrong, and a test that has to walk a
+ * rendered element tree to find them tests the tree as much as the words.
+ *
+ * The `done` half is omitted entirely at zero rather than rendered as
+ * "· 0 done". A card at the start of its work says how much there is, and
+ * an explicit zero reads as a progress report on work nobody has begun —
+ * noise on every freshly-broken-down card, which is most of them.
+ */
+export function subtaskSummary(rollup: SubtaskRollup): string {
+  const noun = rollup.total === 1 ? "subtask" : "subtasks";
+  return rollup.done > 0
+    ? `${rollup.total} ${noun} · ${rollup.done} done`
+    : `${rollup.total} ${noun}`;
+}
+
 export function ItemCard({
   entry,
   needsYou,
@@ -85,6 +139,11 @@ export function ItemCard({
   onDragEnd,
   pending,
   dragHandle,
+  expanded,
+  onToggleExpanded,
+  subtaskEntries,
+  childrenLoading,
+  childrenError,
 }: ItemCardProps) {
   const tone = waitingTone(entry);
   const reason = waitingReason(entry);
@@ -215,6 +274,81 @@ export function ItemCard({
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>
         {entry.item.repo && <span className={styles.repo}>{entry.item.repo}</span>}
       </div>
+      {/* What this card holds, and the way into it.
+
+          Rendered only when there IS a rollup: `subtasks` is `null` for a
+          card with nothing beneath it, so a childless card grows no badge
+          and no control rather than a "0 subtasks" that says nothing.
+
+          A real <button> rather than a clickable span — it is an action, so
+          it has to be reachable and operable by keyboard, which a div with
+          an onClick silently is not. `aria-expanded` is what makes the
+          state itself audible; without it a screen reader announces the
+          same label whether the subtasks are showing or not. */}
+      {entry.subtasks && (
+        <div className={styles.cardSubtasks}>
+          {onToggleExpanded ? (
+            <button
+              type="button"
+              className={styles.subtaskToggle}
+              aria-expanded={expanded === true}
+              aria-controls={`subtasks-${entry.item.id}`}
+              data-expanded={expanded === true ? true : undefined}
+              onClick={(event) => {
+                // The card is a drag source and, on the title, a link. A
+                // press on this control is neither, so it stops here rather
+                // than also starting a drag or following an ancestor's
+                // navigation.
+                event.stopPropagation();
+                onToggleExpanded(entry.item.id);
+              }}
+              // A pointer drag begun on this button would pick the card up
+              // instead of pressing it, so the drag library's listeners are
+              // told this press is not the start of a gesture.
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <span className={styles.subtaskCaret} aria-hidden="true">
+                {expanded === true ? "▾" : "▸"}
+              </span>
+              {subtaskSummary(entry.subtasks)}
+            </button>
+          ) : (
+            // No handler wired: the count is still worth stating, it just
+            // is not a control. Rendering a dead button would offer a
+            // gesture that does nothing.
+            <span className={styles.subtaskToggle}>{subtaskSummary(entry.subtasks)}</span>
+          )}
+        </div>
+      )}
+      {/* The subtasks themselves, in place. A nested <ul> inside this card's
+          own <li>, so the tree the board renders says what the tree of work
+          actually is — a flat sibling list would be the peer-cards problem
+          this whole feature exists to remove, one level in.
+
+          Only rendered while expanded, so a collapsed board pays nothing for
+          cards nobody opened. */}
+      {expanded === true && (
+        <div className={styles.cardChildren} id={`subtasks-${entry.item.id}`}>
+          {childrenError ? (
+            <span className={styles.cardReason}>{childrenError}</span>
+          ) : childrenLoading === true || subtaskEntries === undefined ? (
+            // "Not fetched yet" and "fetched and empty" must not render the
+            // same, or a slow response looks like an answer.
+            <span className={styles.subtaskLoading}>Loading subtasks…</span>
+          ) : (
+            <ul className={styles.childList}>
+              {subtaskEntries.map((child) => (
+                <li key={child.item.id} className={styles.childRow}>
+                  <Link className={styles.childTitle} href={`/items/${child.item.id}`}>
+                    {primaryLine(child.item)}
+                  </Link>
+                  <span className={styles.childState}>{child.item.state.replace(/_/g, " ")}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </li>
   );
 }

@@ -99,10 +99,15 @@ export async function requestMove(
     return { ok: false, message: "That move could not be confirmed." };
   }
 
-  // No assignments, no trust: the transition response carries the item, not
-  // its ownership or its verification history, and a settled card re-renders
-  // from the next board read. An empty array/`null` are the honest values
-  // for "this response did not say" — the same reason the API never omits
-  // either key.
-  return { ok: true, entry: { item, column, assignments: [], trust: null } };
+  // No assignments, no trust, no subtask rollup: the transition response
+  // carries the item, not its ownership, its verification history or its
+  // subtree, and a settled card re-renders from the next board read. An
+  // empty array/`null` are the honest values for "this response did not
+  // say" — the same reason the API never omits any of the keys.
+  //
+  // Note this makes a moved card's badge disappear until the next board
+  // read rather than showing a stale count. That is the right way round:
+  // the count is a fact about the subtree, and inventing one from the
+  // pre-move entry would state it as current when nothing here checked.
+  return { ok: true, entry: { item, column, assignments: [], trust: null, subtasks: null } };
 }

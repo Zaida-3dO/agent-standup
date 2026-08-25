@@ -157,6 +157,35 @@ export interface BoardEntry {
   readonly assignments: readonly BoardAssignment[];
   /** `null` on a project — see `TrustInfo`'s header for why a project has none to give. */
   readonly trust: TrustInfo | null;
+  /**
+   * How much work sits underneath this card, or `null` when nothing does.
+   *
+   * `null` and `{total: 0}` are not the same thing, and only one of them is
+   * ever sent: a card with no descendants has no progress to report, so the
+   * API omits the rollup rather than sending zeroes a badge would render as
+   * a claim about work that does not exist. See `SubtaskRollup`.
+   */
+  readonly subtasks: SubtaskRollup | null;
+}
+
+/**
+ * The rollup of everything beneath a card — see the server's
+ * `subtask-rollup.ts` for how it is counted.
+ *
+ * Both numbers cover **every** descendant at any depth, not just direct
+ * children, because the board shows one level and therefore hides all of
+ * them. Archived descendants are counted by neither.
+ */
+export interface SubtaskRollup {
+  /** Every live descendant at any depth. Always at least 1 — a card with none sends no rollup at all. */
+  readonly total: number;
+  /**
+   * Descendants whose work is over — the completed column's four states,
+   * not `merged` alone. A cancelled subtask is not outstanding work, so
+   * counting only merged ones would leave a card permanently short of its
+   * own total with nothing anyone could do about it.
+   */
+  readonly done: number;
 }
 
 /**

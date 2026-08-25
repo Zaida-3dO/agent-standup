@@ -527,6 +527,103 @@
   content: "· ";
 }
 
+/* ── What a card holds (the subtask rollup) ───────────────────────────────
+   The board shows one level, so a parent has to state what it hides. This
+   is a disclosure control, not decoration: it is a real <button> so it is
+   keyboard-operable, and it carries `aria-expanded` so the open/closed
+   state is announced rather than only drawn. */
+.cardSubtasks {
+  display: flex;
+  margin-top: 0.1rem;
+}
+
+.subtaskToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.25rem;
+  margin-left: -0.25rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: none;
+  font: inherit;
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  text-align: left;
+}
+
+button.subtaskToggle {
+  cursor: pointer;
+}
+
+button.subtaskToggle:hover {
+  color: var(--text-default);
+  background: var(--surface-raised, rgb(0 0 0 / 6%));
+}
+
+/* A visible focus ring, because this control is small and sits inside a
+   card that is itself focusable as a drag source — without one, tabbing
+   through a column gives no indication of where the focus actually is. */
+button.subtaskToggle:focus-visible {
+  outline: 2px solid var(--focus-ring, #4c8dff);
+  outline-offset: 1px;
+}
+
+.subtaskCaret {
+  display: inline-block;
+  font-size: 0.6rem;
+  line-height: 1;
+}
+
+.cardChildren {
+  margin-top: 0.15rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--border-default);
+}
+
+.subtaskLoading {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}
+
+.childList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.childRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+}
+
+.childTitle {
+  color: var(--text-default);
+  text-decoration: none;
+  /* The row is narrow and a subtask title can be long; clipping to one line
+     keeps an expanded parent from growing taller than the column. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.childTitle:hover {
+  text-decoration: underline;
+}
+
+.childState {
+  flex: none;
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  text-transform: capitalize;
+}
+
 @media (max-width: 900px) {
   .columns {
     grid-template-columns: repeat(2, minmax(0, 1fr));

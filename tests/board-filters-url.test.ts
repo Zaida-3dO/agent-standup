@@ -172,12 +172,12 @@ describe("parseBoardQuery", () => {
     // box would 400 rather than widening the board.
     //
     // `level` is present in the result because absent MEANS the board
-    // default (`exclude(0)`), not "unfiltered" — the one axis where a
+    // default (`include(1)`), not "unfiltered" — the one axis where a
     // missing parameter says something. `isFiltered` still reports false,
     // which is the fact this test is really about: a board nobody has
     // narrowed must not claim a filter is applied.
     expect(parseBoardQuery("search=&area=%20%20").filters).toEqual({
-      level: { mode: "exclude", levels: [0] },
+      level: { mode: "include", levels: [1] },
     });
     expect(isFiltered(parseBoardQuery("search=").filters)).toBe(false);
   });
@@ -287,8 +287,9 @@ describe("withFilter and withoutFilters", () => {
     const cleared = withoutFilters(parseBoardQuery("area=web&sort=priority&direction=asc"));
     // The level returns to its DEFAULT rather than to nothing: "no level
     // filter" is not a state this board has, and leaving the key off would
-    // describe a board that still hides projects while reporting it does not.
-    expect(cleared.filters).toEqual({ level: { mode: "exclude", levels: [0] } });
+    // describe a board that still hides projects and subtasks while
+    // reporting it does not.
+    expect(cleared.filters).toEqual({ level: { mode: "include", levels: [1] } });
     expect(isFiltered(cleared.filters)).toBe(false);
     expect(cleared.sort).toBe("priority");
     expect(cleared.direction).toBe("asc");
