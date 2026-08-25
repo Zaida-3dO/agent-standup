@@ -304,6 +304,81 @@ describe("judgeEviction — what counts as evidence that a holder is gone", () =
     expect(judgeEviction(signalLess({ releasedAt: NOW })).verdict).toBe("already_released");
   });
 
+  // ── The declared-but-silent holder, reported rather than protected ────
+  //
+  // A session that registered a hook version and then emitted nothing at
+  // all. It is evicted — the verdict is deliberately unchanged, because
+  // exempting it would make declaring a hook you do not run strictly better
+  // than declaring nothing. What changes is that the eviction says so.
+
+  it("still evicts a holder that declared a hook and never signalled, but flags the discrepancy", () => {
+    // The row this change exists for. The verdict half of this assertion
+    // guards the decision NOT to widen the exemption (AC2): making the
+    // declared-but-silent case return `never_signalled` fails it.
+    const judgement = judgeEviction(signalLess({ holderHookVersion: 1 }));
+    expect(judgement.verdict).toBe("evictable");
+    // Hardcoding `declaredHookNeverSignalled: false` on the evictable path,
+    // or dropping the `hasNeverSignalled` term from it, fails this.
+    expect(judgement.declaredHookNeverSignalled).toBe(true);
+  });
+
+  it("does not flag a declared holder that was signalling and then stopped", () => {
+    // The controlled comparison, and the case that stops the flag being a
+    // constant `true` on the evictable path. Same registration, same
+    // eviction — but this session's `lastActive` moved after the claim, so
+    // its hook demonstrably ran and its silence is an ordinary death rather
+    // than a misreported registration. A flag hardcoded to `true` passes the
+    // test above and fails this one.
+    const judgement = judgeEviction(
+      signalLess({ holderHookVersion: 1, claimedAt: agoSeconds(20_000) }),
+    );
+    expect(judgement.verdict).toBe("evictable");
+    expect(judgement.declaredHookNeverSignalled).toBe(false);
+  });
+
+  it("does not flag a holder whose telemetry proves its hook runs", () => {
+    // The `lastToolCallAt === null` half of the flag, isolated. Telemetry
+    // timestamped before the claim leaves `lastSeenMs` at `claimedAt`, so
+    // the first half of `hasNeverSignalled` is satisfied and only this half
+    // can decide. Such a session has emitted tool calls, so its
+    // registration is corroborated and there is no discrepancy to report.
+    const claimed = agoSeconds(10_000);
+    const judgement = judgeEviction(
+      signalLess({
+        holderHookVersion: 1,
+        claimedAt: claimed,
+        lastActive: claimed,
+        lastToolCallAt: new Date(claimed.getTime() - 60_000),
+      }),
+    );
+    expect(judgement.verdict).toBe("evictable");
+    expect(judgement.declaredHookNeverSignalled).toBe(false);
+  });
+
+  it("does not flag the exempt holder, which declared nothing to contradict", () => {
+    // `never_signalled` and the flag must not be conflated: this holder is
+    // equally silent, but it never claimed a hook, so there is no
+    // misreported registration. Reporting it here would blame a session for
+    // being honest. Setting the flag `true` on the `never_signalled` return
+    // fails this.
+    const judgement = judgeEviction(signalLess());
+    expect(judgement.verdict).toBe("never_signalled");
+    expect(judgement.declaredHookNeverSignalled).toBe(false);
+  });
+
+  it("does not flag a declared-but-silent holder that is still inside the threshold", () => {
+    // Before the threshold, silence is ordinary rather than a discrepancy —
+    // a hook may simply not have flushed yet. Reporting it here would flag
+    // every claim made in the last four hours. Hoisting the flag above the
+    // time check, or setting it `true` on the `recently_seen` return, fails
+    // this.
+    const judgement = judgeEviction(
+      signalLess({ holderHookVersion: 1, claimedAt: agoSeconds(10), lastActive: agoSeconds(10) }),
+    );
+    expect(judgement.verdict).toBe("recently_seen");
+    expect(judgement.declaredHookNeverSignalled).toBe(false);
+  });
+
   it("reads the threshold from its argument rather than a constant", () => {
     // The same row, judged both ways by moving only the threshold. A
     // hard-coded bound passes one of these and fails the other.
@@ -743,6 +818,51 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
 
     expect(result.sessionId).toBe("session-newcomer");
     expect(result.evicted.map((row) => row.sessionId)).toEqual(["session-hooked-silent"]);
+  });
+
+  it("says in the release event that the evicted holder's hook never ran", async () => {
+    // AC1's surfacing half, end to end. `seedHolder` registers a hook
+    // version and writes no `ToolCall`, so this is the misreporting shape
+    // exactly: the eviction is correct, and the event has to record that
+    // the evidence it acted on was a silence the registration promised
+    // would not happen. Without that, a reader diffing timestamps cannot
+    // tell this from an ordinary timeout, which is the state this row is
+    // about.
+    const itemId = await seedItem();
+    await seedHolder(itemId, "session-declared-never-ran", 10_000);
+
+    await runtimeEvictingAfter(60).call("claim", contendingClaim(itemId));
+
+    const events = await prisma.event.findMany({ where: { itemId, type: "release" } });
+    expect(events).toHaveLength(1);
+    // Deleting the note from the event body fails this.
+    expect(events[0]?.body).toContain("emitted no signal at all since claiming");
+    // The version is named, so the discrepancy is attributable to a
+    // specific registration rather than being a generic warning.
+    expect(events[0]?.body).toContain("registered hook version 1");
+  });
+
+  it("does not add the hook note when the evicted holder had been signalling", async () => {
+    // The comparison that stops the note being unconditional text appended
+    // to every eviction. Same registration and same eviction; this holder's
+    // `lastActive` moved after its claim, so its hook ran and there is no
+    // discrepancy. Making the note unconditional passes the test above and
+    // fails this one.
+    const itemId = await seedItem();
+    const assignmentId = await seedHolder(itemId, "session-declared-and-ran", 10_000);
+    await prisma.assignment.update({
+      where: { id: assignmentId },
+      data: { lastActive: new Date(Date.now() - 5_000 * 1000) },
+    });
+
+    const result = (await runtimeEvictingAfter(60).call(
+      "claim",
+      contendingClaim(itemId),
+    )) as unknown as { evicted: { sessionId: string }[] };
+
+    expect(result.evicted.map((row) => row.sessionId)).toEqual(["session-declared-and-ran"]);
+    const events = await prisma.event.findMany({ where: { itemId, type: "release" } });
+    expect(events[0]?.body).not.toContain("emitted no signal at all since claiming");
   });
 
   it("takes the claim from an unregistered holder once it has heartbeated", async () => {
