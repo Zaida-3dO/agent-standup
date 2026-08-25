@@ -56,6 +56,17 @@ import {
 import { fetchSavedViews } from "@/lib/board/saved-views-client";
 import type { SavedViews } from "@/lib/board/saved-views";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
+import { useLiveBoard } from "@/lib/live/use-live-board";
+import type { LiveEvent } from "@/lib/live/events";
+import {
+  highlightAdded,
+  highlightedIds,
+  highlightsSwept,
+  noHighlights,
+  HIGHLIGHT_MS,
+  type Highlights,
+} from "@/lib/live/highlight";
+import { conflictMessage, type ConflictDetails } from "@/lib/live/conflict";
 import { BoardView } from "./BoardView";
 import { BoardFilterBar } from "./BoardFilterBar";
 import { DragLayer } from "./DragLayer";
@@ -323,6 +334,91 @@ export function Board() {
     [boardQuery, subtasksByParent],
   );
 
+  // ── The live feed (T17) ───────────────────────────────────────────────
+  //
+  // **This is another caller of `applyDrag`, not a second fetch path.** The
+  // board already funnels every mutation through that one write path, which
+  // advances `stateRef` synchronously and schedules the render; a delta from
+  // another session is applied the same way a drop is. That is the whole
+  // reason this row did not require re-architecting the fetch.
+  //
+  // **A live event triggers a refetch rather than patching the board
+  // directly.** An event says *that* an item changed, not what the card
+  // should now look like: a `state_change` carries `{from, to}` but not the
+  // item's assignments, its trust mark or its subtask rollup, and a
+  // `field_change` names one field. Reconstructing a card from a slice would
+  // be a second, weaker copy of `get_board`'s projection that could drift
+  // from it silently. Re-reading is one bounded request for a board that is
+  // already paged, and it is the answer that cannot be subtly wrong.
+
+  /** Cards someone else just changed, with their expiries — see `@/lib/live/highlight`. */
+  const [highlights, setHighlights] = useState<Highlights>(() => noHighlights());
+  // The authoritative copy, for the same reason `stateRef` is: the sweep
+  // timer and the event handler both need to read the newest value
+  // synchronously, and reading it out of a `setState` updater is the defect
+  // `scripts/check-updater-side-effects.mjs` exists to catch.
+  const highlightsRef = useRef<Highlights>(highlights);
+  /** The live feed's most recent slice, kept so a conflict can name who moved a card. */
+  const recentEventsRef = useRef<readonly LiveEvent[]>([]);
+
+  /** The single write path for highlights — mirrors `applyDrag`. */
+  const applyHighlights = useCallback((next: Highlights) => {
+    if (next === highlightsRef.current) return;
+    highlightsRef.current = next;
+    setHighlights(next);
+  }, []);
+
+  const onLiveEvents = useCallback(
+    (events: readonly LiveEvent[], touched: readonly string[]) => {
+      // Kept for the conflict message, which needs to name the actor of a
+      // move that has *already happened* — so the slice that carried it is
+      // exactly what it wants, and no extra request is made.
+      recentEventsRef.current = events;
+      applyHighlights(highlightAdded(highlightsRef.current, touched, Date.now()));
+      // Re-read the board. `reloadNonce` is the existing mechanism the retry
+      // control already uses, so the live feed reuses it rather than adding a
+      // second way to reload — and `status` is deliberately NOT set back to
+      // `loading`: a populated board should stay on screen while the fresh
+      // read is in flight, because a spinner every few seconds costs more
+      // than the few seconds of staleness it would cure.
+      setReloadNonce((n) => n + 1);
+    },
+    [applyHighlights],
+  );
+
+  useLiveBoard({
+    onEvents: onLiveEvents,
+    // Not until the first board has arrived: a delta applied to a board that
+    // is not there yet would only schedule a reload of a load already in
+    // flight.
+    enabled: status === "loaded",
+  });
+
+  // Expires the marks. One timer for the whole board rather than one per
+  // card, and it only runs while something is marked.
+  useEffect(() => {
+    if (highlights.size === 0) return;
+    const timer = setInterval(() => {
+      applyHighlights(highlightsSwept(highlightsRef.current, Date.now()));
+    }, HIGHLIGHT_MS / 4);
+    return () => clearInterval(timer);
+  }, [highlights, applyHighlights]);
+
+  const changedItemIds = useMemo(() => highlightedIds(highlights), [highlights]);
+
+  /**
+   * Turns a 409 into the sentence the person reads.
+   *
+   * Read from the ref rather than from state so it uses the newest slice the
+   * feed has seen — a conflict is answered within milliseconds of the poll
+   * that explains it, and a render-time copy would be one tick behind.
+   */
+  const describeConflict = useCallback(
+    (conflict: ConflictDetails, itemId: string) =>
+      conflictMessage(conflict, recentEventsRef.current, itemId, Date.now()),
+    [],
+  );
+
   const onDrop = useCallback(
     (column: BoardColumnId) => {
       // The decision itself lives in `handleDrop` (`@/lib/board/drop-handler`)
@@ -368,11 +464,14 @@ export function Board() {
           // knows both ends of the move — the pre-drop entry and the state
           // the server confirmed.
           offerUndo: offer,
+          // T17: names who moved the card, where to, and how long ago, when
+          // the refusal was a conflict. See `@/lib/live/conflict`.
+          describeConflict,
         },
         column,
       );
     },
-    [applyDrag, offer],
+    [applyDrag, offer, describeConflict],
   );
 
   const loadState: BoardLoadState =
@@ -426,6 +525,7 @@ export function Board() {
           // were waiting for, and `emptinessOf` already decides when the
           // `filtered` kind applies. No new state component was written.
           filtered={filtered}
+          changedItemIds={changedItemIds}
           onClearFilter={() =>
             router.replace(boardHref(withoutFilters(boardQuery)), { scroll: false })
           }

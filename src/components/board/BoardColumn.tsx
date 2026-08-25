@@ -55,6 +55,15 @@ export interface BoardColumnProps {
   readonly onCardDragEnd?: () => void;
   /** The item whose move is in flight, if it is in this column. */
   readonly pendingItemId?: string | null;
+  /**
+   * The items **someone else** just changed, for the brief highlight (T17).
+   *
+   * A set rather than one id, unlike `pendingItemId`: only one move can be
+   * in flight from this client at a time, but a single poll can bring back a
+   * slice in which several cards moved, and highlighting only one of them
+   * would leave the rest of the motion unexplained.
+   */
+  readonly changedItemIds?: ReadonlySet<string>;
   /** Fetches this column's next page — the "show more" control. Absent leaves the column unpaged. */
   readonly onShowMore?: (column: BoardColumnId) => void;
   /** True while this column's next page is in flight. */
@@ -135,6 +144,7 @@ export function BoardColumn({
   onCardDragStart,
   onCardDragEnd,
   pendingItemId,
+  changedItemIds,
   onShowMore,
   loadingMore,
   pageError,
@@ -275,6 +285,7 @@ export function BoardColumn({
                 onDragStart={onCardDragStart}
                 onDragEnd={onCardDragEnd}
                 pending={pendingItemId === entry.item.id}
+                changed={changedItemIds?.has(entry.item.id)}
                 // The disclosure state for THIS card, unpacked from the
                 // board's maps here so `ItemCard` stays a plain function of
                 // its own props and never reads a collection it is not in.

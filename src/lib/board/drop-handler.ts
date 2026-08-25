@@ -30,11 +30,21 @@
 // transition request actually reaches the network. Both layers are load-
 // bearing: this one because it is where the logic can be exercised
 // exhaustively, that one because it is where the defect actually lived.
-import type { BoardColumnId } from "./types";
-import { dropped, isStale, moveRefused, moveSettled, type DragState } from "./drag-state";
+import type { BoardColumnId, BoardEntry } from "./types";
+import {
+  dropped,
+  isStale,
+  moveConflicted,
+  moveRefused,
+  moveSettled,
+  type DragState,
+} from "./drag-state";
+import { findEntry } from "./drag";
 import type { MoveResult } from "./move";
 import type { UndoableAction } from "@/lib/undo";
 import { isItemState } from "@/lib/service/state-machine";
+import { columnForState } from "@/lib/service/board/columns";
+import type { ConflictDetails } from "@/lib/live/conflict";
 
 /** Everything the drop needs from its host, so none of it is reached for globally. */
 export interface DropDeps {
@@ -62,6 +72,56 @@ export interface DropDeps {
    * mounted, keep working unchanged.
    */
   readonly offerUndo?: (action: UndoableAction) => void;
+  /**
+   * Turns a conflict into the sentence shown to the person — "Bunmi moved
+   * this to In Review 12s ago" (T17).
+   *
+   * Injected rather than built here because the only thing that can name the
+   * other actor is the live feed's recently-read events, which live in the
+   * component. Optional: with no live feed mounted the fallback is
+   * `result.message`, which is the 409 branch of `refusalMessage` and still
+   * says the item was changed by someone else.
+   */
+  readonly describeConflict?: (conflict: ConflictDetails, itemId: string) => string;
+}
+
+/**
+ * The entry the board should settle a conflicted card on: the card as it is,
+ * relabelled with the state the server says it is actually in.
+ *
+ * **Built from the pre-move entry, not invented.** Everything a card draws
+ * besides its state — title, kind, priority, area, assignments, the trust
+ * mark, the subtask rollup — is unchanged by someone else's transition, and
+ * the pre-move entry is the newest copy of all of it this client holds.
+ * Only `state` and the column derived from it are known to have moved, so
+ * only those are replaced. The alternative, blanking the rest, would make
+ * another person's move look like data loss.
+ *
+ * Returns `null` when the state is not one this build recognises — the same
+ * `isItemState` narrowing `drop-handler` already applies to an undo, and for
+ * the same reason: a state that is not in the vocabulary has no column, and
+ * guessing one would put the card in an arbitrary place. The caller leaves
+ * the card alone in that case and lets the live refetch settle it.
+ */
+export function conflictEntry(
+  state: DragState,
+  itemId: string,
+  currentState: string,
+): BoardEntry | null {
+  if (!isItemState(currentState)) return null;
+  // The pre-move entry when there is one — it is the copy that has not been
+  // overwritten by the optimistic guess — and otherwise whatever is on the
+  // board under that id.
+  const base =
+    state.pendingOriginal?.item.id === itemId
+      ? state.pendingOriginal
+      : findEntry(state.board, itemId);
+  if (base === null) return null;
+  return {
+    ...base,
+    column: columnForState(currentState),
+    item: { ...base.item, state: currentState },
+  };
 }
 
 /**
@@ -88,11 +148,28 @@ export function handleDrop(deps: DropDeps, column: BoardColumnId): Promise<void>
   const original = outcome.state.pendingOriginal;
 
   return deps.move(itemId, target).then((result) => {
-    deps.update((current) =>
-      result.ok
-        ? moveSettled(current, sequence, result.entry)
-        : moveRefused(current, sequence, result.message),
-    );
+    // **The conflict branch reconciles; every other refusal reverts.** The
+    // difference is not cosmetic: a conflict means the item really did move,
+    // so putting the card back where this client last saw it would be a
+    // second wrong answer delivered confidently. See `moveConflicted`.
+    //
+    // The message is built here rather than in `move.ts` because naming the
+    // other actor needs the live feed, which only the host has.
+    const conflict = !result.ok ? result.conflict : undefined;
+    deps.update((current) => {
+      if (result.ok) return moveSettled(current, sequence, result.entry);
+      if (conflict === undefined) return moveRefused(current, sequence, result.message);
+      const message =
+        deps.describeConflict === undefined
+          ? result.message
+          : deps.describeConflict(conflict, itemId);
+      return moveConflicted(
+        current,
+        sequence,
+        message,
+        conflictEntry(current, itemId, conflict.currentState),
+      );
+    });
 
     // **Offered only on success, and only when this move is still the
     // newest.** Two drags of the same card in quick succession can have the

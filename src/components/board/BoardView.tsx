@@ -56,6 +56,18 @@ export interface BoardViewProps {
    * absent, this renders exactly the tree it has always rendered.
    */
   readonly pointerDrag?: boolean;
+  /**
+   * The items a live update just changed, briefly highlighted (T17, part 3).
+   *
+   * **A top-level prop rather than part of `drag`**, because it is not a
+   * drag: these are cards *someone else* moved, arriving through the live
+   * feed, and a card can be highlighted on a board with no drag wiring at
+   * all. Grouping it under `drag` would tie the multiplayer signal to an
+   * interaction it has nothing to do with.
+   *
+   * Absent is the board as it was — no highlight, no behaviour change.
+   */
+  readonly changedItemIds?: ReadonlySet<string>;
 }
 
 /** Everything the drag interaction needs, grouped so `BoardView` threads one prop rather than seven. */
@@ -105,6 +117,7 @@ export function BoardView({
   filtered,
   onClearFilter,
   pointerDrag,
+  changedItemIds,
 }: BoardViewProps) {
   if (loadState.status === "error") {
     return (
@@ -183,6 +196,7 @@ export function BoardView({
             onCardDragStart={drag?.onCardDragStart}
             onCardDragEnd={drag?.onCardDragEnd}
             pendingItemId={drag?.pendingItemId ?? null}
+            changedItemIds={changedItemIds}
             onShowMore={paging?.onShowMore}
             loadingMore={paging?.loadingColumns[column] === true}
             pageError={paging?.errors[column] ?? null}
