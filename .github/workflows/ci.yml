@@ -208,6 +208,12 @@ jobs:
       # structural check it resembles rather than with the database tests.
       - name: Check every declared event type has an emitter
         run: npm run check:event-emitters
+      # Source-text only, like its neighbours. Guards the recurrence of #128 —
+      # a value assigned inside a React state updater and read after it, which
+      # shipped three separate times because every unit test around it stayed
+      # green. Its own output states what it does not cover.
+      - name: Check nothing assigns inside a React state updater
+        run: npm run check:updater-side-effects
       # Source-text only, like its neighbours. This is what makes `GET /api`
       # trustworthy rather than merely present: the committed route list is
       # regenerated here and compared, so a route added, moved or removed

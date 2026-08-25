@@ -33,11 +33,12 @@
 // exception, and it is narrow on purpose — it asserts *that the transition
 // request is issued*, not what the board looks like. Rendering assertions
 // belong in `BoardView`'s tests, where they need no DOM at all.
-import { createElement } from "react";
+import { createElement, StrictMode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "@/components/board/Board";
+import { UndoToastHost } from "@/components/toast";
 import { emptyBoard } from "@/lib/board/view";
 import type { Board as BoardData } from "@/lib/board/types";
 import { section } from "./helpers/board-sections";
@@ -112,6 +113,12 @@ function boardWithOneCard(): BoardData {
  * this file exists to test.
  */
 const transitionCalls: { url: string; body: unknown }[] = [];
+
+/**
+ * Makes the next transition request come back 409, so a test can drive the
+ * refusal path. One-shot and reset in `beforeEach`, so no test inherits it.
+ */
+let refuseNextTransition = false;
 /** Every subtree-scoped board read — i.e. every subtask expansion fetch. */
 const subtaskCalls: { url: string; parentId: string }[] = [];
 
@@ -123,6 +130,7 @@ beforeEach(() => {
   // `act` warns and the scheduling paths are not the ones we mean to drive.
   (globalThis as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   transitionCalls.length = 0;
+  refuseNextTransition = false;
   subtaskCalls.length = 0;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -189,6 +197,16 @@ beforeEach(() => {
           url,
           body: JSON.parse(String(init?.body ?? "{}")) as unknown,
         });
+        // One-shot, so a refusal is opt-in per test and never leaks into the
+        // next one — `beforeEach` resets it.
+        if (refuseNextTransition) {
+          refuseNextTransition = false;
+          return Promise.resolve({
+            ok: false,
+            status: 409,
+            json: () => Promise.resolve({ error: { message: "Someone else moved this." } }),
+          } as Response);
+        }
         // A whole item, as the real endpoint returns: `requestMove` hands it
         // to `reconcile`, which puts it on the board verbatim. A half-item
         // here would crash the render on a missing field and look like a
@@ -213,11 +231,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Mounts `Board` and lets the mount-time board load resolve. */
+/**
+ * Mounts `Board` **under StrictMode** and lets the mount-time board load
+ * resolve.
+ *
+ * **StrictMode is the whole point of this helper, and it was missing.** The
+ * subtask tests below were written with a plain `createRoot(...).render(Board)`
+ * and passed for a feature that never worked: `onToggleExpanded` assigned
+ * `opening` inside a `setExpandedIds` updater and read it on the next line, so
+ * no subtask request was ever sent and the card sat on "Loading subtasks…"
+ * forever. Without StrictMode React invoked the updater eagerly exactly once,
+ * `opening` was set in time, and every assertion here passed — which is how the
+ * third occurrence of #128 shipped behind a green suite.
+ *
+ * StrictMode invokes updaters twice, so the second pass sees a `current` the
+ * handler has already advanced and takes the opposite branch. That is what
+ * makes an outer variable written inside an updater observably wrong here,
+ * and it is the same mechanism `tests/undo-toast-host-wiring.test.ts`
+ * documents at length for the second occurrence.
+ *
+ * It is not the only mechanism, and the fix does not depend on this one
+ * reproducing: React also defers an updater whenever a lane is already
+ * pending on the fiber, which on this component is essentially always. Both
+ * roads end at the same place — the value is not there when the next line
+ * reads it — so the ref is required either way.
+ */
 async function mountBoard(): Promise<void> {
   await act(async () => {
     root = createRoot(container);
-    root.render(createElement(Board));
+    root.render(createElement(StrictMode, null, createElement(Board)));
   });
 }
 
@@ -325,6 +367,91 @@ describe("Board, mounted in real React", () => {
  * So these press the actual rendered DOM node and assert on the actual
  * network call.
  */
+describe("a drop offers an undo, mounted in real React", () => {
+  /**
+   * Mounts `Board` inside a **real** `UndoToastHost`, exactly as `AppShell`
+   * does — not a stub, not a spy on `offer`.
+   *
+   * That is the whole point of this block. `offer` being called is not the
+   * feature; a person seeing a button and being able to press it is. A test
+   * that asserted on a mocked `offer` would have passed for the entire period
+   * in which undo was unreachable, because the defect was precisely that the
+   * real provider was never handed anything.
+   */
+  async function mountBoardWithToast(): Promise<void> {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        createElement(StrictMode, null, createElement(UndoToastHost, null, createElement(Board))),
+      );
+    });
+  }
+
+  /** The toast's Undo button, matched as `undo-toast-host-wiring` matches it. */
+  function undoButton(): HTMLButtonElement | null {
+    return (
+      Array.from(container.querySelectorAll("button")).find((button) =>
+        button.textContent?.startsWith("Undo"),
+      ) ?? null
+    );
+  }
+
+  it("shows an undo toast after a drop that the server accepted", async () => {
+    // **The regression test for "undo is unreachable".**
+    //
+    // Before this wiring, every mention of `offer` outside the toast module
+    // was a comment: the drag persisted and no toast ever appeared. Removing
+    // `offerUndo` from the deps in `Board.onDrop` makes this fail — measured —
+    // while every other test in this file stays green, because nothing else
+    // observes the toast.
+    await mountBoardWithToast();
+    await dragCardTo("in_progress");
+
+    expect(container.querySelector('[data-phase="offered"]')).not.toBeNull();
+    expect(undoButton()).not.toBeNull();
+  });
+
+  it("sends the inverse transition, with expectedFrom, when the undo is pressed", async () => {
+    // The undo has to reverse the move *and* carry the precondition, which is
+    // what stops it clobbering a change another session made inside the
+    // window. `expectedFrom` is the state the move landed on; `to` is where it
+    // came from. A plan built from the wrong end of the move would still be
+    // one request, so the body is asserted rather than the count alone.
+    await mountBoardWithToast();
+    await dragCardTo("in_progress");
+    const before = transitionCalls.length;
+
+    await act(async () => {
+      undoButton()?.click();
+    });
+
+    expect(transitionCalls).toHaveLength(before + 1);
+    expect(transitionCalls[before]?.body).toEqual({
+      to: "on_deck",
+      expectedFrom: "executing",
+    });
+  });
+
+  it("offers nothing when the server refused the move", async () => {
+    // An optimistic move that was reverted must not leave an undo button —
+    // pressing it would write a state the item was never in. This is why the
+    // offer sits inside the `result.ok` branch rather than beside the
+    // optimistic write.
+    refuseNextTransition = true;
+    await mountBoardWithToast();
+    await dragCardTo("in_progress");
+
+    expect(container.querySelector('[data-phase="offered"]')).toBeNull();
+    expect(undoButton()).toBeNull();
+    // The refusal itself still has to be reported — otherwise this test would
+    // also pass against a board that silently swallowed the failed move, and
+    // "no toast" would be evidence of the wrong thing.
+    expect(container.textContent).toContain("Someone else moved this.");
+    // Exactly the drop's own request: no undo request was issued behind it.
+    expect(transitionCalls).toHaveLength(1);
+  });
+});
+
 describe("expanding a card's subtasks, mounted in real React", () => {
   /**
    * The disclosure control as it is really rendered — never a stand-in.
@@ -356,6 +483,33 @@ describe("expanding a card's subtasks, mounted in real React", () => {
     expect(toggle().textContent).toContain("2 subtasks");
     expect(toggle().getAttribute("aria-expanded")).toBe("false");
   });
+
+  /**
+   * Presses the disclosure the way a reader actually reaches it: with an
+   * update already pending on the board's fiber.
+   *
+   * **This is what makes the test able to fail, and without it the test is
+   * hollow.** Measured directly: with a quiet fiber React evaluates the
+   * updater eagerly, so a variable assigned inside it *is* set by the next
+   * line and the defect is invisible — StrictMode's double invocation does
+   * not rescue it either, because the second pass is not what the handler
+   * reads. With a lane already pending React defers the updater instead and
+   * the variable is still `false` when the next line reads it.
+   *
+   * A `dragenter` is the cheapest honest way to leave that lane: it is a real
+   * gesture a reader performs on a board, it goes through `applyDrag` →
+   * `setDrag` on this same component, and `dragCardTo` above relies on
+   * exactly the same effect for exactly the same reason. Anything that
+   * schedules a state update on `Board` would do; this one is not synthetic.
+   */
+  async function pressToggleWithWorkPending(): Promise<void> {
+    const target = container.querySelector<HTMLElement>('[data-column="in_progress"]');
+    if (!target) throw new Error("no in_progress column rendered — the fixture is wrong");
+    await act(async () => {
+      target.dispatchEvent(new Event("dragenter", { bubbles: true, cancelable: true }));
+      toggle().click();
+    });
+  }
 
   it("fetches that card's subtasks when the control is pressed", async () => {
     // **The composition assertion.** Nothing under `Board` can prove this:
@@ -389,6 +543,37 @@ describe("expanding a card's subtasks, mounted in real React", () => {
     // Named explicitly, because this exact value is what a `level: undefined`
     // regression would silently put back.
     expect(levels).not.toContain("include:1");
+  });
+
+  it("still sends the request when an update is already pending on the board", async () => {
+    // **The regression test for #128's third occurrence.**
+    //
+    // The four cases around this one press the toggle on a quiet fiber, and
+    // all four passed for a feature that was completely broken — deriving
+    // `opening` inside the `setExpandedIds` updater and reading it on the
+    // next line sends nothing, and the card sits on "Loading subtasks…"
+    // forever. That is what the reviewer observed on a real page
+    // (`window.fetch` instrumented, `calls: []`), and what no test here
+    // could see, because a reader never presses anything on a quiet fiber.
+    //
+    // **Restoring the defect makes this fail** — measured, not assumed: the
+    // request count goes to 0 and the "Loading subtasks…" assertion below
+    // fires, while every other test in this file stays green. It is the only
+    // case that distinguishes the two implementations.
+    await mountBoard();
+    await pressToggleWithWorkPending();
+
+    expect(subtaskCalls.length).toBeGreaterThan(0);
+    expect(subtaskCalls.every((call) => call.parentId === "item-a")).toBe(true);
+
+    // The symptom, asserted as the reader meets it. A card that requested
+    // nothing reports itself expanded and then shows the loading line with
+    // nothing in flight to ever replace it — so the absence of that line is
+    // the difference between "opened" and "hung".
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    const card = container.querySelector<HTMLElement>('[draggable="true"]');
+    expect(card?.textContent).not.toContain("Loading subtasks…");
+    expect(card?.textContent).toContain("A subtask of the card");
   });
 
   it("shows the fetched subtasks under the card, and reports itself as expanded", async () => {

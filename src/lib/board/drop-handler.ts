@@ -31,8 +31,10 @@
 // bearing: this one because it is where the logic can be exercised
 // exhaustively, that one because it is where the defect actually lived.
 import type { BoardColumnId } from "./types";
-import { dropped, moveRefused, moveSettled, type DragState } from "./drag-state";
+import { dropped, isStale, moveRefused, moveSettled, type DragState } from "./drag-state";
 import type { MoveResult } from "./move";
+import type { UndoableAction } from "@/lib/undo";
+import { isItemState } from "@/lib/service/state-machine";
 
 /** Everything the drop needs from its host, so none of it is reached for globally. */
 export interface DropDeps {
@@ -47,6 +49,19 @@ export interface DropDeps {
   readonly update: (fn: (current: DragState) => DragState) => void;
   /** Asks the server to move the item. */
   readonly move: (itemId: string, column: BoardColumnId) => Promise<MoveResult>;
+  /**
+   * Offers the completed move back to the person, so they can undo it.
+   *
+   * **Called only after the server accepted**, and with the states the
+   * server reported rather than the ones the drop guessed — an optimistic
+   * move that was later refused must not leave an undo button that would
+   * write a state the item was never in. That is why this is invoked from
+   * inside the `result.ok` branch and not beside `deps.write` above.
+   *
+   * Optional so the seam's existing tests, and any host with no toast
+   * mounted, keep working unchanged.
+   */
+  readonly offerUndo?: (action: UndoableAction) => void;
 }
 
 /**
@@ -66,11 +81,49 @@ export function handleDrop(deps: DropDeps, column: BoardColumnId): Promise<void>
   if (outcome.request === null) return null;
 
   const { itemId, column: target, sequence } = outcome.request;
+  // The entry as it was BEFORE the optimistic move, captured by `dropped`.
+  // Read here, off the outcome, because `deps.read()` after the write would
+  // already show the moved card and the `from` would be the state the item
+  // was moved *to*, making the undo a no-op that looks like it worked.
+  const original = outcome.state.pendingOriginal;
+
   return deps.move(itemId, target).then((result) => {
     deps.update((current) =>
       result.ok
         ? moveSettled(current, sequence, result.entry)
         : moveRefused(current, sequence, result.message),
     );
+
+    // **Offered only on success, and only when this move is still the
+    // newest.** Two drags of the same card in quick succession can have the
+    // first request answer after the second was applied: `moveSettled`
+    // already refuses to write that stale answer to the board, and this
+    // offers nothing for it either. Without the staleness check the toast
+    // would show the *older* move's undo, whose `expectedFrom` does not
+    // match the item any more — so the button would be refused on press,
+    // having told the person it was available.
+    //
+    // Read through `deps.read()` after the update, which is the newest
+    // sequence by the same contract `read` carries above.
+    if (!result.ok || deps.offerUndo === undefined) return;
+    if (isStale(deps.read(), sequence)) return;
+    if (original === null) return;
+    const from = original.item.state;
+    const to = result.entry.item.state;
+    // **Narrowed, not cast.** A board item's `state` is typed `string`
+    // because it arrives over the wire, while an undo's `ItemMove` needs a
+    // real state value — it becomes the `to` and the `expectedFrom` of a
+    // transition request. `isItemState` is the same guard `get-board.ts`
+    // uses on the way in; a cast here would let an unrecognised string
+    // through and produce an undo that the server refuses on press, after
+    // the person had already been told it was available.
+    if (!isItemState(from) || !isItemState(to)) return;
+
+    deps.offerUndo({
+      kind: "state-change",
+      at: Date.now(),
+      move: { itemId, from, to },
+      itemTitle: original.item.title,
+    });
   });
 }
