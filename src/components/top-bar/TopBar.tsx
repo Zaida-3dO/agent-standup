@@ -20,7 +20,7 @@
 // conditionals rather than merely rendering it. `AppShell` is the one place
 // that reads the context and hands this component its props.
 import Link from "next/link";
-import { Menu, Search } from "lucide-react";
+import { Menu, Plus, Search } from "lucide-react";
 import type { Profile } from "@/lib/profile/types";
 import { personColour } from "@/lib/design/person-colour";
 import type { Crumb } from "@/lib/nav/breadcrumb";
@@ -37,6 +37,18 @@ export interface TopBarProps {
   readonly onToggleDensity?: () => void;
   /** Opens the mobile navigation sheet. The button is hidden by CSS above the breakpoint. */
   readonly onOpenNav?: () => void;
+  /**
+   * Opens the command palette — T18. Optional, and when it is absent the
+   * search control stays the disabled placeholder it was, rather than
+   * becoming a button that looks live and does nothing.
+   */
+  readonly onOpenPalette?: () => void;
+  /**
+   * Opens quick create — T18. The `+` renders only when this is supplied,
+   * for the same reason: an affordance for a dialog with no mount is worse
+   * than no affordance.
+   */
+  readonly onOpenCreate?: () => void;
 }
 
 function initialOf(displayName: string): string {
@@ -50,6 +62,8 @@ export function TopBar({
   density,
   onToggleDensity,
   onOpenNav,
+  onOpenPalette,
+  onOpenCreate,
 }: TopBarProps) {
   return (
     <header className={styles.bar}>
@@ -92,21 +106,51 @@ export function TopBar({
       </div>
 
       <div className={styles.right}>
-        {/* Search is a placeholder, and it says so. A search field that
-            accepted a query and did nothing would be worse than none — it
-            teaches a reader the feature is broken rather than absent — so
-            this is a disabled control with an honest label until the
-            command palette lands behind it. */}
+        {/* The command palette landed behind this control (T18), so it is
+            now live — it opens the palette, whose first field is the
+            search box. It keeps the disabled placeholder as its fallback
+            for a caller that supplies no handler: a control that looks
+            live and does nothing teaches a reader the feature is broken
+            rather than absent, which is why the placeholder was written
+            honest in the first place. */}
         <button
           type="button"
           className={styles.search}
-          disabled
-          aria-label="Search — not available yet"
-          title="Search is not available yet"
+          disabled={onOpenPalette === undefined}
+          onClick={onOpenPalette}
+          aria-label={
+            onOpenPalette === undefined ? "Search — not available yet" : "Search and run commands"
+          }
+          title={onOpenPalette === undefined ? "Search is not available yet" : undefined}
         >
           <Search size={15} aria-hidden="true" />
           <span className={styles.searchLabel}>Search</span>
+          {onOpenPalette !== undefined && (
+            // The chord, shown on the control that runs it. This is the
+            // only place in the app the palette advertises itself to
+            // someone who has not pressed `?`, so it is worth the width.
+            <kbd className={styles.searchChord} aria-hidden="true">
+              Ctrl K
+            </kbd>
+          )}
         </button>
+
+        {onOpenCreate !== undefined && (
+          // T18's visible create affordance. In the top strip rather than
+          // on the board, because creating an item is not a thing you do
+          // *to* the board — it is available on every screen, which is
+          // exactly what the strip is for.
+          <button
+            type="button"
+            className={styles.create}
+            onClick={onOpenCreate}
+            aria-label="Create an item"
+            title="Create an item (c)"
+          >
+            <Plus size={15} aria-hidden="true" />
+            <span className={styles.createLabel}>Create</span>
+          </button>
+        )}
 
         {density !== undefined && onToggleDensity !== undefined && (
           <DensityToggle density={density} onToggle={onToggleDensity} />

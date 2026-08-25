@@ -1,0 +1,178 @@
+/* The command palette (T18), painted entirely from the token layer
+   (`src/app/globals.css`). No literal colour appears in this file. */
+
+/* ── The z-index decision ─────────────────────────────────────────────────
+   The stack in this app, low to high: board content 1, the filter bar and
+   top strip 20, the sidebar 50, the undo toast 50, the quick-create
+   backdrop 60, the profile picker 100.
+
+   The palette sits at 70 — above quick create, below the picker.
+
+   Above quick create, because the palette OPENS the create dialog and can
+   be opened by `Ctrl/⌘K` from anywhere. If it rendered below 60 it would
+   appear underneath a dialog it is capable of launching, which is a stack
+   that contradicts the order the person experiences.
+
+   Below the profile picker, because the picker gates the whole application
+   — nothing behind it is safe to act on until a profile is chosen — so no
+   overlay may cover it. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 6rem 1rem 1rem;
+  overflow-y: auto;
+  background: var(--surface-scrim);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 34rem;
+  max-height: min(30rem, calc(100vh - 8rem));
+  border: 1px solid var(--border-default);
+  border-radius: 0.6rem;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+}
+
+.input {
+  flex: none;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0.6rem 0.6rem 0 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.98rem;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Which item the state verbs will act on. */
+.context {
+  flex: none;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.contextItem {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.error {
+  flex: none;
+  margin: 0;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--state-blocked-fg);
+  font-size: 0.82rem;
+}
+
+.empty {
+  margin: 0;
+  padding: 1.5rem 1rem;
+  color: var(--text-faint);
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+.list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0.35rem;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.row {
+  margin: 0;
+}
+
+.groupHeading {
+  margin: 0.5rem 0 0.25rem;
+  padding: 0 0.6rem;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.option,
+.optionSelected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The highlight is a background AND a left edge, not a background alone.
+   The selected row is the thing Enter will run, so it has to survive a
+   person who cannot distinguish the two background tones. */
+.optionSelected {
+  background: var(--surface-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.optionLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionMeta {
+  flex: none;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  font-size: 0.74rem;
+  flex-wrap: wrap;
+}
+
+.key {
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.25rem;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.72rem;
+}
