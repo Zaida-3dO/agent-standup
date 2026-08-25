@@ -63,7 +63,7 @@ import {
   movedOverMessage,
   pickedUpMessage,
 } from "@/lib/board/drag-announce";
-import { horizontalStep, VERTICAL_STEP_PX } from "@/lib/board/drag-keyboard";
+import { horizontalStep, SILENT_ANNOUNCEMENTS, VERTICAL_STEP_PX } from "@/lib/board/drag-keyboard";
 import { DragCardPreview } from "./DragCardPreview";
 import styles from "./Board.module.css";
 
@@ -109,23 +109,6 @@ const boardCoordinateGetter: KeyboardCoordinateGetter = (
 function isBoardColumn(id: unknown): id is BoardColumnId {
   return typeof id === "string" && (BOARD_COLUMNS as readonly string[]).includes(id);
 }
-
-/**
- * Announcements that say nothing, so this board has exactly one announcer.
- *
- * Every handler returns `undefined`, which `dnd-kit`'s `announce` treats as
- * "no announcement" and skips — leaving the library's `assertive` region
- * empty while the polite region in `DragLayer` does the talking. Supplying
- * silent announcements is the only lever the library offers for this — it
- * has no prop that removes the region itself.
- */
-const silentAnnouncements: Announcements = {
-  onDragStart: () => undefined,
-  onDragMove: () => undefined,
-  onDragOver: () => undefined,
-  onDragEnd: () => undefined,
-  onDragCancel: () => undefined,
-};
 
 export interface DragLayerProps {
   /** The board being rendered — used to resolve a dragged id back to its entry. */
@@ -280,7 +263,7 @@ export function DragLayer({
       // Handlers returning `undefined` are the supported way to say
       // nothing: `useAnnouncement`'s `announce` ignores a nullish value, so
       // the library's region stays empty and only ours speaks.
-      accessibility={{ announcements: silentAnnouncements }}
+      accessibility={{ announcements: SILENT_ANNOUNCEMENTS satisfies Announcements }}
     >
       {children}
       {/* Portalled out of the columns' `overflow` troughs — a card dragged

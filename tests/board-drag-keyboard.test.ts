@@ -17,12 +17,16 @@
 //   - Making `nextColumn` wrap instead of clamp fails the clamp tests.
 //   - Flipping `pressesToCross`'s `Math.ceil` to `Math.floor` fails "a step
 //     that nearly crosses still needs a second press".
-//   - Any handler in `silentAnnouncements` returning a string fails the
+//   - Any handler in `SILENT_ANNOUNCEMENTS` returning a string fails the
 //     announcer test — that is the whole defect it exists to prevent.
+//   - Deleting any one key from `SILENT_ANNOUNCEMENTS` fails the coverage
+//     test: an omitted handler falls back to the library's default for
+//     that event, reintroducing the UUID for one announcement only.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  SILENT_ANNOUNCEMENTS,
   VERTICAL_STEP_PX,
   horizontalStep,
   nextColumn,
@@ -130,12 +134,69 @@ describe("a horizontal press moves one column, and stops at the ends", () => {
 
 // ── The announcer ─────────────────────────────────────────────────────
 //
-// Read from the SOURCE TEXT rather than by mounting the component. The
-// claim is about what is handed to `dnd-kit`'s `accessibility` prop, and
-// the component is a client component full of hooks that this DOM-free
-// harness cannot render. Asserting on the source is weaker than asserting
-// on a rendered live region, and the handoff says so and asks a browser
-// reviewer to confirm what a screen reader actually hears.
+// The silent announcements are asserted by IMPORTING them and calling
+// them, not by reading the component's source. That matters for more than
+// tidiness: a source-text assertion reads whatever file is on disk, and
+// under a mutation run that is an INSTRUMENTED copy of the component —
+// so the regex stops matching and the test fails for a reason that has
+// nothing to do with the mutant. Calling the real object tests the
+// behaviour and is indifferent to how the file is spelled.
+//
+// They live in `@/lib/board/drag-keyboard` for exactly this reason: the
+// component is a `"use client"` file built on hooks that this DOM-free
+// harness cannot import, and a plain object can be.
+describe("the silent announcer says nothing at all", () => {
+  it("returns undefined from every handler dnd-kit calls", () => {
+    // `undefined` is the library's supported "say nothing": its `announce`
+    // ignores a nullish value, so its own live region stays empty. Any
+    // handler returning a string would fill that region instead — and
+    // that region is `assertive`, so it would interrupt this board's
+    // polite one mid-sentence.
+    const active = { id: "4f8ac10b-58cc-4372-a567-0e02b2c3d479", data: { current: {} }, rect: {} };
+    const over = { id: "in_progress", rect: {}, data: { current: {} }, disabled: false };
+    const args = { active, over } as never;
+    for (const [name, handler] of Object.entries(SILENT_ANNOUNCEMENTS)) {
+      const spoken = (handler as (a: never) => string | undefined)(args);
+      expect(spoken, `${name} must say nothing`).toBeUndefined();
+    }
+  });
+
+  it("covers every announcement dnd-kit can make", () => {
+    // A handler the library calls but this object omits falls back to the
+    // library's default for THAT event — which is the UUID-reading,
+    // interrupting behaviour, reintroduced for one event only. Deleting
+    // any single key here fails this.
+    expect(Object.keys(SILENT_ANNOUNCEMENTS).sort()).toEqual([
+      "onDragCancel",
+      "onDragEnd",
+      "onDragMove",
+      "onDragOver",
+      "onDragStart",
+    ]);
+  });
+
+  it("says nothing even when handed a real-looking id", () => {
+    // The specific defect: the library's defaults interpolate `active.id`,
+    // which on this board is a UUID. Nothing here may echo it back.
+    const id = "4f8ac10b-58cc-4372-a567-0e02b2c3d479";
+    const args = { active: { id }, over: { id: "waiting" } } as never;
+    for (const handler of Object.values(SILENT_ANNOUNCEMENTS)) {
+      const spoken = (handler as (a: never) => string | undefined)(args);
+      expect(spoken ?? "").not.toContain(id);
+    }
+  });
+});
+
+// ── The component's wiring ────────────────────────────────────────────
+//
+// These few claims are about how `DragLayer.tsx` wires the pieces above
+// into `dnd-kit`, which is a fact about the file rather than about any
+// value it exports — so they are read from source. Weaker than the
+// behavioural assertions above, and the handoff says so: a browser
+// reviewer is asked to confirm what a screen reader actually hears.
+//
+// `readFileSync` at module scope rather than through a bundler import,
+// because the file is a client component this harness cannot load.
 const DRAG_LAYER_SOURCE = readFileSync(
   path.resolve(import.meta.dirname, "../src/components/board/DragLayer.tsx"),
   "utf8",
@@ -148,61 +209,33 @@ const DRAG_LAYER_SOURCE = readFileSync(
  * quoting the broken expression (`announcements: undefined`), so a
  * substring search over the raw text would find the defect in the very
  * comment explaining that it is gone — and the assertion below would fail
- * on a correct file. Stripping comments is what makes these assertions
- * about the code rather than about the prose around it.
+ * on a correct file.
  */
-const DRAG_LAYER = DRAG_LAYER_SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
-  /^[ \t]*\/\/.*$/gm,
-  "",
-);
+const DRAG_LAYER = DRAG_LAYER_SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ 	]*\/\/.*$/gm, "");
 
-describe("there is exactly one announcer, and it is the polite one", () => {
+describe("the component wires up one announcer and a stepping sensor", () => {
   it("does NOT pass `announcements: undefined`, which selects the defaults", () => {
-    // The defect. `dnd-kit` destructures with a default
+    // `dnd-kit` destructures with a default
     // (`announcements = defaultAnnouncements`), so a property explicitly
-    // set to `undefined` takes that default exactly as an absent one does.
-    // The previous code read as suppression and did the opposite.
+    // set to `undefined` takes that default exactly as an absent one does
+    // — the spelling that reads most like suppression turns them on.
     expect(DRAG_LAYER).not.toContain("announcements: undefined");
   });
 
-  it("hands the library a silent announcer", () => {
-    expect(DRAG_LAYER).toContain("announcements: silentAnnouncements");
-  });
-
-  it("every silent handler returns undefined and none builds a string", () => {
-    const block = /const silentAnnouncements: Announcements = \{([\s\S]*?)\n\};/.exec(DRAG_LAYER);
-    expect(block).not.toBeNull();
-    const body = block![1]!;
-    // The library's contract declares `string | undefined`, so returning
-    // `undefined` is supported rather than a trick — and `announce`
-    // ignores a nullish value, leaving its region empty.
-    for (const handler of [
-      "onDragStart",
-      "onDragMove",
-      "onDragOver",
-      "onDragEnd",
-      "onDragCancel",
-    ]) {
-      expect(body).toContain(`${handler}: () => undefined`);
-    }
-    // Nothing in there may interpolate an id. A handler that returned a
-    // string would speak over the polite region again, which is the
-    // interruption this fixes.
-    expect(body).not.toContain("active.id");
-    expect(body).not.toContain("`");
+  it("hands the library the silent announcer", () => {
+    expect(DRAG_LAYER).toContain("announcements: SILENT_ANNOUNCEMENTS");
   });
 
   it("keeps the app's own region polite, and it is the only one that speaks", () => {
     // The app's region says the card's title and the column's name. It
-    // must stay `polite`: these are a commentary on a gesture the reader is
-    // making, so they must not interrupt.
+    // must stay `polite`: these are a commentary on a gesture the reader
+    // is making, so they must not interrupt.
     expect(DRAG_LAYER).toContain('aria-live="polite"');
     expect(DRAG_LAYER).not.toContain('aria-live="assertive"');
   });
 
   it("registers the keyboard sensor WITH a coordinate getter", () => {
-    // A bare `useSensor(KeyboardSensor)` is the 25px defect. The getter is
-    // what makes the sensor use the column-sized step proved above.
+    // A bare `useSensor(KeyboardSensor)` is the 25px-per-press defect.
     expect(DRAG_LAYER).toContain("useSensor(KeyboardSensor, { coordinateGetter:");
     expect(DRAG_LAYER).not.toMatch(/useSensor\(KeyboardSensor\)/);
   });

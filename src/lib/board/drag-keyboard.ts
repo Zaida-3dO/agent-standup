@@ -87,3 +87,38 @@ export function nextColumn(from: BoardColumnId, direction: -1 | 1): BoardColumnI
   if (target < 0 || target >= BOARD_COLUMNS.length) return null;
   return BOARD_COLUMNS[target] ?? null;
 }
+
+/**
+ * Announcements that say nothing, so the board has exactly one announcer.
+ *
+ * ── The defect this exists to prevent ─────────────────────────────────
+ *
+ * `dnd-kit` renders its own live region and fills it from a default set of
+ * announcements. Those defaults are `assertive` and interpolate the raw
+ * draggable id, so a screen reader reads out a UUID ("Picked up draggable
+ * item 4f8a…") and, being assertive, INTERRUPTS this board's own polite
+ * region mid-sentence. `drag-announce.ts` can say the card's title and the
+ * column's name, which is what a reader can actually act on.
+ *
+ * **Passing `{ announcements: undefined }` does not suppress them.** The
+ * library destructures with a default (`announcements = defaultAnnouncements`),
+ * and a property explicitly set to `undefined` selects that default exactly
+ * as an absent one does — so the spelling that reads most like suppression
+ * is the one that turns the defaults on.
+ *
+ * Supplying handlers that all return `undefined` is the supported way to
+ * say nothing: the library's `announce` ignores a nullish value, so its
+ * region stays empty. There is no prop that removes the region itself.
+ *
+ * **Lives here, not in `DragLayer.tsx`, so it is testable.** The component
+ * is a `"use client"` file built on hooks and cannot be imported by this
+ * repo's DOM-free harness; a plain object can. Its type is checked against
+ * the library's `Announcements` contract at the point of use.
+ */
+export const SILENT_ANNOUNCEMENTS = {
+  onDragStart: () => undefined,
+  onDragMove: () => undefined,
+  onDragOver: () => undefined,
+  onDragEnd: () => undefined,
+  onDragCancel: () => undefined,
+} as const;
