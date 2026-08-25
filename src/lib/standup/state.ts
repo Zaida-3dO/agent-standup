@@ -118,7 +118,9 @@ export async function fetchStandup(
     liveAssignments,
   );
 
-  return { overnight, inFlight: inProgress.entries, projects, needsYou };
+  // `fetchNeedsYou` returns the page and its `total` since T24; this screen
+  // renders the rows only, so it takes the items and leaves the count.
+  return { overnight, inFlight: inProgress.entries, projects, needsYou: needsYou.items };
 }
 
 /** Turns a caught value into the message the error state shows. */

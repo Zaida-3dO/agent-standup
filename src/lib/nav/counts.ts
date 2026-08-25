@@ -13,8 +13,7 @@
 // **No database access, and none possible.** Both reads go through the
 // HTTP adapter, each a thin shell over one `service.call`; nothing here
 // imports the service layer or the database client.
-import { fetchBoardColumn } from "@/lib/board/state";
-import { needsYou } from "@/lib/board/view";
+import { fetchNeedsYouTotal } from "@/lib/needs-you/state";
 import { fetchFeed } from "@/lib/since/state";
 
 export interface NavCounts {
@@ -29,32 +28,33 @@ export function emptyCounts(): NavCounts {
 }
 
 /**
- * How many items are blocked on this person.
+ * How many items need this person — the number beside the Needs-you link.
  *
- * Reads the **Waiting column only**, not the whole board. `needsYou`
- * (`@/lib/board/view`) already requires `state === "blocked"`, and the
- * server groups every blocked item into Waiting, so the other three columns
- * cannot contribute a match — asking for them would be three extra requests
- * on every page load to count zero each time.
+ * **Reads the same operation the inbox itself reads (T24).** It used to
+ * fetch the board's whole Waiting column and count the entries matching
+ * `needsYou` — which was both a fetch-and-discard (a page of cards, to
+ * produce one integer) and, more seriously, a *different rule*: that
+ * counted only items blocked on this person, while the list behind the link
+ * admits three reasons. The badge said one number and the screen showed
+ * another, with nothing to explain the gap.
  *
- * The board view keeps scanning all four (see `needsYouCount`'s header),
- * and that is right *there*: it has the whole board in memory already, so
- * the extra pass is free. Here it is not free, and the trade goes the other
- * way. If the server's grouping ever changes so a blocked item can sit
- * elsewhere, this under-counts and `needsYouCount` does not — which is
- * exactly the seam a reviewer should look at first.
+ * `get_needs_you` returns `total` computed over the same union that
+ * produces the list, in the same transaction, so the badge is now the
+ * length of the list behind it **by construction** rather than by two
+ * implementations staying in step. `limit: 1` because the rows are not
+ * rendered here — `total` does not depend on how many come back, and asking
+ * for one keeps a badge's request from pulling a page nothing draws.
  *
- * With no active profile the count is zero without a request at all: nothing
- * can need you when the app does not know who you are, and issuing the read
- * anyway would show a stranger's queue.
+ * With no active profile the count is zero without a request at all:
+ * nothing can need you when the app does not know who you are, and issuing
+ * the read anyway would show a stranger's queue.
  */
 export async function fetchNeedsYouCount(
   personId: string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
   if (personId === null) return 0;
-  const section = await fetchBoardColumn("waiting", { fetchImpl });
-  return section.entries.filter((entry) => needsYou(entry, personId)).length;
+  return fetchNeedsYouTotal(personId, fetchImpl);
 }
 
 /**

@@ -14,6 +14,17 @@
 // **one** service call (CLAUDE.md) — four reads would have to become four
 // endpoints, and the consistency would then be genuinely unobtainable.
 //
+// **History here is the newest window; `get_item_history` pages past it
+// (T24).** The `historyLimit` cap below is deliberate and stays — this read
+// exists to deliver one coherent snapshot of a whole screen, and an
+// unbounded ledger inside it would make the most detailed read in the
+// product also the one most likely to fail on payload size. Entries past
+// the cap are reached through `get_item_history`, a keyset-paged read of
+// the same table that the detail view calls on demand. `historyTruncated`
+// is the fact that says whether any exist. See that operation's header for why it is a
+// separate read with a per-page snapshot rather than an offset threaded
+// through this payload — the consistency trade is the substance of it.
+//
 // **The subtree is recursive, not one level.** `kind`'s nesting is
 // unbounded (SCHEMA.md §1) and #72 asks for a *tree*. `orientation` reads
 // direct children only, which is right for its question ("what still needs

@@ -40,10 +40,10 @@ export function NeedsYouInbox() {
   const load = useCallback(() => {
     let cancelled = false;
     fetchNeedsYou(personId)
-      .then((items) => {
+      .then(({ items, total }) => {
         if (cancelled) return;
         setNow(Date.now());
-        setLoaded({ personId, state: { status: "loaded", items } });
+        setLoaded({ personId, state: { status: "loaded", items, total } });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -82,8 +82,8 @@ export function NeedsYouInbox() {
           // moves the item to a new state (`executing`/`merged`), which is
           // exactly the condition that makes it stop qualifying for this
           // list under all three admission rules at once — refetching is
-          // simpler than re-deriving that here and it is a small, bounded
-          // read (`fetchNeedsYou` is three capped `list_items` calls).
+          // simpler than re-deriving that here, and since T24 it is a
+          // single bounded read (`get_needs_you`) rather than three.
           load();
         })
         .catch(() => {

@@ -113,7 +113,7 @@ describe("NeedsYouInboxView — load branches and ordering", () => {
 
   it("shows the empty state when the loaded list is empty", () => {
     const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [] },
+      loadState: { status: "loaded", items: [], total: [].length },
       now: Date.now(),
       decidingId: null,
       onApprove: vi.fn(),
@@ -129,7 +129,7 @@ describe("NeedsYouInboxView — load branches and ordering", () => {
     const newer = item({ id: "newer", updatedAt: "2026-08-18T12:00:00.000Z" });
     const older = item({ id: "older", updatedAt: "2026-08-18T08:00:00.000Z" });
     const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [newer, older] },
+      loadState: { status: "loaded", items: [newer, older], total: 2 },
       now: Date.now(),
       decidingId: null,
       onApprove: vi.fn(),
@@ -147,7 +147,7 @@ describe("NeedsYouInboxView — load branches and ordering", () => {
     const a = item({ id: "a", reason: "plan_review", updatedAt: "2026-08-18T08:00:00.000Z" });
     const b = item({ id: "b", reason: "plan_review", updatedAt: "2026-08-18T09:00:00.000Z" });
     const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [a, b] },
+      loadState: { status: "loaded", items: [a, b], total: 2 },
       now: Date.now(),
       decidingId: "a",
       onApprove: vi.fn(),
@@ -162,7 +162,7 @@ describe("NeedsYouInboxView — load branches and ordering", () => {
 
   it("surfaces a decision failure above the list without discarding what loaded", () => {
     const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [item()] },
+      loadState: { status: "loaded", items: [item()], total: 1 },
       now: Date.now(),
       decidingId: null,
       onApprove: vi.fn(),

@@ -12,30 +12,6 @@ import {
   fetchNeedsYouCount,
   fetchUnseenCount,
 } from "@/lib/nav/counts";
-import type { BoardEntry } from "@/lib/board/types";
-
-function entry(overrides: Partial<BoardEntry["item"]> = {}): BoardEntry {
-  return {
-    item: {
-      id: "i1",
-      title: "t",
-      headline: null,
-      kind: "task",
-      state: "blocked",
-      priority: "P2",
-      area: "a",
-      repo: null,
-      blockedOnPersonId: "me",
-      blockedOnType: "person",
-      blockedReason: null,
-      pauseReason: null,
-      ...overrides,
-    },
-    column: "waiting",
-    assignments: [],
-    trust: null,
-  };
-}
 
 /** A `fetch` that answers every request with one JSON body, recording the urls it saw. */
 function stubFetch(body: unknown, urls: string[] = []): typeof fetch {
@@ -45,50 +21,45 @@ function stubFetch(body: unknown, urls: string[] = []): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-function boardBody(entries: readonly BoardEntry[]) {
-  return {
-    board: {
-      columns: { waiting: { entries, total: entries.length, nextCursor: null, withheld: false } },
-    },
-  };
+/** A `GET /api/needs-you` response carrying a server-computed total. */
+function needsYouBody(total: number) {
+  return { items: [], total };
 }
 
 describe("fetchNeedsYouCount", () => {
-  it("counts only items blocked on the given person", async () => {
-    const count = await fetchNeedsYouCount(
-      "me",
-      stubFetch(
-        boardBody([
-          entry(),
-          entry({ id: "i2" }),
-          // Someone else's queue, not yours.
-          entry({ id: "i3", blockedOnPersonId: "them" }),
-          // Blocked on a deploy — nothing you can do.
-          entry({ id: "i4", blockedOnType: "external_process" }),
-          // Paused means nobody is on it, not that you are.
-          entry({ id: "i5", state: "paused" }),
-        ]),
-      ),
-    );
-    // Changing `needsYou`'s person comparison from `===` to `!==` flips
-    // this from 2 to 2 of the others — either way it fails.
-    expect(count).toBe(2);
+  it("reports the server's own total, not the number of rows it was sent", async () => {
+    // Zero rows in the page, seven waiting: this is the assertion that the
+    // badge reads `total` rather than counting a page. Since T24 the rule
+    // itself lives in `get_needs_you` and is tested against a real database
+    // in `tests/needs-you-operation.test.ts` — a client-side re-derivation
+    // is exactly what that change removed, so there is none to test here.
+    expect(await fetchNeedsYouCount("me", stubFetch(needsYouBody(7)))).toBe(7);
   });
 
   it("issues NO request at all when nobody is signed in", async () => {
     const urls: string[] = [];
-    const count = await fetchNeedsYouCount(null, stubFetch(boardBody([entry()]), urls));
+    const count = await fetchNeedsYouCount(null, stubFetch(needsYouBody(3), urls));
     // Nothing can need you when the app does not know who you are, and
     // issuing the read anyway would show a stranger's queue.
     expect(count).toBe(0);
     expect(urls).toEqual([]);
   });
 
-  it("reads the waiting column only — not all four", async () => {
+  it("makes ONE request, to the same operation the inbox itself reads", async () => {
+    // The badge and the list are now the same read, which is what stops the
+    // two disagreeing. It used to fetch the board's whole Waiting column to
+    // produce one integer.
     const urls: string[] = [];
-    await fetchNeedsYouCount("me", stubFetch(boardBody([]), urls));
+    await fetchNeedsYouCount("me", stubFetch(needsYouBody(0), urls));
     expect(urls).toHaveLength(1);
-    expect(urls[0]).toContain("column=waiting");
+    expect(urls[0]).toContain("/needs-you");
+    expect(urls[0]).toContain("personId=me");
+  });
+
+  it("asks for a single row, because the rows are not rendered", async () => {
+    const urls: string[] = [];
+    await fetchNeedsYouCount("me", stubFetch(needsYouBody(0), urls));
+    expect(urls[0]).toContain("limit=1");
   });
 });
 
@@ -122,7 +93,7 @@ describe("fetchNavCounts", () => {
     const fetchImpl = ((url: string) => {
       const body = url.startsWith("/api/ui/events")
         ? { events: [], cursor: "", horizon: "", unseenCount: 5, firstVisit: false }
-        : boardBody([entry(), entry({ id: "i2" }), entry({ id: "i3", blockedOnPersonId: "them" })]);
+        : needsYouBody(2);
       return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
     }) as unknown as typeof fetch;
     expect(await fetchNavCounts("me", fetchImpl)).toEqual({ unseen: 5, needsYou: 2 });
@@ -137,7 +108,7 @@ describe("fetchNavCounts", () => {
       if (url.startsWith("/api/ui/events")) return Promise.reject(new Error("events down"));
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve(boardBody([entry()])),
+        json: () => Promise.resolve(needsYouBody(1)),
       } as Response);
     }) as unknown as typeof fetch;
     // Removing either `.catch(() => 0)` in `fetchNavCounts` makes this

@@ -75,6 +75,13 @@ import { markEventSeen } from "./operations/mark-event-seen";
 // The detail read behind the item view (MILESTONES.md #72) — one item's
 // subtask tree, artifacts, history and summary in a single consistent read.
 import { getItemDetail } from "./operations/get-item-detail";
+// The ledger past `get_item_detail`'s cap, paged server-side (T24). Its own
+// read with its own snapshot rather than an offset threaded through the
+// detail payload — see its header for why that trade is the right one.
+import { getItemHistory } from "./operations/get-item-history";
+// "What needs this person", in one call (T24) — the union three separate
+// `list_items` reads used to assemble in the browser.
+import { getNeedsYou } from "./operations/get-needs-you";
 import { getSettings } from "./operations/get-settings";
 import { getSetting } from "./operations/get-setting";
 import { patchSettings } from "./operations/patch-settings";
@@ -193,6 +200,8 @@ export const OPERATION_REGISTRY = {
   [getEvents.name]: getEvents,
   [markEventSeen.name]: markEventSeen,
   [getItemDetail.name]: getItemDetail,
+  [getItemHistory.name]: getItemHistory,
+  [getNeedsYou.name]: getNeedsYou,
   [getSettings.name]: getSettings,
   [getSetting.name]: getSetting,
   [patchSettings.name]: patchSettings,
