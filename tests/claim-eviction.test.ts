@@ -248,14 +248,31 @@ describe("judgeEviction — what counts as evidence that a holder is gone", () =
     ).toBe("evictable");
   });
 
-  it("still evicts an unregistered holder that made a tool call and then stopped", () => {
-    // The independent signal does the same work. `ToolCall` rows are
-    // written whether or not the session holds a claim, so a holder with
-    // telemetry has a signal that genuinely moves. Dropping the
-    // `lastToolCallAt === null` half makes this `never_signalled`.
-    expect(judgeEviction(signalLess({ lastToolCallAt: agoSeconds(9_000) })).verdict).toBe(
-      "evictable",
-    );
+  it("still evicts an unregistered holder whose telemetry predates its claim", () => {
+    // The `lastToolCallAt === null` half, isolated. A tool call *after* the
+    // claim is already caught by the `lastActive <= claimedAt` half, since
+    // `lastSeenMs` is the max of the two — so a case like that proves
+    // nothing about this half and would leave the mutant that deletes it
+    // alive. This is the case only this half can decide: telemetry
+    // timestamped **before** the claim, which leaves `lastSeenMs` sitting
+    // at `claimedAt` and the first half satisfied.
+    //
+    // Such a holder is still evicted, and that is the intended reading:
+    // `ToolCall` rows are written whether or not a session holds a claim,
+    // so their existence proves this session emits telemetry — it has a
+    // mechanism for being seen regardless of what its registration says.
+    // Deleting `input.lastToolCallAt === null` from the conjunction makes
+    // this `never_signalled`.
+    const claimed = agoSeconds(10_000);
+    expect(
+      judgeEviction(
+        signalLess({
+          claimedAt: claimed,
+          lastActive: claimed,
+          lastToolCallAt: new Date(claimed.getTime() - 60_000),
+        }),
+      ).verdict,
+    ).toBe("evictable");
   });
 
   it("exempts on silence, not on being unregistered — a fresh unhooked claim is still recently_seen", () => {
