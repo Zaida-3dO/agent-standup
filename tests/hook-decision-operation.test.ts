@@ -208,15 +208,21 @@ async function callAgainst(
 
 describe("what the operation answers", () => {
   it("allows a pre-tool call no intervention objects to", async () => {
-    // `git push --force` is deliberately the example: it is alarming, and
-    // no entry in the catalogue is about it. The registry answers the
+    // `rm -rf build/` is deliberately the example: it is alarming, and no
+    // entry in the catalogue is about it. The registry answers the
     // situations it was given, not everything that looks dangerous — a
     // guard that objected to this would be a pattern list again.
+    //
+    // The example has to be a command the assembler looks nothing up for,
+    // which rules out a push: I13 keys on pushes and commits, so one of
+    // those would assert this property through a command that also triggers
+    // a claim lookup, muddling the two things. `rm -rf` matches no entry at
+    // all, so it demonstrates the point cleanly.
     const answer = await call({
       eventType: "PreToolUse",
       sessionId: "s1",
       tool: "Bash",
-      command: "git push --force",
+      command: "rm -rf build/",
     });
 
     expect(answer.decision).toBe("allow");
@@ -364,18 +370,26 @@ describe("the operation touches no table on the ordinary path", () => {
       { tool: "Bash", command: "ls -la" },
       { tool: "Bash", command: "npm test" },
       { tool: "Bash", command: "git status" },
-      { tool: "Bash", command: "git commit -m 'x'" },
       { tool: "Bash", command: "git add src/lib/thing.ts" },
+      // A `PostToolUse` on a read. I14 is a `post` entry, so a gate keyed on
+      // the phase alone would put the window read behind every one of these
+      // — roughly half of all hook events. It is gated on the phase *and* a
+      // file-editing tool for that reason, and this is the case that pins it.
+      { tool: "Read", command: undefined, eventType: "PostToolUse" },
+      { tool: "Bash", command: "ls -la", eventType: "PostToolUse" },
     ];
 
-    for (const { tool, command } of ordinary) {
+    for (const entry of ordinary) {
+      const { tool, command } = entry;
+      const eventType = "eventType" in entry ? entry.eventType : "PreToolUse";
       await expect(
         call({
-          eventType: "PreToolUse",
+          eventType,
           sessionId: "s1",
           tool,
           ...(command === undefined ? {} : { command }),
         }),
+        `${eventType} ${tool} ${command ?? ""}`,
       ).resolves.toMatchObject({ decision: "allow" });
     }
   });

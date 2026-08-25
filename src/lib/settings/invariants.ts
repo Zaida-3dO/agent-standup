@@ -163,6 +163,13 @@ export const KEY_PREFIXES: Readonly<Record<string, string>> = {
   retention: "Retention",
   hook: "Hook",
   shape: "Telemetry",
+  // Filed under Telemetry rather than a category of its own: the
+  // `interventions.*` keys declared so far are thresholds a reading is taken
+  // against, which is the same kind of knob as `shape.*` and belongs beside
+  // it on the settings page. A catalogue entry's own configuration —
+  // enabled, level, timing, message — is not a setting key at all; it is an
+  // override row keyed by entry id, so it does not arrive through here.
+  interventions: "Telemetry",
   ui: "Interface",
 };
 

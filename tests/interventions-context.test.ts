@@ -43,9 +43,7 @@ describe("needs — what a call could possibly require", () => {
       "ls -la",
       "npm test",
       "git status",
-      "git commit -m 'x'",
       "git add src/lib/thing.ts",
-      "git push",
       // A broad kill needs no state either: I12 blocks on shape alone, by
       // an explicitly settled decision against an ownership check.
       "taskkill /F /IM node.exe",
@@ -54,6 +52,48 @@ describe("needs — what a call could possibly require", () => {
         assignment: false,
         approval: false,
         occupancy: false,
+        handsOn: false,
+      });
+    }
+  });
+
+  it("I13 costs one assignment lookup on a commit or a push, and nothing more", () => {
+    // These two were once asserted alongside `ls -la` as needing nothing.
+    // I13 moved them, and the move is deliberate rather than a regression:
+    // a commit and a push are **punctuation, not traffic**. A builder runs
+    // hundreds of reads between them, so they are not in the volume class
+    // the free-set assertion above exists to protect — and the lookup they
+    // trigger is the same single `Assignment` query a merge already makes,
+    // not a new query shape.
+    //
+    // What must stay true is the bound: one assignment lookup and no more.
+    // An artifact question here would be paying the merge gate's price on
+    // every commit in the system.
+    for (const command of ["git commit -m 'x'", "git push", "git push --force origin main"]) {
+      expect(needs(command), String(command)).toEqual({
+        assignment: true,
+        approval: false,
+        occupancy: false,
+        handsOn: false,
+      });
+    }
+  });
+
+  it("declines the commit shapes that record nothing new", () => {
+    // An amend rewrites a commit that already exists — if the work was
+    // unminted the finding was already due at the original commit, and
+    // repeating it at every amend is how a guard becomes noise. A dry run
+    // writes nothing at all.
+    for (const command of [
+      "git commit --amend --no-edit",
+      "git commit --dry-run",
+      "git push --dry-run",
+    ]) {
+      expect(needs(command), String(command)).toEqual({
+        assignment: false,
+        approval: false,
+        occupancy: false,
+        handsOn: false,
       });
     }
   });
@@ -63,11 +103,13 @@ describe("needs — what a call could possibly require", () => {
       assignment: true,
       approval: true,
       occupancy: false,
+      handsOn: false,
     });
     expect(needs("gh pr merge 12")).toEqual({
       assignment: true,
       approval: true,
       occupancy: false,
+      handsOn: false,
     });
   });
 
@@ -79,6 +121,7 @@ describe("needs — what a call could possibly require", () => {
       assignment: true,
       approval: false,
       occupancy: false,
+      handsOn: false,
     });
   });
 });

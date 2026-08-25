@@ -468,6 +468,38 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  // I14's two thresholds. Separate from the `shape.*` keys above because
+  // they answer a different question: those describe a session's balance of
+  // reading to writing, and these count how much editing an orchestrator has
+  // done regardless of how much it read. An orchestrator that reads forty
+  // files to brief a crew and edits three is doing its job; the same session
+  // making twenty edits is the drift the entry exists to catch, and a
+  // proportion cannot tell those apart.
+
+  "interventions.hands_on_window": define({
+    schema: z.number().int().positive(),
+    default: 40,
+    label: "Hands-on window",
+    help: "How many of a session's most recent tool calls the hands-on reading is taken over. A window rather than the whole session, because the finding is about what an orchestrator is doing now, not about what it did an hour ago before it dispatched its crew.",
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "interventions.hands_on_edit_threshold": define({
+    schema: z.number().int().positive(),
+    default: 12,
+    label: "Hands-on edit threshold",
+    help: "How many file edits an orchestrator must make within the hands-on window before it is told it has become the builder. Deliberately well above a handful: one edit is often exactly the right call for an orchestrator, and the finding is the accumulation rather than any single write.",
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "shape.repeat_threshold": define({
     schema: z.number().int().positive(),
     default: 3,

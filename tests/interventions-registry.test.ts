@@ -687,6 +687,184 @@ describe("I15 — a checkout another crew already holds", () => {
   });
 });
 
+describe("I13 — work recorded against no item", () => {
+  // The entry with the most expensive incident behind it: a five-crew night
+  // where the most valuable PR of the five was never minted as a task, and
+  // nothing failed loudly because the board was being tracked in a person's
+  // head. Each test below is written against a way this could be wrong
+  // rather than against the happy path alone.
+
+  it("fires on a commit from a session that holds nothing", async () => {
+    const findings = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "git commit -m 'the work'", holdsClaim: false },
+    });
+
+    expect(findings.map((finding) => finding.id)).toContain("work-recorded-against-no-item");
+    // A nudge and not a block. An unminted commit is not a wrong commit —
+    // in the incident it was the best work of the night — so refusing it
+    // would delete the record rather than the mistake.
+    expect(strongestLevel(findings)).toBe("nudge");
+  });
+
+  it("fires on a push as well as a commit", async () => {
+    const findings = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "git push origin feat/thing", holdsClaim: false },
+    });
+
+    expect(findings.map((finding) => finding.id)).toContain("work-recorded-against-no-item");
+  });
+
+  it("says nothing when the session holds an item", async () => {
+    // The ordinary case, and by far the most common one. An entry that
+    // fired here would fire on every commit a claimed builder makes, which
+    // is the "fires and annoys" failure that earns a 1 on the owner's scale.
+    const findings = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "git commit -m 'the work'", holdsClaim: true, itemId: "item-9" },
+    });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("says nothing when nobody asked whether a claim exists", async () => {
+    // **The distinction the entry is built on.** `holdsClaim` absent means
+    // the lookup never ran — which is what the assembly gate does for most
+    // calls — and is emphatically not the same as "asked, and it holds
+    // nothing". A predicate keyed on `itemId === undefined` would read
+    // these two the same way and fire on most calls in the system.
+    const findings = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "git commit -m 'the work'" },
+    });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("says nothing about the commit shapes that record nothing new", async () => {
+    for (const command of ["git commit --amend --no-edit", "git commit --dry-run", "git status"]) {
+      const findings = await evaluate({
+        entries: BUILTIN_INTERVENTIONS,
+        phase: "pre",
+        context: { command, holdsClaim: false },
+      });
+
+      expect(findings, command).toEqual([]);
+    }
+  });
+
+  it("names a remedy the caller can actually carry out", () => {
+    // The rule PR #255 exists to enforce, applied to an intervention rather
+    // than to an operation's advice. Five times in one month this
+    // repository shipped a message naming a remedy that did not exist, and
+    // the kill guard is the cautionary case — right on most firings and
+    // catastrophic on the one where its message named a remedy it refused.
+    const entry = BUILTIN_INTERVENTIONS.find(
+      (candidate) => candidate.id === "work-recorded-against-no-item",
+    );
+    expect(entry).toBeDefined();
+
+    // Both operations named are real, and neither is refused by this entry:
+    // it is a nudge, so nothing is blocked, and `create_task` followed by
+    // `claim` is a route the caller can walk from where it is standing.
+    for (const message of [entry?.messages.plain, entry?.messages.prominent]) {
+      expect(message).toContain("create_task");
+    }
+    expect(entry?.messages.prominent).toContain("claim");
+  });
+});
+
+describe("I14 — an orchestrator that has become the builder", () => {
+  const drifting = { claimedRole: "orchestrator", handsOnWork: "elevated" } as const;
+
+  it("fires on an orchestrator accumulating edits", async () => {
+    const findings = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "post",
+      context: { ...drifting, itemId: "item-3" },
+    });
+
+    expect(findings.map((finding) => finding.id)).toContain("orchestrator-doing-the-work");
+    expect(findings.find((f) => f.id === "orchestrator-doing-the-work")?.data).toEqual({
+      itemId: "item-3",
+    });
+  });
+
+  it("says nothing about a builder doing exactly the same editing", async () => {
+    // The role is the entry. A builder making twenty edits is doing its
+    // job, and this is the assertion that stops I14 from becoming a
+    // general "you edited a lot of files" nudge.
+    for (const claimedRole of ["builder", "reviewer", "scout"]) {
+      const findings = await evaluate({
+        entries: BUILTIN_INTERVENTIONS,
+        phase: "post",
+        context: { claimedRole, handsOnWork: "elevated" },
+      });
+
+      expect(findings, claimedRole).toEqual([]);
+    }
+  });
+
+  it("treats an unknown reading as no finding, not as an elevated one", async () => {
+    // `unknown` means too little evidence, and a session a few calls old
+    // has established nothing. Reading it as elevated would nudge every
+    // orchestrator on its opening moves — which is how a digest teaches
+    // its reader to skip it.
+    for (const handsOnWork of ["unknown", "normal"] as const) {
+      const findings = await evaluate({
+        entries: BUILTIN_INTERVENTIONS,
+        phase: "post",
+        context: { claimedRole: "orchestrator", handsOnWork },
+      });
+
+      expect(findings, handsOnWork).toEqual([]);
+    }
+  });
+
+  it("cannot block, however it is configured", async () => {
+    // A `post` entry describes a call that has already run. This is the
+    // invariant rather than a property of the entry's own default.
+    const findings = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      overrides: { "orchestrator-doing-the-work": { level: "hard-block" } },
+      phase: "post",
+      context: drifting,
+    });
+
+    const finding = findings.find((f) => f.id === "orchestrator-doing-the-work");
+    expect(finding?.level).toBe("nudge");
+  });
+
+  it("never fires on a pre event, so it cannot cost the blocking path", async () => {
+    const findings = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: drifting,
+    });
+
+    expect(findings.map((finding) => finding.id)).not.toContain("orchestrator-doing-the-work");
+  });
+
+  it("names a remedy the caller can actually carry out", () => {
+    const entry = BUILTIN_INTERVENTIONS.find(
+      (candidate) => candidate.id === "orchestrator-doing-the-work",
+    );
+    expect(entry).toBeDefined();
+
+    // Two routes, and the second matters: telling an orchestrator only to
+    // "delegate" is unfollowable when it has already done the work. So the
+    // message also offers releasing and re-claiming as a builder, which is
+    // a real pair of operations and makes the board true either way.
+    expect(entry?.messages.plain).toContain("release");
+    expect(entry?.messages.prominent).toContain("release");
+  });
+});
+
 describe("the catalogue entries that are deliberately not built", () => {
   it("records a reason for every unimplemented entry", () => {
     // The catalogue's instruction is to say so and stop when a situation
@@ -730,6 +908,8 @@ describe("the catalogue entries that are deliberately not built", () => {
       I10: "merge-without-approval-at-tip",
       I11: "broad-git-add-on-shared-checkout",
       I12: "broad-process-kill",
+      I13: "work-recorded-against-no-item",
+      I14: "orchestrator-doing-the-work",
       I15: "checkout-held-by-another-crew",
     };
     const shipped = new Set(BUILTIN_INTERVENTIONS.map((entry) => entry.id));
