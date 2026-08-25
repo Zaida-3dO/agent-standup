@@ -33,7 +33,12 @@
 import { CREATE_KINDS, CREATE_KIND_ORDER, CREATE_PRIORITIES } from "@/lib/create/kinds";
 import type { CreateKind, CreatePriority } from "@/lib/create/kinds";
 import { INBOX_PROJECT_ID } from "@/lib/create/inbox";
-import { blockingIssues, titlePreview, type QuickCreateDraft } from "@/lib/create/state";
+import {
+  blockingIssues,
+  isPristine,
+  titlePreview,
+  type QuickCreateDraft,
+} from "@/lib/create/state";
 import styles from "./QuickCreateDialog.module.css";
 
 export interface QuickCreateDialogProps {
@@ -80,8 +85,14 @@ export function QuickCreateDialog({
   // than refuses precisely because "reads well to a person" has no predicate
   // that is right about every string — so the person keeps the last word.
   const blocked = issues.length > 0;
+  // **Issues are shown once the form has been engaged, never on arrival.**
+  // A dialog that opens already saying "A title is required." is scolding
+  // the person for not having typed yet. `blocked` is deliberately NOT
+  // gated on this: submit stays disabled on a pristine draft, the form just
+  // does not shout about why until there is something to respond to.
+  const pristine = isPristine(draft);
   const issueFor = (field: "title" | "area" | "parent") =>
-    issues.find((issue) => issue.field === field) ?? null;
+    (pristine ? null : issues.find((issue) => issue.field === field)) ?? null;
   const titleIssue = issueFor("title");
   const areaIssue = issueFor("area");
   const parentIssue = issueFor("parent");

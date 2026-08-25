@@ -14,7 +14,7 @@
 // gone; the explanation is the whole point). Writing them as one union
 // makes those impossible combinations unrepresentable instead of merely
 // avoided.
-import { canUndo, type UndoableAction } from "./actions";
+import { canUndo, isWithinWindow, type UndoableAction } from "./actions";
 
 /**
  * What the toast area is showing.
@@ -80,7 +80,24 @@ export function undoPressed(state: UndoToastState, nowMs: number): UndoToastStat
  */
 export function ticked(state: UndoToastState, nowMs: number): UndoToastState {
   if (state.phase !== "offered") return state;
-  return canUndo(state.action, nowMs) ? state : idleToast;
+  // **The window only — deliberately NOT `canUndo`.**
+  //
+  // `canUndo` ANDs the window with `inverseOf(action).available`, which is
+  // the right question for "should the button render" and the wrong one for
+  // "should the toast render". Using it here made visibility depend on
+  // undoability, and for an archive `available` is permanently false — so
+  // the first tick collapsed the toast to `idle` and the confirmation
+  // "Archived X" was never seen at all. The same fate hit a no-op
+  // `from === to` move, and it made `UndoToast`'s `unavailableReason`
+  // branch unreachable: the component was written to render the toast
+  // without a button and say why, and nothing could ever reach that path.
+  //
+  // A confirmation of something the person just did is worth showing
+  // whether or not it can be taken back — the toast is how they learn the
+  // archive happened. What it must not do is offer a button that cannot
+  // work, and that is `showUndo`'s job, one layer up, where `canUndo`'s
+  // two conditions still both apply.
+  return isWithinWindow(state.action, nowMs) ? state : idleToast;
 }
 
 /** The undo finished. `ok` decides which report the person is left with. */

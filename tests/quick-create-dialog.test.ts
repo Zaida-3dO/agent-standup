@@ -180,6 +180,43 @@ describe("validation", () => {
     expect(textOf(tree)).toContain("An area is required");
   });
 
+  it("does not scold a freshly-opened dialog before anything is typed", () => {
+    // The dialog opened already saying "A title is required." — an error as
+    // a greeting, on the one form state where it carries no information.
+    // Reverting `issueFor`'s pristine gate makes every assertion here fail.
+    const tree = render({ draft: emptyDraft("task") });
+
+    expect(textOf(tree)).not.toContain("A title is required");
+    expect(textOf(tree)).not.toContain("An area is required");
+    expect(
+      (byId(tree, "quick-create-title").props as Record<string, unknown>)["aria-invalid"],
+    ).toBe(false);
+    expect((byId(tree, "quick-create-area").props as Record<string, unknown>)["aria-invalid"]).toBe(
+      false,
+    );
+  });
+
+  it("still refuses to submit a pristine draft", () => {
+    // The other half, and the one that would make the fix above a bug if it
+    // were missing: staying quiet about why must not make the form
+    // submittable. `blocked` is deliberately not gated on pristine.
+    const button = submitButton(render({ draft: emptyDraft("task") }));
+    expect(button.disabled).toBe(true);
+    expect(String(button.title)).toContain("title is required");
+  });
+
+  it("states the reason as soon as one field has been engaged", () => {
+    // Pristine is "nothing entered anywhere", not "this field is empty" — so
+    // typing an area surfaces the still-missing title rather than staying
+    // silent until the person presses a disabled button.
+    const tree = render({ draft: { ...emptyDraft("task"), area: "web" } });
+
+    expect(textOf(tree)).toContain("A title is required");
+    expect(
+      (byId(tree, "quick-create-title").props as Record<string, unknown>)["aria-invalid"],
+    ).toBe(true);
+  });
+
   it("disables submit while a create is in flight, and names the state", () => {
     const button = submitButton(render({ submitting: true }));
     expect(button.disabled).toBe(true);

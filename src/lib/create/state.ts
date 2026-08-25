@@ -106,6 +106,34 @@ export function canSubmit(draft: QuickCreateDraft): boolean {
 }
 
 /**
+ * True when nothing has been entered yet — the dialog as it opens.
+ *
+ * **Why this exists: an error is a response, not a greeting.** The dialog
+ * renders `blockingIssues` beside each field, and on a freshly opened form
+ * every one of them is unsatisfied, so it opened already telling the person
+ * "A title is required." before they had touched anything. That reads as
+ * having done something wrong by arriving, and it spends the error styling
+ * on the one moment it carries no information — of course the empty form is
+ * empty.
+ *
+ * Deriving "untouched" from the draft rather than tracking a `touched` flag
+ * keeps this a pure predicate over data the dialog already has, which is
+ * what lets it stay hook-free and testable by direct call — the same
+ * constraint that shapes every component in this tree.
+ *
+ * Only the fields a person types into count. `kind` and `priority` both
+ * open on a default rather than on blank, so they are never evidence of
+ * engagement, and including them would make this permanently false.
+ *
+ * **This gates display only.** `canSubmit` is unchanged and submit stays
+ * disabled on a pristine draft — the form does not become submittable by
+ * staying quiet about why it is not.
+ */
+export function isPristine(draft: QuickCreateDraft): boolean {
+  return draft.title === "" && draft.area === "" && draft.parent === "";
+}
+
+/**
  * What the card will actually read, and what is worth saying about it.
  *
  * The row asks for "a live preview of how it will read on a card", and calls
