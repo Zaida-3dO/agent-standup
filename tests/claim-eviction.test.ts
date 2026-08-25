@@ -45,6 +45,14 @@ function agoSeconds(seconds: number): Date {
 /**
  * Eviction inputs for a holder that claimed long ago and has been quiet
  * ever since — the stranded case — overridable per assertion.
+ *
+ * **`holderHookVersion` defaults to a registered hook**, i.e. a session that
+ * had a mechanism for being seen and has not used it. That is deliberately
+ * the *evictable* side of condition 4, so the pre-existing cases in this
+ * file keep asserting what they were written to assert: that a holder which
+ * could have been seen and was not loses its claim. The signal-less case is
+ * its own describe block below, and states the null explicitly rather than
+ * inheriting it — a safety property should never be reached by a default.
  */
 function inputs(overrides: Partial<EvictionInputs> = {}): EvictionInputs {
   return {
@@ -53,6 +61,7 @@ function inputs(overrides: Partial<EvictionInputs> = {}): EvictionInputs {
     lastActive: agoSeconds(10_000),
     claimedAt: agoSeconds(10_000),
     lastToolCallAt: null,
+    holderHookVersion: 1,
     now: NOW,
     evictAfterSeconds: 3_600,
     ...overrides,
@@ -180,6 +189,104 @@ describe("judgeEviction — what counts as evidence that a holder is gone", () =
     );
   });
 
+  // ── Condition 4: silence from a session that cannot speak ────────────
+  //
+  // The property under test is that eviction distinguishes "no signal
+  // because dead" from "no signal because this session never emits one".
+  // Every case here is past the threshold on both time terms, so time alone
+  // would say `evictable` and only condition 4 can produce a different
+  // answer — which is what makes these fail when it is removed.
+
+  /** A holder that never registered and never moved either signal. */
+  function signalLess(overrides: Partial<EvictionInputs> = {}): EvictionInputs {
+    const claimed = agoSeconds(10_000);
+    return inputs({
+      claimedAt: claimed,
+      lastActive: claimed,
+      lastToolCallAt: null,
+      holderHookVersion: null,
+      ...overrides,
+    });
+  }
+
+  it("does NOT evict an unregistered holder that has never emitted a signal", () => {
+    // The row this whole change exists for: a session running no hook, on a
+    // single turn longer than the threshold. Both time terms derive from
+    // `claimedAt`, so the claim-age floor is the same measurement twice and
+    // cannot save it. Deleting the `never_signalled` branch makes this
+    // `evictable`.
+    const judgement = judgeEviction(signalLess());
+    expect(judgement.verdict).toBe("never_signalled");
+  });
+
+  it("reports no signal for a holder it declined to judge on silence", () => {
+    // The verdict has to carry *why*, because the refusal path reports it
+    // and "held by a session that has never been seen" sends a caller to
+    // `takeover` rather than to waiting.
+    expect(judgeEviction(signalLess()).lastSeenSignal).toBeNull();
+  });
+
+  it("still evicts a REGISTERED holder that has never emitted a signal", () => {
+    // The other half of the distinction, and the one that keeps eviction
+    // working. This session reported a hook version, so it had a mechanism
+    // that stamps `lastActive` on every flush; four hours of nothing from
+    // it is evidence, not configuration. Dropping the
+    // `holderHookVersion === null` half of the condition — exempting every
+    // silent holder — makes this `never_signalled`.
+    expect(judgeEviction(signalLess({ holderHookVersion: 1 })).verdict).toBe("evictable");
+  });
+
+  it("still evicts an unregistered holder that heartbeated once and then stopped", () => {
+    // One stamp is enough to retire the exemption forever: the session has
+    // demonstrated it can be seen, so its later silence is an observation
+    // about something that should have been talking. Dropping the
+    // `lastActive <= claimedAt` half — exempting on registration alone —
+    // makes this `never_signalled`.
+    expect(
+      judgeEviction(signalLess({ claimedAt: agoSeconds(20_000), lastActive: agoSeconds(10_000) }))
+        .verdict,
+    ).toBe("evictable");
+  });
+
+  it("still evicts an unregistered holder that made a tool call and then stopped", () => {
+    // The independent signal does the same work. `ToolCall` rows are
+    // written whether or not the session holds a claim, so a holder with
+    // telemetry has a signal that genuinely moves. Dropping the
+    // `lastToolCallAt === null` half makes this `never_signalled`.
+    expect(judgeEviction(signalLess({ lastToolCallAt: agoSeconds(9_000) })).verdict).toBe(
+      "evictable",
+    );
+  });
+
+  it("exempts on silence, not on being unregistered — a fresh unhooked claim is still recently_seen", () => {
+    // Ordering matters: the time terms are checked first, so a holder
+    // inside the threshold gets `recently_seen` regardless of registration.
+    // Hoisting condition 4 above the time check would turn this into
+    // `never_signalled` and lose the distinction the refusal path reports.
+    expect(
+      judgeEviction(signalLess({ claimedAt: agoSeconds(10), lastActive: agoSeconds(10) })).verdict,
+    ).toBe("recently_seen");
+  });
+
+  it("does not let a sub-millisecond gap between the two column defaults decide the exemption", () => {
+    // `claimedAt` and `lastActive` are separate `@default(now())` calls in
+    // one INSERT, so `lastActive` can land a tick either side of
+    // `claimedAt` without anything having stamped it. A `===` test here
+    // would let that ordering artefact decide a safety property; `<=` means
+    // it cannot. Tightening the comparison to `===` makes this `evictable`.
+    const claimed = agoSeconds(10_000);
+    expect(
+      judgeEviction(signalLess({ claimedAt: claimed, lastActive: new Date(claimed.getTime() - 1) }))
+        .verdict,
+    ).toBe("never_signalled");
+  });
+
+  it("treats a released signal-less holder as already_released, without reaching condition 4", () => {
+    // The early return still wins. A row something else already decided
+    // needs no fresh judgement, exemption or not.
+    expect(judgeEviction(signalLess({ releasedAt: NOW })).verdict).toBe("already_released");
+  });
+
   it("reads the threshold from its argument rather than a constant", () => {
     // The same row, judged both ways by moving only the threshold. A
     // hard-coded bound passes one of these and fails the other.
@@ -287,6 +394,7 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
     await prisma.event.deleteMany({});
     await prisma.assignment.deleteMany({});
     await prisma.item.deleteMany({});
+    await prisma.session.deleteMany({});
   });
 
   /** The shipped defaults, so the ordinary path is what is under test. */
@@ -335,8 +443,51 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
     return id;
   }
 
-  /** A live claim held by `sessionId`, quiet since `quietForSeconds` ago. */
+  /**
+   * A live claim held by `sessionId`, quiet since `quietForSeconds` ago.
+   *
+   * **Also registers the holder's session with a hook version**, which is
+   * what makes its silence evidence rather than configuration (condition 4
+   * in `claim-eviction.ts`). Every case in this block that expects an
+   * eviction depends on it: without a registration the holder has no
+   * mechanism it failed to use, and declining to evict it would be the
+   * correct answer. The signal-less holder is seeded by
+   * `seedUnregisteredHolder` below, and only where that is the point.
+   */
   async function seedHolder(
+    itemId: string,
+    sessionId: string,
+    quietForSeconds: number,
+    role: "orchestrator" | "builder" = "orchestrator",
+  ): Promise<string> {
+    await registerHookedSession(sessionId);
+    return seedRawHolder(itemId, sessionId, quietForSeconds, role);
+  }
+
+  /** The `Session` row that says this session has a hook to be seen by. */
+  async function registerHookedSession(sessionId: string): Promise<void> {
+    await prisma.session.upsert({
+      where: { id: sessionId },
+      create: { id: sessionId, machine: "laptop", transport: "cli_direct", hookVersion: 1 },
+      update: { hookVersion: 1 },
+    });
+  }
+
+  /**
+   * The same claim with **no `Session` row at all** — a holder that never
+   * registered, so nothing anywhere claims it can emit a liveness signal.
+   */
+  async function seedUnregisteredHolder(
+    itemId: string,
+    sessionId: string,
+    quietForSeconds: number,
+    role: "orchestrator" | "builder" = "orchestrator",
+  ): Promise<string> {
+    return seedRawHolder(itemId, sessionId, quietForSeconds, role);
+  }
+
+  /** The assignment row itself, with no opinion about registration. */
+  async function seedRawHolder(
     itemId: string,
     sessionId: string,
     quietForSeconds: number,
@@ -534,6 +685,68 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
     // The crew guard is what refuses a second crew claiming alongside, and
     // its message names the holder.
     expect(String((error as { message: string }).message)).toContain("session-live");
+  });
+
+  it("does NOT take the claim from an unregistered holder that never signalled — the whole point", async () => {
+    // End to end through the real operation, with a threshold the holder is
+    // far past on both time terms. The *only* thing standing between this
+    // holder and eviction is that nothing anywhere says it had a hook to be
+    // seen by: no `Session` row, `lastActive` still at `claimedAt`, no
+    // `ToolCall`. Under the previous three conditions this claim succeeded
+    // and took the item from a session that may well have been working.
+    const itemId = await seedItem();
+    await seedUnregisteredHolder(itemId, "session-no-hook", 10_000);
+
+    const error = await runtimeEvictingAfter(60)
+      .call("claim", contendingClaim(itemId))
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+    // Refused, and the holder still holds it.
+    expect(isServiceError(error)).toBe(true);
+    const holders = await prisma.assignment.findMany({ where: { itemId, releasedAt: null } });
+    expect(holders.map((row) => row.sessionId)).toEqual(["session-no-hook"]);
+  });
+
+  it("takes the claim from an identical holder that DID register a hook", async () => {
+    // The controlled comparison for the case above: same item shape, same
+    // silence, same threshold — the single difference is a `Session` row
+    // carrying a hook version. This one is evicted, which is what shows the
+    // exemption is keyed on the registration rather than quietly disabling
+    // eviction for silent holders in general.
+    const itemId = await seedItem();
+    await seedHolder(itemId, "session-hooked-silent", 10_000);
+
+    const result = (await runtimeEvictingAfter(60).call(
+      "claim",
+      contendingClaim(itemId),
+    )) as unknown as { sessionId: string; evicted: { sessionId: string }[] };
+
+    expect(result.sessionId).toBe("session-newcomer");
+    expect(result.evicted.map((row) => row.sessionId)).toEqual(["session-hooked-silent"]);
+  });
+
+  it("takes the claim from an unregistered holder once it has heartbeated", async () => {
+    // A session with no `Session` row is not exempt forever — it is exempt
+    // until it produces one signal. `lastActive` ahead of `claimedAt` is
+    // that signal, and it puts the holder back under ordinary judgement
+    // even though it still never registered.
+    const itemId = await seedItem();
+    const assignmentId = await seedUnregisteredHolder(itemId, "session-no-hook-but-beat", 10_000);
+    await prisma.assignment.update({
+      where: { id: assignmentId },
+      data: { lastActive: new Date(Date.now() - 5_000 * 1000) },
+    });
+
+    const result = (await runtimeEvictingAfter(60).call(
+      "claim",
+      contendingClaim(itemId),
+    )) as unknown as { sessionId: string; evicted: { sessionId: string }[] };
+
+    expect(result.sessionId).toBe("session-newcomer");
+    expect(result.evicted.map((row) => row.sessionId)).toEqual(["session-no-hook-but-beat"]);
   });
 
   it("reports no evictions on an uncontended claim", async () => {
