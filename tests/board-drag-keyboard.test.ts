@@ -71,6 +71,16 @@ describe("the horizontal step is a column, not a pixel nudge", () => {
     expect(horizontalStep(Number.NaN, 16)).toBeGreaterThan(25);
   });
 
+  it("ignores a gap that is not a usable number", () => {
+    // Both halves of the guard matter independently: a non-finite gap
+    // would make the whole step `NaN`, and a negative one would pull the
+    // step back under a column's width. Either way the column width alone
+    // is the answer, never a corrupted sum.
+    for (const badGap of [Number.NaN, Number.POSITIVE_INFINITY, -16, 0]) {
+      expect(horizontalStep(300, badGap)).toBe(300);
+    }
+  });
+
   it("keeps a fine vertical step, because up/down does not change column", () => {
     // Which column is under the card is a question about `x` alone, so
     // vertical movement stays aimable rather than jumping a column's worth.
@@ -90,12 +100,27 @@ describe("pressesToCross", () => {
   it("reports an impossible step rather than dividing by zero", () => {
     expect(pressesToCross(300, 0)).toBe(Number.POSITIVE_INFINITY);
   });
+
+  it("treats a negative step as impossible too, not as progress backwards", () => {
+    // `step <= 0`, not `step < 0`: a negative step divides to a negative
+    // count, and `Math.ceil` of that is a number a caller would read as
+    // "fewer presses than zero" rather than as impossible.
+    expect(pressesToCross(300, -25)).toBe(Number.POSITIVE_INFINITY);
+  });
 });
 
 describe("a horizontal press moves one column, and stops at the ends", () => {
   it("steps to the adjacent column in each direction", () => {
     expect(nextColumn("backlog", 1)).toBe("in_progress");
     expect(nextColumn("in_progress", -1)).toBe("backlog");
+  });
+
+  it("refuses a column it does not recognise", () => {
+    // `indexOf` returning -1 has to be its own answer: without that guard
+    // the arithmetic below would happily index from -1 and return a
+    // neighbour of a column that is not on the board.
+    expect(nextColumn("not_a_column" as BoardColumnId, 1)).toBeNull();
+    expect(nextColumn("not_a_column" as BoardColumnId, -1)).toBeNull();
   });
 
   it("clamps at the ends rather than wrapping around", () => {
