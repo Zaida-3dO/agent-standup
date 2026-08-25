@@ -95,6 +95,43 @@ function labelOf(row: Record<string, unknown>, id: string, ...fields: readonly s
 }
 
 /**
+ * Just the area names, for the create form's suggestion list (row 6b2fb637).
+ *
+ * Its own function rather than a `fetchFilterOptions` call whose other three
+ * results are discarded: the create dialog needs one vocabulary, and issuing
+ * four requests to use one of them is three requests nobody asked for.
+ *
+ * Returns the **ids** — the normalised keys items actually store and the
+ * filters actually match — not the display names. Suggesting a display name
+ * would invite someone to type `Web Site` where the stored id is `web-site`;
+ * that particular pair happens to normalise back to the same key, but the
+ * two are not the same field and only the id is guaranteed to round-trip.
+ *
+ * Inherits the same failure posture as every other read here: any failure
+ * resolves to an empty list. An empty list renders no datalist, and the area
+ * field was free text to begin with, so a vocabulary read that is down costs
+ * a suggestion rather than the ability to create an item.
+ */
+export async function fetchAreaNames(fetchImpl: typeof fetch = fetch): Promise<readonly string[]> {
+  // `idOf` is passed through `FilterOption.value` because `fetchOptions` is
+  // the thing that owns the failure posture (non-OK, throw, wrong shape →
+  // empty list), and reimplementing that here to save one hop would be the
+  // only place in this module where those rules could drift.
+  //
+  // `label` is deliberately the id as well, and the mapping below reads
+  // `value` rather than `label`. That makes the two interchangeable *here* —
+  // a mutation swapping them cannot be detected, and stating that is more
+  // honest than pretending a test covers it. It is `value` because `value`
+  // is the field that means "what this option submits", which is what a
+  // suggestion inserts into the field.
+  const areas = await fetchOptions(fetchImpl, uiApiPath("/api/areas"), "areas", (row) => {
+    const id = idOf(row);
+    return id === null ? null : { value: id, label: id };
+  });
+  return areas.map((area) => area.value);
+}
+
+/**
  * Loads every store-backed vocabulary at once.
  *
  * In parallel: the three reads are independent, and serialising them would

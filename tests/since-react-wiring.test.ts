@@ -406,7 +406,7 @@ describe("SinceLastVisit — paging past the first screenful", () => {
     expect(lastUrl.searchParams.get("offset")).toBeNull();
   });
 
-  it("appends the page rather than replacing what was on screen", async () => {
+  it("keeps the rows already on screen and adds the page beneath them", async () => {
     // The defect worth pinning: a container that sets the new page as the
     // feed loses everything above it, and the reader watches their list
     // shorten as they ask for more of it.

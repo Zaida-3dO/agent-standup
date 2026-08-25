@@ -296,7 +296,7 @@ describe("appendPage — continuing from the server's cursor (row 3c25e600)", ()
     const first = feed({ events: [event({ id: "1" })], cursor: "1" });
     const next = feed({ events: [event({ id: "2" })], cursor: "2" });
 
-    // Keeping the old cursor would re-request the same page forever.
+    // A cursor that does not advance re-requests the same page forever.
     expect(appendPage(first, next).cursor).toBe("2");
   });
 

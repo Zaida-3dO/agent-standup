@@ -680,4 +680,81 @@ describeIfDb("item areas", () => {
       expect(rows).toHaveLength(1);
     });
   });
+
+  describe("list_areas reports how many items carry each area (row 6b2fb637)", () => {
+    /** `list_areas`, typed loosely — this file's `call` helper returns `Created`. */
+    async function listAreas(
+      input: Record<string, unknown> = {},
+    ): Promise<{ id: string; itemCount?: number }[]> {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = (await (runtime.call as any)("list_areas", input)) as {
+        areas: { id: string; itemCount?: number }[];
+      };
+      return result.areas;
+    }
+
+    function countFor(areas: { id: string; itemCount?: number }[], id: string): number | undefined {
+      return areas.find((area) => area.id === id)?.itemCount;
+    }
+
+    it("counts the items carrying an area", async () => {
+      await call("create_project", { ...base("Counted one"), area: "counted-area" });
+      await call("create_project", { ...base("Counted two"), area: "counted-area" });
+
+      // Two items, two. A count that returned rows rather than items — or a
+      // hardcoded 1 — fails here.
+      expect(countFor(await listAreas(), "counted-area")).toBe(2);
+    });
+
+    it("counts an area that is an item's SECOND area, not only its primary", async () => {
+      // The load-bearing case, and the reason this counts `ItemArea` rather
+      // than `Item.area`. Counting the column would report 0 here while the
+      // board, which filters through `areaFilterCondition` on the same join
+      // table, would show the item — the read and the filter disagreeing is
+      // exactly the split this row is about.
+      await call("create_project", {
+        ...base("Two areas"),
+        areas: ["primary-of-two", "secondary-of-two"],
+      });
+
+      const areas = await listAreas();
+      expect(countFor(areas, "primary-of-two")).toBe(1);
+      expect(countFor(areas, "secondary-of-two")).toBe(1);
+    });
+
+    it("reports 0 for an area no item carries, and still lists it", async () => {
+      await runtime.call("create_area", { name: "empty-area" });
+
+      const areas = await listAreas();
+      // An INNER join would drop this row entirely; `count(*)` instead of
+      // `count("ItemArea"."itemId")` would report 1. Both are killed here.
+      expect(areas.some((area) => area.id === "empty-area")).toBe(true);
+      expect(countFor(areas, "empty-area")).toBe(0);
+    });
+
+    it("makes a near-duplicate visible by its count — the whole point", async () => {
+      // `web` and `website` are different ids: normalisation collapses case
+      // and separators, never synonyms. Nothing stops the second existing,
+      // and this read is what lets a person SEE that it does and judge which
+      // is the typo.
+      await call("create_project", { ...base("Real one"), area: "dup-web" });
+      await call("create_project", { ...base("Real two"), area: "dup-web" });
+      await call("create_project", { ...base("The typo"), area: "dup-website" });
+
+      const areas = await listAreas();
+      expect(countFor(areas, "dup-web")).toBe(2);
+      expect(countFor(areas, "dup-website")).toBe(1);
+    });
+
+    it("counts a number, never a bigint that JSON cannot serialise", async () => {
+      // Postgres `count()` comes back as a bigint, and `JSON.stringify`
+      // throws outright on one — so an un-narrowed count would not merely
+      // look odd, it would break the HTTP route entirely.
+      await call("create_project", { ...base("Serialisable"), area: "serialisable-area" });
+
+      const areas = await listAreas();
+      expect(typeof countFor(areas, "serialisable-area")).toBe("number");
+      expect(() => JSON.stringify(areas)).not.toThrow();
+    });
+  });
 });

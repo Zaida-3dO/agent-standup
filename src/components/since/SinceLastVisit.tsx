@@ -54,8 +54,8 @@ export function SinceLastVisit() {
   // ORDER BY id ASC`, and `cursor` is the *highest* id in the slice, so
   // continuing means walking **forward** into newer events — the opposite of
   // T24's item history, which walks back into the past. With `since` omitted
-  // the first page starts at id 0, so what a reader cannot currently reach is
-  // everything *after* that first screenful. Hence "Load newer entries", not
+  // the first page starts at id 0, so a reader without a pager sees the
+  // oldest screenful and nothing after it. Hence "Load newer entries", not
   // "older": the label has to match the direction or it is a lie.
   // **Both paging flags are tagged with the profile they describe, and
   // compared during render — exactly like `loaded` above, and for the same
