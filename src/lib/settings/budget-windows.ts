@@ -90,6 +90,18 @@ export type BudgetWindow = z.infer<typeof windowShape>;
 
 const BAND_ORDER = ["selective", "windDown", "stop"] as const;
 
+/**
+ * The three boundaries a window carries, named.
+ *
+ * Exported from the model because `CrossingProblem.detail` names bands and a
+ * consumer needs the type to switch on them exhaustively. It is deliberately
+ * the *same* three keys as `budget-page/chart.ts`'s `BAND_KEYS`, which stays
+ * declared separately there: that one is a drawing order, this one is the
+ * model's vocabulary, and the two agreeing is a fact rather than a
+ * dependency either should carry.
+ */
+export type BandKey = (typeof BAND_ORDER)[number];
+
 /** How many points along a window the crossing check evaluates. */
 const SAMPLE_COUNT = 101;
 
@@ -146,12 +158,38 @@ export function boundaryAt(
   }
 }
 
+/**
+ * What kind of fault a `CrossingProblem` records. Structured alongside the
+ * sentence rather than instead of it — see `CrossingProblem.detail`.
+ */
+export type CrossingDetail =
+  | { kind: "missing"; band: BandKey }
+  | { kind: "out-of-range"; band: BandKey; value: number }
+  | { kind: "mis-ordered"; lower: BandKey; lowerValue: number; upper: BandKey; upperValue: number };
+
 export interface CrossingProblem {
   /** Window key, present when the check ran over a map of windows. */
   window?: string;
   /** Hours into the window at which the problem is first observable. */
   atHours: number;
   message: string;
+  /**
+   * The same fault as data — which bands, and what their values were.
+   *
+   * **Why both a sentence and its parts.** The sentence is what a reader
+   * copies into a bug report and what a screen reader reaches, so it stays
+   * the primary rendering of a fault. But a *drawing*
+   * needs to know which two lines collided and at what height, and that
+   * cannot be recovered from prose without parsing English. Adding the
+   * fields is what lets the editor mark the exact pair on the chart instead
+   * of falling back to a generic "invalid" — the thing §17.4's editor is
+   * for.
+   *
+   * Optional because a `CrossingProblem` may be constructed by a caller
+   * that only has a sentence; consumers treat its absence as "draw the
+   * moment, but not the pair".
+   */
+  detail?: CrossingDetail;
 }
 
 /**
@@ -214,11 +252,13 @@ export function findCrossings(window: BudgetWindow): CrossingProblem[] {
         problems.push({
           atHours,
           message: `${key} has no value at ${atHours}h`,
+          detail: { kind: "missing", band: key },
         });
       } else if (!Number.isFinite(value) || value < 0 || value > 100) {
         problems.push({
           atHours,
           message: `${key} is ${value} at ${atHours}h, outside 0–100`,
+          detail: { kind: "out-of-range", band: key, value },
         });
       }
     }
@@ -235,6 +275,13 @@ export function findCrossings(window: BudgetWindow): CrossingProblem[] {
         problems.push({
           atHours,
           message: `${lower.key} (${lower.value}) is above ${upper.key} (${upper.value}) at ${atHours}h`,
+          detail: {
+            kind: "mis-ordered",
+            lower: lower.key,
+            lowerValue: lower.value,
+            upper: upper.key,
+            upperValue: upper.value,
+          },
         });
       }
     }
