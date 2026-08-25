@@ -478,6 +478,43 @@ describeIfDb("restore_item", () => {
       expect(rejection.message).toContain("doomed-repo");
     });
 
+    // Fails if the repo condition is widened from `&&` to `||`, which would
+    // refuse every item that merely HAS a repo — the archived-repo case
+    // above passes either way, so without this the operator is unpinned.
+    it("allows it when the repo is live", async () => {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Repo" ("id", "displayName") VALUES ($1, $2)`,
+        "live-repo",
+        "Live repo",
+      );
+      const project = await call<Created>("create_project", {
+        ...base("live repo project"),
+        repo: "live-repo",
+      });
+      await call("delete_item", {
+        id: project.id,
+        reason: GOOD_REASON,
+        acknowledgeReferences: true,
+      });
+
+      const outcome = await call<RestoreOutcome>("restore_item", { id: project.id });
+
+      expect(outcome.restored).toBe(true);
+    });
+
+    // The same pinning for the parent condition: `&&` widened to `||` would
+    // refuse a top-level project, whose `parentId` is null and whose
+    // `parentArchivedAt` is therefore null too. Distinct from the top-level
+    // case above, which exercises the JOIN rather than the operator.
+    it("allows a live child whose area and repo are also live", async () => {
+      const { taskId } = await archivedTask("all live");
+
+      const outcome = await call<RestoreOutcome>("restore_item", { id: taskId });
+
+      expect(outcome.restored).toBe(true);
+      expect(outcome.item.archivedAt).toBeNull();
+    });
+
     // Fails if the guards throw on the first blocker they find. A caller
     // sent round the loop once per broken reference has to discover the
     // second problem only after fixing the first, which is the failure mode
