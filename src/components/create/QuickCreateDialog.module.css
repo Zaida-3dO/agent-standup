@@ -1,0 +1,175 @@
+/* Quick create (T18), painted entirely from the token layer
+   (`src/app/globals.css`). No literal colour appears in this file. */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4rem 1rem 1rem;
+  overflow-y: auto;
+  background: var(--surface-scrim);
+}
+
+/* The one thing with a shadow — see `--surface-overlay`'s note. */
+.dialog {
+  width: 100%;
+  max-width: 30rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.6rem;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  padding: 1.15rem 1.25rem 1.25rem;
+}
+
+.heading {
+  margin: 0 0 0.9rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.label {
+  margin-bottom: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.input,
+.select {
+  margin-bottom: 0.85rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.4rem;
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.input:focus-visible,
+.select:focus-visible,
+.submitButton:focus-visible,
+.cancelButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--state-blocked-border);
+}
+
+/* The live card-title preview. Sunken so it reads as a rendering of the
+   title rather than another field to fill in. */
+.preview {
+  margin: 0 0 0.85rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.4rem;
+  background: var(--surface-sunken);
+}
+
+.previewEmpty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+
+.previewLabel {
+  margin: 0 0 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* Styled as the board's own card row, so what is previewed looks like where
+   it will end up. */
+.previewCard {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.35rem;
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 550;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* Advice, not a refusal — amber rather than the blocked colour, because the
+   person keeps the last word on a title. */
+.previewAdvice {
+  margin: 0.45rem 0 0;
+  color: var(--stale-warn);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.hint {
+  margin: -0.5rem 0 0.85rem;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.fieldError {
+  margin: -0.6rem 0 0.85rem;
+  color: var(--state-blocked-fg);
+  font-size: 0.78rem;
+}
+
+.error {
+  margin: 0 0 0.75rem;
+  color: var(--state-blocked-fg);
+  font-size: 0.82rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.submitButton {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.4rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.submitButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancelButton {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.cancelButton:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
