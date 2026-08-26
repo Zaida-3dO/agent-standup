@@ -266,6 +266,26 @@ describe("the axes disclosure toggle (narrow-width collapse)", () => {
     expect(label["aria-expanded"]).toBe(toggle?.defaultChecked);
   });
 
+  it("gives the label a role that actually supports aria-expanded, and points it at the panel it discloses", () => {
+    // Row cd36e9fd-25e1-47f8-980c-7c0ea9a178a6: a plain <label> has no ARIA
+    // role of its own (maps to `generic`), which does not support
+    // `aria-expanded` either -- moving the attribute off the checkbox and
+    // onto an unstyled label just moved it to a second role that drops it,
+    // so it was written and kept in sync but never reached assistive tech.
+    // `role="button"` is the role aria-expanded IS defined for. The single-
+    // character change this catches: reverting the role (or the id it
+    // points at) back off the label.
+    const labels = tags(bar(), "label").filter(
+      (el) => (el.props as { htmlFor?: string }).htmlFor === "board-axes-toggle",
+    );
+    const label = labels[0]!.props as { role?: string; "aria-controls"?: string };
+    expect(label.role).toBe("button");
+    expect(label["aria-controls"]).toBe("board-axes-panel");
+
+    const panel = byId(bar(), "board-axes-panel");
+    expect(panel, "no element carries the id aria-controls points at").toBeDefined();
+  });
+
   it("says how many filters are active even while collapsed, so a narrowed board is not silently unexplained", () => {
     const labels = tags(bar({ query: parseBoardQuery("area=web&priority=P0") }), "label").filter(
       (el) => (el.props as { htmlFor?: string }).htmlFor === "board-axes-toggle",

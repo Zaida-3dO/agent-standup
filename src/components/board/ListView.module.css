@@ -167,6 +167,19 @@
   background: var(--surface-raised);
 }
 
+/* Row 8243e3b0-3084-44c5-8a0f-b617f7492875 — the list-view equivalent of
+   the card's `.cardUnverified` dashed outline (`Board.module.css`), so
+   provenance is not silently absent here the way `TrustBadge.tsx`'s header
+   used to describe. Dashes the row's OWN hairline rather than touching
+   `.colState`'s tone box-shadow above: a solid `box-shadow` cannot also be
+   dashed, and this way a paused-or-blocked row can be unverified too
+   without either channel overwriting the other, matching the card's
+   "both can be true at once and each still reads" rule. */
+.row[data-unverified="true"] {
+  border-bottom-style: dashed;
+  border-bottom-color: var(--trust-unverified-border);
+}
+
 .row td {
   padding: 0.4rem 0.6rem;
   vertical-align: top;

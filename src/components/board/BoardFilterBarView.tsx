@@ -503,6 +503,17 @@ export function BoardFilterBarView({
       <label
         htmlFor="board-axes-toggle"
         className={styles.axesSummary}
+        // `role="button"` is what makes `aria-expanded` below land on a role
+        // that supports it — ARIA 1.2 does not define `aria-expanded` for
+        // the implicit `generic` role a plain `<label>` maps to (found in
+        // review, row cd36e9fd-25e1-47f8-980c-7c0ea9a178a6: the attribute
+        // was written and kept in sync correctly but never reached
+        // assistive tech). This does not change the label's native
+        // click-toggles-its-`htmlFor`-checkbox behaviour — that comes from
+        // the DOM `<label>`/`for` relationship, not from the ARIA role — so
+        // the hook-free checkbox toggle above is untouched.
+        role="button"
+        aria-controls="board-axes-panel"
         // Matches `defaultChecked={false}` above — correct on first paint,
         // and kept correct after that by the `onChange` beside it.
         aria-expanded={false}
@@ -510,7 +521,7 @@ export function BoardFilterBarView({
         <SlidersHorizontal size={13} aria-hidden="true" />
         <span>Filters{active > 0 ? ` — ${active} active` : ""}</span>
       </label>
-      <div className={styles.axes}>
+      <div id="board-axes-panel" className={styles.axes}>
         {shows("area") && (
           <AxisSelect
             id="board-filter-area"

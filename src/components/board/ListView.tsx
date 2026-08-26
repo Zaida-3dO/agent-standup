@@ -266,10 +266,22 @@ export function ListView({
                     const mine = needsYou(entry, personId);
                     const reason = waitingReason(entry);
                     const distinct = hasDistinctHeadline(entry.item);
+                    // Row 8243e3b0-3084-44c5-8a0f-b617f7492875: the card view
+                    // marks an imported-and-unchecked row with a dashed
+                    // outline (`ItemCard.tsx`'s `unverified`,
+                    // `Board.module.css` `.cardUnverified`) IN ADDITION to
+                    // `TrustBadge`, so provenance survives even where the
+                    // badge alone (correctly, per `TrustBadge.tsx`'s header)
+                    // says only "nobody has checked" with no origin claim.
+                    // Without this, the list rendered the same badge but no
+                    // second channel, so it was the ONLY trust signal here —
+                    // this gives the row the channel the card already has.
+                    const unverified = entry.trust?.unverifiedOrigin === true;
                     return (
                       <tr
                         key={entry.item.id}
                         className={styles.row}
+                        {...(unverified ? { "data-unverified": "true" } : {})}
                         // The amber/red split, carried into the list.
                         // SCHEMA.md §1.1 makes it a property of the DATA,
                         // so a layout that dropped it would be showing a
