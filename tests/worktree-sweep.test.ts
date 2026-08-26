@@ -21,6 +21,7 @@ import {
   looksLikeProcessList,
   mergeVerdict,
   reducePullRequestStates,
+  rescuePlan,
 } from "../scripts/sweep-worktrees.mjs";
 
 const WORKTREE = "C:/work/coding/as-wt-example";
@@ -254,5 +255,52 @@ describe("mergeVerdict", () => {
       countDiffering: () => 0,
     });
     expect(v.removable).toBe(true);
+  });
+});
+
+describe("rescuePlan", () => {
+  // The rescue-ref decision that fixes HIGH B, extracted as a pure function
+  // for exactly the reason mergeVerdict already was: logic reachable only
+  // from inside main() is logic no test can see. Mutating the original
+  // inline guard (`if (containing.trim().length === 0)`) to `if (false)`
+  // disabled rescue-ref minting entirely — restoring HIGH B's irreversible
+  // deletion — while the 22-test suite stayed green, because nothing outside
+  // main() could exercise it. These tests are the fix for that gap: each one
+  // fails if the corresponding branch of rescuePlan is disabled or inverted.
+  const HEAD = "abcdef0123456789";
+
+  it("does nothing for a branched worktree", () => {
+    const plan = rescuePlan({ branch: "feat/x", head: HEAD, containingRefs: "irrelevant" });
+    expect(plan.action).toBe("none");
+  });
+
+  it("mints a rescue ref for a zero-ref detached commit", () => {
+    // This is the exact case the `if (false)` mutant defeats: containingRefs
+    // is empty, so no ref keeps this commit alive without minting one.
+    const plan = rescuePlan({ branch: null, head: HEAD, containingRefs: "" });
+    expect(plan.action).toBe("mint");
+    expect(plan.ref).toBe(`refs/worktree-sweep/${HEAD.slice(0, 12)}`);
+  });
+
+  it("treats a whitespace-only containing-refs answer the same as empty", () => {
+    const plan = rescuePlan({ branch: null, head: HEAD, containingRefs: "   \n  " });
+    expect(plan.action).toBe("mint");
+  });
+
+  it("reuses an existing ref instead of minting when the commit is already contained", () => {
+    const plan = rescuePlan({
+      branch: null,
+      head: HEAD,
+      containingRefs: "refs/heads/main\nrefs/heads/other\n",
+    });
+    expect(plan.action).toBe("reuse");
+    expect(plan.ref).toBe("refs/heads/main");
+  });
+
+  it("reports unknown rather than guessing when containment could not be determined", () => {
+    // git(...) returns null on failure; the caller must refuse removal
+    // rather than treat a failed lookup as "nothing contains it".
+    const plan = rescuePlan({ branch: null, head: HEAD, containingRefs: null });
+    expect(plan.action).toBe("unknown");
   });
 });

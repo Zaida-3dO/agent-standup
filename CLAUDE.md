@@ -499,6 +499,31 @@ than against a list gathered up front. On its first run two worktrees were clean
 dirty seconds later when removal reached them; a list-then-delete pass would have destroyed that
 work. This is the same hazard, and the same fix, as `scripts/sweep-scratch-databases.mjs`.
 
+**The `refs/worktree-sweep/` namespace.** A worktree on a branch is reversible for free, because the
+branch ref survives removal. A **detached** worktree is not — it has no branch, so removal drops the
+only reference to its commit and the next `git gc --prune` collects it outright. Before removing a
+detached worktree the sweep checks whether any existing ref already contains its commit
+(`git for-each-ref --contains`):
+
+- If one does, nothing is minted — the existing ref already keeps the commit alive, and the sweep's
+  report says `reused, nothing new created`.
+- If none does, the sweep mints `refs/worktree-sweep/<sha12>` pointing at the commit *before* removing
+  the worktree, and only removes if the mint succeeded. The report says `minted`.
+
+A ref under this namespace means: *this commit's only worktree was removed while nothing else
+referenced it, and this ref is the one thing standing between it and garbage collection.* Restore it
+with `git worktree add <path> refs/worktree-sweep/<sha12>` (the sweep prints this exact command on
+every removal). Deleting one of these refs makes that commit collectable at the next `gc` — do it only
+once you've confirmed the work is not needed (e.g. it is also reachable from a merged branch, or you
+have deliberately decided to discard it).
+
+**Nothing prunes this namespace, on purpose.** No timer, no auto-expiry. A ref here exists because a
+commit had no other guardian; an automatic prune on an age threshold would silently re-introduce the
+exact irreversibility the ref was minted to prevent — a rescue ref would seem to protect a commit while
+quietly having an expiry date nobody was watching. Any cleanup of this namespace should be an explicit,
+opt-in operator action (e.g. an on-demand check for which of these refs are now also reachable from a
+merged branch, and therefore safe to drop), not something that runs unattended.
+
 ### Fast-forward the shared checkout before you rely on it
 
 The shared checkout drifts, because worktrees are created from it but nothing pulls it. On
