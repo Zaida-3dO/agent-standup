@@ -200,9 +200,9 @@ export async function hasApproval(
  *
  * 4 is git's own practical floor for `--short` output (`core.abbrev`
  * defaults to "auto", which never goes below 4); 40 is a full sha-1. Sha-256
- * repos use 64, which this does not (yet) accept — nothing in this codebase
- * writes them today, and widening the ceiling later is a one-line change
- * with no callers to revisit.
+ * repos use 64, which this does not accept — this codebase writes only
+ * sha-1 commit ids, and widening the ceiling is a one-line change with no
+ * callers to revisit if that ever changes.
  */
 const HEX_SHA = /^[0-9a-f]{4,40}$/;
 
