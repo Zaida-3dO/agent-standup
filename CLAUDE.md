@@ -464,6 +464,62 @@ Clean up worktrees only after the agent that owns one has finished. If you must 
 mid-flight, expect the agent's report to be confused about what happened, and say plainly that it was
 you.
 
+### Don't tear down your own worktree either — sweep them instead
+
+The rule above says a worktree is yours until you have reported. It is tempting to conclude that you
+should therefore remove it *as* you report. **Don't.** Two reasons, and the second is the one that
+decides it:
+
+- Your PR may come back with review findings, and the worktree is where you would address them.
+- **You cannot verify your own teardown is safe at the moment you do it.** Your work is merged when
+  someone merges it, which is after you have finished — so at teardown time the honest answer to "is
+  this work on `main`?" is usually *not yet*.
+
+So teardown is not a crew's job. It is a sweep, run against the base branch when the answer is
+knowable:
+
+```bash
+node scripts/sweep-worktrees.mjs            # dry run: report only
+node scripts/sweep-worktrees.mjs --apply    # remove what is provably safe
+```
+
+It removes a worktree only when it is clean, has no live process, and every file its branch changed
+is already byte-identical on `origin/main` — the last of which is what recognises a **squash** merge.
+`git branch --merged` does not: this repo squash-merges, so on the first run ancestry recognised 4 of
+the 21 worktrees whose work was actually on `main`. It never deletes a branch ref, so every removal
+is undone by `git worktree add <path> <branch>`.
+
+**Why a sweep and not a convention.** On 2026-08-25 the checkout had accumulated 80 worktrees.
+Several crews had torn theirs down unprompted; most had not. A convention only some follow is not a
+convention — it is a bimodal mess that still needs a sweep, so the sweep is the whole mechanism and
+crews are asked for nothing.
+
+The sweep is also why the guards are re-checked immediately before each individual removal rather
+than against a list gathered up front. On its first run two worktrees were clean when listed and
+dirty seconds later when removal reached them; a list-then-delete pass would have destroyed that
+work. This is the same hazard, and the same fix, as `scripts/sweep-scratch-databases.mjs`.
+
+### Fast-forward the shared checkout before you rely on it
+
+The shared checkout drifts, because worktrees are created from it but nothing pulls it. On
+2026-08-25 it sat **29 commits behind** `origin/main` and lacked `scripts/run-tests.mjs` entirely, so
+a crew that ran the suite there got `MODULE_NOT_FOUND` — a failure that reads as a broken repo rather
+than a stale one.
+
+Before working in the shared checkout, or creating a worktree from it:
+
+```bash
+git -C <shared checkout> fetch origin && git -C <shared checkout> merge --ff-only origin/main
+```
+
+`--ff-only` is deliberate: it refuses rather than creating a merge commit if the checkout has local
+commits, which is a state worth noticing rather than papering over. **Do not** `git reset --mixed`
+here — that is a Resilio-synced-repo protocol and this repo is not one; it would move the pointer
+while leaving the working tree stale, which is precisely the failure above wearing a disguise.
+
+Creating your worktree from `origin/main` explicitly (`git worktree add <path> -b <branch>
+origin/main`) sidesteps the drift entirely, and is the better habit.
+
 ## Working in this repo
 
 - **`main` is protected.** Linear history, no force-pushes, no deletions, and every change arrives by
