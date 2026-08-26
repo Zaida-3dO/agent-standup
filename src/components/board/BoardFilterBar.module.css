@@ -321,3 +321,45 @@
   font-size: var(--text-3xs);
   font-style: italic;
 }
+
+/* ── Touch targets at phone widths (row 74ef86fb) ───────────────────────
+   Measured in a real browser at 320x844: every control in this file sat at
+   its desktop height of 26-30px, well under the 44px minimum a thumb can
+   reliably hit. `min-height`, not `height` — a control whose label wraps
+   at this width still has to grow past 44px rather than clip.
+
+   Desktop is untouched: this whole block is scoped to the breakpoint, and
+   nothing outside it changes size, padding step, or font-size. */
+@media (max-width: 640px) {
+  .select,
+  .direction,
+  .search,
+  .clear,
+  .viewName,
+  .pickerToggle {
+    min-height: 44px;
+  }
+
+  .viewChip,
+  .levelChip,
+  .levelMode {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* The bar itself loses some of its vertical budget here — narrower
+     spacing between rows of controls, which is what row 74ef86fb's second
+     finding (821px of chrome before the first card) is partly made of.
+     This does not collapse any control; it only tightens the gaps between
+     them. See that row's PR for why a full collapse-behind-a-disclosure
+     was left for a follow-up rather than attempted here. */
+  .bar {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .axes {
+    gap: var(--space-2);
+  }
+}

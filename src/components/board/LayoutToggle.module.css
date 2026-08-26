@@ -46,3 +46,16 @@
   color: var(--text-primary);
   font-weight: 600;
 }
+
+/* Touch target at phone widths (row 74ef86fb) — this control measured
+   27px tall in the visual review, one of the worst offenders on the
+   board's header. `min-height` + `align-items: center` grows the box
+   without disturbing the text baseline; desktop's 0.25rem/0.7rem padding
+   is unchanged outside this breakpoint. */
+@media (max-width: 640px) {
+  .option {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
