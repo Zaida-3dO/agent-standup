@@ -44,6 +44,21 @@
    needs) but is an ordinary checkbox with no shadow content, so the
    sibling selector below is uncontested CSS.
 
+   **The checkbox itself carries no `aria-hidden` and no negative
+   `tabIndex`.** An earlier version of this fix had both — added on the
+   mistaken theory that a visually-hidden element should also be an
+   accessibility-hidden one, which is exactly backwards for a control that
+   still does something: those two attributes are for decorative markup,
+   and applying them here removed the checkbox from the tab order
+   entirely, taking the eight selects behind it with it (`.axes` is
+   `display: none` until checked). A keyboard-only reader below 641px
+   could reach no filter control at all — worse than the overflow this
+   disclosure was written to fix. `aria-expanded` reflecting the checked
+   state lives on the LABEL in `BoardFilterBarView.tsx`, not on the
+   checkbox: the `checkbox` ARIA role does not support `aria-expanded`
+   the way `button` does, and the label is the visible trigger a keyboard
+   or screen-reader user actually operates.
+
    Desktop is intentionally NOT a smaller version of the same disclosure:
    `@media (min-width: 641px)` forces `.axes` to display regardless of
    the checkbox, at the same breakpoint every touch-target fix in this

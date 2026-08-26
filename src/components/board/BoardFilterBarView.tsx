@@ -476,10 +476,37 @@ export function BoardFilterBarView({
         id="board-axes-toggle"
         className={styles.axesToggle}
         defaultChecked={false}
-        aria-hidden="true"
-        tabIndex={-1}
+        // **No `aria-hidden`, no negative `tabIndex`.** Those two attributes
+        // are for a decorative element with nothing behind them — the
+        // opposite of what a visually-hidden-but-functional control needs.
+        // With them, a keyboard user reached no filter at all below 641px,
+        // which was strictly worse than the overflow this disclosure exists
+        // to fix. A plain, unhidden, tabbable checkbox is the whole point
+        // of the idiom this file's header already describes: real input,
+        // invisible styling.
+        onChange={(event) => {
+          // Not React state — this component is hook-free by design (see
+          // this file's header and `tests/board-filter-bar-component.test.ts`,
+          // which calls it as a plain function with no renderer beneath it,
+          // so a hook here would throw outside an actual React tree). The
+          // checkbox's own `checked` is already live and browser-tracked
+          // with zero code; this only keeps the VISIBLE trigger's
+          // `aria-expanded` — which belongs on `label`, not on `checkbox`
+          // (the `checkbox` role does not support `aria-expanded` in ARIA
+          // 1.2 the way `button` does) — in sync with it after a toggle.
+          const label = event.currentTarget.nextElementSibling;
+          if (label instanceof HTMLElement) {
+            label.setAttribute("aria-expanded", String(event.currentTarget.checked));
+          }
+        }}
       />
-      <label htmlFor="board-axes-toggle" className={styles.axesSummary}>
+      <label
+        htmlFor="board-axes-toggle"
+        className={styles.axesSummary}
+        // Matches `defaultChecked={false}` above — correct on first paint,
+        // and kept correct after that by the `onChange` beside it.
+        aria-expanded={false}
+      >
         <SlidersHorizontal size={13} aria-hidden="true" />
         <span>Filters{active > 0 ? ` — ${active} active` : ""}</span>
       </label>
