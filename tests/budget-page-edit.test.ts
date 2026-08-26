@@ -6,7 +6,12 @@
 // preset is coherent, that switching kind does not destroy what was typed,
 // and that a collision is described in the labels the form actually shows.
 import { describe, expect, it } from "vitest";
-import { findCrossings, type Boundary, type BudgetWindow } from "@/lib/settings/budget-windows";
+import {
+  findCrossings,
+  gridStepHours,
+  type Boundary,
+  type BudgetWindow,
+} from "@/lib/settings/budget-windows";
 import {
   BAND_FIELD_LABELS,
   PRESETS,
@@ -449,26 +454,26 @@ describe("groupProblemRuns", () => {
   });
 
   it("collapses a fault that holds all window into ONE entry, not 101", () => {
-    const runs = groupProblemRuns(findCrossings(crossedThroughout()));
+    const runs = groupProblemRuns(findCrossings(crossedThroughout()), gridStepHours(10));
     expect(runs).toHaveLength(1);
     expect(runs[0]!.moments).toBe(101);
   });
 
   it("keeps every moment accounted for, so nothing is silently dropped", () => {
     const problems = findCrossings(crossedThroughout());
-    const runs = groupProblemRuns(problems);
+    const runs = groupProblemRuns(problems, gridStepHours(10));
     expect(runs.reduce((total, run) => total + run.moments, 0)).toBe(problems.length);
   });
 
   it("spans the run from the window's start to its end", () => {
-    const runs = groupProblemRuns(findCrossings(crossedThroughout()));
+    const runs = groupProblemRuns(findCrossings(crossedThroughout()), gridStepHours(10));
     expect(runs[0]!.fromHours).toBe(0);
     expect(runs[0]!.toHours).toBe(10);
   });
 
   it("says a window-long fault as one interval statement, not a moment", () => {
     const window = crossedThroughout();
-    const runs = groupProblemRuns(findCrossings(window));
+    const runs = groupProblemRuns(findCrossings(window), gridStepHours(window.lengthHours));
     const said = describeRun(runs[0]!, window.lengthHours);
     expect(said).toContain("for the whole window");
     // The fault itself is still named in the form's own labels.
@@ -479,32 +484,145 @@ describe("groupProblemRuns", () => {
   });
 
   it("does not merge two DIFFERENT faults into one line", () => {
-    const runs = groupProblemRuns([
-      {
-        atHours: 0,
-        message: "a",
-        detail: { kind: "mis-ordered", lower: "windDown", upper: "stop" },
-      },
-      {
-        atHours: 1,
-        message: "b",
-        detail: { kind: "mis-ordered", lower: "selective", upper: "stop" },
-      },
-    ]);
+    const runs = groupProblemRuns(
+      [
+        {
+          atHours: 0,
+          message: "a",
+          detail: { kind: "mis-ordered", lower: "windDown", upper: "stop" },
+        },
+        {
+          atHours: 1,
+          message: "b",
+          detail: { kind: "mis-ordered", lower: "selective", upper: "stop" },
+        },
+      ],
+      2,
+    );
     expect(runs).toHaveLength(2);
   });
 
   it("reports a fault that clears and returns as two runs, because it is two", () => {
+    // Clearing is an ABSENCE. `findCrossings` reports only faulty moments,
+    // so a healthy stretch is a hole in the array with the same identity on
+    // both sides — nothing marks it. These samples are one grid step apart
+    // either side of a gap of ten, and no other fault is interleaved: the
+    // ONLY thing that can split this is noticing the hole.
     const same = { kind: "mis-ordered", lower: "windDown", upper: "stop" };
-    const other = { kind: "out-of-range", band: "selective", value: 120 };
-    const runs = groupProblemRuns([
-      { atHours: 0, message: "a", detail: same },
-      { atHours: 1, message: "a", detail: other },
-      { atHours: 2, message: "a", detail: same },
-    ]);
-    expect(runs).toHaveLength(3);
+    const runs = groupProblemRuns(
+      [
+        { atHours: 0, message: "a", detail: same },
+        { atHours: 1, message: "a", detail: same },
+        // ten steps of nothing — the window is fine here
+        { atHours: 11, message: "a", detail: same },
+        { atHours: 12, message: "a", detail: same },
+      ],
+      1,
+    );
+    expect(runs).toHaveLength(2);
     expect(runs[0]!.fromHours).toBe(0);
-    expect(runs[2]!.fromHours).toBe(2);
+    expect(runs[0]!.toHours).toBe(1);
+    expect(runs[1]!.fromHours).toBe(11);
+    expect(runs[1]!.toHours).toBe(12);
+  });
+
+  it("does not split a run on the float error between two adjacent grid points", () => {
+    // Grid points are divisions of the window length, so consecutive ones
+    // differ by the step plus or minus a rounding error. Splitting on that
+    // would put the 101 lines back.
+    const same = { kind: "mis-ordered", lower: "windDown", upper: "stop" };
+    const step = 7 / 100;
+    const problems = Array.from({ length: 20 }, (_, i) => ({
+      atHours: (7 * i) / 100,
+      message: "a",
+      detail: same,
+    }));
+    expect(groupProblemRuns(problems, step)).toHaveLength(1);
+  });
+
+  it("keeps a schedule switch point in its run, though it sits off the grid", () => {
+    // The sample set is the grid UNION each schedule entry's own start, so
+    // genuine neighbours are often closer together than the step. A rule
+    // keyed off a fixed tolerance splits these; keying off the grid does not.
+    const same = { kind: "mis-ordered", lower: "windDown", upper: "stop" };
+    const runs = groupProblemRuns(
+      [
+        { atHours: 0, message: "a", detail: same },
+        { atHours: 0.05, message: "a", detail: same },
+        { atHours: 0.1, message: "a", detail: same },
+      ],
+      0.1,
+    );
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.moments).toBe(3);
+  });
+
+  it("still splits on a change of fault even with no gap at all", () => {
+    // The identity path, kept honest alongside the gap path: adjacent
+    // samples, different faults.
+    const runs = groupProblemRuns(
+      [
+        {
+          atHours: 0,
+          message: "a",
+          detail: { kind: "mis-ordered", lower: "windDown", upper: "stop" },
+        },
+        {
+          atHours: 1,
+          message: "a",
+          detail: { kind: "out-of-range", band: "selective", value: 120 },
+        },
+      ],
+      1,
+    );
+    expect(runs).toHaveLength(2);
+  });
+
+  it("groups on identity alone when no usable grid step is given", () => {
+    // A caller without a window length still gets the 101-line collapse
+    // rather than every sample splitting into its own run.
+    const same = { kind: "mis-ordered", lower: "windDown", upper: "stop" };
+    const problems = [
+      { atHours: 0, message: "a", detail: same },
+      { atHours: 50, message: "a", detail: same },
+    ];
+    expect(groupProblemRuns(problems, 0)).toHaveLength(1);
+    expect(groupProblemRuns(problems, Number.NaN)).toHaveLength(1);
+  });
+
+  it("names only the hours that are broken when a window clears in the middle", () => {
+    // End to end against the real check, which is what makes this real:
+    // a window genuinely fine on [4h, 7h) must not be described as broken
+    // "for the whole window".
+    const window: BudgetWindow = {
+      enabled: true,
+      lengthHours: 10,
+      boundaries: {
+        selective: { kind: "constant", value: 10 },
+        windDown: {
+          kind: "schedule",
+          entries: [
+            { at: { elapsed: 0, per: "hour" }, value: { kind: "constant", value: 80 } },
+            { at: { elapsed: 4, per: "hour" }, value: { kind: "constant", value: 20 } },
+            { at: { elapsed: 7, per: "hour" }, value: { kind: "constant", value: 80 } },
+          ],
+        },
+        stop: { kind: "constant", value: 40 },
+      },
+    };
+    const problems = findCrossings(window);
+    expect(problems.length).toBeGreaterThan(1);
+    const runs = groupProblemRuns(problems, gridStepHours(window.lengthHours));
+
+    expect(runs).toHaveLength(2);
+    // Nothing is dropped by the split.
+    expect(runs.reduce((total, run) => total + run.moments, 0)).toBe(problems.length);
+    // The healthy stretch is outside both runs.
+    expect(runs[0]!.toHours).toBeLessThan(4);
+    expect(runs[1]!.fromHours).toBeGreaterThanOrEqual(7);
+    for (const run of runs) {
+      expect(describeRun(run, window.lengthHours)).not.toContain("for the whole window");
+    }
   });
 
   it("leaves a single isolated fault worded exactly as it was before grouping", () => {
@@ -519,7 +637,7 @@ describe("groupProblemRuns", () => {
         upperValue: 75,
       },
     };
-    const runs = groupProblemRuns([problem]);
+    const runs = groupProblemRuns([problem], 1);
     expect(runs).toHaveLength(1);
     expect(describeRun(runs[0]!, 10)).toBe(describeProblem(problem));
     expect(describeRun(runs[0]!, 10)).toContain("3 hours in");
@@ -533,45 +651,51 @@ describe("groupProblemRuns", () => {
       upper: "stop",
       upperValue: 75,
     };
-    const runs = groupProblemRuns([
-      { atHours: 2, message: "m", detail },
-      { atHours: 4, message: "m", detail },
-    ]);
+    const runs = groupProblemRuns(
+      [
+        { atHours: 2, message: "m", detail },
+        { atHours: 4, message: "m", detail },
+      ],
+      2,
+    );
     const said = describeRun(runs[0]!, 10);
     expect(said).toContain("from 2h to 4h");
     expect(said).not.toContain("for the whole window");
   });
 
   it("quotes the earliest problem's numbers, so the run speaks from where it began", () => {
-    const runs = groupProblemRuns([
-      {
-        atHours: 2,
-        message: "first",
-        detail: {
-          kind: "mis-ordered",
-          lower: "windDown",
-          lowerValue: 82,
-          upper: "stop",
-          upperValue: 75,
+    const runs = groupProblemRuns(
+      [
+        {
+          atHours: 2,
+          message: "first",
+          detail: {
+            kind: "mis-ordered",
+            lower: "windDown",
+            lowerValue: 82,
+            upper: "stop",
+            upperValue: 75,
+          },
         },
-      },
-      {
-        atHours: 4,
-        message: "later",
-        detail: {
-          kind: "mis-ordered",
-          lower: "windDown",
-          lowerValue: 90,
-          upper: "stop",
-          upperValue: 60,
+        {
+          atHours: 4,
+          message: "later",
+          detail: {
+            kind: "mis-ordered",
+            lower: "windDown",
+            lowerValue: 90,
+            upper: "stop",
+            upperValue: 60,
+          },
         },
-      },
-    ]);
+      ],
+      2,
+    );
     expect(runs).toHaveLength(1);
     expect(describeRun(runs[0]!, 10)).toContain("82%");
   });
 
   it("groups nothing when there is nothing", () => {
-    expect(groupProblemRuns([])).toEqual([]);
+    expect(groupProblemRuns([], 1)).toEqual([]);
   });
 });

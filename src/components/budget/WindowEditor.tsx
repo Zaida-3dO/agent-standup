@@ -26,6 +26,7 @@
 //
 // All four run off the *draft*, recomputed on every keystroke, so the fault
 // appears as it is typed and clears as it is fixed — never only after a save.
+import { gridStepHours } from "@/lib/settings/budget-windows";
 import type { BudgetWindow, CrossingProblem } from "@/lib/settings/budget-windows";
 import {
   BAND_FIELD_LABELS,
@@ -80,7 +81,10 @@ export function WindowEditor(props: WindowEditorProps) {
   // The sentences to print: contiguous runs of the same fault, one line
   // each. Derived from `problems`, which stays intact alongside it, so the
   // chart and the save gate keep seeing every sampled moment.
-  const runs = groupProblemRuns(problems);
+  // The grid step comes from the parsed window, so a run breaks wherever
+  // the window is genuinely healthy for a stretch rather than reading as
+  // one long fault across it.
+  const runs = parsed === null ? [] : groupProblemRuns(problems, gridStepHours(parsed.lengthHours));
   const readings =
     parsed !== null && firstProblem !== undefined ? valuesAt(parsed, firstProblem.atHours) : [];
 

@@ -639,9 +639,29 @@ export function valuesAt(
 // splitting it per-sample would be the same wall of text for a case that is
 // no less single.
 //
-// Grouping is *contiguous only*, so a fault that clears and returns is two
-// runs and reads as two — which is true, and is the case a reader most
-// needs told apart from one long one.
+// ── Why a run needs the grid step, and cannot be found without it ───────
+//
+// A run must also be contiguous *in time*, and that is the part which does
+// not come for free. `findCrossings` reports only the moments that are
+// faulty; it says nothing whatever about the ones that are fine. So a
+// window that collides, clears for three hours, and collides again the
+// same way produces one array whose entries are the same identity either
+// side of a hole — and a check that compares each entry only with the one
+// before it walks straight across the healthy stretch and calls the whole
+// window broken.
+//
+// That is the same defect as the 101 lines, inverted: it understates
+// instead of overstating, and it is worse, because it is false about the
+// reader's data and sends them to hours that are fine.
+//
+// Clearing is therefore an *absence*, and the only way to see an absence
+// is to know how wide the gap would have been had nothing been absent.
+// That is the even grid's step (`gridStepHours`), so it is passed in. A
+// fixed tolerance cannot do this job: the sample set also contains each
+// schedule entry's own start, which lands wherever the schedule puts it,
+// so genuine neighbours are routinely closer together than the grid step
+// and a constant either splits those or misses real gaps in longer
+// windows.
 
 /** What makes two sampled problems the same ongoing fault rather than two. */
 function faultIdentity(problem: CrossingProblemLike): string {
@@ -679,18 +699,40 @@ export interface ProblemRun {
 /**
  * Collapses contiguous runs of the same fault into one entry each.
  *
+ * Two problems join the same run only when they are the same fault *and*
+ * adjacent in time. `gridStep` is what makes the second half decidable —
+ * see this module's header — and should be `gridStepHours(lengthHours)`
+ * for the window the problems came from. A non-finite or non-positive step
+ * disables gap splitting rather than splitting everything, so a caller
+ * that cannot supply one still gets identity grouping.
+ *
  * Order is preserved and nothing is dropped: every input problem lands in
  * exactly one run, so a reader who counts moments across the runs gets the
  * same number the check found.
  */
-export function groupProblemRuns(problems: readonly CrossingProblemLike[]): ProblemRun[] {
+export function groupProblemRuns(
+  problems: readonly CrossingProblemLike[],
+  gridStep: number,
+): ProblemRun[] {
   const runs: ProblemRun[] = [];
   let identity: string | null = null;
+  let previousAt: number | null = null;
 
   for (const problem of problems) {
     const current = faultIdentity(problem);
     const open = runs[runs.length - 1];
-    if (open !== undefined && current === identity) {
+    // A gap wider than the grid means at least one grid point between
+    // these two was sampled and found clean, so the fault stopped and
+    // started again. The tolerance is a hair over the step because these
+    // are floating-point divisions of the window length: consecutive grid
+    // points differ by the step plus or minus a rounding error, and an
+    // exact `>` would split a run on that error alone.
+    const cleared =
+      previousAt !== null &&
+      Number.isFinite(gridStep) &&
+      gridStep > 0 &&
+      problem.atHours - previousAt > gridStep * 1.5;
+    if (open !== undefined && current === identity && !cleared) {
       // Extend the open run rather than starting one. `toHours` takes the
       // later moment so a run that is sampled out of order still spans.
       runs[runs.length - 1] = {
@@ -699,6 +741,7 @@ export function groupProblemRuns(problems: readonly CrossingProblemLike[]): Prob
         toHours: Math.max(open.toHours, problem.atHours),
         moments: open.moments + 1,
       };
+      previousAt = problem.atHours;
       continue;
     }
     runs.push({
@@ -708,6 +751,7 @@ export function groupProblemRuns(problems: readonly CrossingProblemLike[]): Prob
       moments: 1,
     });
     identity = current;
+    previousAt = problem.atHours;
   }
 
   return runs;

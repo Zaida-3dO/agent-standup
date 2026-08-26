@@ -102,8 +102,33 @@ const BAND_ORDER = ["selective", "windDown", "stop"] as const;
  */
 export type BandKey = (typeof BAND_ORDER)[number];
 
-/** How many points along a window the crossing check evaluates. */
-const SAMPLE_COUNT = 101;
+/**
+ * How many points along a window the crossing check evaluates.
+ *
+ * Exported because a caller reading `findCrossings`'s output needs it to
+ * interpret the *spacing* of what came back. The result reports only the
+ * moments that are faulty and says nothing at all about the ones that are
+ * fine, so a healthy stretch is a gap between two entries rather than a
+ * marker in them. Recovering "it cleared here" means knowing how far apart
+ * two adjacent samples would be if none had been omitted, which is this
+ * count and the window's length — see `gridStepHours`.
+ */
+export const SAMPLE_COUNT = 101;
+
+/**
+ * The spacing of the even grid `findCrossings` samples on, in hours.
+ *
+ * Deliberately not a fixed tolerance. The point set also includes each
+ * schedule entry's own start, which lands wherever the schedule says and
+ * routinely sits closer to its neighbour than the grid step — measured on
+ * a 10h window with switch points at 4.05h and 7.05h, adjacent samples are
+ * 0.05h, 0.1h and 3.05h apart. Only the grid step separates "the next
+ * sample" from "a stretch with clean samples in it", and it scales with
+ * the window, which a constant cannot.
+ */
+export function gridStepHours(lengthHours: number): number {
+  return lengthHours / (SAMPLE_COUNT - 1);
+}
 
 function perHours(per: "hour" | "day"): number {
   return per === "hour" ? 1 : 24;

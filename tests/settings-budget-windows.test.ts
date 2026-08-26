@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   boundaryAt,
+  gridStepHours,
   budgetWindowsSchema,
   findCrossings,
   type Boundary,
@@ -497,5 +498,42 @@ describe("the schema runs the crossing check", () => {
     if (!parsed.success) {
       expect(parsed.error.issues.map((i) => i.message).join(" ")).toContain("broken");
     }
+  });
+});
+
+describe("the sampling grid a caller can reason about", () => {
+  // `gridStepHours` exists so a reader of `findCrossings`'s output can tell
+  // "the next sample" from "a stretch with clean samples in it". That only
+  // works if it reports the spacing the check REALLY uses, so this measures
+  // the emitted moments rather than restating the formula.
+  it("matches the actual spacing between the check's own samples", () => {
+    for (const lengthHours of [5, 10, 168]) {
+      // Every boundary out of range at every moment, so the check emits a
+      // problem at every point it samples and the grid is fully visible.
+      const problems = findCrossings({
+        enabled: true,
+        lengthHours,
+        boundaries: {
+          selective: { kind: "constant", value: 300 },
+          windDown: { kind: "constant", value: 300 },
+          stop: { kind: "constant", value: 300 },
+        },
+      });
+      const moments = [...new Set(problems.map((p) => p.atHours))].sort((a, b) => a - b);
+      expect(moments.length).toBeGreaterThan(2);
+
+      const step = gridStepHours(lengthHours);
+      // The whole length is covered in exactly the steps it claims.
+      expect(moments[0]).toBe(0);
+      expect(moments[moments.length - 1]).toBeCloseTo(lengthHours, 6);
+      expect(step * (moments.length - 1)).toBeCloseTo(lengthHours, 6);
+      for (let i = 1; i < moments.length; i += 1) {
+        expect(moments[i]! - moments[i - 1]!).toBeCloseTo(step, 6);
+      }
+    }
+  });
+
+  it("scales with the window, which is why it is not a constant", () => {
+    expect(gridStepHours(10)).toBeCloseTo(gridStepHours(5) * 2, 9);
   });
 });

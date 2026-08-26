@@ -161,6 +161,41 @@ describe("WindowEditor — drawing a collision", () => {
     );
   });
 
+  it("names only the broken hours when the window clears in the middle", () => {
+    // The wiring, end to end: the panel must pass the window's real grid
+    // step down, or a window that is genuinely healthy for a stretch reads
+    // as one fault across the whole of it. Asserted on rendered text
+    // because the failure this guards against is the editor supplying a
+    // step that never lets the gap check fire, with the grouping itself
+    // still perfectly correct.
+    const clearing = windowWith({
+      lengthHours: 10,
+      boundaries: {
+        selective: constant(10),
+        windDown: {
+          kind: "schedule",
+          entries: [
+            { at: { elapsed: 0, per: "hour" }, value: constant(80) },
+            { at: { elapsed: 4, per: "hour" }, value: constant(20) },
+            { at: { elapsed: 7, per: "hour" }, value: constant(80) },
+          ],
+        },
+        stop: constant(40),
+      },
+    });
+    const clearingProblems = findCrossings(clearing);
+    expect(clearingProblems.length).toBeGreaterThan(1);
+
+    const element = WindowEditor(editorProps({ parsed: clearing, problems: clearingProblems }));
+    const lines = findAllByType(element, "li")
+      .map((li) => (li.props as { children?: unknown }).children)
+      .filter((c): c is string => typeof c === "string")
+      .filter((c) => c.includes("must stay below"));
+
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(line).not.toContain("for the whole window");
+  });
+
   it("counts the heading in faults, so it does not promise 101 lines above one", () => {
     const text = textOf(WindowEditor(editorProps({ parsed: window, problems })));
     expect(text).not.toContain("101 moments");

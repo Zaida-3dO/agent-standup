@@ -62,6 +62,7 @@ export {
   boundarySchema,
   budgetWindowsSchema,
   findCrossings,
+  gridStepHours,
   type Boundary,
   type BudgetWindow,
   type BudgetWindows,
