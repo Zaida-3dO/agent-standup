@@ -90,7 +90,18 @@ async function measure(browser, label, target) {
               height: Math.round(r.height * 10) / 10,
             };
           })
-          .filter((t) => t.width > 0 && t.height > 0);
+          // Excludes both a genuinely unrendered element (0x0, the
+          // original guard) AND the visually-hidden-but-AT-accessible
+          // idiom (clipped to ~1px, `position: absolute`, used by
+          // BoardFilterBarView's axes-disclosure checkbox) — a control
+          // nobody can see or tap is not a tap target under either name,
+          // and 4px is well below anything a legitimate small visible
+          // control renders at in this codebase (the smallest real
+          // control measured in this sweep was 19px). This is NOT a
+          // license to shrink a real control below 44px and call it
+          // "hidden" — it only excludes boxes too small to be operated by
+          // sight in the first place.
+          .filter((t) => t.width > 4 && t.height > 4);
 
         const firstCard = document.querySelector("a[href^='/items/']");
         const firstCardTop = firstCard

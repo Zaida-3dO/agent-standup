@@ -444,7 +444,45 @@ export function BoardFilterBarView({
 
       {/* Only the axes this reader has turned on. The set is browser-local
           and the values stay in the URL — see `@/lib/board/visible-filters`
-          for why those two are deliberately different places. */}
+          for why those two are deliberately different places.
+
+          **A CSS-only checkbox disclosure collapses this block below 641px**
+          (row 74ef86fb-9da8-4ab1-9b63-9eb84bd43ee6's second finding — 821px
+          of chrome before the first card, because `.axes` alone measured
+          ~400px of an ~540px bar at 320px). Tried `<details>` first and
+          measured it broken: modern Chromium renders a closed `<details>`'s
+          non-summary content through an internal `::details-content`
+          mechanism that an author stylesheet's `display` override cannot
+          reach, regardless of what `getComputedStyle` reports on the light
+          DOM — every property read back as visible while the axes painted
+          nothing. A checkbox has no such shadow content; the sibling
+          selector in `BoardFilterBar.module.css` is ordinary CSS with
+          nothing hidden from it.
+
+          `defaultChecked` makes this uncontrolled by design: it is a
+          display preference for THIS load, not a value the rest of the
+          component tree reads or writes, so there is nothing to lift into
+          state. `.axesToggle:checked ~ .axes` in the CSS shows the block on
+          tap; `@media (min-width: 641px)` forces `.axes` to display
+          regardless of the checkbox past the same breakpoint every
+          touch-target fix in this sweep uses, so a desktop reader's
+          experience is unchanged. No JS, no new stored preference: this is
+          a second, orthogonal disclosure from the "More filters" picker
+          below, which still decides WHICH axes exist; this only decides
+          whether the existing set is showing right now on a narrow
+          screen. */}
+      <input
+        type="checkbox"
+        id="board-axes-toggle"
+        className={styles.axesToggle}
+        defaultChecked={false}
+        aria-hidden="true"
+        tabIndex={-1}
+      />
+      <label htmlFor="board-axes-toggle" className={styles.axesSummary}>
+        <SlidersHorizontal size={13} aria-hidden="true" />
+        <span>Filters{active > 0 ? ` — ${active} active` : ""}</span>
+      </label>
       <div className={styles.axes}>
         {shows("area") && (
           <AxisSelect
