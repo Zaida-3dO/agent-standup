@@ -326,6 +326,25 @@ runs a test. A green `--require-db` means a URL was offered, not that a database
 it recognises the gate by the shape written above — a file inventing a different spelling is invisible
 to it.
 
+### Two known flakes under full-suite load — check before you assume a regression is yours
+
+Both are load-dependent: they fail as part of the full `npm test` run and pass in isolation. Neither
+is a property of any one PR's diff — reviewers have reproduced both against plain `main` content. Tell
+them apart by file and failure shape before writing either off:
+
+- **`tests/merge-guards.test.ts`** — a call-count mismatch, not a timeout. Tracked as row
+  `1d56cd0e-e8e7-4439-833f-541bec8d7f03`.
+- **`tests/cli-init-dispatch.test.ts`** — the `runCli — init dispatch order > reaches
+  runInitCommand even when nothing is configured at all` case times out at 30000ms under full-suite
+  load; run alone (`npx vitest run tests/cli-init-dispatch.test.ts`) it passes reliably. The failure
+  signature points at contention (a tight timeout, a shared resource, or a fixture assuming it runs
+  alone), but nobody has diagnosed the cause yet, so treat that as a lead for whoever picks it up next,
+  not a fix already in hand.
+
+If a run on your branch turns up a failure in either file, the fast check is whether the same test
+fails on `main` on its own — reproduce with `main`'s content for the files you touched (or a clean
+checkout of `main`) before spending time on a fix that isn't yours to make.
+
 ## Standing authorisation — keep the queue moving
 
 **Merging is pre-authorised. Do not stop to ask.** Once a change has been through review and its
@@ -509,6 +528,14 @@ detached worktree the sweep checks whether any existing ref already contains its
   report says `reused, nothing new created`.
 - If none does, the sweep mints `refs/worktree-sweep/<sha12>` pointing at the commit *before* removing
   the worktree, and only removes if the mint succeeded. The report says `minted`.
+- If the containment check itself fails — `git for-each-ref --contains` exits non-zero — the sweep
+  cannot tell which of the above two cases it is in, so it refuses to remove the worktree at all and
+  reports `could not determine whether any ref contains its commit`. This fails closed on purpose: a
+  failed lookup is not evidence that some ref contains the commit, so treating it as if one did — and
+  skipping the mint — would remove the worktree and drop the only reference to that commit on a guess.
+  A worktree kept for this reason needs a person to check why the `git` call failed (e.g. a corrupt
+  ref, a permissions problem, or the command running outside a git checkout) and either fix that and
+  re-run the sweep, or remove the worktree by hand once satisfied the commit is safe to lose.
 
 A ref under this namespace means: *this commit's only worktree was removed while nothing else
 referenced it, and this ref is the one thing standing between it and garbage collection.* Restore it
