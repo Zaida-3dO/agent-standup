@@ -191,7 +191,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     await runtime.call("record_artifact", {
       itemId: id,
       kind: "commit",
-      commitSha: "sha-tip",
+      commitSha: "5ba71100",
       createdByType: "agent",
       createdById: "agent-a",
     });
@@ -212,7 +212,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       itemId: id,
       kind: "plan_review",
       verdict: "approved",
-      commitSha: "sha-tip",
+      commitSha: "5ba71100",
       createdByType: "person",
       createdById: "user-a",
     });
@@ -232,7 +232,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     await runtime.call("record_artifact", {
       itemId: id,
       kind: "commit",
-      commitSha: "sha-1",
+      commitSha: "5ba00001",
       createdByType: "agent",
       createdById: "agent-a",
     });
@@ -248,7 +248,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       itemId: id,
       kind: "code_review",
       verdict: "lgtm",
-      commitSha: "sha-1",
+      commitSha: "5ba00001",
       createdByType: "agent",
       createdById: "agent-a",
     });
@@ -262,7 +262,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       itemId: id,
       kind: "code_review",
       verdict: "lgtm",
-      commitSha: "sha-1",
+      commitSha: "5ba00001",
       createdByType: "person",
       createdById: "user-a",
     });
@@ -273,7 +273,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     await runtime.call("record_artifact", {
       itemId: id,
       kind: "merge_approval",
-      commitSha: "sha-1",
+      commitSha: "5ba00001",
       createdByType: "person",
       createdById: "user-a",
     });
@@ -292,7 +292,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     await runtime.call("record_artifact", {
       itemId: id,
       kind: "commit",
-      commitSha: "sha-1",
+      commitSha: "5ba00001",
       createdByType: "agent",
       createdById: "agent-a",
     });
@@ -300,7 +300,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       itemId: id,
       kind: "code_review",
       verdict: "lgtm",
-      commitSha: "sha-1",
+      commitSha: "5ba00001",
       createdByType: "person",
       createdById: "user-a",
     });
@@ -308,7 +308,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     await runtime.call("record_artifact", {
       itemId: id,
       kind: "commit",
-      commitSha: "sha-2",
+      commitSha: "5ba00002",
       createdByType: "agent",
       createdById: "agent-a",
     });
@@ -335,7 +335,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     await runtime.call("record_artifact", {
       itemId: id,
       kind: "commit",
-      commitSha: "sha-final",
+      commitSha: "5ba0f1a1",
       createdByType: "agent",
       createdById: "agent-a",
     });
@@ -346,7 +346,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       itemId: id,
       kind: "code_review",
       verdict: "lgtm",
-      commitSha: "sha-final",
+      commitSha: "5ba0f1a1",
       createdByType: "agent",
       createdById: "reviewer-agent",
     });

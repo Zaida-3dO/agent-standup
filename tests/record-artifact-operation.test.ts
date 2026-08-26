@@ -109,7 +109,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
         kind: "code_review",
         verdict: "lgtm",
         reviewRound: 3,
-        commitSha: "abc123",
+        commitSha: "abc1234",
         body: "looks good",
         ref: "https://example.invalid/pr/1",
         browserSession: "session-7",
@@ -123,7 +123,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(artifact.kind).toBe("code_review");
       expect(artifact.verdict).toBe("lgtm");
       expect(artifact.reviewRound).toBe(3);
-      expect(artifact.commitSha).toBe("abc123");
+      expect(artifact.commitSha).toBe("abc1234");
       expect(artifact.ref).toBe("https://example.invalid/pr/1");
       expect(artifact.browserSession).toBe("session-7");
       expect(artifact.createdByType).toBe("person");
@@ -281,7 +281,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId: "no-such-item",
         kind: "commit",
-        commitSha: "abc",
+        commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -329,7 +329,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "historical_verification",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -344,7 +344,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "historical_verification",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         body: "   \n  ",
         createdByType: "agent",
         createdById: "agent-a",
@@ -379,7 +379,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "merge_override",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -392,7 +392,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "merge_override",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         body: "   \n  ",
         createdByType: "agent",
         createdById: "agent-a",
@@ -410,7 +410,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "merge_override",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         body: "fine",
         createdByType: "agent",
         createdById: "agent-a",
@@ -429,7 +429,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const artifact = await record({
         itemId,
         kind: "merge_override",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         body: "Rebased onto main after approval; no source changes since the review.",
         createdByType: "agent",
         createdById: "agent-a",
@@ -456,7 +456,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "merge_approval",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -492,7 +492,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "merge_approval",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         createdByType: "person",
         createdById: "nobody-at-all",
       });
@@ -504,7 +504,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const artifact = await record({
         itemId,
         kind: "merge_approval",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         createdByType: "person",
         createdById: "user-a",
       });
@@ -535,7 +535,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const artifact = await record({
         itemId,
         kind: "commit",
-        commitSha: "plain11",
+        commitSha: "1a2b3c4",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -547,7 +547,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const artifact = await record({
         itemId,
         kind: "historical_verification",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         body: "Read the merged code at abc123: the routes named in the brief are absent.",
         createdByType: "agent",
         createdById: "agent-a",
@@ -564,7 +564,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const error = await recordFails({
         itemId,
         kind: "historical_verification",
-        commitSha: "abc123",
+        commitSha: "abc1234",
         body: "inspected",
         verdict: "lgtm",
         createdByType: "agent",
@@ -592,7 +592,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const artifact = await record({
         itemId,
         kind: "commit",
-        commitSha: "abc",
+        commitSha: "abc1234",
         verdict: "na",
         createdByType: "agent",
         createdById: "agent-a",
@@ -635,6 +635,112 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
         createdById: "agent-a",
       });
       expect(error.code).toBe("invalid_input");
+    });
+  });
+
+  // Row 030ec708 — before this, `commitSha` was `z.string().trim().min(1)`:
+  // any non-empty string. Equality comparison made that mostly harmless — a
+  // junk value simply never matched anything — but `artifact-tip.ts`'s
+  // `shaMatches` (a fix in review at the time of writing) compares by HEX
+  // PREFIX, so a short value now matches a whole family of commits rather
+  // than none. This block pins the shape a `commitSha` must have to be
+  // accepted at all: lowercase hex, 7-40 characters — 7 because that is
+  // git's own default abbreviation length and the margin its tooling stakes
+  // collision safety on; 40 because that is a full sha-1.
+  describe("commitSha format (row 030ec708)", () => {
+    it("refuses a non-hex value, even at an otherwise-acceptable length", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "commit",
+        commitSha: "not-hex-at-all",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["commitSha"]);
+    });
+
+    it("refuses a hex value shorter than the floor — the exact shape a brute-forceable sha would take", async () => {
+      const itemId = await createTask();
+      // 6 hex characters: one short of the 7-character floor. All-hex, so
+      // this is testing the LENGTH bound specifically, not the charset one.
+      const error = await recordFails({
+        itemId,
+        kind: "commit",
+        commitSha: "abc123",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["commitSha"]);
+    });
+
+    it("refuses a hex value longer than a full sha-1", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "commit",
+        // 41 hex characters — one longer than a full sha-1.
+        commitSha: "a".repeat(41),
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["commitSha"]);
+    });
+
+    it("refuses uppercase hex — git never emits it, and accepting it would double the prefix-matching search space for no real caller", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "commit",
+        commitSha: "ABC1234",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["commitSha"]);
+    });
+
+    it("accepts a 7-character lowercase hex value — the floor itself, not one past it", async () => {
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "commit",
+        commitSha: "abc1234",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.commitSha).toBe("abc1234");
+    });
+
+    it("accepts a 40-character lowercase hex value — the ceiling itself, not one past it", async () => {
+      const itemId = await createTask();
+      const sha = "a4856512895853095c2f31b0057340fcf40be0ab";
+      // Sanity on the fixture itself before trusting the assertion below —
+      // a full sha-1 is exactly 40 hex characters.
+      expect(sha.length).toBe(40);
+      const artifact = await record({
+        itemId,
+        kind: "commit",
+        commitSha: sha,
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.commitSha).toBe(sha);
+    });
+
+    it("leaves commitSha null when the caller sends null — the format check does not run on absence", async () => {
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "plan",
+        commitSha: null,
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.commitSha).toBeNull();
     });
   });
 
@@ -813,7 +919,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const next = await record({
         itemId,
         kind: "commit",
-        commitSha: "abc",
+        commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -906,7 +1012,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       await record({
         itemId,
         kind: "commit",
-        commitSha: "abc",
+        commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
       });
