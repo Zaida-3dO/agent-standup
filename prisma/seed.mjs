@@ -18,6 +18,7 @@
 // what makes it safe for `standup init` (#80) to call on every run, not just
 // the first.
 import { PrismaClient } from "@prisma/client";
+import { pathToFileURL } from "node:url";
 
 /**
  * @param {import("@prisma/client").PrismaClient} prisma
@@ -99,7 +100,17 @@ async function main() {
 
 // Only run as a script (`prisma db seed` / `node prisma/seed.mjs`), never on
 // import — tests import `seed` directly against a scratch database.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, "/")}`) {
+//
+// `pathToFileURL` rather than building the URL by hand: on Windows a path is
+// `C:\...` and the correct file URL is `file:///C:/...` with three slashes,
+// which a naive `"file://" + argv[1]` concatenation gets wrong (two slashes,
+// never matches). The failure mode when it is wrong is this block silently
+// never running — `npm run db:seed` exits 0 having seeded nothing, which is
+// precisely the defect it exists to fix. Every other script in this repo
+// uses this idiom (`scripts/db-up.mjs`, `scripts/entrypoint.mjs`,
+// `scripts/reconcile-shipped-rows.mjs`, `scripts/run-tests.mjs`,
+// `scripts/sweep-worktrees.mjs`), so it is worth not hand-rolling here too.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);

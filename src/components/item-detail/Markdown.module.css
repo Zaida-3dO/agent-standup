@@ -108,6 +108,18 @@
 .markdown ol {
   margin: var(--space-3) 0;
   padding-left: var(--space-5);
+  /* Tailwind's preflight resets `ul`/`ol` to `list-style: none` globally
+     (by design, for nav/menu lists elsewhere in the app — see the scoped
+     `list-style: none` rules in Board/Admin/Budget/ItemDetail modules).
+     Rendered markdown is the one place that reset is wrong: a numbered
+     step list with no numbers is unreadable. Re-establish markers here,
+     scoped to this component's own content, rather than fighting the
+     reset globally. */
+  list-style-type: disc;
+}
+
+.markdown ol {
+  list-style-type: decimal;
 }
 
 .markdown li {

@@ -482,6 +482,11 @@
   line-height: 1.35;
   color: inherit;
   text-decoration: none;
+  /* An item title can be a file path or a URL with no spaces in it — the
+     same unbroken-token case ListView.module.css's `.row td` already
+     handles. Without this the token overflows the card instead of
+     wrapping (measured 62px at 1440, 96px at 320). */
+  overflow-wrap: anywhere;
 }
 
 .cardTitle:hover,

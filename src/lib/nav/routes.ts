@@ -24,8 +24,14 @@ export type NavId =
  * Two counters, not one per destination: a badge is a claim that something
  * is waiting for you, and a number that is merely "how many things exist"
  * trains you to ignore the whole row of them. `unseen` is the activity a
- * profile has not marked seen; `needsYou` is the far narrower "blocked, on
- * a person, and that person is you" (`@/lib/board/view`).
+ * profile has not marked seen; `needsYou` is the three-reason union
+ * `get_needs_you` computes server-side — blocked on you, a merge awaiting
+ * your approval, or a plan awaiting your review (`@/lib/nav/counts`,
+ * `fetchNeedsYouCount`). It is **not** the narrower client-side
+ * `needsYouCount()` in `@/lib/board/view` that the board's own banner uses
+ * (T24 moved the sidebar off that count on purpose, after the two disagreed
+ * with nothing to explain the gap) — see `NeedsYouBadge.tsx`'s header for
+ * why the board banner still uses the narrower one.
  */
 export type NavBadge = "unseen" | "needsYou";
 

@@ -19,7 +19,7 @@ import { fetchFeed } from "@/lib/since/state";
 export interface NavCounts {
   /** Events this profile has not marked seen — the Standup badge. */
   readonly unseen: number;
-  /** Items blocked on this person — the Needs you badge. */
+  /** What needs this person — blocked on them, a merge awaiting their approval, or a plan awaiting their review. The Needs you badge. */
   readonly needsYou: number;
 }
 
