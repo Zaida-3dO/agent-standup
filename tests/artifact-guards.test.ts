@@ -222,6 +222,143 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
     });
   });
 
+  describe("artifact.evidence_at_tip — an abbreviated sha must not be treated as stale (row 73ff36bd)", () => {
+    it("ALLOWS: an approval pinned to a 7-char abbreviation of the full-length tip commit", async () => {
+      // The exact reproduction from row 73ff36bd: three approvals pinned to
+      // `86f3af0`, a commit artifact pinned to the full 40-character sha for
+      // the same commit. Same commit, different lengths — must not refuse.
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "86f3af0",
+        createdAt: new Date(),
+      });
+
+      await callTransition(id, "executing", reg);
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("ALLOWS: the abbreviation on the other side — a full-length approval against a short tip", async () => {
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af0",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+        createdAt: new Date(),
+      });
+
+      await callTransition(id, "executing", reg);
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("REFUSES: an abbreviation of a DIFFERENT commit than the tip — prefix matching does not widen to unrelated shas", async () => {
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      // `deadbee` is not a prefix of the tip and the tip is not a prefix of
+      // it — genuinely a different commit, and must still be refused.
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "deadbee",
+        createdAt: new Date(),
+      });
+
+      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
+      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      expect(await readState(id)).toBe("plan_review");
+    });
+
+    it("REFUSES: a non-hex fixture value must not prefix-match another non-hex value it happens to start with", async () => {
+      // Guards the HEX_SHA gate itself: without it, "commit-a" would
+      // startsWith-match "commit-ab" even though they are unrelated
+      // synthetic identifiers, not the same commit at two lengths.
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "commit-ab",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "commit-a",
+        createdAt: new Date(),
+      });
+
+      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
+      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      expect(await readState(id)).toBe("plan_review");
+    });
+
+    it("ALLOWS: an abbreviated approval matching a sha the tip's lineage stands in for, not just the tip itself", async () => {
+      // Combines row 73ff36bd's abbreviation fix with the pre-existing
+      // supersession-lineage widening: the approval is short, and the sha it
+      // is short for isn't the tip directly but something the tip's commit
+      // artifact declared it superseded (a squash/rebase/amend).
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "86f3af0",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await prisma.artifact.create({
+        data: {
+          id: randomUUID(),
+          itemId: id,
+          kind: "commit",
+          commitSha: "cafef00dcafef00dcafef00dcafef00dcafef00",
+          supersedesSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+          createdByType: "agent",
+          createdById: "test-agent",
+          createdAt: new Date(),
+        },
+      });
+
+      await callTransition(id, "executing", reg);
+      expect(await readState(id)).toBe("executing");
+    });
+  });
+
   describe("artifact.evidence_at_tip — stale evidence from an earlier commit must be refused", () => {
     it("REFUSES: an approval attached to a superseded commit, even though an approval exists", async () => {
       // The load-bearing test for AC3. A plan is approved at commit A; the
@@ -449,6 +586,46 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
 
       const result = await latestApprovalAtTip(prisma, id, "code_review");
       expect(result?.id).toBe(approvalAtTip.id);
+    });
+
+    it("latestApprovalAtTip matches a short sha against a full-length tip, and vice versa", async () => {
+      const id = await createTask("executing");
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+      });
+      const approval = await prisma.artifact.create({
+        data: {
+          id: randomUUID(),
+          itemId: id,
+          kind: "code_review",
+          verdict: "approved",
+          commitSha: "86f3af0",
+          createdByType: "agent",
+          createdById: "test-agent",
+        },
+      });
+
+      const result = await latestApprovalAtTip(prisma, id, "code_review");
+      expect(result?.id).toBe(approval.id);
+    });
+
+    it("latestApprovalAtTip does not match a short sha against an unrelated full-length tip", async () => {
+      const id = await createTask("executing");
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "deadbee",
+      });
+
+      expect(await latestApprovalAtTip(prisma, id, "code_review")).toBeNull();
     });
   });
 });
