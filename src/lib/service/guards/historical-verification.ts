@@ -171,7 +171,7 @@ export async function historicalVerificationSatisfies(
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
         AND "commitSha" = $3 AND "body" IS NOT NULL
-      ORDER BY "createdAt" DESC, "id" DESC
+      ORDER BY "createdAt" DESC, "seq" DESC
       LIMIT 1`,
     itemId,
     HISTORICAL_VERIFICATION_KIND,
@@ -287,6 +287,18 @@ async function unhonouredFollowUpBargain(
     // current tip commit. `IS NOT DISTINCT FROM` for the sha so that an item
     // with no commit artifact at all (tip null) compares as equal to a null
     // `commitSha`, which is the reading the tip helpers already document.
+    //
+    // `(s."createdAt", s."seq") > (a."createdAt", a."seq")` — a strict
+    // tuple comparison deciding whether a review genuinely retires the
+    // bargain, not a cosmetic ordering: comparing by `id` on a
+    // same-millisecond tie makes `superseded` a coin flip on two random
+    // uuids, because a random v4 carries no relationship to insertion
+    // order — a merge could legally proceed or be refused depending on
+    // which uuid happened to sort higher, for artifacts written in the same
+    // transaction-timing window a concurrent write can produce. `seq` is
+    // Postgres-assigned true insertion order (see its own doc on the Prisma
+    // model), so the strictly *later* review is the one that wins, which is
+    // what "supersedes" is supposed to mean.
     `SELECT a."verdict"::text AS "verdict",
             a."followUpItemId",
             i."state"::text AS "followUpState",
@@ -298,13 +310,13 @@ async function unhonouredFollowUpBargain(
                  AND s."verdict" = ANY($2::"Verdict"[])
                  AND s."reviewRound" = $3
                  AND s."commitSha" IS NOT DISTINCT FROM $4
-                 AND (s."createdAt", s."id") > (a."createdAt", a."id")
+                 AND (s."createdAt", s."seq") > (a."createdAt", a."seq")
             ) AS "superseded"
        FROM "Artifact" a
        LEFT JOIN "Item" i ON i."id" = a."followUpItemId"
       WHERE a."itemId" = $1 AND a."kind" = 'code_review'::"ArtifactKind"
         AND a."verdict" = 'lgtm_with_followups'::"Verdict"
-      ORDER BY a."createdAt" ASC, a."id" ASC`,
+      ORDER BY a."createdAt" ASC, a."seq" ASC`,
     itemId,
     APPROVING_VERDICTS,
     round,

@@ -111,10 +111,20 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     followUpItemId?: string | null;
     findings?: unknown;
     body?: string | null;
+    /**
+     * An explicit `id` rather than the usual `randomUUID()` default — for
+     * the one test that needs to pin which artifact wins a same-`createdAt`
+     * `id DESC` tie deterministically (the tiebreak's own regression test:
+     * it reverts the fix under mutation, so it needs the *old* ordering to
+     * have a guaranteed rather than a 50/50 answer). Every other call site
+     * leaves this unset and gets the random default, which is correct there
+     * — an id chosen for legibility, not insertion order.
+     */
+    id?: string;
   }) {
     await prisma.artifact.create({
       data: {
-        id: randomUUID(),
+        id: overrides.id ?? randomUUID(),
         itemId: overrides.itemId,
         kind: overrides.kind as never,
         verdict: (overrides.verdict ?? null) as never,
@@ -2427,10 +2437,31 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     // relevant inserts above land in the same Postgres millisecond
     // (`Artifact.createdAt` is `@db.Timestamptz(3)`) often enough by chance
     // alone. Pinning `createdAt` to the same instant on both `bbb2222` and
-    // `ddd4444` makes the tie certain instead of probable, so this test fails
-    // every run — not 45% of them — if the tiebreak regresses to something
-    // that does not reflect actual insertion order (e.g. back to `id DESC`
-    // on the random-uuid `Artifact.id`).
+    // `ddd4444` removes the *timing* luck, but is not enough on its own —
+    // see the `id` note just below.
+    //
+    // **The ids are pinned too, and this is the part that actually makes the
+    // mutant kill deterministic.** Pinning only `createdAt` still leaves the
+    // reverted tiebreak (`id DESC` on a `randomUUID()`) deciding the
+    // outcome, which is a fair coin flip: simulated at 100k random uuid
+    // pairs, the true tip won only ~49.8% of the time, and measuring this
+    // exact test against the reverted code across 17 runs killed the mutant
+    // 6 times and let it survive 11 — the same disease this fix exists to
+    // cure (a confident "fails every run" claim that wasn't true),
+    // reproduced in the regression test written to catch it. So the ids are
+    // chosen explicitly: `bbb2222` sorts LOWER than `ddd4444` lexically
+    // (`bbb... < ddd...`), which under `id DESC` alone would make `ddd4444`
+    // win the tie regardless of tiebreak — not the collision this test needs
+    // to force. The ids below invert that on purpose: `bbb2222FF...` (all
+    // trailing `f`s, the maximum hex digit) is given the id that sorts
+    // HIGHEST, so under the reverted `"createdAt" DESC, "id" DESC` ordering
+    // it — not the true tip `ddd4444` — always wins the tie and is wrongly
+    // treated as current. That guarantees the guard wrongly allows the merge
+    // under the reverted code every run, and this test's `.rejects` then
+    // never fires: a deterministic kill instead of a coin flip. Under the
+    // fix (`seq DESC`), insertion order decides regardless of what the ids
+    // happen to be, so `ddd4444` — inserted after `bbb2222` — still wins and
+    // the merge is still correctly refused.
     it("REFUSES the same case even when the new commit ties the superseding one on createdAt to the millisecond", async () => {
       const id = await createTask({ state: "in_review" });
       // Explicit, ordered timestamps rather than each artifact's own
@@ -2439,6 +2470,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // would not be exercising the tiebreak at all.
       const reviewed = new Date("2026-01-01T00:00:00.000Z");
       const tie = new Date("2026-01-01T00:00:01.000Z");
+      // Explicit ids so a reverted tiebreak (`id DESC`) has a guaranteed,
+      // not merely probable, wrong answer — see the comment above this test.
+      const bbb2222Id = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+      const ddd4444Id = "00000000-0000-4000-8000-000000000000";
       await createArtifact({
         itemId: id,
         kind: "commit",
@@ -2458,11 +2493,19 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         commitSha: "bbb2222",
         supersedesSha: "aaa1111",
         createdAt: tie,
+        id: bbb2222Id,
       });
       // Real new work, inserted AFTER bbb2222 (so it is the true tip) but
       // carrying the identical `createdAt` — the collision the intermittent
-      // failure turned on.
-      await createArtifact({ itemId: id, kind: "commit", commitSha: "ddd4444", createdAt: tie });
+      // failure turned on. Its id is pinned lower than `bbb2222`'s, so under
+      // the reverted `id DESC` tiebreak it is the one that loses.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "ddd4444",
+        createdAt: tie,
+        id: ddd4444Id,
+      });
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);

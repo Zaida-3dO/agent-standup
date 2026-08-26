@@ -172,10 +172,16 @@ export async function mergeOverrideSatisfies(
     // predicate should not exist. It is asserted anyway because this clause
     // decides a merge, and a guard that trusted an upstream validator would
     // be one edit away from accepting an empty excuse.
+    //
+    // `seq`, not `id`, breaks the `createdAt` tie: `id` is a random uuid
+    // with no relationship to insertion order, so on a same-millisecond tie
+    // `rows.find` below could return an older override ahead of a newer one
+    // (see `currentTipCommitSha`'s doc on `artifact-tip.ts` for the full
+    // reasoning, which applies here identically).
     `SELECT "id", "commitSha", "body", "createdByType", "createdById"
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind" AND "body" IS NOT NULL
-      ORDER BY "createdAt" DESC, "id" DESC`,
+      ORDER BY "createdAt" DESC, "seq" DESC`,
     itemId,
     MERGE_OVERRIDE_KIND,
   );

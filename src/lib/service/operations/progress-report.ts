@@ -292,17 +292,22 @@ export const progressReport = defineOperation({
       // to the pessimistic reading, deterministically, in the same order on
       // every machine and every run.
       //
-      // `id DESC` stays as the last term so the ordering is a total one: two
+      // `seq DESC` stays as the last term so the ordering is a total one: two
       // rows with the same timestamp AND the same status still need a stable
       // winner, and either is equally correct because they say the same
-      // thing.
+      // thing. `seq`, not `id` — `Artifact.id` is a random uuid and not an
+      // insertion-order tiebreak (see `artifact-tip.ts`'s `currentTipCommitSha`
+      // doc); this site was found during the sweep that fixed the load-bearing
+      // ones and switched for consistency, not because a tie here could pick
+      // a wrong answer — the two rows reaching this term already agree on
+      // both timestamp and closed/open status.
       const prRows = await ctx.db.$queryRawUnsafe<RawPullRequestRow[]>(
         `SELECT DISTINCT ON ("itemId") "itemId", "ref", "body"
            FROM "Artifact"
           WHERE "itemId" = ANY($1) AND "kind" = 'pull_request'::"ArtifactKind"
           ORDER BY "itemId", "createdAt" DESC,
                    (CASE WHEN btrim(COALESCE("body", '')) = 'closed' THEN 0 ELSE 1 END) ASC,
-                   "id" DESC`,
+                   "seq" DESC`,
         itemIds,
       );
       for (const row of prRows) {

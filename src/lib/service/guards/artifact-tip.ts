@@ -168,6 +168,15 @@ export async function currentTipCommitSha(
  * interpolated into the SQL — the values come from a module constant, not
  * from a caller, but building a query string out of an array is a habit that
  * stops being safe the first time the array's source changes.
+ *
+ * Ordered `"createdAt" DESC, "seq" DESC`, same reason as `currentTipCommitSha`:
+ * `seq` is the true insertion-order tiebreak on a same-millisecond tie,
+ * `id` is a random uuid and is not. Every caller here reads the returned
+ * list as a membership/existence test (`hasApproval`'s count, or a walk
+ * for the first row that qualifies at the tip) rather than trusting
+ * `rows[0]` alone, so a tie was never a correctness bug the way the tip
+ * query's was — but a query in this file still tie-breaking on `id` taught
+ * the next reader the wrong rule, which is reason enough on its own.
  */
 async function approvedArtifacts(
   db: TransactionHandle,
@@ -186,7 +195,7 @@ async function approvedArtifacts(
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
         AND "verdict" = ANY($3::"Verdict"[])
-      ORDER BY "createdAt" DESC, "id" DESC`,
+      ORDER BY "createdAt" DESC, "seq" DESC`,
     itemId,
     kind,
     APPROVING_VERDICTS,
