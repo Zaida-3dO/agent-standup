@@ -18,9 +18,9 @@ function textOf(root: ReactNode): string {
 }
 
 describe("TrustBadge", () => {
-  it("renders 'Imported' when unverified", () => {
+  it("renders 'Unchecked' when unverified", () => {
     const badge = TrustBadge({ verified: false });
-    expect(textOf(badge)).toContain("Imported");
+    expect(textOf(badge)).toContain("Unchecked");
     expect((badge.props as { "data-trust": string })["data-trust"]).toBe("unverified");
   });
 
@@ -37,7 +37,7 @@ describe("TrustBadge", () => {
   // Fails if the aria-label loses the "Trust:" prefix or the label word.
   it("carries an accessible label naming the trust state", () => {
     const badge = TrustBadge({ verified: false });
-    expect((badge.props as { "aria-label": string })["aria-label"]).toBe("Trust: Imported");
+    expect((badge.props as { "aria-label": string })["aria-label"]).toBe("Trust: Unchecked");
   });
 
   // Fails if the title stops mentioning who checked, e.g. drops checkedByType.
@@ -115,6 +115,20 @@ describe("TrustBadge", () => {
     });
     const title = (badge.props as { title: string }).title;
     expect(title).not.toContain("ope");
-    expect(title).toContain("Imported from an external store");
+    expect(title).toContain("has never been checked against the live system");
+  });
+
+  // The tooltip must not assert provenance the row's `originType` may not
+  // have — `verified` alone carries no origin information (see the header
+  // comment). Pinned to the exact string, not a substring, so re-adding the
+  // old "Imported from an external store" prefix ahead of the checking
+  // clause — which would still satisfy a `toContain` on the tail — fails
+  // this test.
+  it("never claims an external-store origin in the unverified tooltip", () => {
+    const badge = TrustBadge({ verified: false });
+    const title = (badge.props as { title: string }).title;
+    expect(title).toBe("This state has never been checked against the live system.");
+    expect(title).not.toContain("Imported");
+    expect(title).not.toContain("external store");
   });
 });

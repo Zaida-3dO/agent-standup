@@ -18,11 +18,18 @@
 //
 // **Those two diverge, by design and in practice.** An imported item that
 // someone has since verified is badged "Verified" and still dashed; an
-// item created in the product and never checked is badged "Imported" and
+// item created in the product and never checked is badged "Unchecked" and
 // is not dashed — which is the common case, so a board where every card
-// reads "Imported" and none is outlined is correct, not a bug. Keying the
+// reads "Unchecked" and none is outlined is correct, not a bug. Keying the
 // border off `verification` to "restore" a redundancy that was never there
 // would dash every row in the store.
+//
+// **The false-case label used to say "Imported" and its tooltip claimed an
+// external origin.** That was wrong for any row this badge marks whose
+// `originType` isn't `source` — which is most of them, since `verified`
+// here carries no origin information at all. "Unchecked" says exactly what
+// the prop computes (no `historical_verification` on file) without
+// asserting where the row came from; provenance stays the border's job.
 //
 // Never a severity colour: `globals.css` §6 is explicit that an unverified
 // row "is not *wrong*, it is unconfirmed", so this shares no visual
@@ -51,7 +58,7 @@ export interface TrustBadgeProps {
   /**
    * True when a `historical_verification` exists for this item — i.e.
    * someone has actually looked, whatever they found. False renders the
-   * plain "Imported" marking the row header asks for.
+   * plain "Unchecked" marking the row header asks for.
    */
   readonly verified: boolean;
 }
@@ -89,11 +96,11 @@ export function verifierPhrase(
 
 export function TrustBadge({ checkedAt, checkedByType, checkedById, verified }: TrustBadgeProps) {
   const tokens = trustTokens();
-  const label = verified ? "Verified" : "Imported";
+  const label = verified ? "Verified" : "Unchecked";
   const verifier = verifierPhrase(checkedByType, checkedById);
   const title = verified
     ? `Checked ${checkedAt ?? "at an unrecorded time"}${verifier === "" ? "" : ` by ${verifier}`}`
-    : "Imported from an external store — this state has never been checked against the live system.";
+    : "This state has never been checked against the live system.";
 
   return (
     <span

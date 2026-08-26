@@ -590,13 +590,13 @@ describe("ItemCard", () => {
     });
 
     // `TrustBadge` is a nested component — it appears in `ItemCard`'s
-    // returned tree as an unrendered reference, so its own text ("Imported"/
+    // returned tree as an unrendered reference, so its own text ("Unchecked"/
     // "Verified") is not there to be walked yet (the same reason
     // `AgentPanel`'s `Bounded` note gives for `Markdown`). Asserting on the
     // PROP the card passed is what actually proves the card decided
     // correctly; `TrustBadge`'s own rendering is proved in
     // `tests/trust-badge-component.test.ts`.
-    it("shows Imported for an unverified item with no verification on file", () => {
+    it("shows Unchecked for an unverified item with no verification on file", () => {
       const card = ItemCard({
         entry: entry("backlog", {}, { unverifiedOrigin: true, verification: null }),
         needsYou: false,
