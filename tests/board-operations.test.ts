@@ -874,14 +874,14 @@ describeIfDb("get_board against Postgres", () => {
       await runtime.call("record_artifact", {
         itemId: verified.id,
         kind: "commit",
-        commitSha: "commit-1",
+        commitSha: "c001d001",
         createdByType: "agent",
         createdById: "agent-a",
       });
       await runtime.call("record_artifact", {
         itemId: verified.id,
         kind: "historical_verification",
-        commitSha: "commit-1",
+        commitSha: "c001d001",
         body: "Checked — the state matches.",
         createdByType: "agent",
         createdById: "agent-a",
@@ -892,7 +892,7 @@ describeIfDb("get_board against Postgres", () => {
       const verifiedEntry = all.find((e) => e.item.id === verified.id);
       const unverifiedEntry = all.find((e) => e.item.id === unverified.id);
 
-      expect(verifiedEntry?.trust?.verification?.commitSha).toBe("commit-1");
+      expect(verifiedEntry?.trust?.verification?.commitSha).toBe("c001d001");
       expect(verifiedEntry?.trust?.verification?.body).toBe("Checked — the state matches.");
       // The neighbour recorded nothing — proves the join is keyed per item,
       // not a single row broadcast across the whole page.
@@ -909,14 +909,14 @@ describeIfDb("get_board against Postgres", () => {
       await runtime.call("record_artifact", {
         itemId: item.id,
         kind: "commit",
-        commitSha: "commit-1",
+        commitSha: "c001d001",
         createdByType: "agent",
         createdById: "agent-a",
       });
       await runtime.call("record_artifact", {
         itemId: item.id,
         kind: "historical_verification",
-        commitSha: "commit-1",
+        commitSha: "c001d001",
         body: "First check — looked fine.",
         createdByType: "agent",
         createdById: "agent-a",
@@ -924,7 +924,7 @@ describeIfDb("get_board against Postgres", () => {
       await runtime.call("record_artifact", {
         itemId: item.id,
         kind: "historical_verification",
-        commitSha: "commit-1",
+        commitSha: "c001d001",
         body: "Second check — actually wrong.",
         createdByType: "person",
         createdById: "user-a",
@@ -966,7 +966,7 @@ describeIfDb("get_board against Postgres", () => {
         // Required: a verification that does not name the code it read
         // cannot be confirmed by anyone else, and `record_artifact` refuses
         // one without it.
-        commitSha: "commit-trust",
+        commitSha: "deadfeed1",
         body: "Checked against the live system.",
         createdByType: "person",
         createdById: "user-a",
