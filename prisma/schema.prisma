@@ -641,6 +641,31 @@ model Artifact {
   createdByType  HolderType
   createdById    String
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  // A Postgres-assigned monotonic tiebreak for "which artifact came later",
+  // used ONLY where `createdAt` ties need breaking by actual insertion
+  // order — row #17/#18's tip-commit selection in `artifact-tip.ts`
+  // (`currentTipCommitSha`, `tipCommitLineage`).
+  //
+  // `createdAt` is `@db.Timestamptz(3)` — millisecond precision — and two
+  // `commit` artifacts for the same item recorded within the same
+  // millisecond are not a hypothetical: it reproduced at a ~45% rate on
+  // ordinary hardware for the test that stacks three commit artifacts back
+  // to back with no explicit `createdAt`. Before this column, the tiebreak
+  // was `"id" DESC`, and `id` is `@default(uuid())` — a random v4 with no
+  // relationship to insertion order. The comment on the query that used it
+  // called that tiebreak "deterministic", which was true (same inputs, same
+  // output) but not what the guard actually needed: deterministic-but-random
+  // is still a coin flip on which artifact counts as the tip, decided once
+  // at insert time and then fixed forever. `bigserial` is the same
+  // insertion-order primitive `Event.id` already uses in this schema for
+  // exactly this reason (see `Event.id`'s own doc) — reused here rather than
+  // re-solved, on the same table that already needed it.
+  //
+  // `createdAt DESC` stays the primary sort; `seq` only breaks a tie on it.
+  // Two artifacts can only ever legitimately race on which one is "the tip"
+  // when they were created close enough together that `createdAt` cannot
+  // tell them apart — `seq` settles exactly that case and nothing else.
+  seq            BigInt       @default(autoincrement())
 
   @@index([itemId, kind, reviewRound])
   @@index([followUpItemId])
