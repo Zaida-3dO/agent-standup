@@ -298,4 +298,27 @@
        width. The title takes what is left and the bar keeps a usable size. */
     grid-template-columns: minmax(0, 1fr) 3rem 2.5rem;
   }
+
+  .projectStripTitle {
+    /* The strip's own tap target, and the last one on this page under 44px.
+       It was measured at 17.4px tall at 320/360/390 — a third of the
+       minimum, on links stacked directly on one another, so a mistap opens
+       the neighbouring project.
+
+       Height only, deliberately. The comment on `.projectStripItem` above
+       defends the *columns*, and the fixed 3rem bar and 2.5rem percent must
+       keep sharing the title's line for the at-a-glance comparison the
+       strip exists for. Growing the row costs none of that: the title is
+       one grid cell, so its min-height sets the row's height and leaves
+       every column width alone. Measured in a browser at 320/360/390 —
+       columns `150px 48px 40px`, bar on the title's row, links at 44px.
+
+       `flex` rather than `block` because the cell is already ellipsised on
+       one line; centring keeps the text where it was and puts the added
+       height evenly above and below it, so the strip does not visibly
+       shift. */
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }

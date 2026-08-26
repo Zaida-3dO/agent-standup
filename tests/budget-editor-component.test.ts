@@ -142,6 +142,66 @@ describe("WindowEditor — drawing a collision", () => {
     expect(text).toContain("Marked on the chart at");
   });
 
+  it("prints ONE line for a fault that holds all window, not one per sample", () => {
+    // The measured defect: 101 near-identical <li>s across 1873px for one
+    // time-invariant fact. Asserted on the rendered list, because that is
+    // the thing that was long — `groupProblemRuns` being correct in
+    // isolation would not have caught the panel failing to call it.
+    expect(problems.length).toBe(101);
+    const element = WindowEditor(editorProps({ parsed: window, problems }));
+    const items = findAllByType(element, "li").filter(
+      (li) => typeof (li.props as { children?: unknown }).children === "string",
+    );
+    const collisionLines = items.filter((li) =>
+      String((li.props as { children: string }).children).includes("must stay below"),
+    );
+    expect(collisionLines).toHaveLength(1);
+    expect(String((collisionLines[0]!.props as { children: string }).children)).toContain(
+      "for the whole window",
+    );
+  });
+
+  it("names only the broken hours when the window clears in the middle", () => {
+    // The wiring, end to end: the panel must pass the window's real grid
+    // step down, or a window that is genuinely healthy for a stretch reads
+    // as one fault across the whole of it. Asserted on rendered text
+    // because the failure this guards against is the editor supplying a
+    // step that never lets the gap check fire, with the grouping itself
+    // still perfectly correct.
+    const clearing = windowWith({
+      lengthHours: 10,
+      boundaries: {
+        selective: constant(10),
+        windDown: {
+          kind: "schedule",
+          entries: [
+            { at: { elapsed: 0, per: "hour" }, value: constant(80) },
+            { at: { elapsed: 4, per: "hour" }, value: constant(20) },
+            { at: { elapsed: 7, per: "hour" }, value: constant(80) },
+          ],
+        },
+        stop: constant(40),
+      },
+    });
+    const clearingProblems = findCrossings(clearing);
+    expect(clearingProblems.length).toBeGreaterThan(1);
+
+    const element = WindowEditor(editorProps({ parsed: clearing, problems: clearingProblems }));
+    const lines = findAllByType(element, "li")
+      .map((li) => (li.props as { children?: unknown }).children)
+      .filter((c): c is string => typeof c === "string")
+      .filter((c) => c.includes("must stay below"));
+
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(line).not.toContain("for the whole window");
+  });
+
+  it("counts the heading in faults, so it does not promise 101 lines above one", () => {
+    const text = textOf(WindowEditor(editorProps({ parsed: window, problems })));
+    expect(text).not.toContain("101 moments");
+    expect(text).toContain("These boundaries collide, and this window cannot be saved");
+  });
+
   it("centres the chart on the first collision rather than on the window's start", () => {
     const shifted = problems.map((problem) => ({ ...problem, atHours: 2 }));
     const element = WindowEditor(editorProps({ parsed: window, problems: shifted }));
