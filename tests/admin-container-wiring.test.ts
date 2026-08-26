@@ -12,8 +12,8 @@
 // override survives the save:
 //
 //   - if the field overrides a setting and is now inheriting: skip it
-//     entirely UNLESS it was previously overridden, in which case send an
-//     explicit `null` to actually clear the override (§17.7's "an omitted
+//     entirely UNLESS the row itself carries an override, in which case send
+//     an explicit `null` to actually clear the override (§17.7's "an omitted
 //     field is no change");
 //   - otherwise: read the draft, and if it was never touched, skip the
 //     field rather than sending `undefined`.
@@ -184,8 +184,9 @@ describe("Admin, mounted in real React", () => {
     // `sourceGlobs: null` — not omit the field, which `buildPatchBody`
     // would otherwise treat as "no change" and leave the override in
     // place. A caller that always skipped an inheriting field regardless
-    // of the row's prior state would pass every fixture where the row
-    // already inherits and fail silently only on a row like this one.
+    // of whether the row itself carries an override would pass every
+    // fixture where the row already inherits and fail silently only on a
+    // row like this one.
     await mountAdmin();
     await act(async () => {
       editButton().click();

@@ -11,7 +11,7 @@
 // itself — the seam this row is about — which:
 //
 //   1. resolves the field's widget from the registry (`widgetFor`),
-//   2. reads what is CURRENTLY STORED for that key out of `loadState`,
+//   2. reads that key's stored value out of `loadState`,
 //   3. falls back to the draft only if the person has typed one
 //      (`drafts[key] ?? stored`),
 //   4. parses that through `inputToValue`, and
