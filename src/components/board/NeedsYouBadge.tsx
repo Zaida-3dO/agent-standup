@@ -18,8 +18,10 @@
 // off data the board already has, and duplicating that network round trip
 // into every board load to save a label change was the wrong trade. So this
 // banner keeps its narrower, cheaper count and says "blocked on you", the
-// literal thing it counts; the sidebar keeps "waiting on you" for the
-// broader union. Neither number moved.
+// literal thing it counts; the sidebar keeps its existing "Needs you" label
+// (`routes.ts`) for the broader union — "waiting on you" is a different
+// component's wording (`NeedsYouInboxView.tsx`'s longer explanatory line),
+// not the sidebar's. Neither number moved.
 //
 // Hook-free and prop-driven; see `TopBar.tsx`'s header.
 import styles from "./Board.module.css";
