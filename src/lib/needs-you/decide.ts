@@ -23,6 +23,16 @@
 // real and complete action: the next reviewer or the agent already on the
 // item sees the rejection and knows to act, without this screen guessing at
 // a transition the schema does not define.
+//
+// **The transition states its precondition.** `/needs-you` is a screen a
+// person leaves open and comes back to, so the row under an "Approve" button
+// is exactly the kind of thing that goes stale — the item may have been
+// decided by someone else, or moved on by the agent working it, since this
+// list was fetched. The transition therefore sends `expectedFrom` (#257,
+// applied to the board's drag path by #292), so a decision made against a
+// stale row is refused with a 409 rather than applied over whatever happened
+// in between. The value is the item's server-reported state; see
+// `DecideInput.expectedFrom`.
 import { uiApiPath } from "@/lib/ui-proxy/path";
 import type { NeedsYouReason } from "./types";
 
@@ -57,6 +67,26 @@ interface DecideInput {
   readonly reason: NeedsYouReason;
   /** The active profile deciding — required: `record_artifact` refuses to guess a person (see that operation's own header). */
   readonly personId: string;
+  /**
+   * The item's state **as the server last reported it** — `NeedsYouItem.state`,
+   * carried verbatim from `GET /api/needs-you` (`./state.ts`), never a value
+   * this module derived.
+   *
+   * This becomes the transition's `expectedFrom` (MILESTONES.md #257), and it
+   * is required rather than optional for the reason #292 gives on the board's
+   * drag path: omitting it is not a smaller request, it is a *different* one.
+   * `applyTransition` raises `StaleTransitionError` only when a caller supplied
+   * a precondition, so an approval sent without one asks the server to move the
+   * item from wherever it now happens to be — and a decision made against a
+   * screen that has gone stale gets a 200 and silently overwrites whatever
+   * another session did in the meantime.
+   *
+   * **It must be the pre-move state, never the target.** The two are always
+   * different here — a `plan_review` item moves to `executing`, an `in_review`
+   * one to `merged` — so sending `to` in this slot would compare a state to
+   * itself, and the precondition could never fire.
+   */
+  readonly expectedFrom: string;
 }
 
 async function recordArtifact(
@@ -119,7 +149,10 @@ export async function approve(
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ to }),
+        // **`expectedFrom` is the item's pre-move state, not `to`.** See
+        // `DecideInput.expectedFrom` for why it is required, and why sending
+        // the target here would make the precondition unfireable.
+        body: JSON.stringify({ to, expectedFrom: input.expectedFrom }),
       },
     );
   } catch {

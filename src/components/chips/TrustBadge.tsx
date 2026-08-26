@@ -3,15 +3,26 @@
 //
 // A verified state and an unverifiable one must not look the same, exactly
 // as an empty column and a withheld one must not (#123's rule, applied to a
-// single card rather than a whole section). Two things carry that
-// difference here, deliberately redundant so neither channel alone has to
-// do the whole job:
+// single card rather than a whole section). Two channels carry that
+// difference, and they key on **related but distinct facts** — they are not
+// two renderings of one token, and a reader who assumes they are will
+// "fix" one of them into being wrong:
 //
-//   - This badge — text plus the `--trust-unverified` fill, so the fact is
-//     legible even to a reader who cannot see the border.
-//   - The card's own dashed border (`Board.module.css` `.cardUnverified`),
-//     painted from the same token, so the fact is visible even at a glance
-//     that never reaches the text.
+//   - This badge — text plus the `--trust-unverified` fill, driven by
+//     `verified` (`entry.trust.verification !== null`, see the JSDoc
+//     below). It answers *has anyone checked this state?*
+//   - The card's own dashed border (`Board.module.css` `.cardUnverified`,
+//     painted from `--trust-unverified-border`), driven by
+//     `entry.trust.unverifiedOrigin` (`ItemCard.tsx`). It answers *did this
+//     row arrive by import?*
+//
+// **Those two diverge, by design and in practice.** An imported item that
+// someone has since verified is badged "Verified" and still dashed; an
+// item created in the product and never checked is badged "Imported" and
+// is not dashed — which is the common case, so a board where every card
+// reads "Imported" and none is outlined is correct, not a bug. Keying the
+// border off `verification` to "restore" a redundancy that was never there
+// would dash every row in the store.
 //
 // Never a severity colour: `globals.css` §6 is explicit that an unverified
 // row "is not *wrong*, it is unconfirmed", so this shares no visual
