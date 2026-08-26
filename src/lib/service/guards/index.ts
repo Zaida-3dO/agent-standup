@@ -68,6 +68,8 @@ export {
   currentTipCommitSha,
   hasApproval,
   latestApprovalAtTip,
+  shaMatches,
+  shaMatchesTipOrLineage,
   tipCommitLineage,
 } from "./artifact-tip";
 export {

@@ -383,6 +383,34 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       await callTransition(id, "merged", reg);
       expect(await readState(id)).toBe("merged");
     });
+
+    it("ALLOWS: an approval pinned to a 7-char abbreviation of the full-length tip commit (row 73ff36bd's recurrence, e09aa150 site 2)", async () => {
+      // approvingArtifactAtCurrentRoundAndTip is the second of four sites
+      // that ask "is this sha at the tip" — this pins that it now agrees
+      // with latestApprovalAtTip (artifact-guards.test.ts) rather than
+      // still comparing shas by exact value, which is what let a row #300
+      // unblocked at plan_review hit the identical wall at merged.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+        reviewRound: 1,
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "86f3af0",
+        reviewRound: 1,
+        createdAt: new Date(),
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
   });
 
   describe("criterion 3 — merge.requires_visual_review", () => {
@@ -607,6 +635,31 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         kind: "commit",
         commitSha: "squashed",
         supersedesSha: "branch-tip",
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("needs_approval: ALLOWS a merge_approval pinned to a 7-char abbreviation of the full-length tip commit (e09aa150 site 3)", async () => {
+      // personHasApprovedMerge is the third of four sites that ask "is this
+      // sha at the tip" — before this fix it compared shas by exact value
+      // via a local appliesToTip(), so an abbreviated merge_approval was
+      // refused as stale even though the underlying commit was identical,
+      // AND the refusal rendered as staleApprovalExists:true — sending a
+      // person to re-authorise a merge for a change that never happened.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
+        commitSha: "86f3af0",
+        createdByType: "person",
       });
       await callTransition(id, "merged", reg);
       expect(await readState(id)).toBe("merged");
@@ -2617,6 +2670,31 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
         message: expect.stringContaining("merge_override"),
       });
+    });
+
+    it("ALLOWS an override pinned to a 7-char abbreviation of the full-length tip commit (e09aa150 site 4)", async () => {
+      // mergeOverrideSatisfies is the fourth of four sites, and the one that
+      // used to compare shas in SQL ("commitSha" = ANY($3::text[])) rather
+      // than in TS — exact-value membership either way, and blind to an
+      // override recorded from ordinary git output the same way the other
+      // three sites were.
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a",
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_override",
+        commitSha: "86f3af0",
+        body: "Docs-only change since review; no source files were touched.",
+      });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
     });
   });
 });

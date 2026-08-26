@@ -17,6 +17,7 @@ import {
   latestApprovalAtTip,
   planApprovalGuard,
   reviewRequestedGuard,
+  shaMatches,
 } from "@/lib/service/guards";
 import { guardRegistry } from "@/lib/service/state-machine/guard";
 import {
@@ -627,5 +628,60 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
 
       expect(await latestApprovalAtTip(prisma, id, "code_review")).toBeNull();
     });
+  });
+});
+
+// shaMatches's bound is pure — no database needed, so this runs even
+// without TEST_DATABASE_URL. Pinned separately from the guard-level and
+// latestApprovalAtTip tests above because two mutants survived those:
+// widening HEX_SHA from `{7,40}` to `{1,40}` or to `{7,}` still passed
+// every test that exercises shaMatches only through real git-length shas
+// (7 or 40 characters) — none of those fixtures happen to sit exactly on
+// the boundary the bound is supposed to enforce. Row 030ec708: with
+// commitSha stored as any non-empty string (record-artifact.ts has no
+// format check), the floor is a security margin, not a convenience — at 4
+// characters a matching sha is 1-in-65,536 and brute-forceable in minutes
+// by writing artifacts in a loop; at 7 it is 1-in-268,435,456, the exact
+// margin git itself stakes --short abbreviation on.
+describe("shaMatches — the {7,40} bound is pinned, not left to a comment", () => {
+  // A 40-char real sha-1 to compare boundary-length candidates against.
+  const fullSha = "86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a";
+  const sixChar = fullSha.slice(0, 6);
+  const sevenChar = fullSha.slice(0, 7);
+  const fortyOneChar = `${fullSha}a`;
+
+  it("REFUSES a 6-character prefix — one character under the floor", () => {
+    expect(shaMatches(sixChar, fullSha)).toBe(false);
+  });
+
+  it("ALLOWS a 7-character prefix — exactly at the floor", () => {
+    expect(shaMatches(sevenChar, fullSha)).toBe(true);
+  });
+
+  it("REFUSES a 41-character string prefix-matching a longer one — the ceiling, not just non-equality", () => {
+    // A genuine prefix relationship — fortyOneChar really is the first 41
+    // characters of a longer string — so this can only be refused because
+    // HEX_SHA's ceiling excludes 41-character values from counting as a sha
+    // at all. Comparing two unrelated 41-char strings (no prefix relation)
+    // would pass this same assertion for the WRONG reason even with no
+    // ceiling at all, since shaMatches would fall through to false anyway —
+    // that is exactly the gap that let `{7,40}` -> `{7,}` survive: it
+    // widens what HEX_SHA accepts without ever being asked to accept a
+    // prefix pair that only a wider ceiling would admit.
+    const longerRelated = `${fortyOneChar}cccccccccccccccccccccccccccccccccccccccc`;
+    expect(shaMatches(fortyOneChar, longerRelated)).toBe(false);
+  });
+
+  it("ALLOWS a 40-character exact match — exactly at the ceiling", () => {
+    expect(shaMatches(fullSha, fullSha)).toBe(true);
+  });
+
+  it("case-sensitive: an uppercase-hex candidate does not bypass the gate via a mixed-case prefix", () => {
+    // Guards against a case-insensitive regex slipping in later: HEX_SHA is
+    // lowercase-only, and git commit shas are always rendered lowercase, so
+    // an uppercase value is never real git output and must not prefix-match
+    // through some case-folding path this function does not have but a
+    // careless edit could add.
+    expect(shaMatches(sevenChar.toUpperCase(), fullSha)).toBe(false);
   });
 });

@@ -196,15 +196,36 @@ export async function hasApproval(
 }
 
 /**
- * A full or abbreviated git object id: 4–40 lowercase hex characters.
+ * The shortest prefix `shaMatches` will accept as an abbreviation, and the
+ * longest string it will accept as a sha at all: 7–40 lowercase hex
+ * characters.
  *
- * 4 is git's own practical floor for `--short` output (`core.abbrev`
- * defaults to "auto", which never goes below 4); 40 is a full sha-1. Sha-256
- * repos use 64, which this does not accept — this codebase writes only
- * sha-1 commit ids, and widening the ceiling is a one-line change with no
- * callers to revisit if that ever changes.
+ * **Why 7, not git's own practical floor of 4.** `commitSha` is stored with
+ * no format validation (`record-artifact.ts` accepts any non-empty
+ * trimmed string), so a short value is not guaranteed to have come from
+ * git — it is caller-supplied, and prefix matching turns a short value into
+ * a match against a whole family of commits. At 4 hex characters that
+ * family has 65,536 members, cheap to search by writing artifacts in a
+ * loop; at 7 it has 268,435,456, the exact margin git itself stakes
+ * `--short` abbreviation on and the width the report that motivated this
+ * module used throughout. Nothing in this codebase writes a 4- or
+ * 6-character sha, so 7 cannot refuse a real caller.
+ *
+ * 40 is a full sha-1. Sha-256 repos use 64, which this does not accept —
+ * this codebase writes only sha-1 commit ids, and widening the ceiling is a
+ * one-line change with no callers to revisit if that ever changes.
+ *
+ * **Both bounds are pinned by a dedicated test**, not left to this comment
+ * alone — `{7,40}` narrowed silently to `{1,40}` or `{7,}` still lets every
+ * existing test pass, because the fixtures those tests use never happen to
+ * probe the boundary. A mutation that widens either number changes what
+ * this module will accept as evidence for a merge, and the margin above
+ * only holds at the numbers actually enforced, not at the numbers this
+ * comment claims.
  */
-const HEX_SHA = /^[0-9a-f]{4,40}$/;
+const HEX_SHA_MIN_LENGTH = 7;
+const HEX_SHA_MAX_LENGTH = 40;
+const HEX_SHA = new RegExp(`^[0-9a-f]{${HEX_SHA_MIN_LENGTH},${HEX_SHA_MAX_LENGTH}}$`);
 
 /**
  * Whether `candidate` refers to the same commit as `reference`, allowing
@@ -242,7 +263,7 @@ const HEX_SHA = /^[0-9a-f]{4,40}$/;
  * case (abbreviated git shas) and leaves equality as the only route for
  * anything else, synthetic or otherwise.
  */
-function shaMatches(candidate: string, reference: string): boolean {
+export function shaMatches(candidate: string, reference: string): boolean {
   if (candidate === reference) {
     return true;
   }
@@ -252,6 +273,53 @@ function shaMatches(candidate: string, reference: string): boolean {
   return candidate.length < reference.length
     ? reference.startsWith(candidate)
     : candidate.startsWith(reference);
+}
+
+/**
+ * Whether `candidate` matches the tip itself or anything in its
+ * supersession lineage, allowing abbreviation on either side of each
+ * comparison (`shaMatches` above).
+ *
+ * **Every site in this codebase that asks "is this sha at the tip" needs
+ * this exact question answered, not a narrower one.** Before this row, three
+ * of the four call sites tested `candidate === tip || lineage.has(candidate)`
+ * directly — correct for two full-length shas, but `Set.has` is exact-value
+ * membership, so a lineage built from full shas is blind to an abbreviated
+ * `candidate` even though `shaMatches` alone would have accepted it. Row
+ * `e09aa150` proved this empirically: `latestApprovalAtTip` (routed through
+ * `shaMatches` first) matched a 7-character approval against a 40-character
+ * tip, while `approvingArtifactAtCurrentRoundAndTip` and
+ * `personHasApprovedMerge` — still doing the comparison directly — refused
+ * the identical row. Centralising the question here, once, is what makes
+ * "every site agrees on what counts as the same commit" true by
+ * construction rather than by four call sites happening to stay in sync.
+ *
+ * `tip === null` (no commit artifact exists yet) is handled the same way
+ * every caller of this question already needed it handled: nothing exists
+ * for `candidate` to be stale against, so a `null` `candidate` matches and
+ * anything else does not — see `latestApprovalAtTip`'s own doc for why that
+ * asymmetry is correct rather than an oversight.
+ */
+export function shaMatchesTipOrLineage(
+  candidate: string | null,
+  tip: string | null,
+  lineage: ReadonlySet<string>,
+): boolean {
+  if (tip === null) {
+    return candidate === null;
+  }
+  if (candidate === null) {
+    return false;
+  }
+  if (shaMatches(candidate, tip)) {
+    return true;
+  }
+  for (const lineageSha of lineage) {
+    if (shaMatches(candidate, lineageSha)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -302,26 +370,15 @@ export async function latestApprovalAtTip(
   // latest approval that is at the tip" are different questions, and
   // collapsing them to "the latest one, checked" would silently answer the
   // wrong one whenever they diverge.
+  //
+  // Delegated to `shaMatchesTipOrLineage` rather than repeating the
+  // tip/lineage/null-handling logic inline — this is one of four sites in
+  // the codebase that ask exactly this question, and having each answer it
+  // separately is what let three of the four drift out of agreement (row
+  // `e09aa150`).
   for (const row of rows) {
-    // `row.commitSha === tip` (inside shaMatches) still carries the
-    // `null`-tip case: with no commit artifact for the item, `lineage` is
-    // empty and an approval with `commitSha: null` must still match, which
-    // set membership alone would not give (`lineage.has(null)` is not a
-    // question the set can answer). `shaMatches` short-circuits on exact
-    // equality first, so `null === null` still passes before either side is
-    // tested against `HEX_SHA`.
-    if (row.commitSha === tip) {
+    if (shaMatchesTipOrLineage(row.commitSha, tip, lineage)) {
       return row;
-    }
-    if (tip !== null && row.commitSha !== null && shaMatches(row.commitSha, tip)) {
-      return row;
-    }
-    if (row.commitSha !== null) {
-      for (const lineageSha of lineage) {
-        if (shaMatches(row.commitSha, lineageSha)) {
-          return row;
-        }
-      }
     }
   }
   return null;
