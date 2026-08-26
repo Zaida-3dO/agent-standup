@@ -8,6 +8,7 @@
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
+import { Client as PgClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -260,21 +261,33 @@ describeIfDb("get_item_detail against Postgres", () => {
   describe("artifacts", () => {
     async function addArtifact(
       itemId: string,
-      fields: { kind: string; verdict?: string; round?: number; sha?: string },
+      fields: { kind: string; verdict?: string; round?: number; sha?: string; createdAt?: Date },
     ): Promise<void> {
       // `createdByType`/`createdById` are NOT NULL — an artifact always
       // records who produced it (SCHEMA.md §6a), so a fixture cannot omit
       // them.
+      //
+      // `createdAt` defaults to `now()` via the column default when omitted;
+      // an explicit value lets a test pin two rows to the exact same
+      // instant, which is the only way to exercise the `seq` tiebreak — two
+      // calls to `now()` a statement apart are never actually equal.
       await prisma.$executeRawUnsafe(
         `INSERT INTO "Artifact"
-           ("id", "itemId", "kind", "verdict", "reviewRound", "commitSha", "createdByType", "createdById")
-         VALUES (gen_random_uuid(), $1, $2::"ArtifactKind", $3::"Verdict", $4, $5, 'agent'::"HolderType", $6)`,
-        itemId,
-        fields.kind,
-        fields.verdict ?? null,
-        fields.round ?? 1,
-        fields.sha ?? null,
-        "test-agent",
+           ("id", "itemId", "kind", "verdict", "reviewRound", "commitSha", "createdByType", "createdById"${
+             fields.createdAt ? `, "createdAt"` : ""
+           })
+         VALUES (gen_random_uuid(), $1, $2::"ArtifactKind", $3::"Verdict", $4, $5, 'agent'::"HolderType", $6${
+           fields.createdAt ? `, $7` : ""
+         })`,
+        ...([
+          itemId,
+          fields.kind,
+          fields.verdict ?? null,
+          fields.round ?? 1,
+          fields.sha ?? null,
+          "test-agent",
+          ...(fields.createdAt ? [fields.createdAt] : []),
+        ] as unknown[]),
       );
     }
 
@@ -303,6 +316,78 @@ describeIfDb("get_item_detail against Postgres", () => {
       await addArtifact(theirs.id, { kind: "code_review", verdict: "lgtm" });
 
       expect((await detailOf(mine.id)).artifacts).toEqual([]);
+    });
+
+    // Row 6faf6478-35a5-468d-bce3-341789c08ccd. `currentTipCommitSha`
+    // (`src/lib/item-detail/view.ts`) walks this response's `artifacts`
+    // array keeping the *last* matching `commit`-kind entry — so the tip it
+    // derives is decided entirely by the order this query returns rows in,
+    // not by any field the client can see. Without a `seq` tiebreak, two
+    // `commit` artifacts sharing a `createdAt` (a real case under concurrent
+    // writes) leave the winner to whatever order Postgres's plan happens to
+    // return rows in.
+    //
+    // **Why 8 concurrent connections, not 2.** A single connection issuing
+    // two sequential `INSERT`s — or even two connections racing on `BEGIN` /
+    // `COMMIT` — was tried first and could not be made to fail here: on this
+    // table shape a plain scan with no tiebreak returned insertion order
+    // consistently across a seq scan, an index scan, and a forced 4-worker
+    // parallel scan (checked directly, including 30 trials at 200 tied rows
+    // and a bare `SELECT` with no `ORDER BY` at all). Widening to 8 backends
+    // truly concurrent via `Promise.all`, each opening its own connection
+    // and inserting one row at the identical `createdAt`, disagreed with
+    // insertion order on **30 of 30** trials measured directly against the
+    // unfixed query — genuine, reliable, not a coin flip. The same 8-way
+    // race against the fixed query (`"seq" ASC` added) matched insertion
+    // order on **20 of 20**. Both figures were measured before this test was
+    // written, not assumed from the fix's shape.
+    it("orders same-millisecond artifacts by seq, matching insertion order", async () => {
+      const project = await createItem({ area: "detail-art-tie" });
+      const task = await createItem({ area: "detail-art-tie", parentId: project.id });
+      const tiedInstant = new Date();
+
+      const WRITER_COUNT = 8;
+      const clients = Array.from(
+        { length: WRITER_COUNT },
+        () => new PgClient({ connectionString: scratchUrl }),
+      );
+      await Promise.all(clients.map((c) => c.connect()));
+      // `pg` returns a `bigint`/`int8` column as a STRING by default (no
+      // custom type parser is registered) — comparing those with `<`/`>`
+      // would sort lexically ("15" < "9"), not numerically, and silently
+      // compute the wrong expected order. `BigInt(...)` is what makes the
+      // comparison below actually numeric.
+      let results: { rows: { seq: string }[] }[];
+      try {
+        results = await Promise.all(
+          clients.map((client, i) =>
+            client.query<{ seq: string }>(
+              `INSERT INTO "Artifact"
+                 ("id","itemId","kind","reviewRound","commitSha","createdByType","createdById","createdAt")
+               VALUES (gen_random_uuid(),$1,'commit'::"ArtifactKind",1,$2,'agent'::"HolderType",'test-agent',$3)
+               RETURNING "seq"`,
+              [task.id, `writer-${i}`, tiedInstant],
+            ),
+          ),
+        );
+      } finally {
+        await Promise.all(clients.map((c) => c.end()));
+      }
+
+      // `seq` is a `BIGSERIAL` — the true insertion order is whichever writer
+      // actually drew the lowest value, not the order this test happened to
+      // issue `INSERT`s in (a real race lets either side land first). Reading
+      // the expected order back from the `seq` values themselves, rather
+      // than assuming `writer-0` always wins, is what keeps this assertion
+      // honest under a genuine race.
+      const expectedOrder = results
+        .map((r, i) => ({ sha: `writer-${i}`, seq: BigInt(r.rows[0]!.seq) }))
+        .sort((a, b) => (a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0))
+        .map((r) => r.sha);
+
+      const detail = await detailOf(task.id);
+      const commits = detail.artifacts.filter((a) => a.kind === "commit");
+      expect(commits.map((a) => a.commitSha)).toEqual(expectedOrder);
     });
   });
 

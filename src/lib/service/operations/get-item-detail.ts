@@ -395,11 +395,24 @@ export const getItemDetail = defineOperation({
       // nobody — so the fact that decides whether a merge gate means anything
       // was invisible to every human and agent reading the item back. A
       // record that cannot be read is not an audit trail.
+      //
+      // `"seq" ASC` breaks a same-millisecond `createdAt` tie by insertion
+      // order rather than leaving it to whatever order Postgres happens to
+      // return rows in. This response is the one source the client-side
+      // mirrors in `item-detail/view.ts` (`currentTipCommitSha`,
+      // `newestVerification`) read, and both walk the array keeping the
+      // *last* matching entry — so an unordered tie here was a coin flip on
+      // which commit's sha those mirrors derived, and `currentTipCommitSha`'s
+      // answer is written back as a `historical_verification` artifact
+      // (`ItemDetailContainer.tsx`), making a lost tie a durable wrong
+      // record rather than a transient render. `seq` ASC, matching
+      // `createdAt ASC`: within the array the client scans forward with
+      // `>=`, so ASC ordering is what makes "last seen" mean "most recent".
       `SELECT "id", "kind"::text AS "kind", "verdict"::text AS "verdict", "reviewRound",
               "commitSha", "ref", "body", "findings", "followUpItemId",
               "createdByType"::text AS "createdByType", "createdById", "createdAt"
        FROM "Artifact" WHERE "itemId" = $1
-       ORDER BY "reviewRound" ASC, "createdAt" ASC`,
+       ORDER BY "reviewRound" ASC, "createdAt" ASC, "seq" ASC`,
       id,
     );
     const artifacts: ItemDetailArtifact[] = artifactRows.map((row) => ({
