@@ -118,19 +118,26 @@ async function mountContainer(): Promise<void> {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      createElement(StrictMode, null, createElement(ProjectDetailContainer, { projectId: "proj-1" })),
+      createElement(
+        StrictMode,
+        null,
+        createElement(ProjectDetailContainer, { projectId: "proj-1" }),
+      ),
     );
   });
 }
 
 function parentIdInput(): HTMLInputElement {
   const input = container.querySelector<HTMLInputElement>('input[data-repair-input="parentId"]');
-  if (!input) throw new Error("no parentId repair input rendered — the fixture is wrong, not the code");
+  if (!input)
+    throw new Error("no parentId repair input rendered — the fixture is wrong, not the code");
   return input;
 }
 
 function reparentButton(): HTMLButtonElement {
-  const button = container.querySelector<HTMLButtonElement>('button[data-repair-action="reparent"]');
+  const button = container.querySelector<HTMLButtonElement>(
+    'button[data-repair-action="reparent"]',
+  );
   if (!button) throw new Error("no reparent button rendered — the fixture is wrong, not the code");
   return button;
 }

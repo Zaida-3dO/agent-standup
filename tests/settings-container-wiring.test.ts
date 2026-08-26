@@ -141,9 +141,7 @@ function saveButton(key: string): HTMLButtonElement {
 }
 
 function confirmInput(key: string): HTMLInputElement {
-  const input = container.querySelector<HTMLInputElement>(
-    `[aria-label="Type ${key} to confirm"]`,
-  );
+  const input = container.querySelector<HTMLInputElement>(`[aria-label="Type ${key} to confirm"]`);
   if (!input) throw new Error(`no confirmation input rendered for ${key}`);
   return input;
 }

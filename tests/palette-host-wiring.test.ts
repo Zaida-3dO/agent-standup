@@ -69,7 +69,11 @@ beforeEach(() => {
           url,
           body: JSON.parse(String(init?.body ?? "{}")) as unknown,
         });
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) } as Response);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({}),
+        } as Response);
       }
       if (url.includes("/api/ui/items/item-a")) {
         return Promise.resolve({

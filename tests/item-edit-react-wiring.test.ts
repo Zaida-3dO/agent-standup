@@ -111,7 +111,13 @@ beforeEach(() => {
           status: 200,
           json: () =>
             Promise.resolve({
-              item: { id: "item-a", title: "whatever", state: "on_deck", headline: null, updatedAt: "x" },
+              item: {
+                id: "item-a",
+                title: "whatever",
+                state: "on_deck",
+                headline: null,
+                updatedAt: "x",
+              },
             }),
         } as Response);
       }
@@ -157,7 +163,8 @@ async function mount(): Promise<void> {
 
 function editTitleButton(): HTMLButtonElement {
   const button = container.querySelector<HTMLButtonElement>('button[aria-label="Edit title"]');
-  if (!button) throw new Error("no Edit title button rendered — the fixture is wrong, not the code");
+  if (!button)
+    throw new Error("no Edit title button rendered — the fixture is wrong, not the code");
   return button;
 }
 
