@@ -628,6 +628,17 @@ origin/main`) sidesteps the drift entirely, and is the better habit.
 Conventional-commit prefixes (`feat:`, `fix:`, `docs:`, `chore:`, `test:`, `ci:`). Say what changed
 and why; the diff already says how.
 
+### If a PR delivers a board row, name the row's id in the PR title or body
+
+**A full UUID, verbatim** — `id-in-merged-pr` matching (`scripts/reconcile-shipped-rows.mjs`) reads
+the raw title/body text and needs the exact 36-character id; an abbreviated or short-id form will
+not match. One line is enough: `Row: <uuid>` in the body, or the id inline in the title.
+
+This is what lets `scripts/reconcile-shipped-rows.mjs` find board rows that shipped but never got
+closed — its only signal is a merged PR's title or body containing the row's own id. A PR that
+delivers no board row has nothing to add here; this is an invitation for the PRs that do, not a
+requirement on every PR.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

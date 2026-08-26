@@ -9,7 +9,8 @@ export interface ReconcilableItem {
   readonly id: string;
   readonly title: string;
   readonly state: string;
-  readonly priority: string;
+  /** Null when nobody has written one, same as `ItemSummaryRecord`. */
+  readonly headline: string | null;
 }
 
 /** The slice of `gh pr list --json ...` this module needs. */

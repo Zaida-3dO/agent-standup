@@ -91,9 +91,11 @@ function parseArgs(argv) {
  *
  * `includeTerminal` defaults to false server-side (list-items.ts), which is
  * exactly "non-terminal" — no separate filtering needed here. `full: true`
- * is NOT passed: the matcher only reads id/title/state/priority, all of
- * which the slim shape already returns, and asking for whole records would
- * cost every row's body and customFields for nothing this script uses.
+ * is NOT passed: the matcher only reads id/title/state/headline, and the
+ * slim `ItemSummaryRecord` shape (src/lib/service/items/row.ts) already
+ * returns exactly those four fields — it does NOT include `priority`, so
+ * this report shows headline instead. Asking for whole records would cost
+ * every row's body and customFields for nothing this script uses.
  *
  * Throws on any non-2xx response or a body that isn't the shape expected,
  * rather than returning an empty list — see the module header on why a
@@ -130,7 +132,7 @@ async function fetchNonTerminalItems(baseUrl, token) {
         id: item.id,
         title: item.title,
         state: item.state,
-        priority: item.priority,
+        headline: item.headline ?? null,
       });
     }
     if (!payload.nextCursor) break;

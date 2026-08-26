@@ -42,7 +42,9 @@ export function renderReport(
       lines.push(`### ${item.title}`);
       lines.push("");
       lines.push(`- id: \`${item.id}\``);
-      lines.push(`- state: \`${item.state}\`, priority: \`${item.priority}\``);
+      lines.push(
+        `- state: \`${item.state}\`${item.headline ? `, headline: ${item.headline}` : ""}`,
+      );
       lines.push(
         `- confidence: **${candidate.confidence}** (row id found verbatim in a merged PR)`,
       );

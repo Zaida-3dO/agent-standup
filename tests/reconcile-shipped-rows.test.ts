@@ -20,14 +20,14 @@ const ITEM_A: ReconcilableItem = {
   id: "17e83ab8-4d4f-4d2b-a00d-92651228112b",
   title: "Nothing walks a shipped row forward",
   state: "on_deck",
-  priority: "P1",
+  headline: "Reconciliation has no signal to walk a shipped row forward",
 };
 
 const ITEM_B: ReconcilableItem = {
   id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   title: "Some unrelated row with no PR at all",
   state: "plan_review",
-  priority: "P0",
+  headline: null,
 };
 
 function pr(overrides: Partial<MergedPullRequest>): MergedPullRequest {
@@ -163,6 +163,24 @@ describe("renderReport", () => {
     expect(report).toContain("No candidates found");
     expect(report).toContain("5");
     expect(report).toContain("12");
+  });
+
+  it("prints the item's headline, never `priority: undefined` — the slim shape has no priority field", () => {
+    const merged = [pr({ number: 60, body: ITEM_A.id })];
+    const candidates = findShippedCandidates({ items: [ITEM_A], mergedPullRequests: merged });
+    const report = renderReport(candidates, { itemsChecked: 1, pullRequestsSearched: 1 });
+
+    expect(report).toContain(`headline: ${ITEM_A.headline}`);
+    expect(report).not.toContain("undefined");
+  });
+
+  it("omits the headline clause entirely when a row has none, rather than printing 'headline: null'", () => {
+    const merged = [pr({ number: 61, body: ITEM_B.id })];
+    const candidates = findShippedCandidates({ items: [ITEM_B], mergedPullRequests: merged });
+    const report = renderReport(candidates, { itemsChecked: 1, pullRequestsSearched: 1 });
+
+    expect(report).not.toContain("headline:");
+    expect(report).not.toContain("null");
   });
 
   it("always states the deliverable-existence gap, regardless of candidate count", () => {
