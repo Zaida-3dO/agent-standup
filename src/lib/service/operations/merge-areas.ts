@@ -20,10 +20,15 @@
 // the losing area, EITHER it does not yet hold the surviving one (a plain
 // retag is safe) OR it already holds both (the losing membership is dropped,
 // never inserted a second time). `INSERT … ON CONFLICT DO NOTHING` on the
-// insert half makes the "already holds both" case inert by construction —
-// there is no path through this function that can reach the primary-key
-// violation the naive version hits, because nothing here ever attempts an
-// insert or update that could collide.
+// insert half is what makes the "already holds both" case inert by
+// construction, and it is what actually prevents the primary-key violation
+// the naive version hits — the per-item `heldBoth` check (below) is a second,
+// independent guard for the same case, kept because it makes the returned
+// `duplicatesResolved` count honest and skips an insert already known to be
+// a no-op, not because it alone is what stops the collision. Hand-mutation
+// confirmed this: deleting the `heldBoth` skip and always attempting the
+// insert left every test green, because `ON CONFLICT DO NOTHING` was already
+// carrying the correctness on its own.
 //
 // ── The three decisions this row's body asked to make ─────────────────────
 //
@@ -166,14 +171,19 @@ export const mergeAreas = defineOperation({
       //
       //   - Drop the losing membership unconditionally. If the item did not
       //     already hold `to`, this is followed by an insert of `to` below;
-      //     if it did, dropping `from` is the entire fix — no insert is
-      //     attempted, so there is nothing to collide on the primary key.
-      //   - `ON CONFLICT DO NOTHING` on the insert is a second, redundant
-      //     line of defence for the same case (a concurrent write that
-      //     tagged this item with `to` between the SELECT above and this
-      //     statement), not the primary mechanism — the `heldBoth` check
-      //     already prevents the ordinary case from ever attempting an
-      //     insert that could conflict.
+      //     if it did, dropping `from` is the entire fix.
+      //   - `heldBoth`/`ON CONFLICT DO NOTHING` are two independent guards
+      //     against the same primary-key collision, not a primary mechanism
+      //     plus a redundant backstop: hand-mutation testing this operation
+      //     showed that deleting the `if (!heldBoth)` skip (always attempting
+      //     the insert) leaves the whole suite green, because
+      //     `ON CONFLICT DO NOTHING` alone already makes the insert safe
+      //     either way. `heldBoth` earns its keep elsewhere — it is what
+      //     makes `duplicatesResolved` (below) an honest count rather than
+      //     an estimate, and it avoids an insert this connection knows in
+      //     advance will be a no-op — but do not read its presence here as
+      //     load-bearing for correctness; `ON CONFLICT DO NOTHING` is what
+      //     actually prevents the collision.
       await ctx.db.$executeRawUnsafe(
         `DELETE FROM "ItemArea" WHERE "itemId" = $1 AND "areaId" = $2`,
         item.itemId,
@@ -197,7 +207,11 @@ export const mergeAreas = defineOperation({
       const newPrimary = wasPrimary ? to : item.area;
 
       if (wasPrimary) {
-        await ctx.db.$executeRawUnsafe(`UPDATE "Item" SET "area" = $2 WHERE "id" = $1`, item.itemId, to);
+        await ctx.db.$executeRawUnsafe(
+          `UPDATE "Item" SET "area" = $2 WHERE "id" = $1`,
+          item.itemId,
+          to,
+        );
       }
 
       const before: Record<string, unknown> = { areas: item.areas };
