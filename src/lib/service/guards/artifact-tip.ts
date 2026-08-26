@@ -20,6 +20,18 @@ interface ArtifactRow {
 }
 
 /**
+ * The row shape for queries that need the insertion-order tiebreak —
+ * `currentTipCommitSha` and the supersession walk in `tipCommitLineage`.
+ * Kept separate from `ArtifactRow` rather than adding `seq` to it broadly:
+ * nothing else in this module orders by `seq`, and a field every caller
+ * carries but only two ever read invites exactly the kind of drift this
+ * fix exists to close (see `seq`'s own doc on the Prisma model).
+ */
+interface OrderedArtifactRow {
+  commitSha: string | null;
+}
+
+/**
  * How many supersession hops the walk below will follow before giving up.
  *
  * A bound rather than an unbounded loop, because the chain is built from
@@ -86,7 +98,7 @@ export async function tipCommitLineage(
          FROM "Artifact"
         WHERE "itemId" = $1 AND "kind" = 'commit' AND "commitSha" = $2
           AND "supersedesSha" IS NOT NULL
-        ORDER BY "createdAt" DESC, "id" DESC
+        ORDER BY "createdAt" DESC, "seq" DESC
         LIMIT 1`,
       itemId,
       cursor,
@@ -114,11 +126,16 @@ export async function tipCommitLineage(
  * never stored, per DECISIONS.md §13a ("store facts, derive volatiles").
  *
  * Defined as the `commitSha` of the most recently created `commit`-kind
- * artifact for the item. `createdAt DESC, id DESC` breaks a same-instant tie
- * deterministically rather than leaving it to whatever order Postgres
- * happens to return rows in — two artifacts can share a timestamp at
- * millisecond precision under concurrent writes, and an unordered "the last
- * one" would be a coin flip.
+ * artifact for the item. Ordered `"createdAt" DESC, "seq" DESC` — `seq` is
+ * the tiebreak, not `createdAt`: two artifacts can share a timestamp at
+ * millisecond precision under concurrent writes (`Artifact.createdAt` is
+ * `@db.Timestamptz(3)`), and this used to break that tie with `id DESC`.
+ * `id` is `@default(uuid())` — a random v4 with no relationship to
+ * insertion order — so a same-millisecond tie was a coin flip on which
+ * commit counted as the tip, decided once and then fixed forever. `seq` is
+ * a Postgres-assigned `bigserial` (see its own doc on the Prisma model),
+ * handed out in true insertion order, so the tiebreak now actually answers
+ * "which one was recorded later" instead of "which uuid sorts higher".
  *
  * Returns `null` when the item has no `commit` artifact at all — nothing has
  * been committed yet, so there is no tip for anything to be stale against.
@@ -127,11 +144,11 @@ export async function currentTipCommitSha(
   db: TransactionHandle,
   itemId: string,
 ): Promise<string | null> {
-  const rows = await db.$queryRawUnsafe<ArtifactRow[]>(
-    `SELECT "id", "kind", "verdict", "commitSha", "createdAt"
+  const rows = await db.$queryRawUnsafe<OrderedArtifactRow[]>(
+    `SELECT "commitSha"
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = 'commit'
-      ORDER BY "createdAt" DESC, "id" DESC
+      ORDER BY "createdAt" DESC, "seq" DESC
       LIMIT 1`,
     itemId,
   );

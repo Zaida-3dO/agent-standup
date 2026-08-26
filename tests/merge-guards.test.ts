@@ -2420,6 +2420,58 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("in_review");
     });
 
+    // Same case as directly above, forced onto the actual collision this row
+    // exists to close rather than relying on timing to hit it — the
+    // intermittent failure this test is named for (#agent-standup row
+    // 1d56cd0e) reproduced at ~45% on ordinary hardware, because the two
+    // relevant inserts above land in the same Postgres millisecond
+    // (`Artifact.createdAt` is `@db.Timestamptz(3)`) often enough by chance
+    // alone. Pinning `createdAt` to the same instant on both `bbb2222` and
+    // `ddd4444` makes the tie certain instead of probable, so this test fails
+    // every run — not 45% of them — if the tiebreak regresses to something
+    // that does not reflect actual insertion order (e.g. back to `id DESC`
+    // on the random-uuid `Artifact.id`).
+    it("REFUSES the same case even when the new commit ties the superseding one on createdAt to the millisecond", async () => {
+      const id = await createTask({ state: "in_review" });
+      // Explicit, ordered timestamps rather than each artifact's own
+      // insert-time default: `aaa1111` must be strictly OLDER than the tied
+      // pair below it, or it would itself win "most recent" and the test
+      // would not be exercising the tiebreak at all.
+      const reviewed = new Date("2026-01-01T00:00:00.000Z");
+      const tie = new Date("2026-01-01T00:00:01.000Z");
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "aaa1111",
+        createdAt: reviewed,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: "aaa1111",
+        createdAt: reviewed,
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "bbb2222",
+        supersedesSha: "aaa1111",
+        createdAt: tie,
+      });
+      // Real new work, inserted AFTER bbb2222 (so it is the true tip) but
+      // carrying the identical `createdAt` — the collision the intermittent
+      // failure turned on.
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "ddd4444", createdAt: tie });
+
+      const reg = new GuardRegistry();
+      for (const guard of MERGE_GUARDS) reg.register(guard);
+      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
+        guard: "merge.requires_approving_code_review",
+      });
+      expect(await readState(id)).toBe("in_review");
+    });
+
     it("a supersession cycle terminates rather than hanging the merge decision", async () => {
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "cyc0001" });

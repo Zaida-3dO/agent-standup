@@ -1,0 +1,29 @@
+-- A monotonic insertion-order tiebreak on Artifact, for the tip-commit
+-- selection in `src/lib/service/guards/artifact-tip.ts`
+-- (`currentTipCommitSha`, `tipCommitLineage`).
+--
+-- ── What this fixes ─────────────────────────────────────────────────────
+--
+-- Those two functions pick "the tip artifact" by `ORDER BY "createdAt"
+-- DESC, "id" DESC`. `createdAt` is millisecond precision
+-- (`@db.Timestamptz(3)`), and two `commit` artifacts recorded for the same
+-- item within the same millisecond are not a hypothetical — it reproduced
+-- at ~45% on ordinary hardware for a test that records three commit
+-- artifacts back to back with no explicit `createdAt`. The tiebreak on a
+-- tie was `id DESC`, and `id` is `@default(uuid())` — a random v4 with no
+-- relationship to insertion order. So the tip was, on a same-millisecond
+-- tie, chosen at random and then fixed forever: a merge-guard test that
+-- stacks a genuinely-new commit after a superseded one intermittently had
+-- that new commit lose the tiebreak, and the guard wrongly treated a stale
+-- approval as current.
+--
+-- `seq` is the same primitive `Event.id` already uses in this schema for
+-- the identical reason (see that column's own doc) — a Postgres-assigned
+-- `bigserial`, handed out in true insertion order, reused here rather than
+-- re-solved.
+--
+-- Additive only: existing rows backfill in whatever order Postgres visits
+-- them (irrelevant — the column only disambiguates NEW same-millisecond
+-- ties going forward), no existing column changes meaning, and no query
+-- outside `artifact-tip.ts` is required to read it.
+ALTER TABLE "Artifact" ADD COLUMN "seq" BIGSERIAL NOT NULL;

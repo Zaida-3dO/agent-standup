@@ -77,6 +77,15 @@ export const ADMIN_HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.fre
     }),
     unwrap: (body) => property(body, "area"),
   },
+  merge_areas: {
+    method: "POST",
+    request: (input) => ({ path: "/api/areas/merge", body: input }),
+    // `POST /api/areas/merge` returns `MergeAreasOutput` unwrapped — `to`,
+    // `from`, `itemsMerged`, `duplicatesResolved` — same as `list_areas`,
+    // not nested under a named key the way the single-row `get`/`create`
+    // routes are.
+    unwrap: (body) => body,
+  },
   list_machines: {
     method: "GET",
     request: () => ({ path: "/api/machines" }),

@@ -246,6 +246,24 @@ export const ADMIN_COMMANDS: readonly CommandSpec[] = Object.freeze([
       };
     },
   },
+  {
+    noun: "area",
+    verb: "merge",
+    operation: "merge_areas",
+    summary: "Fold one area's membership into another, and archive the losing area.",
+    // No local "needs two ids" or "from === to" check: `merge_areas`'
+    // own schema (`min(1)` on both fields) and its `SAME_AREA_GUARD` are
+    // what refuse those, exactly as they do for the `http` and `mcp`
+    // adapters — the http route (`../../app/api/areas/merge/route.ts`)
+    // passes its body straight through with no route-side validation
+    // either. Refusing here first would mean this adapter answers a
+    // missing/duplicate `from`/`to` with `malformed_command` while the
+    // other two answer `invalid_input`/`area_merge.same_area` for the
+    // identical caller mistake — the divergence the conformance suite's
+    // assertion 4 bound exists to catch. `from`/`to` are simply passed
+    // through, undefined or not, and the operation says what is wrong.
+    buildInput: (rest) => ({ ok: true, input: { from: rest[0], to: rest[1] } }),
+  },
   // ── machine ───────────────────────────────────────────────────────────
   {
     noun: "machine",

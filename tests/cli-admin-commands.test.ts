@@ -136,6 +136,25 @@ describe("area", () => {
     await runCommand(["area", "update", "web", "--archive"], binding);
     expect(binding.calls[1]?.input).toEqual({ id: "web", archived: true });
   });
+
+  it("merge reads both positionals in order", async () => {
+    const binding = recorder();
+    await runCommand(["area", "merge", "web", "website"], binding);
+    expect(binding.calls).toEqual([
+      { operation: "merge_areas", input: { from: "web", to: "website" } },
+    ]);
+  });
+
+  it("merge passes a missing positional through as undefined rather than refusing it locally", async () => {
+    // No CLI-side "needs two ids" check: the operation's own schema is what
+    // refuses this, identically to the `http` and `mcp` adapters — see the
+    // comment on the `merge` command in `../src/lib/cli/commands-admin.ts`.
+    const binding = recorder();
+    await runCommand(["area", "merge", "web"], binding);
+    expect(binding.calls).toEqual([
+      { operation: "merge_areas", input: { from: "web", to: undefined } },
+    ]);
+  });
 });
 
 describe("machine", () => {

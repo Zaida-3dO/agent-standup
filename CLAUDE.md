@@ -326,6 +326,25 @@ runs a test. A green `--require-db` means a URL was offered, not that a database
 it recognises the gate by the shape written above — a file inventing a different spelling is invisible
 to it.
 
+### Two known flakes under full-suite load — check before you assume a regression is yours
+
+Both are load-dependent: they fail as part of the full `npm test` run and pass in isolation. Neither
+is a property of any one PR's diff — reviewers have reproduced both against plain `main` content. Tell
+them apart by file and failure shape before writing either off:
+
+- **`tests/merge-guards.test.ts`** — a call-count mismatch, not a timeout. Tracked as row
+  `1d56cd0e-e8e7-4439-833f-541bec8d7f03`.
+- **`tests/cli-init-dispatch.test.ts`** — the `runCli — init dispatch order > reaches
+  runInitCommand even when nothing is configured at all` case times out at 30000ms under full-suite
+  load; run alone (`npx vitest run tests/cli-init-dispatch.test.ts`) it passes reliably. The failure
+  signature points at contention (a tight timeout, a shared resource, or a fixture assuming it runs
+  alone), but nobody has diagnosed the cause yet, so treat that as a lead for whoever picks it up next,
+  not a fix already in hand.
+
+If a run on your branch turns up a failure in either file, the fast check is whether the same test
+fails on `main` on its own — reproduce with `main`'s content for the files you touched (or a clean
+checkout of `main`) before spending time on a fix that isn't yours to make.
+
 ## Standing authorisation — keep the queue moving
 
 **Merging is pre-authorised. Do not stop to ask.** Once a change has been through review and its
@@ -499,6 +518,39 @@ than against a list gathered up front. On its first run two worktrees were clean
 dirty seconds later when removal reached them; a list-then-delete pass would have destroyed that
 work. This is the same hazard, and the same fix, as `scripts/sweep-scratch-databases.mjs`.
 
+**The `refs/worktree-sweep/` namespace.** A worktree on a branch is reversible for free, because the
+branch ref survives removal. A **detached** worktree is not — it has no branch, so removal drops the
+only reference to its commit and the next `git gc --prune` collects it outright. Before removing a
+detached worktree the sweep checks whether any existing ref already contains its commit
+(`git for-each-ref --contains`):
+
+- If one does, nothing is minted — the existing ref already keeps the commit alive, and the sweep's
+  report says `reused, nothing new created`.
+- If none does, the sweep mints `refs/worktree-sweep/<sha12>` pointing at the commit *before* removing
+  the worktree, and only removes if the mint succeeded. The report says `minted`.
+- If the containment check itself fails — `git for-each-ref --contains` exits non-zero — the sweep
+  cannot tell which of the above two cases it is in, so it refuses to remove the worktree at all and
+  reports `could not determine whether any ref contains its commit`. This fails closed on purpose: a
+  failed lookup is not evidence that some ref contains the commit, so treating it as if one did — and
+  skipping the mint — would remove the worktree and drop the only reference to that commit on a guess.
+  A worktree kept for this reason needs a person to check why the `git` call failed (e.g. a corrupt
+  ref, a permissions problem, or the command running outside a git checkout) and either fix that and
+  re-run the sweep, or remove the worktree by hand once satisfied the commit is safe to lose.
+
+A ref under this namespace means: *this commit's only worktree was removed while nothing else
+referenced it, and this ref is the one thing standing between it and garbage collection.* Restore it
+with `git worktree add <path> refs/worktree-sweep/<sha12>` (the sweep prints this exact command on
+every removal). Deleting one of these refs makes that commit collectable at the next `gc` — do it only
+once you've confirmed the work is not needed (e.g. it is also reachable from a merged branch, or you
+have deliberately decided to discard it).
+
+**Nothing prunes this namespace, on purpose.** No timer, no auto-expiry. A ref here exists because a
+commit had no other guardian; an automatic prune on an age threshold would silently re-introduce the
+exact irreversibility the ref was minted to prevent — a rescue ref would seem to protect a commit while
+quietly having an expiry date nobody was watching. Any cleanup of this namespace should be an explicit,
+opt-in operator action (e.g. an on-demand check for which of these refs are now also reachable from a
+merged branch, and therefore safe to drop), not something that runs unattended.
+
 ### Fast-forward the shared checkout before you rely on it
 
 The shared checkout drifts, because worktrees are created from it but nothing pulls it. On
@@ -575,6 +627,17 @@ origin/main`) sidesteps the drift entirely, and is the better habit.
 
 Conventional-commit prefixes (`feat:`, `fix:`, `docs:`, `chore:`, `test:`, `ci:`). Say what changed
 and why; the diff already says how.
+
+### If a PR delivers a board row, name the row's id in the PR title or body
+
+**A full UUID, verbatim** — `id-in-merged-pr` matching (`scripts/reconcile-shipped-rows.mjs`) reads
+the raw title/body text and needs the exact 36-character id; an abbreviated or short-id form will
+not match. One line is enough: `Row: <uuid>` in the body, or the id inline in the title.
+
+This is what lets `scripts/reconcile-shipped-rows.mjs` find board rows that shipped but never got
+closed — its only signal is a merged PR's title or body containing the row's own id. A PR that
+delivers no board row has nothing to add here; this is an invitation for the PRs that do, not a
+requirement on every PR.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
