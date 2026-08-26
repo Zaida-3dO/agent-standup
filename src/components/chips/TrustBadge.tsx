@@ -29,7 +29,13 @@
 // `originType` isn't `source` — which is most of them, since `verified`
 // here carries no origin information at all. "Unchecked" says exactly what
 // the prop computes (no `historical_verification` on file) without
-// asserting where the row came from; provenance stays the border's job.
+// asserting where the row came from; provenance stays the border's job —
+// **on the board card only** (`ItemCard.tsx`'s `.cardUnverified` outline).
+// `ListView.tsx` renders this same badge but never reads
+// `unverifiedOrigin` and paints no unverified treatment of its own, so in
+// list mode this badge is the only trust channel present — "Unchecked"
+// there says only "nobody has checked", with no way to tell an imported
+// row from one this system authored.
 //
 // Never a severity colour: `globals.css` §6 is explicit that an unverified
 // row "is not *wrong*, it is unconfirmed", so this shares no visual

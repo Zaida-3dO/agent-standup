@@ -187,8 +187,14 @@
     display: none;
   }
 
+  /* min-height, not height — the icon-only form still has to clear 44px
+     (row 74ef86fb-9da8-4ab1-9b63-9eb84bd43ee6 measured this control at
+     32px). `densityButton` gets the same treatment below, next to its own
+     desktop rule so its 32px square is the only place that size is
+     declared. */
   .search,
   .create {
+    min-height: 44px;
     padding: 0 var(--space-2);
   }
 }
@@ -216,6 +222,16 @@
   background: var(--accent-bg);
   border-color: var(--accent-border);
   color: var(--text-primary);
+}
+
+/* Touch target at phone widths — 32px square desktop button grown to the
+   44px minimum. Kept beside the desktop rule rather than in the shared
+   block below, so this control's size lives in one place. */
+@media (max-width: 640px) {
+  .densityButton {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 .switcher {
@@ -259,7 +275,10 @@
     display: none;
   }
 
+  /* min-height clears 44px around the 28px avatar — the switcher's own
+     padding, not the avatar's size, is what the reader actually taps. */
   .switcher {
+    min-height: 44px;
     padding: var(--space-1);
   }
 }

@@ -670,6 +670,26 @@ button.subtaskToggle:focus-visible {
   }
 }
 
+/* Touch target (row 74ef86fb-9da8-4ab1-9b63-9eb84bd43ee6) — measured at
+   38px for a title short enough to sit on one line. A long title already
+   clears 44px by wrapping (same reasoning as `NeedsYouInbox.module.css`'s
+   `.title` fix); this covers the short case the same way: `flex` +
+   `align-items: center` centres the text once the box has a height, rather
+   than the link only growing downward from its baseline.
+
+   640px, not 560px — kept separate from `.columns`'s grid-collapse
+   breakpoint above (a layout decision this row does not touch) and aligned
+   instead with every other touch-target fix in this sweep
+   (`BoardFilterBar.module.css`, `LayoutToggle.module.css`,
+   `TopBar.module.css`), all of which use 640px. */
+@media (max-width: 640px) {
+  .cardTitle {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+
 /* ── The pointer drag (T6-A) ───────────────────────────────────────────────
    The defect this fixes: the board used native HTML5 drag with no
    `setDragImage`, so nothing followed the cursor at all. What follows the

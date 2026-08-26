@@ -26,6 +26,87 @@
   gap: var(--space-3);
 }
 
+/* ── The axes disclosure (row 74ef86fb-9da8-4ab1-9b63-9eb84bd43ee6) ────────
+   `.axes` above measured ~400px of an ~540px filter bar at 320px — by far
+   the largest single chunk of the 821px of chrome that sat above the first
+   card. Below 641px `.axes` is hidden until the checkbox is ticked, which
+   is the actual fix: a phone sees a card on load and opens filtering on
+   request, rather than always paying for eight stacked selects to reach
+   it.
+
+   **A checkbox, not `<details>`.** `<details>` was tried first and
+   measured broken: a closed `<details>`'s non-summary content renders
+   through Chromium's internal `::details-content` mechanism, which an
+   author stylesheet cannot override by targeting the child directly —
+   every computed style read back "visible" while the block painted
+   nothing. `.axesToggle` is visually hidden (not `display: none`, which
+   would drop it from the accessibility tree and the tab order the label
+   needs) but is an ordinary checkbox with no shadow content, so the
+   sibling selector below is uncontested CSS.
+
+   **The checkbox itself carries no `aria-hidden` and no negative
+   `tabIndex`.** An earlier version of this fix had both — added on the
+   mistaken theory that a visually-hidden element should also be an
+   accessibility-hidden one, which is exactly backwards for a control that
+   still does something: those two attributes are for decorative markup,
+   and applying them here removed the checkbox from the tab order
+   entirely, taking the eight selects behind it with it (`.axes` is
+   `display: none` until checked). A keyboard-only reader below 641px
+   could reach no filter control at all — worse than the overflow this
+   disclosure was written to fix. `aria-expanded` reflecting the checked
+   state lives on the LABEL in `BoardFilterBarView.tsx`, not on the
+   checkbox: the `checkbox` ARIA role does not support `aria-expanded`
+   the way `button` does, and the label is the visible trigger a keyboard
+   or screen-reader user actually operates.
+
+   Desktop is intentionally NOT a smaller version of the same disclosure:
+   `@media (min-width: 641px)` forces `.axes` to display regardless of
+   the checkbox, at the same breakpoint every touch-target fix in this
+   sweep uses, so nothing about the desktop reader's experience changes —
+   the axes are exactly as permanently visible as they were before this
+   existed. */
+.axesToggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.axesSummary {
+  display: none;
+  align-items: center;
+  gap: var(--space-1);
+  width: fit-content;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .axesSummary {
+    display: inline-flex;
+  }
+
+  .axes {
+    display: none;
+    width: 100%;
+  }
+
+  .axesToggle:checked ~ .axes {
+    display: flex;
+  }
+}
+
 .axis,
 .sortGroup {
   display: flex;
@@ -320,4 +401,46 @@
   color: var(--text-muted);
   font-size: var(--text-3xs);
   font-style: italic;
+}
+
+/* ── Touch targets at phone widths (row 74ef86fb) ───────────────────────
+   Measured in a real browser at 320x844: every control in this file sat at
+   its desktop height of 26-30px, well under the 44px minimum a thumb can
+   reliably hit. `min-height`, not `height` — a control whose label wraps
+   at this width still has to grow past 44px rather than clip.
+
+   Desktop is untouched: this whole block is scoped to the breakpoint, and
+   nothing outside it changes size, padding step, or font-size. */
+@media (max-width: 640px) {
+  .select,
+  .direction,
+  .search,
+  .clear,
+  .viewName,
+  .pickerToggle {
+    min-height: 44px;
+  }
+
+  .viewChip,
+  .levelChip,
+  .levelMode {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* The bar itself loses some of its vertical budget here — narrower
+     spacing between rows of controls, which is what row 74ef86fb's second
+     finding (821px of chrome before the first card) is partly made of.
+     This does not collapse any control; it only tightens the gaps between
+     them. See that row's PR for why a full collapse-behind-a-disclosure
+     was left for a follow-up rather than attempted here. */
+  .bar {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .axes {
+    gap: var(--space-2);
+  }
 }

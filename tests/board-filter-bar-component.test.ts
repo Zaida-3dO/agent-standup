@@ -220,6 +220,76 @@ describe("the bar reflects the query it is given", () => {
   });
 });
 
+// The narrow-width axes disclosure (row 74ef86fb-9da8-4ab1-9b63-9eb84bd43ee6,
+// blocker ccce0635-b2af-4c18-990b-016edeca8184). What this CAN and cannot
+// prove is worth being explicit about: this harness has no DOM and no CSS
+// engine (vitest.config.ts: environment: "node"), so it cannot exercise the
+// CSS sibling-selector toggle or confirm the block actually paints in a
+// browser -- that is exactly the class of defect the details-element attempt
+// had, invisible to a static tree and caught only by a real screenshot (see
+// 1d7ebff1-faf7-4772-a17b-14f4e80fbbca, filed separately for a real-browser
+// check this repo has no precedent for inside tests/).
+//
+// What it CAN prove, and does: the exact two attributes whose presence was
+// the round-2 defect. aria-hidden and a negative tabIndex are structural
+// facts on the returned element -- this is precisely the shape of assertion
+// byId exists for, and it would have failed against the code this review
+// bounced.
+describe("the axes disclosure toggle (narrow-width collapse)", () => {
+  it("the checkbox carries no aria-hidden and no negative tabIndex -- both remove it from the keyboard path", () => {
+    const toggle = byId(bar(), "board-axes-toggle");
+    expect(toggle?.["aria-hidden"]).toBeUndefined();
+    expect(toggle?.tabIndex).not.toBe(-1);
+  });
+
+  it("the checkbox starts unchecked (collapsed is the narrow-width default)", () => {
+    // defaultChecked, not checked -- this control is deliberately uncontrolled
+    // (see BoardFilterBar.module.css's header on this block), so the
+    // render-time prop is the one fact a hook-free harness can observe about
+    // its starting state.
+    expect(byId(bar(), "board-axes-toggle")?.defaultChecked).toBe(false);
+  });
+
+  it("the label names the checkbox by id, and starts with aria-expanded matching the unchecked default", () => {
+    const toggle = byId(bar(), "board-axes-toggle");
+    const labels = tags(bar(), "label").filter(
+      (el) => (el.props as { htmlFor?: string }).htmlFor === "board-axes-toggle",
+    );
+    expect(labels).toHaveLength(1);
+    const label = labels[0]!.props as { "aria-expanded"?: boolean };
+    // aria-expanded lives on the LABEL, not the checkbox -- the checkbox ARIA
+    // role does not support it the way button does, and the label is the
+    // visible control a keyboard/AT user actually operates. Matches
+    // defaultChecked above by construction; if the two are ever set from
+    // different literals this fails without needing a browser to catch the
+    // drift.
+    expect(label["aria-expanded"]).toBe(toggle?.defaultChecked);
+  });
+
+  it("says how many filters are active even while collapsed, so a narrowed board is not silently unexplained", () => {
+    const labels = tags(bar({ query: parseBoardQuery("area=web&priority=P0") }), "label").filter(
+      (el) => (el.props as { htmlFor?: string }).htmlFor === "board-axes-toggle",
+    );
+    // The count renders as an interpolated expression inside the summary
+    // span, so its `children` prop is an ARRAY of two strings ("Filters" and
+    // the computed suffix) rather than one string `walk` would surface on
+    // its own -- `walk` only recurses into element children, so a bare
+    // string in that array is otherwise never visited. Reading each span's
+    // `children` prop directly and joining any array entries is what
+    // actually finds the rendered text here.
+    const spans = tags(labels[0]!, "span");
+    const texts = spans.flatMap((el) => {
+      const children = (el.props as { children?: unknown }).children;
+      if (typeof children === "string") return [children];
+      if (Array.isArray(children)) {
+        return [children.filter((c) => typeof c === "string").join("")];
+      }
+      return [];
+    });
+    expect(texts.some((t) => t.includes("2 active"))).toBe(true);
+  });
+});
+
 describe("the sort control", () => {
   it("offers all four keys", () => {
     const sort = byId(bar(), "board-sort");
