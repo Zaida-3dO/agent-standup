@@ -143,7 +143,7 @@ export const mergeAreas = defineOperation({
     await loadAreaOrThrow(ctx, from);
     await loadAreaOrThrow(ctx, to);
 
-    // Every item currently holding the losing area, with its full area set —
+    // Every item holding the losing area, with its full area set —
     // both representations, `Item.area` (the primary) and `ItemArea` (the
     // complete set including the primary) — so the de-duplication decision
     // below has everything it needs without a second round trip per item.
