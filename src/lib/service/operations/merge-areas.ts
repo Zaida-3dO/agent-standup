@@ -21,14 +21,29 @@
 // retag is safe) OR it already holds both (the losing membership is dropped,
 // never inserted a second time). `INSERT … ON CONFLICT DO NOTHING` on the
 // insert half is what makes the "already holds both" case inert by
-// construction, and it is what actually prevents the primary-key violation
-// the naive version hits — the per-item `heldBoth` check (below) is a second,
-// independent guard for the same case, kept because it makes the returned
-// `duplicatesResolved` count honest and skips an insert already known to be
-// a no-op, not because it alone is what stops the collision. Hand-mutation
-// confirmed this: deleting the `heldBoth` skip and always attempting the
-// insert left every test green, because `ON CONFLICT DO NOTHING` was already
-// carrying the correctness on its own.
+// construction, and it is REQUIRED: `prismaTransactionRunner` (`../runtime.ts`)
+// opens no `isolationLevel`, so every merge runs at Postgres's default READ
+// COMMITTED, and the per-item `heldBoth` check (below) is computed from a
+// snapshot read that can go stale before the insert executes — a concurrent
+// write can add the surviving-area membership in the gap. A deterministic
+// two-connection race against real Postgres confirms this: with
+// `ON CONFLICT DO NOTHING`, the stale-snapshot racer's insert is silently
+// absorbed and the merge completes; without it, the same race throws a
+// primary-key violation. Because the whole operation runs inside one
+// transaction, the loser of that race aborts and rolls back wholly — this is
+// fail-safe, not a lost update.
+//
+// `heldBoth` therefore CANNOT be what prevents the collision — it is an
+// optimisation plus the source of the returned `duplicatesResolved` count
+// (kept honest) and it skips an insert already known to be a no-op. A
+// single-threaded hand-mutation cannot tell the two apart: deleting the
+// `heldBoth` skip and always attempting the insert still leaves every test
+// green, because `ON CONFLICT DO NOTHING` alone already covers the
+// single-connection case. That mutation surviving is not evidence `heldBoth`
+// is redundant — it only proves single-threaded tests can't observe the
+// staleness that concurrency introduces. Do not delete
+// `ON CONFLICT DO NOTHING` as "redundant with `heldBoth`"; under concurrency
+// it is the one actually preventing the collision.
 //
 // ── The three decisions this row's body asked to make ─────────────────────
 //
@@ -172,18 +187,18 @@ export const mergeAreas = defineOperation({
       //   - Drop the losing membership unconditionally. If the item did not
       //     already hold `to`, this is followed by an insert of `to` below;
       //     if it did, dropping `from` is the entire fix.
-      //   - `heldBoth`/`ON CONFLICT DO NOTHING` are two independent guards
-      //     against the same primary-key collision, not a primary mechanism
-      //     plus a redundant backstop: hand-mutation testing this operation
-      //     showed that deleting the `if (!heldBoth)` skip (always attempting
-      //     the insert) leaves the whole suite green, because
-      //     `ON CONFLICT DO NOTHING` alone already makes the insert safe
-      //     either way. `heldBoth` earns its keep elsewhere — it is what
-      //     makes `duplicatesResolved` (below) an honest count rather than
-      //     an estimate, and it avoids an insert this connection knows in
-      //     advance will be a no-op — but do not read its presence here as
-      //     load-bearing for correctness; `ON CONFLICT DO NOTHING` is what
-      //     actually prevents the collision.
+      //   - `ON CONFLICT DO NOTHING` on the insert is what actually prevents
+      //     the primary-key collision under concurrency: this transaction
+      //     runs at READ COMMITTED (no `isolationLevel` set — see the file
+      //     header), so `heldBoth` above is a snapshot read that can go
+      //     stale before this insert runs, if another transaction adds the
+      //     surviving-area membership in between. `heldBoth` cannot be the
+      //     collision guard for that reason; it is kept because it makes
+      //     `duplicatesResolved` (below) an honest count and skips an insert
+      //     already known to be a no-op. A single-threaded hand-mutation
+      //     (deleting the `if (!heldBoth)` skip) leaves the suite green —
+      //     that only shows single-threaded tests can't observe the race,
+      //     not that the guard is redundant.
       await ctx.db.$executeRawUnsafe(
         `DELETE FROM "ItemArea" WHERE "itemId" = $1 AND "areaId" = $2`,
         item.itemId,

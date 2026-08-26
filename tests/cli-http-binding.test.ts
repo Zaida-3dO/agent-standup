@@ -91,6 +91,31 @@ describe("the request the http binding builds", () => {
     expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ title: "renamed" });
   });
 
+  it("posts `merge_areas` to its named sub-route with both ids in the body", async () => {
+    const { seen, fetch } = capture(
+      json({
+        to: { id: "website" },
+        from: { id: "web" },
+        itemsMerged: 3,
+        duplicatesResolved: 1,
+      }),
+    );
+    const binding = createHttpBinding({ baseUrl: "https://example.test", fetch });
+    const result = await binding.invoke("merge_areas", { from: "web", to: "website" });
+
+    expect(seen[0]?.url).toBe("https://example.test/api/areas/merge");
+    expect(seen[0]?.init.method).toBe("POST");
+    expect(JSON.parse(seen[0]?.init.body as string)).toEqual({ from: "web", to: "website" });
+    // Unwrapped, same as `list_areas` — not nested under a named key.
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data).toEqual({
+      to: { id: "website" },
+      from: { id: "web" },
+      itemsMerged: 3,
+      duplicatesResolved: 1,
+    });
+  });
+
   it("tolerates a trailing slash on the base URL rather than doubling it", async () => {
     const { seen, fetch } = capture(json({ item: {} }));
     const binding = createHttpBinding({ baseUrl: "https://example.test///", fetch });
