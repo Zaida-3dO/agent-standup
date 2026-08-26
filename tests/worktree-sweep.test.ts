@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasLiveProcess,
   looksLikeProcessList,
+  mergeVerdict,
   reducePullRequestStates,
 } from "../scripts/sweep-worktrees.mjs";
 
@@ -82,7 +83,14 @@ describe("hasLiveProcess", () => {
   it("ignores a pathologically short basename instead of matching everything", () => {
     // A 3-character directory name would otherwise match almost any command
     // line and freeze the sweep into never removing anything.
-    expect(hasLiveProcess("node server.mjs", "C:/tmp/abc")).toBe(false);
+    //
+    // The snapshot must CONTAIN the short basename for this to test anything.
+    // An earlier version paired "node server.mjs" with basename "abc", which
+    // the snapshot does not contain either way — so the length floor was never
+    // the deciding term and deleting it left this green. "abc" appears twice
+    // below, in `abc.mjs` and inside `fabric`, exactly the incidental matches
+    // the floor exists to reject.
+    expect(hasLiveProcess("node abc.mjs --loader fabric", "C:/tmp/abc")).toBe(false);
   });
 });
 
@@ -123,5 +131,128 @@ describe("reducePullRequestStates", () => {
     ]);
     expect(states.size).toBe(1);
     expect(states.get("feat/x")).toBe("MERGED");
+  });
+});
+
+describe("mergeVerdict", () => {
+  // The merge decision is a pure function precisely so it can be tested here.
+  // Logic that lives only inside `main()` is unreachable by any test, and the
+  // defects that hide there are the ones about what the tool does when it
+  // CANNOT know — which is exactly where deleting-things-wrongly lives.
+  const base = "origin/main";
+  const never = () => {
+    throw new Error("countDiffering must not be consulted for this case");
+  };
+
+  it("accepts a branch whose pull request is merged", () => {
+    const v = mergeVerdict({
+      branch: "feat/x",
+      prState: "MERGED",
+      prsAvailable: true,
+      base,
+      countDiffering: never,
+    });
+    expect(v.removable).toBe(true);
+  });
+
+  it("refuses a CLOSED branch even when its content is identical to base", () => {
+    // countDiffering would return 0 here. Refusing before consulting it is
+    // the point: someone decided not to take that work.
+    const v = mergeVerdict({
+      branch: "feat/x",
+      prState: "CLOSED",
+      prsAvailable: true,
+      base,
+      countDiffering: () => 0,
+    });
+    expect(v.removable).toBe(false);
+    expect(v.reason).toContain("CLOSED");
+  });
+
+  it("refuses a branch outright when the pull request state is unavailable", () => {
+    // Falling through to the content check here is unsafe: a CLOSED branch
+    // GitHub cannot be asked about would become REMOVABLE, so losing the PR
+    // signal WIDENS deletion for that class even while the total falls. A net
+    // count cannot detect that, which is why the invariant is asserted per
+    // worktree in the next test rather than measured in aggregate.
+    const v = mergeVerdict({
+      branch: "feat/x",
+      prState: undefined,
+      prsAvailable: false,
+      base,
+      countDiffering: () => 0,
+    });
+    expect(v.removable).toBe(false);
+    expect(v.reason).toContain("unavailable");
+  });
+
+  it("does not let losing gh turn a refusal into a removal", () => {
+    // States the invariant directly: for one branch, holding tree state
+    // constant, dropping the PR signal must never move removable false -> true.
+    const withGh = mergeVerdict({
+      branch: "feat/x",
+      prState: "CLOSED",
+      prsAvailable: true,
+      base,
+      countDiffering: () => 0,
+    });
+    const withoutGh = mergeVerdict({
+      branch: "feat/x",
+      prState: undefined,
+      prsAvailable: false,
+      base,
+      countDiffering: () => 0,
+    });
+    expect(withGh.removable).toBe(false);
+    expect(withoutGh.removable).toBe(false);
+  });
+
+  it("still uses the content check for a detached worktree when gh is unavailable", () => {
+    // A detached worktree has no branch, so the PR record could never have
+    // said anything about it; refusing it for a missing PR signal would strand
+    // every reviewer checkout forever.
+    const v = mergeVerdict({
+      branch: null,
+      prState: undefined,
+      prsAvailable: false,
+      base,
+      countDiffering: () => 0,
+    });
+    expect(v.removable).toBe(true);
+  });
+
+  it("refuses when the branch still differs from base", () => {
+    const v = mergeVerdict({
+      branch: "feat/x",
+      prState: undefined,
+      prsAvailable: true,
+      base,
+      countDiffering: () => 3,
+    });
+    expect(v.removable).toBe(false);
+    expect(v.reason).toContain("3 file(s) differ");
+  });
+
+  it("refuses when there is no merge-base to compare against", () => {
+    const v = mergeVerdict({
+      branch: "feat/x",
+      prState: undefined,
+      prsAvailable: true,
+      base,
+      countDiffering: () => null,
+    });
+    expect(v.removable).toBe(false);
+    expect(v.reason).toContain("no merge-base");
+  });
+
+  it("accepts content present on base when gh is available and knows nothing", () => {
+    const v = mergeVerdict({
+      branch: "feat/x",
+      prState: undefined,
+      prsAvailable: true,
+      base,
+      countDiffering: () => 0,
+    });
+    expect(v.removable).toBe(true);
   });
 });

@@ -69,10 +69,19 @@
  *      residual race between guard 2 and the delete, and it still holds when
  *      guard 3 misses a crew it cannot see. **Never add `--force`.**
  *
- * Branch refs are deliberately NEVER deleted. Removing a worktree only
- * removes the checkout; `git worktree add <path> <branch>` restores it. That
- * asymmetry is the point — it makes every action this script takes
- * reversible, so the worst case is inconvenience rather than lost work.
+ * Refs are deliberately NEVER deleted. Removing a worktree only removes the
+ * checkout; `git worktree add <path> <ref>` restores it. That asymmetry is
+ * the point — it makes every action this script takes reversible, so the
+ * worst case is inconvenience rather than lost work.
+ *
+ * A worktree on a branch is reversible for free, because the branch ref
+ * survives. A DETACHED worktree is not: it has no branch, so removal drops
+ * the only reference to its commit and the next `gc --prune` collects it.
+ * That case is handled by minting a rescue ref before removing, never by
+ * assuming the commit is reachable. Assuming it is how a sweep reports
+ * "branch ref kept" for a worktree that has no branch, and the commit is then
+ * gone at the next prune with the recovery instruction naming a ref that
+ * never existed.
  *
  * ── Scope ───────────────────────────────────────────────────────────────
  *
@@ -344,6 +353,63 @@ function reducePullRequestStates(pullRequests) {
   return states;
 }
 
+/**
+ * Whether a worktree's work is safely on the base branch, and why.
+ *
+ * Pure and side-effect free apart from `countDiffering`, which is injected so
+ * the decision can be exercised without a repository. Returns
+ * `{ removable, reason }`; the reason is shown to the operator either way, so
+ * a refusal always names the signal that produced it.
+ *
+ * The ordering matters and is the subject of two review findings:
+ *
+ *   - **Unavailable PR state refuses before the content check.** Without the
+ *     PR record a content match cannot be told apart from a closed-unmerged
+ *     branch whose content someone re-landed. Falling through instead made
+ *     losing `gh` WIDEN deletion for that class, while the aggregate count
+ *     still fell — which is why a net measurement could not detect it.
+ *   - **CLOSED refuses before either signal**, so an incidental content match
+ *     cannot delete work a person decided not to take.
+ */
+function mergeVerdict({ branch, prState, prsAvailable, base, countDiffering }) {
+  if (!prsAvailable && branch) {
+    return {
+      removable: false,
+      reason:
+        "pull request state is unavailable, so a content match cannot be told apart " +
+        "from a closed-unmerged branch someone re-landed — re-run with gh working",
+    };
+  }
+  if (prState === "CLOSED") {
+    return {
+      removable: false,
+      reason:
+        "its pull request was CLOSED without merging — this may be the only copy of that work",
+    };
+  }
+  if (prState === "MERGED") {
+    return { removable: true, reason: "its pull request is merged" };
+  }
+  const differing = countDiffering();
+  if (differing === null) {
+    return {
+      removable: false,
+      reason: `no merge-base with ${base} — cannot tell if its work is safe`,
+    };
+  }
+  if (differing > 0) {
+    // Name which signal was consulted, so "kept" is never mistaken for
+    // "GitHub said it was unmerged" when GitHub was never reachable.
+    return {
+      removable: false,
+      reason: prsAvailable
+        ? `${differing} file(s) differ from ${base}, and no merged pull request — work is not on the base branch`
+        : `${differing} file(s) differ from ${base} — work is not on the base branch (pull request state was unavailable)`,
+    };
+  }
+  return { removable: true, reason: `content is present on ${base}` };
+}
+
 function main() {
   const { apply, base } = parseArgs(process.argv.slice(2));
   const repo = git(
@@ -410,44 +476,22 @@ function main() {
       kept.push([label, "could not resolve HEAD"]);
       continue;
     }
-    // Two independent ways for the work to be safely on the base branch. The
-    // PR record is checked first because it stays true as the base branch
-    // moves on, whereas the content comparison silently stops recognising a
-    // merge once anything else edits the same files.
-    const prState = wt.branch ? prStates.get(wt.branch) : undefined;
-    let mergedBecause = null;
-
-    // A closed-unmerged PR is a person deciding not to take that work, so the
-    // worktree may hold the only copy. That decision outranks both merge
-    // signals: refuse before either is consulted, rather than letting an
-    // incidental content match delete it.
-    if (prState === "CLOSED") {
-      kept.push([
-        label,
-        "its pull request was CLOSED without merging — this may be the only copy of that work",
-      ]);
+    // Decide, from the two merge signals, whether this worktree's work is
+    // safely on the base branch. Extracted as a pure function so the decision
+    // can be tested directly: both HIGHs found in review lived in exactly this
+    // logic and were invisible to the suite because it only ran inside main().
+    const verdict = mergeVerdict({
+      branch: wt.branch,
+      prState: wt.branch ? prStates.get(wt.branch) : undefined,
+      prsAvailable,
+      base,
+      countDiffering: () => filesStillDiffering(mainCheckout, head, baseSha),
+    });
+    if (!verdict.removable) {
+      kept.push([label, verdict.reason]);
       continue;
     }
-
-    if (prState === "MERGED") {
-      mergedBecause = "its pull request is merged";
-    } else {
-      const differing = filesStillDiffering(mainCheckout, head, baseSha);
-      if (differing === null) {
-        kept.push([label, `no merge-base with ${base} — cannot tell if its work is safe`]);
-        continue;
-      }
-      if (differing > 0) {
-        // Say which signal was consulted, so "kept" is never mistaken for
-        // "GitHub said it was unmerged" when GitHub was never reachable.
-        const why = prsAvailable
-          ? `${differing} file(s) differ from ${base}, and no merged pull request — work is not on the base branch`
-          : `${differing} file(s) differ from ${base} — work is not on the base branch (pull request state was unavailable)`;
-        kept.push([label, why]);
-        continue;
-      }
-      mergedBecause = `content is present on ${base}`;
-    }
+    const mergedBecause = verdict.reason;
 
     if (!apply) {
       removed.push([label, `would remove: clean, no live process, ${mergedBecause}`]);
@@ -461,6 +505,41 @@ function main() {
       kept.push([label, "became dirty between the check and the removal"]);
       continue;
     }
+    // A detached worktree has no branch to keep, so removing it can orphan
+    // its commit outright: `git worktree remove` drops the working-tree
+    // reference, and if no ref contains that commit the next `gc --prune`
+    // deletes the objects outright. Verified by reproduction: remove a
+    // zero-ref detached worktree, run `gc --prune=now`, and the commit is
+    // unrecoverable.
+    //
+    // So mint a ref FIRST and only remove if that succeeded. Refusing instead
+    // would also be safe, but it would leave detached reviewer checkouts
+    // accumulating forever with no way to clear them; a ref costs 41 bytes
+    // and keeps the reversibility guarantee this script advertises.
+    let rescueRef = null;
+    if (!wt.branch) {
+      const containing = git(
+        ["for-each-ref", "--contains", head, "--format=%(refname)"],
+        mainCheckout,
+      );
+      if (containing === null) {
+        kept.push([label, "could not determine whether any ref contains its commit"]);
+        continue;
+      }
+      if (containing.trim().length === 0) {
+        rescueRef = `refs/worktree-sweep/${head.slice(0, 12)}`;
+        if (git(["update-ref", rescueRef, head], mainCheckout) === null) {
+          kept.push([
+            label,
+            "detached, and a rescue ref could not be minted to make removal reversible",
+          ]);
+          continue;
+        }
+      } else {
+        rescueRef = containing.trim().split("\n")[0];
+      }
+    }
+
     // NEVER add `--force` here. Without it git independently refuses to
     // delete a worktree containing modified or untracked files, which is the
     // last and strongest guard in this script: it closes the residual race
@@ -471,7 +550,12 @@ function main() {
       kept.push([label, "git worktree remove failed"]);
       continue;
     }
-    removed.push([label, `removed (branch ref kept — restore with \`git worktree add\`)`]);
+    removed.push([
+      label,
+      wt.branch
+        ? `removed (branch ${wt.branch} kept — restore with \`git worktree add <path> ${wt.branch}\`)`
+        : `removed (rescue ref ${rescueRef} minted — restore with \`git worktree add <path> ${rescueRef}\`)`,
+    ]);
   }
 
   if (removed.length) {
@@ -493,4 +577,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main();
 }
 
-export { hasLiveProcess, looksLikeProcessList, reducePullRequestStates };
+export { hasLiveProcess, looksLikeProcessList, mergeVerdict, reducePullRequestStates };
