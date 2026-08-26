@@ -410,6 +410,39 @@ function mergeVerdict({ branch, prState, prsAvailable, base, countDiffering }) {
   return { removable: true, reason: `content is present on ${base}` };
 }
 
+/**
+ * Whether removing a detached worktree needs a rescue ref first, and which
+ * one to use.
+ *
+ * Pure and side-effect free: takes the raw `git for-each-ref --contains`
+ * output as data (`containingRefs`) rather than calling git itself, so the
+ * decision can be exercised without a repository — the same spirit as
+ * `mergeVerdict` taking an injected `countDiffering`, just simpler here
+ * because there is only one git call to keep out of this function, not
+ * several. This exists because the rescue logic that fixes HIGH B originally
+ * lived only inside `main()`, which is exactly the defect shape `mergeVerdict`
+ * was extracted to avoid: mutating the zero-ref guard to `if (false)`
+ * disabled the rescue outright and the suite stayed green, because nothing
+ * outside `main()` could reach it.
+ *
+ * Returns one of:
+ *   - `{ action: "none" }` — branched worktree, nothing to rescue.
+ *   - `{ action: "mint", ref }` — zero-ref detached commit; mint `ref`.
+ *   - `{ action: "reuse", ref }` — detached, but some ref already contains
+ *     the commit; reuse the first one found and mint nothing.
+ *   - `{ action: "unknown" }` — could not determine whether any ref
+ *     contains the commit; the caller must refuse removal.
+ */
+function rescuePlan({ branch, head, containingRefs }) {
+  if (branch) return { action: "none" };
+  if (containingRefs === null) return { action: "unknown" };
+  const trimmed = containingRefs.trim();
+  if (trimmed.length === 0) {
+    return { action: "mint", ref: `refs/worktree-sweep/${head.slice(0, 12)}` };
+  }
+  return { action: "reuse", ref: trimmed.split("\n")[0] };
+}
+
 function main() {
   const { apply, base } = parseArgs(process.argv.slice(2));
   const repo = git(
@@ -517,26 +550,34 @@ function main() {
     // accumulating forever with no way to clear them; a ref costs 41 bytes
     // and keeps the reversibility guarantee this script advertises.
     let rescueRef = null;
+    let rescueMinted = false;
     if (!wt.branch) {
       const containing = git(
         ["for-each-ref", "--contains", head, "--format=%(refname)"],
         mainCheckout,
       );
-      if (containing === null) {
+      // Decide, from the two possible signals, whether a rescue ref is
+      // needed and which one to use. Extracted as a pure function so the
+      // decision can be tested directly: this logic lived only inside
+      // main() before, which is exactly why HIGH B was invisible to the
+      // suite in the first place.
+      const plan = rescuePlan({ branch: wt.branch, head, containingRefs: containing });
+      if (plan.action === "unknown") {
         kept.push([label, "could not determine whether any ref contains its commit"]);
         continue;
       }
-      if (containing.trim().length === 0) {
-        rescueRef = `refs/worktree-sweep/${head.slice(0, 12)}`;
-        if (git(["update-ref", rescueRef, head], mainCheckout) === null) {
+      if (plan.action === "mint") {
+        if (git(["update-ref", plan.ref, head], mainCheckout) === null) {
           kept.push([
             label,
             "detached, and a rescue ref could not be minted to make removal reversible",
           ]);
           continue;
         }
-      } else {
-        rescueRef = containing.trim().split("\n")[0];
+        rescueRef = plan.ref;
+        rescueMinted = true;
+      } else if (plan.action === "reuse") {
+        rescueRef = plan.ref;
       }
     }
 
@@ -554,7 +595,7 @@ function main() {
       label,
       wt.branch
         ? `removed (branch ${wt.branch} kept — restore with \`git worktree add <path> ${wt.branch}\`)`
-        : `removed (rescue ref ${rescueRef} minted — restore with \`git worktree add <path> ${rescueRef}\`)`,
+        : `removed (rescue ref ${rescueRef} ${rescueMinted ? "minted" : "reused, nothing new created"} — restore with \`git worktree add <path> ${rescueRef}\`)`,
     ]);
   }
 
@@ -577,4 +618,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main();
 }
 
-export { hasLiveProcess, looksLikeProcessList, mergeVerdict, reducePullRequestStates };
+export { hasLiveProcess, looksLikeProcessList, mergeVerdict, reducePullRequestStates, rescuePlan };
