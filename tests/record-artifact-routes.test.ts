@@ -83,7 +83,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
         jsonRequest(`http://test.invalid/api/items/${id}/artifacts`, "POST", {
           kind: "code_review",
           verdict: "lgtm",
-          commitSha: "sha-1",
+          commitSha: "a1b2c3d",
           createdByType: "person",
           createdById: "user-a",
         }),

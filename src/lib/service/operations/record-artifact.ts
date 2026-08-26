@@ -74,6 +74,49 @@ const VERDICT_VALUES = [
 /** `HolderType` — who produced the artifact. §6: "A review by a person and one by a reviewer agent are both evidence." */
 const HOLDER_TYPES = ["person", "agent"] as const;
 
+/**
+ * The shortest `commitSha` this write accepts, in hex characters.
+ *
+ * **Why 7, not git's own practical floor of 4.** `artifact-tip.ts`'s
+ * `shaMatches` — the read-side comparison a fix in review adds — treats one
+ * sha as matching another whenever either is a hex prefix of the other, so
+ * that an approval recorded from `git log --oneline` output (which
+ * abbreviates to 7 characters by default) is not wrongly refused as stale
+ * against a 40-character commit artifact for the same commit. That is the
+ * right fix for the problem it solves, but it changes what a short
+ * `commitSha` *means*: under equality comparison a junk value simply never
+ * matched anything, so validating its shape was mostly cosmetic; under
+ * prefix matching a short value matches a whole **family** of commits, and
+ * with no floor at all it could be any string at all — this value never has
+ * to have come from git.
+ *
+ * At floor 4 that family is 1 in 65,536 — brute-forceable in minutes by
+ * amending a throwaway commit in a loop until the low nibbles land where
+ * wanted. At floor 7 it is 1 in 268,435,456, which is the margin git's own
+ * tooling stakes abbreviation safety on (`core.abbrev`'s default floor).
+ * Every caller this application writes a commit sha for produces a full
+ * sha-1 or a git-standard 7-character abbreviation, so the floor cannot
+ * reject a legitimate one — see `MIN_COMMIT_SHA_LENGTH`'s test for the
+ * pinned bound this reasoning depends on staying put.
+ */
+export const MIN_COMMIT_SHA_LENGTH = 7;
+
+/** A full or git-abbreviated commit id: lowercase hex, `MIN_COMMIT_SHA_LENGTH`–40 characters. */
+const COMMIT_SHA_PATTERN = new RegExp(`^[0-9a-f]{${MIN_COMMIT_SHA_LENGTH},40}$`);
+
+const commitShaSchema = z
+  .string()
+  .trim()
+  .regex(
+    COMMIT_SHA_PATTERN,
+    `commitSha must be ${MIN_COMMIT_SHA_LENGTH}-40 lowercase hex characters — a real or ` +
+      "abbreviated git commit id, not an arbitrary string. The read-side guard that authorises " +
+      "a merge does prefix matching on this value, so a short non-hex value would be evidence " +
+      "about a commit that never has to have come from git.",
+  )
+  .nullable()
+  .optional();
+
 const inputSchema = z
   .object({
     itemId: z.string().min(1),
@@ -92,7 +135,7 @@ const inputSchema = z
      * merge gate reads `max(review_round)` across the item.
      */
     reviewRound: z.coerce.number().int().min(1).optional(),
-    commitSha: z.string().trim().min(1).nullable().optional(),
+    commitSha: commitShaSchema,
     /**
      * On a `commit` artifact, the sha this commit is a REWRITE OF — set when
      * it carries already-reviewed work under a new identity rather than new
@@ -399,6 +442,13 @@ const RECORD_ARTIFACT_CONTRACT = {
     {
       fields: ["commitSha", "kind"],
       rule: "A `commit` artifact must carry `commitSha`; a `historical_verification` must carry both `commitSha` and a `body` saying what was inspected.",
+    },
+    {
+      fields: ["commitSha"],
+      rule:
+        `When set, commitSha must be ${MIN_COMMIT_SHA_LENGTH}-40 lowercase hex characters — a ` +
+        "real or abbreviated git commit id. The merge-authorising guard does prefix matching on " +
+        "this value, so it must not be an arbitrary string.",
     },
     {
       fields: ["ref", "kind"],
