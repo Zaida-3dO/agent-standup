@@ -213,6 +213,133 @@ export async function hasApproval(
 }
 
 /**
+ * The shortest prefix `shaMatches` will accept as an abbreviation, and the
+ * longest string it will accept as a sha at all: 7–40 lowercase hex
+ * characters.
+ *
+ * **Why 7, not git's own practical floor of 4.** `commitSha` is stored with
+ * no format validation (`record-artifact.ts` accepts any non-empty
+ * trimmed string), so a short value is not guaranteed to have come from
+ * git — it is caller-supplied, and prefix matching turns a short value into
+ * a match against a whole family of commits. At 4 hex characters that
+ * family has 65,536 members, cheap to search by writing artifacts in a
+ * loop; at 7 it has 268,435,456, the exact margin git itself stakes
+ * `--short` abbreviation on and the width the report that motivated this
+ * module used throughout. Nothing in this codebase writes a 4- or
+ * 6-character sha, so 7 cannot refuse a real caller.
+ *
+ * 40 is a full sha-1. Sha-256 repos use 64, which this does not accept —
+ * this codebase writes only sha-1 commit ids, and widening the ceiling is a
+ * one-line change with no callers to revisit if that ever changes.
+ *
+ * **Both bounds are pinned by a dedicated test**, not left to this comment
+ * alone — `{7,40}` narrowed silently to `{1,40}` or `{7,}` still lets every
+ * existing test pass, because the fixtures those tests use never happen to
+ * probe the boundary. A mutation that widens either number changes what
+ * this module will accept as evidence for a merge, and the margin above
+ * only holds at the numbers actually enforced, not at the numbers this
+ * comment claims.
+ */
+const HEX_SHA_MIN_LENGTH = 7;
+const HEX_SHA_MAX_LENGTH = 40;
+const HEX_SHA = new RegExp(`^[0-9a-f]{${HEX_SHA_MIN_LENGTH},${HEX_SHA_MAX_LENGTH}}$`);
+
+/**
+ * Whether `candidate` refers to the same commit as `reference`, allowing
+ * either side to be a git-style abbreviation of the other.
+ *
+ * ── Why prefix matching, and only in this direction ─────────────────────
+ *
+ * `git log --oneline`, `git rev-parse --short` and most tooling output
+ * abbreviate to 7 characters by default — an artifact recorded from ordinary
+ * git output carries a short sha, not a mistake. Comparing those against a
+ * 40-character sha for the same commit with `===` refuses every one of them,
+ * which is what row `73ff36bd` reported: three approvals pinned to
+ * `86f3af0` could not match a commit artifact pinned to
+ * `86f3af00253f4b0737fdcec00ca1fe7d3aa91f4a` — the same commit, written at
+ * different lengths.
+ *
+ * Prefix matching is the direction git itself resolves abbreviations in: a
+ * short sha identifies a commit exactly when it is an unambiguous prefix of
+ * that commit's full id within the repo's object store. A 7-hex-character
+ * collision between two *different* real commits in one repository is
+ * astronomically unlikely (that is the entire premise `--short` relies on),
+ * so treating "one is a prefix of the other" as "same commit" does not
+ * meaningfully widen what this guard accepts as evidence — it only stops
+ * refusing the same commit for having been spelled two different lengths.
+ *
+ * ── Why gated on `HEX_SHA` rather than a bare prefix check ──────────────
+ *
+ * `commitSha` is a free-form trimmed string at the schema level (nothing
+ * validates it looks like git output when it's written), and this codebase's
+ * own tests use short synthetic values like `"commit-a"` / `"commit-ab"` to
+ * stand in for shas. A bare `a.startsWith(b) || b.startsWith(a)` would treat
+ * `"commit-a"` as matching `"commit-ab"` — an unrelated fixture value, not
+ * an abbreviation of anything. Requiring both sides to look like actual hex
+ * git ids before applying prefix logic keeps the widening scoped to the real
+ * case (abbreviated git shas) and leaves equality as the only route for
+ * anything else, synthetic or otherwise.
+ */
+export function shaMatches(candidate: string, reference: string): boolean {
+  if (candidate === reference) {
+    return true;
+  }
+  if (!HEX_SHA.test(candidate) || !HEX_SHA.test(reference)) {
+    return false;
+  }
+  return candidate.length < reference.length
+    ? reference.startsWith(candidate)
+    : candidate.startsWith(reference);
+}
+
+/**
+ * Whether `candidate` matches the tip itself or anything in its
+ * supersession lineage, allowing abbreviation on either side of each
+ * comparison (`shaMatches` above).
+ *
+ * **Every site in this codebase that asks "is this sha at the tip" needs
+ * this exact question answered, not a narrower one.** Before this row, three
+ * of the four call sites tested `candidate === tip || lineage.has(candidate)`
+ * directly — correct for two full-length shas, but `Set.has` is exact-value
+ * membership, so a lineage built from full shas is blind to an abbreviated
+ * `candidate` even though `shaMatches` alone would have accepted it. Row
+ * `e09aa150` proved this empirically: `latestApprovalAtTip` (routed through
+ * `shaMatches` first) matched a 7-character approval against a 40-character
+ * tip, while `approvingArtifactAtCurrentRoundAndTip` and
+ * `personHasApprovedMerge` — still doing the comparison directly — refused
+ * the identical row. Centralising the question here, once, is what makes
+ * "every site agrees on what counts as the same commit" true by
+ * construction rather than by four call sites happening to stay in sync.
+ *
+ * `tip === null` (no commit artifact exists yet) is handled the same way
+ * every caller of this question already needed it handled: nothing exists
+ * for `candidate` to be stale against, so a `null` `candidate` matches and
+ * anything else does not — see `latestApprovalAtTip`'s own doc for why that
+ * asymmetry is correct rather than an oversight.
+ */
+export function shaMatchesTipOrLineage(
+  candidate: string | null,
+  tip: string | null,
+  lineage: ReadonlySet<string>,
+): boolean {
+  if (tip === null) {
+    return candidate === null;
+  }
+  if (candidate === null) {
+    return false;
+  }
+  if (shaMatches(candidate, tip)) {
+    return true;
+  }
+  for (const lineageSha of lineage) {
+    if (shaMatches(candidate, lineageSha)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Finds the newest artifact of `kind` for `itemId` that is **both** an
  * approval and **at the item's current tip commit**, or `null` if none
  * qualifies.
@@ -236,6 +363,11 @@ export async function hasApproval(
  * (`null !== '<real sha>'`) and is correctly refused as unverifiable against
  * the tip — the artifact never recorded which commit it was reviewed
  * against, so it cannot be trusted to be current.
+ *
+ * Matching against both the tip and the lineage now allows either side of
+ * the comparison to be an abbreviated git sha (`shaMatches` above) — an
+ * approval pinned to a 7-character sha is treated as current when it
+ * prefix-matches the full sha of the tip or of anything in its lineage.
  */
 export async function latestApprovalAtTip(
   db: TransactionHandle,
@@ -255,12 +387,14 @@ export async function latestApprovalAtTip(
   // latest approval that is at the tip" are different questions, and
   // collapsing them to "the latest one, checked" would silently answer the
   // wrong one whenever they diverge.
+  //
+  // Delegated to `shaMatchesTipOrLineage` rather than repeating the
+  // tip/lineage/null-handling logic inline — this is one of four sites in
+  // the codebase that ask exactly this question, and having each answer it
+  // separately is what let three of the four drift out of agreement (row
+  // `e09aa150`).
   for (const row of rows) {
-    // `=== tip` still carries the `null`-tip case: with no commit artifact
-    // for the item, `lineage` is empty and an approval with `commitSha:
-    // null` must still match, which set membership alone would not give
-    // (`lineage.has(null)` is not a question the set can answer).
-    if (row.commitSha === tip || (row.commitSha !== null && lineage.has(row.commitSha))) {
+    if (shaMatchesTipOrLineage(row.commitSha, tip, lineage)) {
       return row;
     }
   }

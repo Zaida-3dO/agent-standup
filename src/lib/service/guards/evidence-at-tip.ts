@@ -44,6 +44,15 @@ export const evidenceAtTipGuard: Guard = {
     const atTip = await latestApprovalAtTip(input.db, input.item.id, "plan_review");
     if (!atTip) {
       const tip = await currentTipCommitSha(input.db, input.item.id);
+      // latestApprovalAtTip already treats an approval whose sha is a git
+      // abbreviation of the tip (or of anything the tip's lineage stands in
+      // for) as current — see artifact-tip.ts's `shaMatches`. So a rejection
+      // reaching here is never "the same commit, spelled at two lengths"; it
+      // is either a real move (the plan changed after approval, and
+      // re-review is the correct remedy) or an approval that never recorded
+      // a commit at all (unverifiable, and re-review is also the only way
+      // out, but for a different reason worth naming honestly rather than
+      // implying the plan moved when it may not have).
       return guardRejected(
         tip
           ? `The most recent plan_review approval is not for the current tip commit (${tip}). ` +
