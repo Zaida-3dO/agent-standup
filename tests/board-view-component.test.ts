@@ -277,8 +277,14 @@ describe("NeedsYouBadge", () => {
   });
 
   it("uses the singular for one item and the plural for more", () => {
-    expect(textOf(NeedsYouBadge({ count: 1 }))).toContain("item needs you");
-    expect(textOf(NeedsYouBadge({ count: 2 }))).toContain("items need you");
+    // Wording changed from "needs you" to "blocked on you" — this banner's
+    // count is `needsYouCount()`, the narrower client-side rule (strictly
+    // `state === "blocked"` on this person), and it used to share the exact
+    // words the sidebar/`/needs-you` badge uses for a broader server-side
+    // union, which is what let the same screen show "1" here and "25" there
+    // with nothing to explain the gap. See `NeedsYouBadge.tsx`'s header.
+    expect(textOf(NeedsYouBadge({ count: 1 }))).toContain("item blocked on you");
+    expect(textOf(NeedsYouBadge({ count: 2 }))).toContain("items blocked on you");
   });
 });
 

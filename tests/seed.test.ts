@@ -9,6 +9,9 @@
 // then throw a unique-constraint violation on Person's primary key the
 // moment this same suite calls it again. That is the single-character-ish
 // change ("upsert" -> "create") this test is built to catch.
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../prisma/seed.mjs";
@@ -17,6 +20,9 @@ import {
   dropScratchDatabase,
   scratchDatabaseName,
 } from "./helpers/scratch-db";
+
+const execFileAsync = promisify(execFile);
+const SEED_SCRIPT_PATH = fileURLToPath(new URL("../prisma/seed.mjs", import.meta.url));
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -111,4 +117,45 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
       await dropScratchDatabase(testDatabaseUrl!, secondDbName);
     }
   }, 20_000); // creates a scratch database, migrates it, then seeds it twice — slower than vitest's 5s default
+
+  // Every test above imports `seed` and calls it directly — none of them
+  // ever runs `node prisma/seed.mjs` as a real process, so none of them
+  // exercises the self-invocation guard (`process.argv[1]` compared against
+  // `import.meta.url`) that `npm run db:seed` actually depends on. That
+  // guard was the bug: built with a hand-rolled `file://` string that never
+  // matches a Windows path's three-slash form, so the script exited 0
+  // having done nothing. A `seed(prisma)` unit test cannot see that failure
+  // — it has to be a real subprocess with a real `argv[1]`.
+  it("`node prisma/seed.mjs`, run as a real subprocess, actually seeds the database", async () => {
+    const dbName = scratchDatabaseName("seed-cli");
+    const scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
+
+    try {
+      const { stdout } = await execFileAsync(process.execPath, [SEED_SCRIPT_PATH], {
+        env: { ...process.env, DATABASE_URL: scratchUrl },
+      });
+
+      // The success path's own log line — the one signal the original bug
+      // report says is easy to miss in npm output. A regressed guard prints
+      // nothing at all here, so this line is the first thing that fails.
+      expect(stdout).toMatch(/Seeded \d+ people, \d+ agents?, \d+ accounts?\.?/i);
+
+      const client = new PrismaClient({ datasourceUrl: scratchUrl });
+      try {
+        // The actual regression: on the broken guard this subprocess exits
+        // 0 and every one of these tables is empty, because `main()` never
+        // ran at all.
+        const people = await client.person.findMany();
+        const agents = await client.agent.findMany();
+        const accounts = await client.account.findMany();
+        expect(people.length).toBeGreaterThan(0);
+        expect(agents.length).toBeGreaterThan(0);
+        expect(accounts.length).toBeGreaterThan(0);
+      } finally {
+        await client.$disconnect();
+      }
+    } finally {
+      await dropScratchDatabase(testDatabaseUrl!, dbName);
+    }
+  }, 20_000);
 });
