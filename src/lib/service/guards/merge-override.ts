@@ -78,7 +78,7 @@
 // row with a name on it, which is a real one precisely because it does not
 // depend on anybody remembering to close anything.
 import type { TransactionHandle } from "../context";
-import { currentTipCommitSha, tipCommitLineage } from "./artifact-tip";
+import { currentTipCommitSha, shaMatchesTipOrLineage, tipCommitLineage } from "./artifact-tip";
 
 /** The artifact kind recording a reasoned decision to merge without a fresh review. */
 export const MERGE_OVERRIDE_KIND = "merge_override";
@@ -150,11 +150,18 @@ export async function mergeOverrideSatisfies(
   }
 
   const lineage = await tipCommitLineage(db, itemId);
-  // `tipCommitLineage` always contains the tip when one exists, but the set
-  // is built for membership tests and this query needs a list; spelling the
-  // tip in explicitly rather than relying on that keeps the two independent.
-  const candidateShas = Array.from(new Set([tip, ...lineage]));
 
+  // Fetches every override for the item and filters in TS with
+  // `shaMatchesTipOrLineage`, rather than pushing the sha comparison into
+  // the query with `"commitSha" = ANY($3::text[])` as this used to. That
+  // SQL form is exact-value membership — the same abbreviation blindness
+  // `latestApprovalAtTip` had before it routed through `shaMatches` (row
+  // `e09aa150`) — and prefix matching is not something `= ANY` can express
+  // without a per-row `LIKE`/regex OR-chain. The set of overrides for one
+  // item is small (this is a rarely-used escape hatch, not a hot path per
+  // its own module doc), so fetching all of them and filtering here costs
+  // nothing that matters and keeps one implementation of "is this sha at
+  // the tip" rather than a second one reimplemented in SQL.
   const rows = await db.$queryRawUnsafe<MergeOverrideRow[]>(
     // `$2::"ArtifactKind"` — Postgres infers an enum type for a literal but
     // not for a bind parameter; the same cast every query in this directory
@@ -165,18 +172,21 @@ export async function mergeOverrideSatisfies(
     // predicate should not exist. It is asserted anyway because this clause
     // decides a merge, and a guard that trusted an upstream validator would
     // be one edit away from accepting an empty excuse.
+    //
+    // `seq`, not `id`, breaks the `createdAt` tie: `id` is a random uuid
+    // with no relationship to insertion order, so on a same-millisecond tie
+    // `rows.find` below could return an older override ahead of a newer one
+    // (see `currentTipCommitSha`'s doc on `artifact-tip.ts` for the full
+    // reasoning, which applies here identically).
     `SELECT "id", "commitSha", "body", "createdByType", "createdById"
        FROM "Artifact"
-      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
-        AND "commitSha" = ANY($3::text[]) AND "body" IS NOT NULL
-      ORDER BY "createdAt" DESC, "seq" DESC
-      LIMIT 1`,
+      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind" AND "body" IS NOT NULL
+      ORDER BY "createdAt" DESC, "seq" DESC`,
     itemId,
     MERGE_OVERRIDE_KIND,
-    candidateShas,
   );
 
-  const row = rows[0];
+  const row = rows.find((candidate) => shaMatchesTipOrLineage(candidate.commitSha, tip, lineage));
   if (!row) {
     return { satisfied: false };
   }

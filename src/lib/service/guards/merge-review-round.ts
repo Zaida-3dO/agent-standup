@@ -13,7 +13,7 @@
 // its own small module rather than overloading `artifact-tip.ts` with a
 // second axis it was never asked to compare on.
 import type { TransactionHandle } from "../context";
-import { currentTipCommitSha, tipCommitLineage } from "./artifact-tip";
+import { currentTipCommitSha, shaMatchesTipOrLineage, tipCommitLineage } from "./artifact-tip";
 import { APPROVING_VERDICTS } from "../../verdicts";
 
 interface ReviewRoundRow {
@@ -149,11 +149,13 @@ export async function approvingArtifactAtCurrentRoundAndTip(
   // questions, and collapsing them would answer the wrong one whenever a
   // newer approval sits at the same round but an older commit.
   const lineage = await tipCommitLineage(db, itemId);
-  return (
-    rows.find(
-      (row) => row.commitSha === tip || (row.commitSha !== null && lineage.has(row.commitSha)),
-    ) ?? null
-  );
+  // Delegated to `shaMatchesTipOrLineage` (`artifact-tip.ts`) rather than a
+  // direct `=== tip || lineage.has(...)` comparison — that comparison is
+  // exact-value only, blind to a `commitSha` recorded as a git abbreviation
+  // of the tip. Row `e09aa150` proved this concretely: the same approval
+  // that `latestApprovalAtTip` matched (routed through `shaMatches`) was
+  // refused here while this function still compared shas directly.
+  return rows.find((row) => shaMatchesTipOrLineage(row.commitSha, tip, lineage)) ?? null;
 }
 
 /**

@@ -53,7 +53,7 @@
 // through an act the human had no part in, and a fresh approval fetched for
 // no reason a person could see.
 import type { TransactionHandle } from "../context";
-import { currentTipCommitSha, tipCommitLineage } from "./artifact-tip";
+import { currentTipCommitSha, shaMatchesTipOrLineage, tipCommitLineage } from "./artifact-tip";
 
 /** The artifact kind carrying a person's merge decision. */
 export const MERGE_APPROVAL_KIND = "merge_approval";
@@ -116,32 +116,21 @@ export async function personHasApprovedMerge(
   const lineage = await tipCommitLineage(db, itemId);
   const tip = await currentTipCommitSha(db, itemId);
 
+  // Delegated to `shaMatchesTipOrLineage` (`artifact-tip.ts`), which both
+  // (a) treats a `null` `commitSha` as matching only when the item has no
+  // commit artifact at all — nothing exists for it to be stale against, so
+  // an unpinned approval is refused once a real tip exists, because it
+  // cannot be shown to be about the code that would ship — and (b) allows
+  // either side of the comparison to be an abbreviated git sha. This used
+  // to be a local `appliesToTip` doing the same tip/lineage comparison by
+  // exact value, which is exactly the shape that let this function refuse
+  // an approval `latestApprovalAtTip` accepted for the identical row (row
+  // `e09aa150`): four call sites independently deciding "is this sha at the
+  // tip" is how three of them drifted out of agreement with the fourth.
   for (const row of rows) {
-    if (appliesToTip(row.commitSha, tip, lineage)) {
+    if (shaMatchesTipOrLineage(row.commitSha, tip, lineage)) {
       return { satisfied: true, approvedBy: row.createdById, staleApprovalExists: false };
     }
   }
   return { satisfied: false, staleApprovalExists: true };
-}
-
-/**
- * Whether an approval's sha covers the current tip.
- *
- * A `null` `commitSha` matches only when the item has no commit artifact at
- * all — nothing exists for it to be stale against. Once a real tip exists an
- * unpinned approval is refused, because it cannot be shown to be about the
- * code that would ship. Same reading `artifact-tip.ts` documents.
- */
-function appliesToTip(
-  approvalSha: string | null,
-  tip: string | null,
-  lineage: ReadonlySet<string>,
-): boolean {
-  if (tip === null) {
-    return approvalSha === null;
-  }
-  if (approvalSha === null) {
-    return false;
-  }
-  return approvalSha === tip || lineage.has(approvalSha);
 }
