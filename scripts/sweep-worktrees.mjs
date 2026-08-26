@@ -33,23 +33,27 @@
  * day, a crew lost ~200 lines to a single `git checkout`, and a reviewer
  * destroyed two scratch databases that were not its own.
  *
- * ── The three independent guards ────────────────────────────────────────
+ * ── The guards ──────────────────────────────────────────────────────────
  *
  * All must pass for a worktree to be removed, and all are evaluated at
  * REMOVE TIME rather than at list time:
  *
- *   1. **Clean.** `git status --porcelain` re-run immediately before each
+ *   1. **The work is merged.** Satisfied by EITHER of two signals, because
+ *      each misses what the other catches — and notably neither is ancestry.
+ *      Of the 55 merged worktrees measured here, `git branch --merged`
+ *      recognised 4, the content comparison 21, and the pull-request record
+ *      all 55.
+ *        - Its pull request is `MERGED`. Stays true however far the base
+ *          branch moves on. A `CLOSED` pull request is NOT merged and is
+ *          refused outright — see `pullRequestStates`.
+ *        - Or every file the branch changed is byte-identical on the base
+ *          branch. Needs no network and no `gh`, but only recognises a
+ *          squash merge while nothing else has since edited those files.
+ *
+ *   2. **Clean.** `git status --porcelain` re-run immediately before each
  *      individual removal, not once for the whole batch. Any uncommitted
  *      change at all — tracked or untracked — and it is skipped and
  *      reported. This is the guard that caught the two above.
- *
- *   2. **Work is present on the base branch.** Not `git branch --merged`,
- *      which answers a question about ancestry and misses every squash
- *      merge — and squash is how this repo merges, so ancestry alone found
- *      4 of the 21 worktrees that were genuinely merged. Instead, for each
- *      file the branch changed relative to its merge-base, compare the
- *      branch's blob to the base branch's blob. If every one is identical,
- *      the branch's content is on the base branch however it got there.
  *
  *   3. **No live process.** A worktree that any running process references
  *      is skipped even when it is clean and merged — a crew between two
@@ -57,6 +61,13 @@
  *      `vitest`. On the first run this guard alone saved
  *      `wt-t20-archive-mobile`, which was fully merged and clean but had a
  *      test run in flight.
+ *
+ *   4. **git's own refusal.** Removal calls `git worktree remove` WITHOUT
+ *      `--force`, so git refuses outright to delete a tree holding modified
+ *      or untracked files. This is the strongest guard here and the only one
+ *      that does not depend on this script being correct: it closes the
+ *      residual race between guard 2 and the delete, and it still holds when
+ *      guard 3 misses a crew it cannot see. **Never add `--force`.**
  *
  * Branch refs are deliberately NEVER deleted. Removing a worktree only
  * removes the checkout; `git worktree add <path> <branch>` restores it. That
@@ -81,6 +92,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 /** Runs a git command and returns stdout, or null if it failed. */
 function git(args, cwd) {
@@ -138,9 +150,21 @@ function listWorktrees(repo) {
  * matching nothing — a guard that aborts looks the same as a guard that
  * passes unless you check. The first version of this sweep had exactly that
  * bug; its process check crashed on every iteration and protected nothing.
- * If the snapshot cannot be taken at all we return null, and the caller
- * treats that as "cannot determine" and skips every removal, rather than
- * proceeding without the guard.
+ *
+ * Returns null whenever the answer cannot be trusted, and the caller treats
+ * null as "cannot determine" and removes nothing at all. Three ways to get
+ * there, and the last two are the same mistake as the NUL bug one layer out:
+ *
+ *   - the command throws;
+ *   - it exits 0 having printed nothing;
+ *   - it prints something that plainly is not a process list.
+ *
+ * The middle case is the dangerous one. An empty string is a perfectly good
+ * string, so a permissive check like `snapshot === null` accepts it, and
+ * every worktree then reads as "no process references this" — the permissive
+ * answer, returned precisely when we know least. A sanity floor (does this
+ * look like a process list at all?) is what turns "I got nothing back" into
+ * a refusal instead of an all-clear.
  */
 function processSnapshot() {
   const commands =
@@ -163,7 +187,9 @@ function processSnapshot() {
         stdio: ["ignore", "pipe", "ignore"],
         maxBuffer: 64 * 1024 * 1024,
       });
-      return out.replace(/\0/g, "").toLowerCase();
+      const cleaned = out.replace(/\0/g, "").toLowerCase();
+      if (!looksLikeProcessList(cleaned)) continue;
+      return cleaned;
     } catch {
       /* try the next one */
     }
@@ -171,11 +197,52 @@ function processSnapshot() {
   return null;
 }
 
-/** True if any running process references this worktree path. */
+/**
+ * A floor on what counts as a usable process snapshot.
+ *
+ * This process is itself a running process, so ANY genuine listing contains
+ * at least one line naming a node binary. That makes it a self-verifying
+ * check: if the snapshot cannot see the process taking it, it cannot see
+ * anything, and reporting "no live processes" from it would be a guarantee
+ * we do not have.
+ */
+function looksLikeProcessList(snapshot) {
+  if (snapshot.trim().length === 0) return false;
+  return snapshot.includes("node");
+}
+
+/**
+ * True if any running process appears to reference this worktree.
+ *
+ * Matches the absolute path in either slash direction, and also the
+ * directory's own name. The basename match is what catches the common shape
+ * the path match cannot: a crew that ran `npx vitest run` from inside its
+ * worktree has a command line carrying no path at all, but the tool it
+ * spawned almost always names the directory somewhere in its argv.
+ *
+ * ── What this CANNOT see, stated plainly ────────────────────────────────
+ *
+ * This is a heuristic over command lines, not a handle table. Windows'
+ * `Win32_Process` exposes no working directory, and reading a true cwd needs
+ * handle inspection this script deliberately does not attempt. So a process
+ * whose cwd is the worktree and whose argv names it nowhere — a bare
+ * `node vitest run`, an editor holding files open, an 8.3 short path — is
+ * invisible here.
+ *
+ * That gap is survivable only because it is not the last line of defence.
+ * Removal uses `git worktree remove` WITHOUT `--force`, and git independently
+ * refuses to delete a tree containing modified or untracked files. A crew
+ * actively working has, essentially always, written something. Treat this
+ * function as the cheap early filter and git's own refusal as the guarantee —
+ * which is why that call must never gain `--force`.
+ */
 function hasLiveProcess(snapshot, worktreePath) {
   const forward = worktreePath.toLowerCase().replace(/\\/g, "/");
   const backward = forward.replace(/\//g, "\\");
-  return snapshot.includes(forward) || snapshot.includes(backward);
+  if (snapshot.includes(forward) || snapshot.includes(backward)) return true;
+  const basename = forward.slice(forward.lastIndexOf("/") + 1);
+  // Guard against a pathologically short or empty basename matching everything.
+  return basename.length >= 4 && snapshot.includes(basename);
 }
 
 /**
@@ -198,6 +265,83 @@ function filesStillDiffering(repo, head, base) {
     if (onBranch !== onBase) differing += 1;
   }
   return differing;
+}
+
+/**
+ * Every branch that has a pull request, mapped to that PR's state.
+ *
+ * ── Why this signal is needed at all ────────────────────────────────────
+ *
+ * `filesStillDiffering` recognises a squash merge only while the files that
+ * branch touched are untouched on the base branch afterwards. On a repo
+ * moving at 50+ PRs in a few days that window closes almost immediately, so
+ * the check degrades from "is this merged?" to "was this merged recently?".
+ *
+ * Measured on 2026-08-25: of 70 worktrees, the PR record says 55 were
+ * merged; ancestry recognised 4 and the content comparison 21. The failure
+ * is not random, it is systematically biased toward "do not delete", which
+ * is the safe direction but leaves the leak in place.
+ *
+ * `fix/app-shell-sentinel-binary` is the worked example. Its work is on the
+ * base branch as `a1fe032` (#203) — genuinely, provably merged — yet one
+ * file still differs because three later PRs (#213, #268, #270) edited that
+ * same file. Nothing about the branch changed; the base branch moved.
+ *
+ * ── Why asking GitHub is safe here ─────────────────────────────────────
+ *
+ * This is one `gh` call for the whole repository, not one per branch.
+ *
+ * More importantly it can only ever ADD merged-ness. A branch this map
+ * reports as MERGED is removable; a branch it says nothing about falls back
+ * to the content comparison exactly as before. So when `gh` is missing,
+ * unauthenticated or rate-limited we return an empty map and the sweep
+ * removes strictly LESS than it otherwise would — never more. "Could not
+ * ask" must not be able to widen what gets deleted.
+ *
+ * Only `MERGED` counts. `CLOSED` deliberately does NOT: a closed-unmerged
+ * PR is a person deciding not to take that work, which makes the worktree
+ * possibly the only copy of it — the opposite of safe to delete.
+ */
+function pullRequestStates() {
+  let raw;
+  try {
+    raw = execFileSync(
+      "gh",
+      ["pr", "list", "--state", "all", "--limit", "400", "--json", "headRefName,state"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+  } catch {
+    return { states: new Map(), available: false };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { states: new Map(), available: false };
+  }
+  return { states: reducePullRequestStates(parsed), available: true };
+}
+
+/**
+ * Collapses the PR list to one state per branch.
+ *
+ * A branch can carry several pull requests — reopened, superseded, or simply
+ * reused after a merge. `MERGED` wins over everything else, because once any
+ * PR from a branch has merged, that work is on the base branch regardless of
+ * what happened to the others.
+ */
+function reducePullRequestStates(pullRequests) {
+  const states = new Map();
+  for (const pr of pullRequests) {
+    if (!pr?.headRefName) continue;
+    if (states.get(pr.headRefName) === "MERGED") continue;
+    states.set(pr.headRefName, pr.state);
+  }
+  return states;
 }
 
 function main() {
@@ -226,7 +370,15 @@ function main() {
     return;
   }
 
+  const { states: prStates, available: prsAvailable } = pullRequestStates();
+
   console.log(`base ${base} = ${baseSha}`);
+  console.log(
+    prsAvailable
+      ? `pull requests: ${prStates.size} branches known to GitHub`
+      : "pull requests: UNAVAILABLE (gh missing, unauthenticated or rate-limited) — " +
+          "falling back to the content comparison, which removes strictly less",
+  );
   console.log(apply ? "mode: APPLY\n" : "mode: dry run (pass --apply to remove)\n");
 
   const removed = [];
@@ -258,21 +410,47 @@ function main() {
       kept.push([label, "could not resolve HEAD"]);
       continue;
     }
-    const differing = filesStillDiffering(mainCheckout, head, baseSha);
-    if (differing === null) {
-      kept.push([label, `no merge-base with ${base} — cannot tell if its work is safe`]);
-      continue;
-    }
-    if (differing > 0) {
+    // Two independent ways for the work to be safely on the base branch. The
+    // PR record is checked first because it stays true as the base branch
+    // moves on, whereas the content comparison silently stops recognising a
+    // merge once anything else edits the same files.
+    const prState = wt.branch ? prStates.get(wt.branch) : undefined;
+    let mergedBecause = null;
+
+    // A closed-unmerged PR is a person deciding not to take that work, so the
+    // worktree may hold the only copy. That decision outranks both merge
+    // signals: refuse before either is consulted, rather than letting an
+    // incidental content match delete it.
+    if (prState === "CLOSED") {
       kept.push([
         label,
-        `${differing} file(s) differ from ${base} — work is not on the base branch`,
+        "its pull request was CLOSED without merging — this may be the only copy of that work",
       ]);
       continue;
     }
 
+    if (prState === "MERGED") {
+      mergedBecause = "its pull request is merged";
+    } else {
+      const differing = filesStillDiffering(mainCheckout, head, baseSha);
+      if (differing === null) {
+        kept.push([label, `no merge-base with ${base} — cannot tell if its work is safe`]);
+        continue;
+      }
+      if (differing > 0) {
+        // Say which signal was consulted, so "kept" is never mistaken for
+        // "GitHub said it was unmerged" when GitHub was never reachable.
+        const why = prsAvailable
+          ? `${differing} file(s) differ from ${base}, and no merged pull request — work is not on the base branch`
+          : `${differing} file(s) differ from ${base} — work is not on the base branch (pull request state was unavailable)`;
+        kept.push([label, why]);
+        continue;
+      }
+      mergedBecause = `content is present on ${base}`;
+    }
+
     if (!apply) {
-      removed.push([label, "would remove: clean, no live process, content present on base"]);
+      removed.push([label, `would remove: clean, no live process, ${mergedBecause}`]);
       continue;
     }
 
@@ -283,6 +461,12 @@ function main() {
       kept.push([label, "became dirty between the check and the removal"]);
       continue;
     }
+    // NEVER add `--force` here. Without it git independently refuses to
+    // delete a worktree containing modified or untracked files, which is the
+    // last and strongest guard in this script: it closes the residual race
+    // between the check above and this call, and it is the only guard that
+    // still holds when `hasLiveProcess` misses a crew it cannot see.
+    // Adding `--force` for convenience would silently remove that layer.
     if (git(["worktree", "remove", wt.path], mainCheckout) === null) {
       kept.push([label, "git worktree remove failed"]);
       continue;
@@ -303,4 +487,10 @@ function main() {
   console.log(`${removed.length} ${apply ? "removed" : "removable"}, ${kept.length} left alone.`);
 }
 
-main();
+// Run only when invoked directly, so the guards above can be imported and
+// tested without the sweep executing as a side effect of the import.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
+
+export { hasLiveProcess, looksLikeProcessList, reducePullRequestStates };
