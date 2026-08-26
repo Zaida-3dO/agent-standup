@@ -14,9 +14,11 @@ import {
   boundaryFromDraft,
   boundaryToDraft,
   describeProblem,
+  describeRun,
   draftIncompleteness,
   emptyBoundaryDraft,
   fieldNumber,
+  groupProblemRuns,
   presetDraft,
   presetWindow,
   problemPercent,
@@ -417,5 +419,159 @@ describe("drawing a collision", () => {
     // Every sample of this window collides, so the first is at the start.
     expect(describeProblem(problem)).toContain("start");
     expect(describeProblem({ ...problem, atHours: 3 })).toContain("3 hours in");
+  });
+});
+
+// ── Saying a collision once ─────────────────────────────────────────────
+//
+// The defect these cover, measured on the rendered page: two crossed
+// `constant` boundaries printed 101 near-identical list items across
+// 1873px for a fact that does not vary over the window.
+describe("groupProblemRuns", () => {
+  /** Two constants the wrong way round — collides at every sampled moment. */
+  function crossedThroughout(): BudgetWindow {
+    return {
+      enabled: true,
+      lengthHours: 10,
+      boundaries: {
+        selective: { kind: "constant", value: 20 },
+        windDown: { kind: "constant", value: 80 },
+        stop: { kind: "constant", value: 40 },
+      },
+    };
+  }
+
+  it("has the 101 near-identical problems that motivated this, so the rest is not vacuous", () => {
+    const problems = findCrossings(crossedThroughout());
+    expect(problems.length).toBe(101);
+    // Every one is the same fault said about a different moment.
+    expect(new Set(problems.map((p) => describeProblem(p))).size).toBe(101);
+  });
+
+  it("collapses a fault that holds all window into ONE entry, not 101", () => {
+    const runs = groupProblemRuns(findCrossings(crossedThroughout()));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.moments).toBe(101);
+  });
+
+  it("keeps every moment accounted for, so nothing is silently dropped", () => {
+    const problems = findCrossings(crossedThroughout());
+    const runs = groupProblemRuns(problems);
+    expect(runs.reduce((total, run) => total + run.moments, 0)).toBe(problems.length);
+  });
+
+  it("spans the run from the window's start to its end", () => {
+    const runs = groupProblemRuns(findCrossings(crossedThroughout()));
+    expect(runs[0]!.fromHours).toBe(0);
+    expect(runs[0]!.toHours).toBe(10);
+  });
+
+  it("says a window-long fault as one interval statement, not a moment", () => {
+    const window = crossedThroughout();
+    const runs = groupProblemRuns(findCrossings(window));
+    const said = describeRun(runs[0]!, window.lengthHours);
+    expect(said).toContain("for the whole window");
+    // The fault itself is still named in the form's own labels.
+    expect(said).toContain("Wind down");
+    expect(said).toContain("Stop");
+    // And it speaks of the span rather than of one sampled instant.
+    expect(said).not.toContain("at the start of the window");
+  });
+
+  it("does not merge two DIFFERENT faults into one line", () => {
+    const runs = groupProblemRuns([
+      {
+        atHours: 0,
+        message: "a",
+        detail: { kind: "mis-ordered", lower: "windDown", upper: "stop" },
+      },
+      {
+        atHours: 1,
+        message: "b",
+        detail: { kind: "mis-ordered", lower: "selective", upper: "stop" },
+      },
+    ]);
+    expect(runs).toHaveLength(2);
+  });
+
+  it("reports a fault that clears and returns as two runs, because it is two", () => {
+    const same = { kind: "mis-ordered", lower: "windDown", upper: "stop" };
+    const other = { kind: "out-of-range", band: "selective", value: 120 };
+    const runs = groupProblemRuns([
+      { atHours: 0, message: "a", detail: same },
+      { atHours: 1, message: "a", detail: other },
+      { atHours: 2, message: "a", detail: same },
+    ]);
+    expect(runs).toHaveLength(3);
+    expect(runs[0]!.fromHours).toBe(0);
+    expect(runs[2]!.fromHours).toBe(2);
+  });
+
+  it("leaves a single isolated fault worded exactly as it was before grouping", () => {
+    const problem = {
+      atHours: 3,
+      message: "m",
+      detail: {
+        kind: "mis-ordered",
+        lower: "windDown",
+        lowerValue: 82,
+        upper: "stop",
+        upperValue: 75,
+      },
+    };
+    const runs = groupProblemRuns([problem]);
+    expect(runs).toHaveLength(1);
+    expect(describeRun(runs[0]!, 10)).toBe(describeProblem(problem));
+    expect(describeRun(runs[0]!, 10)).toContain("3 hours in");
+  });
+
+  it("names the interval when a run spans part of the window only", () => {
+    const detail = {
+      kind: "mis-ordered",
+      lower: "windDown",
+      lowerValue: 82,
+      upper: "stop",
+      upperValue: 75,
+    };
+    const runs = groupProblemRuns([
+      { atHours: 2, message: "m", detail },
+      { atHours: 4, message: "m", detail },
+    ]);
+    const said = describeRun(runs[0]!, 10);
+    expect(said).toContain("from 2h to 4h");
+    expect(said).not.toContain("for the whole window");
+  });
+
+  it("quotes the earliest problem's numbers, so the run speaks from where it began", () => {
+    const runs = groupProblemRuns([
+      {
+        atHours: 2,
+        message: "first",
+        detail: {
+          kind: "mis-ordered",
+          lower: "windDown",
+          lowerValue: 82,
+          upper: "stop",
+          upperValue: 75,
+        },
+      },
+      {
+        atHours: 4,
+        message: "later",
+        detail: {
+          kind: "mis-ordered",
+          lower: "windDown",
+          lowerValue: 90,
+          upper: "stop",
+          upperValue: 60,
+        },
+      },
+    ]);
+    expect(runs).toHaveLength(1);
+    expect(describeRun(runs[0]!, 10)).toContain("82%");
+  });
+
+  it("groups nothing when there is nothing", () => {
+    expect(groupProblemRuns([])).toEqual([]);
   });
 });

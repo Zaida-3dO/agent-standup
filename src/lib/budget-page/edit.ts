@@ -618,3 +618,130 @@ export function valuesAt(
     value: boundaryAt(window.boundaries[key], atHours, window.lengthHours),
   }));
 }
+
+// ── Saying a collision once ─────────────────────────────────────────────
+//
+// `findCrossings` samples a window at 101 grid points and reports each
+// point independently, which is right for a *check*: the caller asking
+// "may this be saved" wants every moment, and the chart marks each one.
+//
+// It is wrong for a *sentence*. Two `constant` boundaries the wrong way
+// round collide at all 101 samples, and the panel printed 101 lines that
+// were identical apart from a timestamp — 1873px for one time-invariant
+// fact, on a page whose length was already the complaint that started this
+// work. Lines 2-101 carry no information the reader does not have.
+//
+// So the panel groups a *contiguous run* of the same fault into one
+// statement naming the interval it spans. "Same fault" is the fault's
+// identity, not its numbers: the same kind implicating the same bands. The
+// values are allowed to move within a run — a linear crossing another
+// linear is one continuous fault whose numbers differ at every sample, and
+// splitting it per-sample would be the same wall of text for a case that is
+// no less single.
+//
+// Grouping is *contiguous only*, so a fault that clears and returns is two
+// runs and reads as two — which is true, and is the case a reader most
+// needs told apart from one long one.
+
+/** What makes two sampled problems the same ongoing fault rather than two. */
+function faultIdentity(problem: CrossingProblemLike): string {
+  const detail = problem.detail as
+    { kind: string; band?: BandKey; lower?: BandKey; upper?: BandKey } | undefined;
+  // No `detail` means the sentence is all there is, so the sentence is the
+  // identity — two structureless problems group only if they read alike.
+  if (detail === undefined) return `message:${problem.message}`;
+  if (detail.kind === "mis-ordered") return `mis-ordered:${detail.lower}:${detail.upper}`;
+  return `${detail.kind}:${detail.band}`;
+}
+
+/** The subset of `CrossingProblem` this module reads, so tests can build one. */
+interface CrossingProblemLike {
+  readonly atHours: number;
+  readonly message: string;
+  readonly detail?: unknown;
+}
+
+/**
+ * One contiguous run of the same fault: the problem to speak from, and how
+ * far the run extends.
+ */
+export interface ProblemRun {
+  /** The earliest problem in the run — the one whose numbers are quoted. */
+  readonly problem: CrossingProblemLike;
+  /** Hours into the window at which the run starts. */
+  readonly fromHours: number;
+  /** Hours into the window at which the run ends; equal to `fromHours` for a point. */
+  readonly toHours: number;
+  /** How many sampled moments the run covers. Always >= 1. */
+  readonly moments: number;
+}
+
+/**
+ * Collapses contiguous runs of the same fault into one entry each.
+ *
+ * Order is preserved and nothing is dropped: every input problem lands in
+ * exactly one run, so a reader who counts moments across the runs gets the
+ * same number the check found.
+ */
+export function groupProblemRuns(problems: readonly CrossingProblemLike[]): ProblemRun[] {
+  const runs: ProblemRun[] = [];
+  let identity: string | null = null;
+
+  for (const problem of problems) {
+    const current = faultIdentity(problem);
+    const open = runs[runs.length - 1];
+    if (open !== undefined && current === identity) {
+      // Extend the open run rather than starting one. `toHours` takes the
+      // later moment so a run that is sampled out of order still spans.
+      runs[runs.length - 1] = {
+        problem: open.problem,
+        fromHours: open.fromHours,
+        toHours: Math.max(open.toHours, problem.atHours),
+        moments: open.moments + 1,
+      };
+      continue;
+    }
+    runs.push({
+      problem,
+      fromHours: problem.atHours,
+      toHours: problem.atHours,
+      moments: 1,
+    });
+    identity = current;
+  }
+
+  return runs;
+}
+
+/**
+ * A run said as one sentence: the fault's own wording, with its "when"
+ * widened from a moment to the interval the run covers.
+ *
+ * A single-moment run is worded exactly as it was before this grouping
+ * existed, so the common case of one isolated fault is unchanged.
+ */
+export function describeRun(run: ProblemRun, lengthHours: number): string {
+  const single = describeProblem({
+    atHours: run.problem.atHours,
+    message: run.problem.message,
+    detail: run.problem.detail,
+  });
+  if (run.moments <= 1 || run.toHours <= run.fromHours) return single;
+
+  // The run's own "when", to swap in for the moment phrasing the sentence
+  // was built with. Substituted in place, so the sentence keeps one clause.
+  const spansWholeWindow =
+    run.fromHours <= 0 && Number.isFinite(lengthHours) && run.toHours >= lengthHours;
+  const widened = spansWholeWindow
+    ? "for the whole window"
+    : `from ${describeHours(run.fromHours)} to ${describeHours(run.toHours)}`;
+
+  const moment = describeWhen(run.problem.atHours);
+  return single.includes(moment) ? single.replace(moment, widened) : `${single} (${widened})`;
+}
+
+/** A bare hours figure for an interval's ends — "0h", "1.68h". */
+function describeHours(atHours: number): string {
+  if (!Number.isFinite(atHours)) return "0h";
+  return `${Math.round(atHours * 100) / 100}h`;
+}

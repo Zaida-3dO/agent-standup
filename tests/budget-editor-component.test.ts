@@ -142,6 +142,31 @@ describe("WindowEditor — drawing a collision", () => {
     expect(text).toContain("Marked on the chart at");
   });
 
+  it("prints ONE line for a fault that holds all window, not one per sample", () => {
+    // The measured defect: 101 near-identical <li>s across 1873px for one
+    // time-invariant fact. Asserted on the rendered list, because that is
+    // the thing that was long — `groupProblemRuns` being correct in
+    // isolation would not have caught the panel failing to call it.
+    expect(problems.length).toBe(101);
+    const element = WindowEditor(editorProps({ parsed: window, problems }));
+    const items = findAllByType(element, "li").filter(
+      (li) => typeof (li.props as { children?: unknown }).children === "string",
+    );
+    const collisionLines = items.filter((li) =>
+      String((li.props as { children: string }).children).includes("must stay below"),
+    );
+    expect(collisionLines).toHaveLength(1);
+    expect(String((collisionLines[0]!.props as { children: string }).children)).toContain(
+      "for the whole window",
+    );
+  });
+
+  it("counts the heading in faults, so it does not promise 101 lines above one", () => {
+    const text = textOf(WindowEditor(editorProps({ parsed: window, problems })));
+    expect(text).not.toContain("101 moments");
+    expect(text).toContain("These boundaries collide, and this window cannot be saved");
+  });
+
   it("centres the chart on the first collision rather than on the window's start", () => {
     const shifted = problems.map((problem) => ({ ...problem, atHours: 2 }));
     const element = WindowEditor(editorProps({ parsed: window, problems: shifted }));

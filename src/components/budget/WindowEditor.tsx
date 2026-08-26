@@ -34,7 +34,8 @@ import {
   PRESET_HELP,
   PRESET_LABELS,
   bandsInProblem,
-  describeProblem,
+  describeRun,
+  groupProblemRuns,
   presetDraft,
   problemPercent,
   valuesAt,
@@ -75,6 +76,11 @@ export function WindowEditor(props: WindowEditorProps) {
   // problem would be a wall of numbers; the earliest is the one to fix
   // first, and fixing it usually clears the rest.
   const firstProblem = problems[0];
+
+  // The sentences to print: contiguous runs of the same fault, one line
+  // each. Derived from `problems`, which stays intact alongside it, so the
+  // chart and the save gate keep seeing every sampled moment.
+  const runs = groupProblemRuns(problems);
   const readings =
     parsed !== null && firstProblem !== undefined ? valuesAt(parsed, firstProblem.atHours) : [];
 
@@ -171,13 +177,23 @@ export function WindowEditor(props: WindowEditorProps) {
                with this panel missing entirely. */
             <div className={styles.problems} data-collision={name}>
               <p className={styles.problemsTitle}>
-                {problems.length === 1
+                {/* Counted in faults, matching the lines below it. Counting
+                    sampled moments instead would promise a hundred entries
+                    above a list of one. */}
+                {runs.length === 1
                   ? "These boundaries collide, and this window cannot be saved until they do not:"
-                  : `These boundaries collide at ${countDistinctMoments(problems)} moments, and this window cannot be saved until they do not:`}
+                  : `These boundaries collide in ${runs.length} places, and this window cannot be saved until they do not:`}
               </p>
+              {/* One entry per contiguous run of the same fault, not per
+                  sampled moment. Two crossed constants are one statement
+                  spanning the window, where this printed 101 near-identical
+                  lines. The chart above still receives every problem, so
+                  nothing is lost from the drawing — only from the prose. */}
               <ul className={styles.problemList}>
-                {problems.map((problem, index) => (
-                  <li key={`${problem.atHours}-${index}`}>{describeProblem(problem)}</li>
+                {runs.map((run, index) => (
+                  <li key={`${run.fromHours}-${run.toHours}-${index}`}>
+                    {describeRun(run, parsed.lengthHours)}
+                  </li>
                 ))}
               </ul>
 
@@ -217,9 +233,4 @@ export function WindowEditor(props: WindowEditorProps) {
       )}
     </section>
   );
-}
-
-/** How many distinct moments the problems fall at — a count of faults, not of rows. */
-function countDistinctMoments(problems: readonly CrossingProblem[]): number {
-  return new Set(problems.map((problem) => problem.atHours)).size;
 }
