@@ -23,6 +23,7 @@ export const HTTP_ROUTES: readonly HttpRoute[] = [
   { path: "/api/activity", methods: ["GET"] },
   { path: "/api/areas", methods: ["GET", "POST"] },
   { path: "/api/areas/{id}", methods: ["GET", "PATCH", "DELETE"] },
+  { path: "/api/areas/merge", methods: ["POST"] },
   { path: "/api/backfill", methods: ["POST"] },
   { path: "/api/board", methods: ["GET"] },
   { path: "/api/checkpoints", methods: ["POST"] },
