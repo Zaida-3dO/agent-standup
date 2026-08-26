@@ -658,13 +658,48 @@ model Artifact {
   // is still a coin flip on which artifact counts as the tip, decided once
   // at insert time and then fixed forever. `bigserial` is the same
   // insertion-order primitive `Event.id` already uses in this schema for
-  // exactly this reason (see `Event.id`'s own doc) — reused here rather than
-  // re-solved, on the same table that already needed it.
+  // exactly this reason — reused here rather than re-solved, on the same
+  // table that already needed it.
+  //
+  // `Event.id`'s own doc points at a caveat worth repeating rather than
+  // silently dropping: `Event.txId`'s comment, on the `Event` model above,
+  // records that "`id` is handed out before commit, so sequence order is
+  // not commit order" — a `bigserial` reserves its value at statement
+  // execution, before the transaction that holds it has necessarily
+  // committed, so a long-running transaction can commit *after* one that
+  // reserved a later value. The same is mechanically true of `seq`. It is
+  // immaterial here, not absent: every artifact is written by one short
+  // `INSERT ... RETURNING` inside its own transaction, and every guard read
+  // that uses `seq` runs inside a transaction that only sees already-
+  // committed rows — so being misled would require two `commit` artifacts
+  // for the same item written by concurrent, overlapping transactions that
+  // commit out of allocation order AND land in the same millisecond, which
+  // is a genuine write race this ordering has no better answer for either
+  // way, not a case `seq` makes worse.
   //
   // `createdAt DESC` stays the primary sort; `seq` only breaks a tie on it.
   // Two artifacts can only ever legitimately race on which one is "the tip"
   // when they were created close enough together that `createdAt` cannot
   // tell them apart — `seq` settles exactly that case and nothing else.
+  //
+  // The backfill migration (`prisma/migrations/20260826090000_artifact_
+  // insertion_seq`) states that existing rows' backfill order is
+  // irrelevant, which is correct, but for a narrower reason than its own
+  // comment gives. Verified empirically: `ALTER TABLE ... ADD COLUMN seq
+  // BIGSERIAL` assigns values in *physical* (heap/ctid) order, not
+  // insertion order — a row that was later UPDATEd moves to the end of the
+  // heap and gets a *higher* seq than rows inserted after it but never
+  // touched. (Migration files are the applied historical record and are not
+  // edited after landing — SCHEMA conventions, "additive only, never edit
+  // an applied migration" — which is why the correction lives here instead
+  // of there.) What actually makes the backfill order safe is that
+  // `Artifact` is append-only: exactly two INSERT sites in `src/`
+  // (`record-artifact.ts`, `import-assignments-artifacts.ts`) and zero
+  // UPDATE or DELETE against this table anywhere in the codebase, so no
+  // existing row has ever moved and heap order equals insertion order for
+  // every row that predates this column. If an UPDATE is ever added against
+  // `Artifact`, this guarantee stops holding silently — re-derive it before
+  // relying on `seq` for backfilled rows if that ever changes.
   seq            BigInt       @default(autoincrement())
 
   @@index([itemId, kind, reviewRound])

@@ -352,7 +352,7 @@ async function deriveFinalState(
     `SELECT "commitSha"
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = 'historical_verification'::"ArtifactKind"
-      ORDER BY "createdAt" DESC, "id" DESC
+      ORDER BY "createdAt" DESC, "seq" DESC
       LIMIT 1`,
     itemId,
   );

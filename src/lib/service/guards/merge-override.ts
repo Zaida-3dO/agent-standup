@@ -169,7 +169,7 @@ export async function mergeOverrideSatisfies(
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
         AND "commitSha" = ANY($3::text[]) AND "body" IS NOT NULL
-      ORDER BY "createdAt" DESC, "id" DESC
+      ORDER BY "createdAt" DESC, "seq" DESC
       LIMIT 1`,
     itemId,
     MERGE_OVERRIDE_KIND,

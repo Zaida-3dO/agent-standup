@@ -97,7 +97,7 @@ async function approvingArtifactsAtRound(
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
         AND "reviewRound" = $3 AND "verdict" = ANY($4::"Verdict"[])
-      ORDER BY "createdAt" DESC, "id" DESC`,
+      ORDER BY "createdAt" DESC, "seq" DESC`,
     itemId,
     kind,
     round,

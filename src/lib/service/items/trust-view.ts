@@ -93,7 +93,7 @@ export const NEWEST_VERIFICATION_SQL = `SELECT DISTINCT ON ("itemId")
      "commitSha" AS "commitSha"
    FROM "Artifact"
    WHERE "itemId" = ANY($1::text[]) AND "kind" = 'historical_verification'::"ArtifactKind"
-   ORDER BY "itemId", "createdAt" DESC, "id" DESC`;
+   ORDER BY "itemId", "createdAt" DESC, "seq" DESC`;
 
 function isoOrString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;

@@ -99,7 +99,7 @@ export async function personHasApprovedMerge(
        FROM "Artifact"
       WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
         AND "createdByType" = 'person'::"HolderType"
-      ORDER BY "createdAt" DESC, "id" DESC`,
+      ORDER BY "createdAt" DESC, "seq" DESC`,
     itemId,
     MERGE_APPROVAL_KIND,
   );
