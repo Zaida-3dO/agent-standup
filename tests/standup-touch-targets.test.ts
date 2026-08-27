@@ -81,7 +81,10 @@ function narrowBlock(): string {
   const afterHeader = CODE.slice(start + header.length).match(/^\s*\{/);
   expect(
     afterHeader,
-    `no \`${header}\` block — found the prelude as a substring prefix only (something sits between the header and the brace)`,
+    `no \`${header}\` block — something other than whitespace sits between the header and the brace. ` +
+      `This helper reads only the EXACT prelude above; if you added a comma-separated query (e.g. ` +
+      `\`${header}, print\`) or extended the condition (e.g. \`and (min-width: …)\`), that is a real ` +
+      `prelude change this test needs to know about — split the block, or update the header here to match.`,
   ).not.toBeNull();
   const open = start + header.length + afterHeader![0].length - 1;
   let depth = 0;
