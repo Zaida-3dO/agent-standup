@@ -84,6 +84,12 @@ import { getItemDetail } from "./operations/get-item-detail";
 // read with its own snapshot rather than an offset threaded through the
 // detail payload — see its header for why that trade is the right one.
 import { getItemHistory } from "./operations/get-item-history";
+// `body` past what `get_item`/`get_item_detail` can return whole (row
+// 977dc07e): a body over the response-size cap had no read that reached it
+// at all, only ones that returned the slim record it was already refused
+// from. Paged by character offset rather than a keyset, for the reason its
+// own header gives — `body` is one scalar on one row, not a growing set.
+import { getItemBody } from "./operations/get-item-body";
 // "What needs this person", in one call (T24) — the union three separate
 // `list_items` reads used to assemble in the browser.
 import { getNeedsYou } from "./operations/get-needs-you";
@@ -218,6 +224,7 @@ export const OPERATION_REGISTRY = {
   [markEventSeen.name]: markEventSeen,
   [getItemDetail.name]: getItemDetail,
   [getItemHistory.name]: getItemHistory,
+  [getItemBody.name]: getItemBody,
   [getNeedsYou.name]: getNeedsYou,
   [getSettings.name]: getSettings,
   [getSetting.name]: getSetting,

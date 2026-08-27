@@ -141,7 +141,17 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // opted into the heavy columns. A guard that refuses correctly but
   // advises wrongly costs the same debugging time as one that only refuses.
   get_events: "`full: false`, which drops each event's payload and body",
-  get_item: "`full: false`, which returns the slim record",
+  // **Naming only `full: false` here is the gap row 977dc07e filed: the
+  // slim record drops `body` entirely rather than returning less of it, so
+  // a caller whose body alone was the reason for the refusal would follow
+  // that advice back to the thing they already had.** `get_item_body` is
+  // the call that actually reaches the body — paged by character offset,
+  // its own operation for the reason its header gives. Named second, after
+  // `full: false`, so the advice-sweep's attribution (nearest tool named
+  // *before* an instructed field — `describe/advice.ts`'s `attributeTo`)
+  // reads `full: false` as this operation's own field rather than
+  // `get_item_body`'s, which has no `full` to accept it.
+  get_item: "`full: false` for the slim record, or `get_item_body` to read the body in windows",
   // **Both of these used to name a call that does not return loops, and
   // that is the correction.** `get_item_detail` suggested `get_item {full:
   // false}` and `orientation` suggested `get_item`; neither returns loops at
@@ -153,11 +163,16 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // than the refusal alone: the refusal is at least legible as a failure,
   // where an empty `openLoops` reads as "there are none".
   //
-  // Both now name `loop_list` first, because that is the call that actually
-  // returns the withheld thing, and keep the slim-record route for the rest
-  // of the payload.
+  // **`get_item_body` is now named too, for the same reason it was added to
+  // `get_item` above.** A 290,914-character body alone was measured at
+  // 5,192,784 through this operation — the subtask tree, artifacts, history
+  // and assignments this read joins in are not the body, and none of them
+  // shrink by reading the body elsewhere, but the body itself is exactly
+  // the field this operation cannot return any less of. `loop_list` stays
+  // first: on a long-lived item the loops are still the more common cause,
+  // named ahead of a route that fixes a rarer one.
   get_item_detail:
-    "`loop_list` for this item's loops, or `get_item` with `full: false` for the slim record",
+    "`loop_list` for this item's loops, `get_item_body` to read a large body in windows, or `get_item` with `full: false` for the slim record",
   // **Now names `limit`, which is the parameter that actually bounds this
   // response.** The advice here predated `orientation` gaining a working
   // `limit`, so it could only redirect a caller to a different call — the
@@ -181,6 +196,15 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // is the call that fixes it.
   my_work:
     "`release` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer",
+  // The generic fallback names `search`, which answers "find the item I
+  // want" — the wrong suggestion here, since a caller refused on this
+  // operation already has the item and is mid-way through reading its body.
+  // `limit` is genuinely the parameter that shrinks this response; unlike
+  // the stale-advice cases above, this one is correct by construction
+  // (`MAX_BODY_CHUNK_CHARS`'s own default already sits well under the
+  // ceiling — see that constant's header), but a caller is free to lower it
+  // further, and naming it is more useful than the default fallback.
+  get_item_body: "a smaller `limit`",
 };
 
 /**
