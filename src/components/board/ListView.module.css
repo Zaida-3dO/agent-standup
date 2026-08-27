@@ -171,7 +171,7 @@
    the card's `.cardUnverified` dashed outline (`Board.module.css`), so
    provenance is not silently absent here the way `TrustBadge.tsx`'s header
    used to describe. Dashes the row's OWN hairline rather than touching
-   `.colState`'s tone box-shadow above: a solid `box-shadow` cannot also be
+   `.colState`'s tone box-shadow below: a solid `box-shadow` cannot also be
    dashed, and this way a paused-or-blocked row can be unverified too
    without either channel overwriting the other, matching the card's
    "both can be true at once and each still reads" rule. */

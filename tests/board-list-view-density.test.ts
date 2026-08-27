@@ -155,7 +155,17 @@ function containerBlock(maxWidth: number): string {
   return atRuleBlock(`@container list (max-width: ${maxWidth}px)`);
 }
 
-/** The body of the one block with this exact at-rule prelude. */
+/**
+ * The body of the one block with this exact at-rule prelude.
+ *
+ * **Requires the prelude to be EXACTLY `header`**, not merely start with
+ * it — the same substring-prefix hole row 9a43b772 found and fixed in the
+ * two `narrowBlock` helpers this function is their shared template for.
+ * Without the guard below, `code.indexOf("{", start)` after a bare
+ * `code.indexOf(header)` matches a narrowed prelude like `... and
+ * (min-width: 500px)` too, and everything inside that block is read as if
+ * it were declared at the whole breakpoint.
+ */
 function atRuleBlock(header: string): string {
   const occurrences = CODE.split(header).length - 1;
   if (occurrences === 0) throw new Error(`No \`${header}\` block.`);
@@ -163,7 +173,13 @@ function atRuleBlock(header: string): string {
     throw new Error(`${occurrences} \`${header}\` blocks — a breakpoint must be declared once.`);
   }
   const start = CODE.indexOf(header);
-  const open = CODE.indexOf("{", start);
+  const afterHeader = CODE.slice(start + header.length).match(/^\s*\{/);
+  if (!afterHeader) {
+    throw new Error(
+      `No \`${header}\` block — found the prelude as a substring prefix only (something sits between the header and the brace).`,
+    );
+  }
+  const open = start + header.length + afterHeader[0].length - 1;
   let depth = 0;
   for (let i = open; i < CODE.length; i += 1) {
     if (CODE[i] === "{") depth += 1;
