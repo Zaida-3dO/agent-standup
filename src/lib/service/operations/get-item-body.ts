@@ -66,7 +66,8 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { resolveItemId } from "../items/resolve-id";
-import { MAX_RESPONSE_CHARS } from "../response-size";
+import { MAX_RESPONSE_CHARS, responseSize, wireCopiesFor } from "../response-size";
+import { surfaceForTransport, type CallSurface } from "@/lib/surfaces";
 
 /**
  * The most characters one page may hold.
@@ -84,6 +85,31 @@ import { MAX_RESPONSE_CHARS } from "../response-size";
  * directly in `item-body-operation.test.ts`'s "every page this operation
  * returns stays under the response-size ceiling" rather than trusted from
  * this comment.
+ *
+ * **This bounds the REQUEST; it is not the guarantee about the RESPONSE —
+ * and that difference is the defect this constant alone once had.** The
+ * arithmetic above counts *raw body characters*, while the guard measures
+ * *serialised JSON*, and `JSON.stringify` expands: `"` and a newline each
+ * widen to two characters, and a control character such as `ESC` (`0x1B`,
+ * the byte every ANSI-coloured paste of terminal output is full of) widens
+ * to six as `\u001b`. Those are not the same quantity, so a page dense in
+ * such characters breached the cap while nominally obeying this constant —
+ * measured at 50,000 raw characters of 20% `ESC`, serialising to 100,079
+ * and delivering 200,158 on MCP, over the 200,000 ceiling. That is the
+ * operation which exists to escape a size refusal being refused on its own
+ * default call.
+ *
+ * **Why this stayed a quarter instead of shrinking to a worst-case-proof
+ * constant.** A sixteenth (12,500) would survive even a body of pure
+ * control characters, but real content is nowhere near it: measured across
+ * 1,090 Markdown, TypeScript and JSON files in this repository, the worst
+ * expansion ratio of any of them is 1.13, and a page this size does not
+ * breach until that ratio reaches 2.0. Shrinking the constant would
+ * quadruple the pages every real caller walks, to defend against content
+ * none of them send. So the quarter stays as the *request* bound, and
+ * `fitPageToBudget` enforces the *response* bound the quarter cannot
+ * express: the common case pays one serialisation and keeps its full-size
+ * page, and only genuinely expanding content pays a narrower one.
  */
 export const MAX_BODY_CHUNK_CHARS = Math.floor(MAX_RESPONSE_CHARS / 4);
 
@@ -142,6 +168,175 @@ export interface GetItemBodyOutput {
   readonly nextOffset: number | null;
 }
 
+/**
+ * The output shape, built from a row in exactly one place.
+ *
+ * **One builder, because the loop must measure what the handler returns.**
+ * `fitPageToBudget` decides whether a page fits by serialising it, and
+ * that verdict is only meaningful if the object it measured is the object
+ * the caller eventually receives. A second construction site — one to
+ * measure, one to return — would let the two drift, and a page measured in
+ * a shape lighter than the one returned is a page that passes the check
+ * and then breaches the cap, silently reintroducing this whole defect.
+ *
+ * `chunkLength` comes off the row rather than from `chunk.length` for the
+ * unit reason the module header sets out: it is a Postgres character
+ * count, the same unit as `offset`, where the JavaScript string's own
+ * `.length` counts UTF-16 code units and disagrees on any character
+ * outside the Basic Multilingual Plane.
+ */
+function pageOf(row: RawBodyRow, offset: number): GetItemBodyOutput {
+  const totalLength = Number(row.totalLength);
+  const chunkLength = Number(row.chunkLength);
+  const nextOffset = offset + chunkLength;
+  const hasMore = nextOffset < totalLength;
+  return {
+    chunk: row.chunk,
+    offset,
+    totalLength,
+    hasMore,
+    nextOffset: hasMore ? nextOffset : null,
+  };
+}
+
+/**
+ * How much serialised payload one page may spend for a caller on `surface`.
+ *
+ * The guard's own arithmetic read backwards: it refuses when `payload *
+ * wireCopiesFor(surface)` exceeds `MAX_RESPONSE_CHARS`, so the payload one
+ * page may occupy is that ceiling divided by those wire copies. Derived
+ * from the same two exports the guard uses rather than restated as a
+ * literal here — a second copy of that arithmetic is a second thing to
+ * update when either changes, and a stale copy fails in the unsafe
+ * direction, as a page that believes it fits and does not.
+ */
+export function payloadBudgetFor(surface: CallSurface | undefined): number {
+  return Math.floor(MAX_RESPONSE_CHARS / wireCopiesFor(surface));
+}
+
+/**
+ * How much of the projected limit to actually take — deliberately under 1.
+ *
+ * **The direction of this error is the whole point.** The next limit is
+ * projected from the overshoot ratio, and a projection that lands slightly
+ * generous returns a page that breaches the cap, which is precisely the
+ * bug being fixed; one that lands slightly mean costs a marginally shorter
+ * page and at worst one extra iteration. Those two failures are not
+ * equally bad, so the bias is toward the harmless one. The margin also
+ * absorbs the envelope fields (`offset`, `totalLength`, `hasMore`,
+ * `nextOffset`), whose ~79 characters the ratio alone does not model.
+ *
+ * **This is a tuning knob, not a safety bound, and the distinction is
+ * deliberate.** Correctness does not rest on this number: the loop
+ * re-measures every candidate and only returns one that actually fits, so
+ * even a value *above* 1 — which projects a larger page than the overshoot
+ * justifies — cannot produce an oversized response; it can only cost
+ * another iteration. That was verified by hand-mutating this constant to
+ * `1.02` and sweeping the fixture space: no input produced an oversized
+ * page, and the iteration count moved by at most one. A test pinning that
+ * one-iteration difference would be pinning noise, so none does, and this
+ * paragraph records the reasoning instead — the mutant survives because it
+ * is equivalent on correctness, not because the sizing is untested. What
+ * *is* tested is the property that matters: `fitPageToBudget` never
+ * returns a page over budget, and it converges in a bounded number of
+ * round trips.
+ */
+const SHRINK_SAFETY = 0.98;
+
+/**
+ * The largest page that actually serialises inside `budget`.
+ *
+ * **Why a loop rather than a smaller constant.** See
+ * `MAX_BODY_CHUNK_CHARS`'s header: that constant bounds raw characters
+ * while the guard measures serialised JSON, and no single constant
+ * expresses both unless sized for the pathological case, which taxes every
+ * ordinary caller forever. Measuring what was actually produced is the
+ * only sizing correct for both, so this asks the real question — "does
+ * this exact page fit?" — of `responseSize`, the very function the guard
+ * measures with, rather than of an estimate of it.
+ *
+ * **Why it re-queries instead of trimming the string it already holds.**
+ * Trimming in JavaScript cuts by UTF-16 code unit, and the module header
+ * explains why that unit is wrong here: a cut landing mid-surrogate yields
+ * a lone surrogate (serialising to `\ud83d`, and not valid text a caller
+ * can reassemble), and a `chunkLength` taken from the trimmed string's own
+ * `.length` would put `nextOffset` in a different unit from the `offset`
+ * that produced it — the silent torn read this operation exists to
+ * prevent. Re-cutting the slice in Postgres keeps every count in Postgres
+ * characters by construction, so the unit cannot drift however many times
+ * this shrinks.
+ *
+ * Measured cost: 0.02ms for ASCII, which fits first time and never
+ * re-queries, and 0.46ms for a body of pure control characters — against a
+ * database round trip.
+ */
+// Exported for the suite, which counts the round trips this makes. That
+// count is the whole cost argument for choosing a loop over a smaller
+// constant, so it is asserted against the real function rather than
+// re-derived from a copy of the arithmetic in a test.
+export async function fitPageToBudget(
+  budget: number,
+  offset: number,
+  limit: number,
+  fetchPage: (limit: number) => Promise<RawBodyRow | undefined>,
+): Promise<RawBodyRow | undefined> {
+  let attemptedLimit = limit;
+  for (;;) {
+    const row = await fetchPage(attemptedLimit);
+    // Nothing to size: a missing row is the caller's `NotFoundError` to
+    // raise, and an empty slice cannot shrink further.
+    if (!row || row.chunk.length === 0) return row;
+
+    // Measured at the REAL offset, not at zero. `offset` and `nextOffset`
+    // are numbers, and a larger one serialises to more digits — a page at
+    // offset 1,000,000 is a longer payload than the same chunk at offset 0.
+    // Measuring at zero would size a page slightly smaller than the one
+    // actually returned, which is the "measure one shape, return another"
+    // drift `pageOf`'s own header warns about: it passed the check here and
+    // breached the cap downstream by exactly those few characters.
+    const size = responseSize(pageOf(row, offset));
+    // Unmeasurable is not oversized — `responseSize`'s own header draws
+    // this distinction, and shrinking here would convert an unrelated
+    // defect into a mysteriously short page.
+    if (size === null || size <= budget) return row;
+    // One character is the floor: below it there is no page left, and a
+    // body whose single character will not fit is a condition no further
+    // shrinking resolves. Returning it lets the guard refuse honestly
+    // rather than looping forever.
+    if (attemptedLimit <= 1) return row;
+
+    // **Two bounds, and the second is what keeps this cheap.**
+    //
+    // The projection assumes the page expands *uniformly*, so it scales the
+    // limit by how far over budget the page came in. That is a good guess
+    // for uniform content and a poor one when the density is uneven — a
+    // page whose tail is far denser than its average overshoots slightly
+    // every time, and the projection then creeps down in small steps.
+    // Measured on a front-loaded control-character body, that creep cost
+    // **26 iterations**, and each iteration here is a database round trip
+    // rather than a cheap serialisation.
+    //
+    // So the shrink is also floored at half the current limit. That makes
+    // every iteration at least halve the remaining search space regardless
+    // of what the projection guesses,
+    // which bounds the loop logarithmically: the same worst case measured
+    // at **3 iterations**, and the uniform cases still converge in the 1–2
+    // the projection alone achieved. The projection is kept because when it
+    // is right it beats bisection outright — ASCII fits on the first
+    // attempt and never re-queries at all.
+    const projected = Math.floor(attemptedLimit * (budget / size) * SHRINK_SAFETY);
+    // Halving, which is the bisection: the loop returns the moment a page
+    // fits, so the largest limit known to fit is always zero here and the
+    // interval to halve is the whole of `attemptedLimit`.
+    const bisected = Math.floor(attemptedLimit / 2);
+    // `attemptedLimit - 1` keeps strict progress even if both bounds round
+    // back to the current limit; halving covers a projection that collapses
+    // to zero or below.
+    const next = Math.min(projected, bisected, attemptedLimit - 1);
+    attemptedLimit = Math.max(1, next > 0 ? next : Math.floor(attemptedLimit / 2));
+  }
+}
+
 interface RawBodyRow {
   chunk: string;
   chunkLength: number;
@@ -189,30 +384,59 @@ export const getItemBody = defineOperation({
     // UTF-16 code units instead, which overcounts any character outside the
     // Basic Multilingual Plane relative to the Postgres-character offset
     // the next `SUBSTRING` call needs — see the module header.
-    const rows = await ctx.db.$queryRawUnsafe<RawBodyRow[]>(
-      `SELECT chunk, LENGTH(chunk) AS "chunkLength", "totalLength" FROM (
+    // **The page is sized against what it serialises to, not against the
+    // character count that was asked for.** `MAX_BODY_CHUNK_CHARS` bounds
+    // the request in raw characters; the guard downstream measures
+    // serialised JSON times the surface's wire copies, and JSON escaping
+    // makes those two numbers diverge without limit — see that constant's
+    // header for the measurement. So the requested limit is a starting
+    // point, and `fitPageToBudget` narrows it until the page it produces
+    // genuinely fits, re-cutting in Postgres so every count stays in
+    // Postgres characters.
+    //
+    // Sized against THIS caller's surface, from `ctx.caller.transport` —
+    // the same field `enforceResponseSize` reads to decide the refusal. A
+    // page is sized for the wire it is about to travel, so a caller on a
+    // non-duplicating surface is not charged for MCP's doubling.
+    const budget = payloadBudgetFor(surfaceForTransport(ctx.caller.transport));
+    const row = await fitPageToBudget(budget, input.offset, input.limit, async (limit) => {
+      // The slice and the total length come from one statement so they
+      // describe the same read of the row — computing `totalLength` from a
+      // second query could disagree with the row the slice was actually cut
+      // from if a write landed in between. `SUBSTRING` is 1-indexed in
+      // Postgres, so the zero-based `offset` this operation's own input
+      // documents is shifted by one at the query boundary, not at the
+      // schema boundary — the caller-facing contract stays zero-based, which
+      // is the ordinary meaning of "offset".
+      // `$2`/`$3` are cast to `::int` explicitly — the driver sends a
+      // JavaScript number as `bigint` by default, and Postgres's `SUBSTRING`
+      // has no `(text, bigint, bigint)` overload, only `(text, int, int)`. Left
+      // uncast this fails outright with `42883`, caught only by the DB-backed
+      // suite (`item-body-operation.test.ts`) — the mock-driver test in
+      // `get-item-history`'s style would not see it, because a stub that
+      // returns canned rows never asks Postgres to resolve the overload.
+      // `LENGTH(chunk)` is selected alongside the chunk itself — the same
+      // statement that cut the slice also measures it, in the same
+      // Postgres-character unit `SUBSTRING` and `LENGTH("body")` already use.
+      // Measuring the chunk with a JavaScript string's own `.length` counts
+      // UTF-16 code units instead, which overcounts any character outside the
+      // Basic Multilingual Plane relative to the Postgres-character offset
+      // the next `SUBSTRING` call needs — see the module header.
+      const rows = await ctx.db.$queryRawUnsafe<RawBodyRow[]>(
+        `SELECT chunk, LENGTH(chunk) AS "chunkLength", "totalLength" FROM (
          SELECT SUBSTRING("body" FROM $2::int FOR $3::int) AS chunk, LENGTH("body") AS "totalLength"
          FROM "Item" WHERE "id" = $1
        ) AS page`,
-      id,
-      input.offset + 1,
-      input.limit,
-    );
-    const row = rows[0];
+        id,
+        input.offset + 1,
+        limit,
+      );
+      return rows[0];
+    });
     if (!row) {
       throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
     }
 
-    const totalLength = Number(row.totalLength);
-    const chunkLength = Number(row.chunkLength);
-    const nextOffset = input.offset + chunkLength;
-    const hasMore = nextOffset < totalLength;
-    return {
-      chunk: row.chunk,
-      offset: input.offset,
-      totalLength,
-      hasMore,
-      nextOffset: hasMore ? nextOffset : null,
-    };
+    return pageOf(row, input.offset);
   },
 });

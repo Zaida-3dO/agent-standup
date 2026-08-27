@@ -72,8 +72,18 @@ describeIfDb("get_item_body against Postgres", () => {
     }) as Promise<{ id: string }>;
   }
 
-  async function bodyOf(input: Record<string, unknown>): Promise<GetItemBodyOutput> {
-    return (await runtime.call("get_item_body", input)) as GetItemBodyOutput;
+  async function bodyOf(
+    input: Record<string, unknown>,
+    caller?: { transport: string },
+  ): Promise<GetItemBodyOutput> {
+    // `caller` is threaded through because the response-size guard is
+    // surface-aware: only a caller on MCP gets the 2x wire multiplier, and
+    // the ceiling tests below are only meaningful with it applied.
+    return (await runtime.call(
+      "get_item_body",
+      input,
+      caller ? { caller } : {},
+    )) as GetItemBodyOutput;
   }
 
   describe("reading a normal body", () => {
@@ -277,6 +287,128 @@ describeIfDb("get_item_body against Postgres", () => {
       expect(payloadSize).not.toBeNull();
       const delivered = payloadSize! * wireCopiesFor("mcp");
       expect(delivered).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+    });
+
+    // **The ASCII test above probes the claim only where it cannot fail,
+    // and this is the case that actually broke it.** `JSON.stringify`
+    // expands as it serialises — a control character becomes six
+    // characters (`\u001b`), a quote or newline becomes two — while
+    // `MAX_BODY_CHUNK_CHARS` counts raw characters. A body dense in those
+    // characters therefore produced a page that obeyed the character
+    // ceiling and still breached the response cap once MCP doubled it:
+    // the operation that exists to escape a size refusal, refused on its
+    // own default call.
+    //
+    // Called through the real runtime **on the MCP surface**, so the
+    // response-size guard applies the 2x wire multiplier exactly as it
+    // would for an agent reading through MCP. Before the fix this call
+    // rejected with `response.too_large`; the assertion is that it returns
+    // a page at all, and that the page it returns measures inside the cap.
+    it("a control-character-dense body still returns a page that fits, on MCP", async () => {
+      // 20% ESC — the density measured at 200,158 delivered characters
+      // against the 200,000 ceiling. ESC is not exotic: it is the lead
+      // byte of every ANSI escape sequence in pasted terminal output,
+      // which board bodies routinely carry.
+      const dense = "\u001bxxxx";
+      const bigBody = dense.repeat((MAX_RESPONSE_CHARS * 2) / dense.length);
+      const item = await createItem(bigBody, { area: "item-body-ceiling" });
+
+      const page = await bodyOf({ id: item.id }, { transport: "mcp-stdio" });
+
+      const payloadSize = responseSize(page);
+      expect(payloadSize).not.toBeNull();
+      expect(payloadSize! * wireCopiesFor("mcp")).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+      // It shrank rather than returning nothing — a zero-length page would
+      // "fit" while being useless, so the remedy must still make forward
+      // progress.
+      expect(page.chunk.length).toBeGreaterThan(0);
+      expect(page.hasMore).toBe(true);
+    });
+
+    // The worst case the escape table allows: every character expanding
+    // sixfold. This is the fixture a fixed smaller constant would have had
+    // to be sized for, and the loop handles it without one.
+    it("a body of pure control characters still returns a page that fits, on MCP", async () => {
+      const bigBody = "\u0001".repeat(MAX_RESPONSE_CHARS);
+      const item = await createItem(bigBody, { area: "item-body-ceiling" });
+
+      const page = await bodyOf({ id: item.id }, { transport: "mcp-stdio" });
+
+      const payloadSize = responseSize(page);
+      expect(payloadSize).not.toBeNull();
+      expect(payloadSize! * wireCopiesFor("mcp")).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+      expect(page.chunk.length).toBeGreaterThan(0);
+    });
+
+    // **The shrink must not cost correctness.** A narrowed page is still a
+    // page: walking it by `nextOffset` has to reassemble the body exactly,
+    // with no character dropped or repeated at the seam where the shrink
+    // happened.
+    it("a shrunk page still walks and reassembles the body exactly", async () => {
+      const body = '\u001bab"c\n'.repeat(20_000);
+      const item = await createItem(body, { area: "item-body-ceiling" });
+
+      let assembled = "";
+      let offset: number | null = 0;
+      let pages = 0;
+      while (offset !== null) {
+        const page: GetItemBodyOutput = await bodyOf(
+          { id: item.id, offset },
+          { transport: "mcp-stdio" },
+        );
+        assembled += page.chunk;
+        offset = page.nextOffset;
+        pages++;
+        expect(pages).toBeLessThan(500);
+      }
+      expect(assembled).toBe(body);
+      expect(pages).toBeGreaterThan(1);
+    });
+
+    // **A non-BMP body proves the shrink kept its unit.** Trimming the
+    // chunk in JavaScript would cut by UTF-16 code unit and could land
+    // mid-surrogate, yielding a lone surrogate and a `nextOffset` counted
+    // in the wrong unit — the silent torn read the module header exists to
+    // prevent. Re-cutting the slice in Postgres cannot do that, and this
+    // is the test that would notice if it ever did.
+    it("a shrunk page never splits a surrogate pair", async () => {
+      // Emoji (2 UTF-16 units, 1 Postgres character) mixed with control
+      // characters, so the page both expands under escaping AND straddles
+      // the unit boundary.
+      const body = "\u001b\u001b\u001b\u{1F600}".repeat(15_000);
+      const item = await createItem(body, { area: "item-body-ceiling" });
+
+      let assembled = "";
+      let offset: number | null = 0;
+      let pages = 0;
+      while (offset !== null) {
+        const page: GetItemBodyOutput = await bodyOf(
+          { id: item.id, offset },
+          { transport: "mcp-stdio" },
+        );
+        // A high surrogate at the end, or a low surrogate at the start,
+        // means the cut landed inside a pair.
+        expect(/[\uD800-\uDBFF]$/.test(page.chunk)).toBe(false);
+        expect(/^[\uDC00-\uDFFF]/.test(page.chunk)).toBe(false);
+        assembled += page.chunk;
+        offset = page.nextOffset;
+        pages++;
+        expect(pages).toBeLessThan(500);
+      }
+      expect(assembled).toBe(body);
+    });
+
+    // **An ordinary body must not pay for the pathological one.** The whole
+    // reason this is a loop rather than a smaller constant is that real
+    // content — measured across this repository at a worst expansion ratio
+    // of 1.13, against the 2.0 needed to breach — keeps its full-size page.
+    // If this fails, the fix has quietly become the shrink-everything
+    // option it was deliberately chosen over.
+    it("an ordinary ASCII body still gets a full-size page", async () => {
+      const bigBody = "x".repeat(MAX_RESPONSE_CHARS * 5);
+      const item = await createItem(bigBody, { area: "item-body-ceiling" });
+      const page = await bodyOf({ id: item.id }, { transport: "mcp-stdio" });
+      expect(page.chunk).toHaveLength(MAX_BODY_CHUNK_CHARS);
     });
 
     // The other side of the same claim, proven rather than assumed: a chunk
