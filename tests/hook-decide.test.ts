@@ -273,6 +273,78 @@ describe("nudges never change a verdict", () => {
   });
 });
 
+describe("findings ride the verdict untouched — MILESTONES.md #128", () => {
+  const FINDING = {
+    id: "I10",
+    source: "builtin" as const,
+    phase: "pre" as const,
+    audience: "agent" as const,
+    level: "block-overridable" as const,
+    timing: "immediate" as const,
+    messages: { plain: "no approval at tip", prominent: "NO APPROVAL AT TIP" },
+  };
+
+  it("carries the findings the server answered with, alongside a deny", async () => {
+    const { verdict, findings } = await decideWithNudges({
+      event: event(),
+      askServer: server({ decision: "block", reason: "no approval at tip", findings: [FINDING] }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    expect(findings).toEqual([FINDING]);
+  });
+
+  it("carries the findings the server answered with, alongside an allow", async () => {
+    // A nudge-level finding allows the call but is still worth recording —
+    // `capture.ts`'s own contract is that every triggered finding is
+    // captured, including ones that never blocked anything.
+    const nudgeFinding = { ...FINDING, level: "nudge" as const };
+    const { verdict, findings } = await decideWithNudges({
+      event: event(),
+      askServer: server({ decision: "allow", findings: [nudgeFinding] }),
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(findings).toEqual([nudgeFinding]);
+  });
+
+  it("is an empty array, never undefined, when the server sent none", async () => {
+    // `DecidedEvent.findings` is declared non-optional so a caller can
+    // iterate it unconditionally; `answer.findings` being absent must not
+    // leak an `undefined` through this function's own return.
+    const { findings } = await decideWithNudges({
+      event: event(),
+      askServer: server({ decision: "allow" }),
+    });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("is an empty array when there was no answer at all", async () => {
+    const { findings } = await decideWithNudges({
+      event: event(),
+      askServer: server(undefined),
+    });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("cannot influence the verdict — a block-level finding on a post event still allows", async () => {
+    // The clamp lives in `decide`, keyed on the event's phase alone; a
+    // regression that let `findings` feed back into the verdict would make
+    // this the one test in the suite to notice, because every other
+    // post/Stop assertion here uses a server answer with no findings at
+    // all.
+    const { verdict, findings } = await decideWithNudges({
+      event: event({ eventType: "PostToolUse" }),
+      askServer: server({ decision: "block", findings: [FINDING] }),
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(findings).toEqual([FINDING]);
+  });
+});
+
 describe("what the hook sends", () => {
   it("asks the server exactly once per event", async () => {
     const askServer = server({ decision: "allow" });

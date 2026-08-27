@@ -31,6 +31,7 @@ import type { HookEvent } from "./payload";
 import { readSessionStatus } from "./enforcement";
 import { readStopContext } from "./stop-catch";
 import { readNudgeContext } from "./nudge";
+import type { InterventionFinding } from "../interventions/types";
 
 /** The subset of `fetch` this adapter uses. Injected so tests need no network. */
 export type FetchLike = (
@@ -59,6 +60,69 @@ function property(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)[key]
     : undefined;
+}
+
+/**
+ * One `findings` entry, read defensively.
+ *
+ * `hook_decision`'s own response is trusted server output, but this reader
+ * exists anyway for the same reason `readStopContext` and `readNudgeContext`
+ * do not trust theirs either: a script is installed on a machine and a
+ * server can be ahead of it, so a field this build does not yet know about
+ * — or one an older server never sent — must not throw the whole response
+ * away. Only what every caller of `buildCaptures` actually reads is
+ * required (`id`, `level`, `phase`, `messages.plain`); a malformed entry is
+ * dropped rather than failing the batch, the same posture `readSpool` takes
+ * with a torn line.
+ */
+function readFinding(value: unknown): InterventionFinding | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+
+  const id = record.id;
+  const level = record.level;
+  const phase = record.phase;
+  const messages = record.messages;
+  const plain =
+    typeof messages === "object" && messages !== null
+      ? (messages as Record<string, unknown>).plain
+      : undefined;
+  const prominent =
+    typeof messages === "object" && messages !== null
+      ? (messages as Record<string, unknown>).prominent
+      : undefined;
+
+  if (typeof id !== "string" || id.length === 0) return undefined;
+  if (typeof level !== "string" || level.length === 0) return undefined;
+  if (typeof phase !== "string" || phase.length === 0) return undefined;
+  if (typeof plain !== "string") return undefined;
+
+  return {
+    id,
+    // `source` and `audience` are not read by anything on this side of the
+    // wire — `buildCaptures` never asks for either — so they are carried
+    // through when present rather than invented when absent. A cast rather
+    // than a validated enum: an unrecognised value here changes nothing a
+    // capture writes, so rejecting the whole finding over it would lose
+    // real data to protect a property nobody reads.
+    source: (typeof record.source === "string" ? record.source : "builtin") as never,
+    phase: phase as never,
+    audience: (typeof record.audience === "string" ? record.audience : "agent") as never,
+    level: level as never,
+    timing: (typeof record.timing === "string" ? record.timing : "immediate") as never,
+    messages: { plain, prominent: typeof prominent === "string" ? prominent : plain },
+  };
+}
+
+/** `findings`, read defensively. `undefined` for anything that is not an array. */
+function readFindings(value: unknown): readonly InterventionFinding[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const findings: InterventionFinding[] = [];
+  for (const entry of value) {
+    const finding = readFinding(entry);
+    if (finding !== undefined) findings.push(finding);
+  }
+  return findings;
 }
 
 /**
@@ -120,6 +184,11 @@ export function createHttpAsk({
     // either is dropped by its own reader and can never affect the verdict.
     const stop = readStopContext(property(body, "stop"));
     const nudge = readNudgeContext(property(body, "nudge"));
+    // Advisory in the same sense: `hook_decision` always returns `findings`
+    // (present-but-empty when nothing triggered), and nothing about them
+    // can change `decision` — they exist so a caller can record what fired,
+    // not to be consulted here.
+    const findings = readFindings(property(body, "findings"));
 
     return {
       // The one string that refuses. Everything else — including a value
@@ -129,6 +198,7 @@ export function createHttpAsk({
       ...(enforcement === undefined ? {} : { enforcement }),
       ...(stop === undefined ? {} : { stop }),
       ...(nudge === undefined ? {} : { nudge }),
+      ...(findings === undefined ? {} : { findings }),
     };
   };
 }
