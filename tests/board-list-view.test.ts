@@ -282,6 +282,32 @@ describe("the list carries the amber/red split", () => {
     expect(propOf<string>(row, "data-tone")).toBeUndefined();
   });
 
+  it("marks an imported-and-unchecked row with data-unverified, so provenance is not badge-only in list mode", () => {
+    // Row 8243e3b0-3084-44c5-8a0f-b617f7492875: the card view marks this
+    // with `.cardUnverified`, but the list rendered the same `TrustBadge`
+    // and no second channel — the badge alone says only "nobody has
+    // checked", with no way to tell an imported row from one this system
+    // authored. The single-character change this catches: dropping the
+    // `unverified` spread (or reading `.verification` instead of
+    // `.unverifiedOrigin`, the wrong field on `TrustInfo`).
+    const board = boardOf({
+      backlog: [
+        entry(
+          "backlog",
+          { id: "imported" },
+          { trust: { unverifiedOrigin: true, verification: null } },
+        ),
+        entry(
+          "backlog",
+          { id: "native" },
+          { trust: { unverifiedOrigin: false, verification: null } },
+        ),
+      ],
+    });
+    const rows = findAllByType(render(board), "tr").filter((r) => propOf(r, "className"));
+    expect(rows.map((r) => propOf<string>(r, "data-unverified"))).toEqual(["true", undefined]);
+  });
+
   it("marks a row that needs the active reader, and only for that reader", () => {
     const board = boardOf({
       waiting: [
