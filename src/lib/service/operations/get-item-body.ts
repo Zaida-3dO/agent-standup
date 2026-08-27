@@ -41,6 +41,26 @@
 // (where this page sits), and `hasMore` (whether calling again would
 // return anything new) — never inferred from whether a page happened to
 // come back shorter than asked.
+//
+// **`nextOffset`, not a caller-computed one — this is a second instance of
+// the same principle, one boundary further out.** `SUBSTRING`/`LENGTH`
+// count Postgres characters; a JavaScript string's own `.length` counts
+// UTF-16 code units, and the two disagree on any character outside the
+// Basic Multilingual Plane (an emoji is 1 Postgres character, 2 JS units).
+// A caller walking pages by advancing `offset += chunk.length` — the
+// obvious reading of "an offset and a chunk" — overshoots by one per such
+// character consumed: content is silently skipped, and because the same
+// arithmetic decided `hasMore`, the walk can terminate one page early
+// having served a body that reassembles short. That is a torn read with
+// no signal attached — exactly "a partial result you cannot identify as
+// partial" for a caller who did nothing wrong, discovered against real
+// board content this operation exists to read (search for "emoji" turns
+// up rows carrying one). So the offset arithmetic is not exposed for a
+// caller to redo: `nextOffset` is computed here, in the same
+// Postgres-character units as `offset` and `SUBSTRING` themselves, from
+// `LENGTH(chunk)` rather than from the JS string's own `.length` — a
+// caller that just passes `nextOffset` back can get this wrong by
+// ignoring the field, never by doing the arithmetic in the wrong unit.
 import { z } from "zod";
 import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
@@ -92,22 +112,39 @@ export type GetItemBodyInput = z.infer<typeof inputSchema>;
 export interface GetItemBodyOutput {
   /** This page's slice of `body`. May be shorter than `limit` — see `hasMore`, never inferred from this length alone. */
   readonly chunk: string;
-  /** Where this page starts in the full body, in characters. */
+  /** Where this page starts in the full body, in characters (Postgres characters — see the module header on why that unit matters). */
   readonly offset: number;
   /** How long the WHOLE body is, in characters — what lets a caller compute how many pages remain. */
   readonly totalLength: number;
   /**
-   * Whether calling again with a later `offset` would return more content.
-   * A fact computed from `offset + chunk.length` against `totalLength`,
-   * never an inference from `chunk` coming back shorter than `limit` — the
-   * last page of a body whose length is an exact multiple of `limit` is
-   * legitimately full length and still has no more after it.
+   * Whether calling again with `nextOffset` would return more content. A
+   * fact computed server-side from `offset + LENGTH(chunk)` against
+   * `totalLength` — the same sum `nextOffset` itself is, before the
+   * `hasMore`-false case collapses it to `null` — never an inference from
+   * `chunk` coming back shorter than `limit`: the last page of a body
+   * whose length is an exact multiple of `limit` is legitimately full
+   * length and still has no more after it.
    */
   readonly hasMore: boolean;
+  /**
+   * The `offset` to pass on the next call to continue reading — `null` once
+   * `hasMore` is false, so there is nothing to pass back into.
+   *
+   * Computed here from `LENGTH(chunk)`, the chunk's own Postgres-character
+   * count, rather than left for the caller to derive from the returned
+   * string's JavaScript `.length`. Those two counts disagree on any
+   * character outside the Basic Multilingual Plane — the module header
+   * has the full reasoning — so a caller that used the string's own length
+   * to advance would silently skip content on exactly the input this
+   * operation exists to serve. Passing `nextOffset` straight back removes
+   * that arithmetic from the caller entirely.
+   */
+  readonly nextOffset: number | null;
 }
 
 interface RawBodyRow {
   chunk: string;
+  chunkLength: number;
   totalLength: number;
 }
 
@@ -145,9 +182,18 @@ export const getItemBody = defineOperation({
     // suite (`item-body-operation.test.ts`) — the mock-driver test in
     // `get-item-history`'s style would not see it, because a stub that
     // returns canned rows never asks Postgres to resolve the overload.
+    // `LENGTH(chunk)` is selected alongside the chunk itself — the same
+    // statement that cut the slice also measures it, in the same
+    // Postgres-character unit `SUBSTRING` and `LENGTH("body")` already use.
+    // Measuring the chunk with a JavaScript string's own `.length` counts
+    // UTF-16 code units instead, which overcounts any character outside the
+    // Basic Multilingual Plane relative to the Postgres-character offset
+    // the next `SUBSTRING` call needs — see the module header.
     const rows = await ctx.db.$queryRawUnsafe<RawBodyRow[]>(
-      `SELECT SUBSTRING("body" FROM $2::int FOR $3::int) AS "chunk", LENGTH("body") AS "totalLength"
-       FROM "Item" WHERE "id" = $1`,
+      `SELECT chunk, LENGTH(chunk) AS "chunkLength", "totalLength" FROM (
+         SELECT SUBSTRING("body" FROM $2::int FOR $3::int) AS chunk, LENGTH("body") AS "totalLength"
+         FROM "Item" WHERE "id" = $1
+       ) AS page`,
       id,
       input.offset + 1,
       input.limit,
@@ -158,11 +204,15 @@ export const getItemBody = defineOperation({
     }
 
     const totalLength = Number(row.totalLength);
+    const chunkLength = Number(row.chunkLength);
+    const nextOffset = input.offset + chunkLength;
+    const hasMore = nextOffset < totalLength;
     return {
       chunk: row.chunk,
       offset: input.offset,
       totalLength,
-      hasMore: input.offset + row.chunk.length < totalLength,
+      hasMore,
+      nextOffset: hasMore ? nextOffset : null,
     };
   },
 });

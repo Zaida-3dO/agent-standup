@@ -7,6 +7,14 @@
 // also needs a row Postgres actually stores and actually measures the
 // `LENGTH` of, which is the property under test.
 //
+// **Every walking loop below advances by `nextOffset`, never by
+// `offset + page.chunk.length`.** `LENGTH` counts Postgres characters; a
+// JavaScript string's own `.length` counts UTF-16 code units, and the two
+// disagree on any character outside the Basic Multilingual Plane. A walk
+// that advanced by the JS length would silently skip content on a body
+// containing one — "the non-BMP body walk reassembles exactly" below is
+// the test that would have caught it, and does.
+//
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -80,6 +88,7 @@ describeIfDb("get_item_body against Postgres", () => {
       expect(page.offset).toBe(0);
       expect(page.totalLength).toBe("hello world".length);
       expect(page.hasMore).toBe(false);
+      expect(page.nextOffset).toBeNull();
     });
 
     it("starts at the given offset, not the beginning", async () => {
@@ -102,6 +111,7 @@ describeIfDb("get_item_body against Postgres", () => {
       const page = await bodyOf({ id: item.id, limit: 4 });
       expect(page.chunk).toHaveLength(4);
       expect(page.hasMore).toBe(true);
+      expect(page.nextOffset).toBe(4);
     });
 
     it("is false once offset + chunk reaches the end, even on the last page's full-length chunk", async () => {
@@ -114,6 +124,7 @@ describeIfDb("get_item_body against Postgres", () => {
       const page = await bodyOf({ id: item.id, offset: 4, limit: 4 }); // exactly the tail
       expect(page.chunk).toHaveLength(4);
       expect(page.hasMore).toBe(false);
+      expect(page.nextOffset).toBeNull();
     });
 
     it("is false for an offset already past the end — returns an empty chunk, not an error", async () => {
@@ -122,6 +133,7 @@ describeIfDb("get_item_body against Postgres", () => {
       expect(page.chunk).toBe("");
       expect(page.hasMore).toBe(false);
       expect(page.totalLength).toBe(5);
+      expect(page.nextOffset).toBeNull();
     });
   });
 
@@ -140,13 +152,55 @@ describeIfDb("get_item_body against Postgres", () => {
       const item = await createItem(original);
 
       let assembled = "";
-      let offset = 0;
-      for (let guard = 0; guard < 50; guard++) {
+      let offset: number | undefined = 0;
+      for (let guard = 0; guard < 50 && offset !== undefined; guard++) {
         const page = await bodyOf({ id: item.id, offset, limit: 100 });
         assembled += page.chunk;
-        if (!page.hasMore) break;
-        offset += page.chunk.length;
+        offset = page.nextOffset ?? undefined;
       }
+      expect(assembled).toBe(original);
+    });
+
+    // **The regression this row was reopened for.** `SUBSTRING`/`LENGTH`
+    // count Postgres characters; a JS string's `.length` counts UTF-16 code
+    // units, and the two disagree on any character outside the Basic
+    // Multilingual Plane. A walk that advanced `offset` by
+    // `page.chunk.length` instead of by `page.nextOffset` overshot by one
+    // per such character consumed — reproduced against real board content
+    // (rows this repository's own search turns up for "emoji") as: 107
+    // pages walked, 5461 of 5580 characters delivered, 119 lost, `hasMore`
+    // false while content remained. The assertion that would have caught
+    // it is byte-for-byte reassembly against a body built from exactly
+    // this class of character, which is what follows.
+    it("the non-BMP body walk reassembles exactly — the case a UTF-16-length walk would silently lose", async () => {
+      // A body deliberately weighted toward characters where UTF-16 code
+      // units and Postgres characters diverge: astral emoji (2 JS units,
+      // 1 Postgres character each) interleaved with ordinary ASCII, so a
+      // wrong-unit walk both overshoots AND does so unevenly across pages
+      // rather than by one constant fixable offset.
+      const original = Array.from({ length: 400 }, (_, i) => {
+        const emojis = ["🚫", "✅", "🛒", "🎉", "🔥"];
+        return `${i}-${emojis[i % emojis.length]}-`;
+      }).join("");
+      // Confirm the fixture actually exercises the divergence before
+      // trusting the rest of the test: Postgres characters must be fewer
+      // than JS UTF-16 units, or this proves nothing.
+      const item = await createItem(original);
+      const wholeBodyProbe = await bodyOf({ id: item.id, limit: MAX_BODY_CHUNK_CHARS });
+      expect(wholeBodyProbe.totalLength).toBeLessThan(original.length);
+
+      let assembled = "";
+      let offset: number | undefined = 0;
+      let pages = 0;
+      for (let guard = 0; guard < 200 && offset !== undefined; guard++) {
+        // A small limit forces many page boundaries to fall inside runs of
+        // multi-unit characters, which is where a wrong-unit walk tears.
+        const page = await bodyOf({ id: item.id, offset, limit: 37 });
+        pages++;
+        assembled += page.chunk;
+        offset = page.nextOffset ?? undefined;
+      }
+      expect(pages).toBeGreaterThan(1);
       expect(assembled).toBe(original);
     });
   });
@@ -184,15 +238,14 @@ describeIfDb("get_item_body against Postgres", () => {
 
       // Walk the whole thing through get_item_body and reassemble it.
       let assembled = "";
-      let offset = 0;
+      let offset: number | undefined = 0;
       let pages = 0;
-      for (let guard = 0; guard < 100; guard++) {
+      for (let guard = 0; guard < 100 && offset !== undefined; guard++) {
         const page = await bodyOf({ id: item.id, offset });
         pages++;
         assembled += page.chunk;
         expect(page.totalLength).toBe(bigBody.length);
-        if (!page.hasMore) break;
-        offset += page.chunk.length;
+        offset = page.nextOffset ?? undefined;
       }
       expect(assembled).toBe(bigBody);
       // More than one page — proof this is actually windowing, not one call
@@ -236,6 +289,7 @@ describeIfDb("get_item_body against Postgres", () => {
         offset: 0,
         totalLength: MAX_RESPONSE_CHARS * 10,
         hasMore: true,
+        nextOffset: Math.floor(MAX_RESPONSE_CHARS / 2),
       };
       const payloadSize = responseSize(halfCeilingPage);
       expect(payloadSize).not.toBeNull();
