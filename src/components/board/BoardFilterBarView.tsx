@@ -529,8 +529,9 @@ export function BoardFilterBarView({
         // adding `tabIndex` to this label, add an `onKeyDown` Enter handler
         // in the same change (see the checkbox's `onChange` above for how
         // this component keeps `aria-expanded` in sync without hooks).
-        // Guarded by the "must not become focusable while Enter is
-        // unhandled" test in tests/board-filter-bar-component.test.ts.
+        // Guarded by the "the button-roled label stays non-focusable
+        // unless it also handles Enter" test in
+        // tests/board-filter-bar-component.test.ts.
         role="button"
         aria-controls="board-axes-panel"
         // Matches `defaultChecked={false}` above — correct on first paint,

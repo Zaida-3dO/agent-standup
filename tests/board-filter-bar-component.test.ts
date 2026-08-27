@@ -306,9 +306,6 @@ describe("the axes disclosure toggle (narrow-width collapse)", () => {
         label.onKeyDown,
         "label became keyboard-focusable (tabIndex >= 0) without gaining an Enter handler -- the announced button role is now reachable and wrong",
       ).toBeDefined();
-    } else {
-      const focusable = label.tabIndex !== undefined && label.tabIndex >= 0;
-      expect(focusable, "label must stay non-focusable while Enter is unhandled").toBe(false);
     }
   });
 

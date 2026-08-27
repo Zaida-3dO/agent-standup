@@ -373,6 +373,28 @@ describe("board header — tap targets at phone widths (PR #311)", () => {
     // known tap target: the min-height roster, `.densityButton` and the
     // base-rule roster above, or a class in BASE_NON_TARGET_CLASSES for a
     // real >=44px box that is verified, case by case, not to be one.
+    //
+    // **Known limit, left deliberately (row a7618c76, decision recorded on
+    // the row rather than built): this scan is keyed on SIZE, not on
+    // markup.** It only inspects rules that already declare >=44px, so a
+    // brand-new UNDERSIZED control — e.g. `.tinyButton { min-height: 18px }`
+    // — never enters the check and passes silently. That is the actual
+    // `.projectStripTitle`-shaped miss this file exists to prevent; the
+    // scan below only catches "declared big but unrostered", not "declared
+    // too small". `tests/standup-touch-targets.test.ts` closes the
+    // equivalent gap on the Standup home by parsing component TSX for
+    // `<Link>`/`<a>` tap targets and asserting the roster matches what
+    // actually renders — a real markup-drift guard. This file's roster
+    // spans four components and three element families (`<button>`,
+    // `<select>`/`<input>`, `<a>`/`<span>`), so the same approach here is
+    // materially more scope than that precedent, not a like-for-like port.
+    // Two directions were on the table and neither was taken casually: (a)
+    // parse all four components for interactive elements and require each
+    // to be rostered or excused, or (b) assert the SET of scanned
+    // stylesheets against a glob so a fifth board-area file can't silently
+    // fall outside scope either. Left undone; if you are adding a new
+    // interactive control below 44px to one of these four files, this
+    // suite will not catch it — verify it by hand or in a real browser.
     const knownSelectors = new Set(MIN_HEIGHT_TARGETS.map((t) => `.${t.selector.slice(1)}`));
     knownSelectors.add(".densityButton");
     for (const target of BASE_RULE_TARGETS) knownSelectors.add(target.selector);

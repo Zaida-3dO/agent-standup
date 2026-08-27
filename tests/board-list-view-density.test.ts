@@ -71,6 +71,19 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
  * lookup that scanned the whole file would find whichever came first in
  * source order and silently report a narrow-width value as the full-width
  * one, which would let the reflow tests below pass while asserting nothing.
+ *
+ * This locates each block's opening `{` by scanning forward from the bare
+ * `@media`/`@container` KEYWORD, which looks like the same substring-scan
+ * shape `atRuleBlock` below had to be fixed for — but it is not the same
+ * hazard. `atRuleBlock` searches for a full PRELUDE string (e.g.
+ * `@media (max-width: 560px)`), so a narrower prelude that merely starts
+ * with it (`... and (min-width: 500px)`) is a real substring-prefix match
+ * whose body would be misread as unconditional. This scan searches only
+ * for the keyword itself and does not care what the prelude says — it
+ * wants the next `{` after `@media`/`@container` in order to skip the
+ * whole block, and for any syntactically valid at-rule that is always the
+ * correct brace, regardless of how long, narrow, or comma-separated the
+ * prelude is. There is no prelude here to be a prefix of.
  */
 const TOP_LEVEL = (() => {
   let out = "";
@@ -176,7 +189,10 @@ function atRuleBlock(header: string): string {
   const afterHeader = CODE.slice(start + header.length).match(/^\s*\{/);
   if (!afterHeader) {
     throw new Error(
-      `No \`${header}\` block — found the prelude as a substring prefix only (something sits between the header and the brace).`,
+      `No \`${header}\` block — something other than whitespace sits between the header and the brace. ` +
+        `This helper reads only the EXACT prelude above; if you added a comma-separated query (e.g. ` +
+        `\`${header}, print\`) or extended the condition (e.g. \`and (min-width: …)\`), that is a real ` +
+        `prelude change this test needs to know about — split the block, or update the header here to match.`,
     );
   }
   const open = start + header.length + afterHeader[0].length - 1;
