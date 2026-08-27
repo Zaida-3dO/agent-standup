@@ -64,13 +64,26 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
  * file does not make that safe, since it is a property of this particular
  * ordering rather than a guarantee this test can rely on without asserting
  * it directly.
+ *
+ * **Requires the prelude to be EXACTLY `@media (max-width: 640px)`**, not
+ * merely start with it — the same substring-prefix hole row 9a43b772 found
+ * elsewhere, and the identical shape `atRuleBlock` carried until this
+ * sweep: a bare `CODE.indexOf("{", start)` after the header matches a
+ * narrowed prelude like `@media (max-width: 640px) and (min-width: 580px)`
+ * too, and everything inside that block would be read as if it were
+ * unconditional at the whole breakpoint.
  */
 function narrowBlock(): string {
   const header = "@media (max-width: 640px)";
   const occurrences = CODE.split(header).length - 1;
   expect(occurrences, `${occurrences} \`${header}\` blocks — expected exactly one`).toBe(1);
   const start = CODE.indexOf(header);
-  const open = CODE.indexOf("{", start);
+  const afterHeader = CODE.slice(start + header.length).match(/^\s*\{/);
+  expect(
+    afterHeader,
+    `no \`${header}\` block — found the prelude as a substring prefix only (something sits between the header and the brace)`,
+  ).not.toBeNull();
+  const open = start + header.length + afterHeader![0].length - 1;
   let depth = 0;
   for (let i = open; i < CODE.length; i += 1) {
     if (CODE[i] === "{") depth += 1;
