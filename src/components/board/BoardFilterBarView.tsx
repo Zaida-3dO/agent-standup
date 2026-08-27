@@ -463,10 +463,11 @@ export function BoardFilterBarView({
           display preference for THIS load, not a value the rest of the
           component tree reads or writes, so there is nothing to lift into
           state. `.axesToggle:checked ~ .axes` in the CSS shows the block on
-          tap; `@media (min-width: 641px)` forces `.axes` to display
-          regardless of the checkbox past the same breakpoint every
-          touch-target fix in this sweep uses, so a desktop reader's
-          experience is unchanged. No JS, no new stored preference: this is
+          tap; desktop is unaffected by ABSENCE, not by an override — `.axes`
+          is `display: flex` in its own base rule in `BoardFilterBar.module.css`
+          and is only ever collapsed inside `@media (max-width: 640px)`, so a
+          wide viewport never depends on the checkbox's state at all. No JS,
+          no new stored preference: this is
           a second, orthogonal disclosure from the "More filters" picker
           below, which still decides WHICH axes exist; this only decides
           whether the existing set is showing right now on a narrow

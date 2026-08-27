@@ -74,9 +74,18 @@
 //   - Moving that sibling rule outside the `max-width: 640px` block fails
 //     the desktop-unaffected test, or the narrow-collapse test, depending on
 //     which direction it moved.
-//   - Deleting the `@media (min-width: 641px)` override that unconditionally
-//     shows `.axes` fails "desktop is not gated by the checkbox" — the
-//     narrow-width disclosure would leak onto wide viewports.
+//   - Adding `display: none` to `.axes`'s own base rule (outside the
+//     `max-width: 640px` block) fails "declares .axes visible
+//     unconditionally, so nothing above 640px depends on the checkbox" —
+//     row 51099bdd corrected this bullet: there is no
+//     `@media (min-width: 641px)` override anywhere in the source
+//     (`grep -rn "641" src/` matches only prose), and desktop is unaffected
+//     by ABSENCE rather than by an explicit override — `.axes` is
+//     `display: flex` in its base rule and only ever collapsed inside the
+//     narrow-width block, so a viewport that never matches that query has
+//     no narrower rule to override. The mutation above (adding a
+//     `display: none` to the base rule instead) is the one that actually
+//     exercises this test.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -102,6 +111,58 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
 function rulesFor(selector: string): string[] {
   const rules = [...CODE.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
   return rules.filter((m) => m[1]!.split(",").some((s) => s.trim() === selector)).map((m) => m[2]!);
+}
+
+/**
+ * The concatenated bodies of every block whose prelude is EXACTLY
+ * `@media (max-width: 640px)` — not merely starts with that string.
+ *
+ * A plain `CODE.slice(CODE.indexOf("@media (max-width: 640px)"))` finds a
+ * block by substring PREFIX. Mutation-verified: narrowing the prelude to
+ * `@media (max-width: 640px) and (min-width: 500px)` — inert below 500px,
+ * excluding 320/360/390, the exact widths this row's fix was measured at
+ * — still matches `indexOf`, so the block is found and everything inside
+ * it asserts as if it were unconditional. This walks brace depth to each
+ * block's own closing brace (same shape as `board-list-view-density.test.ts`'s
+ * `atRuleBlock`) and requires the header immediately followed by `{`
+ * (allowing only whitespace between), which an `and (...)` prelude cannot
+ * satisfy. Two blocks share this exact prelude in this file (see the
+ * touch-target sweep further down), so this concatenates rather than
+ * asserting exactly one, unlike `standup-touch-targets.test.ts`'s
+ * single-block version.
+ */
+function narrowBlock(): string {
+  const header = "@media (max-width: 640px)";
+  let out = "";
+  let index = 0;
+  let found = 0;
+  while (true) {
+    const start = CODE.indexOf(header, index);
+    if (start === -1) break;
+    const afterHeader = CODE.slice(start + header.length).match(/^\s*\{/);
+    if (!afterHeader) {
+      // Prefix match only (e.g. `and (min-width: ...)` before the brace) —
+      // not a real occurrence of this exact block. Skip past it and keep
+      // looking, rather than silently reading it as the block.
+      index = start + header.length;
+      continue;
+    }
+    found += 1;
+    const open = start + header.length + afterHeader[0].length - 1;
+    let depth = 0;
+    let i = open;
+    for (; i < CODE.length; i += 1) {
+      if (CODE[i] === "{") depth += 1;
+      if (CODE[i] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    out += CODE.slice(open + 1, i) + "\n";
+    index = i + 1;
+  }
+  expect(found, `no exact \`${header}\` block`).toBeGreaterThan(0);
+  return out;
 }
 
 function has(body: string, property: string, value?: string): boolean {
@@ -141,16 +202,34 @@ describe("the axes toggle checkbox stays in the tab order at every width", () =>
     }
   });
 
-  it("hides .axesToggle only with the clip-rect technique, which keeps it in the tab order", () => {
-    // Pins the actual mechanism this file's own header names: `position:
-    // absolute` + a 1px box + `clip: rect(0,0,0,0)` is visually-hidden but
-    // NOT `display:none`/`visibility:hidden`, so the browser still lays it
-    // out and keeps it tabbable. Losing any one of these three weakens the
-    // guarantee even though none of them alone is "display:none".
+  it("hides .axesToggle only with a visually-hidden technique that keeps it in the tab order", () => {
+    // Pins the property that matters — hidden by a technique that does NOT
+    // remove the element from the tab order — rather than one specific
+    // spelling of it. `position: absolute` + a 1px box + either
+    // `clip: rect(0,0,0,0)` (the legacy spelling) or a `clip-path` that
+    // clips the box to nothing (the modern, widely-recommended
+    // replacement — `clip` itself is deprecated) both achieve this: the
+    // element is still laid out and still tabbable. Losing `position`
+    // or having neither clip mechanism weakens the guarantee even though
+    // neither alone is "display:none".
+    //
+    // Row 51099bdd: pinning the exact `clip: rect(0, 0, 0, 0)` spelling
+    // made this test a false positive against `clip-path: inset(50%)` —
+    // mutation-verified, that substitution used to fail this test despite
+    // being a strict improvement (same visual-hiding guarantee, modern
+    // property). display:none/visibility:hidden stay hard prohibitions
+    // above; this test only widens which HIDING TECHNIQUE is accepted.
     const bodies = rulesFor(".axesToggle");
     const base = bodies[0]!;
     expect(has(base, "position", "absolute")).toBe(true);
-    expect(has(base, "clip", "rect(0, 0, 0, 0)")).toBe(true);
+    const clip = has(base, "clip", "rect(0, 0, 0, 0)");
+    const clipPath = base
+      .split(";")
+      .some((part) => part.trim().startsWith("clip-path:") && part.includes("inset("));
+    expect(
+      clip || clipPath,
+      ".axesToggle declares neither `clip: rect(0, 0, 0, 0)` nor a `clip-path: inset(...)`",
+    ).toBe(true);
   });
 });
 
@@ -159,12 +238,12 @@ describe("the sibling-selector reveal that the toggle's reachability exists to s
     // Without this, the checkbox could be perfectly reachable and still do
     // nothing — reachability alone is not the contract, reachability THAT
     // WORKS is.
-    const narrow = CODE.slice(CODE.indexOf("@media (max-width: 640px)"));
+    const narrow = narrowBlock();
     expect(narrow).toMatch(/\.axesToggle:checked\s*~\s*\.axes\s*\{[^}]*display:\s*flex/);
   });
 
   it("collapses .axes by default below 641px, so there is something to reveal", () => {
-    const narrow = CODE.slice(CODE.indexOf("@media (max-width: 640px)"));
+    const narrow = narrowBlock();
     const bodies = [...narrow.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
       .filter((m) => m[1]!.split(",").some((s) => s.trim() === ".axes"))
       .map((m) => m[2]!);

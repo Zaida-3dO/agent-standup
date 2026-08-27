@@ -51,11 +51,35 @@ const CSS = readFileSync(
 /** Strip comments, so a rule discussed in prose is never mistaken for a declared one. */
 const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
 
-/** The body of the narrow-width block — what a phone actually reads. */
+/**
+ * The body of the one `@media (max-width: 640px)` block — what a phone
+ * actually reads.
+ *
+ * Walks brace depth to the block's own closing brace rather than slicing to
+ * end-of-file, and refuses to guess when the block is declared more than
+ * once — the same shape as `atRuleBlock` in
+ * `tests/board-list-view-density.test.ts`. A slice-to-EOF version would
+ * silently absorb anything appended below the block as if it were inside
+ * it; this stylesheet's single media block happening to sit last in the
+ * file does not make that safe, since it is a property of this particular
+ * ordering rather than a guarantee this test can rely on without asserting
+ * it directly.
+ */
 function narrowBlock(): string {
-  const start = CODE.indexOf("@media (max-width: 640px)");
-  expect(start).toBeGreaterThan(-1);
-  return CODE.slice(start);
+  const header = "@media (max-width: 640px)";
+  const occurrences = CODE.split(header).length - 1;
+  expect(occurrences, `${occurrences} \`${header}\` blocks — expected exactly one`).toBe(1);
+  const start = CODE.indexOf(header);
+  const open = CODE.indexOf("{", start);
+  let depth = 0;
+  for (let i = open; i < CODE.length; i += 1) {
+    if (CODE[i] === "{") depth += 1;
+    if (CODE[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return CODE.slice(open + 1, i);
+    }
+  }
+  throw new Error(`Unterminated \`${header}\` block.`);
 }
 
 /** One class's declarations inside a stylesheet chunk. */

@@ -44,6 +44,12 @@
 //   - Adding a new interactive control to one of these four files with no
 //     44px rule fails the roster test — the one that stops the next
 //     `.projectStripTitle`-shaped miss, this time on the board header.
+//   - Shrinking `.axesSummary`'s or `.menuButton`'s BASE-rule size below
+//     44px fails "declares >=44px on every base-rule roster target" —
+//     row afd1b4b4: both escaped every test above, mutation-verified
+//     (44px -> 20px/24px, all green), because the roster and completeness
+//     tests only ever look inside `max-width: 640px` blocks and both of
+//     these declare their real size in a base rule instead.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -71,16 +77,36 @@ const TOP_BAR_CSS = css("../src/components/top-bar/TopBar.module.css");
  * file). A helper that stopped at the first block would silently read as
  * "no rule" for every selector declared in the second one — which is
  * exactly where `.select` and five of its roster siblings live.
+ *
+ * **Requires the prelude to be EXACTLY `@media (max-width: 640px)`**, not
+ * merely start with it. Row 9a43b772 found this file's original version —
+ * `code.indexOf(header, index)` followed by `code.indexOf("{", start)` —
+ * matches by substring prefix, so a narrowed prelude like
+ * `@media (max-width: 640px) and (min-width: 500px)` is still found and
+ * everything inside it is read as if it were unconditional at the whole
+ * breakpoint. That row's own mutation was against
+ * `BoardFilterBar.module.css`'s disclosure block, not this file's
+ * `.select`-roster block, but the same substring match is used here and
+ * the row names this file explicitly as carrying the identical hole.
  */
 function narrowBlock(code: string): string {
+  const header = "@media (max-width: 640px)";
   let out = "";
   let index = 0;
   let found = 0;
   while (true) {
-    const start = code.indexOf("@media (max-width: 640px)", index);
+    const start = code.indexOf(header, index);
     if (start === -1) break;
+    const afterHeader = code.slice(start + header.length).match(/^\s*\{/);
+    if (!afterHeader) {
+      // Prefix match only — an `and (...)` (or anything else) sits between
+      // the header and the brace, so this is not a real occurrence of the
+      // exact block. Skip past it and keep looking.
+      index = start + header.length;
+      continue;
+    }
     found += 1;
-    const open = code.indexOf("{", start);
+    const open = start + header.length + afterHeader[0].length - 1;
     let depth = 0;
     let i = open;
     for (; i < code.length; i += 1) {
@@ -170,6 +196,33 @@ const MIN_HEIGHT_TARGETS: ReadonlyArray<{
   { name: ".switcher", code: TOP_BAR_CSS, selector: ".switcher", inlineByDefault: false },
 ];
 
+/**
+ * Tap targets whose >=44px size lives in a BASE rule rather than inside a
+ * `max-width: 640px` block — found missing entirely in review (row
+ * afd1b4b4). `narrowBlock()` only ever looks inside narrow-width blocks, so
+ * neither of these was checked by anything: `.axesSummary`'s `min-height`
+ * is set once, in its base rule, and only its `display` is toggled inside
+ * the narrow block; `.menuButton`'s fixed `width`/`height` is likewise a
+ * base-rule declaration, gated behind a DIFFERENT breakpoint entirely
+ * (`@media (max-width: 900px)`, not 640px) that this file's `narrowBlock`
+ * does not even search for. Both escaped mutation (44px -> 20px/24px) with
+ * every test in this file green.
+ */
+const BASE_RULE_TARGETS: ReadonlyArray<{
+  readonly name: string;
+  readonly code: string;
+  readonly selector: string;
+  readonly property: "min-height" | "width" | "height";
+}> = [
+  // The <label> that opens the axes disclosure — the only thing a thumb
+  // taps to reach the filters at all on a phone.
+  { name: ".axesSummary", code: FILTER_BAR_CSS, selector: ".axesSummary", property: "min-height" },
+  // The mobile nav sheet trigger, a fixed 44x44px square (same mechanism as
+  // .densityButton), shown only under @media (max-width: 900px).
+  { name: ".menuButton (width)", code: TOP_BAR_CSS, selector: ".menuButton", property: "width" },
+  { name: ".menuButton (height)", code: TOP_BAR_CSS, selector: ".menuButton", property: "height" },
+];
+
 describe("board header — tap targets at phone widths (PR #311)", () => {
   it("declares min-height 44px on every roster target, where a phone will read it", () => {
     for (const target of MIN_HEIGHT_TARGETS) {
@@ -237,6 +290,30 @@ describe("board header — tap targets at phone widths (PR #311)", () => {
     );
   });
 
+  it("declares >=44px on every base-rule roster target, regardless of which block it sits in", () => {
+    // Row afd1b4b4: `.axesSummary` and `.menuButton` are real 44px phone tap
+    // targets whose size is set in a BASE rule rather than inside a
+    // `max-width: 640px` block — narrowBlock() cannot see either. This
+    // asserts BASE_RULE_TARGETS directly, against the whole stylesheet
+    // rather than any one block, which is what makes it independent of
+    // narrowBlock() and its 640px assumption.
+    for (const target of BASE_RULE_TARGETS) {
+      const bodies = rulesFor(target.code, target.selector);
+      expect(
+        bodies.length,
+        `${target.name} has no rule anywhere in the stylesheet`,
+      ).toBeGreaterThan(0);
+      const declared = bodies
+        .map((b) => declaration(b, target.property))
+        .find((v) => v !== undefined);
+      expect(declared, `${target.name} declares no ${target.property}`).toBeDefined();
+      expect(
+        Number(/(\d+)px/.exec(declared!)?.[1]),
+        `${target.name} is under the 44px minimum`,
+      ).toBeGreaterThanOrEqual(44);
+    }
+  });
+
   it("names every roster target the four stylesheets actually declare touch-target CSS for", () => {
     // Guards the roster itself against drifting: this is the assertion that
     // stops the next `.projectStripTitle`-shaped miss, where a class exists
@@ -244,13 +321,19 @@ describe("board header — tap targets at phone widths (PR #311)", () => {
     // each stylesheet's narrow-width block for every class selector present
     // and checks each one is either in the roster or is `.densityButton`
     // (covered separately) or a non-target support class this row's own
-    // history explains (`.bar`, `.axes`, `.axesSummary`, `.axesToggle`,
-    // `.searchLabel`, `.searchChord`, `.createLabel`, `.name` — spacing,
-    // disclosure and hide-on-narrow rules, not things a thumb taps).
+    // history explains (`.bar`, `.axes`, `.axesToggle`, `.searchLabel`,
+    // `.searchChord`, `.createLabel`, `.name` — spacing, disclosure and
+    // hide-on-narrow rules, not things a thumb taps).
+    //
+    // NOT `.axesSummary` — found in review (row afd1b4b4) to be a real 44px
+    // phone tap target (the disclosure trigger a thumb taps to reach the
+    // filters at all), wrongly filed here as decoration. It stays out of
+    // NON_TARGET_CLASSES and is instead a real `BASE_RULE_TARGETS` entry,
+    // checked by the test above, since its `min-height` lives in its base
+    // rule rather than inside this narrow-width block.
     const NON_TARGET_CLASSES = new Set([
       "bar",
       "axes",
-      "axesSummary",
       "axesToggle",
       "searchLabel",
       "searchChord",
@@ -259,6 +342,7 @@ describe("board header — tap targets at phone widths (PR #311)", () => {
     ]);
     const rosterSelectors = new Set(MIN_HEIGHT_TARGETS.map((t) => `.${t.selector.slice(1)}`));
     rosterSelectors.add(".densityButton");
+    rosterSelectors.add(".axesSummary");
 
     for (const code of [BOARD_CSS, FILTER_BAR_CSS, LAYOUT_TOGGLE_CSS, TOP_BAR_CSS]) {
       const narrow = narrowBlock(code);
@@ -274,6 +358,54 @@ describe("board header — tap targets at phone widths (PR #311)", () => {
           `${selector} appears in a narrow-width block but is not in the touch-target roster — ` +
             `either it needs a 44px rule and a roster entry, or it belongs in NON_TARGET_CLASSES`,
         ).toBe(true);
+      }
+    }
+  });
+
+  it("names every selector the four stylesheets declare a >=44px min-height/width/height for, anywhere in the file", () => {
+    // The stronger half of the afd1b4b4 fix. The test above only scans
+    // inside `@media (max-width: 640px)` blocks — it would not have caught
+    // `.axesSummary` or `.menuButton` even after they were added to
+    // BASE_RULE_TARGETS by hand, and it is exactly the kind of miss that
+    // let both escape in the first place. This scans EVERY rule in each
+    // stylesheet (base rules and every block alike) for a >=44px
+    // `min-height`/`width`/`height` and requires each such selector to be a
+    // known tap target: the min-height roster, `.densityButton` and the
+    // base-rule roster above, or a class in BASE_NON_TARGET_CLASSES for a
+    // real >=44px box that is verified, case by case, not to be one.
+    const knownSelectors = new Set(MIN_HEIGHT_TARGETS.map((t) => `.${t.selector.slice(1)}`));
+    knownSelectors.add(".densityButton");
+    for (const target of BASE_RULE_TARGETS) knownSelectors.add(target.selector);
+
+    // Nothing is in this set — `.avatar` (28px) and `.select`'s
+    // `height: 30px` never reach 44px, so neither trips the scan. This
+    // exists so the next real >=44px non-target box has somewhere to go
+    // other than silently widening the roster.
+    const BASE_NON_TARGET_CLASSES = new Set<string>([]);
+
+    for (const code of [BOARD_CSS, FILTER_BAR_CSS, LAYOUT_TOGGLE_CSS, TOP_BAR_CSS]) {
+      const rules = [...code.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+      for (const rule of rules) {
+        const selectors = rule[1]!
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => /^\.[A-Za-z][\w-]*$/.test(s));
+        if (selectors.length === 0) continue;
+        const body = rule[2]!;
+        const sizes = ["min-height", "width", "height"]
+          .map((prop) => declaration(body, prop))
+          .map((v) => Number(/(\d+)px/.exec(v ?? "")?.[1]))
+          .filter((n) => !Number.isNaN(n));
+        if (!sizes.some((n) => n >= 44)) continue;
+        for (const selector of selectors) {
+          const className = selector.slice(1);
+          if (BASE_NON_TARGET_CLASSES.has(className)) continue;
+          expect(
+            knownSelectors.has(selector),
+            `${selector} declares a >=44px min-height/width/height somewhere in the stylesheet but is ` +
+              `not a known tap target — either it needs a BASE_RULE_TARGETS entry or it belongs in BASE_NON_TARGET_CLASSES`,
+          ).toBe(true);
+        }
       }
     }
   });
