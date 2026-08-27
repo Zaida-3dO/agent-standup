@@ -209,6 +209,17 @@ function containerBlock(maxWidth: number): string {
  * `code.indexOf(header)` matches a narrowed prelude like `... and
  * (min-width: 500px)` too, and everything inside that block is read as if
  * it were declared at the whole breakpoint.
+ *
+ * The BRACE walk below ignores braces inside quoted strings — `content:
+ * "}"` is ordinary CSS, and counting it as a real close-brace ends the
+ * block early, silently dropping every declaration after it (row
+ * 9f72a6a2, the same hazard `TOP_LEVEL` above was hardened against). It
+ * does NOT need a throw-on-EOF fix the way `TOP_LEVEL` did: that loop is
+ * already bounded by `CODE.length` and already falls through to the
+ * `Unbalanced` throw below when depth never returns to zero — verified
+ * directly (a header with an unclosed nested brace throws in under a
+ * millisecond rather than hanging), so there is no non-terminating path
+ * here to fix.
  */
 function atRuleBlock(header: string): string {
   const occurrences = CODE.split(header).length - 1;
@@ -228,9 +239,24 @@ function atRuleBlock(header: string): string {
   }
   const open = start + header.length + afterHeader[0].length - 1;
   let depth = 0;
+  let quote: '"' | "'" | null = null;
   for (let i = open; i < CODE.length; i += 1) {
-    if (CODE[i] === "{") depth += 1;
-    if (CODE[i] === "}") {
+    const ch = CODE[i];
+    if (quote !== null) {
+      // Inside a string: nothing counts as a brace until the matching
+      // quote closes it, and an escaped quote (`\"`) does not close it.
+      if (ch === "\\") {
+        i += 1;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
       depth -= 1;
       if (depth === 0) return CODE.slice(open + 1, i);
     }
