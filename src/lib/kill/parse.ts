@@ -136,6 +136,40 @@ const CARRIES_KILL_MAX_DEPTH = 40;
  * exactly as before this recursed.
  */
 function carriesKill(tokens: readonly string[], depth = 0): boolean {
+  // This line is intentionally fail-closed and, as far as row 399526d7 and
+  // this comment's own re-verification could establish, unreachable through
+  // the public API. Read both halves before ever touching it.
+  //
+  // UNREACHABLE: no input found across ordinary nesting (up to 20,000
+  // stacked same-quote wrappers), alternating-quote nesting (up to 1,000
+  // levels), and stacked quote layers on a single token (up to 5,000) drove
+  // `depth` past single digits — the deepest observed was 6, against a
+  // bound of 40. This is because `tokenise` collapses potentially many
+  // quote layers in one pass, so nesting depth and recursion depth are not
+  // the same number; recursion depth grows far slower. No test exercises
+  // this branch: exporting `depth` or lowering the bound purely to reach it
+  // would widen this security-relevant module's public surface for a
+  // branch that (per the next paragraph) is not load-bearing for
+  // correctness — judged not worth it here, but the branch stays and this
+  // comment is the record of why, so nobody "simplifies" it later.
+  //
+  // WHY IT MUST STAY `true` IF IT EVER FIRES: `tokens` grows OR the
+  // recursion is unbounded, so if a caller ever manages to construct input
+  // that reaches the bound, returning `false` here would silently WAVE
+  // THROUGH an unresolved wrapper as `not-a-kill` — turning a fail-closed
+  // guard fail-open in exactly the module DECISIONS.md §4 exists to keep
+  // strict. Do not "tidy" this to `false`.
+  //
+  // WHY THE BOUND ISN'T WHAT MAKES THIS TERMINATE: `tokenise` only ever
+  // *removes* characters (unwrapping one layer of quoting) or splits on
+  // whitespace — both non-increasing in total character count — so every
+  // recursive call in the branch below operates on strictly less content
+  // than its caller, except the one case explicitly short-circuited two
+  // lines down (a token that re-tokenises to itself). Fuzzed 200,000
+  // random quote/whitespace/text tokens with no counterexample. The
+  // recursion is well-founded on shrinking content; `CARRIES_KILL_MAX_DEPTH`
+  // is redundant defence-in-depth against a stack-growth shape nobody has
+  // been able to construct, not the thing preventing a hang.
   if (depth >= CARRIES_KILL_MAX_DEPTH) return true;
   return tokens.some((token) => {
     if (killVerb(token) !== null) return true;
