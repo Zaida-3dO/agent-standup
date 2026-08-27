@@ -102,6 +102,89 @@ function wrapperVerb(token: string): string | null {
 }
 
 /**
+ * The flag, per wrapper, that by convention takes **exactly one** argument:
+ * "run this string as a command". Lower-cased, leading `-`/`/` stripped —
+ * matched the same way `parseWindowsKill` normalises a flag.
+ *
+ * row f53e667a-97da-4b10-bded-8a3c50836a85: on Windows every single-line
+ * `Bash` tool call reaches this parser already wrapped as `powershell
+ * -NoProfile -Command "<command>"` — that is the harness's own invocation
+ * shape, not a choice the agent made. Treating that wrapping as
+ * indistinguishable from `xargs kill -9` (whose targets genuinely come from
+ * stdin, unreadable here) refused every PID-scoped kill on the platform
+ * unconditionally, including the exact form the guard's own message
+ * recommends.
+ *
+ * `xargs` is deliberately absent: it has no such argument — the words after
+ * it are the command *plus* whatever it appends from stdin — so it is not
+ * eligible for this path and stays maximally conservative.
+ */
+const SINGLE_COMMAND_FLAGS: Readonly<Record<string, string>> = {
+  sh: "c",
+  bash: "c",
+  zsh: "c",
+  dash: "c",
+  ksh: "c",
+  powershell: "command",
+  pwsh: "command",
+  cmd: "c",
+};
+
+/**
+ * Tries to read the inner command out of a wrapper invocation, when doing so
+ * is safe rather than a guess.
+ *
+ * Two conditions, both required:
+ *
+ *   1. The wrapper has a single-command flag (`SINGLE_COMMAND_FLAGS`), it
+ *      appears in `rest`, and it is followed by **exactly one** remaining
+ *      token. `tokenise` already keeps a quoted argument as one token with
+ *      its internal whitespace intact, so one token after the flag means
+ *      the inner command arrived as a single quoted (or otherwise atomic)
+ *      unit — the same guarantee `-c`'s own contract makes. More than one
+ *      remaining token means either no quoting was used (so this build
+ *      cannot tell where the inner command ends and further wrapper words
+ *      begin) or extra arguments were appended after it — both genuinely
+ *      ambiguous, and left to the caller.
+ *   2. Recursively parsing that inner token must produce `targets` made up
+ *      **entirely of pids** — never `not-a-kill` (nothing to adopt), never
+ *      `unparseable` (the inner command is itself unreadable, e.g. a
+ *      filter or another wrapper), and never a target naming an executable
+ *      (`Stop-Process -Name node` through a wrapper is exactly the
+ *      machine-wide shape DECISIONS.md §4 exists to stop — this path exists
+ *      to unblock the narrow PID form, not to widen what a wrapper can
+ *      smuggle through).
+ *
+ * Returns `null` when either condition fails, and the caller keeps its
+ * existing fail-closed `unparseable` verdict. Nothing here widens what is
+ * allowed beyond what a direct, unwrapped invocation of the same inner
+ * command would already resolve to.
+ */
+function decomposeSingleCommandWrapper(
+  wrapper: string,
+  rest: readonly string[],
+): KillCommandParse | null {
+  const flag = SINGLE_COMMAND_FLAGS[wrapper];
+  if (flag === undefined) return null;
+
+  const flagIndex = rest.findIndex((token) => token.toLowerCase().replace(/^[-/]+/, "") === flag);
+  if (flagIndex === -1) return null;
+
+  const remaining = rest.slice(flagIndex + 1);
+  if (remaining.length !== 1) return null;
+
+  const inner = parseKillCommand(remaining[0]!);
+  if (inner.kind !== "targets") return null;
+
+  // Only PID targets are adopted. An executable target through a wrapper
+  // (`powershell -Command "Stop-Process -Name node"`) is exactly the
+  // machine-wide shape DECISIONS.md §4 exists to stop, and this path exists
+  // to unblock the narrow form, not to widen what a wrapper can smuggle
+  // through — see the description above.
+  return inner.targets.every((target) => target.kind === "pid") ? inner : null;
+}
+
+/**
  * Splits a command into whitespace-separated words, honouring quotes.
  *
  * Quotes matter: `taskkill /FI "IMAGENAME eq node.exe"` is three words, not
@@ -275,6 +358,14 @@ function parseStatement(statement: string): KillCommandParse {
       (token) => killVerb(token) !== null || tokenise(token).some((w) => killVerb(w) !== null),
     );
     if (carriesKill) {
+      // Safe to decompose only when the inner command arrived as one atomic
+      // token behind a single-command flag (`-c`, `-Command`, `/c`) and
+      // that inner command itself resolves to real targets — see
+      // `decomposeSingleCommandWrapper`. Anything else keeps the existing
+      // fail-closed refusal.
+      const decomposed = decomposeSingleCommandWrapper(wrapper, rest);
+      if (decomposed !== null) return decomposed;
+
       return {
         kind: "unparseable",
         reason:

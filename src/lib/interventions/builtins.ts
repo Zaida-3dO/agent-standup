@@ -221,16 +221,28 @@ const broadProcessKill: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
+  // row f53e667a-97da-4b10-bded-8a3c50836a85: this level is named
+  // `block-overridable`, but no override channel exists anywhere in the
+  // wire protocol — `ServerVerdict.decision` (`src/lib/hook/decide.ts`) is
+  // a plain `"block" | "allow"` with no field an agent's retry could carry
+  // a written reason on, and `hook-decision.ts`'s own input schema has none
+  // either. `block-overridable` and `hard-block` are handled identically by
+  // every consumer (`strongestLevel`, the block/allow mapping). The
+  // messages below used to promise "proceed with a written reason" as a
+  // second way through — a real agent tried it, verbatim, and was refused
+  // identically to a plain retry. Removed rather than left in: a message
+  // offering an exit that does not exist is worse than one that only offers
+  // the exit that does (narrow the kill to a pid). Wiring an actual
+  // override channel is a larger, separate change than this row's fix for
+  // the pid-scope defect and is not attempted here.
   messages: {
     plain:
       "This ends every process matching a name, including ones other sessions are relying on. " +
-      "Kill by process id instead, or proceed with a written reason if the broad kill is really " +
-      "what you want.",
+      "Kill by process id instead — name the specific process(es) rather than the image name.",
     prominent:
       "⚠️ Do not proceed until you have read this. This kill is not scoped to a specific process " +
       "— it ends everything matching the name, and other sessions on this machine are very " +
-      "likely running something that matches. Find the process id and kill that. If you truly " +
-      "need the broad form, say why: the reason is recorded.",
+      "likely running something that matches. Find the process id and kill that instead.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };

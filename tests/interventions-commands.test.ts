@@ -86,6 +86,36 @@ describe("isBroadProcessKill", () => {
     }
   });
 
+  // row f53e667a-97da-4b10-bded-8a3c50836a85: this is the function the
+  // guard's "kill by process id instead" message actually gates on. A
+  // Windows Bash tool call reaches the hook already wrapped as `powershell
+  // -NoProfile -Command "<command>"` — not a choice the agent made — so a
+  // PID-scoped kill written exactly as the message recommends must NOT
+  // read as broad merely for arriving through that wrapper.
+  it("does not recognise a pid-scoped kill through the wrapper Windows always uses", () => {
+    for (const command of [
+      'powershell -NoProfile -Command "Stop-Process -Id 130580 -Force"',
+      'powershell -Command "Stop-Process -Id 130580 -Force"',
+      'cmd /c "taskkill /PID 130580 /F"',
+      "sh -c 'kill 130580'",
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(false);
+    }
+  });
+
+  // The negative control: the same wrappers must still read as broad when
+  // the inner command actually is — this fix must not become "trust
+  // anything a wrapper carries".
+  it("still recognises a broad kill through the same wrappers", () => {
+    for (const command of [
+      'powershell -NoProfile -Command "Stop-Process -Name node -Force"',
+      'cmd /c "taskkill /F /IM node.exe"',
+      'sh -c "taskkill /F /FI \\"IMAGENAME eq node.exe\\""',
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(true);
+    }
+  });
+
   it("does not recognise commands that end no process", () => {
     for (const command of [
       "ls -la",

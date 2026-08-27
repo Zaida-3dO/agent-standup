@@ -210,6 +210,106 @@ describe("a kill it cannot read is unparseable, never not-a-kill", () => {
   });
 });
 
+describe("a single-argument wrapper carrying a fully-scoped kill is decomposed", () => {
+  // row f53e667a-97da-4b10-bded-8a3c50836a85: on Windows, the harness that
+  // runs a Bash tool call invokes it as `powershell -NoProfile -Command
+  // "<command>"` — that wrapping is not a choice the agent made, it is how
+  // every single-line command reaches the hook. A guard that treats *any*
+  // wrapper carrying a kill verb as unparseable therefore refuses every
+  // PID-scoped kill on Windows unconditionally, including the exact form
+  // its own refusal message recommends as the fix. Four agents hit this in
+  // one night.
+  //
+  // The fix is narrow: `-c`/`-Command`/`/c` name a single command argument
+  // by convention, and `tokenise` already preserves a quoted argument as one
+  // token with its internal whitespace intact — so when exactly one token
+  // remains after that flag, it is read verbatim as the inner command,
+  // recursively, through the same parser. Nothing is guessed: an inner
+  // command that itself resolves to `unparseable` (a filter, a name) stays
+  // `unparseable`, and only a *resolved target list* is adopted.
+  it.each([
+    [
+      'powershell -NoProfile -Command "Stop-Process -Id 130580 -Force"',
+      "powershell -NoProfile -Command, PID",
+    ],
+    ['powershell -Command "Stop-Process -Id 130580 -Force"', "powershell -Command, PID"],
+    ['cmd /c "taskkill /PID 130580 /F"', "cmd /c, PID"],
+    ["sh -c 'kill 130580'", "sh -c, PID"],
+    ["bash -c 'kill -9 130580'", "bash -c, PID with signal"],
+    ['pwsh -Command "taskkill /PID 130580 /F"', "pwsh -Command, PID"],
+  ])("%s resolves to the pid target (%s)", (command) => {
+    expect(parseKillCommand(command)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "130580" }],
+    });
+  });
+
+  // The negative control this fix must not break: the SAME wrappers, with
+  // an inner command that is genuinely broad or unreadable, must still
+  // refuse. Decomposing the inner command must not become "trust the
+  // wrapper's contents unconditionally" — it must apply the identical
+  // targets/unparseable/not-a-kill judgement recursively.
+  it.each([
+    ['powershell -NoProfile -Command "Stop-Process -Name node -Force"', "powershell, by name"],
+    ['cmd /c "taskkill /F /IM node.exe"', "cmd /c, by image name — DECISIONS.md §4's own case"],
+    ['sh -c "taskkill /F /FI \\"IMAGENAME eq node.exe\\""', "sh -c, a filter"],
+  ])("%s stays broad, not decomposed into a narrow allow (%s)", (command) => {
+    const parsed = parseKillCommand(command);
+    expect(parsed.kind).not.toBe("not-a-kill");
+    if (parsed.kind === "targets") {
+      expect(parsed.targets.every((t) => t.kind === "pid")).toBe(false);
+    }
+  });
+
+  // `xargs` has no single-command argument the way `-c` does — the words
+  // after it are the command plus whatever xargs appends from stdin, which
+  // is precisely the case this build cannot resolve. It must NOT be swept
+  // into the new decomposition path.
+  it("xargs kill -9 is still unparseable, never decomposed", () => {
+    expect(parseKillCommand("xargs kill -9")).toEqual({
+      kind: "unparseable",
+      reason: expect.stringContaining("xargs"),
+    });
+  });
+
+  // A `-c`/`-Command`/`/c` followed by more than one remaining token was not
+  // delivered as a single quoted argument (or carries extra words appended
+  // after it) — reconstructing that with a naive join would risk silently
+  // dropping or merging targets, so it stays unparseable rather than being
+  // guessed at.
+  it("cmd /c with unquoted multi-word content stays unparseable", () => {
+    const parsed = parseKillCommand("cmd /c taskkill /PID 130580 /F");
+    // Tokenised without quotes, `/c`'s "argument" is only the next bare
+    // token (`taskkill`), so the rest is read as further wrapper words, not
+    // as part of one command string — this is exactly the ambiguity the
+    // wrapper refusal exists for.
+    expect(parsed.kind).toBe("unparseable");
+  });
+
+  it("several pid-only statements inside one wrapper argument are all adopted", () => {
+    // The recursive call goes through the full parser, statements and all,
+    // so `kill 130580 && kill 999` inside the quoted argument collects both
+    // — narrow however many pids are named, per the module's own principle
+    // that breadth, not count, is what this guards against.
+    expect(parseKillCommand('sh -c "kill 130580 && kill 999"')).toEqual({
+      kind: "targets",
+      targets: [
+        { kind: "pid", value: "130580" },
+        { kind: "pid", value: "999" },
+      ],
+    });
+  });
+
+  it("a wrapper argument mixing a pid kill with a broad one is not decomposed", () => {
+    // The mix must not be waved through on the strength of the pid half —
+    // one broad statement inside the quoted argument makes the recursive
+    // parse itself unparseable-or-executable, which this path refuses to
+    // adopt (see `decomposeSingleCommandWrapper`'s pid-only rule).
+    const parsed = parseKillCommand('sh -c "kill 130580 && pkill node"');
+    expect(parsed.kind).toBe("unparseable");
+  });
+});
+
 describe("statements — the verb is not always the first word", () => {
   it("a kill after && is still a kill", () => {
     expect(parseKillCommand("ls && taskkill /IM node.exe")).toEqual({
