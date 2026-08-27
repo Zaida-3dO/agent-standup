@@ -79,15 +79,20 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
  * `@media (max-width: 560px)`), so a narrower prelude that merely starts
  * with it (`... and (min-width: 500px)`) is a real substring-prefix match
  * whose body would be misread as unconditional. This scan searches only
- * for the keyword itself and does not care what the prelude says — it
- * wants the next `{` after `@media`/`@container` in order to skip the
- * whole block, and for any syntactically valid at-rule that is always the
- * correct brace, regardless of how long, narrow, or comma-separated the
- * prelude is. There is no prelude here to be a prefix of.
+ * for the keyword itself and does not care what the prelude says, so no
+ * prelude shape — long, narrow, or comma-separated — can misdirect it.
+ *
+ * The BRACE walk that skips each block's body is a separate concern from
+ * the prelude, and it does two things a plain `{`/`}` counter does not:
+ * it ignores braces inside quoted strings (`content: "}"` is ordinary CSS,
+ * and counting it as a real close-brace ends the block early, letting a
+ * narrow-width declaration leak into this "full width" text as the
+ * unconditional one), and it throws rather than loops when a block never
+ * finds its opening or closing brace, so a malformed sheet fails the test
+ * instead of hanging the run.
  */
 const TOP_LEVEL = (() => {
   let out = "";
-  let depth = 0;
   let index = 0;
   while (index < CODE.length) {
     // Both at-rules, not just `@media`: the reflow now lives in
@@ -105,14 +110,40 @@ const TOP_LEVEL = (() => {
     }
     out += CODE.slice(index, next);
     const open = CODE.indexOf("{", next);
-    depth = 0;
+    if (open === -1) {
+      throw new Error(
+        `\`@media\`/\`@container\` at index ${next} has no opening \`{\` anywhere after it.`,
+      );
+    }
+    let depth = 0;
+    let quote: '"' | "'" | null = null;
     let i = open;
     for (; i < CODE.length; i += 1) {
-      if (CODE[i] === "{") depth += 1;
-      if (CODE[i] === "}") {
+      const ch = CODE[i];
+      if (quote !== null) {
+        // Inside a string: nothing counts as a brace until the matching
+        // quote closes it, and an escaped quote (`\"`) does not close it.
+        if (ch === "\\") {
+          i += 1;
+        } else if (ch === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "{") {
+        depth += 1;
+      } else if (ch === "}") {
         depth -= 1;
         if (depth === 0) break;
       }
+    }
+    if (depth !== 0) {
+      throw new Error(
+        `\`@media\`/\`@container\` block starting at index ${open} is never closed ` +
+          `(reached end of file with depth ${depth}).`,
+      );
     }
     index = i + 1;
   }
