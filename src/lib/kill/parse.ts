@@ -102,6 +102,54 @@ function wrapperVerb(token: string): string | null {
 }
 
 /**
+ * How many times {@link carriesKill} will re-tokenise a fused token looking
+ * for a kill verb, before giving up and reporting none found.
+ *
+ * `tokenise` strips quotes, so a doubly (or deeper) nested wrapper —
+ * `powershell -Command "sh -c 'taskkill /IM node.exe'"` — collapses one
+ * quote layer *per wrapper level* into a single fused token, and each
+ * additional level needs one more re-tokenise to peel back off. A single
+ * fixed re-tokenise (the original shape of this check) only ever recovers
+ * one level, so anything nested two or more wrappers deep produced a fused
+ * token containing no single word that matched a kill verb, and the guard
+ * silently reported `not-a-kill` for a command that byte-for-byte types
+ * `taskkill /IM node.exe`. A bound, rather than unconditional recursion,
+ * exists only so a pathologically long chain of nested quotes cannot grow
+ * the call stack — ordinary nesting a person or an agent would type is a
+ * handful of levels deep at most.
+ */
+const CARRIES_KILL_MAX_DEPTH = 40;
+
+/**
+ * Whether any token in `tokens`, or anything a fused token re-tokenises
+ * into, names a kill verb — however many wrapper levels deep the quoting
+ * collapsed it to.
+ *
+ * See `CARRIES_KILL_MAX_DEPTH` for why this recurses instead of checking a
+ * single re-tokenise, and `WRAPPER_VERBS`'s doc comment for the incident
+ * this exists to keep closed (#122). This is purely a *sighting* — it only
+ * says a kill verb is present somewhere in the (possibly still-fused)
+ * remainder, never what it would target. The wrapper branch that calls this
+ * remains fail-closed either way: finding a kill verb here refuses the
+ * statement (or hands it to `decomposeSingleCommandWrapper`), and finding
+ * none allows it to fall through to ordinary, non-wrapper classification —
+ * exactly as before this recursed.
+ */
+function carriesKill(tokens: readonly string[], depth = 0): boolean {
+  if (depth >= CARRIES_KILL_MAX_DEPTH) return true;
+  return tokens.some((token) => {
+    if (killVerb(token) !== null) return true;
+    const inner = tokenise(token);
+    // A fused token that re-tokenises to itself (no further quoting left to
+    // peel back) is not progress — recursing on it again would loop
+    // forever on that single token rather than terminating on
+    // `CARRIES_KILL_MAX_DEPTH`, which exists precisely to bound this.
+    if (inner.length === 1 && inner[0] === token) return false;
+    return carriesKill(inner, depth + 1);
+  });
+}
+
+/**
  * The flag, per wrapper, that by convention takes **exactly one** argument:
  * "run this string as a command". Lower-cased, leading `-`/`/` stripped —
  * matched the same way `parseWindowsKill` normalises a flag.
@@ -354,10 +402,7 @@ function parseStatement(statement: string): KillCommandParse {
   const wrapper = wrapperVerb(verbToken);
   if (wrapper !== null) {
     const rest = tokens.slice(index + 1);
-    const carriesKill = rest.some(
-      (token) => killVerb(token) !== null || tokenise(token).some((w) => killVerb(w) !== null),
-    );
-    if (carriesKill) {
+    if (carriesKill(rest)) {
       // Safe to decompose only when the inner command arrived as one atomic
       // token behind a single-command flag (`-c`, `-Command`, `/c`) and
       // that inner command itself resolves to real targets — see

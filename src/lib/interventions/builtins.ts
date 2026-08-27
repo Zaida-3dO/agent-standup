@@ -65,6 +65,12 @@ const broadGitAddOnSharedCheckout: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
+  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
+  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): no
+  // override channel exists anywhere in the wire protocol, so "say why: the
+  // reason is recorded" promised an exit that no caller could ever take.
+  // Removed; the message still names the one remedy that actually works —
+  // staging by path.
   messages: {
     plain:
       "This stages every modified file in a checkout other sessions are also working in, so it " +
@@ -73,7 +79,7 @@ const broadGitAddOnSharedCheckout: Intervention = {
       "⚠️ Do not proceed until you have read this. This `git add` stages every modified file in a " +
       "checkout that other sessions are working in right now — their uncommitted work would be " +
       "committed under your name and attributed to your change. Stage your own files explicitly " +
-      "by path. If the broad add is genuinely what you want, say why: the reason is recorded.",
+      "by path instead.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
@@ -166,16 +172,20 @@ const mergeWithoutApprovalAtTip: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
+  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
+  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): no
+  // override channel exists anywhere in the wire protocol, so "proceed with
+  // a written reason" promised an exit that no caller could ever take.
+  // Removed; the message still names the one remedy that actually works —
+  // requesting a review against the current tip.
   messages: {
     plain:
       "This merges work that has no approving review at its current tip commit. Request a review " +
-      "and land it against this commit, or proceed with a written reason saying why it should go " +
-      "without one.",
+      "against this commit and land it instead of merging now.",
     prominent:
       "⚠️ Do not proceed until you have read this. This would merge a change that nothing has " +
       "approved at the commit being merged — either it was never reviewed, or it was reviewed and " +
-      "then changed. Request a review against the current tip. If it genuinely should land " +
-      "anyway, say so in writing: the reason is recorded and read.",
+      "then changed. Request a review against the current tip instead of merging now.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
@@ -328,15 +338,23 @@ const checkoutHeldByAnotherCrew: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
+  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
+  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): no
+  // override channel exists anywhere in the wire protocol, so "proceed with
+  // a written reason" / "say why: the reason is recorded" promised an exit
+  // that no caller could ever take — in all three of this entry's messages,
+  // including the dynamic one built in the predicate below. Removed; each
+  // still names the one remedy that actually works — taking your own
+  // worktree.
   messages: {
     plain:
       "Another crew is already working in this checkout on this machine. Working here too will " +
-      "mix the two sets of changes. Take your own worktree, or proceed with a written reason.",
+      "mix the two sets of changes. Take your own worktree instead.",
     prominent:
       "⚠️ Do not proceed until you have read this. Another live crew holds this checkout on this " +
       "machine right now, and writing here would interleave your changes with theirs in one " +
       "working tree — neither of you would be able to commit cleanly. Create your own worktree " +
-      "and work there. If you genuinely need this checkout, say why: the reason is recorded.",
+      "and work there instead.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     // A linked worktree is a *separate working tree* on the same machine and
@@ -371,7 +389,7 @@ const checkoutHeldByAnotherCrew: Intervention = {
         (holder.lastActiveSecondsAgo === undefined
           ? ""
           : `, last active ${holder.lastActiveSecondsAgo}s ago`) +
-        ". Take your own worktree, or proceed with a written reason.",
+        ". Take your own worktree.",
       data: {
         rootSessionId: holder.rootSessionId,
         itemId: holder.itemId,

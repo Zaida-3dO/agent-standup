@@ -286,6 +286,22 @@ describe("a single-argument wrapper carrying a fully-scoped kill is decomposed",
     expect(parsed.kind).toBe("unparseable");
   });
 
+  it("a quoted command string followed by another argument stays unparseable", () => {
+    // Covers `decomposeSingleCommandWrapper`'s "exactly one remaining
+    // token" condition — distinct from the unquoted case immediately above,
+    // which is caught one step earlier by the inner parse failing before
+    // this condition is ever reached. Here the quoted command is perfectly
+    // well-formed on its own (`"kill 1"` alone would decompose to pid 1),
+    // and only the trailing token after it makes the flag's "argument"
+    // ambiguous — this is the shape that exercises the token-count guard
+    // itself, not the inner parser. Relaxing `!== 1` to `< 1` would let a
+    // broad kill ride along behind a pid kill and still be read as the pid
+    // alone, which is exactly the incident class this module exists to
+    // prevent, so this must stay `unparseable`.
+    expect(parseKillCommand('sh -c "kill 1" "pkill node"').kind).toBe("unparseable");
+    expect(parseKillCommand('sh -c "kill 1" extra').kind).toBe("unparseable");
+  });
+
   it("several pid-only statements inside one wrapper argument are all adopted", () => {
     // The recursive call goes through the full parser, statements and all,
     // so `kill 130580 && kill 999` inside the quoted argument collects both
@@ -307,6 +323,38 @@ describe("a single-argument wrapper carrying a fully-scoped kill is decomposed",
     // adopt (see `decomposeSingleCommandWrapper`'s pid-only rule).
     const parsed = parseKillCommand('sh -c "kill 130580 && pkill node"');
     expect(parsed.kind).toBe("unparseable");
+  });
+});
+
+describe("a machine-wide kill nested two or more wrappers deep is still refused", () => {
+  // Pre-existing on `origin/main` before this row, reproducible byte for
+  // byte, and never touched by the pid-scope fix above — that fix is
+  // reached only after `carriesKill` finds a kill verb in the wrapper's
+  // remaining tokens, and at two levels of nesting `tokenise`'s quote
+  // stripping had already fused the inner command into one token no single
+  // re-tokenise could see into. The result was `not-a-kill`, not
+  // `unparseable` — the guard never fired at all, byte for byte
+  // `WRAPPER_VERBS`'s own doc comment's cautionary example (#122).
+  it.each([
+    [`powershell -Command "sh -c 'taskkill /IM node.exe'"`, "powershell wrapping sh -c, by image"],
+    [`powershell -Command "bash -c 'pkill node'"`, "powershell wrapping bash -c, by name"],
+    [`sh -c "sh -c 'pkill node'"`, "sh -c wrapping sh -c, by name"],
+  ])("%s is unparseable, not not-a-kill (%s)", (command) => {
+    const parsed = parseKillCommand(command);
+    expect(parsed.kind).toBe("unparseable");
+  });
+
+  // The negative space this fix must not break: a nested wrapper whose
+  // innermost command is genuinely pid-scoped must still be decomposed and
+  // allowed — `decomposeSingleCommandWrapper` already recurses through
+  // `parseKillCommand`, so once `carriesKill` correctly sees the kill verb
+  // (rather than bailing out to `not-a-kill`), the existing single-command
+  // decomposition picks it up at whatever depth it is nested.
+  it("a nested wrapper whose innermost command is pid-scoped is still decomposed", () => {
+    expect(parseKillCommand(`powershell -Command "sh -c 'kill 130580'"`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "130580" }],
+    });
   });
 });
 
