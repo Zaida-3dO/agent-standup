@@ -53,6 +53,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { matchingBrace } from "./helpers/css-blocks";
 
 const CSS = readFileSync(
   path.resolve(import.meta.dirname, "../src/components/board/ListView.module.css"),
@@ -82,14 +83,27 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
  * for the keyword itself and does not care what the prelude says, so no
  * prelude shape — long, narrow, or comma-separated — can misdirect it.
  *
- * The BRACE walk that skips each block's body is a separate concern from
- * the prelude, and it does two things a plain `{`/`}` counter does not:
- * it ignores braces inside quoted strings (`content: "}"` is ordinary CSS,
+ * ── Contract ──────────────────────────────────────────────────────────
+ *
+ * **Accepts:** the whole comment-stripped stylesheet.
+ *
+ * **Returns:** that text with every `@media` and `@container` block —
+ * prelude and body — removed. Blocks may appear any number of times,
+ * including none; this is a stripper, so cardinality is not a question it
+ * asks. That is the opposite end of the policy range from `atRuleBlock`
+ * below, which demands exactly one, and both are deliberate.
+ *
+ * **On malformed input it THROWS:** directly when an at-rule keyword has
+ * no `{` after it, and via `matchingBrace` when a block is never closed.
+ * It never returns partially-stripped text, because text that silently
+ * kept a narrow-width block would be read as "the full-width rules" and
+ * every assertion below would be measuring the wrong thing.
+ *
+ * The brace walk is `matchingBrace` (`tests/helpers/css-blocks.ts`), which
+ * ignores braces inside quoted strings — `content: "}"` is ordinary CSS,
  * and counting it as a real close-brace ends the block early, letting a
  * narrow-width declaration leak into this "full width" text as the
- * unconditional one), and it throws rather than loops when a block never
- * finds its opening or closing brace, so a malformed sheet fails the test
- * instead of hanging the run.
+ * unconditional one.
  */
 const TOP_LEVEL = (() => {
   let out = "";
@@ -115,37 +129,7 @@ const TOP_LEVEL = (() => {
         `\`@media\`/\`@container\` at index ${next} has no opening \`{\` anywhere after it.`,
       );
     }
-    let depth = 0;
-    let quote: '"' | "'" | null = null;
-    let i = open;
-    for (; i < CODE.length; i += 1) {
-      const ch = CODE[i];
-      if (quote !== null) {
-        // Inside a string: nothing counts as a brace until the matching
-        // quote closes it, and an escaped quote (`\"`) does not close it.
-        if (ch === "\\") {
-          i += 1;
-        } else if (ch === quote) {
-          quote = null;
-        }
-        continue;
-      }
-      if (ch === '"' || ch === "'") {
-        quote = ch;
-      } else if (ch === "{") {
-        depth += 1;
-      } else if (ch === "}") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    if (depth !== 0) {
-      throw new Error(
-        `\`@media\`/\`@container\` block starting at index ${open} is never closed ` +
-          `(reached end of file with depth ${depth}).`,
-      );
-    }
-    index = i + 1;
+    index = matchingBrace(CODE, open) + 1;
   }
   return out;
 })();
@@ -210,16 +194,32 @@ function containerBlock(maxWidth: number): string {
  * (min-width: 500px)` too, and everything inside that block is read as if
  * it were declared at the whole breakpoint.
  *
- * The BRACE walk below ignores braces inside quoted strings — `content:
- * "}"` is ordinary CSS, and counting it as a real close-brace ends the
- * block early, silently dropping every declaration after it (row
- * 9f72a6a2, the same hazard `TOP_LEVEL` above was hardened against). It
- * does NOT need a throw-on-EOF fix the way `TOP_LEVEL` did: that loop is
- * already bounded by `CODE.length` and already falls through to the
- * `Unbalanced` throw below when depth never returns to zero — verified
- * directly (a header with an unclosed nested brace throws in under a
- * millisecond rather than hanging), so there is no non-terminating path
- * here to fix.
+ * ── Contract ──────────────────────────────────────────────────────────
+ *
+ * **Accepts:** a full at-rule prelude, matched EXACTLY, appearing exactly
+ * once in `CODE`, followed by `{` with only whitespace between.
+ *
+ * **Returns:** that one block's body, braces excluded.
+ *
+ * **Cardinality is asserted, not tolerated — and it THROWS.** Zero
+ * occurrences and more than one are both errors. Splitting a breakpoint
+ * across two blocks is how a rule and the rule it depends on drift apart,
+ * and this file's stylesheet declares each breakpoint once, so a split IS
+ * the drift this helper exists to catch. This deliberately differs from
+ * the `narrowBlock` helpers in `board-filter-bar-keyboard-path.test.ts`
+ * and `board-header-touch-targets.test.ts`, which CONCATENATE multiple
+ * blocks because their stylesheets genuinely split this breakpoint across
+ * separate edits. Do not unify the two policies: giving this helper their
+ * tolerance would take the split-breakpoint detection away from this file.
+ *
+ * **On malformed input it throws**, via `matchingBrace` for an unclosed
+ * block and directly for a missing or duplicated prelude. It never returns
+ * a partial or over-long body.
+ *
+ * The brace walk itself is `matchingBrace` (`tests/helpers/css-blocks.ts`),
+ * which ignores braces inside quoted strings — `content: "}"` is ordinary
+ * CSS, and counting it as a real close-brace ends the block early,
+ * silently dropping every declaration after it (row 9f72a6a2).
  */
 function atRuleBlock(header: string): string {
   const occurrences = CODE.split(header).length - 1;
@@ -238,30 +238,7 @@ function atRuleBlock(header: string): string {
     );
   }
   const open = start + header.length + afterHeader[0].length - 1;
-  let depth = 0;
-  let quote: '"' | "'" | null = null;
-  for (let i = open; i < CODE.length; i += 1) {
-    const ch = CODE[i];
-    if (quote !== null) {
-      // Inside a string: nothing counts as a brace until the matching
-      // quote closes it, and an escaped quote (`\"`) does not close it.
-      if (ch === "\\") {
-        i += 1;
-      } else if (ch === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-    } else if (ch === "{") {
-      depth += 1;
-    } else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return CODE.slice(open + 1, i);
-    }
-  }
-  throw new Error(`Unbalanced \`${header}\` block.`);
+  return CODE.slice(open + 1, matchingBrace(CODE, open));
 }
 
 /**

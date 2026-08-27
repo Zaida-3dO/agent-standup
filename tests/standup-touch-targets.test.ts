@@ -42,6 +42,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { matchingBrace } from "./helpers/css-blocks";
 
 const CSS = readFileSync(
   path.resolve(import.meta.dirname, "../src/components/standup/Standup.module.css"),
@@ -72,6 +73,41 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
  * narrowed prelude like `@media (max-width: 640px) and (min-width: 580px)`
  * too, and everything inside that block would be read as if it were
  * unconditional at the whole breakpoint.
+ *
+ * ── Contract ──────────────────────────────────────────────────────────
+ *
+ * **Accepts:** the comment-stripped stylesheet, containing EXACTLY ONE
+ * block whose prelude is exactly `@media (max-width: 640px)`.
+ *
+ * **Returns:** that block's body, braces excluded.
+ *
+ * **Cardinality: exactly one, checked with `expect()` rather than a
+ * throw.** This stylesheet declares the breakpoint once, and a split is
+ * the drift this file exists to catch, so more than one is a failure
+ * rather than something to concatenate. The `narrowBlock` helpers in
+ * `board-filter-bar-keyboard-path.test.ts` and
+ * `board-header-touch-targets.test.ts` share this function's name and
+ * deliberately NOT this policy — their stylesheets really do split the
+ * breakpoint. Do not make the two agree; this one would stop detecting a
+ * split, which is most of its value.
+ *
+ * `expect()` rather than `throw` is the one difference here that is
+ * cosmetic rather than principled: it reports as an assertion failure
+ * naming the count, which reads better in this file's output. It is not a
+ * behavioural distinction worth preserving if this ever moves.
+ *
+ * **On malformed input it THROWS**, via `matchingBrace`, when the block is
+ * never closed.
+ *
+ * **Do not rely on this stylesheet's media block being last in the file.**
+ * Where the block sits changes how a quote-unaware brace walk fails: with
+ * nothing after it, an over-counted depth runs off the end and throws — a
+ * loud false FAILURE on a valid stylesheet — while with any rule below it,
+ * the same over-count silently absorbs that rule into the block and the
+ * assertion reads a declaration no phone applies. Position decides which,
+ * so it is not protection and must not be treated as any. The shared
+ * quote-aware walk is what makes the outcome independent of where the
+ * block sits.
  */
 function narrowBlock(): string {
   const header = "@media (max-width: 640px)";
@@ -87,15 +123,7 @@ function narrowBlock(): string {
       `prelude change this test needs to know about — split the block, or update the header here to match.`,
   ).not.toBeNull();
   const open = start + header.length + afterHeader![0].length - 1;
-  let depth = 0;
-  for (let i = open; i < CODE.length; i += 1) {
-    if (CODE[i] === "{") depth += 1;
-    if (CODE[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return CODE.slice(open + 1, i);
-    }
-  }
-  throw new Error(`Unterminated \`${header}\` block.`);
+  return CODE.slice(open + 1, matchingBrace(CODE, open));
 }
 
 /** One class's declarations inside a stylesheet chunk. */

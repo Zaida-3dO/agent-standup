@@ -89,6 +89,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { matchingBrace } from "./helpers/css-blocks";
 
 const CSS = readFileSync(
   path.resolve(import.meta.dirname, "../src/components/board/BoardFilterBar.module.css"),
@@ -130,6 +131,34 @@ function rulesFor(selector: string): string[] {
  * touch-target sweep further down), so this concatenates rather than
  * asserting exactly one, unlike `standup-touch-targets.test.ts`'s
  * single-block version.
+ *
+ * ── Contract ──────────────────────────────────────────────────────────
+ *
+ * **Accepts:** the comment-stripped stylesheet, containing one or more
+ * blocks whose prelude is exactly `@media (max-width: 640px)`.
+ *
+ * **Returns:** their bodies concatenated, newline-separated, braces
+ * excluded.
+ *
+ * **Cardinality: one or more, tolerated by design, checked with
+ * `expect()`.** Multiple blocks are legitimate here — this stylesheet
+ * genuinely splits the 640px breakpoint across separate edits — so this
+ * concatenates rather than choosing one. Zero blocks fails an assertion
+ * rather than throwing, because it is a statement about the stylesheet
+ * under test rather than a defect in this helper. That is deliberately
+ * NOT the policy in `board-list-view-density.test.ts`, whose stylesheet
+ * declares each breakpoint once and which throws on a split precisely so
+ * the split gets noticed.
+ *
+ * **On malformed input it THROWS**, via `matchingBrace`, when a block is
+ * never closed. This is the one part of the contract worth stating
+ * explicitly, because the tolerant-sounding "one or more" policy above
+ * might suggest this helper is lenient generally, and it is not. An
+ * unclosed block has no correct body to return: slicing to the end of the
+ * source would append the whole remainder of the stylesheet as if it were
+ * inside the breakpoint, and every assertion below would then be reading
+ * declarations that no phone applies. A loud failure is the only outcome
+ * that cannot be mistaken for a passing test.
  */
 function narrowBlock(): string {
   const header = "@media (max-width: 640px)";
@@ -149,17 +178,9 @@ function narrowBlock(): string {
     }
     found += 1;
     const open = start + header.length + afterHeader[0].length - 1;
-    let depth = 0;
-    let i = open;
-    for (; i < CODE.length; i += 1) {
-      if (CODE[i] === "{") depth += 1;
-      if (CODE[i] === "}") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    out += CODE.slice(open + 1, i) + "\n";
-    index = i + 1;
+    const close = matchingBrace(CODE, open);
+    out += CODE.slice(open + 1, close) + "\n";
+    index = close + 1;
   }
   expect(found, `no exact \`${header}\` block`).toBeGreaterThan(0);
   return out;

@@ -53,6 +53,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { matchingBrace } from "./helpers/css-blocks";
 
 /** One of the four stylesheets PR #311 touched, comment-stripped. */
 function css(relPath: string): string {
@@ -88,6 +89,35 @@ const TOP_BAR_CSS = css("../src/components/top-bar/TopBar.module.css");
  * `BoardFilterBar.module.css`'s disclosure block, not this file's
  * `.select`-roster block, but the same substring match is used here and
  * the row names this file explicitly as carrying the identical hole.
+ *
+ * ── Contract ──────────────────────────────────────────────────────────
+ *
+ * **Accepts:** any comment-stripped stylesheet (this helper is
+ * parameterised, and reads four of them), containing one or more blocks
+ * whose prelude is exactly `@media (max-width: 640px)`.
+ *
+ * **Returns:** their bodies concatenated, newline-separated, braces
+ * excluded.
+ *
+ * **Cardinality: one or more, tolerated by design, checked with
+ * `expect()`** — for the reason given at length above: two of the four
+ * stylesheets split this breakpoint across separate blocks. Zero blocks
+ * fails an assertion rather than throwing, because it is a statement about
+ * the stylesheet rather than a defect in this helper. `atRuleBlock` in
+ * `board-list-view-density.test.ts` takes the opposite policy on purpose;
+ * neither should be changed to match the other.
+ *
+ * **On malformed input it THROWS**, via `matchingBrace`, when a block is
+ * never closed — and that strictness is deliberate despite the tolerant
+ * "one or more" policy above, because the failure it prevents is this
+ * file's worst case. A walk that sliced to the end of the source on an
+ * unclosed block would append the whole remainder of the stylesheet as if
+ * it were part of the narrow block. A single quoted `{` is enough to
+ * reach that state: the depth counter over-counts, the walk runs past the
+ * block's real closing brace, and an UNCONDITIONAL rule below is absorbed
+ * and then asserted as though a phone would read it — this file reporting
+ * 44px tap targets against a stylesheet that never raises them at the
+ * breakpoint. A test that passes on that input is worse than no test.
  */
 function narrowBlock(code: string): string {
   const header = "@media (max-width: 640px)";
@@ -107,17 +137,9 @@ function narrowBlock(code: string): string {
     }
     found += 1;
     const open = start + header.length + afterHeader[0].length - 1;
-    let depth = 0;
-    let i = open;
-    for (; i < code.length; i += 1) {
-      if (code[i] === "{") depth += 1;
-      if (code[i] === "}") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    out += code.slice(open + 1, i) + "\n";
-    index = i + 1;
+    const close = matchingBrace(code, open);
+    out += code.slice(open + 1, close) + "\n";
+    index = close + 1;
   }
   expect(found, "no @media (max-width: 640px) block").toBeGreaterThan(0);
   return out;
