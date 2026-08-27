@@ -140,6 +140,101 @@ describe("the answer, when there is one", () => {
     expect(answer?.decision).toBe("block");
     expect(answer?.nudge).toBeUndefined();
   });
+
+  it("carries the findings hook_decision returned, for the capture loop", async () => {
+    // MILESTONES.md #128: `hook_decision` returns `findings` on every
+    // answer, and until this row nothing on this side of the wire read the
+    // field at all — it was parsed out of `property(body, ...)` calls for
+    // every other key and simply never asked for this one, so a caller
+    // wanting the evidence behind a decision had no way to reach it.
+    const answer = await ask(
+      responding({
+        decision: "block",
+        findings: [
+          {
+            id: "I10",
+            source: "builtin",
+            phase: "pre",
+            audience: "agent",
+            level: "block-overridable",
+            timing: "immediate",
+            messages: { plain: "no approval at tip", prominent: "NO APPROVAL AT TIP" },
+          },
+        ],
+      }),
+    )(EVENT);
+    expect(answer?.findings).toEqual([
+      {
+        id: "I10",
+        source: "builtin",
+        phase: "pre",
+        audience: "agent",
+        level: "block-overridable",
+        timing: "immediate",
+        messages: { plain: "no approval at tip", prominent: "NO APPROVAL AT TIP" },
+      },
+    ]);
+  });
+
+  it("carries an empty findings array rather than dropping it", async () => {
+    // `[]` and "the field was absent" are different facts — an answer that
+    // explicitly triggered nothing versus a server too old to send the
+    // field at all — and `decideWithNudges` distinguishes them (an
+    // explicit `[]` overwrites a previous answer's findings; `undefined`
+    // does not). Losing this here would collapse that distinction before
+    // it ever reaches `decide.ts`.
+    const answer = await ask(responding({ decision: "allow", findings: [] }))(EVENT);
+    expect(answer?.findings).toEqual([]);
+  });
+
+  it("is absent when the body carries no findings field at all", async () => {
+    // An older server that predates #128. `undefined`, not `[]`, so a
+    // caller can tell "answered, nothing triggered" apart from "this
+    // server has never heard of findings" if it ever needs to.
+    const answer = await ask(responding({ decision: "allow" }))(EVENT);
+    expect(answer?.findings).toBeUndefined();
+  });
+
+  it("drops a finding missing a required field rather than the whole array", async () => {
+    // Same posture `readSpool` takes with a torn line: one malformed entry
+    // must not cost every other finding in the same answer.
+    const answer = await ask(
+      responding({
+        decision: "allow",
+        findings: [
+          { id: "I10", phase: "pre", level: "nudge", messages: { plain: "ok" } },
+          { phase: "pre", level: "nudge", messages: { plain: "missing its id" } },
+          "not an object",
+          { id: "I11", phase: "post" /* no level */, messages: { plain: "missing its level" } },
+          { id: "I12", phase: "pre", level: "nudge" /* no messages */ },
+        ],
+      }),
+    )(EVENT);
+    expect(answer?.findings).toHaveLength(1);
+    expect(answer?.findings?.[0]?.id).toBe("I10");
+  });
+
+  it("drops the whole findings value when it is not an array", async () => {
+    const answer = await ask(responding({ decision: "allow", findings: "I10" }))(EVENT);
+    expect(answer?.findings).toBeUndefined();
+  });
+
+  it("falls back to the plain message when prominent is missing", async () => {
+    // `InterventionMessages` requires both; an older or malformed server
+    // response supplying only `plain` must still produce a usable finding
+    // rather than being dropped outright, since `buildCaptures` only ever
+    // reads `.plain`.
+    const answer = await ask(
+      responding({
+        decision: "allow",
+        findings: [{ id: "I7", phase: "post", level: "nudge", messages: { plain: "only plain" } }],
+      }),
+    )(EVENT);
+    expect(answer?.findings?.[0]?.messages).toEqual({
+      plain: "only plain",
+      prominent: "only plain",
+    });
+  });
 });
 
 describe("only `block` blocks", () => {

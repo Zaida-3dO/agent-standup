@@ -53,6 +53,7 @@ import type { HookEvent } from "./payload";
 import { enforcementRefusal, type SessionEnforcement } from "./enforcement";
 import type { StopContext } from "./stop-catch";
 import { evaluateNudges, isWriteShaped, type Nudge, type NudgeContext } from "./nudge";
+import type { InterventionFinding } from "../interventions/types";
 
 /**
  * What the hook concluded, and why.
@@ -107,6 +108,20 @@ export interface ServerVerdict {
    * change `decision`, and `decide` never reads it while choosing one.
    */
   readonly nudge?: NudgeContext;
+  /**
+   * The findings behind the decision — `hook_decision`'s own `findings`
+   * field, carried through unread.
+   *
+   * This is intervention-evidence plumbing (MILESTONES.md #128's capture
+   * loop, `src/lib/interventions/capture.ts`), not part of the decision
+   * itself: `decide` never inspects it, the same way it never inspects
+   * `stop` or `nudge`. It exists on `ServerVerdict` so a caller that wants
+   * to record what fired — `../../bin/standup-hook.ts`, via
+   * `RunHookOptions.onFindings` — has the same round trip's answer to
+   * build a capture from, rather than needing a second request for data
+   * the server already computed.
+   */
+  readonly findings?: readonly InterventionFinding[];
 }
 
 export type AskServer = (event: HookEvent) => Promise<ServerVerdict | undefined>;
@@ -123,6 +138,13 @@ export type AskServer = (event: HookEvent) => Promise<ServerVerdict | undefined>
 export interface DecidedEvent {
   readonly verdict: HookVerdict;
   readonly nudges: readonly Nudge[];
+  /**
+   * The findings the server's answer carried, in registry order. Empty when
+   * there was no answer, or the answer carried none — never `undefined`, so
+   * a caller can iterate unconditionally the way `buildCaptures` already
+   * does for its own `findings` parameter.
+   */
+  readonly findings: readonly InterventionFinding[];
 }
 
 export interface DecideOptions {
@@ -248,9 +270,18 @@ export async function decide({
  */
 export async function decideWithNudges(options: DecideOptions): Promise<DecidedEvent> {
   let volunteered: NudgeContext | undefined;
+  // Same posture as `volunteered` above: read off whatever round trip
+  // `decide` was already making, never triggering one of its own. Findings
+  // ride every answer the server gives, not only a `nudge`-bearing one, so
+  // this is set unconditionally rather than guarded on a defined check the
+  // way `nudge` and `stop` are — an answer with an empty array is still an
+  // answer, and `findings` below defaults it to one only when there was no
+  // answer at all.
+  let findings: readonly InterventionFinding[] | undefined;
   const askServer: AskServer = async (asked) => {
     const answer = await options.askServer(asked);
     if (answer?.nudge !== undefined) volunteered = answer.nudge;
+    if (answer?.findings !== undefined) findings = answer.findings;
     return answer;
   };
 
@@ -270,5 +301,5 @@ export async function decideWithNudges(options: DecideOptions): Promise<DecidedE
     writeShaped: merged.writeShaped ?? isWriteShaped(options.event.tool),
   });
 
-  return { verdict, nudges };
+  return { verdict, nudges, findings: findings ?? [] };
 }

@@ -15,14 +15,16 @@
 // call on its way out would refuse a command it never examined, on behalf
 // of rules that live server-side and were never consulted.
 
-import { runHook } from "@/lib/hook/run";
+import { runHook, type FindingsReport } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";
 import { HOOK_EXIT } from "@/lib/hook/response";
 import { spoolEvent } from "@/lib/cli/hook-command";
 import { fileSpool, fileAppendCounter, spoolPath } from "@/lib/cli/spool-file";
 import { flushSpool } from "@/lib/hook/flush";
 import { createHttpFlush } from "@/lib/hook/flush-http";
+import { createRecordInterventionHttp } from "@/lib/hook/record-intervention-http";
 import { parseHookPayload } from "@/lib/hook/payload";
+import { buildCaptures } from "@/lib/interventions/capture";
 // The version this script declares it speaks (SCHEMA.md §21). It lives in
 // its own module rather than here because this file's body runs on import —
 // it reads stdin to the end — so a constant exported from it could not be
@@ -64,7 +66,19 @@ async function main(): Promise<number> {
 
   const stdin = await readStdin();
   const now = Date.now();
-  const rendered = await runHook({ stdin, askServer, now });
+  const rendered = await runHook({
+    stdin,
+    askServer,
+    now,
+    // MILESTONES.md #128's capture loop. Fires only when `runHook` has
+    // findings to report — see its own header for why this is a callback
+    // rather than a return field. With no server configured there is
+    // nowhere to send a capture either, so this is `undefined` in exactly
+    // the case `askServer` above already degrades to "no answer" for.
+    ...(baseUrl === undefined || baseUrl === ""
+      ? {}
+      : { onFindings: recordFindings(baseUrl, env) }),
+  });
 
   // The verdict is written before the record is spooled, and the record is
   // spooled before the process exits — MILESTONES.md #88. Deciding first
@@ -180,6 +194,67 @@ function flushTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
   // to become `NaN`, which `AbortSignal.timeout` would reject and which
   // would turn a typo in an env var into a flush that never runs.
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * Builds the `onFindings` callback `runHook` calls — MILESTONES.md #128's
+ * capture loop, the write `capture.ts`'s own header says belongs to a
+ * service operation rather than to the module that turns a finding into a
+ * row.
+ *
+ * **This is not spooled**, unlike the tool-call telemetry above. It fires
+ * directly, at the moment `runHook` already has both the findings and the
+ * event they answer for in hand — see `record-intervention-http.ts`'s
+ * header for why riding the spool would be a second contract change rather
+ * than a saving.
+ *
+ * **This function cannot fail** in the sense that matters: every failure —
+ * an unreachable server, a refused shape, an unexpected throw building the
+ * capture rows themselves — is swallowed, for the same reason `drain`
+ * swallows a flush failure. A lost capture is the accepted cost;
+ * `record-intervention.ts`'s header states outright that losing the
+ * evidence loop and not the guard is the correct direction of failure.
+ *
+ * `itemId` and `rootSessionId` are **not** filled in here, and that is a
+ * real gap rather than an oversight to fix quietly: this script only ever
+ * has `event.sessionId`, `event.tool` and `event.command` — the item a
+ * session holds a claim on is resolved server-side, inside
+ * `assembleContext`, from a claim lookup the client never sees the result
+ * of. A capture built here can therefore be attributed to a session but
+ * not to the item that session was working on. `itemId` is already
+ * optional on `CaptureContext` and `InterventionCapture` for exactly this
+ * reason — an unclaimed call has no item either — so this degrades to the
+ * same "unknown, not absent-by-mistake" shape the rest of the system
+ * already uses, rather than introducing a new one.
+ */
+function recordFindings(
+  baseUrl: string,
+  env: NodeJS.ProcessEnv,
+): (report: FindingsReport) => Promise<void> {
+  const send = createRecordInterventionHttp({
+    baseUrl,
+    fetch: globalThis.fetch as never,
+    ...(env.STANDUP_TOKEN === undefined || env.STANDUP_TOKEN.trim() === ""
+      ? {}
+      : { token: env.STANDUP_TOKEN.trim() }),
+  });
+
+  return async (report) => {
+    try {
+      const captures = buildCaptures(report.findings, {
+        sessionId: report.event.sessionId,
+        ...(report.event.tool === undefined ? {} : { tool: report.event.tool }),
+        ...(report.event.command === undefined ? {} : { command: report.event.command }),
+        blocked: report.blocked,
+      });
+      if (captures.length === 0) return;
+      await send({ sessionId: report.event.sessionId, captures });
+    } catch {
+      // Deliberately silent — see the header above. A capture is evidence
+      // for a report nobody is waiting on right now; the tool call this
+      // event answers for has already been decided.
+    }
+  };
 }
 
 try {

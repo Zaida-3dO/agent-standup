@@ -12,7 +12,7 @@
 // allowed call would pass every test in `hook-decide.test.ts` and put a line
 // of noise into a session after every Read the agent performs.
 import { describe, expect, it, vi } from "vitest";
-import { runHook } from "@/lib/hook/run";
+import { runHook, type FindingsReport } from "@/lib/hook/run";
 import type { AskServer } from "@/lib/hook/decide";
 import { HOOK_EXIT } from "@/lib/hook/response";
 
@@ -247,5 +247,110 @@ describe("what reaches the server", () => {
     // critical path of every call makes the hook the slowest thing in the
     // session.
     expect(sent.toolResult).toHaveLength(4000);
+  });
+});
+
+describe("onFindings — MILESTONES.md #128's capture loop", () => {
+  const FINDING = {
+    id: "I10",
+    source: "builtin" as const,
+    phase: "pre" as const,
+    audience: "agent" as const,
+    level: "block-overridable" as const,
+    timing: "immediate" as const,
+    messages: { plain: "no approval at tip", prominent: "NO APPROVAL AT TIP" },
+  };
+
+  it("is not called when the answer carried no findings", async () => {
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    await runHook({ stdin: stdin("git status"), askServer: allowing, now: NOW, onFindings });
+
+    expect(onFindings).not.toHaveBeenCalled();
+  });
+
+  it("is called once with the findings, the event and blocked: true on a deny", async () => {
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "no approval at tip",
+      findings: [FINDING],
+    });
+
+    await runHook({ stdin: stdin("git merge"), askServer, now: NOW, onFindings });
+
+    expect(onFindings).toHaveBeenCalledTimes(1);
+    expect(onFindings).toHaveBeenCalledWith({
+      event: { eventType: "PreToolUse", sessionId: "s-1", tool: "Bash", command: "git merge" },
+      findings: [FINDING],
+      blocked: true,
+    });
+  });
+
+  it("reports blocked: false when the finding fired but the call was allowed", async () => {
+    // A nudge-level finding, or a blocking finding on a phase that cannot
+    // block: `outcomeFor` in capture.ts must be told the call was not
+    // actually refused, or it would record a block that never happened.
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({ decision: "allow", findings: [FINDING] });
+
+    await runHook({ stdin: stdin("git merge"), askServer, now: NOW, onFindings });
+
+    expect(onFindings.mock.calls[0]?.[0]).toMatchObject({ blocked: false });
+  });
+
+  it("reports blocked: false for a blocking-level finding on a post event", async () => {
+    // The phase clamp: `decide` cannot deny a `post` event no matter what
+    // the server says, so a finding riding a `post` answer must never be
+    // captured as blocked — that would assert a refusal `verdict.decision`
+    // itself denies happened.
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({ decision: "block", findings: [FINDING] });
+
+    await runHook({
+      stdin: stdin("git merge", "PostToolUse"),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    expect(onFindings.mock.calls[0]?.[0]).toMatchObject({ blocked: false });
+  });
+
+  it("is awaited before runHook resolves", async () => {
+    // If this were fired without awaiting, a process that exits right after
+    // `runHook` returns (as `standup-hook.ts` does) would routinely kill the
+    // capture write before it left the process. Asserted by making the
+    // callback's completion observable only after a microtask queue flush,
+    // and checking runHook did not resolve before it ran.
+    let finished = false;
+    const onFindings = vi.fn(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      finished = true;
+    });
+    const askServer: AskServer = async () => ({ decision: "allow", findings: [FINDING] });
+
+    await runHook({ stdin: stdin("git merge"), askServer, now: NOW, onFindings });
+
+    expect(finished).toBe(true);
+  });
+
+  it("does not let onFindings change the rendered response", async () => {
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "no approval at tip",
+      findings: [FINDING],
+    });
+
+    const rendered = await runHook({
+      stdin: stdin("git merge"),
+      askServer,
+      now: NOW,
+      onFindings: async () => {
+        throw new Error("a broken capture write must not reach the caller");
+      },
+    });
+
+    expect(rendered.exitCode).toBe(HOOK_EXIT.DENY);
   });
 });
