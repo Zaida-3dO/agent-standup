@@ -513,6 +513,24 @@ export function BoardFilterBarView({
         // click-toggles-its-`htmlFor`-checkbox behaviour — that comes from
         // the DOM `<label>`/`for` relationship, not from the ARIA role — so
         // the hook-free checkbox toggle above is untouched.
+        //
+        // **Latent trap, row 40f75641-86f3-4828-8843-24460f732e50: this
+        // label has NO `tabIndex`, so it is not keyboard-focusable — a real
+        // `<button>` activates on Enter as well as Space, this one does
+        // neither, but nothing can reach it to notice. Keyboard users land
+        // on the native checkbox instead, where Space is correct and
+        // Enter-does-nothing is standard checkbox behaviour, so as long as
+        // that stays true there is no reachable failure mode.** The gap
+        // becomes real the moment `tabIndex={0}` is added here without also
+        // adding an Enter
+        // handler — an easy, superficially sensible "make the button
+        // focusable" edit that would make an element announcing as
+        // `button` ignore half the keys a button user presses. If you are
+        // adding `tabIndex` to this label, add an `onKeyDown` Enter handler
+        // in the same change (see the checkbox's `onChange` above for how
+        // this component keeps `aria-expanded` in sync without hooks).
+        // Guarded by the "must not become focusable while Enter is
+        // unhandled" test in tests/board-filter-bar-component.test.ts.
         role="button"
         aria-controls="board-axes-panel"
         // Matches `defaultChecked={false}` above — correct on first paint,

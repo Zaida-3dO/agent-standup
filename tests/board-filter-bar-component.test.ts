@@ -286,6 +286,32 @@ describe("the axes disclosure toggle (narrow-width collapse)", () => {
     expect(panel, "no element carries the id aria-controls points at").toBeDefined();
   });
 
+  it("the button-roled label stays non-focusable unless it also handles Enter (row 40f75641-86f3-4828-8843-24460f732e50)", () => {
+    // The label announces as `button "Filters"`, and a real `<button>`
+    // activates on Enter as well as Space. This one only activates on
+    // Space, via the native `<label for>` relationship -- there is no
+    // `onKeyDown` here. That gap stays invisible only as long as the label
+    // carries no `tabIndex` and so cannot receive keyboard focus in the
+    // first place: nothing can land on it to press Enter at it. The single
+    // change this test exists to catch is `tabIndex={0}` (or any other
+    // non-negative tabIndex) being added to this label WITHOUT an Enter
+    // handler landing in the same change -- at that point the announced
+    // "button" contract becomes false for a reachable element.
+    const labels = tags(bar(), "label").filter(
+      (el) => (el.props as { htmlFor?: string }).htmlFor === "board-axes-toggle",
+    );
+    const label = labels[0]!.props as { tabIndex?: number; onKeyDown?: unknown };
+    if (label.tabIndex !== undefined && label.tabIndex >= 0) {
+      expect(
+        label.onKeyDown,
+        "label became keyboard-focusable (tabIndex >= 0) without gaining an Enter handler -- the announced button role is now reachable and wrong",
+      ).toBeDefined();
+    } else {
+      const focusable = label.tabIndex !== undefined && label.tabIndex >= 0;
+      expect(focusable, "label must stay non-focusable while Enter is unhandled").toBe(false);
+    }
+  });
+
   it("says how many filters are active even while collapsed, so a narrowed board is not silently unexplained", () => {
     const labels = tags(bar({ query: parseBoardQuery("area=web&priority=P0") }), "label").filter(
       (el) => (el.props as { htmlFor?: string }).htmlFor === "board-axes-toggle",
