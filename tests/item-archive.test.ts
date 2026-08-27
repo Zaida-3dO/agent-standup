@@ -1197,6 +1197,12 @@ describeIfDb("delete_item", () => {
         // items, so there is nothing here for it to leak *into* — the id
         // has to be known already.
         "get_item_history",
+        // Reads one item's `body` **by id**, paged by character offset — the
+        // same shape and the same reason as `get_item_history` immediately
+        // above: reaching an archived item by its id still resolves, this
+        // operation ranges over no set of items, and there is no id to leak
+        // *into* — the caller already has to know it.
+        "get_item_body",
         // Aggregates intervention firings per catalogue entry. It ranges
         // over `intervention_events` and `intervention_scores` and returns
         // counts keyed by entry id — the same "ranges over no items" reason
