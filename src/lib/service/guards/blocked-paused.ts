@@ -16,7 +16,8 @@
 // `to`, not just `from`, for the reason that matters here).
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 
-const BLOCKED_ON_TYPES = new Set(["person", "external_process", "time"]);
+const BLOCKED_ON_TYPES = ["person", "external_process", "time"] as const;
+const BLOCKED_ON_TYPES_SET: ReadonlySet<string> = new Set(BLOCKED_ON_TYPES);
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -44,10 +45,21 @@ export const blockedRequiredFieldsGuard: Guard = {
     }
 
     const onType = input.fields.blocked_on_type;
-    if (typeof onType !== "string" || !BLOCKED_ON_TYPES.has(onType)) {
-      return guardRejected("blocked requires a valid blocked_on_type.", {
-        fields: ["blocked_on_type"],
-      });
+    if (typeof onType !== "string" || !BLOCKED_ON_TYPES_SET.has(onType)) {
+      // Named values, not just the field name — matches the convention
+      // `NOT_DONE_REASONS` validation already uses (summaries/validate.ts).
+      // Row c1ee5fbc-2926-4315-87dd-6d4ad2ab69e9: a caller who hits this
+      // with an internal-work blocker (waiting on another row, not a
+      // person/process/timer) got refused twice with no hint that `person`,
+      // `external_process` and `time` are the only legal values, and had to
+      // read the schema to find them. This does not add a value for that
+      // case — see the same row's note and docs/plans/SCHEMA.md §1.1 on why
+      // `blocked` is deliberately "an outside actor must act" — it only
+      // makes the refusal say what it is refusing against.
+      return guardRejected(
+        `blocked requires a valid blocked_on_type: must be one of ${BLOCKED_ON_TYPES.join(", ")}; got ${JSON.stringify(onType)}.`,
+        { fields: ["blocked_on_type"] },
+      );
     }
 
     if (onType === "person" && !isNonEmptyString(input.fields.blocked_on_person)) {

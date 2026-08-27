@@ -149,8 +149,31 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
         "blocked",
         { blocked_reason: "waiting on infra" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
+      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
       expect(error.fields).toEqual(["blocked_on_type"]);
+    });
+
+    it("names the legal blocked_on_type values in the refusal, not just the field (row c1ee5fbc-2926-4315-87dd-6d4ad2ab69e9)", async () => {
+      // The original message ("blocked requires a valid blocked_on_type.")
+      // named the field but not what would satisfy it — every other guard
+      // that rejects an enum in this codebase (NOT_DONE_REASONS,
+      // summaries/validate.ts) does list its legal values. This asserts the
+      // message text itself, so reverting to the field-only phrasing fails
+      // this test even though `fields` still comes back correct.
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const error = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        { blocked_reason: "waiting on infra", blocked_on_type: "some_other_row" },
+        reg,
+      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
+      expect(error.fields).toEqual(["blocked_on_type"]);
+      expect(error.message).toContain("person");
+      expect(error.message).toContain("external_process");
+      expect(error.message).toContain("time");
+      expect(error.message).toContain('"some_other_row"');
     });
 
     it("refuses blocked_on_type=person with no blocked_on_person", async () => {
