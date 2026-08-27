@@ -59,12 +59,14 @@
    the way `button` does, and the label is the visible trigger a keyboard
    or screen-reader user actually operates.
 
-   Desktop is intentionally NOT a smaller version of the same disclosure:
-   `@media (min-width: 641px)` forces `.axes` to display regardless of
-   the checkbox, at the same breakpoint every touch-target fix in this
-   sweep uses, so nothing about the desktop reader's experience changes —
-   the axes are exactly as permanently visible as they were before this
-   existed. */
+   Desktop is intentionally NOT a smaller version of the same disclosure,
+   and it is unaffected by ABSENCE rather than by an explicit override:
+   `.axes` is `display: flex` in its own base rule and is only ever
+   overridden inside `@media (max-width: 640px)` above, so a viewport that
+   never matches that query renders the axes regardless of the checkbox —
+   there is no separate desktop rule for a wide viewport to need. Nothing
+   about the desktop reader's experience changes — the axes are exactly as
+   permanently visible as they were before this existed. */
 .axesToggle {
   position: absolute;
   width: 1px;
