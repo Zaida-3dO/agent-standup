@@ -15,6 +15,7 @@ import {
   type FetchLike,
   type InterventionCaptureBatch,
 } from "@/lib/hook/record-intervention-http";
+import { DEFAULT_TIMEOUT_MS as DEFAULT_ASK_TIMEOUT_MS } from "@/lib/hook/ask-http";
 import type { InterventionCapture } from "@/lib/interventions/capture";
 
 function capture(overrides: Partial<InterventionCapture> = {}): InterventionCapture {
@@ -138,6 +139,16 @@ describe("the request is bounded in time", () => {
     await send(BATCH);
     expect(timeoutSignal).toHaveBeenCalledWith(DEFAULT_RECORD_TIMEOUT_MS);
     expect(DEFAULT_RECORD_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+
+  it("does not borrow the decision's full patience for a lost capture", () => {
+    // Row a5af3691: a lost capture costs strictly less than a delayed tool
+    // call, so this ceiling must stay materially below `ask-http.ts`'s
+    // `DEFAULT_TIMEOUT_MS` rather than copying it — otherwise a hung
+    // capture server costs a real tool call the decision's *own* worst-case
+    // wait a second time. Pinned as a relationship, not a literal number,
+    // so either constant can move without this test silently going stale.
+    expect(DEFAULT_RECORD_TIMEOUT_MS).toBeLessThan(DEFAULT_ASK_TIMEOUT_MS);
   });
 });
 

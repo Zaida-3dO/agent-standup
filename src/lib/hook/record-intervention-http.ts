@@ -45,12 +45,29 @@ export type FetchLike = (
 /**
  * How long to wait for the ingest before giving up, in milliseconds.
  *
- * Shorter than `flush-http.ts`'s ceiling: unlike a flush, this runs on the
- * critical path of the process exiting — `runHook` awaits it before
- * `standup-hook.ts` writes its response and returns — so it shares the
- * hook's own tolerance for delay rather than a background flush's.
+ * Shorter than `flush-http.ts`'s ceiling for the same reason as before:
+ * unlike a flush, this runs on the critical path of the process exiting —
+ * `runHook` awaits it before `standup-hook.ts` writes its response and
+ * returns.
+ *
+ * **Deliberately shorter than `ask-http.ts`'s own ceiling, though, not
+ * equal to it** (row a5af3691 on the capture-loop follow-up, filed against
+ * an earlier version of this file that copied `ask-http.ts`'s 5000ms
+ * outright). Fire-and-forget was considered and rejected: `standup-hook.ts`
+ * exits right after `main()` returns with nothing else keeping the event
+ * loop alive, and `tests/hook-run.test.ts`'s "is awaited before runHook
+ * resolves" pins exactly this — an un-awaited send would routinely be
+ * killed mid-flight by the process exiting, trading a bounded delay for an
+ * *unbounded* loss rate. But a lost capture still costs strictly less than
+ * a delayed tool call, so the capture should not borrow the decision's full
+ * patience either: `POST /api/interventions` does one small insert, not the
+ * decision logic `ask-http.ts` waits on, so it does not need the same
+ * ceiling to complete on any request that is actually going to succeed. A
+ * hung server now costs at most this long added to a real tool call, on top
+ * of `ask-http.ts`'s own ceiling — not this plus an equal second helping of
+ * it.
  */
-export const DEFAULT_RECORD_TIMEOUT_MS = 5000;
+export const DEFAULT_RECORD_TIMEOUT_MS = 1500;
 
 export interface RecordInterventionHttpOptions {
   readonly baseUrl: string;
