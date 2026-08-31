@@ -372,6 +372,54 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  "model_picker.flag_below_strength": define({
+    schema: z.number().min(0).max(1),
+    default: 0.5,
+    label: "Flag runs below this confidence",
+    help: "Confidence at or below which a run asks for a person's eyes on the since-your-last-visit card, rather than letting a passive accept stand. At or below an even chance the picker is closer to guessing than recommending, which is where a person's read is worth most. Explorations are always asked about regardless of this value.",
+    category: "Model picker",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "model_picker.high_difficulty": define({
+    schema: z.number().int().min(1).max(5),
+    default: 4,
+    label: "Difficulty counted as high risk",
+    help: "The declared facet difficulty at or above which work is treated as high risk, so no experiment runs on it however high the explore rate is set. Hard work is where a cheaper tier is most likely to fail and least likely to fail obviously.",
+    category: "Model picker",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "model_picker.min_observations": define({
+    schema: z.number().int().min(1),
+    default: 3,
+    label: "Runs before a recommendation counts",
+    help: "How many scored runs a tier needs before its recommendation carries more than the minimum confidence. One run is an anecdote and two is a coincidence; below this the picker reports that it does not know yet rather than recommending from a single lucky result.",
+    category: "Model picker",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  "model_picker.poor_penalty": define({
+    schema: z.number().min(0).max(1),
+    default: 0.15,
+    label: "Confidence lost per unusable run",
+    help: "How much each run scored 1 cuts a tier's recommendation confidence, on top of what its mean says. This is the distribution doing work a mean cannot: nine good runs and one discarded one average well and still describe a real failure mode.",
+    category: "Model picker",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "notify.doc": define({
     schema: capabilityDocSchema,
     default: null,

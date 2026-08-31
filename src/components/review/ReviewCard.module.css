@@ -1,0 +1,121 @@
+/* The review card on the since-your-last-visit list — MILESTONES.md #68,
+   and the flagged-run question of #69.
+
+   Tokens only, no raw colours: the same rule the rest of the components
+   follow so a theme change lands everywhere at once. */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+/* A flagged run is an invitation, not an alarm. Deliberately NOT the
+   treatment the blocked list uses — SCHEMA.md §12 keeps "work cannot
+   proceed without you" and "your judgement is unusually valuable here"
+   visually distinct, because conflating them makes the urgent list
+   untrustworthy. */
+.flagged {
+  border-left: 3px solid var(--accent);
+}
+
+.question {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.flagLabel {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 7rem 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.facet {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.slider {
+  width: 100%;
+}
+
+.value {
+  min-width: 4.5rem;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-align: right;
+}
+
+/* The person's score, once they have given one — distinguished from the
+   agent's so a reader can see at a glance which numbers are theirs. */
+.userValue {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.accept {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.accept:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Seen sits apart from the scoring controls, and is never disabled by
+   them — MILESTONES.md #68: scoring must never block Seen. */
+.seen {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
