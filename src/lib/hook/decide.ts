@@ -351,6 +351,13 @@ export async function decideWithNudges(options: DecideOptions): Promise<DecidedE
     // upstream should have to restate it. A `writeShaped` already on the
     // context still wins.
     writeShaped: merged.writeShaped ?? isWriteShaped(options.event.tool),
+    // Same reasoning for `beforeCall`, which the backgrounding nudge keys
+    // off (MILESTONES.md #65). This is read from the *event*, never from
+    // the server: whether the call has already run is a local fact, and a
+    // server that claimed otherwise would be overriding something it
+    // cannot observe. Hence `??` on the two fields above and a plain
+    // assignment here.
+    beforeCall: options.event.eventType === "PreToolUse",
   });
 
   return { verdict, nudges, findings: findings ?? [] };
