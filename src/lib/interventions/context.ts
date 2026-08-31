@@ -50,6 +50,7 @@ import { isWriteTool } from "@/lib/telemetry/shape";
 import { isMergeAttempt, isWorkRecordingCommand } from "./commands";
 import { isBroadGitAdd } from "./builtins";
 import type { InterventionContext, InterventionPhase } from "./types";
+import { normaliseWorktree, sameWorktree } from "./worktree";
 
 /**
  * What the call might need looked up.
@@ -228,8 +229,52 @@ interface OccupancyRow {
   rootSessionId: string;
   itemId: string;
   branch: string | null;
+  worktree: string | null;
   lastActiveSecondsAgo: number | null;
 }
+
+/**
+ * How long a holder may be quiet before I15 stops deferring to it.
+ *
+ * Twelve hours. The bound exists because `liveness` cannot carry this on its
+ * own: `sweepLiveness` has no caller (MILESTONES.md #99) and the claim insert
+ * is `ON CONFLICT DO NOTHING`, so a crashed session's row stays `running`
+ * indefinitely and every future crew in that repository is refused on behalf
+ * of a crew that stopped days ago. Three separate crews hit exactly that on
+ * 2026-08-31, all deferred to one holder ~10.9 days quiet.
+ *
+ * Twelve hours rather than something tighter because the cost of the two
+ * errors is not symmetric. Too short and a genuine collision goes unblocked
+ * while its holder is merely thinking — a long test run, a slow review, a
+ * session waiting on a person — which is the incident this entry exists to
+ * prevent. Too long and a stale row blocks a live crew, which is annoying,
+ * visible immediately, and self-correcting once the sweep exists. So the
+ * bound is set well past any plausible pause within a working session and
+ * well inside the multi-day staleness that was actually observed, and it is
+ * deliberately not tuned finer than that: a threshold chosen to the minute
+ * would be a number nobody could justify.
+ *
+ * It applies on top of `liveness = 'running'` and both must hold: a holder
+ * marked stalled or dead is ignored however recently it spoke, and a holder
+ * still marked running is ignored once it passes this bound.
+ */
+const HOLDER_STALE_AFTER_SECONDS = 12 * 60 * 60;
+
+/**
+ * How many candidate holders the occupancy query reads.
+ *
+ * The worktree comparison happens in this process rather than in SQL (see
+ * `occupancyFor`), so the query returns a set of candidates rather than a
+ * single row — the freshest claim in the repository is often a sibling
+ * worktree, and stopping at it would miss the crew sharing this tree.
+ *
+ * A bound rather than an unbounded read because this is the highest-volume
+ * path in the system: one machine running many claims in one repository
+ * would otherwise read all of them on every file edit. Sixteen concurrent
+ * worktrees of one repository is an observed real number here, so the bound
+ * is set well above it while still being a bound.
+ */
+const CANDIDATE_LIMIT = 50;
 
 /**
  * Builds the context for one hook event.
@@ -312,7 +357,20 @@ export async function assembleContext(options: {
     // a linked worktree with its own index; `null` means the claim never
     // recorded one, which is **unknown**, not "the shared checkout" — so
     // the field stays absent rather than becoming `false`.
+    //
+    // **This answers I11's question, not I15's**, and conflating the two is
+    // what made I15 fire on the healthy case. I11 asks whether the caller's
+    // *own* index is shared, which its own path genuinely settles — a linked
+    // worktree has its own index whoever else is around. I15 asks whether
+    // the caller and the *holder* are in one tree, which no fact about the
+    // caller alone can answer, and which is now settled by comparing the two
+    // paths in `occupancyFor` below.
     ...(claim.worktree === null ? {} : { isLinkedWorktree: claim.worktree.trim() !== "" }),
+    // Carried for the refusal message, so a caller can see which path was
+    // matched against theirs. Raw, deliberately — see the field's own note.
+    ...(claim.worktree !== null && normaliseWorktree(claim.worktree) !== undefined
+      ? { claimedWorktree: claim.worktree }
+      : {}),
   };
 
   // I15 — who else holds this checkout. Keyed on `(machine, repo)` and
@@ -455,6 +513,53 @@ async function handsOnWorkFor(
  *     crew is the liveness sweep's business, not this entry's: blocking on
  *     a claim whose holder is gone would refuse work on the strength of a
  *     crew that has already finished.
+ *   - **`lastActive` within `HOLDER_STALE_AFTER_SECONDS`.** The liveness
+ *     column alone cannot carry this, because nothing moves it off
+ *     `running` — see that constant for the incident.
+ *
+ * ── Same machine and repository is the prefilter, not the answer ───────
+ *
+ * `(machine, repo)` narrows the candidates to claims that *could* share a
+ * working tree, and then the worktree paths decide whether they actually
+ * do. Both halves are needed and neither is sufficient: the pair alone
+ * cannot tell one shared directory from sixteen sibling worktrees of one
+ * repository, which is the arrangement every parallel dispatch here uses
+ * and which this entry was refusing on every file edit.
+ *
+ * The comparison is done in TypeScript over `normaliseWorktree` rather than
+ * in SQL, and that is deliberate. The folding it needs — slash direction,
+ * drive-letter case on Windows paths but not on POSIX ones, `..` arithmetic
+ * — is a page of reasoning that belongs somewhere testable on its own; as a
+ * `WHERE` clause it would be an unreadable expression that only the database
+ * job could exercise. So the query keeps the cheap, indexable half of the
+ * predicate and the process keeps the half that needs judgement.
+ *
+ * **Candidates are therefore fetched rather than a single row**, bounded by
+ * `CANDIDATE_LIMIT`. The bound matters more than it looks: without it, one
+ * machine with many claims in one repository would read every one of them
+ * on every file edit.
+ *
+ * ── When a path is missing, nobody is blocked ──────────────────────────
+ *
+ * If either side recorded no worktree, `sameWorktree` answers `undefined`
+ * and that candidate is **skipped**. This is the single most consequential
+ * line in the change, so the reasoning is stated rather than implied.
+ *
+ * `Assignment.worktree` is nullable and `claim`'s `worktree` is optional,
+ * so an unknown path is the *common* case rather than an edge one — most
+ * claims in the wild carry nothing. Reading unknown as "same tree" would
+ * therefore restore precisely the behaviour being fixed, and would do it
+ * for the majority of claims: every crew whose claim omitted an optional
+ * field, blocked on a question that was never asked.
+ *
+ * The cost is honest and worth naming: two crews genuinely sharing one
+ * checkout, neither of which recorded a path, are **not** caught. The entry
+ * is a `block-overridable` on the highest-volume path in the system, and
+ * the catalogue's consistent reading of an unanswerable question is no
+ * finding — the same reading `broad-git-add-on-shared-checkout` takes two
+ * hundred lines up, and the same one this function already takes when the
+ * repository is null. What closes that gap is claims recording their
+ * worktree, not this predicate guessing.
  */
 async function occupancyFor(
   db: TransactionHandle,
@@ -467,10 +572,15 @@ async function occupancyFor(
   // checkout on the machine against this one.
   if (claim.repo === null) return {};
 
+  // Nothing to compare against. Established before the query rather than
+  // after it, so the common unclaimed-path case costs no read at all.
+  if (normaliseWorktree(claim.worktree) === undefined) return {};
+
   const rows = await db.$queryRawUnsafe<OccupancyRow[]>(
     `SELECT a."rootSessionId" AS "rootSessionId",
             a."itemId"        AS "itemId",
             a."branch"        AS "branch",
+            a."worktree"      AS "worktree",
             FLOOR(EXTRACT(EPOCH FROM (NOW() - a."lastActive")))::int AS "lastActiveSecondsAgo"
        FROM "Assignment" a
        JOIN "Item" i ON i."id" = a."itemId"
@@ -479,14 +589,22 @@ async function occupancyFor(
         AND a."rootSessionId" <> $3
         AND a."releasedAt" IS NULL
         AND a."liveness" = 'running'
+        AND a."worktree" IS NOT NULL
+        AND a."lastActive" > NOW() - MAKE_INTERVAL(secs => $4)
       ORDER BY a."lastActive" DESC
-      LIMIT 1`,
+      LIMIT $5`,
     claim.machine,
     claim.repo,
     claim.rootSessionId,
+    HOLDER_STALE_AFTER_SECONDS,
+    CANDIDATE_LIMIT,
   );
 
-  const holder = rows[0];
+  // The most recently active candidate that is genuinely in this working
+  // tree. Ordered by `lastActive DESC` in the query, so the first match is
+  // the freshest holder — a caller pointed at the stalest one would be sent
+  // to whoever is least likely to still be there.
+  const holder = rows.find((row) => sameWorktree(claim.worktree, row.worktree) === true);
   if (holder === undefined) return {};
 
   return {

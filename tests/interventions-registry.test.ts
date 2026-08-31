@@ -648,31 +648,36 @@ describe("I15 — a checkout another crew already holds", () => {
     expect(verdict?.message).toContain("30s ago");
   });
 
-  it("does not fire inside a linked worktree", async () => {
-    // `(machine, repo)` cannot distinguish two crews sharing one working
-    // tree from two crews each in their own — and the second is the
-    // intended arrangement, not a collision. Firing on it would refuse the
-    // healthy case on every file edit, which is how a guard teaches a
-    // session to distrust it.
+  it("does not exempt a caller merely for being in some linked worktree", async () => {
+    // `isLinkedWorktree` describes the CALLER only — whether this session's
+    // own claim recorded a path. It cannot answer "are we in the same tree",
+    // because that is a question about a pair. Read as an exemption it
+    // excuses two crews genuinely sharing one checkout, which is the
+    // incident the entry exists to prevent, so the predicate must ignore it
+    // and defer to the comparison the assembler has already made.
     const verdict = await entry?.predicate({
       sessionId: "s1",
       tool: "Write",
       isLinkedWorktree: true,
       occupyingCrew: { rootSessionId: "root-theirs", itemId: "item-b" },
     });
-    expect(verdict?.triggered).toBe(false);
+    expect(verdict?.triggered).toBe(true);
   });
 
-  it("fires when the working tree is unknown", async () => {
-    // Strictly `true` suppresses. An absent field means the claim recorded
-    // no worktree, and an unknown working tree is not a known-separate one
-    // — the same reading of absence the rest of the catalogue uses.
+  it("names the working tree it matched, so a wrong match is checkable", async () => {
+    // Every refusal on 2026-08-31 told a crew already in its own worktree to
+    // take its own worktree. With nothing naming what was matched, the
+    // honest inference is that the guard sees something the caller cannot,
+    // and each crew spent minutes re-verifying `git rev-parse` to rule that
+    // out. Printing the matched path makes a wrong match visible in a line.
     const verdict = await entry?.predicate({
       sessionId: "s1",
       tool: "Write",
+      claimedWorktree: "/checkouts/wt-mine",
       occupyingCrew: { rootSessionId: "root-theirs", itemId: "item-b" },
     });
     expect(verdict?.triggered).toBe(true);
+    expect(verdict?.message).toContain("/checkouts/wt-mine");
   });
 
   it("still names the holder when the branch and activity are unknown", async () => {
