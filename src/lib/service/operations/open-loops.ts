@@ -161,10 +161,10 @@ export const loopAdd = defineOperation({
   name: "loop_add",
   kind: "write",
   summary:
-    "Records a loose end on an item — a piece of work that still needs doing but is not big enough to be its own item. " +
-    "Loops track WORK, not notes: a reference, an index or a status marker belongs in the repo (CLAUDE.md, a MEMORY.md) " +
-    "or in a `note` on the item, not here. Pass kind: note for one recorded here anyway, so it stays out of the count " +
-    "of work outstanding, or kind: blocked_on_person for something real that is waiting on a human.",
+    "Records a loose end on an item — work that still needs doing but is not big enough to be its own item. " +
+    "Loops track WORK, not notes: a reference, an index or a status marker belongs in the repo or in a `note` " +
+    "on the item, not here. Pass kind: note for one recorded here anyway, so it stays out of the count of work " +
+    "outstanding, or kind: blocked_on_person for something waiting on a human.",
   // Stryker restore all
   input: addInput,
   async handler(ctx: ServiceContext, input: LoopAddInput): Promise<LoopAdded> {

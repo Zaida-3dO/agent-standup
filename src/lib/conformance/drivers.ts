@@ -35,7 +35,7 @@ import type { CallableService } from "../cli/bindings/direct";
 import { HTTP_ROUTES } from "../cli/bindings/http";
 import { COMMANDS } from "../cli/commands";
 import { runCommand } from "../cli/run";
-import { callTool } from "../mcp/server";
+import { callTool, createMcpServer } from "../mcp/server";
 import { MCP_HTTP_TRANSPORT } from "../mcp/http";
 import { MCP_STDIO_TRANSPORT } from "../mcp/stdio";
 import { withRehearsalUnwrapping } from "../mcp/rehearsal";
@@ -207,6 +207,42 @@ export function cliArgvDriver(options: {
 /** Operation names the web API exposes, derived from its own route table. */
 export function httpOperations(): Set<string> {
   return new Set(Object.keys(HTTP_ROUTES));
+}
+
+/**
+ * Operation names an MCP transport exposes, read from the tools the SDK
+ * actually holds.
+ *
+ * **Why this is read rather than computed.** Assertion 4 asks what each
+ * adapter exposes, and every adapter must answer from a real structure that
+ * can disagree with the registry: `http` and `cli` answer from their route
+ * and command tables. Computing MCP's answer as "the registry minus its
+ * waivers" instead would hand the assertion the same expression it then
+ * checks — satisfied by construction, and green whatever the adapter emits.
+ * Waivers make MCP's surface genuinely smaller than the registry, so that
+ * is the difference most worth observing: a waiver hiding an operation no
+ * other adapter exposes is precisely the failure completeness exists to
+ * catch, and a self-satisfying expression cannot see it.
+ *
+ * Builds a server and reads `_registeredTools`, the same way
+ * `tests/adapter-waivers.test.ts` does, so what is compared is what a client
+ * would be sent rather than a recomputation of the list under test.
+ */
+export async function mcpOperations(adapter: "mcp_http" | "mcp_stdio"): Promise<Set<string>> {
+  const server = createMcpServer({
+    call: async () => ({}),
+    transport: adapter === "mcp_http" ? "mcp-http" : "mcp-stdio",
+    adapter,
+  });
+  try {
+    return new Set(
+      Object.keys(
+        (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools,
+      ),
+    );
+  } finally {
+    await server.close();
+  }
 }
 
 /**

@@ -42,14 +42,41 @@ describe("the waiver list", () => {
   it("waives no operation a registered guard can reject — §22's bound", () => {
     // The bound exists so an adapter cannot decline to expose the
     // operations that are hard to get right and then pass the comparison
-    // assertions vacuously. `backfill` refuses with `forbidden` and
-    // `invalid_input` only; `get_crew_name` refuses with `invalid_input` and
-    // a plain `conflict` for an exhausted pool; `readiness` takes an empty
-    // input and refuses nothing at all — it runs two reads and reports
-    // counts. None declares a guard.
-    const permitted = new Set(["backfill", "get_crew_name", "readiness"]);
+    // assertions vacuously.
+    //
+    // Derived rather than hand-listed. A permit list naming each waived
+    // operation grows with the waiver list and is maintained by the same
+    // edit, so it stops being independent evidence the moment the list is
+    // long — it becomes a second copy of the thing it checks, and the
+    // honest way to satisfy it is to append to both. What actually bounds
+    // a waiver is *structural*: a registered guard runs only inside the
+    // state machine's `runGuards`, and the only *registered operations*
+    // that reach it are the two below. (`rehearsal-rollback.ts` also calls
+    // the transition path but declares no operation, so no adapter can
+    // expose or waive it.) An operation that cannot reach a transition
+    // cannot be refused by a guard, so waiving it loses no guard-coverage
+    // case — which is exactly what §22's bound protects.
+    //
+    // Adding a third guard-running operation and waiving it from MCP
+    // fails here, which is the behaviour being bought.
+    const GUARD_RUNNING_OPERATIONS = new Set(["transition_item", "complete_item"]);
     for (const waiver of ADAPTER_WAIVERS) {
-      expect(permitted).toContain(waiver.operation);
+      expect(GUARD_RUNNING_OPERATIONS.has(waiver.operation)).toBe(false);
+    }
+  });
+
+  it("waives nothing that is an agent's only route to a documented remediation", () => {
+    // A waiver is legal under §22 and still wrong if it removes the one
+    // surface an agent was told to use. The kill guard refuses a
+    // machine-wide kill and its refusal text names `register_process` as
+    // the way to make the call succeed (`@/lib/kill/ownership`); the
+    // other two process operations are how that registry is read and
+    // closed. Waiving any of them from MCP would leave a refusal message
+    // pointing at a tool the refused agent cannot call.
+    const AGENT_REMEDIATION_OPERATIONS = ["register_process", "end_process", "list_processes"];
+    for (const operation of AGENT_REMEDIATION_OPERATIONS) {
+      expect(isWaived("mcp_http", operation)).toBe(false);
+      expect(isWaived("mcp_stdio", operation)).toBe(false);
     }
   });
 });
@@ -60,7 +87,11 @@ describe("isWaived / waiversFor / exposedOperations", () => {
     expect(isWaived("mcp_stdio", "backfill")).toBe(true);
     expect(isWaived("http", "backfill")).toBe(false);
     expect(isWaived("cli", "backfill")).toBe(false);
-    expect(isWaived("mcp_http", "create_item")).toBe(false);
+    // `create_task` is the sentinel for "still exposed": it is one of the
+    // most-called tools and is deliberately not waived. (`create_item` was
+    // this sentinel until it became a waived deprecation.)
+    expect(isWaived("mcp_http", "create_task")).toBe(false);
+    expect(isWaived("mcp_http", "create_item")).toBe(true);
     expect(isWaived("mcp_http", "get_crew_name")).toBe(true);
     expect(isWaived("mcp_stdio", "get_crew_name")).toBe(true);
     expect(isWaived("http", "get_crew_name")).toBe(false);
@@ -74,18 +105,23 @@ describe("isWaived / waiversFor / exposedOperations", () => {
   });
 
   it("groups waivers by adapter", () => {
-    expect(
-      waiversFor("mcp_http")
-        .map((w) => w.operation)
-        .sort(),
-    ).toEqual(["backfill", "get_crew_name", "readiness"]);
+    const mcpHttpWaived = waiversFor("mcp_http").map((w) => w.operation);
+    // Grouping is what is under test, so: every entry returned is for this
+    // adapter, the originals are still in it, and no operation is listed
+    // twice — a duplicate would quietly double-count the surface reduction.
+    for (const waiver of waiversFor("mcp_http")) expect(waiver.adapter).toBe("mcp_http");
+    expect(mcpHttpWaived).toEqual(
+      expect.arrayContaining(["backfill", "get_crew_name", "readiness"]),
+    );
+    expect(new Set(mcpHttpWaived).size).toBe(mcpHttpWaived.length);
+    expect(waiversFor("mcp_http").length).toBe(waiversFor("mcp_stdio").length);
     expect(waiversFor("http")).toEqual([]);
   });
 
   it("filters a list down to what an adapter exposes", () => {
-    const all = [{ name: "backfill" }, { name: "create_item" }];
-    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["create_item"]);
-    expect(exposedOperations("http", all).map((o) => o.name)).toEqual(["backfill", "create_item"]);
+    const all = [{ name: "backfill" }, { name: "create_task" }];
+    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["create_task"]);
+    expect(exposedOperations("http", all).map((o) => o.name)).toEqual(["backfill", "create_task"]);
   });
 });
 
@@ -100,7 +136,7 @@ describe("the MCP adapter honours its waiver", () => {
     const tools = toolsFromOperations(exposedOperations("mcp_http", listOperations()));
     expect(tools.map((t) => t.name)).not.toContain("backfill");
     expect(tools.map((t) => t.name)).not.toContain("get_crew_name");
-    expect(tools.map((t) => t.name)).toContain("create_item");
+    expect(tools.map((t) => t.name)).toContain("create_task");
   });
 
   it("builds a server whose registered tools exclude the waived operation", async () => {
@@ -118,7 +154,7 @@ describe("the MCP adapter honours its waiver", () => {
     );
 
     expect(registered.length).toBeGreaterThan(0);
-    expect(registered).toContain("create_item");
+    expect(registered).toContain("create_task");
     expect(registered).not.toContain("backfill");
     expect(registered).not.toContain("get_crew_name");
     // Everything else the registry holds IS exposed — the waiver is one

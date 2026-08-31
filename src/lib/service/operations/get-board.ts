@@ -587,7 +587,7 @@ export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "One paginated page of one board column, with that column's true total, and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls that return backlog and completed. Filterable by priority, area, repo, kind, state, assignee, actor, search, level (tree depth, include or exclude a set of levels) and project (one project's whole subtree); sortable by priority, name, created or updated in either direction; pass full for whole records.",
+    "One paginated page of one board column, with that column's true total and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls for backlog and completed. Filter by priority, area, repo, kind, state, assignee, actor, search, level (tree depth) or project (a whole subtree); sort by priority, name, created or updated, either direction; pass full for whole records.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {

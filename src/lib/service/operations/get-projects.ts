@@ -294,7 +294,7 @@ export const getProjects = defineOperation({
   name: "get_projects",
   kind: "read",
   summary:
-    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Computed in one recursive query rather than per project. A project with no children is reported with progress null and childless true, never as zero percent, and is never hidden. Archived projects and archived descendants are excluded from the grid and from every rollup number — pass includeArchived to audit them. Paged: pass limit and cursor, and read nextCursor for the following page.",
+    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. A childless project reports progress null and childless true, never zero percent, and is never hidden. Archived projects and descendants are excluded from the grid and every rollup number — pass includeArchived to audit them. Paged: pass limit and cursor, read nextCursor.",
   // Stryker restore all
   input: inputSchema,
   contract: {

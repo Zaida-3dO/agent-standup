@@ -386,7 +386,7 @@ export const search = defineOperation({
   name: "search",
   kind: "read",
   summary:
-    "Finds items by text in their title, headline or body, best match first. Searches every state including finished work, unlike the list reads — pass openOnly to exclude it, or state, area and repo to narrow. Loop text is NOT searched unless includeLoops is passed, which adds the open loops whose text matched and the loopId of each. Returns id, title, state, headline and an excerpt; read one in full with get_item.",
+    "Finds items by text in title, headline or body, best match first. Searches every state including finished work, unlike the list reads — pass openOnly to exclude it, or state, area and repo to narrow. Loop text is NOT searched unless includeLoops is passed, which adds matching open loops and each loopId. Returns id, title, state, headline and an excerpt; read one in full with get_item.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: SearchInput): Promise<SearchOutput> {
