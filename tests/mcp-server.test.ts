@@ -98,13 +98,13 @@ describe("tools are derived from the operation registry", () => {
 
   it("advertises each operation's real input schema, not an empty one", async () => {
     const { tools } = await client.listTools();
-    const serviceInfo = tools.find((tool) => tool.name === "service_info");
-    // `service_info` declares `kind?: "read" | "write"`. An advertised
-    // schema that had lost the shape — the failure `.catch()` would cause
-    // if it wrapped the schema in something opaque — would show up here as
-    // a bare `{ type: "object" }` with no properties.
-    expect(serviceInfo?.inputSchema.properties).toMatchObject({
-      kind: { enum: ["read", "write"] },
+    const createWork = tools.find((tool) => tool.name === "create_work");
+    // `create_work` declares `type: "project" | "task" | "subtask"`, required.
+    // An advertised schema that had lost the shape — the failure `.catch()`
+    // would cause if it wrapped the schema in something opaque — would show
+    // up here as a bare `{ type: "object" }` with no properties.
+    expect(createWork?.inputSchema.properties).toMatchObject({
+      type: { enum: ["project", "task", "subtask"] },
     });
   });
 
@@ -125,20 +125,24 @@ describe("tools are derived from the operation registry", () => {
     // Proves the derivation reads its input rather than reaching for the
     // registry regardless — the failure that would make the "derived, not
     // listed" claim unfalsifiable.
-    const only = listOperations().filter((operation) => operation.name === "service_info");
+    const only = listOperations().filter((operation) => operation.name === "describe_tool");
     const subsetClient = await connect(realRuntimeCall(), { operations: only });
     const { tools } = await subsetClient.listTools();
-    expect(tools.map((tool) => tool.name)).toEqual(["service_info"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["describe_tool"]);
   });
 });
 
 describe("a tool call is a service call", () => {
   it("returns what the service returned", async () => {
     const client = await connect(realRuntimeCall());
-    const result = await client.callTool({ name: "service_info", arguments: {} });
+    const result = await client.callTool({
+      name: "describe_tool",
+      arguments: { tool: "describe_tool" },
+    });
     expect(result.isError).toBeFalsy();
-    const structured = result.structuredContent as { operations: unknown[] };
-    expect(structured.operations.length).toBe(OPERATION_NAMES.length);
+    const structured = result.structuredContent as { name: string; fields: unknown[] };
+    expect(structured.name).toBe("describe_tool");
+    expect(structured.fields.length).toBeGreaterThan(0);
   });
 
   it("passes the arguments through to the service unchanged", async () => {
@@ -147,8 +151,8 @@ describe("a tool call is a service call", () => {
       seen.push({ name, input });
       return { ok: true };
     });
-    await client.callTool({ name: "service_info", arguments: { kind: "write" } });
-    expect(seen).toEqual([{ name: "service_info", input: { kind: "write" } }]);
+    await client.callTool({ name: "describe_tool", arguments: { tool: "create_work" } });
+    expect(seen).toEqual([{ name: "describe_tool", input: { tool: "create_work" } }]);
   });
 
   it("stamps the transport it was configured with on every call", async () => {
@@ -163,7 +167,7 @@ describe("a tool call is a service call", () => {
       },
       { transport: "mcp-stdio" },
     );
-    await client.callTool({ name: "service_info", arguments: {} });
+    await client.callTool({ name: "describe_tool", arguments: {} });
     expect(stamped).toEqual(["mcp-stdio"]);
   });
 
@@ -182,7 +186,7 @@ describe("a tool call is a service call", () => {
       },
       { identity: { sessionId: "session-a", actor: "agent-a" } },
     );
-    await client.callTool({ name: "service_info", arguments: {} });
+    await client.callTool({ name: "describe_tool", arguments: {} });
     expect(callers[0]).toMatchObject({ sessionId: "session-a", actor: "agent-a" });
   });
 
@@ -197,7 +201,7 @@ describe("a tool call is a service call", () => {
       callers.push(options?.caller as Record<string, unknown>);
       return {};
     });
-    await client.callTool({ name: "service_info", arguments: {} });
+    await client.callTool({ name: "describe_tool", arguments: {} });
     expect(callers[0]).toBeDefined();
     expect(Object.keys(callers[0]!)).not.toContain("sessionId");
     expect(Object.keys(callers[0]!)).not.toContain("actor");
@@ -214,12 +218,12 @@ describe("a tool call is a service call", () => {
     };
 
     const sessionOnly = await connect(record, { identity: { sessionId: "session-b" } });
-    await sessionOnly.callTool({ name: "service_info", arguments: {} });
+    await sessionOnly.callTool({ name: "describe_tool", arguments: {} });
     expect(callers[0]).toMatchObject({ sessionId: "session-b" });
     expect(Object.keys(callers[0]!)).not.toContain("actor");
 
     const actorOnly = await connect(record, { identity: { actor: "agent-b" } });
-    await actorOnly.callTool({ name: "service_info", arguments: {} });
+    await actorOnly.callTool({ name: "describe_tool", arguments: {} });
     expect(callers[1]).toMatchObject({ actor: "agent-b" });
     expect(Object.keys(callers[1]!)).not.toContain("sessionId");
   });
@@ -234,13 +238,13 @@ describe("rejections arrive with the service's own code and fields", () => {
     // §22's first conformance assertion compares.
     const client = await connect(realRuntimeCall());
     const result = await client.callTool({
-      name: "service_info",
-      arguments: { kind: "sideways" },
+      name: "describe_tool",
+      arguments: { tool: 5 },
     });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       code: "invalid_input",
-      fields: ["kind"],
+      fields: ["tool"],
     });
   });
 
@@ -271,7 +275,7 @@ describe("rejections arrive with the service's own code and fields", () => {
     const client = await connect(async () => {
       throw error;
     });
-    const result = await client.callTool({ name: "service_info", arguments: {} });
+    const result = await client.callTool({ name: "describe_tool", arguments: {} });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ code, fields: error.fields });
   });
@@ -283,7 +287,7 @@ describe("rejections arrive with the service's own code and fields", () => {
     const client = await connect(async () => {
       throw new GuardRejectedError("hierarchy", "Too deep.", { fields: ["parentId"] });
     });
-    const result = await client.callTool({ name: "service_info", arguments: {} });
+    const result = await client.callTool({ name: "describe_tool", arguments: {} });
     expect(result.structuredContent).toMatchObject({ guard: "hierarchy" });
   });
 
@@ -294,7 +298,7 @@ describe("rejections arrive with the service's own code and fields", () => {
       // the caller, so it has to look like something that would matter.
       throw new Error("connect ECONNREFUSED db-host.invalid:5432");
     });
-    const result = await client.callTool({ name: "service_info", arguments: {} });
+    const result = await client.callTool({ name: "describe_tool", arguments: {} });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ code: "internal" });
     expect(JSON.stringify(result)).not.toContain("ECONNREFUSED");
@@ -311,8 +315,8 @@ describe("the core reaches no rule of its own", () => {
       calls.push(name);
       return {};
     });
-    await client.callTool({ name: "service_info", arguments: {} });
-    expect(calls).toEqual(["service_info"]);
+    await client.callTool({ name: "describe_tool", arguments: {} });
+    expect(calls).toEqual(["describe_tool"]);
   });
 
   it("refuses an operation the registry does not have, even when handed one", async () => {

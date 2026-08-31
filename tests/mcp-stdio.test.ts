@@ -123,7 +123,7 @@ describe("the stdio wiring answers a real MCP conversation", () => {
     session.send({ jsonrpc: "2.0" as const, id: 2, method: "tools/list", params: {} });
     const response = await session.waitFor(2);
     const result = response.result as { tools: { name: string }[] };
-    expect(result.tools.map((tool) => tool.name)).toContain("service_info");
+    expect(result.tools.map((tool) => tool.name)).toContain("describe_tool");
     session.end();
     await session.served;
   });
@@ -132,14 +132,14 @@ describe("the stdio wiring answers a real MCP conversation", () => {
     const session = startSession(realRuntimeCall());
     session.send(initializeMessage(1));
     await session.waitFor(1);
-    session.send(callToolMessage("service_info", {}, 2));
+    session.send(callToolMessage("describe_tool", { tool: "get_board" }, 2));
     const response = await session.waitFor(2);
     const result = response.result as {
       isError?: boolean;
-      structuredContent: { operations: unknown[] };
+      structuredContent: { fields: unknown[] };
     };
     expect(result.isError).toBeFalsy();
-    expect(result.structuredContent.operations.length).toBeGreaterThan(0);
+    expect(result.structuredContent.fields.length).toBeGreaterThan(0);
     session.end();
     await session.served;
   });
@@ -157,7 +157,7 @@ describe("the stdio wiring answers a real MCP conversation", () => {
     const session = startSession(call);
     session.send(initializeMessage(1));
     await session.waitFor(1);
-    session.send(callToolMessage("service_info", {}, 2));
+    session.send(callToolMessage("describe_tool", { tool: "get_board" }, 2));
     await session.waitFor(2);
     expect(stamped).toEqual([MCP_STDIO_TRANSPORT]);
     expect(MCP_STDIO_TRANSPORT).toBe("mcp-stdio");
@@ -169,14 +169,14 @@ describe("the stdio wiring answers a real MCP conversation", () => {
     const session = startSession(realRuntimeCall());
     session.send(initializeMessage(1));
     await session.waitFor(1);
-    session.send(callToolMessage("service_info", { kind: "sideways" }, 2));
+    session.send(callToolMessage("describe_tool", { tool: 5 }, 2));
     const response = await session.waitFor(2);
     const result = response.result as {
       isError: boolean;
       structuredContent: Record<string, unknown>;
     };
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: "invalid_input", fields: ["kind"] });
+    expect(result.structuredContent).toMatchObject({ code: "invalid_input", fields: ["tool"] });
     session.end();
     await session.served;
   });
@@ -193,19 +193,20 @@ describe("one long-lived connection, not one per call", () => {
     session.send(initializeMessage(1));
     await session.waitFor(1);
 
-    session.send(callToolMessage("service_info", { kind: "read" }, 2));
+    session.send(callToolMessage("describe_tool", { tool: "get_board" }, 2));
     const first = await session.waitFor(2);
-    session.send(callToolMessage("service_info", { kind: "write" }, 3));
+    session.send(callToolMessage("describe_tool", { tool: "create_work" }, 3));
     const second = await session.waitFor(3);
 
-    const firstOps = (first.result as { structuredContent: { operations: { kind: string }[] } })
-      .structuredContent.operations;
-    const secondOps = (second.result as { structuredContent: { operations: { kind: string }[] } })
-      .structuredContent.operations;
-    expect(firstOps.length).toBeGreaterThan(0);
-    expect(secondOps.length).toBeGreaterThan(0);
-    expect(firstOps.every((operation) => operation.kind === "read")).toBe(true);
-    expect(secondOps.every((operation) => operation.kind === "write")).toBe(true);
+    // Two different subjects, so a second answer that was really the first
+    // one replayed — the failure a per-call re-initialise would hide — shows
+    // up as the wrong contract rather than as a plausible-looking repeat.
+    const firstContract = (first.result as { structuredContent: { name: string } })
+      .structuredContent;
+    const secondContract = (second.result as { structuredContent: { name: string } })
+      .structuredContent;
+    expect(firstContract.name).toBe("get_board");
+    expect(secondContract.name).toBe("create_work");
 
     session.end();
     await session.served;
@@ -238,7 +239,7 @@ describe("the connection ends when input ends, not before and not never", () => 
 
     session.send(initializeMessage(1));
     await session.waitFor(1);
-    session.send(callToolMessage("service_info", {}, 2));
+    session.send(callToolMessage("describe_tool", { tool: "get_board" }, 2));
     await session.waitFor(2);
     // Give any stray microtask/macrotask a real chance to run before
     // asserting the negative, so this is not passing by accident of timing.
