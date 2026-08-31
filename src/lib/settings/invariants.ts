@@ -170,6 +170,13 @@ export const KEY_PREFIXES: Readonly<Record<string, string>> = {
   // enabled, level, timing, message — is not a setting key at all; it is an
   // override row keyed by entry id, so it does not arrive through here.
   interventions: "Telemetry",
+  // Filed under Model picker, not a category of its own: the `scoring.*`
+  // keys govern whether a run's quality signal is recorded, and that signal
+  // exists to be read by the picker. A person looking for "should the
+  // system judge its own work" is looking in the same place as the picker
+  // switches, and splitting them would put two halves of one decision on
+  // two pages.
+  scoring: "Model picker",
   ui: "Interface",
 };
 

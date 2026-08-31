@@ -336,6 +336,18 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  "scoring.auto_derive": define({
+    schema: z.boolean(),
+    default: false,
+    label: "Derive run scores automatically",
+    help: "Whether deriving a run score also writes it. With this off the derivation still runs and reports what it would record, but commits nothing — so the mechanism can be exercised against real work before it starts filling the table.",
+    category: "Model picker",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "model_picker.enabled": define({
     schema: z.boolean(),
     default: false,
