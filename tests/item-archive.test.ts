@@ -1215,6 +1215,17 @@ describeIfDb("delete_item", () => {
         // its entry's score, because the guard fired and was rated whatever
         // later became of the row.
         "get_intervention_scores",
+        // Aggregates run scores per facet. It ranges over `RunScore` and
+        // `Run`, returning counts keyed by facet: no item id is selected,
+        // returned, or used to narrow the report, so an archived item
+        // cannot leak through it. The direction that matters more is the
+        // same one `get_intervention_scores` above argues for — an
+        // archived item's runs must still count toward the facet's
+        // distribution, because the work was done and scored whatever
+        // later became of the row, and a picker learning from a corpus
+        // that silently shed archived work would be learning from a
+        // biased sample.
+        "get_run_scores",
         // Reads the append-only ledger, the same class as `get_events`
         // above and exempt for the same reason: an archived item's events
         // stay readable on purpose — the row is withheld from item reads,

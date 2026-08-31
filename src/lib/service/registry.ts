@@ -160,6 +160,14 @@ import { hookDecision } from "./operations/hook-decision";
 import { recordIntervention } from "./operations/record-intervention";
 import { scoreIntervention } from "./operations/score-intervention";
 import { getInterventionScores } from "./operations/get-intervention-scores";
+// Scoring how a RUN went, as opposed to how an intervention performed
+// (MILESTONES.md #66, #67). Two scores per facet, the agent's frozen once
+// written and a person's beside it, because the delta between them is the
+// measurement. `get_run_scores` keeps the distribution rather than reducing
+// to a mean, so a single unusable run is not averaged away by nine good ones.
+import { scoreRun } from "./operations/score-run";
+import { acceptRunScore } from "./operations/accept-run-score";
+import { getRunScores } from "./operations/get-run-scores";
 // The process registry and the ownership check it exists to feed
 // (MILESTONES.md #45). `kill_guard` is the consumer; the other three are
 // how the registry gets its contents and how a refusal is explained.
@@ -284,6 +292,9 @@ export const OPERATION_REGISTRY = {
   [hookDecision.name]: hookDecision,
   [recordIntervention.name]: recordIntervention,
   [scoreIntervention.name]: scoreIntervention,
+  [scoreRun.name]: scoreRun,
+  [acceptRunScore.name]: acceptRunScore,
+  [getRunScores.name]: getRunScores,
   [getInterventionScores.name]: getInterventionScores,
   [registerProcess.name]: registerProcess,
   [endProcess.name]: endProcess,
