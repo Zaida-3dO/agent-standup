@@ -168,11 +168,18 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // 5,192,784 through this operation — the subtask tree, artifacts, history
   // and assignments this read joins in are not the body, and none of them
   // shrink by reading the body elsewhere, but the body itself is exactly
-  // the field this operation cannot return any less of. `loop_list` stays
+  // the field this operation cannot return any less of. The loop read stays
   // first: on a long-lived item the loops are still the more common cause,
   // named ahead of a route that fixes a rarer one.
+  //
+  // **It is named as `loop` with an `action` because PR #349 folded the six
+  // loop verbs into one tool and waived the verbs off MCP.** The remedy
+  // named `loop_list` for a while after that fold, which is the third stale
+  // remedy this table has carried — so the wording is now checked rather
+  // than reviewed: `advice.ts`'s `unreachable` class fails the build on a
+  // remedy naming a tool the caller cannot call.
   get_item_detail:
-    "`loop_list` for this item's loops, `get_item_body` to read a large body in windows, or `get_item` with `full: false` for the slim record",
+    '`loop` with `action: "list"` for this item\'s loops, `get_item_body` to read a large body in windows, or `get_item` with `full: false` for the slim record',
   // **Now names `limit`, which is the parameter that actually bounds this
   // response.** The advice here predated `orientation` gaining a working
   // `limit`, so it could only redirect a caller to a different call — the
@@ -185,7 +192,7 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // frequently *why* a long-lived item does not fit, and `get_item` remains
   // the way to read the item alone.
   orientation:
-    "a smaller `limit`, which bounds the events, crew and loops it returns, or `loop_list` for this item's loops, or `get_item` for the item itself",
+    'a smaller `limit`, which bounds the events, crew and loops it returns, or `loop` with `action: "list"` for this item\'s loops, or `get_item` for the item itself',
   // **`my_work` has no `limit`, and telling a caller to lower one was the
   // same stale-advice defect as the `orientation` line above.** Its only
   // input is `sessionId`; it returns every item this session holds a live

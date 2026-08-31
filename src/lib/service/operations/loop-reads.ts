@@ -242,7 +242,7 @@ export const loopList = defineOperation({
   name: "loop_list",
   kind: "read",
   summary:
-    "Lists an item's loops without reading its whole context — loopId, kind, status, when it opened and the first 200 characters of its text. Work-tracking open loops only by default; pass includeClosed for resolved ones and includeNonWork for notes. `total` counts the set listed; nonWorkExcluded says how many notes were held back. Read one in full with loop_get.",
+    'Lists an item\'s loops without reading its whole context — loopId, kind, status, when it opened and the first 200 characters of its text. Work-tracking open loops only by default; pass includeClosed for resolved ones and includeNonWork for notes. `total` counts the set listed; nonWorkExcluded says how many notes were held back. Read one in full with action "get".',
   // Stryker restore all
   input: listInput,
   async handler(ctx: ServiceContext, input: LoopListInput): Promise<LoopListOutput> {

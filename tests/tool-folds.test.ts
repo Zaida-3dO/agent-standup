@@ -301,7 +301,11 @@ describeIfDb("the folded loop and create_work tools, against Postgres", () => {
       );
       expect(error.code).toBe("guard_rejected");
       expect(error.guard).toBe("loops.delete_reason_is_not_a_closure");
-      expect(error.message).toContain("loop_close");
+      // Through the fold this message reaches an MCP caller verbatim, and
+      // `loop_close` is waived off MCP — so the remedy has to name the
+      // action the caller can actually send.
+      expect(error.message).toContain('action "close"');
+      expect(error.message).not.toContain("loop_close");
     });
 
     it("refuses an action that is not one of the six", async () => {

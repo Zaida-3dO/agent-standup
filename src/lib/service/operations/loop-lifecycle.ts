@@ -204,7 +204,7 @@ export const loopEdit = defineOperation({
     if (loop.status === "deleted") {
       throw new GuardRejectedError(
         LOOP_EDIT_DELETED_GUARD,
-        `Loop ${input.loopId} was deleted and cannot be edited — a deleted loop is served by no ordinary read, so the new text would be invisible. Open a new loop with loop_add if the loose end is real.`,
+        `Loop ${input.loopId} was deleted and cannot be edited — a deleted loop is served by no ordinary read, so the new text would be invisible. Open a new loop with action "add" if the loose end is real.`,
         { fields: ["loopId"] },
       );
     }
@@ -321,12 +321,12 @@ export const loopDelete = defineOperation({
   name: "loop_delete",
   kind: "write",
   summary:
-    "Retracts a loop that should never have existed — a duplicate, or one recorded by accident. Requires a reason. Use loop_close instead for a real loose end that has been resolved; that is almost always the right call. The events stay in the ledger; the loop stops being served.",
+    'Retracts a loop that should never have existed — a duplicate, or one recorded by accident. Requires a reason. Use action "close" instead for a real loose end that has been resolved; that is almost always the right call. The events stay in the ledger; the loop stops being served.',
   contract: {
     rules: [
       {
         fields: ["reason"],
-        rule: `A reason is required, must be at least ${LOOP_DELETE_REASON_MIN_CHARS} characters, and must not describe a resolution — a loose end that was real and has been dealt with is closed with loop_close, not deleted here.`,
+        rule: `A reason is required, must be at least ${LOOP_DELETE_REASON_MIN_CHARS} characters, and must not describe a resolution — a loose end that was real and has been dealt with is closed with action "close", not deleted here.`,
       },
       {
         fields: ["loopId"],
@@ -366,7 +366,7 @@ export const loopDelete = defineOperation({
     if (input.reason.length < LOOP_DELETE_REASON_MIN_CHARS) {
       throw new GuardRejectedError(
         LOOP_DELETE_REASON_GUARD,
-        `A reason of at least ${LOOP_DELETE_REASON_MIN_CHARS} characters is required — name which duplicate or which accident, so this stays reviewable. If the loose end was real and has been dealt with, use loop_close instead.`,
+        `A reason of at least ${LOOP_DELETE_REASON_MIN_CHARS} characters is required — name which duplicate or which accident, so this stays reviewable. If the loose end was real and has been dealt with, use action "close" instead.`,
         { fields: ["reason"] },
       );
     }
@@ -375,7 +375,7 @@ export const loopDelete = defineOperation({
     if (closureWord !== null) {
       throw new GuardRejectedError(
         LOOP_DELETE_REASON_GUARD,
-        `That reason ("${closureWord}") describes a loose end that was resolved, which is loop_close, not loop_delete. Deleting is for a loop that should never have existed — a duplicate, or one recorded by accident. If this loop was real and is now dealt with, call loop_close.`,
+        `That reason ("${closureWord}") describes a loose end that was resolved, which is action "close", not action "delete". Deleting is for a loop that should never have existed — a duplicate, or one recorded by accident. If this loop was real and is now dealt with, use action "close".`,
         { fields: ["reason"] },
       );
     }

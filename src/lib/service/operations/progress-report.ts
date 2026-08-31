@@ -205,7 +205,7 @@ export const progressReport = defineOperation({
       },
       {
         fields: ["sessionId"],
-        rule: `Sub-bullets are the report's emphasis, so they are budgeted rather than merely advised against: at most ${MAX_FLAGS_PER_ROW} per row and at most ${MAX_FLAGS_PER_REPORT} across the whole report, spent in row order. They are not authored — they are the item's OPEN LOOPS, so the way to raise one is \`loop_add\` and the way to clear one is \`loop_close\`. Anything either cap withholds is counted at the foot of the report and listed in full by \`open_loops\`, so a dropped flag is never silent.`,
+        rule: `Sub-bullets are the report's emphasis, so they are budgeted rather than merely advised against: at most ${MAX_FLAGS_PER_ROW} per row and at most ${MAX_FLAGS_PER_REPORT} across the whole report, spent in row order. They are not authored — they are the item's OPEN LOOPS, so the way to raise one is \`loop\` with \`action: "add"\` and the way to clear one is \`action: "close"\`. Anything either cap withholds is counted at the foot of the report and listed in full by \`open_loops\`, so a dropped flag is never silent.`,
       },
       {
         fields: ["sessionId"],

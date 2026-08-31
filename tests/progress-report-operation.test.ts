@@ -809,7 +809,10 @@ describeIfDb("progress_report against Postgres", () => {
       expect(flagRule!.rule).toContain(String(MAX_FLAGS_PER_ROW));
       expect(flagRule!.rule).toContain(String(MAX_FLAGS_PER_REPORT));
       // And it says how to raise one, since flags are not authored here.
-      expect(flagRule!.rule).toContain("loop_add");
+      // Spelled as the folded tool's action rather than `loop_add`, which is
+      // waived off MCP — the rule has to name a call the reader can make.
+      expect(flagRule!.rule).toContain('action: "add"');
+      expect(flagRule!.rule).not.toContain("loop_add");
     });
 
     it("states that a PR link is recorded, never composed", async () => {
