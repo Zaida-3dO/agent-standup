@@ -63,6 +63,7 @@ import { findNotDoneProofIssues } from "../guards/deferral";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
 import { resolveItemId } from "../items/resolve-id";
+import { scoreCompletedRuns } from "../telemetry/score-completed-runs";
 
 /**
  * The four states a `complete` call may land on (SCHEMA.md §1.1's
@@ -514,6 +515,21 @@ export const completeItem = defineOperation({
       type: "state_change",
       payload: { from: applied.from, to: applied.to },
     });
+
+    // The capture seam for run scoring (MILESTONES.md #67).
+    //
+    // An item completing is the moment its runs are worth scoring: the
+    // review history is final, so the derived signal will not change again.
+    // This is the call site the scoring tables would otherwise lack — and a
+    // scoring system whose only writer is a test accumulates nothing, which
+    // is the state the intervention catalogue is in.
+    //
+    // Deliberately best-effort. `scoreCompletedRuns` swallows its own
+    // failures and the setting defaults to off, so completing an item
+    // behaves identically whether scoring is enabled, disabled, or broken.
+    // That is the right direction of failure: a caller finishing work must
+    // never be refused because a downstream measurement had a bad day.
+    await scoreCompletedRuns(ctx, input.id);
 
     const item = await loadItemRecord(ctx, input.id);
     return { item: input.full ? item : toItemWriteRecord(item) };

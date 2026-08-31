@@ -8,14 +8,25 @@
 //
 // ── Derived from recorded facts, never from a constant ────────────────
 //
-// Every input here is a row the server wrote for its own reasons before
-// this module existed: `Artifact.verdict` and `Artifact.reviewRound` are
-// written by the review path, `Run.reworkRequired` and
-// `Run.steeringInterventions` by the telemetry path. Nothing here invents a
-// measurement, and the weights that turn those facts into a score are
-// arguments with defaults rather than literals buried in the arithmetic —
-// the milestone's requirement that the mechanism be bounded code while the
-// judgement stays data.
+// The review inputs are rows the server writes for its own reasons:
+// `Artifact.verdict` and `Artifact.reviewRound` are recorded on every
+// review by `record_artifact`. Nothing here invents a measurement, and the
+// weights that turn those facts into a score are arguments with defaults
+// rather than literals buried in the arithmetic — the milestone's
+// requirement that the mechanism be bounded code while the judgement stays
+// data.
+//
+// ── Two inputs are OPTIONAL because nothing writes them yet ───────────
+//
+// `reworkRequired` and `steeringInterventions` name `Run` columns that, as
+// of this commit, have no writer anywhere in the tree — like
+// `blockingFindings` below, they hold only their defaults. They are
+// accepted as optional arguments rather than read from those columns, so
+// this module is ready for them without asserting that those columns
+// hold a real measurement.
+// The caller that eventually populates them is what makes them real; until
+// then a caller that omits them gets a signal derived from reviews alone,
+// which is honest, rather than one silently including a false zero.
 //
 // ── Severity comes from the verdict, NOT from `blockingFindings` ──────
 //
@@ -54,9 +65,16 @@ export interface ReviewRoundInput {
 export interface RunEvidence {
   /** Review artifacts for the work, in any order. */
   readonly reviews: readonly ReviewRoundInput[];
-  /** `Run.reworkRequired` — the work had to be redone. */
+  /**
+   * The work had to be redone. Named for `Run.reworkRequired`, which has no
+   * writer yet — supply it from whatever the caller actually knows rather
+   * than reading that column, which holds only its default.
+   */
   readonly reworkRequired?: boolean;
-  /** `Run.steeringInterventions` — how often a supervisor had to correct course. */
+  /**
+   * How often a supervisor had to correct course. Named for
+   * `Run.steeringInterventions`, which likewise has no writer yet.
+   */
   readonly steeringInterventions?: number;
 }
 
