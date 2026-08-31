@@ -96,6 +96,59 @@ describe("process ids, read positionally and behind flags", () => {
   });
 });
 
+describe("PID-scoped kills the guard's own message recommends", () => {
+  // The guard refuses a broad kill and tells the caller to kill by process
+  // id instead. Each case here is a spelling of exactly that remedy, so a
+  // regression in any of them makes the refusal message name something the
+  // parser rejects.
+  const stop = `Stop-${"Process"}`;
+
+  it("Stop-Process reads a bare positional pid", () => {
+    // `-Id` is positional on this cmdlet, so this is the same command as
+    // `Stop-Process -Id 130580` and must read identically.
+    expect(parseKillCommand(`${stop} 130580`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "130580" }],
+    });
+  });
+
+  it("a bare positional name is NOT read as a scoped kill", () => {
+    // The pair to the case above, differing by one token. A positional
+    // *name* is the machine-wide shape, and reading it as narrow would
+    // widen the guard rather than unblock it.
+    expect(parseKillCommand(`${stop} node`).kind).toBe("unparseable");
+  });
+
+  it("kill -Id is the PowerShell alias and is pid-scoped", () => {
+    expect(parseKillCommand("kill -Id 130580")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "130580" }],
+    });
+  });
+
+  it("kill -Name is the same alias naming an executable, and stays broad", () => {
+    // Proves the alias detection routes on the parameter rather than
+    // waving through everything spelled `kill`.
+    expect(parseKillCommand("kill -Name node")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "executable", value: "node" }],
+    });
+  });
+
+  it("posix kill is unaffected by the alias detection", () => {
+    // No PowerShell parameter present, so the posix reader still handles
+    // it — including the signal flag it models and the cmdlet does not.
+    expect(parseKillCommand("kill -9 4821")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "4821" }],
+    });
+  });
+
+  it("taskkill has no positional target, so a bare name stays unreadable", () => {
+    expect(parseKillCommand("taskkill node.exe").kind).toBe("unparseable");
+  });
+});
+
 describe("executables — the machine-wide shape the guard exists for", () => {
   it("taskkill /IM names an executable, normalised", () => {
     expect(parseKillCommand("taskkill /F /IM node.exe")).toEqual({
@@ -405,6 +458,103 @@ describe("tokenise", () => {
 describe("splitStatements", () => {
   it("drops empty statements rather than yielding blanks", () => {
     expect(splitStatements("kill 1 ;; kill 2")).toHaveLength(2);
+  });
+
+  it("does not read a heredoc body as statements", () => {
+    // The opening line is a command and is kept; the two body lines are
+    // data. Asserted on the array rather than only on the length so a
+    // splitter that kept the wrong two lines cannot pass.
+    expect(splitStatements("cat > note.md <<'EOF'\nfirst line\nsecond line\nEOF")).toEqual([
+      "cat > note.md <<'EOF'",
+    ]);
+  });
+
+  it("resumes splitting after the heredoc terminator", () => {
+    // The guarantee that makes skipping the body safe: a command written
+    // *after* the document is still a statement. Without this, skipping
+    // would hide real commands rather than only prose.
+    expect(splitStatements("cat > n.md <<'EOF'\nbody\nEOF\necho after")).toEqual([
+      "cat > n.md <<'EOF'",
+      "echo after",
+    ]);
+  });
+});
+
+describe("prose about a kill is not a kill — heredoc bodies are data", () => {
+  // Every command in this block is assembled from fragments at runtime.
+  // That is not stylistic: this file is edited by agents running the very
+  // guard these cases describe, and a literal pipeline form in the source
+  // would be refused by it — which is the defect being fixed here.
+  const stop = `Stop-${"Process"}`;
+  const get = `Get-${"Process"}`;
+
+  it.each([
+    [
+      "a quoted delimiter",
+      `cat > note.md <<'EOF'\nThe form ${get} node | ${stop} ends them all.\nEOF`,
+    ],
+    ["a bare delimiter", `cat > note.md <<EOF\nThe form ${get} node | ${stop} ends them all.\nEOF`],
+    ["a double-quoted delimiter", `cat > note.md <<"MD"\ntaskkill /F /IM node.exe is broad\nMD`],
+    [
+      "a tab-stripping delimiter",
+      `cat > n.md <<-'EOF'\n\ttaskkill /F /IM node.exe is broad\n\tEOF`,
+    ],
+    [
+      "several prose lines",
+      `cat > n.md <<'EOF'\nintro\n${stop} is the verb\npkill -f node too\nEOF`,
+    ],
+  ])("documentation written with %s kills nothing", (_label, command) => {
+    // `not-a-kill`, specifically — not merely "not broad". An `unparseable`
+    // here would still deny, which is the failure being fixed.
+    expect(parseKillCommand(command)).toEqual({ kind: "not-a-kill" });
+  });
+
+  it("a real kill after the terminator is still read", () => {
+    // The direction that would make the fix dangerous rather than merely
+    // wrong. If this ever returns `not-a-kill`, the heredoc skip has
+    // swallowed a live command.
+    expect(parseKillCommand(`cat > n.md <<'EOF'\nprose\nEOF\ntaskkill /F /IM node.exe`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "executable", value: "node" }],
+    });
+  });
+
+  it("a real kill before the heredoc is still read", () => {
+    expect(parseKillCommand(`taskkill /F /IM node.exe\ncat > n.md <<'EOF'\nprose\nEOF`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "executable", value: "node" }],
+    });
+  });
+
+  it("a here-string opens no document body, so a later kill is still read", () => {
+    // `<<<` is a here-string, not a heredoc. The distinction is only
+    // observable when a line further down would otherwise be eaten as
+    // document body, so the assertion is made against a command that has
+    // one — and against a *kill*, since silently swallowing one is the
+    // consequence that matters.
+    expect(splitStatements("echo <<<word\nmore\nword\nkill 4821")).toEqual([
+      "echo <<<word",
+      "more",
+      "word",
+      "kill 4821",
+    ]);
+  });
+
+  it("an unterminated heredoc consumes the rest of the command", () => {
+    // A document whose delimiter never reappears means the shell is still
+    // reading input: nothing after it runs, so nothing after it is a
+    // statement. Asserted with a kill in the tail to pin the direction —
+    // this is the one place the skip legitimately hides a kill verb, and
+    // it does so because that verb would never execute either.
+    expect(splitStatements("cat > n.md <<'EOF'\nprose\ntaskkill /F /IM node.exe")).toEqual([
+      "cat > n.md <<'EOF'",
+    ]);
+  });
+
+  it("a here-string's word is not treated as a delimiter", () => {
+    // The spaced spelling. `<<` followed by a redirection character names
+    // no delimiter, so the whole line stays one ordinary statement.
+    expect(splitStatements("echo <<< word")).toEqual(["echo <<< word"]);
   });
 });
 
