@@ -264,9 +264,7 @@ export async function decide({
     // the same call, and an override sent against a refusal carrying no
     // findings at all — an `enforcement` refusal, or a server that reported
     // none — changes nothing, because there is no entry for it to match.
-    const blocking = (answer.findings ?? []).filter((finding) =>
-      isBlockingLevel(finding.level),
-    );
+    const blocking = (answer.findings ?? []).filter((finding) => isBlockingLevel(finding.level));
     const overridden = blocking.filter(
       (finding) => overrideApplies(event.override, finding.id, finding.level).applies,
     );

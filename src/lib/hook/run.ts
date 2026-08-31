@@ -26,11 +26,7 @@ import {
   type RenderedResponse,
 } from "./response";
 import type { SessionEnforcement } from "./enforcement";
-import {
-  evaluateStopCatch,
-  evaluateStopSurvey,
-  type StopContext,
-} from "./stop-catch";
+import { evaluateStopCatch, evaluateStopSurvey, type StopContext } from "./stop-catch";
 import type { WindDownContext } from "../interventions/survey";
 import type { NudgeContext } from "./nudge";
 import type { HookEvent } from "./payload";

@@ -188,6 +188,19 @@ export interface InterventionContext {
    * same way — no finding.
    */
   readonly occupyingCrew?: OccupyingCrew;
+  /**
+   * How many items are in flight awaiting a visual review right now.
+   *
+   * `Item.needsVisualReview` is true and no visual review has landed yet,
+   * counted across the board rather than for this session — the whole point
+   * of the entry it serves is concurrency, which is a property of the queue
+   * and not of any one item.
+   *
+   * Absent means the server did not count, which reads as "cannot tell" and
+   * produces no finding. A count of 1 is also silent: one pending visual
+   * review is not a batching opportunity, it is just a review.
+   */
+  readonly pendingVisualReviews?: number;
 }
 
 /**

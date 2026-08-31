@@ -111,10 +111,7 @@ export interface OverrideClaim {
 
 /** Why an override was not honoured, in words a caller can act on. */
 export type OverrideRefusal =
-  | "no-override"
-  | "wrong-entry"
-  | "reason-too-short"
-  | "level-not-overridable";
+  "no-override" | "wrong-entry" | "reason-too-short" | "level-not-overridable";
 
 /**
  * Whether an override lets this finding through.

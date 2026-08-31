@@ -44,11 +44,7 @@ describe("overrideApplies", () => {
   });
 
   it("refuses a hard-block however well-formed the override is", () => {
-    const outcome = overrideApplies(
-      { entryId: "e", reason: GOOD_REASON },
-      "e",
-      "hard-block",
-    );
+    const outcome = overrideApplies({ entryId: "e", reason: GOOD_REASON }, "e", "hard-block");
     expect(outcome.applies).toBe(false);
     expect(outcome.refusal).toBe("level-not-overridable");
   });
@@ -88,9 +84,9 @@ describe("overrideApplies", () => {
   it("accepts a reason exactly at the floor and refuses one a character under", () => {
     const atFloor = "x".repeat(MIN_OVERRIDE_REASON_LENGTH);
     const under = "x".repeat(MIN_OVERRIDE_REASON_LENGTH - 1);
-    expect(overrideApplies({ entryId: "e", reason: atFloor }, "e", "block-overridable").applies).toBe(
-      true,
-    );
+    expect(
+      overrideApplies({ entryId: "e", reason: atFloor }, "e", "block-overridable").applies,
+    ).toBe(true);
     expect(overrideApplies({ entryId: "e", reason: under }, "e", "block-overridable").applies).toBe(
       false,
     );

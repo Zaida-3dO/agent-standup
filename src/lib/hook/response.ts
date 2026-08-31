@@ -198,12 +198,14 @@ export function renderWithStopSurvey(
 ): RenderedResponse {
   if (survey === null) return response;
 
-  const advisory = `[standup:${survey.kind}] ${survey.text}
-`;
+  const advisory = `[standup:${survey.kind}] ${survey.text}\n`;
 
   return {
     stdout: response.stdout,
     stderr: `${response.stderr}${advisory}`,
-    exitCode: HOOK_EXIT.DENY,
+    // Deliberately the response's own code, never a value derived from the
+    // survey. A questionnaire that could raise an exit code would be a
+    // refused stop, which DECISIONS.md section 6 rules out outright.
+    exitCode: response.exitCode,
   };
 }

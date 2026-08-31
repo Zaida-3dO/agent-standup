@@ -911,6 +911,9 @@ describe("the catalogue entries that are deliberately not built", () => {
       I13: "work-recorded-against-no-item",
       I14: "orchestrator-doing-the-work",
       I15: "checkout-held-by-another-crew",
+      I23: "merged-check-by-ref-comparison",
+      I24: "rebase-before-checking-for-conflicts",
+      I25: "visual-reviews-in-flight-concurrently",
     };
     const shipped = new Set(BUILTIN_INTERVENTIONS.map((entry) => entry.id));
 

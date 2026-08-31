@@ -29,7 +29,13 @@
 // read only the context handed to them, they return a verdict, and they
 // emit nothing.
 
-import { isBroadProcessKill, isMergeAttempt, isWorkRecordingCommand } from "./commands";
+import {
+  isBroadProcessKill,
+  isMergeAttempt,
+  isMergedByRefComparison,
+  isRebaseOrDivergenceCheck,
+  isWorkRecordingCommand,
+} from "./commands";
 import type { Intervention, InterventionContext, InterventionVerdict } from "./types";
 
 /**
@@ -568,6 +574,151 @@ const orchestratorDoingTheWork: Intervention = {
  * `pre` event the strongest finding decides the call and reading the list
  * in the order it is evaluated is what makes a log of it legible.
  */
+/**
+ * **I23** - checking whether a branch merged, by comparing commit refs.
+ *
+ * The detection is cheap and the failure it prevents is expensive, which is
+ * an unusual combination in this catalogue and the reason this entry is
+ * worth having despite being, in essence, a documentation lookup.
+ *
+ * This project squash-merges. A squash produces one new commit with a new
+ * sha, and the branch's own commits are never ancestors of it - so every
+ * ref-comparison reports "not merged" for work that merged perfectly well
+ * an hour ago. The answer is *correct for the question asked* and wrong for
+ * the question meant, which is precisely the shape a session cannot debug
+ * by looking harder at the output. Sessions have concluded a merge failed,
+ * re-run it, and re-opened settled work on the strength of it.
+ *
+ * A nudge, never a block: the command is a read, it harms nothing, and the
+ * caller may well know exactly what it is doing. What is worth supplying is
+ * the fact that makes the output interpretable.
+ */
+const squashMergeRefComparison: Intervention = {
+  id: "merged-check-by-ref-comparison",
+  source: "builtin",
+  summary:
+    "Checking whether a branch merged by comparing refs, in a repository that squash-merges.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "nudge",
+  // Immediate rather than digest, and it is the exception that proves the
+  // rule: a fact needed to read the output of the call being made right now
+  // is worthless five minutes after that output was misread.
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This project squash-merges, so a merged branch's commits never appear on the target " +
+      "branch and a ref comparison will report it as unmerged. Check the pull request's own " +
+      "state, or look for the squash commit by message, instead.",
+    prominent:
+      "This ref comparison will say the branch is NOT merged even if it merged cleanly. " +
+      "A squash merge lands the whole branch as a single new commit, so none of its commits " +
+      "are ancestors of the target branch. Check the pull request's own state instead, and do " +
+      "not re-merge or re-open the work on the strength of this output.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!isMergedByRefComparison(context.command)) return { triggered: false };
+    return { triggered: true };
+  },
+};
+
+/**
+ * **I24** - rebasing, or checking whether a branch has diverged from main.
+ *
+ * The advice this carries is a working practice rather than a correctness
+ * rule, which is why it is a nudge and why its message is phrased as a
+ * default rather than an instruction: **bias to fixing forward.** A branch
+ * being behind main is not a problem in itself, and the work of proving it
+ * would merge cleanly is usually work that produces nothing - main moves
+ * again immediately, so an early rebase means rebasing twice. What actually
+ * warrants a rebase is a real conflict preventing the merge; a semantic
+ * conflict is better fixed forward, on the branch, where it is visible.
+ *
+ * Recognising the *check* as well as the rebase is deliberate. By the time
+ * `git rebase` is typed the decision has been made and the calls spent; the
+ * divergence check is where it is still cheap to say "you may not need to".
+ */
+const rebaseRestraint: Intervention = {
+  id: "rebase-before-checking-for-conflicts",
+  source: "builtin",
+  summary:
+    "A rebase, or a divergence check that usually precedes one, where fixing forward is cheaper.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "Rebasing is often wasted work here: main moves several times an hour, so a branch that " +
+      "is merely behind does not need rebasing. Rebase only if there are real merge conflicts " +
+      "preventing the merge; for semantic conflicts, bias toward fixing forward.",
+    prominent:
+      "Consider not doing this. Main purity is not worth much here - main moves several times " +
+      "an hour, so rebasing early usually means rebasing twice. Only rebase if there are " +
+      "actual merge conflicts blocking the merge. If the conflict is semantic, fix it forward " +
+      "on the branch instead.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!isRebaseOrDivergenceCheck(context.command)) return { triggered: false };
+    return { triggered: true };
+  },
+};
+
+/**
+ * **I25** - several items are waiting on a visual review at once.
+ *
+ * A visual reviewer is the most expensive agent this system dispatches: it
+ * needs a browser, it holds one of a small pool of slots, and it spends its
+ * budget looking at a rendered page. Dispatching one per pull request when
+ * four are in flight buys four sets of screenshots of four intermediate
+ * states, most of which are superseded before anybody reads them.
+ *
+ * The cheaper shape is to let them all merge and do one visual pass over
+ * the result. What makes that safe rather than merely cheaper is that the
+ * deferral is **recorded** - the message names the affordance, because
+ * advice to defer a review with no way to record the deferral is advice to
+ * forget it. `Artifact.followUpItemId` already carries exactly this
+ * relationship for `lgtm_with_followups`, so a deferred visual review is a
+ * review artifact linked to the item minted to do it later, rather than a
+ * gap where a review should be.
+ *
+ * **Silent at one.** One pending visual review is not a batching
+ * opportunity; firing there would nudge on the ordinary case and teach the
+ * reader to skip it.
+ */
+const batchVisualReviews: Intervention = {
+  id: "visual-reviews-in-flight-concurrently",
+  source: "builtin",
+  summary: "Several items awaiting visual review at once, where one pass after merge is cheaper.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  // Rides the digest: this is a queue-shaped observation an orchestrator
+  // acts on at a juncture, not a fact needed to read the current call.
+  defaultTiming: "digest",
+  messages: {
+    plain:
+      "Several items are waiting on a visual review, and dispatching a review agent per pull " +
+      "request is expensive. Let them merge, then do a single visual pass over the result. " +
+      "Record each deferral as a review linked to the item minted to carry it out.",
+    prominent:
+      "Multiple visual reviews are in flight at once. A visual reviewer needs a browser and " +
+      "one of a small pool of slots, so one per pull request is the most expensive way to do " +
+      "this - and most of what it screenshots is an intermediate state nobody reads. Let them " +
+      "merge, then do one visual pass. Record each deferred review against the item minted to " +
+      "carry it out, so a deferral is a link rather than a gap.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    const pending = context.pendingVisualReviews;
+    // Absent is "the server did not count", which is not the same as zero
+    // and must not be read as one. One is a review, not a batch.
+    if (pending === undefined || pending < 2) return { triggered: false };
+    return { triggered: true, data: { pendingVisualReviews: pending } };
+  },
+};
+
 export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   mergeWithoutApprovalAtTip,
   broadGitAddOnSharedCheckout,
@@ -577,6 +728,9 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   finishedWithNoReviewer,
   reviewWithoutApprovalAtTip,
   orchestratorDoingTheWork,
+  squashMergeRefComparison,
+  rebaseRestraint,
+  batchVisualReviews,
 ];
 
 /**
@@ -680,7 +834,19 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "only the tool being called, so the sole available proxy is that an agent has recorded " +
       "nothing. That fires on every agent which legitimately had nothing to record — a scout, a " +
       "short crew, one that failed early — which is a guard that costs more than it saves. What " +
-      "would make it buildable is the spawn's tool list being recorded at dispatch.",
+      "would make it buildable is the spawn's tool list being recorded at dispatch. " +
+      "**Re-examined against the owner's stronger ask** — that a subagent lacking its tools " +
+      "should stall immediately and report, as a hard block rather than limping on — and the " +
+      "conclusion is unchanged for the detection half, for a reason worth stating precisely: " +
+      "the request describes behaviour at the moment of *spawning*, and this server never " +
+      "observes a spawn. It sees a session's tool calls once that session is already running, " +
+      "so by the time anything here could speak, the subagent has been dispatched and is " +
+      "underway — which is exactly the situation the ask exists to prevent. The stall-and-report " +
+      "half is genuinely reachable, but not from here: it belongs to whatever performs the " +
+      "dispatch, which is the only party holding both the requested tool list and the ability " +
+      "to refuse before the agent starts. Building a server-side predicate that fired after the " +
+      "fact would satisfy the letter of the entry while doing none of what was asked, and would " +
+      "read as coverage on the settings page. Recorded here rather than shipped hollow.",
   },
   {
     id: "I20",
