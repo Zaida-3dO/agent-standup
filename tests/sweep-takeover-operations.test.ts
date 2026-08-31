@@ -88,7 +88,7 @@ describe("sweep and takeover are registered service operations", () => {
     // an agent sees before choosing this tool, and "releases claims held by
     // dead sessions" is the part that has to survive an edit.
     expect(OPERATION_REGISTRY.sweep.summary).toBe(
-      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items.",
+      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped.",
     );
   });
 });
@@ -305,6 +305,74 @@ describeIfDb("sweep / takeover operations — against Postgres", () => {
 
       expect(result.moves).toContainEqual(expect.objectContaining({ assignmentId, to: "stalled" }));
       expect(result.released).toEqual([]);
+    });
+
+    // `evictedWhileRunning` singles out the releases that took a session
+    // nothing had yet flagged. An operator ran a sweep that moved five
+    // assignments straight from running to dead, two of them belonging to
+    // sessions that were demonstrably alive and mid-build, and only noticed
+    // because they had the live agent list open — the flat arrays read as
+    // one undifferentiated list.
+    it("reports a running -> dead release in evictedWhileRunning", async () => {
+      const itemId = await seedItem();
+      const assignmentId = await seedAssignment(itemId, {
+        liveness: "running",
+        lastActive: new Date(Date.now() - 60_000),
+      });
+
+      const result = (await runtimeWithThresholds({
+        "liveness.stale_after_seconds": 1,
+        "liveness.dead_after_seconds": 2,
+      }).call("sweep", {})) as unknown as {
+        evictedWhileRunning: { assignmentId: string; from: string; to: string }[];
+      };
+
+      expect(result.evictedWhileRunning).toContainEqual(
+        expect.objectContaining({ assignmentId, from: "running", to: "dead" }),
+      );
+    });
+
+    it("EXCLUDES a stalled -> dead release, which confirms what a previous sweep already flagged", async () => {
+      // The distinguishing boundary. If this ever reported every release,
+      // the field would be a duplicate of `released` and would tell a reader
+      // nothing they did not already have.
+      const itemId = await seedItem();
+      const assignmentId = await seedAssignment(itemId, {
+        liveness: "stalled",
+        lastActive: new Date(Date.now() - 60_000),
+      });
+
+      const result = (await runtimeWithThresholds({
+        "liveness.stale_after_seconds": 1,
+        "liveness.dead_after_seconds": 2,
+      }).call("sweep", {})) as unknown as {
+        released: string[];
+        evictedWhileRunning: { assignmentId: string }[];
+      };
+
+      expect(result.released).toContain(assignmentId);
+      expect(result.evictedWhileRunning).not.toContainEqual(
+        expect.objectContaining({ assignmentId }),
+      );
+    });
+
+    it("EXCLUDES a running -> stalled ageing, which releases nothing", async () => {
+      const itemId = await seedItem();
+      const assignmentId = await seedAssignment(itemId, {
+        liveness: "running",
+        lastActive: new Date(Date.now() - 60_000),
+      });
+
+      const result = (await runtimeWithThresholds({
+        "liveness.stale_after_seconds": 1,
+        "liveness.dead_after_seconds": 100_000,
+      }).call("sweep", {})) as unknown as {
+        evictedWhileRunning: { assignmentId: string }[];
+      };
+
+      expect(result.evictedWhileRunning).not.toContainEqual(
+        expect.objectContaining({ assignmentId }),
+      );
     });
 
     it("escalates an item to blocked once its resume attempts reach the configured limit", async () => {

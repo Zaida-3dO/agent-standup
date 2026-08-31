@@ -406,6 +406,85 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
       expect((error as { fields: string[] }).fields).toEqual(["itemId", "sessionId"]);
     });
 
+    // The refusal names WHICH of three situations the caller is in, because
+    // their correct responses differ and one of them is harmful. The case
+    // split itself is proved over its boundaries in
+    // tests/assignment-refusal.test.ts; these three prove the operation
+    // actually reaches each case against real rows — a split nothing wires
+    // up is a split that reports `never_held` for everything.
+    it("distinguishes NEVER HELD from a lost claim", async () => {
+      const itemId = await seedItem();
+      const error = await runtime
+        .call("checkpoint", { itemId, sessionId: "ghost", body: "x" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "never_held",
+      );
+      expect((error as { message: string }).message).toContain("never held an assignment");
+    });
+
+    it("distinguishes a RELEASED claim with the item free, and says re-claiming is safe", async () => {
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      await runtime.call("release", { itemId, sessionId: "s1" });
+
+      const error = await runtime
+        .call("checkpoint", { itemId, sessionId: "s1", body: "x" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "released_free",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("safe");
+      // Distinguishing negative: the free case must not carry the warning
+      // that belongs to the taken-over case.
+      expect(message).not.toContain("Do NOT claim");
+    });
+
+    it("a PAST holder who has also released does not count as a current holder", async () => {
+      // The boundary that separates "someone else is on this item" from
+      // "this item is free": another session held it and let it go. Only a
+      // LIVE assignment makes the takeover warning correct — warning about a
+      // holder who left sends the caller to ask permission of nobody, and
+      // withholds the recovery that is actually available.
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s2" }));
+      await runtime.call("release", { itemId, sessionId: "s2" });
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      await runtime.call("release", { itemId, sessionId: "s1" });
+
+      const error = await runtime
+        .call("checkpoint", { itemId, sessionId: "s1", body: "x" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "released_free",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("No other session holds this item");
+      expect(message).not.toContain("Do NOT claim");
+      expect(message).not.toContain("s2");
+    });
+
+    it("distinguishes a TAKEN OVER item, names the new holder and warns against re-claiming", async () => {
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      await runtime.call("release", { itemId, sessionId: "s1" });
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s2" }));
+
+      const error = await runtime
+        .call("checkpoint", { itemId, sessionId: "s1", body: "x" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "taken_over",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("s2");
+      expect(message).toContain("Do NOT claim");
+      // The near-miss this whole change exists to prevent: the case where
+      // re-claiming is harmful must never call it safe.
+      expect(message).not.toContain("safe");
+    });
+
     it("two agents on the same item get INDEPENDENT checkpoint history (per-agent, not just per-item)", async () => {
       // SCHEMA.md §4: "Per agent, not just per item — assignment_id carries
       // that, so a stalled builder still has its own resume point." This is

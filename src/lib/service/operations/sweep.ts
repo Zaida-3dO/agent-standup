@@ -72,6 +72,29 @@ export interface SweepOperationOutput {
   readonly released: LivenessSweepResult["released"];
   readonly escalated: LivenessSweepResult["escalated"];
   readonly capabilityChecks: LivenessSweepResult["capabilityChecks"];
+  /**
+   * The moves that took a session from `running` straight to `dead` in this
+   * one pass, rather than ageing it through `stalled` first.
+   *
+   * Reported separately because the two are different events wearing the
+   * same shape. Ageing a session that was already `stalled` confirms
+   * something the previous sweep had already noticed; taking one from
+   * `running` to `dead` releases the claim of a session nothing had yet
+   * flagged, and that is the move most likely to have hit a session that is
+   * in fact alive. A holder running no hook stamps `lastActive` only when it
+   * makes a deliberate board call, so a long stretch of reading source or
+   * running a test suite is indistinguishable from having died — see the
+   * warning in `src/lib/claim-eviction.ts`, which is where that weakness is
+   * written down.
+   *
+   * These ids are also present in `moves` and `released`; this is a view
+   * over them, not extra work. It exists so a caller reviewing a sweep can
+   * see the consequential releases without deriving them from `from`, which
+   * is the step an operator reported skipping — the flat arrays read as one
+   * undifferentiated list, and the evictions of live sessions were only
+   * noticed because they happened to have the live agent list open.
+   */
+  readonly evictedWhileRunning: LivenessSweepResult["moves"];
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -84,7 +107,7 @@ export const sweep = defineOperation({
   name: "sweep",
   kind: "write",
   summary:
-    "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items.",
+    "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped.",
   // Stryker restore all
   input: inputSchema,
   // The input is declared and parsed (`.strict()` is what refuses a caller's
@@ -108,6 +131,9 @@ export const sweep = defineOperation({
       released: result.released,
       escalated: result.escalated,
       capabilityChecks: result.capabilityChecks,
+      evictedWhileRunning: result.moves.filter(
+        (move) => move.from === "running" && move.to === "dead",
+      ),
     };
   },
 });

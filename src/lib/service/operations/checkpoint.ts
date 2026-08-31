@@ -16,6 +16,11 @@ import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
+import {
+  describeAssignmentRefusal,
+  type CurrentHolder,
+  type PriorAssignment,
+} from "../items/assignment-refusal";
 
 const inputSchema = z
   .object({
@@ -82,10 +87,38 @@ export const checkpoint = defineOperation({
     );
     const assignment = rows[0];
     if (!assignment) {
-      throw new ConflictError(
-        `Session ${input.sessionId} does not hold a live assignment on ${input.itemId} — a checkpoint needs one to attribute to.`,
-        { fields: ["itemId", "sessionId"] },
+      // No live assignment. Which of the three situations that is decides
+      // what the caller should do next, and they point in opposite
+      // directions — so the refusal names the case rather than reporting the
+      // bare fact. Two extra reads, taken only on the failing path, so the
+      // successful checkpoint costs exactly what it did before.
+      const priorRows = await ctx.db.$queryRawUnsafe<PriorAssignment[]>(
+        `SELECT "releasedAt", "liveness"::text AS "liveness" FROM "Assignment"
+         WHERE "itemId" = $1 AND "sessionId" = $2
+         ORDER BY "claimedAt" DESC
+         LIMIT 1`,
+        input.itemId,
+        input.sessionId,
       );
+      const holderRows = await ctx.db.$queryRawUnsafe<CurrentHolder[]>(
+        `SELECT "sessionId", "role"::text AS "role" FROM "Assignment"
+         WHERE "itemId" = $1 AND "sessionId" <> $2 AND "releasedAt" IS NULL
+         ORDER BY "claimedAt" ASC
+         LIMIT 1`,
+        input.itemId,
+        input.sessionId,
+      );
+      const refusal = describeAssignmentRefusal({
+        sessionId: input.sessionId,
+        itemId: input.itemId,
+        action: "a checkpoint",
+        prior: priorRows[0] ?? null,
+        currentHolder: holderRows[0] ?? null,
+      });
+      throw new ConflictError(refusal.message, {
+        fields: ["itemId", "sessionId"],
+        details: { refusalCase: refusal.case },
+      });
     }
 
     // "(none — prose is in `body`, agent is in `assignment_id`)" — SCHEMA.md
