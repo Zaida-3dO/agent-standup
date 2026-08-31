@@ -893,6 +893,62 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     reason:
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "progress_report",
+    reason:
+      "A fixed rendering of rows `my_work` already returns for the same input, and a rendering " +
+      "is the one thing a caller can reproduce for itself from data it holds. Every tool costs " +
+      "the per-session tool-list budget whether or not it is called, and this one buys a report " +
+      "shape rather than a capability: no state is reachable through it that is not reachable " +
+      "through `my_work`. It runs no state transition, so no registered guard can reject it and " +
+      "§22's bound on waivers is satisfied. Reach it over HTTP or the command line, which is " +
+      "where a scheduled report is generated from anyway.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "progress_report",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "poll",
+    reason:
+      "Its caller is a long-poll loop, not a reasoning agent: it blocks until work appears or a " +
+      "timeout elapses, which is a shape a session cannot use — an agent holding a turn open " +
+      "waiting for a change is an agent doing nothing with a context window. The same class as " +
+      "the hook and scheduler operations already waived here, and for the same reason: the " +
+      "consumer is a process that reaches the service over its own HTTP route. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied. " +
+      "Reach it over HTTP.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "poll",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "service_info",
+    reason:
+      "Most of what it returns is a catalogue of every operation, which every MCP client is " +
+      "already sent on connect — so on this surface, and only on this surface, the bulk of the " +
+      "answer is a duplicate of something the caller already holds. What it carried that nothing " +
+      "else did — the build, the limits and the settings revision — now lives on `describe_tool`, " +
+      "which is authenticated and is the one remaining MCP read whose subject is the contract " +
+      "rather than the data; call it with no `tool` to get them. That home landed before this " +
+      "waiver, deliberately, so the information was never unreachable in between. It runs no " +
+      "state transition, so no registered guard can reject it and §22's bound on waivers is " +
+      "satisfied. Reach the catalogue itself over the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "service_info",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

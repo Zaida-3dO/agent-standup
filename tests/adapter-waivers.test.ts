@@ -4,6 +4,9 @@
 // make it *bounded*: that it names a real adapter and a real operation, that
 // it carries an argument rather than a shrug, and that the operation it
 // waives is one §22's rule actually permits to be waived.
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADAPTER_NAMES } from "@/lib/adapters/registry";
 import {
@@ -63,6 +66,112 @@ describe("the waiver list", () => {
     for (const waiver of ADAPTER_WAIVERS) {
       expect(GUARD_RUNNING_OPERATIONS.has(waiver.operation)).toBe(false);
     }
+  });
+
+  it("waives nothing off its last remaining surface", () => {
+    // -- The invariant ------------------------------------------------
+    //
+    // A waiver says "not here, reach it elsewhere". That sentence is only
+    // true while an elsewhere exists. Waive an operation from every MCP
+    // transport when MCP is the only surface carrying it and the
+    // operation becomes unreachable by anyone -- which is not a narrowed
+    // surface, it is a removed capability wearing a waiver's clothes, and
+    // nothing about a waiver's shape says so.
+    //
+    // This is a *different* rule from the two above it. The guard-coverage
+    // bound is about which refusals stay exercised; the remediation rule
+    // is about an operation a refusal *names*. Neither notices an
+    // operation that simply has nowhere else to be -- which is how three
+    // of them came close to being waived at once, each individually
+    // plausible, each described in its own reason as remaining reachable
+    // on surfaces that do not carry it.
+    //
+    // -- Why the corpus is derived and not written down ----------------
+    //
+    // The same reasoning the guard-coverage test gives for deriving its
+    // own corpus applies with more force here: a hand-written list of
+    // which operations have an HTTP route is a second copy of the route
+    // tree, maintained by a different edit than the one that adds a
+    // route, and its failure mode is silent under-reporting -- an
+    // operation whose route was deleted still looks reachable. So both
+    // surfaces are read from the source that defines them.
+    //
+    // **A caution about how NOT to check this.** The obvious corpus is
+    // `src/lib/http-routes.generated.ts`, and it is the wrong one: it
+    // lists route *paths*, not the operations behind them, so a search
+    // for an operation name in it finds nothing for every operation --
+    // including ones that plainly have routes. A check built on it would
+    // report the whole surface as stranded, or, calibrated against that,
+    // report nothing as stranded ever. The corpora below were each
+    // sanity-checked against operations known to be reachable before
+    // being trusted, and `SURFACE_CONTROLS` keeps that check running.
+    const httpOperations = operationsCalledByHttpRoutes();
+    const cliOperations = operationsBoundToCliVerbs();
+
+    // -- The controls --------------------------------------------------
+    //
+    // A derivation that silently returned nothing would pass this test
+    // vacuously: with no operation reachable anywhere, the loop below
+    // still finds nothing stranded only because it never looks. These fix
+    // known-reachable operations in place, so a scan that breaks -- a
+    // renamed directory, a changed call shape -- fails loudly here rather
+    // than quietly wherever it is used.
+    // A corpus that is too WIDE is as bad as one that is too narrow: an
+    // operation wrongly believed reachable can be waived off its last real
+    // surface with this test still green. `describe_tool` is the control
+    // for that direction -- it is deliberately MCP-only, with no route and
+    // no verb -- so it must be absent from both corpora. It is also the
+    // operation the build facts were rehomed onto, which makes a false
+    // "reachable" here directly dangerous.
+    expect(httpOperations.has("describe_tool")).toBe(false);
+    expect(cliOperations.has("describe_tool")).toBe(false);
+    // `kill_guard` guards the same direction for the command line
+    // specifically. It appears in `src/lib` -- the hook reaches it -- but is
+    // bound to no verb, so a scan pointed one directory too high sweeps it
+    // in along with two dozen others. That widening is not hypothetical:
+    // it would also wrongly mark `poll` CLI-reachable, and `poll` is waived
+    // here. Mutation testing confirmed this assertion is what catches it.
+    expect(cliOperations.has("kill_guard")).toBe(false);
+    // ...and things with a real route and a real verb are present, so the
+    // assertions above cannot be satisfied by an empty corpus.
+    expect(httpOperations.has("backfill")).toBe(true);
+    expect(cliOperations.has("backfill")).toBe(true);
+
+    const SURFACE_CONTROLS = [
+      // A read with a route and no CLI verb.
+      { operation: "get_board", http: true, cli: false },
+      // A write with both.
+      { operation: "note", http: true, cli: true },
+      // A read whose only non-MCP surface is the command line -- the
+      // shape that makes a waiver legal with no HTTP route at all.
+      { operation: "service_info", http: false, cli: true },
+      // Reachable through a route whose `service.call` literal sits on
+      // the line *after* the call, so a scan reading one line at a time
+      // misses it. This is the specific way the HTTP corpus can
+      // under-report while still looking populated.
+      { operation: "register_session", http: true, cli: true },
+    ] as const;
+    for (const control of SURFACE_CONTROLS) {
+      expect({
+        operation: control.operation,
+        http: httpOperations.has(control.operation),
+        cli: cliOperations.has(control.operation),
+      }).toEqual({ operation: control.operation, http: control.http, cli: control.cli });
+    }
+
+    // -- The assertion -------------------------------------------------
+    //
+    // Checked across adapters rather than per waiver, because a waiver on
+    // one MCP transport and not the other still leaves the operation
+    // reachable. Only an operation waived by *every* MCP adapter, with no
+    // route and no verb, is stranded.
+    const mcpAdapters = ADAPTER_NAMES.filter((adapter) => adapter !== "http" && adapter !== "cli");
+    const stranded: string[] = [];
+    for (const operation of new Set(ADAPTER_WAIVERS.map((waiver) => waiver.operation))) {
+      if (httpOperations.has(operation) || cliOperations.has(operation)) continue;
+      if (mcpAdapters.every((adapter) => isWaived(adapter, operation))) stranded.push(operation);
+    }
+    expect(stranded).toEqual([]);
   });
 
   it("waives nothing that is an agent's only route to a documented remediation", () => {
@@ -182,3 +291,85 @@ describe("the MCP adapter honours its waiver", () => {
     await server.close();
   });
 });
+
+// -- Deriving what each surface actually carries -------------------------
+//
+// Both scans read the source that *defines* the surface, so adding a route
+// or a verb makes an operation reachable here by the same edit that makes it
+// reachable in the product -- there is no second list to remember to update.
+
+/**
+ * The real, git-tracked repo root -- deliberately NOT `import.meta.dirname`.
+ * Under mutation testing the suite runs from a sandboxed, instrumented copy
+ * of the tree, and a scan rooted on the test's own directory would read that
+ * rewritten copy rather than the real source.
+ */
+function repoRoot(): string {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
+}
+
+/** Every TypeScript file under a directory, recursively. */
+function sourceFilesUnder(relative: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ts")) found.push(full);
+    }
+  };
+  walk(path.join(repoRoot(), relative));
+  return found;
+}
+
+/**
+ * Operations reachable over HTTP, read from the route tree.
+ *
+ * A route is a thin shell over exactly one `service.call("<name>", ...)`, so
+ * that call is what makes an operation reachable there. Matched across a
+ * newline because several routes put the literal on the line after the call,
+ * and a line-at-a-time scan silently misses those.
+ *
+ * The MCP transport's own route shell is skipped. It forwards whatever name
+ * it is handed (`service.call(name, ...)`) rather than naming an operation,
+ * so it describes no surface of its own. Skipping it is defence in depth
+ * rather than load-bearing: the pattern requires a quoted literal, so the
+ * shell contributes nothing even when read -- mutation testing confirmed
+ * that removing this skip, widening the pattern to accept an unquoted
+ * identifier, and doing both at once all leave every assertion passing,
+ * because the only token such a match can yield is the parameter name
+ * itself, which is not a registered operation. Both are kept so that
+ * neither change alone can start counting forwarded calls.
+ */
+function operationsCalledByHttpRoutes(): Set<string> {
+  const found = new Set<string>();
+  const mcpShell = path.join("api", "mcp", "route.ts");
+  for (const file of sourceFilesUnder("src/app/api")) {
+    if (file.endsWith(mcpShell)) continue;
+    const source = readFileSync(file, "utf-8");
+    for (const match of source.matchAll(/service\.call\(\s*"([a-z_]+)"/g)) {
+      const name = match[1];
+      if (name !== undefined) found.add(name);
+    }
+  }
+  return found;
+}
+
+/**
+ * Operations reachable from the command line, read from the verb tables.
+ *
+ * Every command is a descriptor naming the one operation it calls -- the
+ * command layer has no surface of its own to add to -- so the `operation`
+ * property is the definition of what the command line carries.
+ */
+function operationsBoundToCliVerbs(): Set<string> {
+  const found = new Set<string>();
+  for (const file of sourceFilesUnder("src/lib/cli")) {
+    const source = readFileSync(file, "utf-8");
+    for (const match of source.matchAll(/operation:\s*"([a-z_]+)"/g)) {
+      const name = match[1];
+      if (name !== undefined) found.add(name);
+    }
+  }
+  return found;
+}
