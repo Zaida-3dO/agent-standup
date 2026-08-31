@@ -38,8 +38,8 @@
 // So a non-deterministic sort is not a cosmetic defect here — it is the
 // thing that turns a race the design has *already argued is safe* into one
 // that is not. If two machines are handed the same items in different
-// orders, they pack different subsets against their own headroom, and the
-// allocation is no longer "fulfilled once".
+// orders, they pack different subsets against their own headroom, and two
+// machines can then dispatch the same work twice.
 //
 // This is a real failure mode, not a hypothetical one: a merge gate
 // elsewhere ordered by `createdAt DESC, id DESC` where the id was a random
