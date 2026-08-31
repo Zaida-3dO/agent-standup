@@ -34,11 +34,13 @@ import {
   type ToolContract,
   type TransactionHandle,
 } from "@/lib/service";
+import type { ServiceFacts } from "@/lib/service/operations/describe-tool";
+import { currentBuildInfo, DEV_VERSION, UNKNOWN_REVISION } from "@/lib/build-info";
 import { OPERATION_NAMES } from "@/lib/service/registry";
 import { SHIPPED_CHAR_CAP, SHIPPED_MAX, SHIPPED_MIN } from "@/lib/service/summaries/validate";
 import { invocationFor, invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
 import { assessVersion } from "@/lib/sessions";
-import { defaultSnapshot } from "@/lib/settings";
+import { defaultSnapshot, resolveSettings } from "@/lib/settings";
 import { z } from "zod";
 import { FINDING_SEVERITIES, parseFindings } from "@/lib/findings";
 
@@ -656,6 +658,162 @@ describe("the summary contract states its two element types", () => {
     // which would be documentation that contradicts the validator.
     expect(whatToTest.rule).toMatch(/objects, not strings/i);
     expect(watchFor.rule).toMatch(/\*\*not\*\* an object/i);
+  });
+});
+
+describe("describe_tool with no tool answers what the build is", () => {
+  // ── Why these tests exist ─────────────────────────────────────────────
+  //
+  // `build`, `limits` and `settingsRevision` were `service_info`'s, and
+  // `service_info` is waived off both MCP transports. `get_settings` and
+  // `get_setting` are waived too, so if this branch regresses there is **no
+  // MCP tool that reports a setting value at all** — and the regression is
+  // silent, because a caller who never receives a limit does not know one
+  // exists. These assert the specific fields rather than "an object came
+  // back", so an empty or partial answer fails.
+
+  // ── Why this snapshot is deliberately NOT the defaults ────────────────
+  //
+  // Every value here is overridden to something the defaults are not, and
+  // the revision is non-zero. Asserting against `defaultSnapshot()` looked
+  // right and was hollow: `items.max_depth` defaults to 6, so a handler
+  // that returned a hardcoded `6` — reading no settings at all — passed.
+  // Mutation testing caught exactly that. Values that differ from the
+  // defaults are what make "did it read the snapshot" observable.
+  const OVERRIDDEN_DEPTH = 4;
+  const OVERRIDDEN_WAIT = 97;
+  const OVERRIDDEN_REVISION = 512n;
+
+  function overriddenSnapshot() {
+    return resolveSettings({
+      overrides: [
+        { key: "items.max_depth", value: OVERRIDDEN_DEPTH },
+        { key: "crew.wait_timeout_seconds", value: OVERRIDDEN_WAIT },
+      ],
+      revision: OVERRIDDEN_REVISION,
+    });
+  }
+
+  async function facts(): Promise<ServiceFacts> {
+    const rt = new ServiceRuntime({
+      transaction: (body) => body(inertHandle),
+      resolveSnapshot: async () => overriddenSnapshot(),
+    });
+    return (await rt.call("describe_tool", {})) as ServiceFacts;
+  }
+
+  it("carries the limits a caller is refused against, read from the live settings", async () => {
+    const answer = await facts();
+    // Both differ from the registry defaults, so a handler returning
+    // constants — or reading the wrong setting key — fails rather than
+    // coinciding. `maxDepth` is the ceiling create_work refuses a too-deep
+    // subtask against; a wrong value misleads a caller into a refusal it
+    // was told it would not get.
+    expect(answer.limits.maxDepth).toBe(OVERRIDDEN_DEPTH);
+    expect(answer.limits.waitTimeoutSeconds).toBe(OVERRIDDEN_WAIT);
+    // And neither coincides with the default, which is what makes the two
+    // assertions above capable of failing at all.
+    expect(OVERRIDDEN_DEPTH).not.toBe(defaultSnapshot().values["items.max_depth"]);
+    expect(OVERRIDDEN_WAIT).not.toBe(defaultSnapshot().values["crew.wait_timeout_seconds"]);
+  });
+
+  it("carries the settings revision as a string, because JSON has no bigint", async () => {
+    const answer = await facts();
+    // The type matters as much as the value: the revision is a bigint, and
+    // an adapter serialising one throws. Fails if the `.toString()` is
+    // dropped — which typechecks against a looser type but breaks the wire.
+    expect(typeof answer.settingsRevision).toBe("string");
+    expect(answer.settingsRevision).toBe(OVERRIDDEN_REVISION.toString());
+  });
+
+  it("carries the running build, read per call rather than captured at import", async () => {
+    // ── Why the environment is set here ────────────────────────────────
+    //
+    // Comparing to a bare `currentBuildInfo()` was hollow: on an
+    // unreleased checkout both sides are the development fallbacks
+    // (`0.0.0-dev` / `unknown`), so a handler returning those as a frozen
+    // literal — reading the environment never — passed. Mutation testing
+    // caught it. Setting a released-looking environment makes the two
+    // distinguishable, and also exercises the `released: true` branch that
+    // a dev checkout never reaches.
+    const saved = {
+      APP_VERSION: process.env.APP_VERSION,
+      APP_REVISION: process.env.APP_REVISION,
+      APP_BUILD_TIME: process.env.APP_BUILD_TIME,
+    };
+    process.env.APP_VERSION = "9.9.9";
+    process.env.APP_REVISION = "0123456789abcdef0123456789abcdef01234567";
+    process.env.APP_BUILD_TIME = "2026-01-02T03:04:05.000Z";
+    try {
+      const answer = await facts();
+      expect(answer.build.version).toBe("9.9.9");
+      expect(answer.build.revision).toBe("0123456789abcdef0123456789abcdef01234567");
+      expect(answer.build.buildTime).toBe("2026-01-02T03:04:05.000Z");
+      // Derived from the other two being present — the one boolean a caller
+      // reads instead of knowing which sentinels mean absence.
+      expect(answer.build.released).toBe(true);
+      // Read per call, not captured at import: this is the property that
+      // makes "what is deployed" answerable in one call with no shell on
+      // the deploy host, which is the incident build-info was created for.
+      expect(answer.build).toEqual(currentBuildInfo());
+      // And it is genuinely not the development fallback, which is what
+      // makes every assertion above capable of failing.
+      expect(answer.build.version).not.toBe(DEV_VERSION);
+      expect(answer.build.revision).not.toBe(UNKNOWN_REVISION);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("returns no tool catalogue, because tools/list already sent one", async () => {
+    // The catalogue was the duplication that justified waiving
+    // `service_info` — reproducing it here would rebuild the waste. It would
+    // also be wrong: the registry's name list is every REGISTERED operation,
+    // so it names waived tools (`backfill`, `loop_list`) an MCP caller
+    // cannot call. Fails if someone "helpfully" adds the list back.
+    const answer = (await facts()) as ServiceFacts & { operations?: unknown; tools?: unknown };
+    expect(answer.operations).toBeUndefined();
+    expect(answer.tools).toBeUndefined();
+  });
+
+  it("still refuses an unknown tool name rather than treating it as absent", async () => {
+    // A caller who sent a name that is merely wrong must get "no such tool",
+    // not build info — an answer to a question they did not ask is worse
+    // than the refusal.
+    const error = await refusal("describe_tool", { tool: "no_such_operation" });
+    expect(error.code).toBe("not_found");
+    expect(error.message).toContain("no_such_operation");
+  });
+
+  it("refuses a blank tool instead of reading it as omitted", async () => {
+    // ── Why this asserts on the SCHEMA and not only the handler ─────────
+    //
+    // The handler branches on `tool === undefined`. Mutating that to a
+    // falsy check (`!input.tool`) survives every other test here, because
+    // no input can reach the handler with a defined-but-falsy `tool`: the
+    // schema's `.min(1)` on a trimmed string refuses `""` and `"   "`
+    // first. That makes the mutant *equivalent* rather than uncaught —
+    // but only while the `.min(1)` holds.
+    //
+    // So this pins the property that makes it equivalent. Drop the
+    // `.trim()` or the `.min(1)` and a blank name would reach the handler,
+    // where a falsy check would silently answer with build info for a
+    // caller who asked about a tool. Both spellings are asserted because
+    // `""` is caught by `min` alone while `"   "` needs the `trim` too.
+    for (const blank of ["", "   "]) {
+      const error = await refusal("describe_tool", { tool: blank });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toContain("tool");
+    }
+  });
+
+  it("still describes a named tool, so both questions are answerable from one call", async () => {
+    const contract = await contractFor("create_item");
+    expect(contract.name).toBe("create_item");
+    expect(contract.fields.length).toBeGreaterThan(0);
   });
 });
 

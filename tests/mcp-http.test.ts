@@ -100,18 +100,18 @@ describe("the HTTP wiring answers a real MCP conversation", () => {
       "mcp-protocol-version": PROTOCOL_VERSION,
     });
     const result = body.result as { tools: { name: string }[] };
-    expect(result.tools.map((tool) => tool.name)).toContain("service_info");
+    expect(result.tools.map((tool) => tool.name)).toContain("describe_tool");
   });
 
   it("calls a tool and returns the service's answer", async () => {
     const call = realRuntimeCall();
     await rpc(call, initialize);
-    const { body } = await rpc(call, callToolMessage("service_info", {}), {
+    const { body } = await rpc(call, callToolMessage("describe_tool", { tool: "get_board" }), {
       "mcp-protocol-version": PROTOCOL_VERSION,
     });
-    const result = body.result as { isError?: boolean; structuredContent: { operations: [] } };
+    const result = body.result as { isError?: boolean; structuredContent: { fields: [] } };
     expect(result.isError).toBeFalsy();
-    expect(result.structuredContent.operations.length).toBeGreaterThan(0);
+    expect(result.structuredContent.fields.length).toBeGreaterThan(0);
   });
 
   it("stamps mcp-http as the transport on a call arriving this way", async () => {
@@ -124,7 +124,7 @@ describe("the HTTP wiring answers a real MCP conversation", () => {
       return {};
     };
     await rpc(call, initialize);
-    await rpc(call, callToolMessage("service_info", {}), {
+    await rpc(call, callToolMessage("describe_tool", { tool: "get_board" }), {
       "mcp-protocol-version": PROTOCOL_VERSION,
     });
     expect(stamped).toEqual([MCP_HTTP_TRANSPORT]);
@@ -136,12 +136,12 @@ describe("the HTTP wiring answers a real MCP conversation", () => {
     // was flattened by the transport would still break §22's comparison.
     const call = realRuntimeCall();
     await rpc(call, initialize);
-    const { body } = await rpc(call, callToolMessage("service_info", { kind: "sideways" }), {
+    const { body } = await rpc(call, callToolMessage("describe_tool", { tool: 5 }), {
       "mcp-protocol-version": PROTOCOL_VERSION,
     });
     const result = body.result as { isError: boolean; structuredContent: Record<string, unknown> };
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: "invalid_input", fields: ["kind"] });
+    expect(result.structuredContent).toMatchObject({ code: "invalid_input", fields: ["tool"] });
   });
 });
 
@@ -172,11 +172,14 @@ describe("stateless", () => {
     // any process. A stateful server would refuse this — a `tools/call`
     // with no session and no preceding initialize is exactly what arrives
     // at a replica that has never seen this client.
-    const { response, body } = await rpc(realRuntimeCall(), callToolMessage("service_info", {}));
+    const { response, body } = await rpc(
+      realRuntimeCall(),
+      callToolMessage("describe_tool", { tool: "get_board" }),
+    );
     expect(response.status).toBe(200);
-    const result = body.result as { isError?: boolean; structuredContent: { operations: [] } };
+    const result = body.result as { isError?: boolean; structuredContent: { fields: [] } };
     expect(result.isError).toBeFalsy();
-    expect(result.structuredContent.operations.length).toBeGreaterThan(0);
+    expect(result.structuredContent.fields.length).toBeGreaterThan(0);
   });
 
   it("does not carry a rejection, or anything else, from one request into the next", async () => {
@@ -184,13 +187,13 @@ describe("stateless", () => {
     // survived a request — a cached parse, a remembered failure, a
     // half-closed stream — the second would differ from a first.
     const call = realRuntimeCall();
-    const bad = await rpc(call, callToolMessage("service_info", { kind: "sideways" }, 10));
+    const bad = await rpc(call, callToolMessage("describe_tool", { tool: 5 }, 10));
     expect((bad.body.result as { isError: boolean }).isError).toBe(true);
 
-    const good = await rpc(call, callToolMessage("service_info", {}, 11));
-    const result = good.body.result as { isError?: boolean; structuredContent: { operations: [] } };
+    const good = await rpc(call, callToolMessage("describe_tool", { tool: "get_board" }, 11));
+    const result = good.body.result as { isError?: boolean; structuredContent: { fields: [] } };
     expect(result.isError).toBeFalsy();
-    expect(result.structuredContent.operations.length).toBeGreaterThan(0);
+    expect(result.structuredContent.fields.length).toBeGreaterThan(0);
   });
 
   it("answers two concurrent requests independently", async () => {
@@ -200,19 +203,18 @@ describe("stateless", () => {
     // overlapped.
     const call = realRuntimeCall();
     const [first, second] = await Promise.all([
-      rpc(call, callToolMessage("service_info", { kind: "read" }, 20)),
-      rpc(call, callToolMessage("service_info", { kind: "write" }, 21)),
+      rpc(call, callToolMessage("describe_tool", { tool: "get_board" }, 20)),
+      rpc(call, callToolMessage("describe_tool", { tool: "create_work" }, 21)),
     ]);
-    const readOnly = (
-      first.body.result as { structuredContent: { operations: { kind: string }[] } }
-    ).structuredContent.operations;
-    const writeOnly = (
-      second.body.result as { structuredContent: { operations: { kind: string }[] } }
-    ).structuredContent.operations;
-    expect(readOnly.length).toBeGreaterThan(0);
-    expect(writeOnly.length).toBeGreaterThan(0);
-    expect(readOnly.every((operation) => operation.kind === "read")).toBe(true);
-    expect(writeOnly.every((operation) => operation.kind === "write")).toBe(true);
+    // Two different subjects, so an answer routed to the wrong request is
+    // visible as the wrong contract rather than as a subset that happens to
+    // look plausible.
+    const firstContract = (first.body.result as { structuredContent: { name: string } })
+      .structuredContent;
+    const secondContract = (second.body.result as { structuredContent: { name: string } })
+      .structuredContent;
+    expect(firstContract.name).toBe("get_board");
+    expect(secondContract.name).toBe("create_work");
   });
 });
 
@@ -236,7 +238,7 @@ describe("nothing is left running after a request", () => {
         async () => {
           throw new Error("the service fell over");
         },
-        callToolMessage("service_info", {}, 30),
+        callToolMessage("describe_tool", { tool: "get_board" }, 30),
       );
       expect(closed.length).toBe(1);
     } finally {
@@ -254,7 +256,7 @@ describe("nothing is left running after a request", () => {
       return originalClose.call(this);
     };
     try {
-      await rpc(realRuntimeCall(), callToolMessage("service_info", {}, 31));
+      await rpc(realRuntimeCall(), callToolMessage("describe_tool", { tool: "get_board" }, 31));
       expect(closed.length).toBe(1);
     } finally {
       WebStandardStreamableHTTPServerTransport.prototype.close = originalClose;
@@ -291,7 +293,7 @@ describe("a stateless request says who is calling in its headers", () => {
         callers.push(options?.caller as Record<string, unknown>);
         return {};
       },
-      callToolMessage("service_info", {}, 40),
+      callToolMessage("describe_tool", { tool: "get_board" }, 40),
       { [SESSION_HEADER]: "session-http", [ACTOR_HEADER]: "agent-http" },
     );
     expect(callers[0]).toMatchObject({
@@ -312,7 +314,7 @@ describe("a stateless request says who is calling in its headers", () => {
         callers.push(options?.caller as Record<string, unknown>);
         return {};
       },
-      callToolMessage("service_info", {}, 41),
+      callToolMessage("describe_tool", { tool: "get_board" }, 41),
     );
     expect(body.error).toBeUndefined();
     expect(Object.keys(callers[0]!)).not.toContain("sessionId");

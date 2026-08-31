@@ -109,7 +109,7 @@ describe("runMcpStdio — reaching the service", () => {
     const service: CallableService = {
       call: async (name, _input, options) => {
         calls.push({ name, transport: options?.caller?.transport });
-        return { operations: [{ name: "service_info", kind: "read" }] };
+        return { operations: [{ name: "describe_tool", kind: "read" }] };
       },
     };
 
@@ -127,12 +127,12 @@ describe("runMcpStdio — reaching the service", () => {
         jsonrpc: "2.0",
         id: 2,
         method: "tools/call",
-        params: { name: "service_info", arguments: {} },
+        params: { name: "describe_tool", arguments: { tool: "describe_tool" } },
       })}\n`,
     );
     await reader.waitFor(2);
 
-    expect(calls).toEqual([{ name: "service_info", transport: "mcp-stdio" }]);
+    expect(calls).toEqual([{ name: "describe_tool", transport: "mcp-stdio" }]);
 
     input.end();
     await outcomePromise;
