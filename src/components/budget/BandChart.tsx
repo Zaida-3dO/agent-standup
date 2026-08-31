@@ -15,6 +15,8 @@
 import { Fragment } from "react";
 import type { BudgetWindow, CrossingProblem } from "@/lib/settings/budget-windows";
 import { DEFAULT_BOX, markerX, seriesFor, xFor, yFor, type BandKey } from "@/lib/budget-page/chart";
+import { groupProblemRuns } from "@/lib/budget-page/edit";
+import { gridStepHours } from "@/lib/settings/budget-windows";
 import styles from "./Budget.module.css";
 
 export interface BandChartProps {
@@ -56,6 +58,12 @@ export function BandChart({ window, problems, atHours }: BandChartProps) {
 
   const scrubberX = xFor(atHours, window.lengthHours, box);
 
+  // Contiguous runs of the same fault, so the chart marks stretches rather
+  // than samples. The grid step comes from the window being drawn, which is
+  // what lets a genuinely healthy gap break a run instead of one long mark
+  // spanning a fault that actually cleared in the middle.
+  const runs = groupProblemRuns(problems, gridStepHours(window.lengthHours));
+
   return (
     <svg
       className={styles.chart}
@@ -85,18 +93,54 @@ export function BandChart({ window, problems, atHours }: BandChartProps) {
         />
       ))}
 
-      {/* Every crossing, marked at the moment it happens. A message can say
-          "at 3h"; only the mark puts it where the reader is looking. */}
-      {problems.map((problem, index) => {
-        const x = markerX(problem.atHours, window, box);
+      {/* Every crossing, marked over the STRETCH it covers rather than once
+          per sampled moment.
+
+          `findCrossings` samples the window at `SAMPLE_COUNT` = 101 points
+          and reports each faulty sample independently, so a fault that
+          holds for the whole window arrives here as 101 problems — up to
+          303 with all three faults at once. Drawn as one full-height line
+          each, those marks tiled the plot area solid and hid the very chart
+          they were annotating: the reader lost the boundaries entirely and
+          learned nothing about *where* the fault was, because it was
+          everywhere.
+
+          So the runs are collapsed first, with the same `groupProblemRuns`
+          the editor already uses for its prose list — one shaded band per
+          contiguous fault, which is the honest picture: a fault spanning
+          the window reads as a span, and one lasting a moment still reads
+          as a moment. Reusing that function rather than restating the
+          grouping keeps the drawing and the sentences agreeing about how
+          many faults there are. */}
+      {runs.map((run, index) => {
+        const from = markerX(run.fromHours, window, box);
+        const to = markerX(run.toHours, window, box);
+        const width = to - from;
+
+        // A run covering a single sampled moment has no width to shade, so
+        // it stays a line — otherwise a zero-width rect would render as
+        // nothing at all and an isolated fault would go unmarked.
+        if (!(width > 0)) {
+          return (
+            <line
+              key={`crossing-${index}-${run.fromHours}`}
+              x1={from}
+              y1={0}
+              x2={from}
+              y2={box.height}
+              className={styles.crossingMark}
+            />
+          );
+        }
+
         return (
-          <line
-            key={`crossing-${index}-${problem.atHours}`}
-            x1={x}
-            y1={0}
-            x2={x}
-            y2={box.height}
-            className={styles.crossingMark}
+          <rect
+            key={`crossing-${index}-${run.fromHours}-${run.toHours}`}
+            x={from}
+            y={0}
+            width={width}
+            height={box.height}
+            className={styles.crossingSpan}
           />
         );
       })}

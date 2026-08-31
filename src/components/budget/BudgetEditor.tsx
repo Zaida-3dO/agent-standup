@@ -58,6 +58,7 @@ import {
   type WindowsDraft,
 } from "@/lib/budget-page/edit";
 import { describeConcurrentChange, sameWindows } from "@/lib/budget-page/concurrency";
+import { scrubbedTo } from "@/lib/budget-page/scrubber";
 import { BudgetEditorView } from "./BudgetEditorView";
 
 export type SaveState =
@@ -74,6 +75,12 @@ export function BudgetEditor() {
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [newName, setNewName] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
+  /**
+   * Scrubber position per window, in hours. A window absent from this map
+   * has not been scrubbed, and its chart follows the first collision — see
+   * `WindowEditor`'s `atHours` prop for why absence is not just zero.
+   */
+  const [scrubbed, setScrubbed] = useState<Record<string, number>>({});
 
   /**
    * What was loaded, as the comparison baseline for the conflict check.
@@ -164,6 +171,26 @@ export function BudgetEditor() {
     setSaveState({ status: "idle" });
     setDraft((current) => (current === null ? current : withWindow(current, name, next)));
   }, []);
+
+  /**
+   * Moves one window's scrubber.
+   *
+   * Clamped through `scrubbedTo` against the window's own length, so a
+   * position outside the window cannot be stored. Reads the length from
+   * `parsed` rather than the draft, because the draft's `lengthHours` is
+   * free text and may not be a number at all mid-edit.
+   */
+  const onScrub = useCallback(
+    (name: string, atHours: number) => {
+      const window = parsed[name];
+      if (window === undefined || window === null) return;
+      setScrubbed((current) => {
+        const next = scrubbedTo({ atHours: current[name] ?? 0 }, atHours, window.lengthHours);
+        return { ...current, [name]: next.atHours };
+      });
+    },
+    [parsed],
+  );
 
   const onRemoveWindow = useCallback((name: string) => {
     setSaveState({ status: "idle" });
@@ -267,7 +294,9 @@ export function BudgetEditor() {
       saveState={saveState}
       newName={newName}
       addError={addError}
+      scrubbed={scrubbed}
       onNewNameChange={setNewName}
+      onScrub={onScrub}
       onAddWindow={onAddWindow}
       onChangeWindow={onChangeWindow}
       onRemoveWindow={onRemoveWindow}

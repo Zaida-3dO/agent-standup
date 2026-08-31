@@ -44,7 +44,8 @@ import {
   type PresetName,
   type WindowDraft,
 } from "@/lib/budget-page/edit";
-import { describeMoment } from "@/lib/budget-page/scrubber";
+import { describeMoment, readingsAt } from "@/lib/budget-page/scrubber";
+import { describeBoundary } from "@/lib/budget-page/describe";
 import { BandChart } from "./BandChart";
 import { BoundaryFields } from "./BoundaryFields";
 import styles from "./Budget.module.css";
@@ -62,12 +63,23 @@ export interface WindowEditorProps {
   readonly problems: readonly CrossingProblem[];
   /** Why this window cannot be saved yet, or `null`. */
   readonly incompleteness: string | null;
+  /**
+   * Where the scrubber sits, in hours, or `null` to follow the first
+   * collision.
+   *
+   * `null` rather than a number default because "the reader has not
+   * touched it" and "the reader has dragged it to 0h" are different
+   * states: the first should keep tracking the fault as the draft is
+   * edited, the second must stay where it was put.
+   */
+  readonly atHours: number | null;
   readonly onChange: (next: WindowDraft) => void;
   readonly onRemove: () => void;
+  readonly onScrub: (atHours: number) => void;
 }
 
 export function WindowEditor(props: WindowEditorProps) {
-  const { name, draft, parsed, problems, incompleteness, onChange, onRemove } = props;
+  const { name, draft, parsed, problems, incompleteness, atHours, onChange, onRemove } = props;
   const invalid = problems.length > 0;
 
   // Every band any problem implicates, so a field can ask "am I one of them".
@@ -87,6 +99,18 @@ export function WindowEditor(props: WindowEditorProps) {
   const runs = parsed === null ? [] : groupProblemRuns(problems, gridStepHours(parsed.lengthHours));
   const readings =
     parsed !== null && firstProblem !== undefined ? valuesAt(parsed, firstProblem.atHours) : [];
+
+  // Where the chart's marker and the scrubbed readout sit. Untouched, it
+  // follows the first collision so the readout lines up with the numbers
+  // printed beneath it; once dragged, it stays where it was put.
+  //
+  // Clamped to the window, because `lengthHours` is edited as free text in
+  // the field above: shortening a window with the scrubber near its old end
+  // would otherwise leave the marker off the right-hand edge of the chart.
+  const scrubMax = parsed?.lengthHours ?? 0;
+  const scrubAt =
+    atHours === null ? (firstProblem?.atHours ?? 0) : Math.min(Math.max(atHours, 0), scrubMax);
+  const scrubbedReadings = parsed === null ? [] : readingsAt(parsed, scrubAt);
 
   return (
     <section className={`${styles.card} ${invalid ? styles.cardInvalid : ""}`.trim()}>
@@ -166,14 +190,70 @@ export function WindowEditor(props: WindowEditorProps) {
         <p className={styles.incomplete}>{incompleteness ?? "This window is not complete yet."}</p>
       ) : (
         <>
-          <BandChart
-            window={parsed}
-            problems={problems}
-            /* The scrubber is the viewer's control; here the marked moment
-               is the first collision, so the chart's readout lines up with
-               the numbers printed beneath it. */
-            atHours={firstProblem?.atHours ?? 0}
-          />
+          {/* The window said out loud, one line per boundary.
+
+              §17.4 tabulates each kind with how it "reads as", and
+              `describeBoundary` is that column computed — a boundary a
+              reader cannot say out loud is one they cannot check. Placed
+              below the fields and above the chart, so the order reads: what
+              you typed, what it means, what it looks like. */}
+          <ul className={styles.boundaries}>
+            {EDIT_BAND_KEYS.map((key) => (
+              <li key={key} className={styles.boundary}>
+                <span className={styles.boundaryLabel}>{BAND_FIELD_LABELS[key]}</span>
+                <span className={styles.boundaryWords}>
+                  {describeBoundary(parsed.boundaries[key])}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <BandChart window={parsed} problems={problems} atHours={scrubAt} />
+
+          {/* The time scrubber, and every boundary read out at the moment it
+              points to.
+
+              The scrubber belongs on the editor rather than on a separate
+              read-only page, for the reason `app/budget/page.tsx` gives:
+              one surface answers both "what is configured" and "change it",
+              so a reader never has to know which of two pages showing the
+              same picture they wanted.
+
+              It reads out at any moment, not only at a fault, because "what
+              is the wind-down boundary 40 hours into a 168h window" is a
+              question about a perfectly healthy window — and answering it
+              from the chart is the thing that makes a schedule legible. */}
+          <div className={styles.scrubber}>
+            <input
+              className={styles.scrubberInput}
+              type="range"
+              min={0}
+              max={scrubMax}
+              step={scrubMax / 100}
+              value={scrubAt}
+              aria-label={`Time into the ${name} window`}
+              onChange={(event) => props.onScrub(Number(event.target.value))}
+            />
+            <span className={styles.scrubberMoment}>{describeMoment(scrubAt)}</span>
+          </div>
+
+          <ul className={styles.readings}>
+            {scrubbedReadings.map((reading) => (
+              <li
+                key={reading.key}
+                className={`${styles.reading} ${
+                  reading.value === null ? styles.readingAbsent : ""
+                }`.trim()}
+              >
+                {/* `null` prints as "no value" rather than 0%: a schedule
+                    starting later genuinely has nothing to say before it,
+                    and a zero would be a claim it does not make. */}
+                {`${BAND_FIELD_LABELS[reading.key]}: ${
+                  reading.value === null ? "no value" : `${Math.round(reading.value * 10) / 10}%`
+                }`}
+              </li>
+            ))}
+          </ul>
           {invalid && (
             /* `data-collision` marks this panel so a test can assert on it
                rather than on the whole page — the page's own subheading
