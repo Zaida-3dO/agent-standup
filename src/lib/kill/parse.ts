@@ -369,11 +369,135 @@ export function parseKillCommand(command: string): KillCommandParse {
 }
 
 /**
- * Splits on statement separators, respecting quotes.
+ * Reads a heredoc redirection at `index`, if one starts there.
+ *
+ * Returns the delimiter word and the offset just past it, or `null` when
+ * `index` is not the start of a `<<`. Handles the spellings that differ
+ * only in whitespace and quoting — `<<EOF`, `<< EOF`, `<<-EOF`,
+ * `<<'EOF'`, `<<"EOF"` — because all five are ordinary things to type and
+ * a reader that recognised only the bare form would leave the quoted one
+ * (the most common spelling, since it is the one that suppresses
+ * expansion) being parsed as commands.
+ *
+ * `<<<` is deliberately **not** a heredoc: it is a here-*string*, whose word
+ * is a single argument on the same line and which opens no document body to
+ * skip. The spaced spelling (`<<< word`) is excluded anyway by `<` being in
+ * the delimiter break set, but `<<<word` is not — it would read `word` as a
+ * delimiter and swallow every line until that word appeared again, hiding
+ * anything written in between. The check is therefore load-bearing for the
+ * unspaced form specifically.
+ */
+function readHeredocStart(
+  command: string,
+  index: number,
+): { readonly delimiter: string; readonly next: number } | null {
+  if (!command.startsWith("<<", index)) return null;
+  // `<<<` is a here-*string*: its word is an argument on the same line and
+  // it opens no document body. The neighbour on the *left* is what has to
+  // be checked, and that is not the obvious half. The caller scans every
+  // `<` in the command, so `<<<word` is examined twice: the first `<` is
+  // rejected easily (the character after `<<` is another `<`), but the
+  // scan then reaches the second `<`, where the remainder reads as a
+  // perfectly well-formed `<<word`. Rejecting only the first spelling
+  // leaves the second one reading `word` as a delimiter and swallowing
+  // every line until that word appears again — hiding any command written
+  // in between, which for this module means hiding a kill.
+  if (index > 0 && command[index - 1] === "<") return null;
+
+  let cursor = index + 2;
+  // `<<-` strips leading tabs from the body and its terminator. It changes
+  // nothing about where the document ends, so it is skipped rather than
+  // recorded — except that the terminator match below has to tolerate the
+  // tabs it permits, which is why `terminatesHeredoc` trims.
+  if (command[cursor] === "-") cursor += 1;
+  while (command[cursor] === " " || command[cursor] === "\t") cursor += 1;
+
+  let delimiter = "";
+  let quote: string | null = null;
+  while (cursor < command.length) {
+    const char = command[cursor]!;
+    if (quote !== null) {
+      if (char === quote) {
+        quote = null;
+        cursor += 1;
+        continue;
+      }
+      delimiter += char;
+      cursor += 1;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "\\") {
+      // A backslash before the delimiter quotes it exactly as a quote pair
+      // does (`<<\EOF`), and suppresses expansion identically.
+      if (char === "\\") {
+        cursor += 1;
+        continue;
+      }
+      quote = char;
+      cursor += 1;
+      continue;
+    }
+    // The delimiter word ends at whitespace or at anything that could not
+    // be part of a word. A `<<` followed immediately by one of those is a
+    // redirection this build cannot read, and is reported as no heredoc so
+    // the caller falls back to ordinary splitting.
+    if (/[\s;&|<>()]/.test(char)) break;
+    delimiter += char;
+    cursor += 1;
+  }
+
+  return delimiter.length === 0 ? null : { delimiter, next: cursor };
+}
+
+/** Whether `line` is the terminator for a heredoc opened with `delimiter`. */
+function terminatesHeredoc(line: string, delimiter: string): boolean {
+  // `<<-` permits leading tabs before the terminator, and trailing
+  // whitespace before the newline is invisible and routine. Trimming both
+  // matches more terminators than a strict comparison would, which is the
+  // safe direction: a terminator this failed to recognise would leave the
+  // rest of the command being skipped as document body, hiding a real kill
+  // that came after it.
+  return line.trim() === delimiter;
+}
+
+/**
+ * Splits on statement separators, respecting quotes and heredoc bodies.
  *
  * A separator inside a quoted string is not a separator — `echo "a && b"`
  * is one statement — which matters because the alternative would invent a
  * second statement out of quoted text and could invent a kill verb with it.
+ *
+ * ── Why heredoc bodies are skipped entirely ────────────────────────────
+ *
+ * A heredoc body is **data being written to a file, not commands being
+ * run**. Nothing in it is executed, so nothing in it can kill anything.
+ * Before this, the body was split on its own newlines and pipes like any
+ * other text, so writing *about* a kill tripped the guard against it:
+ *
+ *     cat > note.md <<'EOF'
+ *     The pipeline form ends every matching process.
+ *     EOF
+ *
+ * became four statements, one of which began with a kill verb followed by
+ * ordinary prose, which `parseWindowsKill` correctly reported as an option
+ * it could not read — `unparseable`, which the guard denies. The practical
+ * effect was that **a postmortem, a feedback note or a piece of
+ * documentation about kill safety could not be written**, and the more
+ * precisely it described the dangerous command the more certainly it was
+ * refused. The note that reported this had to assemble the offending
+ * string at runtime to avoid its own subject matter.
+ *
+ * Skipping the body is **strictly narrowing** — it can only ever produce
+ * fewer statements, so it can only ever produce fewer findings, which is
+ * the direction this module's header commits to (under-match rather than
+ * over-match). It cannot hide a real kill, because a real kill is a
+ * command and a heredoc body is not one; a kill written *after* the
+ * terminator is still read, and that is what the terminator search is for.
+ *
+ * The one case worth naming: an **unterminated** heredoc swallows the rest
+ * of the command. That is not a loss of coverage, because an unterminated
+ * heredoc means the shell is still reading a document — nothing after it
+ * runs either.
  */
 export function splitStatements(command: string): string[] {
   const statements: string[] = [];
@@ -387,6 +511,60 @@ export function splitStatements(command: string): string[] {
       if (char === quote) quote = null;
       continue;
     }
+
+    // A heredoc redirection, read before the quote branch below so that the
+    // quotes around a `<<'EOF'` delimiter are consumed here rather than
+    // opening a quoted region that would run to the next matching quote in
+    // the document body.
+    const heredoc = char === "<" ? readHeredocStart(command, index) : null;
+    if (heredoc !== null) {
+      // The redirection itself stays in the current statement — it is part
+      // of the command being run (`cat > note.md <<'EOF'`), and dropping it
+      // would change where that statement's tokens start.
+      current += command.slice(index, heredoc.next);
+
+      // Skip to just past the newline that ends the opening line, then
+      // consume whole lines until the terminator. Everything between that
+      // newline and the terminator is document data, not command text.
+      const newlineAt = command.indexOf("\n", heredoc.next);
+      if (newlineAt === -1) {
+        // The opening line never ends, so there is no document and nothing
+        // further to read at all.
+        index = command.length;
+        break;
+      }
+
+      let cursor = newlineAt + 1;
+      let ended = false;
+      while (cursor <= command.length) {
+        const lineEnd = command.indexOf("\n", cursor);
+        const line = command.slice(cursor, lineEnd === -1 ? command.length : lineEnd);
+        if (terminatesHeredoc(line, heredoc.delimiter)) {
+          // Resume immediately after the terminator line. Anything beyond
+          // it is command text again and is split normally.
+          cursor = lineEnd === -1 ? command.length : lineEnd;
+          ended = true;
+          break;
+        }
+        if (lineEnd === -1) break;
+        cursor = lineEnd + 1;
+      }
+
+      // An unterminated heredoc means the shell is still reading a
+      // document; nothing after it runs either. See the header.
+      if (!ended) {
+        index = command.length;
+        break;
+      }
+
+      // The opening line is a complete statement in its own right — the
+      // document that followed it is not part of any statement.
+      statements.push(current);
+      current = "";
+      index = cursor;
+      continue;
+    }
+
     if (char === '"' || char === "'") {
       quote = char;
       current += char;
@@ -459,10 +637,31 @@ function parseStatement(statement: string): KillCommandParse {
   if (verb === null) return { kind: "not-a-kill" };
 
   const args = tokens.slice(index + 1);
-  return verb === "taskkill" || verb === "stop-process"
-    ? parseWindowsKill(verb, args)
-    : parsePosixKill(verb, args);
+  if (verb === "taskkill" || verb === "stop-process") return parseWindowsKill(verb, args);
+  // `kill` is a real PowerShell alias of `Stop-Process`, so `kill -Id 4821`
+  // is a PID-scoped kill — but `kill` is also the POSIX verb, where `-Id`
+  // means nothing. Routed on the evidence rather than on a guess about the
+  // platform: `-Id`/`-Name` are PowerShell parameter names that no POSIX
+  // `kill` accepts, so seeing one is unambiguous. Without a PowerShell
+  // parameter present the POSIX reader still handles it, which keeps
+  // `kill -9 4821` reading exactly as it did.
+  if (verb === "kill" && args.some((arg) => POWERSHELL_KILL_PARAMETER.test(arg))) {
+    return parseWindowsKill("stop-process", args);
+  }
+  return parsePosixKill(verb, args);
 }
+
+/**
+ * A parameter name that only PowerShell's `Stop-Process` accepts.
+ *
+ * Used to tell the PowerShell alias `kill` apart from the POSIX verb of the
+ * same name. Deliberately narrow — just the two parameters that name a
+ * target — because the cost of a wrong guess is asymmetric in the usual
+ * direction: reading a POSIX kill as PowerShell would drop a signal flag it
+ * does not model, whereas failing to spot the alias costs only a refusal of
+ * a command that was narrow, which is the safe way to be wrong.
+ */
+const POWERSHELL_KILL_PARAMETER = /^-(id|name|processname)$/i;
 
 /**
  * `taskkill` and PowerShell's `Stop-Process`.
@@ -504,6 +703,29 @@ function parseWindowsKill(verb: string, args: readonly string[]): KillCommandPar
       targets.push({ kind: "executable", value: normaliseExecutable(value) });
       index += 1;
       continue;
+    }
+
+    // A bare process id, bound positionally. `Stop-Process 130580` is the
+    // documented positional form of `-Id` and is what a person types when
+    // they already have the number; refusing it while the guard's own
+    // message recommends killing by process id is the contradiction row
+    // f53e667a-97da-4b10-bded-8a3c50836a85 reported.
+    //
+    // Restricted to a token that is **entirely digits**, so nothing that
+    // could name an image can arrive here: `Stop-Process node` still falls
+    // through to the refusal below, because a bare name is `-Name`'s
+    // positional form on some verbs and reading it as narrow would be
+    // exactly the widening this path must not do. `taskkill` has no
+    // positional target at all, so this is confined to `stop-process`.
+    if (verb === "stop-process" && !arg.startsWith("-") && !arg.startsWith("/")) {
+      if (PID_PATTERN.test(arg)) {
+        targets.push({ kind: "pid", value: arg });
+        continue;
+      }
+      return {
+        kind: "unparseable",
+        reason: `${verb} was given ${arg}, which is not a process id this build can resolve`,
+      };
     }
 
     return {
