@@ -23,7 +23,7 @@
 // session after every Read, Grep and Glob the agent performs.
 
 import type { HookVerdict } from "./decide";
-import type { StopCatch } from "./stop-catch";
+import type { StopCatch, StopSurvey } from "./stop-catch";
 import type { Nudge } from "./nudge";
 
 /** The two exit codes this hook uses. */
@@ -170,5 +170,42 @@ export function renderWithNudges(
     stderr: base.stderr === "" ? `${advisory}\n` : `${base.stderr}${advisory}\n`,
     // Deliberately `base.exitCode`, never a value derived from `nudges`.
     exitCode: base.exitCode,
+  };
+}
+
+/**
+ * Attaches the session-end intervention survey to an already-rendered
+ * response — the owner's scoring loop, `../interventions/survey.ts`.
+ *
+ * ── The exit code is never touched, for the same reason as the catch ────
+ *
+ * DECISIONS.md §6 makes Stop advisory, and a survey is the least urgent
+ * thing the hook has to say: it asks about guards that already fired on
+ * calls that already happened. If a refused stop is dangerous for the catch
+ * — which is at least about work in flight — it is indefensible for a
+ * questionnaire. So this carries the response's own exit code through
+ * unchanged, and contains no expression that could produce another one.
+ *
+ * **The survey is emitted last**, after the catch. Ordering here is purely
+ * about what a reader sees last, and the catch is the more actionable of
+ * the two: an orchestrator whose crew are about to be orphaned needs that
+ * sentence more than it needs to rate a nudge. The survey is the wind-down
+ * task, so it belongs at the end of the wind-down.
+ */
+export function renderWithStopSurvey(
+  response: RenderedResponse,
+  survey: StopSurvey | null,
+): RenderedResponse {
+  if (survey === null) return response;
+
+  const advisory = `[standup:${survey.kind}] ${survey.text}\n`;
+
+  return {
+    stdout: response.stdout,
+    stderr: `${response.stderr}${advisory}`,
+    // Deliberately the response's own code, never a value derived from the
+    // survey. A questionnaire that could raise an exit code would be a
+    // refused stop, which DECISIONS.md section 6 rules out outright.
+    exitCode: response.exitCode,
   };
 }

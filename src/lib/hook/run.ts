@@ -22,10 +22,12 @@ import {
   renderResponse,
   renderWithNudges,
   renderWithStopCatch,
+  renderWithStopSurvey,
   type RenderedResponse,
 } from "./response";
 import type { SessionEnforcement } from "./enforcement";
-import { evaluateStopCatch, type StopContext } from "./stop-catch";
+import { evaluateStopCatch, evaluateStopSurvey, type StopContext } from "./stop-catch";
+import type { WindDownContext } from "../interventions/survey";
 import type { NudgeContext } from "./nudge";
 import type { HookEvent } from "./payload";
 import type { InterventionFinding } from "../interventions/types";
@@ -62,6 +64,16 @@ export interface RunHookOptions {
    * (MILESTONES.md #47). Advisory: nothing here can refuse the stop.
    */
   readonly stop?: StopContext;
+  /**
+   * What is known about this session's unrated intervention firings when it
+   * tries to stop — the owner's scoring loop.
+   *
+   * Advisory in the strongest sense available: a survey asks about calls
+   * that already happened, so nothing supplied here can change a verdict,
+   * an exit code, or whether the turn ends. Absent — the common case — is
+   * silence.
+   */
+  readonly survey?: WindDownContext;
   /**
    * Nudge context known locally, before any server call (MILESTONES.md #46).
    * Advisory throughout: nothing supplied here can change a verdict.
@@ -175,7 +187,15 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
   // wrap — so neither can block, and neither can undo the other. What the
   // order settles is which line the agent reads last, and on a `Stop` the
   // catch is the most actionable thing the hook has to say.
-  return renderWithStopCatch(renderWithNudges(verdict, event.eventType, nudges), stopCatch);
+  // The session-end intervention survey. Evaluated and composed exactly as
+  // the catch is — beside the verdict, never inside it — so that no branch
+  // here can turn a questionnaire into a refusal of a stop.
+  const survey = evaluateStopSurvey(event, options.survey);
+
+  return renderWithStopSurvey(
+    renderWithStopCatch(renderWithNudges(verdict, event.eventType, nudges), stopCatch),
+    survey,
+  );
 }
 
 /**

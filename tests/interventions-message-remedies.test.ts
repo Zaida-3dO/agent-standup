@@ -139,7 +139,7 @@ describe("the remedies intervention messages name", () => {
     // reader to do something from merely containing the word, and a mutant
     // of exactly that shape is what the anchor is verified against.
     const imperative =
-      /(^|[.!?:;—]\s+)(stage|kill|find|take|create|claim|spawn|request|release|record|say|read|proceed|mint|either|call|work out)\b/i;
+      /(^|[.!?:;—]\s+)(stage|kill|find|take|create|claim|spawn|request|release|record|say|read|proceed|mint|either|call|work out|check|consider|rebase|let)\b/i;
 
     for (const entry of messageCorpus()) {
       expect(entry.text, `${entry.entryId} (${entry.kind}) states no action`).toMatch(imperative);

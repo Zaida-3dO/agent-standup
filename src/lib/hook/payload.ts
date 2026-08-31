@@ -23,6 +23,8 @@
 // command.
 
 /** The event types the hook understands. Anything else is refused. */
+import { readOverrideClaim, type OverrideClaim } from "./override";
+
 export const HOOK_EVENT_TYPES = ["PreToolUse", "PostToolUse", "Stop"] as const;
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
 
@@ -58,6 +60,17 @@ export interface HookEvent {
    * hook the slowest thing in the session.
    */
   readonly toolResult?: string;
+  /**
+   * An override the caller is asserting for a `block-overridable` finding.
+   *
+   * Present only when the caller deliberately sent one; absent is the
+   * overwhelmingly common case and means "no override", which leaves every
+   * block exactly as strong as it was. Validated by
+   * `./override.ts`'s `readOverrideClaim`, which drops anything malformed
+   * rather than partially accepting it — a garbled override must read as no
+   * override, never as a weaker one.
+   */
+  readonly override?: OverrideClaim;
 }
 
 /**
@@ -150,6 +163,13 @@ export function parseHookPayload(text: string): ParseResult {
   const toolResult = readToolResult(
     property(raw, "tool_response") ?? property(raw, "toolResponse"),
   );
+  // Read from the top-level payload rather than from `tool_input`: an
+  // override is a statement the *caller* makes about the guard, not an
+  // argument to the tool being called, and putting it inside the tool input
+  // would mean it reached whatever the tool does with unrecognised fields.
+  const override = readOverrideClaim(
+    property(raw, "standup_override") ?? property(raw, "standupOverride"),
+  );
 
   return {
     ok: true,
@@ -159,6 +179,7 @@ export function parseHookPayload(text: string): ParseResult {
       ...(tool === undefined ? {} : { tool }),
       ...(command === undefined ? {} : { command }),
       ...(toolResult === undefined ? {} : { toolResult }),
+      ...(override === undefined ? {} : { override }),
     },
   };
 }

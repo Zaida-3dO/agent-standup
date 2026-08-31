@@ -188,3 +188,140 @@ export function readStopContext(value: unknown): StopContext | undefined {
 
   return Object.keys(context).length === 0 ? undefined : context;
 }
+
+// ── The intervention survey, delivered on the same Stop ─────────────────
+//
+// `../interventions/survey.ts` decides *when* to ask and *what the question
+// looks like*, and it did both correctly from the day it was written. What
+// it never had was a caller: nothing in `src/` referenced `buildSurvey`,
+// `shouldSurvey` or `parseSurveyResponse`, so the scale the owner specified
+// existed as a library and was never once put to a session.
+//
+// This is the delivery half. It lives here rather than in its own module
+// because it is the same shape as the stop catch in every respect that
+// matters — it evaluates only on a `Stop`, it returns text or nothing, and
+// it cannot refuse anything — and because `renderWithStopCatch` already
+// establishes the channel it needs. Two functions with one posture beside
+// each other is easier to keep honest than one posture stated twice.
+//
+// **It cannot gate anything, and that is structural.** DECISIONS.md §6:
+// Stop is advisory, and a refused stop can trap an agent in a loop. So this
+// returns a `StopSurvey | null` — a value with no verdict in it and no
+// field that could carry one — and `renderWithStopCatch` carries the
+// response's own exit code through untouched. There is no argument to this
+// function, and no configuration anywhere, that can make a survey hold a
+// turn open.
+
+import { buildSurvey, shouldSurvey, type WindDownContext } from "../interventions/survey";
+
+/** The survey as the hook emits it: a prompt, and nothing that could refuse. */
+export interface StopSurvey {
+  readonly kind: "intervention-survey";
+  /** The question, rendered from the owner's scale. */
+  readonly text: string;
+  /** How many firings are being asked about, for a caller that records it. */
+  readonly asked: number;
+}
+
+/**
+ * Evaluates the session-end survey for one event.
+ *
+ * Silence is the overwhelmingly common answer and is never an error: a
+ * session with nothing unrated, a stop that is not a wind-down, or a
+ * session already surveyed all produce `null`. `shouldSurvey` holds every
+ * one of those conditions — this function deliberately adds none of its
+ * own, so that "when do we ask" has exactly one home and cannot drift
+ * between the two modules.
+ *
+ * **Only a `Stop` event is considered.** The same reason `evaluateStopCatch`
+ * gives: a tool call is not an attempt to end a turn, and surveying on
+ * `PostToolUse` would interrupt the middle of a task to ask about a nudge
+ * from four minutes ago — which is both the worst moment to get an honest
+ * answer and the interruption the digest design exists to avoid.
+ */
+export function evaluateStopSurvey(
+  event: HookEvent,
+  context: WindDownContext | undefined,
+): StopSurvey | null {
+  if (event.eventType !== "Stop") return null;
+  if (context === undefined) return null;
+  if (!shouldSurvey(context)) return null;
+
+  // `shouldSurvey` has already established there is something to ask about,
+  // but `buildSurvey` is the module that decides which firings make the cut
+  // and it may still return nothing. Trusting the first check and asserting
+  // the second would be assuming a relationship between two functions that
+  // neither one promises.
+  const survey = buildSurvey(context.unrated ?? []);
+  if (survey === null) return null;
+
+  return {
+    kind: "intervention-survey",
+    text: survey.prompt,
+    asked: survey.firings.length,
+  };
+}
+
+/**
+ * Reads a `WindDownContext` off an arbitrary value — a field on a server
+ * response.
+ *
+ * Each field is validated on its own and a malformed one is dropped rather
+ * than failing the whole read, exactly as `readStopContext` does. The
+ * direction is the same and matters for the same reason: a dropped field
+ * makes the survey **silent**, never spurious. A server that garbles this
+ * block costs a missed survey rather than an interrogation on every stop.
+ *
+ * `unrated` is the one field with structure in it, and a firing missing its
+ * `eventId` or `entryId` is dropped individually — an answer cannot be
+ * attributed without an event id, so a firing that cannot be identified is
+ * one nothing could ever record a score against.
+ */
+export function readWindDownContext(value: unknown): WindDownContext | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+
+  const unrated = Array.isArray(record.unrated)
+    ? record.unrated.flatMap((entry) => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const firing = entry as Record<string, unknown>;
+        const eventId = firing.eventId;
+        const entryId = firing.entryId;
+        if (typeof eventId !== "string" || eventId.trim() === "") return [];
+        if (typeof entryId !== "string" || entryId.trim() === "") return [];
+        const at = typeof firing.at === "number" && Number.isFinite(firing.at) ? firing.at : 0;
+        return [
+          {
+            eventId: eventId.trim(),
+            entryId: entryId.trim(),
+            at,
+            ...(typeof firing.tool === "string" ? { tool: firing.tool } : {}),
+            ...(typeof firing.message === "string" ? { message: firing.message } : {}),
+            ...(typeof firing.outcome === "string" ? { outcome: firing.outcome } : {}),
+          },
+        ];
+      })
+    : undefined;
+
+  const liveCrew =
+    typeof record.liveCrew === "number" && Number.isInteger(record.liveCrew) && record.liveCrew >= 0
+      ? record.liveCrew
+      : undefined;
+
+  const idleMs =
+    typeof record.idleMs === "number" && Number.isFinite(record.idleMs) && record.idleMs >= 0
+      ? record.idleMs
+      : undefined;
+
+  const context: WindDownContext = {
+    ...(unrated === undefined ? {} : { unrated }),
+    ...(liveCrew === undefined ? {} : { liveCrew }),
+    ...(idleMs === undefined ? {} : { idleMs }),
+    ...(typeof record.wakeScheduled === "boolean" ? { wakeScheduled: record.wakeScheduled } : {}),
+    ...(typeof record.alreadySurveyed === "boolean"
+      ? { alreadySurveyed: record.alreadySurveyed }
+      : {}),
+  };
+
+  return Object.keys(context).length === 0 ? undefined : context;
+}

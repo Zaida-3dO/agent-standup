@@ -39,7 +39,7 @@ import { parseKillCommand, splitStatements } from "@/lib/kill/parse";
  * machine and nothing on another, and a guard that guessed would be wrong
  * in an unpredictable direction on a machine nobody is looking at.
  */
-function invokesGitSubcommand(statement: string, subcommand: string): boolean {
+export function invokesGitSubcommand(statement: string, subcommand: string): boolean {
   const tokens = statement.trim().split(/\s+/);
   const gitAt = tokens.findIndex((token) => token === "git" || token.endsWith("/git"));
   if (gitAt === -1) return false;
@@ -188,6 +188,110 @@ export function isWorkRecordingCommand(command: string): boolean {
 
     if (invokesGitSubcommand(trimmed, "push")) {
       if (/\s--dry-run\b/.test(trimmed)) return false;
+      return true;
+    }
+
+    return false;
+  });
+}
+
+/**
+ * Whether a command is trying to establish that a branch was merged by
+ * comparing commit refs — the recognition half of the squash-merge nudge.
+ *
+ * The situation is specific and the failure is silent, which is what makes
+ * it worth a nudge rather than a doc line. This project squash-merges, so a
+ * merged branch's commits **do not appear on the target branch at all**:
+ * the squash produces one new commit with a new sha, and the branch's own
+ * commits are never ancestors of it. Every ref-comparison answers "not
+ * merged" — truthfully, for the question it was asked, and misleadingly for
+ * the question the caller meant.
+ *
+ * The shapes recognised are the ones that ask "is X an ancestor of Y" or
+ * "what is on X that is not on Y":
+ *
+ *   - `git branch --merged` / `--no-merged` — ancestry by another name.
+ *   - `git merge-base --is-ancestor` — the explicit form.
+ *   - `git cherry`, `git log main..branch`, `git rev-list main..branch` —
+ *     the "what is not yet there" forms, which read as empty-or-not.
+ *
+ * Deliberately NOT recognised: `git log --oneline` with no range, `git
+ * diff`, or a bare `git branch`. Those are ordinary reads a session runs
+ * constantly, and nudging on them would be a nudge on nearly every call —
+ * the "fires and annoys" failure that earns an entry a 1 on the owner's own
+ * scale.
+ */
+export function isMergedByRefComparison(command: string): boolean {
+  return splitStatements(command).some((statement) => {
+    const trimmed = statement.trim();
+
+    // `git branch --merged` / `--no-merged` — ancestry, asked as a listing.
+    if (invokesGitSubcommand(trimmed, "branch") && /\s--(no-)?merged\b/.test(trimmed)) return true;
+
+    // The explicit ancestry test. `git merge-base` alone computes a
+    // reference point and is not a merged-or-not question.
+    if (invokesGitSubcommand(trimmed, "merge-base") && /\s--is-ancestor\b/.test(trimmed)) {
+      return true;
+    }
+
+    // `git cherry` exists to answer "which of these commits are upstream",
+    // which is precisely the question squash-merging invalidates.
+    if (invokesGitSubcommand(trimmed, "cherry")) return true;
+
+    // A two-dot range on log or rev-list: "what is on one and not the
+    // other". Required to carry a range, so an ordinary `git log` is not
+    // matched. The range is anchored to a token so a filename containing
+    // two dots is not mistaken for one.
+    if (invokesGitSubcommand(trimmed, "log") || invokesGitSubcommand(trimmed, "rev-list")) {
+      return /(^|\s)[^\s.]+\.\.[^\s.]+(\s|$)/.test(trimmed);
+    }
+
+    return false;
+  });
+}
+
+/**
+ * Whether a command is a rebase, or is checking whether a branch has
+ * diverged from its base — the recognition half of the rebase-restraint
+ * nudge.
+ *
+ * Both halves are one shape for one reason: the check is almost always the
+ * prelude to the rebase, and the advice is the same at either point. Catching
+ * only the rebase itself would arrive after the caller had already spent the
+ * calls deciding to do it.
+ *
+ * Recognised: `git rebase` (but not `--abort`, `--continue`, `--skip`, which
+ * end one already in progress), `git pull --rebase`, and the
+ * "would this merge" probes — `git merge --no-commit --no-ff` and
+ * `git merge-tree`, which exist to test a merge without performing one.
+ *
+ * `git fetch` and `git status` are deliberately absent: they are what every
+ * session runs to orient itself, and reading them as rebase intent would
+ * nudge constantly on the most ordinary commands there are.
+ */
+export function isRebaseOrDivergenceCheck(command: string): boolean {
+  return splitStatements(command).some((statement) => {
+    const trimmed = statement.trim();
+
+    if (invokesGitSubcommand(trimmed, "rebase")) {
+      // Finishing or abandoning a rebase already under way. The decision
+      // this nudge speaks to was made some time ago; repeating it here
+      // would nudge hardest at the caller who is already cleaning up.
+      if (/\s--(abort|continue|skip|quit)\b/.test(trimmed)) return false;
+      return true;
+    }
+
+    if (invokesGitSubcommand(trimmed, "pull") && /\s--rebase\b/.test(trimmed)) return true;
+
+    // A trial merge: performed to see whether it would conflict, then
+    // thrown away. `merge-tree` writes nothing at all and is the purest
+    // form of the question.
+    if (invokesGitSubcommand(trimmed, "merge-tree")) return true;
+    if (
+      invokesGitSubcommand(trimmed, "merge") &&
+      /\s--no-commit\b/.test(trimmed) &&
+      /\s--no-ff\b/.test(trimmed)
+    ) {
       return true;
     }
 

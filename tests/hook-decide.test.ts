@@ -365,3 +365,145 @@ describe("what the hook sends", () => {
     expect(askServer).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── The override channel — MILESTONES.md #128's middle tier ─────────────
+//
+// Before this existed, `block-overridable` and `hard-block` denied
+// identically: nothing carried an override, so the middle tier of the
+// ladder was a name with no behaviour behind it. These tests are written in
+// pairs — what an override releases, and what it must not — because a
+// channel that simply allowed everything would pass any suite that only
+// checked the happy path.
+
+/** A blocking finding at the given level, shaped as the server reports it. */
+function finding(id: string, level: "block-overridable" | "hard-block") {
+  return {
+    id,
+    source: "builtin" as const,
+    phase: "pre" as const,
+    audience: "agent" as const,
+    level,
+    timing: "immediate" as const,
+    messages: { plain: "p", prominent: "P" },
+  };
+}
+
+const REASON = "Nothing changed since review except the changelog wording.";
+
+describe("overriding a block-overridable refusal", () => {
+  it("allows the call when the override names the blocking finding", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "broad-process-kill", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(verdict.source).toBe("override");
+    // The recorded reason is the whole product of this tier.
+    expect(verdict.reason).toContain(REASON);
+  });
+
+  it("still denies when the override names a different finding", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "something-else", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+  });
+
+  it("still denies when the reason is too short to say anything", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "broad-process-kill", reason: "ok" } }),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+  });
+
+  it("NEVER releases a hard block, however well-formed the override", async () => {
+    // The one property that must not regress. A hard block is the only
+    // thing separating "overridable with a reason" from "always passable".
+    const verdict = await decide({
+      event: event({ override: { entryId: "some-hard-rule", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "a hard rule",
+        findings: [finding("some-hard-rule", "hard-block")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+  });
+
+  it("does not release a call whose other blocking finding was not overridden", async () => {
+    // Two guards refused; the caller answered one. "I considered X" is not
+    // "I considered everything", so the call stays blocked.
+    const verdict = await decide({
+      event: event({ override: { entryId: "first-rule", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "two rules",
+        findings: [
+          finding("first-rule", "block-overridable"),
+          finding("second-rule", "block-overridable"),
+        ],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+  });
+
+  it("does not release a refusal that reported no findings at all", async () => {
+    // An enforcement refusal, or a server that named no entry. There is
+    // nothing for an override to be about, so it cannot apply.
+    const verdict = await decide({
+      event: event({ override: { entryId: "anything", reason: REASON } }),
+      askServer: server({ decision: "block", reason: "displaced session" }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+  });
+
+  it("tells a blocked caller that an override exists and what it costs", async () => {
+    const verdict = await decide({
+      event: event(),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    // A refusal that hides an available exit is what teaches sessions to
+    // route around guards instead of answering them.
+    expect(verdict.reason).toContain("broad-process-kill");
+    expect(verdict.reason).toContain("recorded");
+  });
+
+  it("offers no override in the refusal text for a hard block", async () => {
+    const verdict = await decide({
+      event: event(),
+      askServer: server({
+        decision: "block",
+        reason: "a hard rule",
+        findings: [finding("some-hard-rule", "hard-block")],
+      }),
+    });
+
+    expect(verdict.reason).not.toContain("can be overridden");
+  });
+});

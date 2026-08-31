@@ -224,6 +224,19 @@ person hitting them.
 3. **Scores aggregate per entry** and the report names the ones worth reading.
 4. **A 1 is a removal signal**, not merely a low score.
 
+### Orchestration — the cost of coordinating parallel work
+
+Findings from running several crews at once. All nudges: none of these describes something *wrong*,
+only something more expensive than it needs to be, and the weakest level that works is the rule.
+
+| # | Situation | Phase | Audience | Default level | Timing | Status |
+|---|---|---|---|---|---|---|
+| **I23** | **Checking whether a branch was merged by comparing commit refs, in a repository that squash-merges.** A squash produces one new commit with a new sha and the branch's own commits are never ancestors of it, so `git branch --merged`, `git merge-base --is-ancestor`, `git cherry` and a two-dot `log`/`rev-list` range all report "not merged" for work that merged cleanly an hour ago. **The answer is correct for the question asked and wrong for the question meant**, which is what makes it undebuggable by looking harder at the output — sessions have concluded a merge failed, re-run it, and re-opened settled work on the strength of it. Recognisable from the command alone; the remedy is to read the pull request's own state. From `interventions.md` | `pre` | `agent` | nudge | immediate | `built` |
+| **I24** | **A rebase, or the divergence check that usually precedes one.** The owner's framing: do not worry much about main purity, **bias toward fixing forward** if there are semantic conflicts, and only rebase if there are actual merge conflicts preventing the merge. Main moves several times an hour here, so a branch that is merely behind does not need rebasing and an early rebase usually means rebasing twice. **The check is recognised as well as the rebase itself**, deliberately: by the time `git rebase` is typed the decision is made and the calls are spent, whereas the divergence check is where it is still cheap to say "you may not need to". From `interventions.md` | `pre` | `agent` | nudge | immediate | `built` |
+| **I25** | **Several items awaiting a visual review at the same time.** A visual reviewer is the most expensive agent dispatched — it needs a browser, holds one of a small pool of slots, and spends its budget looking at a rendered page — so one per pull request buys several sets of screenshots of intermediate states that are superseded before anyone reads them. The cheaper shape is to let them merge and do a single visual pass over the result. **The affordance is the point, not the advice**: the owner asks for a first-class way to record *"review deferred because of concurrency"* by linking the item minted to do it later, because advice to defer a review with no way to record the deferral is advice to forget it. `Artifact.followUpItemId` already carries exactly this relationship for `lgtm_with_followups`. **Silent at one** — one pending review is a review, not a batch. From `interventions.md` | `post` | `orchestrator` | nudge | digest | `built` |
+
+---
+
 ### The scale
 
 | Score | Meaning |
