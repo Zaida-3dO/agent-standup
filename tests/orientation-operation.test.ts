@@ -497,6 +497,61 @@ describeIfDb("orientation against Postgres", () => {
       );
     }
 
+    /**
+     * How many checkpoints the truncation cases below append, and the total
+     * number of events that leaves on the item.
+     *
+     * The total is one MORE than the number appended: `create_item` writes a
+     * `field_change` event of its own (SCHEMA.md §3), so an item with four
+     * checkpoints has five events. Both are named here because the polled
+     * count and the number written have to move together — see
+     * `settledOrientation` for what goes wrong when they do not.
+     */
+    const TRUNCATION_CHECKPOINTS = 4;
+    const TRUNCATION_TOTAL_EVENTS = TRUNCATION_CHECKPOINTS + 1;
+
+    /**
+     * Reads `orientation` once EVERY event written to the item is visible.
+     *
+     * **Why this exists, and why polling for "enough" events is not the same
+     * thing.** These cases write `TRUNCATION_CHECKPOINTS` events and then
+     * compare a bounded read against an unbounded one. Both reads have to see
+     * the same ledger, or the comparison is between two different worlds.
+     *
+     * Waiting for only *some* of the events satisfies the lower bound the
+     * horizon threatens — it is why the helper above polls at all — but
+     * leaves the UPPER bound unpinned, and that is a real race rather than a
+     * theoretical one. With four events written and only three awaited, the
+     * unbounded read can settle at three while the fourth is still below the
+     * visibility horizon; if it clears the horizon before the bounded read a
+     * moment later, that read sees four. `slice(-2)` of three rows and
+     * `slice(-2)` of four rows are different pairs, and the comparison fails
+     * with every query having succeeded — an assertion mismatch, not an
+     * error, which is what makes it easy to misread as unrelated flakiness.
+     *
+     * Reproduced deterministically: hold a transaction open across the fourth
+     * write so the unbounded read settles short, then commit it before the
+     * bounded read. The expected pair and the actual pair differ by one
+     * event, exactly as above.
+     *
+     * The horizon is a CLUSTER-wide bound, not a per-database one
+     * (`pg_snapshot_xmin`, `src/lib/events.ts`) — Postgres transaction ids
+     * are shared across databases on a server — so the transaction that
+     * stretches it is usually in another test file entirely, and this file
+     * cannot make it go away by being tidy on its own.
+     *
+     * Waiting for the exact total keeps the discipline the helper above
+     * documents: this polls the PRECONDITION (all the writes have landed),
+     * never the property under test (which events a bounded read returns).
+     * That property is still asserted once, on the first read, and must hold
+     * the first time.
+     */
+    async function settledOrientation(
+      itemId: string,
+    ): Promise<{ whatChanged: readonly { id: string }[]; whatChangedTruncated: boolean }> {
+      return orientationWithAtLeast(itemId, TRUNCATION_TOTAL_EVENTS);
+    }
+
     // The load-bearing property of the whole bounded-reads change, and the
     // one thing that had no test at all. The failure mode if these flags
     // regress is not an error — it is `orientation` quietly returning a
@@ -513,13 +568,16 @@ describeIfDb("orientation against Postgres", () => {
       // truncation), on a hardwired `true` or `false`, and on dropping the
       // flag from the response.
       const item = await makeItem({ title: "Truncation subject" });
-      for (let i = 0; i < 4; i++) await appendCheckpoint(item.id, `checkpoint ${i}`);
+      for (let i = 0; i < TRUNCATION_CHECKPOINTS; i++)
+        await appendCheckpoint(item.id, `checkpoint ${i}`);
 
-      // Wait for the events to clear the visibility horizon FIRST, so the
-      // assertions below are about truncation and not about timing.
-      const wholeResult = await orientationWithAtLeast(item.id, 3);
+      // Wait for EVERY event to clear the visibility horizon first, so the
+      // assertions below are about truncation and not about timing. Waiting
+      // for only some of them would leave `exactCount` below reading a
+      // ledger that can still grow — see `settledOrientation`.
+      const wholeResult = await settledOrientation(item.id);
       expect(wholeResult.whatChangedTruncated).toBe(false);
-      expect(wholeResult.whatChanged.length).toBeGreaterThan(2);
+      expect(wholeResult.whatChanged).toHaveLength(TRUNCATION_TOTAL_EVENTS);
 
       const truncatedResult = (await runtime.call("orientation", {
         itemId: item.id,
@@ -554,9 +612,15 @@ describeIfDb("orientation against Postgres", () => {
       // Fails if the slice flips to `slice(0, limit)` — the returned ids
       // would then be the oldest two rather than the newest two.
       const item = await makeItem({ title: "Newest-events subject" });
-      for (let i = 0; i < 4; i++) await appendCheckpoint(item.id, `ordered checkpoint ${i}`);
+      for (let i = 0; i < TRUNCATION_CHECKPOINTS; i++)
+        await appendCheckpoint(item.id, `ordered checkpoint ${i}`);
 
-      const all = await orientationWithAtLeast(item.id, 3);
+      // Every event, not merely enough of them: the pair this compares
+      // against is taken from the tail of THIS read, so a read that settles
+      // while another event is still below the horizon compares the wrong
+      // pair. See `settledOrientation`.
+      const all = await settledOrientation(item.id);
+      expect(all.whatChanged).toHaveLength(TRUNCATION_TOTAL_EVENTS);
 
       const bounded = (await runtime.call("orientation", {
         itemId: item.id,
