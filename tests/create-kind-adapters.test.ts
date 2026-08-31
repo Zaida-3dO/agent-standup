@@ -54,35 +54,46 @@ describe("the three explicit creates are registered operations", () => {
   });
 });
 
-describe("MCP derives the three tools with no second list", () => {
-  // The derivation is the repo's stated pattern — this asserts it actually
-  // held for these three rather than trusting it. Fails if any of the three
-  // were somehow excluded from the derived list.
-  it.each(NEW_OPERATIONS)("%s appears as an MCP tool over each transport", (name) => {
+describe("MCP derives its create tool with no second list", () => {
+  // On MCP the three are reached through `create_work`, which carries the
+  // kind as a required `type` field; the three themselves are waived off
+  // both MCP transports so one tool describes one decision. This asserts
+  // the derivation actually held rather than trusting it. Fails if
+  // `create_work` is excluded from the derived list.
+  it("create_work appears as an MCP tool over each transport", () => {
     for (const adapter of ["mcp_http", "mcp_stdio"] as const) {
       const tools = toolsFromOperations(exposedOperations(adapter, listOperations()));
-      const tool = tools.find((t) => t.name === name);
-      expect(tool, `${name} missing from ${adapter}`).toBeDefined();
+      const tool = tools.find((t) => t.name === "create_work");
+      expect(tool, `create_work missing from ${adapter}`).toBeDefined();
       // A write must not be advertised read-only — a client acting on that
       // hint would treat a create as safe to retry or to run speculatively.
       expect(tool!.readOnly).toBe(false);
     }
   });
 
-  // The advertised schema has to carry the required parent field, or an
-  // agent reading the tool list cannot know to send it — which is precisely
-  // the failure mode this whole change exists to fix, reintroduced at the
-  // discovery layer. Fails if the schema is replaced with a bare object.
-  it("create_task advertises projectId in its input schema", () => {
+  // The three stay registered — they are what `create_work` dispatches to,
+  // and they remain the operations HTTP and the command line expose. Fails
+  // if a fold at the adapter layer is mistaken for deleting them.
+  it.each(NEW_OPERATIONS)("%s stays a registered operation", (name) => {
+    expect(listOperations().find((operation) => operation.name === name)).toBeDefined();
+  });
+
+  // The advertised schema has to carry the parent field, or an agent
+  // reading the tool list cannot know to send it — which is precisely the
+  // failure mode this whole change exists to fix, reintroduced at the
+  // discovery layer. Fails if the schema is replaced with a bare object,
+  // which is exactly what a discriminated union would advertise.
+  it("create_work advertises type, projectId and taskId in its input schema", () => {
     const tools = toolsFromOperations(listOperations());
-    const tool = tools.find((t) => t.name === "create_task")!;
-    const parsed = tool.inputSchema.safeParse({
-      title: "x",
-      body: "y",
-      area: "z",
-      originType: "auto",
-    });
-    expect(parsed.success).toBe(false);
+    const tool = tools.find((t) => t.name === "create_work")!;
+    const shape = (tool.inputSchema as unknown as { shape: Record<string, unknown> }).shape;
+    for (const field of ["type", "projectId", "taskId"]) {
+      expect(shape[field], `${field} missing from create_work's advertised shape`).toBeDefined();
+    }
+    // `type` is required: a call that omits it does not parse.
+    expect(
+      tool.inputSchema.safeParse({ title: "x", body: "y", area: "z", originType: "auto" }).success,
+    ).toBe(false);
   });
 });
 

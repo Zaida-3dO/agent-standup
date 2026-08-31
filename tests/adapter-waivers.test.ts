@@ -87,11 +87,20 @@ describe("isWaived / waiversFor / exposedOperations", () => {
     expect(isWaived("mcp_stdio", "backfill")).toBe(true);
     expect(isWaived("http", "backfill")).toBe(false);
     expect(isWaived("cli", "backfill")).toBe(false);
-    // `create_task` is the sentinel for "still exposed": it is one of the
-    // most-called tools and is deliberately not waived. (`create_item` was
-    // this sentinel until it became a waived deprecation.)
-    expect(isWaived("mcp_http", "create_task")).toBe(false);
+    // `checkpoint` is the sentinel for "still exposed": it is one of the
+    // most-called agent-facing tools and is deliberately not waived. It took
+    // this role from `create_task`, which is now reached through the folded
+    // `create_work` tool and waived off MCP with the other two creates — a
+    // sentinel has to be a tool no planned fold will ever touch, or it stops
+    // being a positive control and becomes another thing to edit.
+    expect(isWaived("mcp_http", "checkpoint")).toBe(false);
+    expect(isWaived("mcp_stdio", "checkpoint")).toBe(false);
     expect(isWaived("mcp_http", "create_item")).toBe(true);
+    // The folded-away creates and loop verbs are waived on MCP only.
+    expect(isWaived("mcp_http", "create_task")).toBe(true);
+    expect(isWaived("mcp_http", "loop_add")).toBe(true);
+    expect(isWaived("http", "create_task")).toBe(false);
+    expect(isWaived("cli", "loop_add")).toBe(false);
     expect(isWaived("mcp_http", "get_crew_name")).toBe(true);
     expect(isWaived("mcp_stdio", "get_crew_name")).toBe(true);
     expect(isWaived("http", "get_crew_name")).toBe(false);
@@ -119,9 +128,9 @@ describe("isWaived / waiversFor / exposedOperations", () => {
   });
 
   it("filters a list down to what an adapter exposes", () => {
-    const all = [{ name: "backfill" }, { name: "create_task" }];
-    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["create_task"]);
-    expect(exposedOperations("http", all).map((o) => o.name)).toEqual(["backfill", "create_task"]);
+    const all = [{ name: "backfill" }, { name: "checkpoint" }];
+    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["checkpoint"]);
+    expect(exposedOperations("http", all).map((o) => o.name)).toEqual(["backfill", "checkpoint"]);
   });
 });
 
@@ -136,7 +145,13 @@ describe("the MCP adapter honours its waiver", () => {
     const tools = toolsFromOperations(exposedOperations("mcp_http", listOperations()));
     expect(tools.map((t) => t.name)).not.toContain("backfill");
     expect(tools.map((t) => t.name)).not.toContain("get_crew_name");
-    expect(tools.map((t) => t.name)).toContain("create_task");
+    expect(tools.map((t) => t.name)).toContain("checkpoint");
+    // The folded tools are the ones MCP exposes: one loop tool with an
+    // action field, one create tool with a required type field.
+    expect(tools.map((t) => t.name)).toContain("create_work");
+    expect(tools.map((t) => t.name)).toContain("loop");
+    expect(tools.map((t) => t.name)).not.toContain("create_task");
+    expect(tools.map((t) => t.name)).not.toContain("loop_add");
   });
 
   it("builds a server whose registered tools exclude the waived operation", async () => {
@@ -154,7 +169,9 @@ describe("the MCP adapter honours its waiver", () => {
     );
 
     expect(registered.length).toBeGreaterThan(0);
-    expect(registered).toContain("create_task");
+    expect(registered).toContain("checkpoint");
+    expect(registered).toContain("create_work");
+    expect(registered).toContain("loop");
     expect(registered).not.toContain("backfill");
     expect(registered).not.toContain("get_crew_name");
     // Everything else the registry holds IS exposed — the waiver is one
