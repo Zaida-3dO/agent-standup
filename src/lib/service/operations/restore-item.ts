@@ -47,6 +47,7 @@ import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
 import { callerEventActor } from "../items/event-attribution";
 import { ITEM_COLUMNS, toItemRecord, type ItemRecord, type RawItemRow } from "../items/row";
+import { resolveItemId } from "../items/resolve-id";
 
 /**
  * Refused because the row was archived in favour of a named replacement and
@@ -224,6 +225,17 @@ export const restoreItem = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RestoreItemInput): Promise<RestoreItemOutput> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      id: await resolveItemId(ctx.db, input.id, "id"),
+    };
+
     const rows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
       `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,
       input.id,

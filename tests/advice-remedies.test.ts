@@ -45,6 +45,8 @@ import {
   collectAdvice,
   findAdviceDefects,
   findRuleFieldDefects,
+  findUndocumentedConditionalRequirements,
+  requiredFieldNames,
   instructedIdentifiers,
 } from "@/lib/service/describe/advice";
 import { narrowerCallFor } from "@/lib/service/response-size";
@@ -83,6 +85,81 @@ describe("the advice surface a caller is actually shown", () => {
     expect(
       defects,
       `contract rules about non-existent fields:\n${describeDefects(defects)}`,
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Fields the server refuses as required from inside a handler, rather than
+ * at the schema boundary — the conditional requirements a JSON Schema
+ * cannot express, listed with the operations they can refuse.
+ *
+ * Kept as an explicit list rather than scraped out of the source: a regex
+ * over `new InvalidInputError(...)` would silently shrink to zero the day
+ * someone reformats a throw, and a sweep that finds nothing is a sweep that
+ * passes. Adding a conditional refusal here is a deliberate act, and the
+ * test below then insists the contract documents it.
+ */
+const CONDITIONAL_REQUIREMENTS = [
+  // `create-core.ts` — refused after `resolveSessionDefaults`, because
+  // before that a missing `originType` is not yet knowably missing.
+  { field: "originType", operations: ["create_task", "create_project", "create_subtask"] },
+  { field: "originPersonId", operations: ["create_task", "create_project", "create_subtask"] },
+] as const;
+
+describe("conditional requirements the schema cannot state are documented", () => {
+  // ── Why this is a sweep and not three paragraphs ──────────────────────
+  //
+  // Two crews on 2026-08-31 were refused by conditionally-required fields
+  // and both read the schema first, because it is the only machine-readable
+  // contract they have. Both requirements turned out to be documented
+  // already — but nothing enforced that, so the next one would have shipped
+  // undocumented and been found the same expensive way: by a caller being
+  // refused mid-task.
+  //
+  // This is the check that makes `describe_tool` load-bearing for the one
+  // class of rule it uniquely exists to carry.
+
+  it("documents every field that is optional in the schema but refused as required", () => {
+    const defects = findUndocumentedConditionalRequirements(CONDITIONAL_REQUIREMENTS);
+    expect(
+      defects,
+      `conditional requirements missing from describe_tool:
+${describeDefects(defects)}`,
+    ).toEqual([]);
+  });
+
+  // The anti-hollowness half. Everything above reports zero against the
+  // current tree — which is also what a detector that lost its way reports.
+  it("still detects one when the documenting rule is taken away", () => {
+    // A field genuinely optional in the schema, refused at runtime, and
+    // named by no rule of an unrelated operation. Fails if the detector
+    // stops looking at contract rules, or starts treating every field as
+    // documented.
+    const defects = findUndocumentedConditionalRequirements([
+      { field: "branch", operations: ["claim"] },
+    ]);
+    expect(defects).toHaveLength(1);
+    expect(defects[0]!.named).toBe("branch");
+    expect(defects[0]!.operation).toBe("claim");
+  });
+
+  it("does not flag a field the schema already marks required", () => {
+    // `checkpoint.itemId` is required by the schema itself AND named by no
+    // contract rule. Both halves matter: an undocumented field is what
+    // isolates the schema-required condition, because a documented one
+    // would be skipped by the documentation check first and would pass
+    // whether or not the schema condition existed.
+    //
+    // This test was itself corrected by mutation. It originally used
+    // `create_task.title`, which IS documented (by the title-convention
+    // rule) — so it short-circuited on the documentation check and survived
+    // deleting the schema condition entirely. That is the vacuous-negative-
+    // control failure this file exists to prevent, found the only way it
+    // can be: by mutating and watching nothing go red.
+    expect(requiredFieldNames("checkpoint").has("itemId")).toBe(true);
+    expect(
+      findUndocumentedConditionalRequirements([{ field: "itemId", operations: ["checkpoint"] }]),
     ).toEqual([]);
   });
 });

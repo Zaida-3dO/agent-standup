@@ -13,6 +13,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
 import type { Assignment } from "@/lib/claims";
+import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
   .object({
@@ -36,6 +37,17 @@ export const release = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ReleaseOperationInput): Promise<Assignment> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     // The live row this session holds on this item — at most one, by the
     // partial unique index `Assignment_one_live_row_per_session_per_item`
     // (SCHEMA.md §2), so `LIMIT 1` never has to pick between rows.

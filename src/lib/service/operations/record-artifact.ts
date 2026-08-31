@@ -39,6 +39,7 @@ import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib
 import { currentReviewRound } from "../guards/merge-review-round";
 import { MERGE_APPROVAL_KIND } from "../guards/merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH } from "../guards/merge-override";
+import { resolveItemId } from "../items/resolve-id";
 
 /**
  * `ArtifactKind` in schema.prisma, mirrored. Written out rather than derived
@@ -502,6 +503,17 @@ export const recordArtifact = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RecordArtifactInput): Promise<RecordedArtifact> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     const itemRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
       `SELECT "id" FROM "Item" WHERE "id" = $1`,
       input.itemId,
@@ -677,6 +689,18 @@ export const recordArtifact = defineOperation({
     }
 
     if (input.followUpItemId) {
+      // Resolved inside the guard rather than at the top of the handler
+      // because this reference is optional: resolving it unconditionally
+      // would turn an absent follow-up into a lookup. It reports its own
+      // field name, so an ambiguous prefix here names `followUpItemId` and
+      // not the `itemId` the artifact is being recorded against — the two
+      // are different items and a caller told only "id" would not know
+      // which of the two to lengthen.
+      input = {
+        ...input,
+        followUpItemId: await resolveItemId(ctx.db, input.followUpItemId, "followUpItemId"),
+      };
+
       const followUpRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
         `SELECT "id" FROM "Item" WHERE "id" = $1`,
         input.followUpItemId,
@@ -855,6 +879,17 @@ export const requestReview = defineOperation({
   // Stryker restore all
   input: requestReviewInput,
   async handler(ctx: ServiceContext, input: RequestReviewInput) {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     const itemRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
       `SELECT "id" FROM "Item" WHERE "id" = $1`,
       input.itemId,

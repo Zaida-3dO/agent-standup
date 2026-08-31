@@ -25,6 +25,7 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { takeoverAssignment, type TakeoverResult } from "@/lib/takeover";
+import { resolveItemId } from "../items/resolve-id";
 
 const HOLDER_TYPES = ["person", "agent"] as const;
 
@@ -91,6 +92,17 @@ export const takeover = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: TakeoverOperationInput): Promise<TakeoverResult> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     // Checked ahead of the assignment read for the same reason `claim` checks
     // it: a bad item id would otherwise be indistinguishable from "that
     // session holds nothing here", and the two need different fixes.

@@ -51,6 +51,7 @@ import {
   type LoopStatus,
 } from "@/lib/open-loops";
 import { loopEventsFor, requireItemExists } from "./loop-shared";
+import { resolveItemId } from "../items/resolve-id";
 
 /**
  * How much of a loop's text the slim shape carries.
@@ -245,6 +246,17 @@ export const loopList = defineOperation({
   // Stryker restore all
   input: listInput,
   async handler(ctx: ServiceContext, input: LoopListInput): Promise<LoopListOutput> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     // The item is checked before its loops are read, so "no such item" and
     // "that item has no loops" are different answers. They are the two most
     // confusable outcomes of this call — an empty list for a mistyped id
@@ -313,6 +325,17 @@ export const loopGet = defineOperation({
   // Stryker restore all
   input: getInput,
   async handler(ctx: ServiceContext, input: LoopGetInput): Promise<LoopGetOutput> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     await requireItemExists(ctx, input.itemId, "itemId");
 
     const loops = deriveLoops(await loopEventsFor(ctx, input.itemId));

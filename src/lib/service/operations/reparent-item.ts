@@ -35,6 +35,7 @@ import {
 import { resolveInboxProject } from "../items/inbox-project";
 import { INBOX_PROJECT_ID } from "./create-task";
 import { toItemWriteRecord, type ItemRecord, type ItemWriteRecord } from "../items/row";
+import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
   .object({
@@ -106,6 +107,17 @@ export const reparentItem = defineOperation({
     ctx: ServiceContext,
     input: ReparentItemInput,
   ): Promise<ItemRecord | ItemWriteRecord> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      id: await resolveItemId(ctx.db, input.id, "id"),
+    };
+
     // Applied at both returns below. `applyMove` hands back the whole row
     // because the two callers that are not this one need it — notably
     // `repair_stuck_projects`, which shares the core — so the narrowing
@@ -133,13 +145,23 @@ export const reparentItem = defineOperation({
     // after: the inbox is an ordinary project row and could in principle be
     // a descendant of the item being moved, and checking the sentinel string
     // against a list of ids would never match.
+    // A short id is resolved here and not at the top of the handler,
+    // because `parentId` is only an item reference in this branch: the
+    // `null` case returned above, and `"inbox"` is a sentinel that is not
+    // an id at all and must reach `resolveInboxProject` unmodified. It is
+    // not id-shaped anyway (`isShortIdShape` refuses non-hex), so resolving
+    // it first would be a no-op rather than a bug — confirmed by mutation:
+    // hoisting the resolve above the sentinel check leaves the suite green.
+    // The ordering is therefore a readability choice, not a correctness one,
+    // and is written this way so "what is an id" is a decision this branch
+    // makes once rather than a property of the resolver's regex.
     const parentId =
       input.parentId === INBOX_PROJECT_ID
         ? await resolveInboxProject(ctx, {
             area: item.area,
             originType: "auto",
           })
-        : input.parentId;
+        : await resolveItemId(ctx.db, input.parentId, "parentId");
 
     assertNoCycle({ newParentId: parentId, subtree, field: "parentId" });
 

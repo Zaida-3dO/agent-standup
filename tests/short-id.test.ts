@@ -111,6 +111,23 @@ describeIfDb("resolving a short id against Postgres", () => {
     })) as { id: string };
   }
 
+  /**
+   * A task under a fresh project. The transition tests need one: a project
+   * has no state of its own (its state derives from its children), so
+   * transitioning one is refused for a reason unrelated to short ids.
+   */
+  async function createTask(title: string): Promise<string> {
+    const { id: projectId } = await createItem(`project for ${title}`);
+    const created = (await runtime.call("create_task", {
+      title,
+      body: "x",
+      area: "short-id-tests",
+      originType: "auto",
+      projectId,
+    })) as { id: string };
+    return created.id;
+  }
+
   /** Rewrites a fresh item's leading hex so it starts with `prefix`. */
   async function createItemWithIdPrefix(title: string, prefix: string): Promise<string> {
     const { id } = await createItem(title);
@@ -197,6 +214,161 @@ describeIfDb("resolving a short id against Postgres", () => {
     expect(isServiceError(error)).toBe(true);
     if (!isServiceError(error)) throw new Error("unreachable");
     expect(error.code).toBe("not_found");
+  });
+
+  // -- The writes ---------------------------------------------------------
+  //
+  // Short-id resolution shipped on the reads only. That is worse than not
+  // shipping it: an agent handed a short id could `get_item` it, reason
+  // about it, and then fail at the one call that changes state -- and the
+  // successful read makes the "my server must be a different installation"
+  // misdiagnosis MORE likely, not less. Two crews reached exactly that
+  // conclusion from a bare `not_found` on an id.
+  //
+  // Each test below names the write it covers, because "wire the resolver
+  // into the writes" is the kind of change that gets applied to eight of
+  // nine handlers and passes a test that only checks one.
+
+  it("resolves a short id on transition_item, the write that was reported", async () => {
+    const id = await createTask("transitionable by prefix");
+    await runtime.call("transition_item", { id: id.slice(0, 8), to: "on_deck" });
+    // Read back by FULL id: the point is that the write landed on the right
+    // row, not merely that the call returned without throwing. Fails if the
+    // handler resolves for its own lookup but writes the prefix, or if the
+    // resolver is not called here at all (the reported bug).
+    const after = (await runtime.call("get_item", { id })) as { state: string };
+    expect(after.state).toBe("on_deck");
+  });
+
+  it("resolves a short id on note, and stores the canonical id on the event", async () => {
+    const { id } = await createItem("notable by prefix");
+    await runtime.call("note", { itemId: id.slice(0, 8), body: "left against a short id" });
+    // The event has to hang off the canonical id, or the note is written to
+    // an item that does not exist and is invisible on the item's own
+    // history. Fails if the handler resolves only for its existence check
+    // and then writes `input.itemId` unresolved -- the subtle half of this
+    // bug, which a "did it throw" test would miss entirely.
+    // `full` because `body` is one of the two columns the slim shape omits.
+    const history = (await runtime.call("get_item_history", { id, full: true })) as unknown as {
+      entries: readonly { type: string; body?: string | null }[];
+    };
+    expect(history.entries.some((entry) => entry.body === "left against a short id")).toBe(true);
+  });
+
+  it("resolves a short id on update_item", async () => {
+    const { id } = await createItem("updatable by prefix");
+    await runtime.call("update_item", { id: id.slice(0, 8), priority: "P1" });
+    const after = (await runtime.call("get_item", { id, full: true })) as { priority: string };
+    expect(after.priority).toBe("P1");
+  });
+
+  it("resolves a short id on claim, so the assignment names the real item", async () => {
+    const { id } = await createItem("claimable by prefix");
+    await runtime.call("claim", {
+      itemId: id.slice(0, 8),
+      role: "builder",
+      holderType: "agent",
+      holderId: "short-id-tester",
+      sessionId: "session-short-id",
+      machine: "test-machine",
+    });
+    const detail = (await runtime.call("get_item_detail", { id })) as unknown as {
+      assignments: readonly { holderId: string }[];
+    };
+    // Fails if claim writes the prefix into Assignment.itemId, which would
+    // produce an assignment that no read of this item ever returns.
+    expect(detail.assignments.some((a) => a.holderId === "short-id-tester")).toBe(true);
+  });
+
+  // -- The ambiguity refusal, per write -------------------------------------
+  //
+  // The whole safety story of the feature, and the thing most likely to be
+  // lost when the resolver is wired into a new call site by hand: a prefix
+  // matching two items must name both and refuse, never pick one. Asserted
+  // per handler rather than once, because each call site is its own wiring.
+
+  it("refuses an ambiguous prefix on every write, naming both candidates", async () => {
+    const prefix = "beef1234";
+    const first = await createItemWithIdPrefix("first ambiguous write target", prefix);
+    const second = await createItemWithIdPrefix("second ambiguous write target", prefix);
+
+    const calls: { operation: string; args: Record<string, unknown>; field: string }[] = [
+      { operation: "transition_item", args: { id: prefix, to: "on_deck" }, field: "id" },
+      { operation: "update_item", args: { id: prefix, priority: "P1" }, field: "id" },
+      { operation: "note", args: { itemId: prefix, body: "ambiguous" }, field: "itemId" },
+      {
+        operation: "checkpoint",
+        args: { itemId: prefix, sessionId: "s", body: "ambiguous" },
+        field: "itemId",
+      },
+      {
+        operation: "claim",
+        args: {
+          itemId: prefix,
+          role: "builder",
+          holderType: "agent",
+          holderId: "h",
+          sessionId: "s2",
+          machine: "m",
+        },
+        field: "itemId",
+      },
+      { operation: "release", args: { itemId: prefix, sessionId: "s2" }, field: "itemId" },
+    ];
+
+    for (const { operation, args, field } of calls) {
+      const error = await rejectionOf(runtime.call(operation, args));
+      expect(error, `${operation} did not refuse an ambiguous prefix`).not.toBeNull();
+      expect(isServiceError(error), `${operation} threw a non-service error`).toBe(true);
+      if (!isServiceError(error)) throw new Error("unreachable");
+      // A silent pick is the failure this whole feature is designed around,
+      // and it would show up here as a `not_found`, a guard rejection, or a
+      // success -- anything but `invalid_input`.
+      expect(error.code, `${operation} refused with the wrong code`).toBe("invalid_input");
+      // Reported against the field the CALLER used. Fails if a call site
+      // passes no field name and the refusal says `id` to a caller whose
+      // parameter is `itemId`.
+      expect(error.fields, `${operation} named the wrong field`).toEqual([field]);
+      // Both candidates named, so the caller can disambiguate without a
+      // second call. Fails if a call site resolves ambiguity by picking.
+      expect(error.message, `${operation} did not name both candidates`).toContain(first);
+      expect(error.message).toContain(second);
+    }
+  });
+
+  it("names its own field when the ambiguous reference is a secondary one", async () => {
+    const prefix = "dead1234";
+    await createItemWithIdPrefix("first secondary target", prefix);
+    await createItemWithIdPrefix("second secondary target", prefix);
+    const { id } = await createItem("the item being reparented");
+
+    const error = await rejectionOf(runtime.call("reparent_item", { id, parentId: prefix }));
+    expect(isServiceError(error)).toBe(true);
+    if (!isServiceError(error)) throw new Error("unreachable");
+    expect(error.code).toBe("invalid_input");
+    // The operation takes TWO item references. A refusal saying `id` would
+    // point at the one that was fine. Fails if the resolver's field
+    // argument is dropped and it falls back to its "id" default.
+    expect(error.fields).toEqual(["parentId"]);
+  });
+
+  it("leaves the inbox sentinel alone rather than treating it as an id", async () => {
+    const { id } = await createItem("bound for the inbox");
+    // "inbox" is not hex, so `isShortIdShape` refuses it and the resolver
+    // hands it back untouched. Fails if the resolver's shape test stops
+    // excluding non-hex text, which would send the sentinel into the prefix
+    // scan and break every create/reparent that uses it.
+    //
+    // Honest limit, established by mutation rather than assumed: this does
+    // NOT pin the *ordering* of the sentinel branch against the resolve.
+    // Moving the resolve above the sentinel check leaves all 20 tests green,
+    // because on a non-hex reference the resolver is a no-op. The ordering
+    // in the source is therefore a readability choice, documented as such
+    // there, and not a behaviour this suite can defend.
+    const moved = (await runtime.call("reparent_item", { id, parentId: "inbox" })) as {
+      id: string;
+    };
+    expect(moved.id).toBe(id);
   });
 
   it("still refuses a non-id string the way it always did", async () => {

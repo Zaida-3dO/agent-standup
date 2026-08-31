@@ -65,6 +65,7 @@ import {
 import { resolveInboxProject } from "../items/inbox-project";
 import { INBOX_PROJECT_ID } from "./create-task";
 import { toItemWriteRecord, type ItemRecord, type ItemWriteRecord } from "../items/row";
+import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
   .object({
@@ -133,6 +134,17 @@ export const retypeToTask = defineOperation({
     ctx: ServiceContext,
     input: RetypeToTaskInput,
   ): Promise<ItemRecord | ItemWriteRecord> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      id: await resolveItemId(ctx.db, input.id, "id"),
+    };
+
     const item = await loadItem(ctx, input.id);
 
     if (item.kind !== "project") {

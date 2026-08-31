@@ -129,8 +129,22 @@ const MAX_CANDIDATES_REPORTED = 10;
  * so the caller's own lookup produces its usual `not_found` — this helper
  * never invents a refusal for input the operation would have rejected the
  * same way anyway.
+ *
+ * `field` names the input field the reference arrived in, and is what both
+ * refusals report in `fields`. It defaults to `"id"` because that is what
+ * every read calls its parameter, so the existing call sites are unchanged.
+ * The writes are not uniform: most spell it `itemId`, `record_artifact` also
+ * resolves a `followUpItemId`, `reparent_item` a `parentId`, and
+ * `create_subtask` a `taskId`. Reporting `["id"]` for a field the caller
+ * spells `itemId` would point them at a parameter their call does not have,
+ * and on the operations taking *two* item references it would not even say
+ * which of the two was ambiguous.
  */
-export async function resolveItemId(db: TransactionHandle, reference: string): Promise<string> {
+export async function resolveItemId(
+  db: TransactionHandle,
+  reference: string,
+  field = "id",
+): Promise<string> {
   if (isFullUuid(reference)) return reference;
   if (!isShortIdShape(reference)) return reference;
 
@@ -151,7 +165,7 @@ export async function resolveItemId(db: TransactionHandle, reference: string): P
   if (only) return only.id;
 
   if (rows.length === 0) {
-    throw new NotFoundError(`No item's id starts with ${reference}.`, { fields: ["id"] });
+    throw new NotFoundError(`No item's id starts with ${reference}.`, { fields: [field] });
   }
 
   const shown = rows.slice(0, MAX_CANDIDATES_REPORTED);
@@ -162,6 +176,6 @@ export async function resolveItemId(db: TransactionHandle, reference: string): P
     `The short id ${reference} matches more than one item: ${listed}${
       more ? ", and more" : ""
     }. Use a longer prefix, or the full id.`,
-    { fields: ["id"], details: { candidates, truncated: more } },
+    { fields: [field], details: { candidates, truncated: more } },
   );
 }

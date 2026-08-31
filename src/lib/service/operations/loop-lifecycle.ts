@@ -46,6 +46,7 @@ import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
 import { deriveLoops, LOOP_KINDS, type DerivedLoop, type LoopKind } from "@/lib/open-loops";
 import { loopEventsFor, requireItemExists } from "./loop-shared";
+import { resolveItemId } from "../items/resolve-id";
 
 const ACTOR_TYPES = ["person", "agent", "system"] as const;
 
@@ -180,6 +181,17 @@ export const loopEdit = defineOperation({
   // Stryker restore all
   input: editInput,
   async handler(ctx: ServiceContext, input: LoopEditInput): Promise<LoopEdited> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     await requireItemExists(ctx, input.itemId, "itemId");
     const loop = await requireLoop(ctx, input.itemId, input.loopId);
 
@@ -325,6 +337,17 @@ export const loopDelete = defineOperation({
   // Stryker restore all
   input: deleteInput,
   async handler(ctx: ServiceContext, input: LoopDeleteInput): Promise<LoopDeleted> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     await requireItemExists(ctx, input.itemId, "itemId");
     const loop = await requireLoop(ctx, input.itemId, input.loopId);
 
