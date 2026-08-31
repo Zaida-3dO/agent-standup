@@ -95,8 +95,31 @@ export type VersionVerdict = (typeof VERSION_VERDICTS)[number];
 
 export interface VersionAssessment {
   readonly verdict: VersionVerdict;
-  /** Whether this session may take ownership of an item. */
-  readonly mayClaim: boolean;
+  /**
+   * What the **version comparison alone** concluded — not whether this
+   * session may claim.
+   *
+   * ── Why this is not called `mayClaim` ──────────────────────────────────
+   *
+   * It was, and the two names collided in one payload.
+   * `register_session`'s reply carries this assessment nested under
+   * `version` *and* a top-level `mayClaim` that resolves the real
+   * permission, and the two legitimately disagree: with
+   * `hook.require_registration_to_claim` off (the shipped default) an
+   * unregistered session may claim, so the top level says `true` while this
+   * field — reporting only that no version was compared — said `false`.
+   * Both answers were right about different questions, and sharing a name
+   * asserted they were answers to the same one. A reader had to guess which
+   * was authoritative before doing anything.
+   *
+   * So this field says what it measures. It is an *input* to permission,
+   * never permission itself: `assertSessionMayClaim`
+   * (`service/session-registration.ts`) consults it only after the setting
+   * has said the version matters at all, and `register_session` mirrors
+   * that same two-step. Nothing should read this field as a gate on its
+   * own — the setting is the first half of the answer, every time.
+   */
+  readonly versionPermitsClaim: boolean;
   /** A sentence naming the cause, written for whoever has to act on it. */
   readonly message: string;
   /** The variant the comparison was made against, when there was one. */
@@ -171,11 +194,28 @@ export function assessVersion({
   if (variant === undefined || reportedVersion === undefined || reportedVersion === null) {
     return {
       verdict: "unregistered",
-      mayClaim: false,
+      versionPermitsClaim: false,
+      // ── Why this states a consequence rather than an instruction ────────
+      //
+      // It used to end "Register the session with `register_session` before
+      // claiming an item" — which is correct advice in one of the two places
+      // this message is read and circular in the other. `register_session`
+      // returns this assessment nested in its own reply, so a caller who had
+      // just registered was told to register: following it literally means
+      // making the same call and getting the same sentence back.
+      //
+      // The cause is that the sentence named the *call* rather than what the
+      // call was missing. A registration without `hookVersion` is still a
+      // registration; the absent thing is the version, and naming it is
+      // advice that stays true whether the reader has registered or not.
+      // `assertSessionMayClaim` reaches this same text on a refusal, where
+      // naming the field is no worse than naming the call, so one wording
+      // serves both readers.
       message:
-        "This session has not registered a hook protocol version, so the server cannot tell " +
-        "whether the rules it would enforce are the rules this build expects. Register the " +
-        `session with ${invocationFor("register_session", surface)} before claiming an item.`,
+        "This session has not reported a hook protocol version, so the server cannot tell " +
+        "whether the rules it would enforce are the rules this build expects, and cannot " +
+        "enforce them in this session. Send `hookVersion` when registering with " +
+        `${invocationFor("register_session", surface)} to establish one.`,
     };
   }
 
@@ -184,7 +224,7 @@ export function assessVersion({
   if (reportedVersion < protocol.minSupported) {
     return {
       verdict: "incompatible",
-      mayClaim: false,
+      versionPermitsClaim: false,
       variant,
       protocol,
       message:
@@ -198,7 +238,7 @@ export function assessVersion({
   if (reportedVersion < protocol.current) {
     return {
       verdict: "advisory",
-      mayClaim: true,
+      versionPermitsClaim: true,
       variant,
       protocol,
       message:
@@ -210,7 +250,7 @@ export function assessVersion({
 
   return {
     verdict: "current",
-    mayClaim: true,
+    versionPermitsClaim: true,
     variant,
     protocol,
     message: `This session's ${variant} hook is up to date.`,

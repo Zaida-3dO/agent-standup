@@ -121,7 +121,7 @@ export async function assertSessionMayClaim(ctx: ServiceContext, sessionId: stri
     surface: surfaceForTransport(ctx.caller.transport),
   });
 
-  if (assessment.mayClaim) return;
+  if (assessment.versionPermitsClaim) return;
 
   throw new ForbiddenError(`${assessment.message} (session ${sessionId})`, {
     fields: ["sessionId"],

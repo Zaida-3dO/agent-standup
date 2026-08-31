@@ -173,3 +173,189 @@ describe("the docker gate's no-op pass states that nothing was built", () => {
     expect(GATE).toContain("name: Docker build (required)");
   });
 });
+
+// ── The rule, enforced from the Dockerfile rather than from a list ──────
+//
+// The two omissions this block was written for — `scripts/**` and
+// `prisma/**` — were not subtle. `scripts` is COPYed into the image three
+// times, one of its files IS the image's start command
+// (`CMD ["node", "scripts/entrypoint.mjs"]`), and another is RUN during the
+// build. `prisma` is COPYed three times and `prisma generate` runs against
+// it. Both were missing from the filter for as long as the filter existed,
+// so a pull request changing the container's boot sequence got a green
+// `Docker build (required)` in about four seconds without building anything.
+//
+// Adding two lines fixes the two known gaps. What keeps them fixed is
+// deriving the requirement from the Dockerfile: these tests read its own
+// COPY and RUN
+// lines and demand the filter cover each build-context path they name. A
+// future `COPY config ./config` therefore fails CI until the filter catches
+// up, instead of silently reopening the hole — which is the same failure
+// mode, one directory over.
+describe("ci.yml docker paths-filter — covers everything the image is built from", () => {
+  const dockerfile = () => readFileSync(path.join(repoRoot(), "Dockerfile"), "utf8");
+  const dockerFilterEntries = () =>
+    extractFilterEntries(
+      readFileSync(path.join(repoRoot(), ".github", "workflows", "ci.yml"), "utf8"),
+      "docker",
+    );
+
+  /**
+   * The repo-relative paths a Dockerfile reads out of the **build context**.
+   *
+   * `COPY --from=<stage>` is excluded deliberately and is not an oversight:
+   * it reads from an earlier build stage, not from the checkout, so a
+   * `COPY --from=build /app/scripts ./scripts` says nothing about which
+   * repository file a pull request may have touched. Including them would
+   * make this check demand filter entries for `/app/.next/standalone`,
+   * which no pull request can change directly — a requirement that is both
+   * unsatisfiable and meaningless.
+   *
+   * `COPY . .` is likewise excluded: it names no path to require, and a
+   * check that read it as "require everything" would demand the filter list
+   * the whole repository and stop distinguishing anything.
+   */
+  function contextPathsCopied(text: string): string[] {
+    const paths: string[] = [];
+    for (const line of text.split("\n")) {
+      const copy = /^COPY\s+(.*)$/.exec(line.trim());
+      if (copy) {
+        const args = copy[1] ?? "";
+        if (args.includes("--from=")) continue;
+        // Everything but the final destination argument is a source.
+        const parts = args.split(/\s+/).filter((part) => part !== "" && !part.startsWith("--"));
+        for (const source of parts.slice(0, -1)) {
+          if (source === "." || source === "./") continue;
+          paths.push(source);
+        }
+      }
+      // `RUN node scripts/foo.mjs` executes a context file during the build,
+      // which breaks the image just as surely as copying it does.
+      const run = /^RUN\s+.*?\bnode\s+([\w./-]+)/.exec(line.trim());
+      if (run?.[1]) paths.push(run[1]);
+    }
+    return paths;
+  }
+
+  /** The `CMD`'s script, which is what the container actually starts. */
+  function startCommandPath(text: string): string | undefined {
+    const cmd = /^CMD\s+\[([^\]]*)\]/m.exec(text);
+    if (!cmd) return undefined;
+    const args = [...(cmd[1] ?? "").matchAll(/"([^"]*)"/g)].map((match) => match[1] ?? "");
+    return args.find((arg) => /[\w-]+\.(mjs|js|cjs|ts)$/.test(arg));
+  }
+
+  /** Whether any filter entry would match this path — exact, or a `dir/**` prefix. */
+  function covered(entries: readonly string[], candidate: string): boolean {
+    const normalised = candidate.replace(/^\.\//, "").replace(/\*$/, "");
+    return entries.some((entry) => {
+      if (entry === normalised) return true;
+      const globbed = /^(.*?)\/\*\*$/.exec(entry);
+      if (globbed?.[1]) return normalised === globbed[1] || normalised.startsWith(`${globbed[1]}/`);
+      // `package-lock.json*` in the Dockerfile against `package-lock.json`
+      // in the filter, and the reverse.
+      return entry.replace(/\*$/, "") === normalised;
+    });
+  }
+
+  it("reads real COPY sources out of the Dockerfile (not an empty sweep)", () => {
+    const found = contextPathsCopied(dockerfile());
+    // Fails if the parser stops recognising `COPY`, which would make every
+    // assertion below vacuously true.
+    expect(found).toContain("scripts");
+    expect(found).toContain("prisma");
+    expect(found).toContain("package.json");
+    expect(found.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("excludes `--from=` stage copies, which name no build-context path", () => {
+    const found = contextPathsCopied(dockerfile());
+    // These are real `COPY --from=build` sources in the Dockerfile. If the
+    // parser stopped excluding stage copies it would demand filter entries
+    // for build outputs no pull request can touch.
+    expect(found).not.toContain("/app/.next/standalone");
+    expect(found).not.toContain("/app/node_modules");
+  });
+
+  it("covers every build-context path the Dockerfile copies or runs", () => {
+    const entries = dockerFilterEntries();
+    const uncovered = [...new Set(contextPathsCopied(dockerfile()))].filter(
+      (candidate) => !covered(entries, candidate),
+    );
+    expect(
+      uncovered,
+      `the Dockerfile reads these from the build context, but the \`docker\` paths-filter does ` +
+        `not list them — a change to one would leave "Docker build (required)" passing without ` +
+        `building an image:\n  ${uncovered.join("\n  ")}`,
+    ).toEqual([]);
+  });
+
+  it("covers the directory holding the image's start command", () => {
+    const start = startCommandPath(dockerfile());
+    expect(start, "no CMD script found in the Dockerfile").toBeDefined();
+    // The literal defect: CMD is `scripts/entrypoint.mjs` and `scripts/**`
+    // was absent from the filter.
+    expect(covered(dockerFilterEntries(), start!)).toBe(true);
+  });
+
+  // ── The seeded violations ───────────────────────────────────────────────
+  //
+  // Everything above reports zero against the fixed tree, which is also what
+  // a detector that lost its way reports. These re-create the exact hole that
+  // shipped and require the check to catch it.
+
+  it("FAILS when `scripts/**` is taken back out of the filter — the defect as it shipped", () => {
+    const withoutScripts = readFileSync(
+      path.join(repoRoot(), ".github", "workflows", "ci.yml"),
+      "utf8",
+    ).replace(/^[ \t]*-[ \t]*'scripts\/\*\*'\n/m, "");
+    const entries = extractFilterEntries(withoutScripts, "docker");
+    // The seeding really removed it — without this the rest passes vacuously.
+    expect(entries).not.toContain("scripts/**");
+    expect(entries).toContain("Dockerfile");
+    // A change to `scripts/entrypoint.mjs` — the container's start command —
+    // is now ungated, and both checks above must say so.
+    const uncovered = [...new Set(contextPathsCopied(dockerfile()))].filter(
+      (candidate) => !covered(entries, candidate),
+    );
+    expect(uncovered).toContain("scripts");
+    expect(covered(entries, startCommandPath(dockerfile())!)).toBe(false);
+  });
+
+  it("FAILS when `prisma/**` is taken back out of the filter", () => {
+    const withoutPrisma = readFileSync(
+      path.join(repoRoot(), ".github", "workflows", "ci.yml"),
+      "utf8",
+    ).replace(/^[ \t]*-[ \t]*'prisma\/\*\*'\n/m, "");
+    const entries = extractFilterEntries(withoutPrisma, "docker");
+    expect(entries).not.toContain("prisma/**");
+    expect(entries).toContain("Dockerfile");
+    const uncovered = [...new Set(contextPathsCopied(dockerfile()))].filter(
+      (candidate) => !covered(entries, candidate),
+    );
+    expect(uncovered).toContain("prisma");
+  });
+
+  it("FAILS on a newly added COPY the filter does not yet list", () => {
+    // The forward-looking half: a Dockerfile that starts copying a new
+    // directory must fail until the filter catches up. Seeded into the
+    // Dockerfile text rather than the filter, so it pins the direction the
+    // real regression will come from.
+    const seeded = `${dockerfile()}\nCOPY config ./config\n`;
+    const uncovered = [...new Set(contextPathsCopied(seeded))].filter(
+      (candidate) => !covered(dockerFilterEntries(), candidate),
+    );
+    expect(uncovered).toEqual(["config"]);
+  });
+
+  it("does not flag a path the filter covers only via a `dir/**` glob", () => {
+    // Isolates the glob-matching half of `covered`. `scripts` is copied as a
+    // bare directory name and listed as `scripts/**`; if globs stopped
+    // matching, the passing test above would fail for the wrong reason and
+    // this pins which behaviour is responsible.
+    expect(covered(["scripts/**"], "scripts")).toBe(true);
+    expect(covered(["scripts/**"], "scripts/entrypoint.mjs")).toBe(true);
+    // And does not over-match a sibling directory sharing a prefix.
+    expect(covered(["scripts/**"], "scripts-extra")).toBe(false);
+  });
+});

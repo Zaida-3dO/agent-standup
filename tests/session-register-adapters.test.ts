@@ -238,12 +238,12 @@ describe("which transport an HTTP request declares itself as", () => {
     // an unregistered session refused.
     for (const allowed of [...CLI_TRANSPORTS, "http" as const]) {
       const variant = variantForTransport(allowed);
-      expect(assessVersion({ variant, reportedVersion: null }).mayClaim).toBe(false);
+      expect(assessVersion({ variant, reportedVersion: null }).versionPermitsClaim).toBe(false);
       expect(
         assessVersion({
           variant,
           reportedVersion: HOOK_PROTOCOL[variant].minSupported - 1,
-        }).mayClaim,
+        }).versionPermitsClaim,
       ).toBe(false);
     }
   });

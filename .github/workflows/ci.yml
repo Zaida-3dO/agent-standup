@@ -73,18 +73,39 @@ jobs:
             workflows:
               - '.github/workflows/**'
             docker:
+              # The rule this list follows: a path belongs here when the
+              # Dockerfile COPYs it into the image or RUNs it during the
+              # build. Anything the image is built FROM can break the build
+              # or the container without touching Dockerfile itself, and a
+              # filter that misses it turns the required Docker gate into a
+              # ~4s pass that verified nothing.
+              #
+              # `tests/ci-docker-paths-filter.test.ts` enforces the rule
+              # rather than the list: it reads the Dockerfile's own COPY and
+              # RUN lines and requires the filter to cover each one, so a new
+              # COPY fails CI until this list catches up. A comment alone
+              # would go stale silently — that is exactly how the two
+              # omissions below survived.
               - 'Dockerfile'
               - '.dockerignore'
               - 'docker-compose.yml'
               - 'docker-compose.prod.yml'
               # A `package.json` lifecycle script (`prepare`, `postinstall`, ...)
               # or a dependency bump can break `npm ci` inside the image even
-              # though it never touches Dockerfile itself — see
-              # `tests/ci-docker-paths-filter.test.ts` for the regression this
-              # covers and why it needs its own assertion, not just this
-              # comment, to stay true.
+              # though it never touches Dockerfile itself.
               - 'package.json'
               - 'package-lock.json'
+              # `COPY scripts ./scripts` happens three times and the image's
+              # start command IS one of these files (`CMD ["node",
+              # "scripts/entrypoint.mjs"]`), as is a build step
+              # (`RUN node scripts/build-hook-scripts.mjs`). A change to the
+              # container's boot sequence was therefore gated by a filter
+              # that did not mention it.
+              - 'scripts/**'
+              # `COPY prisma ./prisma` in three stages, and `npx prisma
+              # generate` runs against it during the build — a malformed
+              # schema or a bad migration breaks the image build itself.
+              - 'prisma/**'
             source:
               - 'src/**/*.ts'
               - 'src/**/*.tsx'
