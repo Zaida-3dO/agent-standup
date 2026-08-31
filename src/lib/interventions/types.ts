@@ -118,6 +118,21 @@ export interface InterventionContext {
   /** Whether that directory is a linked git worktree with its own index. */
   readonly isLinkedWorktree?: boolean;
   /**
+   * The working tree this session's claim recorded, as the claim spelled it.
+   *
+   * The **raw** value rather than the normalised one, because its only
+   * consumer is a message shown to a person or an agent, and the point of
+   * showing it is that they can compare it against what they believe their
+   * checkout to be. A normalised form is the right thing to *compare* and
+   * the wrong thing to *display*: lowercased and slash-flipped, it stops
+   * resembling the string the caller sent, which invites exactly the "the
+   * guard sees something I do not" reading that makes a refusal expensive.
+   *
+   * Absent when the claim recorded no worktree, which is common — the field
+   * is optional on `claim`.
+   */
+  readonly claimedWorktree?: string;
+  /**
    * The item this session holds a claim on, when it holds one.
    *
    * A string, matching `Item.id` in the schema. It was declared `number`

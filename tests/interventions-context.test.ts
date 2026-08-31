@@ -259,15 +259,31 @@ describe("occupancy — who else holds this checkout (I15)", () => {
     } as TransactionHandle & { queries: string[] };
   }
 
+  // A claim that recorded the working tree it was taken in. That field is
+  // what I15 compares, so a row without it cannot exercise the entry at all
+  // — every case below would short-circuit before the query and pass for
+  // the wrong reason.
   const claimRow = {
     itemId: "item-a",
-    worktree: null,
+    worktree: "/checkouts/wt-mine",
     state: "executing",
     defaultBranch: "main",
     rootSessionId: "root-mine",
     repo: "web",
     machine: "desktop",
   };
+
+  /** A holder row as the occupancy query returns it. */
+  function holderRow(overrides: Record<string, unknown> = {}) {
+    return {
+      rootSessionId: "root-theirs",
+      itemId: "item-b",
+      branch: "feat/x",
+      worktree: "/checkouts/wt-mine",
+      lastActiveSecondsAgo: 12,
+      ...overrides,
+    };
+  }
 
   it("costs nothing on a read, which is the whole point of the gate", async () => {
     // The property this row was told to preserve, asserted for the tool
@@ -298,17 +314,7 @@ describe("occupancy — who else holds this checkout (I15)", () => {
   });
 
   it("reports the holder, named well enough to go and ask", async () => {
-    const db = sequencedHandle([
-      [claimRow],
-      [
-        {
-          rootSessionId: "root-theirs",
-          itemId: "item-b",
-          branch: "feat/x",
-          lastActiveSecondsAgo: 12,
-        },
-      ],
-    ]);
+    const db = sequencedHandle([[claimRow], [holderRow()]]);
     const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
     expect(context.occupyingCrew).toEqual({
       rootSessionId: "root-theirs",
@@ -316,6 +322,76 @@ describe("occupancy — who else holds this checkout (I15)", () => {
       branch: "feat/x",
       lastActiveSecondsAgo: 12,
     });
+  });
+
+  it("carries the caller's own worktree, so a refusal can name what it matched", async () => {
+    // Three crews hit this entry's false positive on one day and each spent
+    // minutes re-verifying `git rev-parse` output, because a refusal that
+    // says only "this checkout" gives no way to check whether it is right.
+    // The raw spelling is carried, not the normalised one: a lowercased,
+    // slash-flipped path stops resembling what the caller sent, which is
+    // the opposite of the point.
+    const db = sequencedHandle([
+      [{ ...claimRow, worktree: "C:\\Checkouts\\WT-Mine" }],
+      [holderRow({ worktree: "C:/checkouts/wt-mine" })],
+    ]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(context.claimedWorktree).toBe("C:\\Checkouts\\WT-Mine");
+    expect(context.occupyingCrew?.rootSessionId).toBe("root-theirs");
+  });
+
+  it("does not report a holder working in a sibling worktree", async () => {
+    // The failure this entry was reported for. Same machine, same
+    // repository, different working tree — the ordinary shape of every
+    // parallel dispatch, and the arrangement the guard's own message
+    // recommends. A holder here means the guard refuses the remedy it names.
+    const db = sequencedHandle([[claimRow], [holderRow({ worktree: "/checkouts/wt-theirs" })]]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(context.occupyingCrew).toBeUndefined();
+  });
+
+  it("finds the sharer even when a sibling worktree's claim is fresher", async () => {
+    // The query orders by `lastActive` and the comparison happens in
+    // process, so the first row back is often a sibling. Taking row zero
+    // and stopping would miss the crew that actually shares the tree.
+    const db = sequencedHandle([
+      [claimRow],
+      [
+        holderRow({ rootSessionId: "root-sibling", worktree: "/checkouts/wt-other" }),
+        holderRow({ rootSessionId: "root-sharer", worktree: "/checkouts/wt-mine" }),
+      ],
+    ]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(context.occupyingCrew?.rootSessionId).toBe("root-sharer");
+  });
+
+  it("asks nothing when the caller's own claim recorded no worktree", async () => {
+    // Unknown on either side is not comparable, and reading it as "same
+    // tree" would block every crew that omitted an optional field — which
+    // is the reported failure. Settled before the query, so the common case
+    // costs no read.
+    const db = sequencedHandle([[{ ...claimRow, worktree: null }], [holderRow()]]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(db.queries).toHaveLength(1);
+    expect(context.occupyingCrew).toBeUndefined();
+  });
+
+  it("ignores a holder whose claim recorded no worktree", async () => {
+    // The other side of the same unknown. The query excludes these rows,
+    // and the comparison declines them too if one arrives.
+    const db = sequencedHandle([[claimRow], [holderRow({ worktree: null })]]);
+    const context = await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(db.queries[1] ?? "").toContain(`a."worktree" IS NOT NULL`);
+    expect(context.occupyingCrew).toBeUndefined();
+  });
+
+  it("bounds how stale a holder may be", async () => {
+    // `liveness` cannot carry this alone: nothing moves a crashed claim off
+    // `running`, so without a bound one abandoned row refuses every future
+    // crew in the repository indefinitely.
+    const db = sequencedHandle([[claimRow], [holderRow()]]);
+    await assembleContext({ db, sessionId: "s1", tool: "Write" });
+    expect(db.queries[1] ?? "").toContain(`a."lastActive" > NOW() - MAKE_INTERVAL`);
   });
 
   it("leaves the field absent when nobody else holds it", async () => {
@@ -334,10 +410,11 @@ describe("occupancy — who else holds this checkout (I15)", () => {
     expect(db.queries[1]).toContain(`a."rootSessionId" <> $3`);
   });
 
-  it("keys on the machine and the repo, never on the worktree path", async () => {
-    // `worktree` is unnormalised free text, so two spellings of one
-    // directory do not compare equal and a predicate over it would pass
-    // silently on exactly the collisions it exists to catch.
+  it("narrows candidates by machine and repo before comparing worktrees", async () => {
+    // The pair is the prefilter: it selects the claims that could share a
+    // tree, and the normalised paths decide whether they do. Both halves
+    // are needed — the pair alone cannot tell one shared directory from
+    // sixteen sibling worktrees of one repository.
     const db = sequencedHandle([[claimRow], []]);
     await assembleContext({ db, sessionId: "s1", tool: "Write" });
     const occupancyQuery = db.queries[1] ?? "";
@@ -349,7 +426,7 @@ describe("occupancy — who else holds this checkout (I15)", () => {
     // only guard the shape.
     expect(occupancyQuery).toContain(`a."machine" = $1`);
     expect(occupancyQuery).toContain(`i."repo" = $2`);
-    expect(occupancyQuery).not.toContain(`"worktree"`);
+    expect(occupancyQuery).toContain(`a."worktree"`);
   });
 
   it("ignores a crew that is not running", async () => {

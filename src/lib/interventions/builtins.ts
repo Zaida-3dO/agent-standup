@@ -322,15 +322,33 @@ const finishedWithNoReviewer: Intervention = {
  * refuse a crew its own parent's claim — blocking the ordinary case while
  * still permitting the one this exists to stop.
  *
- * ── Keyed on `(machine, repo)`, deliberately not on the worktree path ──
+ * ── Keyed on the working tree, with `(machine, repo)` as the prefilter ──
  *
- * `Assignment.worktree` is unnormalised free text, so `/path/to/repo`,
- * `/path/to/repo/` and a home-relative spelling of the same directory do
- * not compare equal. A predicate over it would pass silently on exactly the
- * collisions it exists to catch — the *silently wrong in both directions*
- * failure I12 retreated from, arrived at by a different route. The pair
- * that does compare reliably is the machine and the repository id, and both
- * are columns rather than paths.
+ * The pair alone was the original key, on the reasoning that
+ * `Assignment.worktree` is unnormalised free text — `/path/to/repo`,
+ * `/path/to/repo/` and a differently-cased spelling of one directory do not
+ * compare equal as strings, and a predicate over raw equality would pass
+ * silently on exactly the collisions it exists to catch.
+ *
+ * That reasoning is sound about *naive* comparison and it is why the
+ * comparison now runs over a normal form (`./worktree.ts`) rather than over
+ * the raw column. What the pair could never do is distinguish two crews
+ * sharing one directory from two crews each in their own sibling worktree
+ * of the same repository — identical `(machine, repo)`, opposite verdicts —
+ * and the second is the arrangement every parallel dispatch here uses. Keyed
+ * on the pair alone the entry fired on the healthy case on every file edit,
+ * which three separate crews hit on 2026-08-31 and which is how a guard
+ * teaches its users to route around it.
+ *
+ * So the machine and repository narrow the candidates to claims that could
+ * possibly share a tree, and the normalised paths decide whether they do.
+ *
+ * **What is not caught, stated plainly:** two crews in one checkout where
+ * either claim recorded no worktree at all. `worktree` is optional on
+ * `claim`, so that is common rather than rare. The alternative — reading an
+ * unrecorded path as "same tree" — blocks every crew that omitted an
+ * optional field, which is the failure being fixed. `../interventions/context.ts`
+ * carries the full argument.
  *
  * **`block-overridable`, not hard**: two crews in one checkout is sometimes
  * deliberate and the caller may know something the claim table does not.
@@ -352,31 +370,45 @@ const checkoutHeldByAnotherCrew: Intervention = {
   // including the dynamic one built in the predicate below. Removed; each
   // still names the one remedy that actually works — taking your own
   // worktree.
+  //
+  // Each message also names **the working tree it matched**, at the request
+  // of the third crew to hit the false positive: *"the fix with the best
+  // ratio is probably not either behaviour change — it is printing what the
+  // guard keyed on."* All three refusals that day told a crew already in its
+  // own worktree to take its own worktree, so the honest inference was that
+  // the guard could see something the crew could not, and each crew spent
+  // minutes re-verifying `git rev-parse` output to establish otherwise. A
+  // refusal that shows the path it matched makes a wrong match visible in
+  // one line instead of costing a re-verification.
   messages: {
     plain:
-      "Another crew is already working in this checkout on this machine. Working here too will " +
-      "mix the two sets of changes. Take your own worktree instead.",
+      "Another crew is already working in this same working tree. Working here too will mix the " +
+      "two sets of changes. Take your own worktree instead.",
     prominent:
-      "⚠️ Do not proceed until you have read this. Another live crew holds this checkout on this " +
-      "machine right now, and writing here would interleave your changes with theirs in one " +
-      "working tree — neither of you would be able to commit cleanly. Create your own worktree " +
-      "and work there instead.",
+      "⚠️ Do not proceed until you have read this. Another live crew holds this working tree " +
+      "right now, and writing here would interleave your changes with theirs in one checkout — " +
+      "neither of you would be able to commit cleanly. Create your own worktree and work there " +
+      "instead.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
-    // A linked worktree is a *separate working tree* on the same machine and
-    // the same repository, which is exactly what `(machine, repo)` cannot
-    // distinguish. Two crews each in their own worktree are the healthy,
-    // intended arrangement — the working practice this repository is built
-    // around — so firing on them would refuse the normal case on every file
-    // edit, which is the failure that teaches a session to distrust a guard.
+    // This predicate deliberately does **not** consult
+    // `context.isLinkedWorktree`, and the reason is worth stating because the
+    // field looks like it answers the question.
     //
-    // Strictly `true`: `undefined` means the claim recorded no worktree, and
-    // an unknown working tree is not a known-separate one. That direction
-    // keeps the entry cautious about *suppressing* itself while staying
-    // cautious about firing, and it is the same reading of absence the rest
-    // of this file uses.
-    if (context.isLinkedWorktree === true) return { triggered: false };
-
+    // It describes only the *caller* — whether this session's own claim
+    // recorded a worktree path. It says nothing about where the holder is,
+    // which is the entire question here. Keyed on it, the entry becomes a
+    // blanket exemption hanging off an optional field: absent, and a crew
+    // alone in its own worktree is refused; present, and two crews sharing
+    // one checkout are both excused. One line, wrong in both directions.
+    //
+    // The comparison now happens where both sides are visible — the
+    // assembler compares this claim's normalised worktree against each
+    // candidate holder's (`../interventions/context.ts`) — so an
+    // `occupyingCrew` here has already been established to be in *this*
+    // working tree. A crew in its own sibling worktree produces no holder
+    // and falls out below, which is where the exemption genuinely lives:
+    // in a comparison that can see both paths.
     const holder = context.occupyingCrew;
     // Absent means nobody else holds it *or* the server could not tell, and
     // the two are read the same way. Blocking on an unanswered question is
@@ -389,13 +421,20 @@ const checkoutHeldByAnotherCrew: Intervention = {
       // told *who* has it can go and ask; one told only "occupied" can do
       // nothing but override.
       message:
-        `Another crew (root session ${holder.rootSessionId}) is already working in this checkout ` +
-        `on item ${holder.itemId}` +
+        `Another crew (root session ${holder.rootSessionId}) is already working in this same ` +
+        `working tree on item ${holder.itemId}` +
         (holder.branch === undefined ? "" : ` on branch ${holder.branch}`) +
         (holder.lastActiveSecondsAgo === undefined
           ? ""
           : `, last active ${holder.lastActiveSecondsAgo}s ago`) +
-        ". Take your own worktree.",
+        // Naming the matched tree is what makes a wrong match checkable
+        // against `git rev-parse --show-toplevel` in one step rather than
+        // several. Absent only when this claim recorded no path, and the
+        // entry cannot fire in that case at all.
+        (context.claimedWorktree === undefined
+          ? ""
+          : `. Matched on working tree ${context.claimedWorktree}`) +
+        ". Take your own worktree, or ask that crew.",
       data: {
         rootSessionId: holder.rootSessionId,
         itemId: holder.itemId,
