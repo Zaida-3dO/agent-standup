@@ -46,6 +46,26 @@
 // it: an override must name **which** finding it overrides, must carry a
 // reason with content in it, and must never reach a `hard-block`.
 //
+// ── Where the record actually happens ──────────────────────────────────
+//
+// **Not here.** This module decides; it stores nothing and reaches no
+// database, in keeping with the rest of `src/lib/hook/`. The claim above
+// that the reason is recorded is made good by the path out of it:
+// `./decide.ts` returns the honoured override on `HookVerdict.override`,
+// `./run.ts` hands it to `onFindings`, and `../interventions/capture.ts`
+// turns it into a row with `outcome: "overridden"` and the reason on
+// `override_reason`.
+//
+// That chain is named explicitly because for one release it did not exist.
+// The tier shipped with this header already promising a reviewable record,
+// while the reason reached only the verdict string that is printed to
+// stderr and discarded — so `InterventionOutcome.overridden`, which the
+// schema's own comment calls the most diagnostic outcome on its list, was
+// a value no code could produce. A comment asserting a guarantee the code
+// does not provide is worse than no comment: it ends the search for the
+// gap. If the chain above is ever broken again, this paragraph is the one
+// to correct rather than to leave standing.
+//
 // ── The one thing it must never do ──────────────────────────────────────
 //
 // A `hard-block` is not overridable. That is the whole difference between

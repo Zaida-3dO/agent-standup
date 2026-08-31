@@ -507,3 +507,133 @@ describe("overriding a block-overridable refusal", () => {
     expect(verdict.reason).not.toContain("can be overridden");
   });
 });
+
+// ── The structured override, for the record half ────────────────────────
+//
+// `verdict.reason` is prose printed to stderr and then discarded, which was
+// the whole of the record when this tier first shipped — so the design's
+// claim that the value is the *recorded* reason was false. `verdict.override`
+// is the machine-readable half the capture loop writes to the database.
+//
+// Every refusal case below asserts the field is **absent**, not merely that
+// the call was denied. That is the property that keeps the failure direction
+// safe: a refused override that still emitted an `override` would let the
+// capture loop record a release that never happened.
+describe("the override a verdict carries for the record", () => {
+  // Kills: emitting the verdict without the structured field, i.e. the
+  // original gap. Asserts the reason's content rather than its presence —
+  // dropping the reason while still setting `entryIds` is the plausible
+  // mistake here, and it would look green against a truthiness check.
+  it("carries the entry it released and the reason, verbatim", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "broad-process-kill", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.override?.entryIds).toEqual(["broad-process-kill"]);
+    expect(verdict.override?.reason).toBe(REASON);
+  });
+
+  // The reason recorded is the *validated* one — trimmed by
+  // `overrideApplies` — not the raw claim off the payload. Kills: recording
+  // `event.override.reason` directly, which would store text subtly
+  // different from the text the length check was performed against.
+  it("records the trimmed reason rather than the raw claim", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "broad-process-kill", reason: `   ${REASON}   ` } }),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.override?.reason).toBe(REASON);
+  });
+
+  // The constraint the brief calls unbreakable, restated as a recording
+  // property. A hard block must not merely be denied — it must leave no
+  // trace suggesting it was ever released.
+  it("records nothing at all for a hard block, however well-formed", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "some-hard-rule", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "a hard rule",
+        findings: [finding("some-hard-rule", "hard-block")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    expect(verdict.override).toBeUndefined();
+  });
+
+  // Kills: recording an override that named the wrong entry. The call was
+  // refused, so nothing was excused and nothing may be written.
+  it("records nothing when the override named a different finding", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "something-else", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    expect(verdict.override).toBeUndefined();
+  });
+
+  // Kills: recording an override whose reason failed the length floor. A
+  // refused override is not a quieter override; it is no override.
+  it("records nothing when the reason was too short to count", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "broad-process-kill", reason: "ok" } }),
+      askServer: server({
+        decision: "block",
+        reason: "broad process kill",
+        findings: [finding("broad-process-kill", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    expect(verdict.override).toBeUndefined();
+  });
+
+  // A call refused by two guards where the override covers one is not
+  // released — and must record neither. Kills: emitting the partial
+  // coverage as an override of the finding it did match.
+  it("records nothing when only one of two blocking findings was covered", async () => {
+    const verdict = await decide({
+      event: event({ override: { entryId: "first-rule", reason: REASON } }),
+      askServer: server({
+        decision: "block",
+        reason: "two guards",
+        findings: [
+          finding("first-rule", "block-overridable"),
+          finding("second-rule", "block-overridable"),
+        ],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    expect(verdict.override).toBeUndefined();
+  });
+
+  // An ordinary allow is not an override. Kills: defaulting the field to a
+  // present-but-empty value, which would make every allowed call look like
+  // an excused one to anything reading the column.
+  it("records nothing on a call nothing objected to", async () => {
+    const verdict = await decide({
+      event: event(),
+      askServer: server({ decision: "allow" }),
+    });
+
+    expect(verdict.decision).toBe("allow");
+    expect(verdict.override).toBeUndefined();
+  });
+});

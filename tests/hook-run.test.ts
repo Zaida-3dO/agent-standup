@@ -12,7 +12,7 @@
 // allowed call would pass every test in `hook-decide.test.ts` and put a line
 // of noise into a session after every Read the agent performs.
 import { describe, expect, it, vi } from "vitest";
-import { runHook, type FindingsReport } from "@/lib/hook/run";
+import { runHook, captureContextFor, type FindingsReport } from "@/lib/hook/run";
 import type { AskServer } from "@/lib/hook/decide";
 import { HOOK_EXIT } from "@/lib/hook/response";
 
@@ -352,5 +352,175 @@ describe("onFindings — MILESTONES.md #128's capture loop", () => {
     });
 
     expect(rendered.exitCode).toBe(HOOK_EXIT.DENY);
+  });
+});
+
+// ── The override, end to end through runHook ────────────────────────────
+//
+// `decide` produces the structured override and `capture.ts` writes it, but
+// the seam between them is this callback — and the seam is where the record
+// half was missing. These build the payload the way a caller actually
+// sends it (a `standup_override` field on the raw stdin JSON) so that a
+// break anywhere in payload parsing, the decision, or the report is caught
+// here rather than only in the unit tests either side of it.
+describe("onFindings — the override the caller wrote", () => {
+  const OVERRIDABLE = {
+    id: "broad-process-kill",
+    source: "builtin" as const,
+    phase: "pre" as const,
+    audience: "agent" as const,
+    level: "block-overridable" as const,
+    timing: "immediate" as const,
+    messages: { plain: "broad process kill", prominent: "BROAD PROCESS KILL" },
+  };
+  const HARD = { ...OVERRIDABLE, id: "some-hard-rule", level: "hard-block" as const };
+  const REASON = "the kill is scoped to one pid this guard misread as broad";
+
+  /** Stdin carrying an override claim, as a caller sends one. */
+  function stdinWithOverride(override: unknown): string {
+    return JSON.stringify({
+      hook_event_name: "PreToolUse",
+      session_id: "s-1",
+      tool_name: "Bash",
+      tool_input: { command: "kill 123" },
+      standup_override: override,
+    });
+  }
+
+  // The whole point of the feature: the reason survives the decision and
+  // reaches the callback that writes it. Asserts the reason's *content* —
+  // recording the firing while dropping the reason is the mistake this is
+  // built to catch, and it passes any check for mere presence.
+  it("hands the reason to the capture loop when the override is honoured", async () => {
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "broad process kill",
+      findings: [OVERRIDABLE],
+    });
+
+    const rendered = await runHook({
+      stdin: stdinWithOverride({ entryId: "broad-process-kill", reason: REASON }),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    // Released, and recorded as released.
+    expect(rendered.exitCode).toBe(0);
+    expect(onFindings.mock.calls[0]?.[0]).toMatchObject({
+      blocked: false,
+      override: { entryIds: ["broad-process-kill"], reason: REASON },
+    });
+  });
+
+  // The constraint that must never regress, asserted on the recording side.
+  // A hard block stays refused *and* leaves no override on the report, so
+  // nothing downstream can write an `overridden` row for it.
+  it("reports no override for a hard block, however well-formed the claim", async () => {
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "a hard rule",
+      findings: [HARD],
+    });
+
+    const rendered = await runHook({
+      stdin: stdinWithOverride({ entryId: "some-hard-rule", reason: REASON }),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    expect(rendered.exitCode).toBe(2);
+    const report = onFindings.mock.calls[0]?.[0];
+    expect(report?.blocked).toBe(true);
+    expect(report?.override).toBeUndefined();
+  });
+
+  // The failure direction. A malformed claim reads as *no* override, so the
+  // call stays blocked — never as a weaker override that releases it.
+  // `exitCode` is asserted, not just the report: the danger of a parse
+  // failure is a release, and this pins that the release did not happen.
+  it("keeps the call blocked when the override is malformed", async () => {
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "broad process kill",
+      findings: [OVERRIDABLE],
+    });
+
+    // A reason of the wrong type — the shape `readOverrideClaim` drops.
+    const rendered = await runHook({
+      stdin: stdinWithOverride({ entryId: "broad-process-kill", reason: { nested: REASON } }),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    expect(rendered.exitCode).toBe(2);
+    const report = onFindings.mock.calls[0]?.[0];
+    expect(report?.blocked).toBe(true);
+    expect(report?.override).toBeUndefined();
+  });
+});
+
+// ── The capture context, and why it is a function rather than a literal ──
+//
+// This mapping decides which facts about a call reach the database, so it is
+// kept somewhere a test can call it. Inlined into `src/bin/standup-hook.ts`
+// it would be untestable by construction: that file is a script which runs
+// on import, so nothing can import it to assert on, and deleting the
+// `overrideReason` line from such a literal passes an entire suite. That is
+// the exact failure this feature guards against — record the firing, lose
+// the reason — hiding in the one layer no test can reach.
+describe("captureContextFor", () => {
+  const REASON = "the kill is scoped to one pid this guard misread as broad";
+
+  function report(overrides: Partial<FindingsReport> = {}): FindingsReport {
+    return {
+      event: {
+        eventType: "PreToolUse",
+        sessionId: "s-1",
+        tool: "Bash",
+        command: "kill 123",
+      },
+      findings: [],
+      blocked: false,
+      ...overrides,
+    };
+  }
+
+  // Kills: dropping `overrideReason` from the projection — the mutant that
+  // survived the entire suite before this function existed. Asserts the
+  // reason's content, since passing the entry ids while losing the reason
+  // is the plausible half-wiring.
+  it("carries both the overridden entries and the reason", () => {
+    const context = captureContextFor(
+      report({ override: { entryIds: ["broad-process-kill"], reason: REASON } }),
+    );
+
+    expect(context.overriddenEntryIds).toEqual(["broad-process-kill"]);
+    expect(context.overrideReason).toBe(REASON);
+  });
+
+  // Kills: emitting the override keys unconditionally. `buildCaptures` reads
+  // `overriddenEntryIds` to decide the outcome, so a present-but-empty value
+  // is not equivalent to an absent one.
+  it("carries no override fields for a call that had none", () => {
+    const context = captureContextFor(report({ blocked: true }));
+
+    expect(context.overriddenEntryIds).toBeUndefined();
+    expect(context.overrideReason).toBeUndefined();
+    expect(context.blocked).toBe(true);
+  });
+
+  // The ordinary fields still have to survive the extraction.
+  it("carries the session, tool and command the call named", () => {
+    const context = captureContextFor(report());
+
+    expect(context.sessionId).toBe("s-1");
+    expect(context.tool).toBe("Bash");
+    expect(context.command).toBe("kill 123");
   });
 });

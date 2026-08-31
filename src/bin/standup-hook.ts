@@ -15,7 +15,7 @@
 // call on its way out would refuse a command it never examined, on behalf
 // of rules that live server-side and were never consulted.
 
-import { runHook, type FindingsReport } from "@/lib/hook/run";
+import { runHook, captureContextFor, type FindingsReport } from "@/lib/hook/run";
 import { createHttpAsk } from "@/lib/hook/ask-http";
 import { HOOK_EXIT } from "@/lib/hook/response";
 import { spoolEvent } from "@/lib/cli/hook-command";
@@ -241,12 +241,14 @@ function recordFindings(
 
   return async (report) => {
     try {
-      const captures = buildCaptures(report.findings, {
-        sessionId: report.event.sessionId,
-        ...(report.event.tool === undefined ? {} : { tool: report.event.tool }),
-        ...(report.event.command === undefined ? {} : { command: report.event.command }),
-        blocked: report.blocked,
-      });
+      // The mapping lives in `@/lib/hook/run` rather than inline here
+      // because this file cannot be imported by a test — it is a script
+      // that runs on import — and an inline projection is therefore covered
+      // by nothing. It carries the override half of MILESTONES.md #128's
+      // block-and-record tier, taken from what `decide` honoured rather
+      // than from the payload's claim, so a refused override records
+      // nothing.
+      const captures = buildCaptures(report.findings, captureContextFor(report));
       if (captures.length === 0) return;
       await send({ sessionId: report.event.sessionId, captures });
     } catch {

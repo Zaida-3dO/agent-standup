@@ -183,3 +183,107 @@ describe("surveyable", () => {
     expect(surveyable(block!)).toBe(true);
   });
 });
+
+// ── The override outcome — MILESTONES.md #128's "record" half ──────────
+//
+// `InterventionOutcome.overridden` was declared by the schema, documented
+// there as the most diagnostic outcome on its list, and produced by nothing:
+// the block tier shipped while the reason reached only a verdict string that
+// is printed to stderr and discarded. These pin the value being produced
+// *and* the reason travelling with it, because a row saying `overridden`
+// with an empty `override_reason` is the same gap wearing the right label.
+describe("outcomeFor — overrides", () => {
+  // Kills: dropping the `overriddenEntryIds` branch entirely, and also
+  // ordering it after the `blocked === false` test — an overridden call is
+  // by definition one that was not refused, so a later check files every
+  // override as `nudged`.
+  it("records an overridden finding as overridden, not blocked or nudged", () => {
+    const outcome = outcomeFor(finding({ id: "I10" }), {
+      ...context,
+      blocked: false,
+      overriddenEntryIds: ["I10"],
+      overrideReason: "the guard misread a scoped kill as a broad one",
+    });
+
+    expect(outcome).toBe("overridden");
+  });
+
+  // Kills: matching on "was anything overridden on this call" rather than
+  // on *this* entry. `decide` releases a call only when every blocking
+  // finding is covered, so an uncovered finding refused the call and is
+  // still `blocked` — crediting it with a neighbour's override would record
+  // a release that never happened.
+  it("leaves a finding blocked when a different entry was the one overridden", () => {
+    const outcome = outcomeFor(finding({ id: "I11" }), {
+      ...context,
+      blocked: true,
+      overriddenEntryIds: ["I10"],
+      overrideReason: "a reason written about a different guard entirely",
+    });
+
+    expect(outcome).toBe("blocked");
+  });
+
+  // Kills: treating a non-blocking finding as overridable. There was
+  // nothing to override, and `nudged` is the honest outcome.
+  it("does not call a nudge overridden", () => {
+    const outcome = outcomeFor(finding({ level: "nudge", id: "I10" }), {
+      ...context,
+      overriddenEntryIds: ["I10"],
+      overrideReason: "a reason attached to something that never blocked",
+    });
+
+    expect(outcome).toBe("nudged");
+  });
+});
+
+describe("buildCaptures — the recorded reason", () => {
+  const REASON = "the kill is scoped to one pid that this guard misread";
+
+  // The mutation this exists for: recording the firing but dropping the
+  // reason. A test asserting only that a row exists, or only that its
+  // outcome is `overridden`, stays green through exactly that change — so
+  // this asserts the reason's *content*, which is the entire payload of the
+  // feature.
+  it("carries the caller's reason verbatim onto the overridden row", () => {
+    const [capture] = buildCaptures([finding({ id: "I10" })], {
+      ...context,
+      blocked: false,
+      overriddenEntryIds: ["I10"],
+      overrideReason: REASON,
+    });
+
+    expect(capture?.outcome).toBe("overridden");
+    expect(capture?.overrideReason).toBe(REASON);
+  });
+
+  // Kills: attaching the reason to every row on the call. A reason excuses
+  // the findings it was matched against; crediting it to a finding that
+  // still blocked would attribute a justification to a refusal nobody
+  // overrode.
+  it("attaches the reason only to the rows the override actually excused", () => {
+    const captures = buildCaptures([finding({ id: "I10" }), finding({ id: "I11" })], {
+      ...context,
+      blocked: true,
+      overriddenEntryIds: ["I10"],
+      overrideReason: REASON,
+    });
+
+    const overridden = captures.find((capture) => capture.entryId === "I10");
+    const stillBlocked = captures.find((capture) => capture.entryId === "I11");
+
+    expect(overridden?.outcome).toBe("overridden");
+    expect(overridden?.overrideReason).toBe(REASON);
+    expect(stillBlocked?.outcome).toBe("blocked");
+    expect(stillBlocked?.overrideReason).toBeUndefined();
+  });
+
+  // Kills: writing an `overrideReason` onto an ordinary blocked row when no
+  // override was in play at all. The common path must stay unchanged.
+  it("records no reason on a call that carried no override", () => {
+    const [capture] = buildCaptures([finding({ id: "I10" })], { ...context, blocked: true });
+
+    expect(capture?.outcome).toBe("blocked");
+    expect(capture?.overrideReason).toBeUndefined();
+  });
+});

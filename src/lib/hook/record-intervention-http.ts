@@ -118,6 +118,7 @@ export function toWireBatch(batch: InterventionCaptureBatch): Record<string, unk
       ...(capture.tool === undefined ? {} : { tool: capture.tool }),
       ...(capture.command === undefined ? {} : { command: capture.command }),
       ...(capture.message === undefined ? {} : { message: capture.message }),
+      ...(capture.overrideReason === undefined ? {} : { overrideReason: capture.overrideReason }),
     })),
   };
 }

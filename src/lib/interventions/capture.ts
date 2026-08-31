@@ -60,6 +60,15 @@ export interface InterventionCapture {
   readonly tool?: string;
   readonly command?: string;
   readonly message?: string;
+  /**
+   * The reason a caller wrote when overriding this finding, verbatim.
+   *
+   * Present only on an `overridden` outcome, and the two are set together
+   * by `buildCaptures` from the same value — an `overridden` row with no
+   * reason would be the outcome this table most wants to read stripped of
+   * the only thing that makes it readable.
+   */
+  readonly overrideReason?: string;
 }
 
 /** What the call this finding fired on looked like. */
@@ -71,6 +80,22 @@ export interface CaptureContext {
   readonly command?: string;
   /** Whether the call was actually refused. */
   readonly blocked?: boolean;
+  /**
+   * The entries this call's override actually released, if any.
+   *
+   * A list rather than a boolean because an override is scoped to the entry
+   * it names (`../hook/override.ts`): a call carrying two blocking findings
+   * where only one was overridden released neither, and even where every
+   * finding was covered it is the per-entry match that decides which rows
+   * may say `overridden`. A finding not in this list is recorded exactly as
+   * it would have been with no override present at all.
+   */
+  readonly overriddenEntryIds?: readonly string[];
+  /**
+   * The reason the caller wrote, already trimmed and bounded by
+   * `overrideApplies`. Only meaningful alongside `overriddenEntryIds`.
+   */
+  readonly overrideReason?: string;
 }
 
 /**
@@ -88,13 +113,30 @@ export function truncateCommand(command: string, limit: number = MAX_CAPTURED_CO
 /**
  * What one finding did.
  *
- * `overridden` is not decided here: an override happens *after* the
- * refusal, on a later call, so at capture time a blocking finding is
- * `blocked` and is amended if and when the caller proceeds. Deciding it
- * here would mean guessing, and the guess would always be "not overridden",
- * which is the answer that makes overrides invisible — and an override is
- * the single most diagnostic event this table can hold, because it is the
- * caller saying in the moment that the refusal was wrong.
+ * ── Where `overridden` is decided, and why it is decided here ──────────
+ *
+ * An earlier version of this comment said `overridden` was not decided
+ * here, on the reasoning that an override happens *after* the refusal, on a
+ * later call, and that a row would be amended when the caller proceeded.
+ * That described a mechanism that was never built — nothing amended
+ * anything, no code path anywhere produced this value, and the enum's most
+ * diagnostic outcome was unreachable while a comment explained why it did
+ * not need to be reachable yet.
+ *
+ * It is decided here because the retry *is* an ordinary call, and it
+ * carries its own override (`../hook/payload.ts` reads it off the payload,
+ * `../hook/decide.ts` matches it against this call's findings). So at the
+ * moment this runs, whether this finding was released is a known fact about
+ * this call rather than a guess about a later one. Amending an earlier row
+ * would in any case have been the wrong shape: the first call really was
+ * `blocked`, and rewriting that row would erase the refusal the override is
+ * only meaningful in contrast to. Two rows — a block, then an override —
+ * are the honest record of what happened.
+ *
+ * **A finding is `overridden` only if it is named in `overriddenEntryIds`.**
+ * A blocking finding on a call where some *other* entry was overridden is
+ * still `blocked`, because it was: `decide` releases a call only when every
+ * blocking finding is covered, so an uncovered finding refused the call.
  */
 export function outcomeFor(
   finding: InterventionFinding,
@@ -102,6 +144,12 @@ export function outcomeFor(
 ): InterventionOutcome {
   if (finding.level === "nothing") return "silent";
   if (!isBlockingLevel(finding.level)) return "nudged";
+  // Checked before `blocked`, because an overridden call is precisely one
+  // that was *not* refused — reading `blocked === false` first would file
+  // every override as a `nudged`, which is the outcome for a finding that
+  // never tried to stop anything, and would lose the distinction the enum
+  // calls the most diagnostic one on the list.
+  if (context.overriddenEntryIds?.includes(finding.id) === true) return "overridden";
   // A blocking level whose call was not actually refused did not block. The
   // phase can clamp it — a `post` finding never refuses anything — so
   // trusting the level alone would record a block that never happened.
@@ -127,17 +175,24 @@ export function buildCaptures(
 ): InterventionCapture[] {
   return findings.map((finding) => {
     const command = context.command === undefined ? undefined : truncateCommand(context.command);
+    const outcome = outcomeFor(finding, context);
+    // The reason rides only the rows it actually excused. Attaching it to
+    // every row on the call would credit a reason to findings it did not
+    // release — including, on a call `decide` refused, findings that were
+    // never overridden at all.
+    const overrideReason = outcome === "overridden" ? context.overrideReason : undefined;
     return {
       entryId: finding.id,
       sessionId: context.sessionId,
       ...(context.rootSessionId === undefined ? {} : { rootSessionId: context.rootSessionId }),
       ...(context.itemId === undefined ? {} : { itemId: context.itemId }),
-      outcome: outcomeFor(finding, context),
+      outcome,
       level: finding.level,
       phase: finding.phase,
       ...(context.tool === undefined ? {} : { tool: context.tool }),
       ...(command === undefined ? {} : { command }),
       message: finding.messages.plain,
+      ...(overrideReason === undefined || overrideReason === "" ? {} : { overrideReason }),
     };
   });
 }
