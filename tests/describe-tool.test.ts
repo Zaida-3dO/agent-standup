@@ -484,7 +484,7 @@ describe("a refusal names the surface the caller is on", () => {
       reportedVersion: null,
       surface: "mcp",
     });
-    expect(assessment.mayClaim).toBe(false);
+    expect(assessment.versionPermitsClaim).toBe(false);
     expect(assessment.message).toContain("register_session");
     expect(assessment.message).not.toContain("standup session register");
   });

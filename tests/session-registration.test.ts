@@ -499,6 +499,59 @@ describeIfDb("session registration and the claim refusal", () => {
         const assignment = (await attemptClaim("reply-none", itemId)) as { id: string };
         expect(assignment.id).toBeTruthy();
       });
+
+      // ── One reply must not answer "may I claim" twice ──────────────────
+      //
+      // The reported defect: a single `register_session` call returned
+      // `mayClaim: true` at the top level and `version.mayClaim: false`
+      // nested, and a reader had no way to tell which governed. Neither
+      // value was stale and no race was involved — the two fields simply
+      // answered different questions under the same name. The nested one is
+      // now `versionPermitsClaim`, which is what it always measured.
+      it("carries no second field named `mayClaim` to contradict the first", async () => {
+        const reply = await register("http", { sessionId: "reply-one-answer", machine: "m" });
+        const version = reply.version as Record<string, unknown>;
+
+        // The two facts that made the contradiction visible are both still
+        // true — this is the same reply, not a reply that stopped
+        // disagreeing because one side changed its mind.
+        expect(reply.mayClaim).toBe(true);
+        expect(version.versionPermitsClaim).toBe(false);
+
+        // …and exactly one field in the payload answers "may I claim".
+        // Fails if `mayClaim` is ever reintroduced under `version`, by that
+        // name, whatever value it carries.
+        expect(Object.keys(version)).not.toContain("mayClaim");
+        expect("mayClaim" in reply).toBe(true);
+      });
+
+      it("does not tell a caller to make the call that produced the message", async () => {
+        // The second half of the defect, and the more expensive one: the
+        // nested message said "Register the session with `register_session`
+        // before claiming an item" — inside the reply to `register_session`.
+        // Following it literally means calling again and getting the same
+        // sentence back.
+        //
+        // The message now names what is missing (`hookVersion`) and states
+        // the consequence, so it reads correctly both here and on
+        // `assertSessionMayClaim`'s refusal, which shares this text.
+        const reply = await register("http", { sessionId: "reply-no-loop", machine: "m" });
+        const message = (reply.version as { message: string }).message;
+
+        // The instruction that was circular. Fails if the imperative
+        // "Register the session ... before claiming an item" comes back.
+        expect(message).not.toContain("before claiming an item");
+        expect(message).not.toMatch(/Register the session with/);
+
+        // What it says instead: the missing field, and the consequence.
+        expect(message).toContain("hookVersion");
+        expect(message).toContain("cannot");
+        // Still names the call for the surface the reader is on, which is
+        // the part that was right all along (MILESTONES.md #111) — this is
+        // an MCP registration, so it must not name the CLI spelling.
+        expect(message).toContain("register_session");
+        expect(message).not.toContain("standup session register");
+      });
     });
 
     describe("under the strict posture (setting on)", () => {

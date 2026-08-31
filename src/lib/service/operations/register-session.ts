@@ -140,10 +140,23 @@ export interface RegisterSessionOutput {
   readonly hook: string;
   /** What this build speaks and the oldest it accepts, for this session's variant. */
   readonly protocol: { readonly current: number; readonly minSupported: number };
+  /**
+   * What the version comparison alone concluded.
+   *
+   * Its `versionPermitsClaim` is deliberately **not** named `mayClaim`: it
+   * was, and a reader of one reply got `mayClaim: true` at the top level and
+   * `version.mayClaim: false` nested, with no way to tell which governed.
+   * The two disagree by design whenever
+   * `hook.require_registration_to_claim` is off, which is the shipped
+   * default — see that field's own comment in `@/lib/sessions`.
+   */
   readonly version: VersionAssessment;
   /**
    * Whether this session may take ownership of an item — resolved against
    * `hook.require_registration_to_claim`, not just the version verdict.
+   *
+   * **This is the field that answers "may I claim".** `version` reports on
+   * the protocol version and nothing else.
    *
    * `assessVersion` only ever compares versions; it has no idea the setting
    * exists, because it is the pure half of §21 and the setting is a policy
@@ -152,8 +165,9 @@ export interface RegisterSessionOutput {
    * with the setting off (the shipped default) it returns `undefined`
    * immediately — every session may claim regardless of what it reported
    * here, including one that reported nothing at all. Echoing
-   * `version.mayClaim` unconditionally would tell a session it may not claim
-   * in exactly that case, when a claim would in fact succeed: the handshake
+   * `version.versionPermitsClaim` unconditionally would tell a session it
+   * may not claim in exactly that case, when a claim would in fact succeed:
+   * the handshake
    * would be recommending the one dishonest way through the gate this
    * setting exists to close. So this field mirrors the setting first and the
    * version verdict only when the setting is on — the same two-step
@@ -339,7 +353,7 @@ export const registerSession = defineOperation({
     // repeat the version verdict on its own. On, the version verdict is the
     // answer, exactly as the claim path applies it.
     const requireRegistration = ctx.settings.values["hook.require_registration_to_claim"] === true;
-    const mayClaim = requireRegistration ? version.mayClaim : true;
+    const mayClaim = requireRegistration ? version.versionPermitsClaim : true;
 
     return {
       sessionId: input.sessionId,

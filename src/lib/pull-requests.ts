@@ -84,9 +84,41 @@ export function isPullRequestStatus(value: unknown): value is PullRequestStatus 
  * PR row at all is far likelier to have a live PR than a closed one — this is
  * the same posture `DEFAULT_PULL_REQUEST_STATUS` takes, applied to a row
  * nobody validated.
+ *
+ * ── Why the match is not `body.trim() === "closed"` ────────────────────
+ *
+ * It was, and that made the tolerance one-sided in the one direction that
+ * costs something. The rows this function exists to be lenient about are
+ * precisely the unvalidated ones, and an unvalidated row saying `"Closed"`,
+ * `"CLOSED"`, `"closed."` or `"closed — superseded by #340"` fell through
+ * the exact-equality test and was reported **open**. The result is the one
+ * failure this module's header says the whole design exists to prevent: the
+ * report renders a live markdown link to a dead pull request, and "a reader
+ * who clicks a dead link learns not to trust the links that work either".
+ *
+ * So the closed side is matched case-insensitively and allows trailing
+ * punctuation or an explanatory clause after the word.
+ *
+ * **The leniency is deliberately one-directional, and that asymmetry is the
+ * safety property.** Nothing here widens what counts as `open`: an
+ * unrecognised body still falls through to `open`, so the only behaviour
+ * that changed is a row that plainly says it is closed now being read that
+ * way. Widening the *open* side would be the dangerous direction — it would
+ * let a body that merely mentions the word turn a genuinely closed PR back
+ * into a live link, which is the failure this is fixing, reintroduced from
+ * the other end. `record_artifact` remains exactly as strict as it was: it
+ * accepts only the two exact words, so none of these spellings can be
+ * written through the product from now on. This tolerance is for the
+ * history, not a relaxation of the contract.
  */
 export function pullRequestStatusOf(body: string | null | undefined): PullRequestStatus {
-  return body != null && body.trim() === "closed" ? "closed" : DEFAULT_PULL_REQUEST_STATUS;
+  if (body == null) return DEFAULT_PULL_REQUEST_STATUS;
+  // Anchored at the start: the body must *lead* with the word, so a review
+  // note that merely mentions "closed" partway through — "keeping this open
+  // until the sibling PR is closed" — is not read as a closure. A trailing
+  // clause is allowed only after a boundary that is not a letter, so
+  // `closedown` does not match.
+  return /^closed\b/i.test(body.trim()) ? "closed" : DEFAULT_PULL_REQUEST_STATUS;
 }
 
 /**

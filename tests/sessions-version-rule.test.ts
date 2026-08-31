@@ -133,7 +133,7 @@ describe("the version comparison", () => {
             protocols: PROTOCOLS,
           });
           expect(assessment.verdict).toBe("current");
-          expect(assessment.mayClaim).toBe(true);
+          expect(assessment.versionPermitsClaim).toBe(true);
         }
       });
 
@@ -146,7 +146,7 @@ describe("the version comparison", () => {
           });
           expect(assessment.verdict).toBe("advisory");
           // The whole point of two numbers: an advisory does NOT block.
-          expect(assessment.mayClaim).toBe(true);
+          expect(assessment.versionPermitsClaim).toBe(true);
           expect(assessment.message).toContain(String(range.current));
         }
       });
@@ -159,7 +159,7 @@ describe("the version comparison", () => {
             protocols: PROTOCOLS,
           });
           expect(assessment.verdict).toBe("incompatible");
-          expect(assessment.mayClaim).toBe(false);
+          expect(assessment.versionPermitsClaim).toBe(false);
           // The refusal names both the version it got and the one to move
           // to, so the reader can act rather than go looking.
           expect(assessment.message).toContain(String(reported));
@@ -173,14 +173,14 @@ describe("the version comparison", () => {
             variant,
             reportedVersion: range.minSupported,
             protocols: PROTOCOLS,
-          }).mayClaim,
+          }).versionPermitsClaim,
         ).toBe(true);
         expect(
           assessVersion({
             variant,
             reportedVersion: range.minSupported - 1,
             protocols: PROTOCOLS,
-          }).mayClaim,
+          }).versionPermitsClaim,
         ).toBe(false);
       });
 
@@ -202,17 +202,19 @@ describe("the version comparison", () => {
     // reason the two are versioned independently, and the assertion that
     // would fail if the lookup used a fixed variant.
     expect(
-      assessVersion({ variant: "cli", reportedVersion: 4, protocols: PROTOCOLS }).mayClaim,
+      assessVersion({ variant: "cli", reportedVersion: 4, protocols: PROTOCOLS })
+        .versionPermitsClaim,
     ).toBe(true);
     expect(
-      assessVersion({ variant: "http", reportedVersion: 4, protocols: PROTOCOLS }).mayClaim,
+      assessVersion({ variant: "http", reportedVersion: 4, protocols: PROTOCOLS })
+        .versionPermitsClaim,
     ).toBe(false);
   });
 
   it("REFUSES A CLAIM when the session never registered", () => {
     const assessment = assessVersion({ variant: undefined, reportedVersion: undefined });
     expect(assessment.verdict).toBe("unregistered");
-    expect(assessment.mayClaim).toBe(false);
+    expect(assessment.versionPermitsClaim).toBe(false);
     // It has to say what to do instead, or the refusal is a wall — and it
     // has to say it in a spelling the reader can use. With no surface given
     // that means both, because this refusal is reached from every adapter
@@ -229,14 +231,14 @@ describe("the version comparison", () => {
     for (const reported of [undefined, null]) {
       const assessment = assessVersion({ variant: "http", reportedVersion: reported });
       expect(assessment.verdict).toBe("unregistered");
-      expect(assessment.mayClaim).toBe(false);
+      expect(assessment.versionPermitsClaim).toBe(false);
     }
   });
 
   it("REFUSES A CLAIM when a version is reported with no variant to compare it against", () => {
     const assessment = assessVersion({ variant: undefined, reportedVersion: 99 });
     expect(assessment.verdict).toBe("unregistered");
-    expect(assessment.mayClaim).toBe(false);
+    expect(assessment.versionPermitsClaim).toBe(false);
   });
 });
 
@@ -248,7 +250,7 @@ describe("against this build's own constants", () => {
         reportedVersion: HOOK_PROTOCOL[variant].current,
       });
       expect(assessment.verdict).toBe("current");
-      expect(assessment.mayClaim).toBe(true);
+      expect(assessment.versionPermitsClaim).toBe(true);
     }
   });
 
@@ -259,7 +261,7 @@ describe("against this build's own constants", () => {
         reportedVersion: HOOK_PROTOCOL[variant].minSupported - 1,
       });
       expect(assessment.verdict).toBe("incompatible");
-      expect(assessment.mayClaim).toBe(false);
+      expect(assessment.versionPermitsClaim).toBe(false);
     }
   });
 
