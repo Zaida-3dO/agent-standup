@@ -579,3 +579,43 @@
   color: var(--text-faint);
   cursor: default;
 }
+
+/* ── A refused status pick (MILESTONES.md #76) ───────────────────────────
+   The list's counterpart to `Board.module.css`'s `.refusal`, which shows a
+   refused drag. Same tokens and same shape deliberately: it is the same
+   event reported on a different surface, and a reader who has seen one
+   should recognise the other. Blocked-state colours because a refusal is
+   the interface reporting that the move did not happen. */
+.refusal {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--state-blocked-border);
+  border-radius: 0.5rem;
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-fg);
+  font-size: 0.9rem;
+}
+
+.refusalText {
+  flex: 1;
+  min-width: 0;
+}
+
+.refusalDismiss {
+  flex: none;
+  /* 44px, and in the BASE rule rather than only inside a media query —
+     row afd1b4b4 found base-rule sizes escaping every touch-target test
+     because those only read inside `max-width: 640px` blocks. This is a
+     control a phone reader taps to clear an alert. */
+  min-height: 44px;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--state-blocked-border);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--state-blocked-fg);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
