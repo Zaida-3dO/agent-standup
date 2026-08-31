@@ -76,9 +76,10 @@ describe("assessMintDemand (#63)", () => {
   // The reason is what an operator reads to know why nothing is happening,
   // so the precedence has to be pinned, not just the boolean.
   it("reports the most fundamental reason first when several apply", () => {
-    expect(
-      assessMintDemand({ ...base, sourceGlobs: [], scanInFlight: true, onDeck: 99 }),
-    ).toEqual({ scan: false, reason: "no-sources" });
+    expect(assessMintDemand({ ...base, sourceGlobs: [], scanInFlight: true, onDeck: 99 })).toEqual({
+      scan: false,
+      reason: "no-sources",
+    });
     expect(assessMintDemand({ ...base, scanInFlight: true, onDeck: 99 })).toEqual({
       scan: false,
       reason: "already-scanning",

@@ -181,9 +181,9 @@ describeIfDb("minting idempotency (#63)", () => {
       const ref = formatSourceRef("broken/a.md", hashSourceContent("one"));
       const boom = new Error("column does not exist");
 
-      await expect(
-        mintOnce(prisma, ref, () => Promise.reject(boom)),
-      ).rejects.toThrow("column does not exist");
+      await expect(mintOnce(prisma, ref, () => Promise.reject(boom))).rejects.toThrow(
+        "column does not exist",
+      );
       expect(await prisma.item.count({ where: { sourceRef: ref } })).toBe(0);
     });
 
@@ -321,9 +321,7 @@ describeIfDb("minting idempotency (#63)", () => {
       try {
         expect(await findMintedItem(reconnected, ref)).not.toBeNull();
 
-        const again = await mintOnce(reconnected, ref, (db) =>
-          mintItem(db as PrismaClient, ref),
-        );
+        const again = await mintOnce(reconnected, ref, (db) => mintItem(db as PrismaClient, ref));
         expect(again.minted).toBe(false);
       } finally {
         await reconnected.$disconnect();
@@ -340,7 +338,9 @@ describeIfDb("minting idempotency (#63)", () => {
       const after = formatSourceRef(path, hashSourceContent("version two"));
       expect(before).not.toBe(after);
 
-      const firstMint = await mintOnce(prisma, before, (db) => mintItem(db as PrismaClient, before));
+      const firstMint = await mintOnce(prisma, before, (db) =>
+        mintItem(db as PrismaClient, before),
+      );
       const secondMint = await mintOnce(prisma, after, (db) => mintItem(db as PrismaClient, after));
 
       expect(firstMint.minted).toBe(true);
