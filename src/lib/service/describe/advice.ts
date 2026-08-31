@@ -43,6 +43,8 @@
 //      check, which loses the ones it gets right too.
 import { describeFields } from "./fields";
 import { getOperation, isOperationName, listOperations } from "../registry";
+import { ADAPTER_WAIVERS } from "@/lib/adapters/waivers";
+import { buildSearchNotice } from "../operations/search";
 
 /** One piece of advice, and the operation whose refusal carries it. */
 export interface AdviceEntry {
@@ -61,7 +63,7 @@ export interface AdviceDefect {
   readonly named: string;
   /** The operation the identifier was attributed to. */
   readonly attributedTo: string;
-  readonly kind: "parameter" | "enum-value" | "operation";
+  readonly kind: "parameter" | "enum-value" | "operation" | "unreachable";
   readonly detail: string;
 }
 
@@ -271,9 +273,142 @@ export function attributeTo(text: string, at: number, fallback: string): string 
  *     does not contain it, and no field of that operation does. This is
  *     #250's `pre_approved`-for-`pre-approved`.
  */
+/**
+ * Operations no MCP adapter exposes — the tools an MCP caller cannot call.
+ *
+ * Derived from `ADAPTER_WAIVERS` rather than listed, for the same reason
+ * the tool list itself is derived: a hand-kept copy is a second list to
+ * forget, and this check exists precisely because a *change to the first
+ * list* stranded advice that nothing re-read.
+ *
+ * **Waived on every MCP adapter, not on any.** `mcp_http` and `mcp_stdio`
+ * are one surface over two transports and the waiver table sets them
+ * identically, but the intersection is the honest reading: a tool one MCP
+ * adapter still serves is reachable for some MCP caller, and calling that
+ * unreachable would be a false positive.
+ */
+export function operationsOffMcp(): ReadonlySet<string> {
+  const mcpAdapters = [...new Set(ADAPTER_WAIVERS.map((waiver) => waiver.adapter))].filter(
+    (adapter) => adapter.startsWith("mcp"),
+  );
+  if (mcpAdapters.length === 0) return new Set();
+  const waivedOnEvery = new Set<string>();
+  for (const waiver of ADAPTER_WAIVERS) {
+    if (!waiver.adapter.startsWith("mcp")) continue;
+    const operation = waiver.operation;
+    if (waivedOnEvery.has(operation)) continue;
+    const onAll = mcpAdapters.every((adapter) =>
+      ADAPTER_WAIVERS.some((other) => other.adapter === adapter && other.operation === operation),
+    );
+    if (onAll) waivedOnEvery.add(operation);
+  }
+  return waivedOnEvery;
+}
+
+/**
+ * Marks a mention as a deliberate reference to a non-MCP surface.
+ *
+ * Some references to a waived operation are *correct*: HTTP route tables,
+ * CLI binding maps and prose explaining what the command line still serves
+ * all name these operations legitimately. The annotation is what separates
+ * "this remedy strands an MCP caller" from "this sentence is about the
+ * command line", and it has to be written deliberately rather than
+ * inferred — an inference here would be the checker guessing at intent,
+ * which is what the three existing classes refuse to do.
+ */
+export const NON_MCP_REFERENCE_MARKER = "[http/cli]";
+
+/**
+ * Folded tools, and the waived operations whose messages they surface.
+ *
+ * A fold does not reimplement its verbs — `loop` and `create_work` each
+ * dispatch to the operation that already implements the action, handing
+ * back *the same refusal object* it threw. So a waived operation reached
+ * through a fold speaks **directly to an MCP caller**, and its summary and
+ * contract rules have to satisfy this check even though the operation
+ * itself is waived.
+ *
+ * Verified on the live wire rather than assumed: `loop {action: "delete"}`
+ * with a resolution-sounding reason returns `loop_delete`'s own message,
+ * "…which is `loop_close`, not `loop_delete`", naming two tools no MCP
+ * caller has.
+ *
+ * Declared as data because there is no way to read a dispatch relationship
+ * off the registry, and a checker that inferred one would be guessing.
+ */
+export const FOLDED_INTO: ReadonlyMap<string, string> = new Map([
+  ["loop_add", "loop"],
+  ["loop_get", "loop"],
+  ["loop_list", "loop"],
+  ["loop_edit", "loop"],
+  ["loop_close", "loop"],
+  ["loop_delete", "loop"],
+  ["create_project", "create_work"],
+  ["create_task", "create_work"],
+  ["create_subtask", "create_work"],
+]);
+
+/**
+ * Names of operations the text mentions that an MCP caller cannot call.
+ *
+ * Unlike `mentionedOperations`, this does **not** require backticks. The
+ * stale references this class exists for are bare words in prose — "use
+ * loop_close instead", "read one with loop_get" — and requiring a backtick
+ * would miss every one of them. Loosening the pattern is safe *here* and
+ * nowhere else in this module, because the candidate set is a closed list
+ * of 55 real operation names rather than a guess at what a tool name looks
+ * like: a bare word only matches if it is exactly an operation the waiver
+ * table names, so the false-positive mode that killed the snake_case
+ * widening (`item_id`, `commit_sha`, `open_loops`) cannot arise.
+ */
+export function unreachableMentions(
+  text: string,
+  offMcp: ReadonlySet<string> = operationsOffMcp(),
+): readonly { name: string; at: number }[] {
+  if (text.includes(NON_MCP_REFERENCE_MARKER)) return [];
+  const found: { name: string; at: number }[] = [];
+  for (const match of text.matchAll(/`?\b([a-z][a-z0-9_]*)\b`?/g)) {
+    const name = match[1];
+    if (name === undefined || !offMcp.has(name)) continue;
+    found.push({ name, at: match.index ?? 0 });
+  }
+  return found;
+}
+
 export function findAdviceDefects(entries: readonly AdviceEntry[]): readonly AdviceDefect[] {
   const defects: AdviceDefect[] = [];
+  const offMcp = operationsOffMcp();
   for (const entry of entries) {
+    // The reachability class. An operation can be registered — so the
+    // `operation` class below is satisfied — and still be a tool the caller
+    // reading this message has no way to call, which is the exact state a
+    // fold or a waiver creates. Reported first because it is the one a
+    // refused caller is most stranded by: they are already being told no.
+    //
+    // **Only advice an MCP caller can actually receive is judged.** The
+    // message of an operation that is itself waived off MCP reaches HTTP
+    // and CLI callers only, and for them a waived operation is a perfectly
+    // callable route — `retype_to_task` saying "use `reparent_item`" is
+    // correct advice to everyone who can read it. Judging those would
+    // report defects that cannot be fixed by any wording, which is the
+    // false-positive mode this module refuses elsewhere.
+    // …unless it is folded, in which case an MCP caller reaches it through
+    // the folding tool and reads exactly this text.
+    const spokenOffMcp = offMcp.has(entry.operation) && !FOLDED_INTO.has(entry.operation);
+    for (const mention of spokenOffMcp ? [] : unreachableMentions(entry.text, offMcp)) {
+      defects.push({
+        operation: entry.operation,
+        source: entry.source,
+        named: mention.name,
+        attributedTo: mention.name,
+        kind: "unreachable",
+        detail:
+          `advice names \`${mention.name}\`, which is registered but waived off every MCP ` +
+          `adapter — an MCP caller cannot call it. Name the tool that replaced it (and its ` +
+          `action, if it was folded), or mark a deliberate HTTP/CLI reference with ` +
+          `"${NON_MCP_REFERENCE_MARKER}"`,
+      });
+    }
     for (const mention of calledNames(entry.text)) {
       if (isOperationName(mention.name)) continue;
       defects.push({
@@ -467,12 +602,72 @@ export function collectAdvice(
         text: narrower,
       });
     }
+    // The summary, which is the description MCP sends to the model in the
+    // tool list on **every session** — the single most-read advice surface
+    // here, and one a fold leaves stale in both directions: `loop_list`'s
+    // summary ends "Read one in full with `loop_get`", and a caller reaching
+    // it through the folded `loop` tool has neither name available.
+    if (typeof operation.summary === "string" && operation.summary.length > 0) {
+      entries.push({
+        operation: operation.name,
+        source: `${operation.name} summary`,
+        text: operation.summary,
+      });
+    }
     for (const rule of contractRulesOf(operation)) {
       entries.push({
         operation: operation.name,
         source: `${operation.name} contract.rules`,
         text: rule.rule,
       });
+    }
+  }
+  entries.push(...searchNoticeAdvice());
+  return entries;
+}
+
+/**
+ * `search`'s notices, which are built inline rather than declared.
+ *
+ * **This is the corpus gap that let two of this row's defects hide.** The
+ * two structured sources above are read from the registry, so anything
+ * declared there is swept; `buildSearchNotice` composes its text in a
+ * function body, and a remedy living there was invisible to every
+ * assertion in this module. Both stale `loop_get`/`loop_list` references in
+ * `search.ts` sat in exactly that blind spot.
+ *
+ * The notices are obtained by **calling the real builder** across the
+ * branches that carry advice, never by copying its strings — a copy would
+ * be the two-entry hand-written corpus this check exists to avoid, and it
+ * would go stale in precisely the way the strings themselves just did.
+ */
+function searchNoticeAdvice(): readonly AdviceEntry[] {
+  const query = "q";
+  const cases: readonly {
+    shown: number;
+    truncated: boolean;
+    narrowed: boolean;
+    loopHits: number;
+  }[] = [
+    { shown: 0, truncated: false, narrowed: false, loopHits: 0 },
+    { shown: 0, truncated: false, narrowed: true, loopHits: 0 },
+    { shown: 0, truncated: false, narrowed: false, loopHits: 2 },
+    { shown: 3, truncated: false, narrowed: false, loopHits: 0 },
+    { shown: 3, truncated: true, narrowed: false, loopHits: 0 },
+    { shown: 3, truncated: false, narrowed: false, loopHits: 2 },
+    { shown: 3, truncated: true, narrowed: false, loopHits: 2 },
+  ];
+  const seen = new Set<string>();
+  const entries: AdviceEntry[] = [];
+  for (const one of cases) {
+    for (const searchedLoops of [false, true]) {
+      const text = buildSearchNotice(one.shown, query, one.truncated, one.narrowed, {
+        searchedLoops,
+        loopHits: one.loopHits,
+      });
+      if (seen.has(text)) continue;
+      seen.add(text);
+      entries.push({ operation: "search", source: "search.ts buildSearchNotice", text });
     }
   }
   return entries;

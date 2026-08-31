@@ -556,7 +556,7 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
       expect("dupe".length).toBeLessThan(LOOP_DELETE_REASON_MIN_CHARS);
     });
 
-    it("refuses a reason that describes a resolution, naming loop_close", async () => {
+    it("refuses a reason that describes a resolution, steering to closing", async () => {
       // The steering that converts the mistake rather than only blocking it.
       // Killed by emptying `CLOSURE_REASON_PHRASES`.
       const itemId = await seedItem();
@@ -570,7 +570,14 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
       );
       expect(error.code).toBe("guard_rejected");
       expect(error.guard).toBe(LOOP_DELETE_REASON_GUARD);
-      expect((error as unknown as { message: string }).message).toContain("loop_close");
+      // Names the *action*, not `loop_close`: the six loop verbs are waived
+      // off MCP behind the folded `loop` tool, so a caller reading this
+      // message cannot call `loop_close`. Asserting the steering survives —
+      // killed by emptying `CLOSURE_REASON_PHRASES` — while asserting the
+      // remedy is one the caller can actually follow.
+      const message = (error as unknown as { message: string }).message;
+      expect(message).toContain('action "close"');
+      expect(message).not.toContain("loop_close");
     });
 
     it("refuses a second deletion rather than reporting success", async () => {

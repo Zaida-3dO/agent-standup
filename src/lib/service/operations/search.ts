@@ -178,8 +178,8 @@ export interface SearchMatch {
  *
  * Both, because either alone is unusable: the item id without the loop id
  * makes a caller read every loop on the item to find the one that matched,
- * and the loop id without the item id cannot be passed to `loop_get`, which
- * is item-scoped. Together they are exactly the arguments of the call a
+ * and the loop id without the item id cannot be passed to the loop read,
+ * which is item-scoped. Together they are exactly the arguments of the call a
  * caller makes next.
  */
 export interface SearchLoopMatch {
@@ -264,7 +264,7 @@ export function buildSearchNotice(
       : `No item matches "${query}" in any title, headline or body. Search matches literal text, so a shorter or differently-spelled query may find it.${loopRoute}`;
   }
   if (shown === 0) {
-    return `No item's title, headline or body matches "${query}", but ${loopHits} open ${loopHits === 1 ? "loop" : "loops"} did — read one with loop_get, or list them with loop_list.`;
+    return `No item's title, headline or body matches "${query}", but ${loopHits} open ${loopHits === 1 ? "loop" : "loops"} did — read one with \`loop\` \`action: "get"\`, or list them with \`action: "list"\`.`;
   }
   const loopTail =
     loopHits > 0

@@ -48,6 +48,8 @@ import {
   findUndocumentedConditionalRequirements,
   requiredFieldNames,
   instructedIdentifiers,
+  operationsOffMcp,
+  NON_MCP_REFERENCE_MARKER,
 } from "@/lib/service/describe/advice";
 import { narrowerCallFor } from "@/lib/service/response-size";
 
@@ -227,10 +229,17 @@ describe("the check fails on a reintroduced instance", () => {
   });
 
   it("spares the live operations the same route phrasing names", () => {
-    // Verbatim from `progress_report`'s own rule. Both names are
-    // registered, so the widened pattern must match them and report
-    // nothing — this is the control that fails if the widening ever starts
-    // deciding on name shape instead of on the registry.
+    // Verbatim from `progress_report`'s own rule as it stood before the
+    // loop fold. Both names are registered, so the widened pattern must
+    // match them and report nothing *as unregistered* — this is the control
+    // that fails if the widening ever starts deciding on name shape instead
+    // of on the registry.
+    //
+    // Scoped to the `operation` class deliberately. Since PR #349 these two
+    // are registered **and** waived off MCP, so the `unreachable` class
+    // below reports them — correctly, and that is the defect this row
+    // fixed. Asserting an empty list here would make this control demand
+    // the opposite of what the new class exists to enforce.
     const defects = findAdviceDefects([
       {
         operation: "progress_report",
@@ -240,7 +249,7 @@ describe("the check fails on a reintroduced instance", () => {
           "is `loop_add` and the way to clear one is `loop_close`.",
       },
     ]);
-    expect(defects).toEqual([]);
+    expect(defects.filter((defect) => defect.kind === "operation")).toEqual([]);
   });
 
   it("reads each route in a two-route sentence, not just the last", () => {
@@ -286,12 +295,19 @@ describe("the check does not fire on advice that is correct", () => {
     // so correctly. A detector matching parameters against the operation
     // whose message it happens to be would flag this, be wrong, and get
     // switched off.
+    //
+    // Kept verbatim from the live table, which now names the folded `loop`
+    // tool and its action. The earlier wording of this fixture said
+    // `loop_list`, and leaving it would have made a negative control assert
+    // that a stranded remedy is correct advice.
     expect(
       findAdviceDefects([
         {
           operation: "get_item_detail",
           source: "live",
-          text: "`loop_list` for this item's loops, or `get_item` with `full: false` for the slim record",
+          text:
+            '`loop` with `action: "list"` for this item\'s loops, or `get_item` with ' +
+            "`full: false` for the slim record",
         },
       ]),
     ).toEqual([]);
@@ -417,5 +433,159 @@ describe("how a named remedy is attributed to an operation", () => {
   it("reads an instruction to supply a value, not a bare mention", () => {
     expect(instructedIdentifiers("pass a `limit`").map((found) => found.name)).toEqual(["limit"]);
     expect(instructedIdentifiers("it takes no `limit`")).toEqual([]);
+  });
+});
+
+// ── The reachability class ──────────────────────────────────────────────
+//
+// **Why the three classes above could not catch this.** All of them decide
+// against the *registry*, and the registry is not what an MCP caller can
+// call. PR #349 folded the six loop verbs into one `loop` tool and waived
+// the verbs off both MCP adapters; they stayed registered, so
+// `findAdviceDefects`'s `operation` class kept passing `loop_list` as a
+// perfectly good redirect — advice.ts even documented it as one ("use
+// `loop_list` names a call, not a field"). Meanwhile a caller refused for
+// response size was told to call a tool absent from its tool list, with no
+// other route, while already being refused.
+//
+// This is the third stale-remedy correction `response-size.ts` has needed.
+// The first two were hand-fixes; a hand-fix does not survive the next fold,
+// which is why this class exists as a check rather than as a careful diff.
+describe("advice naming a tool the caller cannot call", () => {
+  it("knows which operations are off MCP, and does not read an empty list", () => {
+    // The anti-hollowness assertion for this class's oracle. Every
+    // seeded-violation test below passes vacuously if `operationsOffMcp()`
+    // silently returns nothing, so the count is pinned to the waiver table
+    // rather than trusted.
+    const offMcp = operationsOffMcp();
+    expect(offMcp.size).toBeGreaterThanOrEqual(40);
+    for (const waived of ["loop_get", "loop_list", "loop_close", "get_crew_name", "readiness"]) {
+      expect(offMcp.has(waived), `${waived} should be known as off-MCP`).toBe(true);
+    }
+    // Live tools must not be in it — the mirror failure, where the class
+    // would flag every correct redirect in the tree.
+    for (const live of ["get_item", "search", "loop", "checkpoint", "create_work"]) {
+      expect(offMcp.has(live), `${live} is on MCP and must not be flagged`).toBe(false);
+    }
+  });
+
+  it("catches the `loop_list` remedy the loop fold stranded (the instance that opened the row)", () => {
+    // Verbatim from `response-size.ts` before this fix.
+    const defects = findAdviceDefects([
+      {
+        operation: "get_item_detail",
+        source: "reintroduced",
+        text:
+          "`loop_list` for this item's loops, `get_item_body` to read a large body in " +
+          "windows, or `get_item` with `full: false` for the slim record",
+      },
+    ]).filter((defect) => defect.kind === "unreachable");
+    expect(defects).toHaveLength(1);
+    expect(defects[0]).toMatchObject({ kind: "unreachable", named: "loop_list" });
+    // The failure has to say what to do instead, or it reproduces the very
+    // defect it reports — a remedy with no remedy.
+    expect(defects[0]?.detail).toContain("MCP");
+    expect(defects[0]?.detail).toContain(NON_MCP_REFERENCE_MARKER);
+  });
+
+  it("catches a bare-word reference, which is how every real instance was written", () => {
+    // `search.ts` said "read one with loop_get, or list them with
+    // loop_list" and `loop_delete` said "call loop_close" — no backticks on
+    // any of them. A detector requiring backticks, as the other classes in
+    // this module do, would have found none of the real defects.
+    const defects = findAdviceDefects([
+      {
+        operation: "search",
+        source: "reintroduced",
+        text: "read one with loop_get, or list them with loop_list.",
+      },
+    ]).filter((defect) => defect.kind === "unreachable");
+    expect(defects.map((defect) => defect.named).sort()).toEqual(["loop_get", "loop_list"]);
+  });
+
+  it("catches a folded operation's own message, which the fold surfaces verbatim", () => {
+    // `loop` dispatches to `loop_delete` and hands back the same refusal
+    // object, so this text reaches an MCP caller unchanged. Verified on the
+    // deployed server: `loop {action:"delete"}` with a resolution-sounding
+    // reason returned "...which is loop_close, not loop_delete".
+    const defects = findAdviceDefects([
+      {
+        operation: "loop_delete",
+        source: "reintroduced",
+        text: "If this loop was real and is now dealt with, call loop_close.",
+      },
+    ]).filter((defect) => defect.kind === "unreachable");
+    expect(defects).toHaveLength(1);
+    expect(defects[0]?.named).toBe("loop_close");
+  });
+
+  it("spares a waived operation's advice that only HTTP and CLI callers can read", () => {
+    // `retype_to_task` is waived off MCP, so its message reaches HTTP and
+    // CLI callers only — and for them `reparent_item` is a real, callable
+    // route. Flagging this would report a defect no wording could fix,
+    // which is the false-positive mode this module refuses everywhere else.
+    const defects = findAdviceDefects([
+      {
+        operation: "retype_to_task",
+        source: "live",
+        text: "The item must be a project. Use reparent_item to move one.",
+      },
+    ]).filter((defect) => defect.kind === "unreachable");
+    expect(defects).toEqual([]);
+  });
+
+  it("honours an explicit HTTP/CLI annotation on an MCP-visible message", () => {
+    const defects = findAdviceDefects([
+      {
+        operation: "get_item",
+        source: "live",
+        text: `Bulk import runs through backfill on the command line. ${NON_MCP_REFERENCE_MARKER}`,
+      },
+    ]).filter((defect) => defect.kind === "unreachable");
+    expect(defects).toEqual([]);
+  });
+
+  it("does not fire on the live tree", () => {
+    // The real assertion this row is judged by, and the one that fails the
+    // build the next time a fold or a waiver strands a remedy.
+    const defects = findAdviceDefects(collectAdvice(narrowerCallFor)).filter(
+      (defect) => defect.kind === "unreachable",
+    );
+    expect(
+      defects,
+      `advice naming a tool no MCP caller can call:\n${describeDefects(defects)}`,
+    ).toEqual([]);
+  });
+});
+
+// ── The corpus this sweep reads ─────────────────────────────────────────
+//
+// The check is only as good as what it is pointed at, and the most likely
+// way for it to rot is silently: a corpus that stops including a surface
+// still reports zero and still looks green. Two of this row's own defects
+// lived in `search.ts`'s inline notices, which no assertion in this file
+// could see until `collectAdvice` was widened to call the real builder.
+describe("the swept corpus covers every advice surface", () => {
+  it("includes operation summaries, which MCP sends the model every session", () => {
+    const entries = collectAdvice(narrowerCallFor);
+    const summaries = entries.filter((entry) => entry.source.endsWith(" summary"));
+    // One per registered operation, so a drop here is a real regression
+    // rather than a threshold nudged down to keep a test green.
+    expect(summaries.length).toBeGreaterThanOrEqual(80);
+    expect(summaries.every((entry) => entry.text.length > 0)).toBe(true);
+  });
+
+  it("includes search's inline notices, obtained by calling the real builder", () => {
+    const entries = collectAdvice(narrowerCallFor);
+    const notices = entries.filter((entry) => entry.source.includes("buildSearchNotice"));
+    expect(notices.length).toBeGreaterThanOrEqual(6);
+    // The loop-hit branch is the one that carried the stale `loop_get` and
+    // `loop_list`, so its presence is what makes this surface swept rather
+    // than merely represented.
+    expect(notices.some((entry) => entry.text.includes("open loops did"))).toBe(true);
+    // Pinned to the live strings: if `buildSearchNotice` stops being called
+    // and a copy is pasted in, this drifts and fails rather than passing on
+    // a stale duplicate.
+    expect(notices.some((entry) => entry.text.includes("Loop text was not searched"))).toBe(true);
   });
 });
