@@ -1,0 +1,51 @@
+-- Minting idempotency, enforced by the database rather than by the scan
+-- that reads it — DECISIONS.md §13, MILESTONES.md #63.
+--
+-- ── Why a constraint and not a check in the scanner ─────────────────────
+--
+-- §13 settles the *identity* question ("has this file been minted from?"
+-- is `SELECT 1 FROM items WHERE source_ref = (path, hash)`) and settles it
+-- correctly, but a SELECT followed by an INSERT is only idempotent when
+-- nothing runs between the two. Two scans of the same source that overlap
+-- both read "no row", both decide to mint, and both insert: the read
+-- happened before either write, so neither can see the other. That is not
+-- a rare interleaving to be defended against with a wider lock — under
+-- READ COMMITTED it is the *expected* outcome of two concurrent scans, and
+-- the window is the whole duration of the mint, not an instant.
+--
+-- The unique index removes the window instead of narrowing it. The second
+-- INSERT is refused by Postgres at write time, whatever the first
+-- transaction had committed by the time the second one read. The scanner
+-- is then free to be written the honest way — attempt the insert, treat a
+-- unique violation as "already minted" — and its correctness is
+-- independent of how two scans happen to interleave.
+--
+-- This is also what makes idempotency hold **across a restart**, which no
+-- in-process guard can do: a lock, a cache or a set of seen hashes lives in
+-- one process and dies with it, while the constraint is a property of the
+-- data and is still there when the process comes back.
+--
+-- ── Why PARTIAL, and why that is not drift ─────────────────────────────
+--
+-- `WHERE "sourceRef" IS NOT NULL`. Null means "not minted from a source"
+-- and describes the overwhelming majority of rows — everything a person or
+-- an agent created directly. Those rows are not duplicates of each other
+-- and a total unique index would wrongly collapse them, because in
+-- Postgres nulls do not conflict but the index would still carry every one
+-- of them for no reader.
+--
+-- It lives only here and not in `schema.prisma`, for exactly the reason
+-- that file's own comment gives about `Item_archivedAt_idx`: this schema
+-- language cannot express a partial index, and declaring the total one
+-- instead would be a *different object* — which is what would make
+-- `db:check-drift` red. `prisma migrate diff` compares against the
+-- datamodel and a partial index has no datamodel representation, so the
+-- diff cannot see one in either direction.
+--
+-- The plain `Item_sourceRef_idx` from the initial migration stays. It is
+-- declared in `schema.prisma` (removing it there is what would cause
+-- drift), it serves the "which items already came from the previous
+-- version of this file?" read that §13 ends on — a prefix scan across
+-- hashes, which this equality-shaped unique index does not answer — and
+-- the redundancy is one index on a column, not a correctness question.
+CREATE UNIQUE INDEX "Item_sourceRef_unique" ON "Item"("sourceRef") WHERE "sourceRef" IS NOT NULL;
