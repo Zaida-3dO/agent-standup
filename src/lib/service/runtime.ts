@@ -38,6 +38,28 @@ export interface ServiceRuntimeOptions {
    * `callOperation`, before the transaction opens.
    */
   resolveSnapshot: () => Promise<SettingsSnapshot>;
+  /**
+   * Attaches whatever the interventions noticed to a finished result
+   * (MILESTONES.md #128).
+   *
+   * **Optional, and absent means the feature is simply not present** - the
+   * result is returned exactly as the operation produced it. That default
+   * is what lets this be added to a seam every existing caller already uses
+   * without changing what any of them see: a runtime constructed without a
+   * deliverer behaves identically to one built before this parameter
+   * existed.
+   *
+   * It is handed the result and the caller, and deliberately **no database
+   * handle**. The transaction has closed by the time it runs, so there is
+   * nothing for it to join even if it wanted one - which is the property
+   * that keeps the ordinary path query-free, and the same contract the
+   * predicates themselves are held to.
+   *
+   * Synchronous on purpose. An async deliverer would put an await on every
+   * response in the system to compute an advisory field, and everything it
+   * needs is already in memory by the time it is called.
+   */
+  deliverInterventions?: (result: unknown, caller: Caller) => unknown;
 }
 
 export interface CallOptions {
@@ -76,10 +98,12 @@ export interface CallOptions {
 export class ServiceRuntime {
   readonly #transaction: ServiceRuntimeOptions["transaction"];
   readonly #resolveSnapshot: ServiceRuntimeOptions["resolveSnapshot"];
+  readonly #deliverer: ServiceRuntimeOptions["deliverInterventions"];
 
-  constructor({ transaction, resolveSnapshot }: ServiceRuntimeOptions) {
+  constructor({ transaction, resolveSnapshot, deliverInterventions }: ServiceRuntimeOptions) {
     this.#transaction = transaction;
     this.#resolveSnapshot = resolveSnapshot;
+    this.#deliverer = deliverInterventions;
   }
 
   /**
@@ -262,7 +286,58 @@ export class ServiceRuntime {
     // inside the transaction would hold it open across the serialisation of
     // the very response that is too big to serialise cheaply.
     enforceResponseSize(operation.name, operation.kind, caller.transport, result);
-    return result;
+
+    // Step 6 - whatever the interventions noticed rides back beside the
+    // payload (MILESTONES.md #128). Here for the same reason step 5 is
+    // here: this is the one seam every call crosses on every adapter, so an
+    // operation added later carries the field without its author
+    // remembering to add it, and no operation's own body has to know the
+    // feature exists.
+    //
+    // **After the size check, deliberately.** The two would otherwise
+    // interact in the one direction that matters: a response measured with
+    // the payload already attached could be refused for exceeding the cap
+    // because of an advisory field the caller never asked for - turning a
+    // nudge into a failed read. The payload is small and bounded, but
+    // "small" is not an argument for measuring it, and the ordering makes
+    // the question moot rather than merely unlikely.
+    return this.#deliverInterventions(result, caller);
+  }
+
+  /**
+   * Attaches the intervention payload, or returns the result untouched.
+   *
+   * Untouched is the overwhelmingly common answer, and the identity return
+   * in `attachInterventions` is what makes this safe to run on every call:
+   * a build with no deliverer configured, or a call that triggered nothing,
+   * returns precisely the value it returned before this existed.
+   *
+   * **It cannot reach the database and is not given the chance to.** The
+   * transaction has already closed by the time this runs, and the deliverer
+   * receives no handle - which is the same contract the predicates are held
+   * to, and the thing that keeps `hook_decision`'s "touches no table on the
+   * ordinary path" property true of every other operation as well.
+   *
+   * **A deliverer that throws is swallowed.** An advisory field is never
+   * worth failing a call that has already committed: the operation
+   * succeeded, the transaction is closed, and the caller is entitled to its
+   * result whether or not something optional could be computed alongside
+   * it. This is the same fail-open reasoning DECISIONS.md sec.16 records for
+   * the hook, applied at the only other place a finding can be produced.
+   */
+  #deliverInterventions(result: unknown, caller: Caller): unknown {
+    const deliver = this.#deliverer;
+    if (deliver === undefined) return result;
+
+    try {
+      return deliver(result, caller);
+    } catch (error) {
+      log.debug("Intervention delivery failed; returning the result unchanged.", {
+        requestId: caller.requestId,
+        err: error,
+      });
+      return result;
+    }
   }
 }
 
