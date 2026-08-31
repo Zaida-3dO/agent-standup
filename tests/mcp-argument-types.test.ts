@@ -156,10 +156,26 @@ describe("argument types survive the streamable-HTTP transport", () => {
   };
 
   it("delivers every JSON type unchanged across a real HTTP round trip", async () => {
-    // The transport the defect was actually reported against — the mount an
-    // agent reaches at `/api/mcp`. Serialising to bytes and parsing back is
-    // the step a client-side coercion would be hidden in, so it is done for
+    // The transport the defect was reported against — the mount an agent
+    // reaches at `/api/mcp`. Serialising to bytes and parsing back is the
+    // step a client-side coercion would be hidden in, so it is done for
     // real here rather than simulated.
+    //
+    // **Driven through `update_item` rather than `put_setting`.** Settings
+    // administration is waived from the MCP surface (`@/lib/adapters/waivers`)
+    // because a setting is a deployment-wide policy decision a person makes,
+    // so `put_setting` is not a tool this mount serves: a call naming it is
+    // refused before any argument is examined, which would make this
+    // assertion pass without the value ever crossing the seam it is about.
+    //
+    // The property under test is a property of the *transport*, not of any
+    // one tool. `update_item` is exposed here and its `customFields` is
+    // `z.record(z.string(), z.unknown())` — the same "Zod will never object
+    // to the type" shape that makes this assertion meaningful, carrying the
+    // identical boolean/number/array/null/string values across the identical
+    // JSON-RPC seam. The `put_setting`-specific coverage is kept in full by
+    // the in-memory cases above, which name the operation explicitly and so
+    // are unaffected by what the mount advertises.
     const { call, seen } = recordingCall();
     await handleMcpRequest(post(initialize), call);
     for (const [index, { key, value }] of TYPED_VALUES.entries()) {
@@ -169,13 +185,26 @@ describe("argument types survive the streamable-HTTP transport", () => {
             jsonrpc: "2.0",
             id: 100 + index,
             method: "tools/call",
-            params: { name: "put_setting", arguments: { key, value } },
+            params: {
+              name: "update_item",
+              arguments: { id: "item-under-test", customFields: { [key]: value } },
+            },
           },
           { "mcp-protocol-version": PROTOCOL_VERSION },
         ),
         call,
       );
     }
-    expect(seen).toEqual(TYPED_VALUES.map(({ key, value }) => ({ key, value })));
+    // `full: false` is `update_item`'s own schema default, applied on the way
+    // through. Asserted rather than stripped: it is evidence the argument was
+    // really parsed by the operation's schema on the far side of the wire,
+    // and not passed along as an opaque blob that a coercion could hide in.
+    expect(seen).toEqual(
+      TYPED_VALUES.map(({ key, value }) => ({
+        id: "item-under-test",
+        customFields: { [key]: value },
+        full: false,
+      })),
+    );
   });
 });

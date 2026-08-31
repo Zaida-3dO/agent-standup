@@ -20,7 +20,10 @@
 //    `body` is serialised and re-decoded exactly the way a network client's
 //    would be — see `mcp-http.test.ts`'s header for why that is "the real
 //    HTTP boundary" without a listening server), through two surfaces: the
-//    MCP `create_item`/`get_item` tools (what both field reports used) and
+//    MCP `create_project`/`get_item` tools (the field reports named
+//    `create_item`, which is deprecated and waived off the MCP surface;
+//    `create_project` is the creation tool with no required parent, so the
+//    bytes cross the identical seam with no unrelated setup) and
 //    the plain `POST /api/items` + `GET /api/items/{id}` route (the
 //    surface `items-routes.test.ts` already covers for ASCII).
 //
@@ -146,14 +149,14 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
   }
 
   describe.each(Object.entries(NON_ASCII_SAMPLES))("%s — %s", (label, sample) => {
-    it(`MCP create_item then get_item returns "${label}" byte-identical`, async () => {
+    it(`MCP create_project then get_item returns "${label}" byte-identical`, async () => {
       await initMcp();
       const createBody = await mcpRpc({
         jsonrpc: "2.0",
         id: 2,
         method: "tools/call",
         params: {
-          name: "create_item",
+          name: "create_project",
           arguments: {
             title: sample,
             body: `body containing ${sample}`,
@@ -228,7 +231,7 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
       id: 2,
       method: "tools/call",
       params: {
-        name: "create_item",
+        name: "create_project",
         arguments: {
           title: combined,
           body: "x",
@@ -252,7 +255,7 @@ describeIfDb("UTF-8 survives the real HTTP boundary (MILESTONES.md #113)", () =>
       id: 2,
       method: "tools/call",
       params: {
-        name: "create_item",
+        name: "create_project",
         arguments: {
           title: "Ship it — quickly",
           body: "the brief mentions an em dash — right here — twice",

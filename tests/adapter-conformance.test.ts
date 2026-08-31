@@ -45,6 +45,7 @@ import {
   cliArgvDriver,
   cliOperations,
   httpOperations,
+  mcpOperations,
   listDrivers,
   rejectionFrom,
   type ConformanceDriver,
@@ -65,6 +66,37 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { routeFetch } from "./helpers/conformance-routes";
+
+/**
+ * Operation names the web API actually serves, read from its route files.
+ *
+ * Derived by scanning `src/app/api` for `service.call("<operation>", …)`
+ * rather than from a maintained list, for the same reason the rest of this
+ * file derives rather than lists: a hand-kept copy of "what has a route" is
+ * wrong the first time someone adds one and forgets. The route handlers are
+ * thin shells over exactly one service call each (§19), so the call name in
+ * the file is the operation the path serves.
+ */
+async function servedByWebApi(): Promise<Set<string>> {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const root = join(process.cwd(), "src", "app", "api");
+  const found = new Set<string>();
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.name === "route.ts") {
+        const source = await readFile(full, "utf8");
+        for (const match of source.matchAll(/service\.call\(\s*"([a-z_]+)"/g)) {
+          found.add(match[1]!);
+        }
+      }
+    }
+  };
+  await walk(root);
+  return found;
+}
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -525,20 +557,47 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     expect(checkGuardCoverage(GUARDS_THE_CASES_REACH, observations)).toEqual([]);
   });
 
-  it("assertion 4 — every adapter's surface maps to registered operations, or carries a waiver", () => {
+  it("assertion 4 — every adapter's surface maps to registered operations, or carries a waiver", async () => {
+    // Every adapter's `exposes` is READ from that adapter, never computed
+    // from the registry minus its waivers. Computing it would make this
+    // assertion compare an expression against itself — green for any
+    // surface whatsoever, including one that had quietly dropped an
+    // operation nothing else exposes. That is precisely the failure the
+    // completeness assertion exists to catch, and it is invisible unless
+    // the surface is read from the adapter that emits it.
+    const mcpHttp = await mcpOperations("mcp_http");
+    const mcpStdio = await mcpOperations("mcp_stdio");
+    const surfaceOf = (adapter: (typeof ADAPTER_NAMES)[number]): Set<string> =>
+      adapter === "http"
+        ? httpOperations()
+        : adapter === "cli"
+          ? cliOperations()
+          : adapter === "mcp_http"
+            ? mcpHttp
+            : mcpStdio;
+
     const surfaces: AdapterSurface[] = ADAPTER_NAMES.map((adapter) => {
       const waived = waiversFor(adapter).map((waiver) => waiver.operation);
+      const surface = surfaceOf(adapter);
       const exposes = OPERATION_NAMES.filter(
-        (operation) =>
-          !waived.includes(operation) &&
-          (adapter === "http"
-            ? httpOperations().has(operation)
-            : adapter === "cli"
-              ? cliOperations().has(operation)
-              : true),
+        (operation) => !waived.includes(operation) && surface.has(operation),
       );
       return { adapter, exposes, waived };
     });
+
+    // The MCP surfaces are asserted exactly, unlike http/cli below. They
+    // are derived from the registry by construction, so a gap there is a
+    // bug rather than a route table lagging: every registered operation is
+    // either emitted as a tool or carries a waiver, and never both.
+    for (const [adapter, surface] of [
+      ["mcp_http", mcpHttp],
+      ["mcp_stdio", mcpStdio],
+    ] as const) {
+      const waived = new Set(waiversFor(adapter).map((waiver) => waiver.operation));
+      const expected = OPERATION_NAMES.filter((operation) => !waived.has(operation));
+      expect([...surface].sort()).toEqual([...expected].sort());
+      for (const operation of surface) expect(waived.has(operation)).toBe(false);
+    }
 
     // Reported rather than asserted empty: `http` and `cli` derive their
     // surfaces from route and command tables that legitimately lag the
@@ -550,6 +609,44 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     for (const finding of findings) {
       expect(finding.message).toMatch(/does not expose|carries no waiver/);
     }
+  });
+
+  it("assertion 4 — no waiver leaves an operation with no surface at all", async () => {
+    // The failure a waiver list actually invites, and the one the exact
+    // comparison above cannot see. That comparison checks MCP against
+    // *registry minus waivers*, so adding a waiver moves both sides
+    // together: it catches an adapter silently dropping a tool, and is
+    // satisfied by construction for anything deliberately waived.
+    //
+    // What is not safe is waiving an operation that no other adapter
+    // exposes. §22's waivers are each argued as "reach it over HTTP or the
+    // command line" — that argument is only true if the operation is in
+    // fact reachable there. An operation waived from both MCP transports
+    // with no HTTP route and no command is reachable from nowhere: it is
+    // registered, it is tested, and no caller can invoke it.
+    //
+    // Waiving `my_work` (no route, no command) fails this. So does waiving
+    // any of the process operations the kill guard's refusal text names.
+    const mcpHttp = await mcpOperations("mcp_http");
+    const mcpStdio = await mcpOperations("mcp_stdio");
+    const cli = cliOperations();
+    // The **web API's own route files**, not `httpOperations()`. That set is
+    // the CLI binding's operation→path map, which covers the routes the
+    // command line drives and legitimately lags the App Router: `get_needs_you`
+    // and `get_fleet` are served at `/api/needs-you` and `/api/fleet` while
+    // being absent from it. Asking it "is this reachable over HTTP?" would
+    // answer no for routes that plainly exist, and this assertion would then
+    // demand MCP keep tools purely to satisfy a stale table.
+    const served = await servedByWebApi();
+
+    const stranded = OPERATION_NAMES.filter(
+      (operation) =>
+        !mcpHttp.has(operation) &&
+        !mcpStdio.has(operation) &&
+        !served.has(operation) &&
+        !cli.has(operation),
+    );
+    expect(stranded).toEqual([]);
   });
 
   it("assertion 4's bound — no waived operation is one a guard can refuse", () => {

@@ -94,6 +94,637 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     operation: "readiness",
     reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "hook_decision",
+    reason:
+      "Hook and scheduler infrastructure. Its callers are the hook client and the launcher, which " +
+      "reach the service over its own HTTP routes, not through MCP; an agent session has no use for " +
+      "it and cannot act on what it returns. It runs no state transition, so no registered guard " +
+      "can reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command " +
+      "line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "hook_decision",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "kill_guard",
+    reason:
+      "Hook and scheduler infrastructure. Its callers are the hook client and the launcher, which " +
+      "reach the service over its own HTTP routes, not through MCP; an agent session has no use for " +
+      "it and cannot act on what it returns. It runs no state transition, so no registered guard " +
+      "can reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command " +
+      "line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "kill_guard",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "record_tool_calls",
+    reason:
+      "Hook and scheduler infrastructure. Its callers are the hook client and the launcher, which " +
+      "reach the service over its own HTTP routes, not through MCP; an agent session has no use for " +
+      "it and cannot act on what it returns. It runs no state transition, so no registered guard " +
+      "can reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command " +
+      "line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "record_tool_calls",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_session_detail",
+    reason:
+      "Hook and scheduler infrastructure. Its callers are the hook client and the launcher, which " +
+      "reach the service over its own HTTP routes, not through MCP; an agent session has no use for " +
+      "it and cannot act on what it returns. It runs no state transition, so no registered guard " +
+      "can reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command " +
+      "line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_session_detail",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_fleet",
+    reason:
+      "Hook and scheduler infrastructure. Its callers are the hook client and the launcher, which " +
+      "reach the service over its own HTTP routes, not through MCP; an agent session has no use for " +
+      "it and cannot act on what it returns. It runs no state transition, so no registered guard " +
+      "can reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command " +
+      "line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_fleet",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "create_area",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "create_area",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "delete_area",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "delete_area",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_area",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_area",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "list_areas",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "list_areas",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "update_area",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "update_area",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "merge_areas",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "merge_areas",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "create_repo",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "create_repo",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "delete_repo",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "delete_repo",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_repo",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_repo",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "list_repos",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "list_repos",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "update_repo",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "update_repo",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_account",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_account",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "list_accounts",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "list_accounts",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "update_account",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "update_account",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_machine",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_machine",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "list_machines",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "list_machines",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "update_machine",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "update_machine",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "delete_person",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "delete_person",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "list_people",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "list_people",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "update_person",
+    reason:
+      "Reference-entity administration - a person curates the areas, repos, accounts, machines and " +
+      "people a board refers to, through the web interface or the command line, and an agent " +
+      "consumes the result by name rather than maintaining the table. Twenty of these spend context " +
+      "on every session to serve an administrative task no agent performs. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "update_person",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_setting",
+    reason:
+      "Settings administration. A setting is a deployment-wide policy decision a person makes — " +
+      "what the guards require, what the caps are — and an agent that could rewrite one could turn " +
+      "off the checks it is subject to. It runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_setting",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_settings",
+    reason:
+      "Settings administration. A setting is a deployment-wide policy decision a person makes — " +
+      "what the guards require, what the caps are — and an agent that could rewrite one could turn " +
+      "off the checks it is subject to. It runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_settings",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "put_setting",
+    reason:
+      "Settings administration. A setting is a deployment-wide policy decision a person makes — " +
+      "what the guards require, what the caps are — and an agent that could rewrite one could turn " +
+      "off the checks it is subject to. It runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "put_setting",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "patch_settings",
+    reason:
+      "Settings administration. A setting is a deployment-wide policy decision a person makes — " +
+      "what the guards require, what the caps are — and an agent that could rewrite one could turn " +
+      "off the checks it is subject to. It runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "patch_settings",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "delete_setting",
+    reason:
+      "Settings administration. A setting is a deployment-wide policy decision a person makes — " +
+      "what the guards require, what the caps are — and an agent that could rewrite one could turn " +
+      "off the checks it is subject to. It runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "delete_setting",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "remove_unrecognised_setting",
+    reason:
+      "Settings administration. A setting is a deployment-wide policy decision a person makes — " +
+      "what the guards require, what the caps are — and an agent that could rewrite one could turn " +
+      "off the checks it is subject to. It runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "remove_unrecognised_setting",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "reparent_item",
+    reason:
+      "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
+      "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
+      "It runs no state transition through the guarded path, so no registered guard can reject it " +
+      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "reparent_item",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "retype_to_task",
+    reason:
+      "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
+      "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
+      "It runs no state transition through the guarded path, so no registered guard can reject it " +
+      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "retype_to_task",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "restore_item",
+    reason:
+      "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
+      "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
+      "It runs no state transition through the guarded path, so no registered guard can reject it " +
+      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "restore_item",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "delete_item",
+    reason:
+      "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
+      "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
+      "It runs no state transition through the guarded path, so no registered guard can reject it " +
+      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "delete_item",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "takeover",
+    reason:
+      "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
+      "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
+      "It runs no state transition through the guarded path, so no registered guard can reject it " +
+      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "takeover",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "record_intervention",
+    reason:
+      "Scoring and telemetry with no agent consumer — these feed dashboards and the intervention " +
+      "scoring loop, both read by people. An agent neither records nor reads them in the course of " +
+      "doing work. It runs no state transition, so no registered guard can reject it and §22's " +
+      "bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "record_intervention",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_costs",
+    reason:
+      "Scoring and telemetry with no agent consumer — these feed dashboards and the intervention " +
+      "scoring loop, both read by people. An agent neither records nor reads them in the course of " +
+      "doing work. It runs no state transition, so no registered guard can reject it and §22's " +
+      "bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_costs",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_activity",
+    reason:
+      "Scoring and telemetry with no agent consumer — these feed dashboards and the intervention " +
+      "scoring loop, both read by people. An agent neither records nor reads them in the course of " +
+      "doing work. It runs no state transition, so no registered guard can reject it and §22's " +
+      "bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_activity",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_needs_you",
+    reason:
+      "A user-interface read (§22 names 'the board is a user-interface read' as the archetypal " +
+      "waiver). This one backs a specific screen — the needs-you inbox, the Activity tab's paging, " +
+      "the unread marker — and its shape is chosen for that screen rather than for a session. An " +
+      "agent asks about its own work with get_item, my_work and progress_report. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_needs_you",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_history",
+    reason:
+      "A user-interface read (§22 names 'the board is a user-interface read' as the archetypal " +
+      "waiver). This one backs a specific screen — the needs-you inbox, the Activity tab's paging, " +
+      "the unread marker — and its shape is chosen for that screen rather than for a session. An " +
+      "agent asks about its own work with get_item, my_work and progress_report. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_history",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "mark_event_seen",
+    reason:
+      "A user-interface read (§22 names 'the board is a user-interface read' as the archetypal " +
+      "waiver). This one backs a specific screen — the needs-you inbox, the Activity tab's paging, " +
+      "the unread marker — and its shape is chosen for that screen rather than for a session. An " +
+      "agent asks about its own work with get_item, my_work and progress_report. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "mark_event_seen",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "create_item",
+    reason:
+      "Deprecated in favour of the purpose-built creation tools, which state their required fields " +
+      "in their own schemas rather than behind a conditional refinement. Keeping a superseded tool " +
+      "in a list sent on every session spends context to offer agents the worse of two ways to do " +
+      "the same thing. It remains on HTTP and the command line for callers already written against " +
+      "it.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "create_item",
+    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */
