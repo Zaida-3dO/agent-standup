@@ -300,9 +300,9 @@ the client is the handful of checks that cannot run anywhere else.
 | PR | Delivers | Needs | Status |
 |---|---|---|---|
 | **55** | **Spike:** launching a session unattended on Windows, locked and logged in | — | `done` |
-| **56** | Accounts and usage readings, from the hook and from polling; handling stale readings | 9, 50 | |
-| **57** | Budget bands: four of them, boundaries that move with the clock, strictest window wins. Reads `budget.windows` as a typed setting, and `accounts.budget_windows` where an account overrides it | 56, 77 | |
-| **58** | The poll: a machine reports its sessions, usage, and anything waiting to be minted. Reads `machines.source_globs`, falling back to `minting.source_globs` | 56, 77 | |
+| **56** | Accounts and usage readings, from the hook and from polling; handling stale readings | 9, 50 | `done` |
+| **57** | Budget bands: four of them, boundaries that move with the clock, strictest window wins. Reads `budget.windows` as a typed setting, and `accounts.budget_windows` where an account overrides it. **The mechanism is built and every number stays configuration** — the open decision below is untouched, and nothing is defaulted into the registry | 56, 77 | `done` |
+| **58** | The poll: a machine reports its sessions, usage, and anything waiting to be minted. Reads `machines.source_globs`, falling back to `minting.source_globs` | 56, 77 | `done` |
 | **59** | The planner: sort by priority, pack against headroom, deterministic ordering | 57, 58 | |
 | **60** | Launch prompts composed server-side; dispatch and dispatch-claimed recorded | 59 | |
 | **61** | The launcher script and its scheduled task, per machine | 55, 60 | |
@@ -481,7 +481,7 @@ Three things get sequenced wrong more often than anything else:
 
 | Question | Blocks |
 |---|---|
-| The band numbers, beyond the starting values | 57 |
+| The band numbers, beyond the starting values. **Still open, and #57 landing does not close it.** The mechanism ships with no number of its own: every boundary is read from `budget.windows` or an account's override of it, `budget.windows` still defaults to `{}` and `budget.enabled` to `false`, so an installation configures the numbers or gets no bands. The starting values §7 of `DECISIONS.md` states appear only as test fixtures, demonstrating the shape can express them without choosing them | 57 |
 | Does Codex need the blocking wait-for-crew fallback? | 64 |
 | ~~Front-end framework beyond the first board view~~ **SETTLED 2026-08-18** — Tailwind v4 + shadcn/ui + Radix + Geist + lucide, matching fynance (the reference Ope named). Radix confined to thin interactive shells so the hook-free `*View` test split survives. See the M10 rescope note | 73 |
 
