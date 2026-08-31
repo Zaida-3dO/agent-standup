@@ -86,6 +86,83 @@ export function backfillWarning(env) {
   );
 }
 
+/**
+ * The startup line naming which build is about to migrate the database.
+ *
+ * **Why this line exists, and why it is printed before the migration runs
+ * rather than after.** A `docker compose pull` resolves a rolling tag to
+ * whichever image it names, and this entrypoint then applies every
+ * migration that image carries — so a pull migrates the database, and the
+ * version doing the migrating cannot be known until after the image is
+ * already running. When a migration then fails, or succeeds and changes
+ * behaviour, the container log is the only surviving record of which build
+ * touched the schema. Printing the identity *first* means a boot that dies
+ * inside `prisma migrate deploy` still leaves behind the one fact needed to
+ * interpret the wreckage.
+ *
+ * **Deliberately the same source of truth as `service_info`** —
+ * `APP_VERSION` and `APP_REVISION`, baked into the image by the release
+ * workflow from the tag and sha it is building. It is NOT read from
+ * `package.json`, whose `version` field is a placeholder that sat at
+ * `0.1.0` through twelve releases and is not what a release publishes (see
+ * `scripts/version-from-tag.mjs`). A boot line sourced from `package.json`
+ * would print a confident, wrong version on every deploy — worse than
+ * printing nothing, because a plausible answer ends an investigation.
+ *
+ * This file is plain JavaScript run by Node before anything is built, so it
+ * cannot import `src/lib/build-info.ts` — the same constraint, and the same
+ * remedy, as `backfillWarning` above: `tests/build-version-plumbing.test.ts`
+ * pins the two readings to the same variables and the same sentinels so
+ * they cannot drift apart silently.
+ *
+ * An unreleased build says so, in the words `build-info.ts` uses, rather
+ * than guessing: an honest "unknown" prompts a check, a false version ends
+ * one.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string}
+ */
+export function bootIdentity(env) {
+  const version = presentOrNull(env.APP_VERSION);
+  const revision = presentOrNull(env.APP_REVISION);
+
+  // Both sentinels are the literal strings `src/lib/build-info.ts` exports
+  // as DEV_VERSION and UNKNOWN_REVISION. Neither can be mistaken for a
+  // release: `0.0.0-dev` is not bare semver, `unknown` is not sha-shaped.
+  const shownVersion = version ?? "0.0.0-dev";
+  const shownRevision = revision ?? "unknown";
+  const identity = `Starting agent-standup ${shownVersion} (revision ${shownRevision}).`;
+
+  // Whether the two values above can be trusted requires BOTH facts — the
+  // same rule `readBuildInfo` applies for `released`. Saying so in words
+  // costs one clause and removes the need to recognise a sentinel on sight.
+  if (version === null || revision === null) {
+    return (
+      `${identity} This build carries no release identity, so the version above is a ` +
+      "placeholder, not a released version — it was built outside the release workflow."
+    );
+  }
+  return identity;
+}
+
+/**
+ * The value if it holds something after trimming, otherwise null.
+ *
+ * Docker's `ARG`/`ENV` pairing makes an empty string, not an unset
+ * variable, the normal shape of "nothing was passed" — the runner stage
+ * declares `ARG APP_VERSION=""`. A `??` check alone would therefore report
+ * an empty version as a real one, which is the precise bug this row exists
+ * to prevent.
+ *
+ * @param {string | undefined} value
+ * @returns {string | null}
+ */
+function presentOrNull(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export async function main({
   env = process.env,
   argv = process.argv.slice(2),
@@ -93,6 +170,11 @@ export async function main({
   spawnServer = defaultSpawnServer,
 } = {}) {
   const databaseUrl = env.DATABASE_URL;
+
+  // First line of the boot, before the database wait and before any
+  // migration runs. A pull silently migrates, so the log has to say which
+  // build did it — and it has to say so even if the migration then dies.
+  log.info(bootIdentity(env));
 
   let timeoutMs;
   let intervalMs;
