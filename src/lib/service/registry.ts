@@ -172,6 +172,13 @@ import { killGuard } from "./operations/kill-guard";
 // (#51) and their recomputed cost (#52); `get_costs` (#53) is the read over
 // what it writes.
 import { recordToolCalls } from "./operations/record-tool-calls";
+// The heartbeat's machine-facing call (MILESTONES.md #58): a machine
+// reports its sessions, its usage and what it has waiting to be minted,
+// and is told how long to wait, which sources to scan and which budget
+// band each of its accounts is in. Every judgement in that answer is made
+// here, which is what keeps the machine side a poller rather than a
+// scheduler.
+import { poll } from "./operations/poll";
 // Session shape (MILESTONES.md #54): the read side of the same rows — how a
 // session's recent work is going, as opposed to what it cost.
 import { getSessionShape } from "./operations/get-session-shape";
@@ -283,6 +290,7 @@ export const OPERATION_REGISTRY = {
   [listProcesses.name]: listProcesses,
   [killGuard.name]: killGuard,
   [recordToolCalls.name]: recordToolCalls,
+  [poll.name]: poll,
   [getSessionShape.name]: getSessionShape,
   [getCosts.name]: getCosts,
   [getSessionDetail.name]: getSessionDetail,
