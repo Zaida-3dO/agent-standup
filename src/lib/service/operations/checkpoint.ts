@@ -15,6 +15,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
 import type { Assignment } from "@/lib/claims";
+import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
   .object({
@@ -58,6 +59,17 @@ export const checkpoint = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CheckpointOperationInput): Promise<AppendedEvent> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     // A checkpoint is per AGENT, not just per item (§4) — it needs the
     // caller's own live assignment to attribute it to, the same lookup
     // `release` and `heartbeat` make for the same reason.

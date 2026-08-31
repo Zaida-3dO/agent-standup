@@ -378,7 +378,7 @@ interface SanitisedEntries {
  * prose, and it is genuinely easy to assume they are bare strings like
  * `shipped` and `watch_for` are.
  */
-const ENTRY_SHAPE_HINTS: Readonly<Record<string, string>> = {
+export const ENTRY_SHAPE_HINTS: Readonly<Record<string, string>> = {
   shipped: "a string",
   watch_for: "a string",
   not_done: 'an object like {"text": "...", "reason": "descoped"}',

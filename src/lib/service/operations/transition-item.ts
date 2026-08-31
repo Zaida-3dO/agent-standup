@@ -27,6 +27,7 @@ import { RehearsalRollback } from "./rehearsal-rollback";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
 import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
+import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
   .object({
@@ -135,6 +136,17 @@ export const transitionItem = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: TransitionItemInput): Promise<TransitionItemResult> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      id: await resolveItemId(ctx.db, input.id, "id"),
+    };
+
     if (input.dryRun) {
       // Evaluate for real — same guard path a real transition takes,
       // `rehearseTransition`'s whole point — then abandon this transaction

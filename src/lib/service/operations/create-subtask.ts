@@ -38,6 +38,7 @@ import {
   type CreatedWriteRecord,
   TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
+import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
   .object({
@@ -86,6 +87,17 @@ export const createSubtask = defineOperation({
     ctx: ServiceContext,
     input: CreateSubtaskInput,
   ): Promise<CreatedItem | CreatedWriteRecord> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      taskId: await resolveItemId(ctx.db, input.taskId, "taskId"),
+    };
+
     const { taskId, ...common } = input;
 
     const depth = await ancestorDepthOf(ctx, taskId);

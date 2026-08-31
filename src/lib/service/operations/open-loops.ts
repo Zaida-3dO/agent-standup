@@ -26,6 +26,7 @@ import {
   type LoopKind,
 } from "@/lib/open-loops";
 import { loopEventsFor } from "./loop-shared";
+import { resolveItemId } from "../items/resolve-id";
 
 const ACTOR_TYPES = ["person", "agent", "system"] as const;
 
@@ -167,6 +168,17 @@ export const loopAdd = defineOperation({
   // Stryker restore all
   input: addInput,
   async handler(ctx: ServiceContext, input: LoopAddInput): Promise<LoopAdded> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     await requireItem(ctx, input.itemId);
 
     const loopId = input.loopId ?? crypto.randomUUID();
@@ -257,6 +269,17 @@ export const loopClose = defineOperation({
   // Stryker restore all
   input: closeInput,
   async handler(ctx: ServiceContext, input: LoopCloseInput): Promise<AppendedEvent> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     await requireItem(ctx, input.itemId);
 
     // Refused when no such loop is open. The read path deliberately *ignores*

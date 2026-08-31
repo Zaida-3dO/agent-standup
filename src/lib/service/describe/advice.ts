@@ -90,6 +90,26 @@ export function acceptedFieldNames(operation: string): ReadonlySet<string> {
   return names;
 }
 
+/**
+ * The fields an operation's schema marks required — the machine-readable
+ * half of the claim a caller reads before calling.
+ *
+ * Read through `describeFields` rather than off the Zod node directly, so
+ * "required" means here exactly what it means everywhere else the product
+ * reports it, including its treatment of a defaulted field as *not*
+ * required. A second definition of required would let this check disagree
+ * with the schema it is checking against.
+ */
+export function requiredFieldNames(operation: string): ReadonlySet<string> {
+  const found = getOperation(operation);
+  const names = new Set<string>();
+  if (!found) return names;
+  for (const field of describeFields(found.input)) {
+    if (field.required) names.add(field.name);
+  }
+  return names;
+}
+
 /** The schema node under `field`, when that field is itself an object or an array of them. */
 function nestedShapeOf(schema: unknown, field: string): unknown {
   const node = schema as {
@@ -472,6 +492,85 @@ export function contractRulesOf(operation: {
     if (typeof rule?.rule === "string") rules.push({ fields: rule.fields ?? [], rule: rule.rule });
   }
   return rules;
+}
+
+/**
+ * A field that some code path refuses as *required* even though the
+ * operation's own JSON Schema marks it optional — paired with whether the
+ * operation's contract rules say anything about it.
+ *
+ * ── Why this check exists ───────────────────────────────────────────────
+ *
+ * A conditionally-required field is the one thing a JSON Schema genuinely
+ * cannot express: `originType` is required *unless the calling session
+ * registered with a personId*, which is runtime state, not shape. So the
+ * schema honestly marks it optional and the server honestly refuses it, and
+ * a caller reading the only machine-readable contract they have is told the
+ * opposite of what will happen.
+ *
+ * That is precisely the gap `describe_tool` exists to close — "the
+ * conditional rules its schema cannot state". The rule is therefore not
+ * optional documentation; it is the *only* place the requirement is
+ * stateable at all, and its absence is a defect of the same kind as a
+ * missing error message.
+ *
+ * Two instances were reported by crews within one day (2026-08-31):
+ * `create_task`'s `originType`, and `complete_item`'s summary shape. Both
+ * turned out to be already documented — but nothing was *enforcing* that,
+ * so the next one would have shipped undocumented and been found the same
+ * expensive way, by a caller being refused.
+ *
+ * ── What counts as an instance ──────────────────────────────────────────
+ *
+ * A field is flagged only when **all three** hold, which is what keeps this
+ * from firing on ordinary schema-level required fields:
+ *
+ *   1. some source file refuses it with an `InvalidInputError` whose message
+ *      says it is required,
+ *   2. the operation's schema does **not** mark it required (so the schema
+ *      and the server disagree), and
+ *   3. no contract rule names it in `fields`.
+ *
+ * Dropping (2) would flag every required field in the product; dropping (3)
+ * would flag the two cases that are already correctly documented.
+ */
+export function findUndocumentedConditionalRequirements(
+  refusals: readonly { field: string; operations: readonly string[] }[],
+): readonly AdviceDefect[] {
+  const defects: AdviceDefect[] = [];
+  for (const { field, operations } of refusals) {
+    for (const name of operations) {
+      const operation = listOperations().find((candidate) => candidate.name === name);
+      if (!operation) continue;
+      // (2) The schema already saying "required" means a caller was never
+      // misled, so there is nothing for a rule to rescue.
+      if (requiredFieldNames(name).has(field)) continue;
+      // (3) Documented if any rule claims the field, which is the same
+      // `fields` lookup a refused caller performs.
+      const documented = contractRulesOf(operation).some((rule) =>
+        rule.fields.some((declared) => {
+          const leaf = declared.includes(".")
+            ? declared.slice(declared.lastIndexOf(".") + 1)
+            : declared;
+          return leaf === field;
+        }),
+      );
+      if (documented) continue;
+      defects.push({
+        operation: name,
+        source: `${name} contract.rules`,
+        named: field,
+        attributedTo: name,
+        kind: "parameter",
+        detail:
+          `\`${field}\` is refused as required at runtime but is optional in \`${name}\`'s ` +
+          `schema, and no contract rule mentions it — so the only machine-readable contract a ` +
+          `caller has says the opposite of what the server does. Add a rule naming ` +
+          `\`${field}\` in its \`fields\`, stating what makes it required.`,
+      });
+    }
+  }
+  return defects;
 }
 
 /**

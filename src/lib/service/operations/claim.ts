@@ -24,6 +24,7 @@ import {
 import { assertSessionMayClaim } from "../session-registration";
 import { ensureNameForSession } from "@/lib/agent-names";
 import { evictStaleHolders, type EvictedClaim } from "@/lib/claim-eviction";
+import { resolveItemId } from "../items/resolve-id";
 
 const ROLES = [
   "orchestrator",
@@ -155,6 +156,17 @@ export const claim = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ClaimOperationInput): Promise<ClaimResult> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      itemId: await resolveItemId(ctx.db, input.itemId, "itemId"),
+    };
+
     // Checked explicitly, ahead of the insert: `Assignment.itemId` carries a
     // foreign key, so claiming a non-existent item would otherwise surface
     // as a raw Postgres constraint violation (mapped to `InternalError` by

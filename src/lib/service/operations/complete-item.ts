@@ -45,6 +45,7 @@ import {
   WHAT_TO_TEST_MAX,
   WHAT_TO_TEST_MIN,
   WHAT_TO_TEST_TEXT_CHAR_CAP,
+  ENTRY_SHAPE_HINTS,
   validateSummaryShape,
   type NotDoneEntry,
   type SummaryCandidate,
@@ -61,6 +62,7 @@ import { findSimilarityIssues } from "../guards/summaries";
 import { findNotDoneProofIssues } from "../guards/deferral";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
+import { resolveItemId } from "../items/resolve-id";
 
 /**
  * The four states a `complete` call may land on (SCHEMA.md §1.1's
@@ -180,8 +182,12 @@ const contract = {
       fields: ["summary.what_to_test", "summary.user_facing"],
       rule:
         `\`what_to_test\` is required when \`user_facing\` is true — ${WHAT_TO_TEST_MIN}–` +
-        `${WHAT_TO_TEST_MAX} entries, each \`text\` at most ${WHAT_TO_TEST_TEXT_CHAR_CAP} ` +
-        `characters — and must be omitted or null when it is false.`,
+        `${WHAT_TO_TEST_MAX} entries, each ${ENTRY_SHAPE_HINTS.what_to_test} with \`text\` at ` +
+        `most ${WHAT_TO_TEST_TEXT_CHAR_CAP} characters — and must be omitted or null when it ` +
+        `is false. **Entries are objects, not strings**, and note the asymmetry with ` +
+        `\`watch_for\` in this same summary, which takes ${ENTRY_SHAPE_HINTS.watch_for} — ` +
+        `getting this one right and then applying the same shape to that one is the ` +
+        `predictable next mistake.`,
     },
     {
       fields: ["summary.how_verified", "summary.user_facing"],
@@ -209,7 +215,11 @@ const contract = {
       rule:
         `\`watch_for\` holds at most ${WATCH_FOR_MAX} entries of at most ` +
         `${WATCH_FOR_CHAR_CAP} characters each, and an explicit empty list is the common ` +
-        `case. It is only for risks that **could not be checked now** — if it could have ` +
+        `case. Each entry is ${ENTRY_SHAPE_HINTS.watch_for} — **not** ` +
+        `${ENTRY_SHAPE_HINTS.what_to_test}, which is what \`what_to_test\` and \`not_done\` ` +
+        `take. The two element types sit side by side in one summary, so this is worth ` +
+        `reading twice. ` +
+        `It is only for risks that **could not be checked now** — if it could have ` +
         `been verified it belongs in \`what_to_test\` or \`how_verified\`, and if it needs ` +
         `work it is a \`not_done\` follow-up.`,
     },
@@ -391,6 +401,17 @@ export const completeItem = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CompleteItemInput): Promise<CompleteItemResult> {
+    // A full UUID passes straight through untouched; a short id becomes
+    // the one item it identifies, or refuses when it names more than
+    // one. Rebinding `input` rather than threading a separate variable
+    // is what makes this safe: every read of the id below this line —
+    // including the ones inside the guards and the event rows — sees the
+    // canonical id, so a short id cannot survive into a stored value.
+    input = {
+      ...input,
+      id: await resolveItemId(ctx.db, input.id, "id"),
+    };
+
     const candidate = toCandidate(input.summary);
 
     // Run the same static validators the guard runs (`summaries/validate.ts`

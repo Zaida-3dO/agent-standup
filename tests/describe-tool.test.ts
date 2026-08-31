@@ -603,5 +603,61 @@ describe("describe_tool touches no table", () => {
   });
 });
 
+describe("the summary contract states its two element types", () => {
+  // ── Why these exist ───────────────────────────────────────────────────
+  //
+  // A reporter closing rows on 2026-08-31 sent `what_to_test` as bare
+  // strings, was refused, and lost ~8 calls across 4 items to it. The
+  // validator's refusal was correct and named the shape; what sent them
+  // down the wrong path first was this contract, which said only "1-3
+  // entries, each `text` at most 240 characters". They read `text` as the
+  // internal field name of a string entry — a fair reading of that
+  // sentence. Then, having discovered the object shape, they applied it to
+  // `watch_for` too and were refused again, because these two adjacent
+  // list fields take opposite element types.
+  //
+  // So the contract has to state the shape positively and state the
+  // asymmetry. Both assertions below fail if that prose is dropped back to
+  // naming the cap alone.
+
+  it("shows what_to_test's entry as an object literal, not just its text cap", async () => {
+    const contract = await contractFor("complete_item");
+    const rule = contract.rules.find((entry) => entry.fields.includes("summary.what_to_test"));
+    expect(rule).toBeDefined();
+    // The literal a caller can copy. Fails if the rule goes back to
+    // describing the entry only as "each `text` at most N characters",
+    // which is the exact wording that was misread as "an array of strings".
+    expect(rule!.rule).toContain('{"text": "..."}');
+    // And says so in words as well as by example, because the example
+    // alone can be skimmed past.
+    expect(rule!.rule).toMatch(/objects, not strings/i);
+  });
+
+  it("warns that watch_for takes the opposite element type", async () => {
+    const contract = await contractFor("complete_item");
+    const rule = contract.rules.find((entry) => entry.fields.includes("summary.watch_for"));
+    expect(rule).toBeDefined();
+    // Fails if the asymmetry warning is removed from watch_for's own rule.
+    // This is the half that catches the *second* mistake — the one that
+    // only bites a caller who got what_to_test right — so it deliberately
+    // asserts on watch_for's rule rather than anywhere in the contract.
+    expect(rule!.rule).toContain("a string");
+    expect(rule!.rule).toContain('{"text": "..."}');
+    expect(rule!.rule).toContain("what_to_test");
+  });
+
+  it("keeps the two rules disagreeing about element type, which is the real contract", async () => {
+    const contract = await contractFor("complete_item");
+    const whatToTest = contract.rules.find((e) => e.fields.includes("summary.what_to_test"))!;
+    const watchFor = contract.rules.find((e) => e.fields.includes("summary.watch_for"))!;
+    // The asymmetry is a fact about the schema, so the prose describing it
+    // must not be copy-pasted into agreement. Fails if someone "fixes" the
+    // inconsistency by making both rules claim the same element type —
+    // which would be documentation that contradicts the validator.
+    expect(whatToTest.rule).toMatch(/objects, not strings/i);
+    expect(watchFor.rule).toMatch(/\*\*not\*\* an object/i);
+  });
+});
+
 /** Silences the unused-import lint for a type used only in annotations above. */
 export type _Ctx = ServiceContext;
