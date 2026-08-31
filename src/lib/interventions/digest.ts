@@ -61,6 +61,33 @@ import { isBlockingLevel, type InterventionFinding } from "./types";
 export const DEFAULT_DIGEST_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
+ * How long a session's entries are kept after its last activity, in
+ * milliseconds.
+ *
+ * ── Why a TTL, and not only a session-end call ─────────────────────────
+ *
+ * `forget` exists for the clean case and is worth calling, but it cannot be
+ * the mechanism this relies on. Both maps here are keyed by session id and
+ * this object lives for the whole server process (`../service/live.ts`
+ * holds one at module scope), so anything that fails to remove a key leaks
+ * for as long as the process runs. A session ends without saying so
+ * routinely — it is killed, it crashes, its `Stop` never arrives, or the
+ * process serving that call is not the process that served its last one —
+ * and every one of those leaves a key behind forever. Eviction that only
+ * works when a session exits politely is eviction that does not work.
+ *
+ * A TTL needs nothing from the session. Thirty minutes is far longer than
+ * the five-minute window a digest is *for*, so it can never evict a session
+ * that is still accumulating a batch: an entry only becomes evictable long
+ * after any batch it belongs to was deliverable.
+ *
+ * This bounds the map by *time*, which is the dimension it actually grows
+ * in — the existing `maxPending` bounds a single session's findings and
+ * does nothing at all about the number of sessions, which is the leak.
+ */
+export const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000;
+
+/**
  * A finding held for a later batch, with when it was noticed.
  *
  * The timestamp is the finding's own, not the batch's. A digest that
@@ -132,11 +159,26 @@ export function ridesDigest(finding: InterventionFinding): boolean {
 export class DigestAccumulator {
   private readonly pending = new Map<string, PendingFinding[]>();
   private readonly lastDelivered = new Map<string, number>();
+  /**
+   * When each session was last seen, for the TTL sweep.
+   *
+   * A third map rather than a timestamp derived from the other two, because
+   * neither can answer the question. `pending` is deleted outright by
+   * `take`, and `lastDelivered` is only written for a session that has
+   * actually had a batch — so a session that accumulated a few findings and
+   * left, or one whose batch was taken and never came back, is invisible to
+   * both while still holding a key in `lastDelivered`. `lastDelivered` is
+   * in fact the more persistent leak of the two: nothing removed a key from
+   * it, ever, including `forget`.
+   */
+  private readonly lastSeen = new Map<string, number>();
   private readonly intervalMs: number;
   private readonly maxPending: number;
+  private readonly sessionTtlMs: number;
 
-  constructor(options: { intervalMs?: number; maxPending?: number } = {}) {
+  constructor(options: { intervalMs?: number; maxPending?: number; sessionTtlMs?: number } = {}) {
     this.intervalMs = options.intervalMs ?? DEFAULT_DIGEST_INTERVAL_MS;
+    this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
     // A bound rather than unbounded growth. A session that triggers the
     // same finding hundreds of times has a problem the hundredth copy does
     // not describe any better than the first, and an unbounded buffer on a
@@ -161,6 +203,12 @@ export class DigestAccumulator {
    */
   add(sessionId: string, finding: InterventionFinding, at: number): boolean {
     if (!ridesDigest(finding)) return false;
+
+    // Marked before any early return below, so a session at its bound —
+    // which is a busy session, not an absent one — still counts as active
+    // and is not evicted out from under itself.
+    this.touch(sessionId, at);
+    this.sweep(at);
 
     const existing = this.pending.get(sessionId) ?? [];
     if (existing.some((held) => held.finding.id === finding.id)) return true;
@@ -222,6 +270,7 @@ export class DigestAccumulator {
 
     this.pending.delete(sessionId);
     this.lastDelivered.set(sessionId, now);
+    this.touch(sessionId, now);
 
     return {
       findings: held.map((entry) => entry.finding),
@@ -231,15 +280,66 @@ export class DigestAccumulator {
   }
 
   /**
-   * Drops everything held for a session.
+   * Drops everything held for a session that has ended.
    *
-   * For a session that has ended: its findings are addressed to it, and a
-   * batch nobody will read is only a memory cost. Note this does *not*
-   * clear `lastDelivered` — a session id that came back would otherwise be
-   * instantly due again.
+   * **All three maps, including `lastDelivered`.** An earlier version
+   * cleared only `pending`, reasoning that a session id that came back
+   * would otherwise be instantly due again. That reasoning does not survive
+   * contact with what a session id is: they are not reused, so the returning
+   * session it protected against does not exist, and the effect was a key
+   * that was never removed by anything — the leak this method appeared to
+   * be the answer to. The protection it was after is real but belongs to
+   * live sessions, and `isDue` already provides it by measuring from the
+   * earliest pending finding when there is no `lastDelivered` — so a
+   * genuinely returning id gets a fresh window rather than an instant batch.
    */
   forget(sessionId: string): void {
     this.pending.delete(sessionId);
+    this.lastDelivered.delete(sessionId);
+    this.lastSeen.delete(sessionId);
+  }
+
+  /** Records that a session is active, for the TTL sweep. */
+  private touch(sessionId: string, at: number): void {
+    this.lastSeen.set(sessionId, at);
+  }
+
+  /**
+   * Drops every session not seen within the TTL. Returns how many went.
+   *
+   * Called from `add` and `take` rather than from a timer, deliberately: a
+   * timer would keep a handle alive for the life of the process and would
+   * run in tests that never asked for it, and this module's whole contract
+   * is that time is an argument and nothing here reads a clock. Sweeping on
+   * activity means the map is tidied by the same traffic that grows it,
+   * and an idle process does no work — the case where its size is already
+   * not changing.
+   *
+   * A session is judged by `lastSeen` alone. Judging by the pending
+   * findings' own timestamps would miss exactly the sessions that leak:
+   * one whose batch was taken has no pending findings at all, yet still
+   * holds keys in `lastDelivered` and here.
+   */
+  sweep(now: number): number {
+    let dropped = 0;
+    for (const [sessionId, seen] of this.lastSeen) {
+      // `>` and not `>=`: an entry exactly at the TTL has not yet outlived
+      // it. The boundary is arbitrary either way, but a session is kept
+      // while it is *not older* than the TTL, which is what the constant's
+      // name says.
+      if (now - seen > this.sessionTtlMs) {
+        this.pending.delete(sessionId);
+        this.lastDelivered.delete(sessionId);
+        this.lastSeen.delete(sessionId);
+        dropped += 1;
+      }
+    }
+    return dropped;
+  }
+
+  /** How many sessions this accumulator holds. For tests and diagnostics. */
+  sessionCount(): number {
+    return this.lastSeen.size;
   }
 }
 

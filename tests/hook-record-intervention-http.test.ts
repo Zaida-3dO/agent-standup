@@ -185,3 +185,41 @@ describe("the sender authenticates when the deployment requires it", () => {
     expect(calls[0]?.init.headers.authorization).toBe(undefined);
   });
 });
+
+// ── The override reason on the wire ─────────────────────────────────────
+//
+// The last link in the chain. `record_intervention` has accepted an
+// `overrideReason` since the operation was written and the column has always
+// existed; what was missing was anything putting the field into the request
+// body. A capture that reached this function with a reason and left without
+// one would lose it silently, since the adapter reduces every answer to a
+// boolean and nothing downstream can tell an absent field from an absent
+// reason.
+describe("the override reason reaches the request body", () => {
+  const REASON = "the kill is scoped to one pid this guard misread as broad";
+
+  // Kills: omitting `overrideReason` from `toWireBatch`'s projection — the
+  // shape of the original gap, one layer further down. Asserts the value,
+  // not merely that the key is set.
+  it("forwards the reason verbatim on an overridden capture", () => {
+    const wire = toWireBatch({
+      sessionId: "s-1",
+      captures: [capture({ outcome: "overridden", overrideReason: REASON })],
+    });
+
+    const captures = wire.captures as Record<string, unknown>[];
+    expect(captures[0]?.outcome).toBe("overridden");
+    expect(captures[0]?.overrideReason).toBe(REASON);
+  });
+
+  // `record_intervention`'s capture schema is `.strict()`, and its
+  // `overrideReason` is `.min(1)` — so an explicit `undefined` or an empty
+  // string would refuse the whole batch rather than storing nothing. The key
+  // must be absent, not present-and-empty.
+  it("omits the key entirely on a capture that carried no override", () => {
+    const wire = toWireBatch({ sessionId: "s-1", captures: [capture()] });
+
+    const captures = wire.captures as Record<string, unknown>[];
+    expect(captures[0]).not.toHaveProperty("overrideReason");
+  });
+});

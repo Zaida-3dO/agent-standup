@@ -68,6 +68,11 @@ export interface ServiceDeliverer {
   readonly forget: (sessionId: string) => void;
   /** How many findings are waiting for a session. For tests and diagnostics. */
   readonly pendingCount: (sessionId: string) => number;
+  /**
+   * How many sessions the accumulator is tracking. For tests and
+   * diagnostics — this is the number that used to grow without bound.
+   */
+  readonly sessionCount: () => number;
 }
 
 export interface ServiceDelivererOptions {
@@ -119,6 +124,7 @@ export function createServiceDeliverer(options: ServiceDelivererOptions = {}): S
   };
   deliver.forget = (sessionId: string): void => accumulator.forget(sessionId);
   deliver.pendingCount = (sessionId: string): number => accumulator.pendingCount(sessionId);
+  deliver.sessionCount = (): number => accumulator.sessionCount();
 
   return deliver;
 }

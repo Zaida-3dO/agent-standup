@@ -43,10 +43,32 @@ export async function POST(request: Request) {
     // service call this session makes, which is the natural juncture the
     // design asks for.
     holdDeferred(result, sessionIdOf(body));
+    // A session that says it is stopping will not read another digest, so
+    // whatever is held for it is dropped now rather than waiting out the
+    // accumulator's TTL. This is the tidy path, not the guarantee: a
+    // session that is killed, crashes, or whose `Stop` never arrives sends
+    // nothing here, which is why `DigestAccumulator` sweeps by age as well
+    // and does not depend on this call happening.
+    forgetOnStop(body);
     return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
     return serviceErrorResponse(error, requestId);
   }
+}
+
+/**
+ * Drops a stopping session's held findings.
+ *
+ * Reads the body defensively for the same reason `holdDeferred` does: this
+ * runs after a response has already been computed, and nothing about an
+ * advisory batch may turn a decided hook answer into a failure.
+ */
+function forgetOnStop(body: unknown): void {
+  if (typeof body !== "object" || body === null) return;
+  if ((body as { eventType?: unknown }).eventType !== "Stop") return;
+  const sessionId = sessionIdOf(body);
+  if (sessionId === undefined) return;
+  interventionDeliverer.forget(sessionId);
 }
 
 /** The session a hook event names, when it names one this route can use as a key. */

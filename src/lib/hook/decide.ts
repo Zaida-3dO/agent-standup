@@ -63,6 +63,28 @@ import { isBlockingLevel, type InterventionFinding } from "../interventions/type
  * deciding is done, and a hook that answered `ask` to the agent tool would
  * be answering a question with a question.
  */
+/**
+ * The override that released a call, as a fact rather than as prose.
+ *
+ * The reason already appears inside `HookVerdict.reason`, which is rendered
+ * to stderr and then discarded. That was the whole of the record for the
+ * first version of this tier, and it made the design's own claim — that the
+ * value of an overridable block is the *recorded* reason — false: nothing
+ * read the string back out, and nothing could, because a sentence written
+ * for a person to read is not a field. This carries the same two facts in a
+ * shape the capture loop can write to `intervention_events`.
+ *
+ * `entryIds` is a list because a call can be refused by several findings at
+ * once, and `decide` releases it only when the override covers **every**
+ * one of them — so every entry named here was individually matched, and a
+ * finding absent from this list was not overridden.
+ */
+export interface AppliedOverride {
+  readonly entryIds: readonly string[];
+  /** The caller's reason, trimmed and bounded by `overrideApplies`. */
+  readonly reason: string;
+}
+
 export interface HookVerdict {
   readonly decision: "allow" | "deny";
   /** A sentence naming the cause. Rendered for a denied call; unused for an allow. */
@@ -92,6 +114,11 @@ export interface HookVerdict {
      * them would make overriding invisible to anything reading the source.
      */
     | "override";
+  /**
+   * Set exactly when `source` is `"override"`. The structured half of the
+   * same fact, for the capture loop — see `AppliedOverride`.
+   */
+  readonly override?: AppliedOverride;
 }
 
 /** The server's answer, as this build understands it. */
@@ -275,12 +302,21 @@ export async function decide({
     // whether proceeding is safe, and letting it through would be reading
     // "I considered X" as "I considered everything".
     if (blocking.length > 0 && overridden.length === blocking.length) {
-      return ALLOW(
-        "override",
-        `overridden by the caller with a written reason: ${
-          overrideApplies(event.override, blocking[0]!.id, blocking[0]!.level).reason ?? ""
-        }`,
-      );
+      // Taken from `overrideApplies` rather than from `event.override.reason`
+      // directly, because that is the value that was actually *validated* —
+      // trimmed, and bounded to `MAX_OVERRIDE_REASON_LENGTH`. Recording the
+      // raw claim instead would write an unbounded string into a database
+      // column on the hook's critical path, and would store text subtly
+      // different from the text the check was performed against.
+      const reason =
+        overrideApplies(event.override, blocking[0]!.id, blocking[0]!.level).reason ?? "";
+      return {
+        ...ALLOW("override", `overridden by the caller with a written reason: ${reason}`),
+        // The structured record. The prose above is for a person reading
+        // stderr; this is what reaches `intervention_events.override_reason`
+        // so the reason survives the process that printed it.
+        override: { entryIds: overridden.map((finding) => finding.id), reason },
+      };
     }
 
     // Still refused — but say so in a way the caller can act on. A refusal

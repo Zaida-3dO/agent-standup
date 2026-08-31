@@ -21,6 +21,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_DIGEST_INTERVAL_MS,
+  DEFAULT_SESSION_TTL_MS,
   DigestAccumulator,
   renderDigest,
   ridesDigest,
@@ -239,5 +240,119 @@ describe("rendering a batch", () => {
 
   it("renders an empty batch as nothing at all", () => {
     expect(renderDigest({ findings: [], from: 0, to: 0 })).toBe("");
+  });
+});
+
+// ── Eviction — the unbounded growth both maps had ───────────────────────
+//
+// This object lives at module scope for the whole server process, and both
+// its maps are keyed by session id. `forget` had no production caller at
+// all, and `lastDelivered` was never deleted by anything — including by
+// `forget`, which cleared only `pending` — so every distinct session id the
+// process ever saw stayed resident for the life of that process.
+//
+// The tests are written as a pair on purpose: that a stale session goes,
+// and that a live one survives the same sweep. A sweep that simply cleared
+// everything would pass the first alone, and would be a worse bug than the
+// leak — it would silently discard batches a session was still waiting for.
+describe("evicting sessions that have gone away", () => {
+  const TTL = 10_000;
+
+  it("drops a session that has not been seen within the TTL", () => {
+    const accumulator = new DigestAccumulator({ sessionTtlMs: TTL });
+    accumulator.add("s-gone", finding(), 0);
+
+    expect(accumulator.sessionCount()).toBe(1);
+    accumulator.sweep(TTL + 1);
+
+    expect(accumulator.sessionCount()).toBe(0);
+    expect(accumulator.pendingCount("s-gone")).toBe(0);
+  });
+
+  // The negative control, and it is written to reach the condition rather
+  // than to stop short of it. Both sessions are added, the sweep runs once
+  // at a moment that is past the TTL *for one of them only*, and the live
+  // session is one whose activity is recent. A sweep that dropped
+  // everything, dropped nothing, or compared against the wrong timestamp
+  // fails this — it cannot pass by never reaching the comparison.
+  it("keeps a session still being seen while dropping a stale one beside it", () => {
+    const accumulator = new DigestAccumulator({ sessionTtlMs: TTL });
+    accumulator.add("s-stale", finding(), 0);
+    // The live session is seen much later, so at sweep time it is inside
+    // its TTL while the stale one is well outside it.
+    accumulator.add("s-live", finding(), TTL);
+
+    accumulator.sweep(TTL + 1);
+
+    expect(accumulator.pendingCount("s-stale")).toBe(0);
+    expect(accumulator.pendingCount("s-live")).toBe(1);
+    expect(accumulator.sessionCount()).toBe(1);
+  });
+
+  // Kills: an off-by-one that evicts a session at exactly the TTL. The
+  // boundary is arbitrary but must match what the constant's name claims —
+  // a session is kept while it is not *older* than the TTL.
+  it("keeps a session sitting exactly on the TTL boundary", () => {
+    const accumulator = new DigestAccumulator({ sessionTtlMs: TTL });
+    accumulator.add("s-edge", finding(), 0);
+
+    accumulator.sweep(TTL);
+
+    expect(accumulator.sessionCount()).toBe(1);
+  });
+
+  // The leak proper, stated as the number that used to grow forever. Each
+  // session is added at a distinct time and the last is far past the first,
+  // so all but the most recent are evictable by the time the sweep runs.
+  it("does not accumulate one entry per session id seen", () => {
+    const accumulator = new DigestAccumulator({ sessionTtlMs: TTL });
+    for (let index = 0; index < 50; index += 1) {
+      accumulator.add(`s-${index}`, finding(), index * TTL);
+    }
+
+    // `add` sweeps as it goes, so the map never held all fifty at once.
+    expect(accumulator.sessionCount()).toBeLessThan(50);
+  });
+
+  // `lastDelivered` is the map nothing ever deleted from, and it is the one
+  // a session reaches only *after* a batch has been taken — so a test that
+  // never takes a batch cannot pin it. This takes one, then sweeps, then
+  // shows the session is genuinely gone rather than merely emptied of
+  // pending findings: a returning id is due on its own fresh window, which
+  // is only true if its `lastDelivered` entry went with it.
+  it("clears the delivered-at record too, not only the pending findings", () => {
+    const accumulator = new DigestAccumulator({ intervalMs: 1000, sessionTtlMs: TTL });
+    accumulator.add("s-1", finding(), 0);
+    expect(accumulator.take("s-1", 1000)).not.toBeNull();
+
+    accumulator.sweep(1000 + TTL + 1);
+    expect(accumulator.sessionCount()).toBe(0);
+
+    // Back again, long after. Measured from its own first finding rather
+    // than from a delivery in the far past, so it is not instantly due.
+    const returned = 1_000_000;
+    accumulator.add("s-1", finding(), returned);
+    expect(accumulator.isDue("s-1", returned)).toBe(false);
+    expect(accumulator.isDue("s-1", returned + 1000)).toBe(true);
+  });
+
+  // `forget` is the clean-exit path, and it must clear every map. Kills:
+  // reverting it to deleting `pending` alone, which is what left the key
+  // behind for the life of the process.
+  it("forget removes the session from every map", () => {
+    const accumulator = new DigestAccumulator({ intervalMs: 1000 });
+    accumulator.add("s-1", finding(), 0);
+    expect(accumulator.take("s-1", 1000)).not.toBeNull();
+
+    accumulator.forget("s-1");
+
+    expect(accumulator.sessionCount()).toBe(0);
+    expect(accumulator.pendingCount("s-1")).toBe(0);
+  });
+
+  // The TTL must not be able to evict a session mid-batch: it is only safe
+  // because it is far longer than the window a digest accumulates over.
+  it("is a TTL far longer than the digest interval", () => {
+    expect(DEFAULT_SESSION_TTL_MS).toBeGreaterThan(DEFAULT_DIGEST_INTERVAL_MS);
   });
 });

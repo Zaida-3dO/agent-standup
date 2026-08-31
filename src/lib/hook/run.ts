@@ -17,7 +17,7 @@
 // that its protocol version should rarely need bumping again.
 
 import { parseHookPayload } from "./payload";
-import { decideWithNudges, type AskServer, type HookVerdict } from "./decide";
+import { decideWithNudges, type AppliedOverride, type AskServer, type HookVerdict } from "./decide";
 import {
   renderResponse,
   renderWithNudges,
@@ -48,6 +48,18 @@ export interface FindingsReport {
   readonly event: HookEvent;
   readonly findings: readonly InterventionFinding[];
   readonly blocked: boolean;
+  /**
+   * The override that released this call, when one did.
+   *
+   * Carried from the verdict rather than re-derived from `event.override`,
+   * and the difference is the point: `event.override` is what the caller
+   * *claimed*, while this is what `decide` actually *honoured* after
+   * checking the entry matched, the reason was long enough, and the level
+   * was not a hard block. A callback re-deriving it from the claim would
+   * record an override for a call that was still refused — which is the
+   * one direction of error that would make this table lie.
+   */
+  readonly override?: AppliedOverride;
 }
 
 export interface RunHookOptions {
@@ -165,7 +177,14 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
   // piece of this function supplied by a caller rather than computed by it.
   if (findings.length > 0 && options.onFindings !== undefined) {
     try {
-      await options.onFindings({ event, findings, blocked: verdict.decision === "deny" });
+      await options.onFindings({
+        event,
+        findings,
+        blocked: verdict.decision === "deny",
+        // Only ever set on an allow whose source is `override`, so a
+        // callback can record the reason against the findings it excused.
+        ...(verdict.override === undefined ? {} : { override: verdict.override }),
+      });
     } catch {
       // Deliberately silent — see above. A capture is evidence for a
       // report nobody is waiting on right now; the call this event answers
@@ -218,4 +237,41 @@ export function mergeStopContext(
   if (local === undefined) return volunteered;
   if (volunteered === undefined) return local;
   return { ...local, ...volunteered };
+}
+
+/**
+ * Turns a findings report into the context `buildCaptures` needs.
+ *
+ * Pure, and exported for one reason: it is the step that decides which
+ * facts about a call reach the database, and its only caller is
+ * `src/bin/standup-hook.ts` — a top-level script that runs on import and
+ * therefore cannot be imported by a test. Left inline there, this mapping
+ * was covered by nothing: dropping `overrideReason` from it passed the
+ * entire suite, which is precisely the "record the firing but lose the
+ * reason" failure this feature exists to prevent. Moving it here makes it a
+ * value in and a value out, like everything else under `src/lib/hook/`.
+ *
+ * The override is read from what `decide` **honoured**, never from the
+ * caller's claim — see `FindingsReport.override`.
+ */
+export function captureContextFor(report: FindingsReport): {
+  sessionId: string;
+  tool?: string;
+  command?: string;
+  blocked: boolean;
+  overriddenEntryIds?: readonly string[];
+  overrideReason?: string;
+} {
+  return {
+    sessionId: report.event.sessionId,
+    ...(report.event.tool === undefined ? {} : { tool: report.event.tool }),
+    ...(report.event.command === undefined ? {} : { command: report.event.command }),
+    blocked: report.blocked,
+    ...(report.override === undefined
+      ? {}
+      : {
+          overriddenEntryIds: report.override.entryIds,
+          overrideReason: report.override.reason,
+        }),
+  };
 }
