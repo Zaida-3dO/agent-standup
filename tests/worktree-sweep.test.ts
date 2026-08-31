@@ -14,14 +14,21 @@
 // on PR #295 treated an empty process snapshot as "no processes are
 // running". Both read as green. `looksLikeProcessList` is the fix, and the
 // tests below are what stop it regressing.
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  findUnregisteredCheckouts,
   hasLiveProcess,
   looksLikeProcessList,
   mergeVerdict,
+  normalisePath,
   reducePullRequestStates,
   rescuePlan,
+  worktreeParents,
 } from "../scripts/sweep-worktrees.mjs";
 
 const WORKTREE = "C:/work/coding/as-wt-example";
@@ -302,5 +309,185 @@ describe("rescuePlan", () => {
     // rather than treat a failed lookup as "nothing contains it".
     const plan = rescuePlan({ branch: null, head: HEAD, containingRefs: null });
     expect(plan.action).toBe("unknown");
+  });
+});
+
+describe("worktreeParents", () => {
+  // A registry can hold entries whose directories are absent. Their parents
+  // are not places worktrees live, and counting them can stop the scan dead:
+  // a rule requiring all worktrees to share one parent sees two — the real
+  // directory and the absent one — and so scans nothing, which is exactly as
+  // blind as having no scan at all.
+  it("ignores registry entries whose directory is absent", () => {
+    const live = mkdtempSync(join(tmpdir(), "wt-parents-"));
+    const tree = join(live, "as-wt-live");
+    mkdirSync(tree);
+    try {
+      const parents = worktreeParents([tree, join(live, "..", "gone-forever", "as-wt-old")]);
+      // Only the extant tree's parent is evidence of where trees are kept.
+      expect(parents.map(normalisePath)).toEqual([normalisePath(live)]);
+    } finally {
+      rmSync(live, { recursive: true, force: true });
+    }
+  });
+
+  it("returns every distinct parent when extant worktrees are spread across two", () => {
+    const a = mkdtempSync(join(tmpdir(), "wt-parents-a-"));
+    const b = mkdtempSync(join(tmpdir(), "wt-parents-b-"));
+    const ta = join(a, "as-wt-a");
+    const tb = join(b, "as-wt-b");
+    mkdirSync(ta);
+    mkdirSync(tb);
+    try {
+      // Declining to scan, or picking one arbitrarily, loses the detection
+      // outright; a superset only ever costs an extra reported line.
+      const parents = worktreeParents([ta, tb]).map(normalisePath).sort();
+      expect(parents).toEqual([normalisePath(a), normalisePath(b)].sort());
+    } finally {
+      rmSync(a, { recursive: true, force: true });
+      rmSync(b, { recursive: true, force: true });
+    }
+  });
+
+  it("returns nothing when no registered worktree still exists", () => {
+    const parents = worktreeParents([join(tmpdir(), "definitely-not-here-9c1f", "as-wt-x")]);
+    expect(parents).toEqual([]);
+  });
+});
+
+describe("findUnregisteredCheckouts", () => {
+  // THE SEEDED VIOLATION. Everything else in this file is a pure-function
+  // unit test that never touches a disk, and that is precisely how the gap
+  // survived: the sweep enumerated only `git worktree list`, so a directory
+  // git had no record of could not appear in its report at all, and no test
+  // that never creates a directory can notice.
+  //
+  // So these build the real thing on a real filesystem — a directory holding
+  // a checkout, which git was never told about — and assert the scan reports
+  // it. A test that only ran the sweep over REGISTERED worktrees would prove
+  // nothing whatsoever about this.
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "wt-scan-"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** A directory that is a checkout, in the structural sense the scan uses. */
+  function seedCheckout(name: string, gitAs: "dir" | "file" = "dir"): string {
+    const dir = join(root, name);
+    mkdirSync(dir);
+    if (gitAs === "dir") mkdirSync(join(dir, ".git"));
+    else writeFileSync(join(dir, ".git"), "gitdir: /somewhere/else\n");
+    return dir;
+  }
+
+  it("reports a checkout git has no record of", () => {
+    const orphan = seedCheckout("as-wt-orphan");
+    const found = findUnregisteredCheckouts(root, []);
+    // Assert on the whole array rather than through `?.`: an optional chain
+    // makes a null result (which means "could not look") pass a test written
+    // to prove the orphan was FOUND.
+    expect(found).toEqual([{ path: orphan, state: "checkout" }]);
+  });
+
+  it("reports a linked worktree whose .git is a FILE, not a directory", () => {
+    // The shape that actually accumulates here: every `git worktree add`
+    // tree carries a `.git` FILE holding a gitdir pointer. A scan that only
+    // accepted a `.git` directory would miss every orphaned worktree and
+    // catch only hand-made clones — i.e. it would miss the common case.
+    const orphan = seedCheckout("as-wt-detached", "file");
+    const found = findUnregisteredCheckouts(root, []);
+    expect(found?.map((f) => f.path)).toEqual([orphan]);
+  });
+
+  it("reports a checkout reached through a directory symlink", () => {
+    // Mutation-driven: dropping `|| entry.isSymbolicLink()` left the suite
+    // green. On Windows a junction or symlink to a directory reports
+    // isDirectory() === false, so classifying by the link rather than by
+    // what it resolves to makes an entire class of checkout invisible —
+    // the same blind spot as the registry gap, wearing a different hat.
+    const real = mkdtempSync(join(tmpdir(), "wt-scan-target-"));
+    mkdirSync(join(real, ".git"));
+    const link = join(root, "as-wt-linked");
+    try {
+      symlinkSync(real, link, "junction");
+    } catch {
+      // Symlink creation can require privileges; skip rather than fail.
+      rmSync(real, { recursive: true, force: true });
+      return;
+    }
+    try {
+      const found = findUnregisteredCheckouts(root, []);
+      expect(found?.map((f) => f.path)).toEqual([link]);
+    } finally {
+      rmSync(link, { recursive: true, force: true });
+      rmSync(real, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report a checkout git already knows about", () => {
+    const known = seedCheckout("as-wt-known");
+    expect(findUnregisteredCheckouts(root, [known])).toEqual([]);
+  });
+
+  it("matches the registry through case and slash differences", () => {
+    // Windows reaches one directory by several spellings. Comparing them
+    // literally would report an ordinary registered worktree as
+    // unregistered, and a report that cries wolf is one nobody reads.
+    const known = seedCheckout("as-wt-Case");
+    const spelled = known.replace(/\\/g, "/").toUpperCase();
+    expect(findUnregisteredCheckouts(root, [spelled])).toEqual([]);
+  });
+
+  it("ignores a plain directory that is not a checkout", () => {
+    mkdirSync(join(root, "notes"));
+    writeFileSync(join(root, "loose.txt"), "x");
+    expect(findUnregisteredCheckouts(root, [])).toEqual([]);
+  });
+
+  it("finds an orphan sitting alongside registered worktrees", () => {
+    // The real configuration: the orphan is not alone, it is the one extra
+    // directory among several legitimate ones — which is exactly why nobody
+    // spots it by eye.
+    const known = seedCheckout("as-wt-known");
+    const alsoKnown = seedCheckout("as-wt-known-2");
+    const orphan = seedCheckout("as-wt-orphan");
+    const found = findUnregisteredCheckouts(root, [known, alsoKnown]);
+    expect(found?.map((f) => f.path)).toEqual([orphan]);
+  });
+
+  it("reports a directory it cannot classify, instead of skipping it", () => {
+    // Mutation-driven. Deleting the `unreadable` report left the whole suite
+    // green, because with the real classifier this branch is unreachable —
+    // `existsSync` returns false for an unreadable path rather than throwing.
+    // A guard no test can reach is not a guard, so the classifier is injected
+    // and made to fail here on purpose.
+    //
+    // Skipping would be the seductive wrong answer: it produces a clean,
+    // confident report that quietly omits the one directory nobody could
+    // read — which is precisely the directory a human should look at.
+    seedCheckout("as-wt-fine");
+    const cursed = join(root, "as-wt-cursed");
+    mkdirSync(cursed);
+    const found = findUnregisteredCheckouts(root, [], (dir: string) => {
+      if (dir === cursed) throw new Error("EPERM");
+      return true;
+    });
+    expect(found).toEqual([
+      { path: join(root, "as-wt-cursed"), state: "unreadable" },
+      { path: join(root, "as-wt-fine"), state: "checkout" },
+    ]);
+  });
+
+  it("reports that it could not look, rather than an empty list", () => {
+    // An unreadable directory and an empty one must not be the same answer.
+    // "No unregistered directories" when the truth is "could not look" is
+    // the same permissive-on-ignorance defect `looksLikeProcessList` exists
+    // to prevent one layer out.
+    expect(findUnregisteredCheckouts(join(root, "no-such-dir"), [])).toBeNull();
   });
 });
