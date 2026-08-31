@@ -34,6 +34,7 @@ import { hasDistinctHeadline, primaryLine } from "@/lib/item-headline-display";
 import { subtaskSummary } from "./ItemCard";
 import { relativeTime } from "@/lib/projects/view";
 import { StateChip } from "@/components/chips/StateChip";
+import { StatusPicker } from "./StatusPicker";
 import { PriorityChip } from "@/components/chips/PriorityChip";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { TrustBadge } from "@/components/chips/TrustBadge";
@@ -87,6 +88,35 @@ export interface ListViewProps {
   readonly paging?: ListPagingProps;
   /** Row selection for bulk actions (T6-E). Absent renders no checkbox column. */
   readonly selection?: ListSelectionProps;
+  /**
+   * The status picker that stands in for drag (MILESTONES.md #76).
+   *
+   * Absent renders the plain state chip, which is what the desktop board
+   * shows. Supplying it turns the State cell into a control, for a surface
+   * where dragging is not available.
+   */
+  readonly statusPick?: ListStatusPickProps;
+}
+
+/**
+ * The status-picker wiring. Keyed by item rather than by column because a
+ * pick is per-row: two rows can be in flight at once and only the one that
+ * was picked should be disabled.
+ */
+export interface ListStatusPickProps {
+  readonly onPick: (itemId: string, column: BoardColumnId) => void;
+  /** Item ids whose move is in flight — those rows' pickers are disabled. */
+  readonly pending: Readonly<Record<string, boolean>>;
+  /**
+   * The server's reason for refusing the last pick, or null.
+   *
+   * Rendered, not swallowed: by the time this is set the row has already
+   * sprung back to where it was, and a row that visibly reverts with no
+   * explanation is indistinguishable from a broken interface — the exact
+   * failure `drag.ts`'s `refusalMessage` exists to avoid.
+   */
+  readonly refusal?: string | null;
+  readonly onDismissRefusal?: () => void;
 }
 
 /**
@@ -137,6 +167,7 @@ export function ListView({
   onRetry,
   paging,
   selection,
+  statusPick,
 }: ListViewProps) {
   if (loadState.status === "error") {
     return (
@@ -164,6 +195,26 @@ export function ListView({
 
   return (
     <div className={styles.list}>
+      {/* A refused pick has already put the row back by the time this
+          renders, so this is the only thing that distinguishes "the server
+          refused, and here is its reason" from "the control does not
+          work". `role="alert"` because the revert itself is not
+          perceivable to a screen-reader user — the same treatment
+          `BoardView` gives a refused drag. */}
+      {statusPick?.refusal != null && (
+        <p className={styles.refusal} role="alert" data-refusal={statusPick.refusal}>
+          <span className={styles.refusalText}>{statusPick.refusal}</span>
+          {statusPick.onDismissRefusal && (
+            <button
+              type="button"
+              className={styles.refusalDismiss}
+              onClick={statusPick.onDismissRefusal}
+            >
+              Dismiss
+            </button>
+          )}
+        </p>
+      )}
       {/* **"Showing N of M" is the list's headline fact**, and the two
           numbers are deliberately different quantities: `shown` counts the
           rows actually rendered, `total` the server's counted totals across
@@ -340,6 +391,21 @@ export function ListView({
                               it is. */}
                           {entry.item.kind === "project" ? (
                             <span className={styles.projectMark}>Project</span>
+                          ) : statusPick ? (
+                            // The picker stands alone in this cell rather
+                            // than sitting beside a chip: both state the
+                            // same fact, and the picker already displays it
+                            // as the selected option. Rendering both would
+                            // put two readings of one value in one cell,
+                            // which is the shape that goes stale in
+                            // different directions. The column header still
+                            // reads "State", which is what the control
+                            // sets.
+                            <StatusPicker
+                              entry={entry}
+                              onPick={statusPick.onPick}
+                              pending={statusPick.pending[entry.item.id] === true}
+                            />
                           ) : (
                             <StateChip state={entry.item.state as ItemState} />
                           )}

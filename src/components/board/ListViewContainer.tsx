@@ -54,6 +54,15 @@ import {
   type Selection,
 } from "@/lib/board/selection";
 import { describeBulkOutcome, runBulkTransition, type BulkOutcome } from "@/lib/board/bulk";
+import {
+  applyOptimisticMove,
+  findEntry,
+  reconcile as reconcileMove,
+  revertMove,
+} from "@/lib/board/drag";
+import { isStatusMove } from "@/lib/board/status-picker";
+import { requestMove } from "@/lib/board/move";
+import { isItemState } from "@/lib/service/state-machine/states";
 import { useUndo } from "@/components/toast";
 import { stateLabel } from "@/lib/undo";
 import { BoardFilterBar } from "./BoardFilterBar";
@@ -399,6 +408,87 @@ export function ListViewContainer() {
     [applySelection, offer],
   );
 
+  // ── The status picker (MILESTONES.md #76) ──────────────────────────
+  //
+  // The mobile stand-in for dragging a card between columns. It reuses the
+  // drag's own machinery deliberately — `isStatusMove` delegates to
+  // `isMove`, and the optimistic update, the revert and the reconcile are
+  // the SAME three functions the kanban's drop handler calls. A second
+  // implementation of "move an item to a column" is exactly how the two
+  // surfaces would come to disagree about what a move means.
+  const [statusPending, setStatusPending] = useState<Record<string, boolean>>({});
+  // The picker's own refusal message. Deliberately NOT `BulkReport`: that
+  // shape belongs to the bulk bar, describes a batch, and carries no tone —
+  // borrowing it would put a single row's refusal in a component whose
+  // whole subject is a multi-row operation.
+  const [statusRefusal, setStatusRefusal] = useState<string | null>(null);
+
+  const onStatusPick = useCallback(
+    (itemId: string, column: BoardColumnId) => {
+      const entry = findEntry(boardRef.current, itemId);
+      // Gone from the board between render and tap, which a background
+      // reload can do. Nothing truthful to move.
+      if (entry === null) return;
+      // Not a move: the item is already in that column, or it is a project.
+      // The picker does not offer either, so reaching here means the board
+      // changed underneath — dropping it is right, and issuing it would
+      // write a state-change event recording that nothing happened.
+      if (!isStatusMove(entry, column)) return;
+
+      // **`expectedFrom` is captured BEFORE the optimistic move overwrites
+      // it.** It must be the state the server last reported, not the column
+      // the row is moving from — `move.ts` is explicit that a guard which
+      // landed the item somewhere unrequested would otherwise make the UI
+      // name a state the item was never in, turning an honest 409 into a
+      // confidently wrong message.
+      const expectedFrom = entry.item.state;
+
+      setStatusRefusal(null);
+      setStatusPending((pending) => ({ ...pending, [itemId]: true }));
+      applyBoard(applyOptimisticMove(boardRef.current, itemId, column));
+
+      void requestMove(itemId, column, expectedFrom, fetch)
+        .then((result) => {
+          if (result.ok) {
+            // Settle on what the SERVER returned, never on the guess — a
+            // guard may land the item somewhere other than the requested
+            // state, and the response says where.
+            applyBoard(reconcileMove(boardRef.current, result.entry));
+            // **Narrowed, not cast** — the same reasoning `drop-handler.ts`
+            // gives: a board item's `state` is typed `string` because it
+            // arrives over the wire, while an undo's `ItemMove` becomes the
+            // `to` and the `expectedFrom` of a real transition request. A
+            // cast would let an unrecognised string through and produce an
+            // undo the server refuses on press, after the person was told
+            // it was available. No undo offered is the honest outcome.
+            const to = result.entry.item.state;
+            if (isItemState(expectedFrom) && isItemState(to)) {
+              offer({
+                kind: "state-change",
+                at: Date.now(),
+                move: { itemId, from: expectedFrom, to },
+                itemTitle: entry.item.title,
+              });
+            }
+            return;
+          }
+          // Refused. The row goes back exactly as it was — `revertMove`
+          // takes the original entry rather than a column, so the state the
+          // optimistic move guessed at is restored too.
+          applyBoard(revertMove(boardRef.current, entry));
+          setStatusRefusal(result.message);
+        })
+        .finally(() => {
+          setStatusPending((pending) => {
+            const next = { ...pending };
+            delete next[itemId];
+            return next;
+          });
+        });
+    },
+    [applyBoard, offer],
+  );
+
   const loadState: BoardLoadState =
     status === "error"
       ? { status: "error", message: errorMessage }
@@ -436,6 +526,12 @@ export function ListViewContainer() {
           setReloadNonce((n) => n + 1);
         }}
         paging={{ onShowMore, loadingColumns, errors: pageErrors }}
+        statusPick={{
+          onPick: onStatusPick,
+          pending: statusPending,
+          refusal: statusRefusal,
+          onDismissRefusal: () => setStatusRefusal(null),
+        }}
         selection={{
           isSelected: (id) => isRowSelected(selection, id),
           onToggle,

@@ -1,0 +1,55 @@
+/* The status picker — MILESTONES.md #76.
+
+   The 44px minimum is the same one every other tap target in this sweep
+   uses (`Board.module.css`, `BoardFilterBar.module.css`,
+   `LayoutToggle.module.css`, `NeedsYouInbox.module.css`), declared at the
+   same 640px breakpoint so a phone reads one consistent rule. A native
+   `<select>` renders around 26-30px by default, well under what a thumb
+   hits reliably. */
+
+.picker {
+  /* A real minimum at every width, not only on a phone. This is the
+     control that stands in for a drag, so it is worth being comfortably
+     hittable with a mouse too — and declaring it in the base rule rather
+     than only inside the media query is what row afd1b4b4 found escaping
+     every touch-target test, because those tests only read inside
+     `max-width: 640px` blocks. */
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.picker:disabled {
+  /* A move in flight. Reads as busy rather than as broken — the row is
+     still legible, it just cannot be picked again until the server
+     answers. */
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* A project's status, which is derived from its children and so is text
+   rather than a control (DECISIONS.md §13c). Sized like the picker so a
+   list of mixed rows keeps its baseline. */
+.readOnly {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+@media (max-width: 640px) {
+  .picker {
+    /* Full width on a phone: the picker is the row's primary action, and
+       a full-width target is the easiest thing on the screen to hit. */
+    width: 100%;
+    min-height: 44px;
+  }
+}

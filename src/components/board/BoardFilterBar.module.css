@@ -94,6 +94,34 @@
   cursor: pointer;
 }
 
+/* ── The filter SHEET at phone widths (MILESTONES.md #76) ────────────────
+   Row 74ef86fb collapsed `.axes` behind the checkbox above and recorded
+   that a fuller treatment was "left for a follow-up rather than attempted
+   here". This is that follow-up, and it is deliberately CSS ONLY.
+
+   **Why the markup is untouched.** The disclosure's checkbox/label/panel
+   wiring carries a lot of hard-won reasoning — `role="button"` so
+   `aria-expanded` lands on a role that supports it, a documented trap
+   about adding `tabIndex` without an Enter handler, and an earlier
+   regression where `aria-hidden` on the checkbox left a keyboard user
+   below 641px unable to reach any filter at all. Every one of those
+   properties survives untouched here because the only thing that changes
+   is where the already-shown panel is painted. It is also what keeps this
+   the SAME filter model rather than a second one: identical controls,
+   identical state, identical URL contract — a different presentation of
+   them.
+
+   **Inline was the actual defect.** Expanding the axes pushed the board
+   down the page, so a reader tapping "Filters" lost sight of the very
+   cards they were filtering and had to scroll back up past ~400px of
+   controls. A sheet overlays instead: the list stays where it is, and
+   dismissing returns to it with nothing moved.
+
+   z-index 50 places it above the app chrome and the sidebar (also 50, and
+   never on screen at the same time as this) and BELOW the quick-create
+   dialog at 60 — minting work has to be able to open over a filter sheet,
+   which is the "you can still mint work" half of this row. The ladder is
+   documented in `CommandPalette.module.css`. */
 @media (max-width: 640px) {
   .axesSummary {
     display: inline-flex;
@@ -106,6 +134,34 @@
 
   .axesToggle:checked ~ .axes {
     display: flex;
+    position: fixed;
+    z-index: 50;
+    /* Anchored to the bottom edge: the half of the screen a thumb reaches
+       without regripping the phone. A top-anchored panel puts the controls
+       furthest from the thumb and under the notch. */
+    right: 0;
+    bottom: 0;
+    left: 0;
+    /* Never taller than most of the viewport, and scrollable inside
+       itself, so a reader who has turned on every axis can still reach the
+       last one — and can always see some of the board behind it, which is
+       what keeps the sheet legible as a temporary layer rather than as a
+       new page. */
+    max-height: 80vh;
+    overflow-y: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    /* Clear of the home indicator on a phone with no bezel. Falls back to
+       the plain padding where the environment variable is unsupported. */
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border-strong);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    /* Opaque: the board scrolls behind this, and a translucent sheet over
+       moving cards is unreadable. */
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-overlay);
   }
 }
 
