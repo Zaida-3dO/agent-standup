@@ -53,7 +53,8 @@ import type { HookEvent } from "./payload";
 import { enforcementRefusal, type SessionEnforcement } from "./enforcement";
 import type { StopContext } from "./stop-catch";
 import { evaluateNudges, isWriteShaped, type Nudge, type NudgeContext } from "./nudge";
-import type { InterventionFinding } from "../interventions/types";
+import { overrideApplies, overrideRemedy } from "./override";
+import { isBlockingLevel, type InterventionFinding } from "../interventions/types";
 
 /**
  * What the hook concluded, and why.
@@ -82,7 +83,15 @@ export interface HookVerdict {
     /** The payload could not be read at all. Allows (§16). */
     | "unreadable-payload"
     /** A `post` or `Stop` event: reported, never refused. */
-    | "post-cannot-block";
+    | "post-cannot-block"
+    /**
+     * The caller overrode a `block-overridable` finding with a written
+     * reason — MILESTONES.md #128's middle tier. Distinct from `"server"`
+     * on purpose: "allowed because nothing objected" and "allowed because
+     * someone overrode an objection" are different facts, and collapsing
+     * them would make overriding invisible to anything reading the source.
+     */
+    | "override";
 }
 
 /** The server's answer, as this build understands it. */
@@ -239,9 +248,54 @@ export async function decide({
   }
 
   if (answer.decision === "block") {
+    // ── The override channel ────────────────────────────────────────────
+    //
+    // MILESTONES.md #128's middle tier, and until this existed it was not
+    // reachable: a `block-overridable` finding denied exactly as hard as a
+    // `hard-block`, so the two levels differed in name only. See
+    // `./override.ts` for why that mattered enough to fix — two built-ins
+    // had already had their stated remedies deleted because the exit they
+    // named did not exist.
+    //
+    // **Only the findings the server actually reported are consulted.** An
+    // override names one entry, and it is honoured only if that entry is
+    // among the blocking findings behind *this* refusal. So an override
+    // written for one guard cannot excuse a different guard that fired on
+    // the same call, and an override sent against a refusal carrying no
+    // findings at all — an `enforcement` refusal, or a server that reported
+    // none — changes nothing, because there is no entry for it to match.
+    const blocking = (answer.findings ?? []).filter((finding) =>
+      isBlockingLevel(finding.level),
+    );
+    const overridden = blocking.filter(
+      (finding) => overrideApplies(event.override, finding.id, finding.level).applies,
+    );
+
+    // Every blocking finding must be covered, and there must have been at
+    // least one. A call refused by two guards is not released by a reason
+    // written about one of them — the other guard has said nothing about
+    // whether proceeding is safe, and letting it through would be reading
+    // "I considered X" as "I considered everything".
+    if (blocking.length > 0 && overridden.length === blocking.length) {
+      return ALLOW(
+        "override",
+        `overridden by the caller with a written reason: ${
+          overrideApplies(event.override, blocking[0]!.id, blocking[0]!.level).reason ?? ""
+        }`,
+      );
+    }
+
+    // Still refused — but say so in a way the caller can act on. A refusal
+    // that conceals an available exit is what teaches sessions to route
+    // around guards rather than answer them.
+    const remedies = blocking
+      .map((finding) => overrideRemedy(finding.id, finding.level))
+      .filter((remedy): remedy is string => remedy !== null);
+
+    const base = answer.reason ?? "blocked by the server";
     return {
       decision: "deny",
-      reason: answer.reason ?? "blocked by the server",
+      reason: remedies.length === 0 ? base : `${base} ${remedies.join(" ")}`,
       source: "server",
     };
   }
