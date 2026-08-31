@@ -38,6 +38,11 @@ import { createItem } from "./operations/create-item";
 import { createProject } from "./operations/create-project";
 import { createTask } from "./operations/create-task";
 import { createSubtask } from "./operations/create-subtask";
+// The three explicit creates behind one tool, chosen with a required `type`.
+// Not a return to `create_item`'s inference — `type` is stated by the caller
+// and a combination that cannot produce it is refused by name. Registered
+// alongside the three, which stay reachable over HTTP and the command line.
+import { createWork } from "./operations/create-work";
 import { getItem } from "./operations/get-item";
 import { updateItem } from "./operations/update-item";
 // Correcting an item's *position* in the tree. `kind` is derived from
@@ -116,6 +121,11 @@ import { loopAdd, loopClose } from "./operations/open-loops";
 // ceiling, so its loops could not be read at all.
 import { loopGet, loopList } from "./operations/loop-reads";
 import { loopDelete, loopEdit } from "./operations/loop-lifecycle";
+// The six loop verbs behind one tool, chosen with `action`. All seven are
+// registered: the six stay reachable over HTTP and the command line, and are
+// waived off the MCP adapters only, where a tool list costs context on every
+// session (`@/lib/adapters/waivers`).
+import { loop } from "./operations/loop";
 import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 // The progress report (MILESTONES.md #136) — session-scoped, and shaped by
@@ -225,6 +235,7 @@ export const OPERATION_REGISTRY = {
   [createProject.name]: createProject,
   [createTask.name]: createTask,
   [createSubtask.name]: createSubtask,
+  [createWork.name]: createWork,
   [getItem.name]: getItem,
   [updateItem.name]: updateItem,
   [reparentItem.name]: reparentItem,
@@ -266,6 +277,7 @@ export const OPERATION_REGISTRY = {
   [loopDelete.name]: loopDelete,
   [loopList.name]: loopList,
   [loopGet.name]: loopGet,
+  [loop.name]: loop,
   [orientation.name]: orientation,
   [myWork.name]: myWork,
   [progressReport.name]: progressReport,

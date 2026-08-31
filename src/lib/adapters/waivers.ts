@@ -725,6 +725,174 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     operation: "create_item",
     reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "loop_add",
+    reason:
+      "Folded into the single `loop` tool, which takes the verb as an `action` field. Six verbs " +
+      "describing one capability spend the per-session tool-list budget six times over to say " +
+      "`itemId` and `loopId` again; a caller reaching for any of them has already decided it is " +
+      "working on loops. The folded tool dispatches to this operation, so its refusals, its guard " +
+      "ids and its fields reach the caller unchanged, and it stays exposed on HTTP and the command " +
+      "line. It runs no state transition, so no registered guard can reject it and §22's bound on " +
+      "waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "loop_add",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "loop_get",
+    reason:
+      "Folded into the single `loop` tool, which takes the verb as an `action` field. Six verbs " +
+      "describing one capability spend the per-session tool-list budget six times over to say " +
+      "`itemId` and `loopId` again; a caller reaching for any of them has already decided it is " +
+      "working on loops. The folded tool dispatches to this operation, so its refusals, its guard " +
+      "ids and its fields reach the caller unchanged, and it stays exposed on HTTP and the command " +
+      "line. It runs no state transition, so no registered guard can reject it and §22's bound on " +
+      "waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "loop_get",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "loop_list",
+    reason:
+      "Folded into the single `loop` tool, which takes the verb as an `action` field. Six verbs " +
+      "describing one capability spend the per-session tool-list budget six times over to say " +
+      "`itemId` and `loopId` again; a caller reaching for any of them has already decided it is " +
+      "working on loops. The folded tool dispatches to this operation, so its refusals, its guard " +
+      "ids and its fields reach the caller unchanged, and it stays exposed on HTTP and the command " +
+      "line. It runs no state transition, so no registered guard can reject it and §22's bound on " +
+      "waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "loop_list",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "loop_edit",
+    reason:
+      "Folded into the single `loop` tool, which takes the verb as an `action` field. Six verbs " +
+      "describing one capability spend the per-session tool-list budget six times over to say " +
+      "`itemId` and `loopId` again; a caller reaching for any of them has already decided it is " +
+      "working on loops. The folded tool dispatches to this operation, so its refusals, its guard " +
+      "ids and its fields reach the caller unchanged, and it stays exposed on HTTP and the command " +
+      "line. It runs no state transition, so no registered guard can reject it and §22's bound on " +
+      "waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "loop_edit",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "loop_close",
+    reason:
+      "Folded into the single `loop` tool, which takes the verb as an `action` field. Six verbs " +
+      "describing one capability spend the per-session tool-list budget six times over to say " +
+      "`itemId` and `loopId` again; a caller reaching for any of them has already decided it is " +
+      "working on loops. The folded tool dispatches to this operation, so its refusals, its guard " +
+      "ids and its fields reach the caller unchanged, and it stays exposed on HTTP and the command " +
+      "line. It runs no state transition, so no registered guard can reject it and §22's bound on " +
+      "waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "loop_close",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "loop_delete",
+    reason:
+      "Folded into the single `loop` tool, which takes the verb as an `action` field. Six verbs " +
+      "describing one capability spend the per-session tool-list budget six times over to say " +
+      "`itemId` and `loopId` again; a caller reaching for any of them has already decided it is " +
+      "working on loops. The folded tool dispatches to this operation, so its refusals, its guard " +
+      "ids and its fields reach the caller unchanged, and it stays exposed on HTTP and the command " +
+      "line. It runs no state transition, so no registered guard can reject it and §22's bound on " +
+      "waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "loop_delete",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "create_project",
+    reason:
+      "Folded into the single `create_work` tool, which takes the kind as a required `type` field. " +
+      "The three share seventeen fields of one common shape and differ by a single parent pointer, " +
+      "so three near-identical schemas spend the per-session tool-list budget three times to " +
+      "describe one decision. This is not `create_item`'s inference returning: `type` is stated by " +
+      "the caller and never derived, and a type the supplied parent cannot produce is refused by " +
+      "name. The folded tool dispatches to this operation, so every depth check and every refusal " +
+      "here reaches the caller unchanged, and it stays exposed on HTTP and the command line. It " +
+      "runs no state transition, so no registered guard can reject it and §22's bound on waivers " +
+      "is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "create_project",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "create_task",
+    reason:
+      "Folded into the single `create_work` tool, which takes the kind as a required `type` field. " +
+      "The three share seventeen fields of one common shape and differ by a single parent pointer, " +
+      "so three near-identical schemas spend the per-session tool-list budget three times to " +
+      "describe one decision. This is not `create_item`'s inference returning: `type` is stated by " +
+      "the caller and never derived, and a type the supplied parent cannot produce is refused by " +
+      "name. The folded tool dispatches to this operation, so every depth check and every refusal " +
+      "here reaches the caller unchanged, and it stays exposed on HTTP and the command line. It " +
+      "runs no state transition, so no registered guard can reject it and §22's bound on waivers " +
+      "is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "create_task",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "create_subtask",
+    reason:
+      "Folded into the single `create_work` tool, which takes the kind as a required `type` field. " +
+      "The three share seventeen fields of one common shape and differ by a single parent pointer, " +
+      "so three near-identical schemas spend the per-session tool-list budget three times to " +
+      "describe one decision. This is not `create_item`'s inference returning: `type` is stated by " +
+      "the caller and never derived, and a type the supplied parent cannot produce is refused by " +
+      "name. The folded tool dispatches to this operation, so every depth check and every refusal " +
+      "here reaches the caller unchanged, and it stays exposed on HTTP and the command line. It " +
+      "runs no state transition, so no registered guard can reject it and §22's bound on waivers " +
+      "is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "create_subtask",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */
