@@ -324,6 +324,18 @@ export const SETTINGS_REGISTRY = {
     formerEnv: ["BUDGET_WINDOWS"],
   }),
 
+  "budget.reading_stale_after_seconds": define({
+    schema: z.number().int().positive(),
+    default: 900,
+    label: "Usage reading stale after",
+    help: "How old a usage reading may be and still be acted on. Past this it is still shown, and still says when it was taken, but no band is computed from it — SCHEMA.md §15: a stale reading is worse than none. Matches the liveness threshold by default because both answer the same question about the same machines.",
+    category: "Budget",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "model_picker.enabled": define({
     schema: z.boolean(),
     default: false,
