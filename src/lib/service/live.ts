@@ -8,6 +8,7 @@
 import { prisma } from "@/lib/prisma";
 import { SettingsCache, type SettingsSource, type StoredOverride } from "@/lib/settings";
 import { ServiceRuntime, prismaTransactionRunner, type CallOptions } from "./runtime";
+import { createServiceDeliverer } from "@/lib/interventions/service-delivery";
 // Side-effect import: every hand-written guard under `src/lib/service/guards/`
 // registers into the shared `guardRegistry` as a side effect of importing
 // this module — see that module's own header. Imported here, not in
@@ -113,7 +114,25 @@ class SettingsInvalidatingRuntime extends ServiceRuntime {
   }
 }
 
+/**
+ * The process-wide intervention deliverer (MILESTONES.md #128).
+ *
+ * Exported because holding findings and delivering them are two different
+ * moments: something that *detects* a situation calls `hold`, and the
+ * runtime delivers whatever is waiting on the next service call that names
+ * the same session. A module-level value is what lets those two be
+ * different calls at different times without a table between them.
+ *
+ * Its accumulator lives in memory, which is the trade `../interventions/
+ * digest.ts` records and accepts: a digest is advisory, expires in five
+ * minutes, and is re-detected on the next call that triggers it, so a
+ * process restart losing one costs nothing that a write per finding on the
+ * highest-volume path in the system would be worth paying to protect.
+ */
+export const interventionDeliverer = createServiceDeliverer();
+
 export const service: ServiceRuntime = new SettingsInvalidatingRuntime({
   transaction: prismaTransactionRunner(prisma),
   resolveSnapshot: () => settingsCache.get(),
+  deliverInterventions: interventionDeliverer,
 });
