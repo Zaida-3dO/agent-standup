@@ -51,7 +51,7 @@ import { SOURCE_REF_SEPARATOR } from "./source-ref";
  * `P2002` is Prisma's own code for "unique constraint failed" and is what a
  * `PrismaClientKnownRequestError` carries; the raw driver reports `23505`.
  * Both are matched, because a mint attempted through `$executeRaw` (which
- * the scan does not do today, but a batching variant might) surfaces the
+ * the scan does not do, but a batching variant might) surfaces the
  * latter.
  */
 export const PRISMA_UNIQUE_VIOLATION = "P2002";

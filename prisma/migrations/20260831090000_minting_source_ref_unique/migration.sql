@@ -17,8 +17,8 @@
 -- INSERT is refused by Postgres at write time, whatever the first
 -- transaction had committed by the time the second one read. The scanner
 -- is then free to be written the honest way — attempt the insert, treat a
--- unique violation as "already minted" — and its correctness no longer
--- depends on how two scans happened to interleave.
+-- unique violation as "already minted" — and its correctness is
+-- independent of how two scans happen to interleave.
 --
 -- This is also what makes idempotency hold **across a restart**, which no
 -- in-process guard can do: a lock, a cache or a set of seen hashes lives in

@@ -11,7 +11,7 @@
 //
 // The mutation each test is written to survive is named in its own comment.
 // The one that matters most: making the dedup non-atomic (deleting the
-// unique index, or replacing `mintOnce` with a plain check-then-insert)
+// unique index, or reducing `mintOnce` to a plain check-then-insert)
 // must turn "mints once under concurrency" red. A fixture that only ever
 // mints serially cannot detect that at all, so the concurrent tests below
 // genuinely overlap two transactions rather than awaiting one after the
@@ -227,13 +227,38 @@ describeIfDb("minting idempotency (#63)", () => {
      * duplicate. `mintOnce`'s own pre-check still runs inside it — this
      * barrier surrounds the insert the caller supplies, and does not
      * replace or bypass any part of the code under test.
+     *
+     * ⚠️ **The barrier is bounded, and it has to be — the visibility
+     * horizon is server-wide.** `pg_snapshot_xmin` is a property of the
+     * server rather than of one database, so a transaction held open here
+     * holds back rows for *every* suite running against the same Postgres,
+     * including the ones that read through a horizon-bounded feed.
+     *
+     * This is measured, not theorised. With an unbounded barrier, three
+     * full-suite runs each failed a *different* test in the bounded-read
+     * suite with "never became visible within 15000ms", while this file
+     * passed alone and the pristine baseline passed clean; skipping only
+     * this describe block turned the whole suite green again. So the cap
+     * has to be short relative to how long another suite is willing to wait
+     * for a row — not merely finite.
+     *
+     * Releasing on the timeout does not weaken the test. It only means the
+     * attempts were not all in flight at once, and the assertion that
+     * exactly one row exists still holds — a run that degrades that way
+     * proves less about interleaving but can never pass with a duplicate.
+     * The mutation check is what keeps that honest: with the unique index
+     * downgraded to a plain index, every concurrency test here still fails
+     * on every run at this timeout.
      */
+    const BARRIER_TIMEOUT_MS = 250;
+
     async function raceMints(ref: string, attempts: number) {
       let arrived = 0;
       let release!: () => void;
       const allArrived = new Promise<void>((resolve) => {
         release = resolve;
       });
+      const timer = setTimeout(release, BARRIER_TIMEOUT_MS);
 
       const started = Array.from({ length: attempts }, () =>
         mintOnce(prisma, ref, async (db) => {
@@ -244,12 +269,18 @@ describeIfDb("minting idempotency (#63)", () => {
           return mintItem(db as PrismaClient, ref);
         }).catch((error: unknown) => ({ error }) as const),
       );
-      return Promise.all(started);
+      try {
+        return await Promise.all(started);
+      } finally {
+        // Never leave the timer pending — it would keep the process alive
+        // past the suite and delay the run's exit.
+        clearTimeout(timer);
+      }
     }
 
     // THE row's headline property. Kills: dropping the unique index;
-    // removing the violation handler (the loser would throw); replacing
-    // `mintOnce`'s body with a bare check-then-insert.
+    // removing the violation handler (the loser would throw); reducing
+    // `mintOnce`'s body to a bare check-then-insert.
     //
     // Two is the smallest real race, and with the barrier above it is a
     // sufficient one — every attempt has read "not minted" before any

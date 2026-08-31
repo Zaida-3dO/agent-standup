@@ -14,7 +14,7 @@
 // that reads the ledger and decides what a wait returns; the doors differ
 // only in **how they wait**, never in **what they answer**. That is what
 // makes the identity assertion in the tests a real property rather than two
-// parallel code paths that happen to agree today.
+// parallel code paths that happen to agree.
 //
 // ── The bound, and why it is not the cursor alone ──────────────────────
 //
