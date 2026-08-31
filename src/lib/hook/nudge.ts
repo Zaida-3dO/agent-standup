@@ -57,8 +57,17 @@
  *
  * `wind-down` is `budget` in DECISIONS.md §7's prose; the name here is the
  * band's name because that is what a reader of the nudge sees.
+ *
+ * `background` (MILESTONES.md #65, DECISIONS.md §6) is the one kind that
+ * fires *before* its call rather than after — see `typicalDurationSeconds`.
  */
-export const NUDGE_KINDS = ["delegate", "staging", "escalation", "wind-down"] as const;
+export const NUDGE_KINDS = [
+  "delegate",
+  "staging",
+  "escalation",
+  "wind-down",
+  "background",
+] as const;
 export type NudgeKind = (typeof NUDGE_KINDS)[number];
 
 export function isNudgeKind(value: unknown): value is NudgeKind {
@@ -112,6 +121,40 @@ export interface NudgeContext {
    * Edge suppression — see the module note.
    */
   readonly alreadyNudged?: readonly NudgeKind[];
+  /**
+   * How long this exact command has typically taken before, in seconds
+   * (MILESTONES.md #65, DECISIONS.md §6 "the backgrounding nudge").
+   *
+   * The server learns this for free: "the gap between consecutive tool
+   * calls *is* the duration of the call between them", so a command seen
+   * before carries a duration without anything having to time it. A command
+   * never seen before has none, and an absent value nudges nothing —
+   * guessing a duration for an unknown command is the "retrospective
+   * flagging" fallback §6 names, which belongs after the call, not here.
+   */
+  readonly typicalDurationSeconds?: number;
+  /**
+   * Whether this call is *already* going to run in the background.
+   *
+   * The single most important suppression in this kind. §6's rule for the
+   * stop-hook catch — "silent if a wait is already backgrounded" — applies
+   * with full force here: telling a session to background a call it has
+   * already backgrounded is advice it has already taken, and it is the
+   * exact shape of nag that trains an agent to stop reading nudges.
+   */
+  readonly alreadyBackgrounded?: boolean;
+  /**
+   * Whether this event fires *before* the tool call runs.
+   *
+   * The backgrounding nudge is the only kind whose value depends on this.
+   * §6 is explicit that the server "can nudge **before** the call via the
+   * ask-list" — because backgrounding is a choice about how to *make* a
+   * call, and after the call has already blocked the session for eighteen
+   * minutes the advice has no remaining value. So this nudge requires a
+   * `PreToolUse`; a `PostToolUse` is too late to act on and would only be
+   * noise.
+   */
+  readonly beforeCall?: boolean;
 }
 
 /**
@@ -143,10 +186,42 @@ const STAGING_TEXT = (count: number) =>
   "in this session. Commit at a logical checkpoint so the work is not lost if the session ends " +
   "unexpectedly.";
 
+/**
+ * How long a command must typically take before backgrounding it is worth
+ * suggesting, in seconds.
+ *
+ * Two minutes. The number is a judgement and the direction of error is the
+ * part worth defending: a threshold set too low nudges on every `npm test`
+ * that happens to take ninety seconds, and a nudge that fires on ordinary
+ * work is one an agent learns to skip — which costs the mechanism its only
+ * power (see the module note). Set too high, some genuinely slow calls go
+ * un-nudged, which loses one piece of advice and nothing else. Cheap in one
+ * direction, expensive in the other, so it sits well clear of routine.
+ *
+ * Exported because the boundary is the interesting case to test and a test
+ * that restates the number would keep passing if the source changed.
+ */
+export const BACKGROUND_NUDGE_THRESHOLD_SECONDS = 120;
+
 const WIND_DOWN_TEXT =
   "The budget window has reached its wind-down band. Start nothing new: bring in-flight work to a " +
   "good stopping point, take shortcuts to a clean pause, and write the handoff. Finishing is not " +
   "required — a clean pause is.";
+
+/**
+ * Renders a duration the way a person reads one. Whole minutes past a
+ * minute, seconds below it — "~18 min" is the phrasing DECISIONS.md §6
+ * itself uses, and a bare "1080 seconds" makes the reader do the division.
+ */
+function approximateDuration(seconds: number): string {
+  if (seconds < 60) return `~${Math.round(seconds)}s`;
+  return `~${Math.round(seconds / 60)} min`;
+}
+
+const BACKGROUND_TEXT = (seconds: number) =>
+  `This command has taken ${approximateDuration(seconds)} on previous runs. Consider running it ` +
+  "in the background and picking the result up later, rather than blocking this session while it " +
+  "runs. Some calls genuinely cannot be backgrounded — this is advice, not a refusal.";
 
 /**
  * Decides what to tell a session on one event.
@@ -200,6 +275,34 @@ export function evaluateNudges(context: NudgeContext): readonly Nudge[] {
     nudges.push({ kind: "wind-down", text: WIND_DOWN_TEXT });
   }
 
+  // 5. Backgrounding. §6: long-running tools should be backgrounded rather
+  //    than blocking a session, and the duration is learnable from data the
+  //    server already has. Four conditions, and each one drops the nudge
+  //    for a different reason:
+  //
+  //      - `beforeCall` — after the call the advice is unactionable.
+  //      - a known duration — an unseen command has nothing to say.
+  //      - over the threshold — under it, backgrounding is not worth it.
+  //      - not already backgrounded — otherwise it is pure nag.
+  //
+  //    The comparison is strictly greater-than, so a command sitting
+  //    exactly on the threshold does not nudge. Either direction is
+  //    defensible at the boundary; what matters is that it is one fixed
+  //    rule rather than an accident, because "typically 120s" is precisely
+  //    the routine-length call the threshold exists to stay quiet about.
+  if (
+    context.beforeCall === true &&
+    context.alreadyBackgrounded !== true &&
+    context.typicalDurationSeconds !== undefined &&
+    Number.isFinite(context.typicalDurationSeconds) &&
+    context.typicalDurationSeconds > BACKGROUND_NUDGE_THRESHOLD_SECONDS
+  ) {
+    nudges.push({
+      kind: "background",
+      text: BACKGROUND_TEXT(context.typicalDurationSeconds),
+    });
+  }
+
   return nudges.filter((nudge) => !already.has(nudge.kind));
 }
 
@@ -244,6 +347,18 @@ export function readNudgeContext(value: unknown): NudgeContext | undefined {
     ? record.alreadyNudged.filter(isNudgeKind)
     : undefined;
 
+  // A duration must be a finite, non-negative number. `Number.isFinite`
+  // rejects `NaN` and both infinities, which JSON cannot carry but a
+  // hand-built object can — and a `NaN` here would compare false against
+  // the threshold and silently never nudge, which is the failure mode that
+  // looks like the feature simply not working.
+  const typicalDurationSeconds =
+    typeof record.typicalDurationSeconds === "number" &&
+    Number.isFinite(record.typicalDurationSeconds) &&
+    record.typicalDurationSeconds >= 0
+      ? record.typicalDurationSeconds
+      : undefined;
+
   const context: NudgeContext = {
     ...(delegationMode === undefined ? {} : { delegationMode }),
     ...(typeof record.isOrchestrator === "boolean"
@@ -253,6 +368,10 @@ export function readNudgeContext(value: unknown): NudgeContext | undefined {
     ...(escalation === undefined ? {} : { escalation }),
     ...(budgetBand === undefined ? {} : { budgetBand }),
     ...(alreadyNudged === undefined ? {} : { alreadyNudged }),
+    ...(typicalDurationSeconds === undefined ? {} : { typicalDurationSeconds }),
+    ...(typeof record.alreadyBackgrounded === "boolean"
+      ? { alreadyBackgrounded: record.alreadyBackgrounded }
+      : {}),
   };
 
   return Object.keys(context).length === 0 ? undefined : context;

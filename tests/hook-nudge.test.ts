@@ -13,6 +13,7 @@ import {
   evaluateNudges,
   isWriteShaped,
   readNudgeContext,
+  BACKGROUND_NUDGE_THRESHOLD_SECONDS,
   NUDGE_KINDS,
   type NudgeContext,
 } from "@/lib/hook/nudge";
@@ -554,7 +555,251 @@ describe("nudges and the stop-hook catch on one event", () => {
 });
 
 describe("the nudge kinds are a closed set", () => {
-  it("names exactly the four kinds MILESTONES.md #46 lists", () => {
-    expect([...NUDGE_KINDS]).toEqual(["delegate", "staging", "escalation", "wind-down"]);
+  it("names exactly the kinds MILESTONES.md #46 and #65 list", () => {
+    expect([...NUDGE_KINDS]).toEqual([
+      "delegate",
+      "staging",
+      "escalation",
+      "wind-down",
+      "background",
+    ]);
+  });
+});
+
+// The backgrounding nudge — MILESTONES.md #65, DECISIONS.md §6.
+//
+// This kind differs from the other four in one structural way: it fires
+// *before* its call rather than after. §6 is explicit that the server "can
+// nudge **before** the call via the ask-list", because backgrounding is a
+// choice about how to make a call — once the call has already blocked the
+// session for eighteen minutes, the advice is worthless. So `beforeCall` is
+// asserted as a requirement rather than a preference.
+//
+// The threshold is exercised from **both sides and exactly on it**. A suite
+// that only tested "long command nudges, short command does not" would keep
+// passing if `>` were changed to `>=`, or if the constant moved by a
+// minute — the boundary is where the rule actually lives.
+describe("evaluateNudges — the backgrounding nudge", () => {
+  const slow = BACKGROUND_NUDGE_THRESHOLD_SECONDS + 1;
+
+  it("nudges before a call whose command has typically run long", () => {
+    const nudges = evaluateNudges({ beforeCall: true, typicalDurationSeconds: 18 * 60 });
+    expect(nudges.map((n) => n.kind)).toEqual(["background"]);
+    expect(nudges[0]?.text).toMatch(/background/i);
+  });
+
+  // The learned duration is *in* the text. §6's whole argument for this
+  // nudge is that the server knows "this command takes ~18 min in this
+  // repo" — a nudge that withheld the number would be advice with the
+  // evidence removed, and an agent cannot weigh it.
+  it("tells the session how long the command has taken before", () => {
+    const nudges = evaluateNudges({ beforeCall: true, typicalDurationSeconds: 18 * 60 });
+    expect(nudges[0]?.text).toContain("~18 min");
+  });
+
+  // ── The boundary, from three sides ────────────────────────────────────
+  it("nudges one second past the threshold", () => {
+    expect(
+      evaluateNudges({ beforeCall: true, typicalDurationSeconds: slow }).map((n) => n.kind),
+    ).toEqual(["background"]);
+  });
+
+  it("stays silent exactly on the threshold", () => {
+    expect(
+      evaluateNudges({
+        beforeCall: true,
+        typicalDurationSeconds: BACKGROUND_NUDGE_THRESHOLD_SECONDS,
+      }),
+    ).toEqual([]);
+  });
+
+  it("stays silent one second under the threshold", () => {
+    expect(
+      evaluateNudges({
+        beforeCall: true,
+        typicalDurationSeconds: BACKGROUND_NUDGE_THRESHOLD_SECONDS - 1,
+      }),
+    ).toEqual([]);
+  });
+
+  // ── The four ways it correctly says nothing ───────────────────────────
+  it("stays silent after the call, when the advice is unactionable", () => {
+    expect(evaluateNudges({ beforeCall: false, typicalDurationSeconds: slow })).toEqual([]);
+  });
+
+  it("stays silent when the event never said whether it was before the call", () => {
+    // Absent is not "before". Defaulting an unknown to `true` would nudge
+    // on every PostToolUse the server happened to know a duration for.
+    expect(evaluateNudges({ typicalDurationSeconds: slow })).toEqual([]);
+  });
+
+  it("stays silent for a command it has never seen before", () => {
+    // §6's fallback for unseen commands is retrospective flagging, which is
+    // not this nudge. No duration means no advice — never a guessed one.
+    expect(evaluateNudges({ beforeCall: true })).toEqual([]);
+  });
+
+  it("stays silent when the call is already being backgrounded", () => {
+    // The nag case, and the most important suppression in this kind.
+    expect(
+      evaluateNudges({
+        beforeCall: true,
+        alreadyBackgrounded: true,
+        typicalDurationSeconds: slow,
+      }),
+    ).toEqual([]);
+  });
+
+  it("still nudges when the call is explicitly not backgrounded", () => {
+    expect(
+      evaluateNudges({
+        beforeCall: true,
+        alreadyBackgrounded: false,
+        typicalDurationSeconds: slow,
+      }).map((n) => n.kind),
+    ).toEqual(["background"]);
+  });
+
+  it("is suppressed once already delivered to this session", () => {
+    expect(
+      evaluateNudges({
+        beforeCall: true,
+        typicalDurationSeconds: slow,
+        alreadyNudged: ["background"],
+      }),
+    ).toEqual([]);
+  });
+
+  // A NaN duration compares false against any threshold, so it would fail
+  // *closed* and merely lose a nudge — but it would do so invisibly, which
+  // is the shape of bug that reads as "the feature was never built".
+  it("ignores a NaN duration rather than comparing against it", () => {
+    expect(evaluateNudges({ beforeCall: true, typicalDurationSeconds: Number.NaN })).toEqual([]);
+  });
+
+  it("nudges on a very long duration rather than dropping it", () => {
+    expect(
+      evaluateNudges({ beforeCall: true, typicalDurationSeconds: 60 * 60 * 24 }).map((n) => n.kind),
+    ).toEqual(["background"]);
+  });
+
+  it("sorts after wind-down when both fire on one event", () => {
+    const nudges = evaluateNudges({
+      beforeCall: true,
+      typicalDurationSeconds: slow,
+      budgetBand: "wind-down",
+      escalation: "something is wrong",
+    });
+    expect(nudges.map((n) => n.kind)).toEqual(["escalation", "wind-down", "background"]);
+  });
+
+  // The property the whole module rests on, asserted for the new kind too.
+  it("carries no field that could block the call", () => {
+    const nudges = evaluateNudges({ beforeCall: true, typicalDurationSeconds: slow });
+    expect(Object.keys(nudges[0] ?? {}).sort()).toEqual(["kind", "text"]);
+  });
+});
+
+describe("readNudgeContext — the backgrounding fields", () => {
+  it("reads a duration and the already-backgrounded flag", () => {
+    expect(readNudgeContext({ typicalDurationSeconds: 300, alreadyBackgrounded: true })).toEqual({
+      typicalDurationSeconds: 300,
+      alreadyBackgrounded: true,
+    });
+  });
+
+  it("accepts a zero duration as a real reading", () => {
+    // Zero is a fact ("this command is instant"), not a missing value, and
+    // dropping it would be indistinguishable from never having seen the
+    // command. It nudges nothing either way, which is the point.
+    expect(readNudgeContext({ typicalDurationSeconds: 0 })).toEqual({
+      typicalDurationSeconds: 0,
+    });
+  });
+
+  it("drops a negative duration, which cannot be a duration", () => {
+    expect(readNudgeContext({ typicalDurationSeconds: -5 })).toBeUndefined();
+  });
+
+  it("drops a duration that arrived as a string", () => {
+    expect(readNudgeContext({ typicalDurationSeconds: "300" })).toBeUndefined();
+  });
+
+  it("drops a NaN duration", () => {
+    expect(readNudgeContext({ typicalDurationSeconds: Number.NaN })).toBeUndefined();
+  });
+
+  it("drops a malformed duration without losing the escalation beside it", () => {
+    // The module's stated posture: a nudge lost is a message not shown, and
+    // one unreadable field must not cost the others.
+    expect(
+      readNudgeContext({ typicalDurationSeconds: "soon", escalation: "still urgent" }),
+    ).toEqual({ escalation: "still urgent" });
+  });
+
+  it("drops a non-boolean already-backgrounded flag", () => {
+    expect(readNudgeContext({ alreadyBackgrounded: "yes" })).toBeUndefined();
+  });
+
+  it("does not read beforeCall off the server, which cannot observe it", () => {
+    // Whether the call has already run is a local fact about the event.
+    // A server claiming otherwise would be overriding something it cannot
+    // see, so the field is deliberately absent from the parser.
+    expect(readNudgeContext({ beforeCall: true })).toBeUndefined();
+  });
+});
+
+describe("decideWithNudges — backgrounding is keyed off the event, not the server", () => {
+  it("nudges on a PreToolUse when the server supplies a long duration", async () => {
+    const { verdict, nudges } = await decideWithNudges({
+      event: event({ eventType: "PreToolUse", command: "npm run build" }),
+      askServer: async () => ({
+        decision: "allow",
+        nudge: { typicalDurationSeconds: 20 * 60 },
+      }),
+    });
+    expect(verdict.decision).toBe("allow");
+    expect(nudges.map((n) => n.kind)).toEqual(["background"]);
+  });
+
+  it("stays silent on a PostToolUse even with the same duration", async () => {
+    const { nudges } = await decideWithNudges({
+      event: event({ eventType: "PostToolUse", command: "npm run build" }),
+      askServer: async () => ({
+        decision: "allow",
+        nudge: { typicalDurationSeconds: 20 * 60 },
+      }),
+    });
+    expect(nudges).toEqual([]);
+  });
+
+  // The server cannot talk its way past the event. This is the test that
+  // fails if `beforeCall` is ever changed to `merged.beforeCall ?? ...`.
+  it("ignores a server claiming beforeCall on a PostToolUse", async () => {
+    const { nudges } = await decideWithNudges({
+      event: event({ eventType: "PostToolUse", command: "npm run build" }),
+      askServer: async () => ({
+        decision: "allow",
+        nudge: {
+          typicalDurationSeconds: 20 * 60,
+          beforeCall: true,
+        } as unknown as NudgeContext,
+      }),
+    });
+    expect(nudges).toEqual([]);
+  });
+
+  it("still nudges alongside a denied verdict", async () => {
+    // Advice is not suppressed by a refusal — the module's stated rule.
+    const { verdict, nudges } = await decideWithNudges({
+      event: event({ eventType: "PreToolUse", command: "npm run build" }),
+      askServer: async () => ({
+        decision: "block" as const,
+        reason: "not now",
+        nudge: { typicalDurationSeconds: 20 * 60 },
+      }),
+    });
+    expect(verdict.decision).toBe("deny");
+    expect(nudges.map((n) => n.kind)).toEqual(["background"]);
   });
 });
