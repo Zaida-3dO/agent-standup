@@ -100,7 +100,8 @@
  * the list, not the aftermath.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** Runs a git command and returns stdout, or null if it failed. */
@@ -443,6 +444,181 @@ function rescuePlan({ branch, head, containingRefs }) {
   return { action: "reuse", ref: trimmed.split("\n")[0] };
 }
 
+/**
+ * Normalises a path for comparison: forward slashes, no trailing slash,
+ * lowercased.
+ *
+ * Case-folding is not merely cosmetic here. This is the comparison that
+ * decides whether a directory found on disk is one git already told us
+ * about, and on Windows — where this sweep principally runs — `C:/Work/as-wt-x`
+ * and `c:/work/as-wt-x` are the SAME directory. Comparing them case-sensitively
+ * would classify a perfectly ordinary registered worktree as unregistered,
+ * and the report exists to be believed. Over-reporting is the cheap failure
+ * here, but a scanner that cries wolf on every registered tree is one nobody
+ * reads, which costs exactly the detection this adds.
+ */
+function normalisePath(p) {
+  return p.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/**
+ * Whether a directory is itself a git checkout — a worktree, a clone, or a
+ * bare-ish tree.
+ *
+ * The test is the presence of `.git`, as a directory (a normal clone) or as
+ * a file (a linked worktree's gitdir pointer). That is the same signal git
+ * itself keys on, and it is deliberately structural rather than name-based:
+ * matching `as-wt-*` would miss exactly the directory someone created by
+ * hand, under a name nobody thought to pattern-match, which is the case this
+ * whole scan exists for.
+ */
+function looksLikeCheckout(dir) {
+  return existsSync(join(dir, ".git"));
+}
+
+/**
+ * Every immediate subdirectory of `parent` that is a git checkout and is NOT
+ * in `registeredPaths`.
+ *
+ * ── Why this function exists ────────────────────────────────────────────
+ *
+ * Everything else in this script enumerates through `git worktree list`,
+ * which is git's own registry. That registry is authoritative about what git
+ * knows and says nothing at all about what is on disk. So a directory git
+ * has never been told about — a hand-made clone, a worktree whose
+ * administrative entry was pruned while the tree survived, a checkout copied
+ * in from elsewhere — is not merely unswept, it is INVISIBLE: it cannot
+ * appear in `removed`, it cannot appear in `kept`, and the sweep's closing
+ * count silently excludes it.
+ *
+ * That is the worst failure shape available to this particular tool. The
+ * sweep is trusted precisely because it reports what it left alone and why;
+ * "0 removable, 12 left alone" reads as a complete account of the parent
+ * directory. If a full checkout holding uncommitted work is sitting beside
+ * those twelve, the report is not incomplete-looking, it is confidently
+ * wrong — and the operator's reasonable conclusion from it ("nothing else is
+ * here") is the one that gets the directory deleted by hand later.
+ *
+ * ── What it deliberately does NOT do ────────────────────────────────────
+ *
+ * It never removes, and nothing downstream may remove what it finds. An
+ * unregistered checkout is the single most dangerous thing in the parent
+ * directory: git's own `worktree remove` refusal — the strongest guard in
+ * this script, per the header — DOES NOT APPLY to a directory git does not
+ * know about, so the safety net that makes every other removal here
+ * survivable is simply absent. Reporting is the whole requirement.
+ *
+ * ── Failure posture ─────────────────────────────────────────────────────
+ *
+ * Returns `null` when the parent cannot be read at all, and the caller says
+ * so rather than printing an empty list. An unreadable directory and an
+ * empty one are the same value in a permissive implementation, and printing
+ * "no unregistered directories" when the truth is "could not look" is the
+ * same defect this file's `looksLikeProcessList` exists to prevent one layer
+ * out.
+ *
+ * A single entry that cannot be classified — a permission error on one
+ * subdirectory, a broken junction — is reported as `unreadable` rather than
+ * skipped. Silently skipping what it cannot classify would reintroduce the
+ * exact blind spot this function was added to close, one directory at a time
+ * instead of all at once.
+ *
+ * `isCheckout` is injected for one reason: so that failure can be tested.
+ * With the real `existsSync`-backed classifier the throw is unreachable —
+ * `existsSync` returns false for an unreadable path rather than throwing —
+ * and mutation testing showed that deleting the `unreadable` report entirely
+ * left all tests green. A safety branch no test can reach is not a safety
+ * branch.
+ */
+function findUnregisteredCheckouts(parent, registeredPaths, isCheckout = looksLikeCheckout) {
+  const registered = new Set(registeredPaths.map(normalisePath));
+  let entries;
+  try {
+    entries = readdirSync(parent, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const found = [];
+  for (const entry of entries) {
+    // A junction/symlink to a directory is not `isDirectory()` on Windows,
+    // and a checkout reached through one is still a checkout holding real
+    // work, so accept either.
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    const full = join(parent, entry.name);
+    if (registered.has(normalisePath(full))) continue;
+    let checkout;
+    try {
+      checkout = isCheckout(full);
+    } catch {
+      // Could not tell — a permission error, a broken junction. REPORT it.
+      // Skipping here would reintroduce the exact blind spot this function
+      // was added to close, one directory at a time instead of all at once,
+      // and it is the directory we failed to read that most deserves a human
+      // glance. The classifier is injected solely so this branch can be
+      // driven by a test: `existsSync` does not throw for an unreadable
+      // path, it returns false, so with the real one wired in this line is
+      // unreachable — and an unreachable safety branch is indistinguishable
+      // from a deleted one.
+      found.push({ path: full, state: "unreadable" });
+      continue;
+    }
+    if (checkout) found.push({ path: full, state: "checkout" });
+  }
+  return found;
+}
+
+/**
+ * The directories the registered worktrees actually live in.
+ *
+ * Scanning needs somewhere to scan, and the honest answer for "where do this
+ * repo's worktrees live?" is "wherever they were put". Rather than inventing
+ * a convention or hardcoding a layout, this reads it off the trees git
+ * already knows about: a directory that already holds one worktree is a
+ * directory a thirteenth would plausibly be put in too, and those are the
+ * only directories this scan has any business reading.
+ *
+ * ── Why only paths that still exist ─────────────────────────────────────
+ *
+ * A registry entry whose directory is absent names a location that holds no
+ * worktree, so it is no evidence at all about where worktrees are kept.
+ * Stale entries like these accumulate whenever a tree is deleted by hand,
+ * and counting their parents drags unrelated directories into the scan for
+ * no gain.
+ *
+ * Filtering them out is also what keeps the scan running at all. A rule that
+ * demanded every registered worktree agree on ONE parent would, against a
+ * registry holding stale entries, find two parents — the directory the trees
+ * are in, and the absent one — and so scan nothing. A scan that declines is
+ * exactly as blind as no scan, which would reproduce the very gap this
+ * addition exists to close, one level further up and harder to see.
+ *
+ * ── Why several parents rather than one ─────────────────────────────────
+ *
+ * Scanning every distinct extant parent can only widen what is REPORTED,
+ * and this scan never removes anything, so a superset costs at most a line
+ * of output the operator dismisses. The opposite error — declining to scan,
+ * or picking one parent arbitrarily and missing the other — costs exactly
+ * the detection this was added for. When the two error directions are that
+ * asymmetric, take the noisy one.
+ */
+function worktreeParents(worktreePaths) {
+  const parents = new Map();
+  for (const p of worktreePaths) {
+    if (!p) continue;
+    let here;
+    try {
+      here = existsSync(p);
+    } catch {
+      here = false;
+    }
+    // A vanished worktree says nothing about where trees are kept now.
+    if (!here) continue;
+    const d = dirname(resolve(p));
+    if (d) parents.set(normalisePath(d), d);
+  }
+  return [...parents.values()];
+}
+
 function main() {
   const { apply, base } = parseArgs(process.argv.slice(2));
   const repo = git(
@@ -483,7 +659,9 @@ function main() {
   const removed = [];
   const kept = [];
 
-  for (const wt of listWorktrees(mainCheckout)) {
+  const worktrees = listWorktrees(mainCheckout);
+
+  for (const wt of worktrees) {
     const label = `${wt.path}${wt.branch ? ` [${wt.branch}]` : " (detached)"}`;
 
     if (!existsSync(wt.path)) {
@@ -609,7 +787,50 @@ function main() {
     for (const [label, why] of kept) console.log(`  ${label}\n    ${why}`);
     console.log("");
   }
-  console.log(`${removed.length} ${apply ? "removed" : "removable"}, ${kept.length} left alone.`);
+  const parents = worktreeParents(worktrees.map((wt) => wt.path));
+  const registeredPaths = [mainCheckout, ...worktrees.map((wt) => wt.path)];
+  const unregistered = [];
+  const unscannable = [];
+  for (const dir of parents) {
+    const found = findUnregisteredCheckouts(dir, registeredPaths);
+    if (found === null) unscannable.push(dir);
+    else unregistered.push(...found);
+  }
+
+  if (parents.length === 0) {
+    console.log(
+      "Unregistered directories: NOT SCANNED — no registered worktree still exists on " +
+        "disk, so there is nowhere identified to look. Saying so beats scanning an " +
+        "arbitrary directory.\n",
+    );
+  }
+  for (const dir of unscannable) {
+    console.log(
+      `Unregistered directories: COULD NOT READ ${dir} — reporting that rather than an ` +
+        "empty list, which would be indistinguishable from having looked.\n",
+    );
+  }
+  if (unregistered.length) {
+    console.log("Unregistered checkouts (git has no record of these — NOT swept):");
+    for (const { path, state } of unregistered) {
+      console.log(
+        state === "unreadable"
+          ? `  ${path}\n    could not classify it — inspect by hand`
+          : `  ${path}\n    a git checkout that is not a registered worktree. This sweep ` +
+              "never removes these: it may hold uncommitted work, and git's own refusal " +
+              "does not protect a tree it has no record of. Inspect it by hand.",
+      );
+    }
+    console.log("");
+  }
+
+  const unregisteredNote = unregistered?.length
+    ? `, ${unregistered.length} unregistered (reported only)`
+    : "";
+  console.log(
+    `${removed.length} ${apply ? "removed" : "removable"}, ${kept.length} left alone` +
+      `${unregisteredNote}.`,
+  );
 }
 
 // Run only when invoked directly, so the guards above can be imported and
@@ -618,4 +839,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main();
 }
 
-export { hasLiveProcess, looksLikeProcessList, mergeVerdict, reducePullRequestStates, rescuePlan };
+export {
+  findUnregisteredCheckouts,
+  hasLiveProcess,
+  looksLikeCheckout,
+  looksLikeProcessList,
+  mergeVerdict,
+  normalisePath,
+  reducePullRequestStates,
+  rescuePlan,
+  worktreeParents,
+};
