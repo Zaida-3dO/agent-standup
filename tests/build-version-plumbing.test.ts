@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { DEV_VERSION, UNKNOWN_REVISION } from "@/lib/build-info";
 
 /** The real repo root, not a Stryker sandbox copy — see service-registry.test.ts. */
 function repoRoot(): string {
@@ -131,5 +132,48 @@ describe("no checked-in constant claims to be the version", () => {
     expect(buildInfo).not.toMatch(/require\s*\(/);
     expect(buildInfo).not.toContain("readFileSync");
     expect(buildInfo).not.toContain("node:fs");
+  });
+});
+
+// The boot line is a SECOND reader of the same two variables, in a file
+// that cannot import the first one — `scripts/entrypoint.mjs` is plain
+// JavaScript run by Node before anything is built. That is the same
+// constraint `backfillWarning` lives under, and it gets the same remedy:
+// the duplication is pinned by test rather than by comment, so the two
+// readings cannot drift apart without something going red.
+describe("the boot identity line reads the same source of truth", () => {
+  it("reads the baked-in variables and not package.json", () => {
+    const entrypoint = read("scripts/entrypoint.mjs");
+
+    // It must consult the build args...
+    expect(entrypoint).toContain("env.APP_VERSION");
+    expect(entrypoint).toContain("env.APP_REVISION");
+    // ...and must never read the placeholder file. The mistake here is
+    // silent: a `?? pkg.version` fallback logs a confident `0.1.0` forever.
+    expect(entrypoint).not.toMatch(/from\s+["'][^"']*package\.json["']/);
+    expect(entrypoint).not.toMatch(/readFileSync\s*\(/);
+  });
+
+  it("uses the same sentinels build-info exports, so the two agree", () => {
+    // If either side changes its wording for "not a real release", a
+    // reader comparing a boot log against a service_info answer would see
+    // two different vocabularies for one fact.
+    const entrypoint = read("scripts/entrypoint.mjs");
+
+    expect(entrypoint).toContain(DEV_VERSION);
+    expect(entrypoint).toContain(UNKNOWN_REVISION);
+  });
+
+  it("prints the identity before migrations are applied, not after", () => {
+    // The ordering IS the feature: a boot that dies inside `migrate
+    // deploy` must still have said which build was doing the migrating.
+    const entrypoint = read("scripts/entrypoint.mjs");
+
+    const identityAt = entrypoint.indexOf("log.info(bootIdentity(env))");
+    const migrateAt = entrypoint.indexOf("await runMigrations(");
+
+    expect(identityAt).toBeGreaterThan(-1);
+    expect(migrateAt).toBeGreaterThan(-1);
+    expect(identityAt).toBeLessThan(migrateAt);
   });
 });

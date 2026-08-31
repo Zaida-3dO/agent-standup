@@ -100,6 +100,56 @@ describe("scripts/entrypoint.mjs — database unreachable (no Postgres needed)",
     expect(getOutput()).toMatch(/FATAL/);
     expect(getOutput()).not.toContain("APP_STARTED");
   });
+
+  it("still announces which build was booting, even though the boot failed", async () => {
+    // The case the boot line exists for. A pull silently migrates, so when
+    // a deploy dies the container log is the only record of WHICH build was
+    // touching the schema — and it is precisely the failed boots where that
+    // question gets asked. Printing the identity after a successful
+    // migration would answer it exactly when nobody needs it.
+    const { child, getOutput } = runEntrypoint(
+      {
+        DATABASE_URL: "postgresql://nobody:nobody@127.0.0.1:1/nowhere",
+        DB_WAIT_TIMEOUT_SECONDS: "1",
+        DB_WAIT_INTERVAL_SECONDS: "0.3",
+        APP_VERSION: "9.9.9-from-the-image",
+        APP_REVISION: "feedfacecafebabe0123456789abcdef01234567",
+      },
+      STUB_SERVER_ARGS,
+    );
+
+    await waitForExit(child, 10_000);
+
+    // Literals supplied by this test, so the value is proved to travel from
+    // the process environment into real stdout rather than being derived.
+    expect(getOutput()).toContain("9.9.9-from-the-image");
+    expect(getOutput()).toContain("feedfacecafebabe0123456789abcdef01234567");
+    // A build with a real identity must not be labelled a placeholder.
+    expect(getOutput()).not.toContain("placeholder");
+  });
+
+  it("announces an unreleased build as unidentified rather than as 0.1.0", async () => {
+    // No APP_* passed — a locally built or manually assembled image. The
+    // wrong answer here is package.json's `0.1.0`, which reads as a real
+    // release and ends the investigation it should have started.
+    const { child, getOutput } = runEntrypoint(
+      {
+        DATABASE_URL: "postgresql://nobody:nobody@127.0.0.1:1/nowhere",
+        DB_WAIT_TIMEOUT_SECONDS: "1",
+        DB_WAIT_INTERVAL_SECONDS: "0.3",
+        APP_VERSION: "",
+        APP_REVISION: "",
+      },
+      STUB_SERVER_ARGS,
+    );
+
+    await waitForExit(child, 10_000);
+
+    expect(getOutput()).toContain("0.0.0-dev");
+    expect(getOutput()).toContain("placeholder");
+    // The whole point: the placeholder version must never be printed.
+    expect(getOutput()).not.toContain("0.1.0");
+  });
 });
 
 describe("scripts/entrypoint.mjs — invalid DB_WAIT_*_SECONDS (no Postgres needed)", () => {
