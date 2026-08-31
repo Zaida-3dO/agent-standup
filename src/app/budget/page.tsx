@@ -7,11 +7,15 @@
 // settings editor.
 //
 // **Why this route mounts the editor.** The editor draws the chart, the
-// plain-words boundaries and the crossing marks itself, so this one page
-// answers both "what is configured" and "change it" — a reader never has to
-// know which of two pages showing the same picture they wanted.
-// `BudgetWindows` is the read-only rendering of the same model, kept for
-// any surface that wants the picture without the fields.
+// plain-words boundaries, the crossing marks and the time scrubber itself,
+// so this one page answers both "what is configured" and "change it" — a
+// reader never has to know which of two pages showing the same picture they
+// wanted.
+//
+// One rendering of the model, not two. A second read-only view of the same
+// windows would have to be kept in step with this one for no gain the
+// reader can name — the fields are the only difference, and somebody who
+// does not want to change anything simply does not type in them.
 import { BudgetEditor } from "@/components/budget/BudgetEditor";
 
 export default function BudgetPage() {

@@ -19,6 +19,7 @@ describe("NAV_ROUTES", () => {
       "fleet",
       "activity",
       "cost",
+      "budget",
       "settings",
     ]);
   });

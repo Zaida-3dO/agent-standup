@@ -62,16 +62,6 @@
   font-size: 1rem;
 }
 
-.cardMeta {
-  color: #a1a1aa;
-  font-size: 0.8rem;
-}
-
-.disabled {
-  color: #a1a1aa;
-  font-size: 0.8rem;
-}
-
 /* The boundary list — three rows, one per band, each said in plain words
    as well as shown on the chart. The words are what a reader checks; the
    chart is what they scan. */
@@ -92,14 +82,6 @@
 .boundaryLabel {
   min-width: 6.5rem;
   font-size: 0.85rem;
-}
-
-.boundaryKind {
-  padding: 0.05rem 0.4rem;
-  border: 1px solid #3f3f46;
-  border-radius: 0.4rem;
-  color: #a1a1aa;
-  font-size: 0.75rem;
 }
 
 .boundaryWords {
@@ -177,6 +159,18 @@
 .crossingMark {
   stroke: #f87171;
   stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+/* A fault that lasts is shaded across the stretch it covers, not drawn as
+   one opaque mark per sampled moment. Translucent on purpose: the reader
+   still has to see the boundaries underneath, because the shading says
+   "the fault is here" and the lines say what the fault IS. */
+.crossingSpan {
+  fill: #f87171;
+  fill-opacity: 0.22;
+  stroke: #f87171;
+  stroke-width: 1;
   stroke-dasharray: 3 2;
 }
 
@@ -478,7 +472,14 @@
    markup — this is the one message on the page that appears without the
    reader having done anything to the field it concerns. */
 .conflict {
-  margin: 1rem 0 0;
+  /* Sticky, and with no top margin: this panel is the first thing in the
+     page and has to stay reachable while the reader scrolls back to the
+     window that caused the refusal. A refusal that scrolls away is the
+     same defect as a refusal below the fold, one gesture later. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 0 1rem;
   padding: 0.75rem;
   border: 1px solid #b45309;
   border-radius: 0.4rem;

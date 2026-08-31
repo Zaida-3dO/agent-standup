@@ -15,6 +15,7 @@ import {
   Columns3,
   Cpu,
   FolderKanban,
+  Gauge,
   LayoutDashboard,
   Settings,
   type LucideIcon,
@@ -28,6 +29,7 @@ const ICONS: Readonly<Record<string, LucideIcon>> = {
   cpu: Cpu,
   activity: Activity,
   banknote: Banknote,
+  gauge: Gauge,
   settings: Settings,
 };
 

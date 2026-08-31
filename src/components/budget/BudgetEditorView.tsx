@@ -1,7 +1,7 @@
 // The editor's presentational half — MILESTONES.md #87.
 //
-// Prop-driven and hook-free, matching `BudgetWindowsView` and
-// `SettingsView`: the container fetches and holds the draft, and everything
+// Prop-driven and hook-free, matching `SettingsView`: the container
+// fetches and holds the draft, and everything
 // conditional lives here where it can be proved by calling this function
 // and walking what comes back.
 import type { BudgetWindow, CrossingProblem } from "@/lib/settings/budget-windows";
@@ -22,9 +22,12 @@ export interface BudgetEditorViewProps {
   readonly saveState: SaveState;
   readonly newName: string;
   readonly addError: string | null;
+  /** Scrubber position per window, in hours. Absent means "follow the first collision". */
+  readonly scrubbed: Readonly<Record<string, number>>;
   readonly onNewNameChange: (name: string) => void;
   readonly onAddWindow: () => void;
   readonly onChangeWindow: (name: string, next: WindowDraft) => void;
+  readonly onScrub: (name: string, atHours: number) => void;
   readonly onRemoveWindow: (name: string) => void;
   readonly onSave: () => void;
   readonly onTakeTheirs: () => void;
@@ -51,6 +54,27 @@ export function BudgetEditorView(props: BudgetEditorViewProps) {
 
   return (
     <div className={styles.page}>
+      {/* The refusal comes FIRST, above the heading, and sticks to the top of
+          the viewport as the page scrolls.
+
+          A refused save has to be visible at the moment it is refused. This
+          page is as tall as the number of windows configured, so anything
+          placed after the window cards sits below the fold on all but the
+          smallest installation — and a refusal the reader cannot see is
+          indistinguishable from the button doing nothing at all. Sticky as
+          well as first, because the reader scrolls down to fix the window
+          that caused it, and an answer that scrolls out of view has the
+          same problem one gesture later. */}
+      {saveState.status === "conflict" && (
+        <div className={styles.conflict} role="alert" aria-live="assertive">
+          <p className={styles.conflictTitle}>Not saved — somebody else changed this first</p>
+          <p>{saveState.message}</p>
+          <button type="button" className={styles.secondaryButton} onClick={props.onTakeTheirs}>
+            Discard my changes and load theirs
+          </button>
+        </div>
+      )}
+
       <h1 className={styles.heading}>Budget windows</h1>
       <p className={styles.subheading}>
         Each window carries four bands — free, selective, wind down, stop — separated by three
@@ -73,7 +97,9 @@ export function BudgetEditorView(props: BudgetEditorViewProps) {
               parsed={props.parsed[name] ?? null}
               problems={props.problems[name] ?? []}
               incompleteness={props.incompleteness[name] ?? null}
+              atHours={props.scrubbed[name] ?? null}
               onChange={(next) => props.onChangeWindow(name, next)}
+              onScrub={(atHours) => props.onScrub(name, atHours)}
               onRemove={() => props.onRemoveWindow(name)}
             />
           );
@@ -122,16 +148,6 @@ export function BudgetEditorView(props: BudgetEditorViewProps) {
           <span className={styles.saveError}>{saveState.message}</span>
         )}
       </div>
-
-      {saveState.status === "conflict" && (
-        <div className={styles.conflict} role="alert">
-          <p className={styles.conflictTitle}>Not saved — somebody else changed this first</p>
-          <p>{saveState.message}</p>
-          <button type="button" className={styles.secondaryButton} onClick={props.onTakeTheirs}>
-            Discard my changes and load theirs
-          </button>
-        </div>
-      )}
     </div>
   );
 }

@@ -16,7 +16,15 @@
  * silently never rendering.
  */
 export type NavId =
-  "standup" | "projects" | "board" | "needs-you" | "fleet" | "activity" | "cost" | "settings";
+  | "standup"
+  | "projects"
+  | "board"
+  | "needs-you"
+  | "fleet"
+  | "activity"
+  | "cost"
+  | "budget"
+  | "settings";
 
 /**
  * Which live count, if any, a destination carries beside its label.
@@ -68,6 +76,14 @@ export const NAV_ROUTES: readonly NavRoute[] = Object.freeze([
   { id: "fleet", label: "Fleet", href: "/fleet", icon: "cpu" },
   { id: "activity", label: "Activity", href: "/activity", icon: "activity" },
   { id: "cost", label: "Cost", href: "/cost", icon: "banknote" },
+  // Beside Cost, and immediately after it, because the two are one
+  // question asked in two tenses: Cost is what has been spent, Budget is
+  // the rule that governs what may be. Reaching the rule only from inside
+  // Settings filed it as configuration-you-set-once, when in practice it
+  // is looked at in the same breath as the spend it constrains — and a
+  // page whose only entrance is a link on another page is one most
+  // readers never learn exists.
+  { id: "budget", label: "Budget", href: "/budget", icon: "gauge" },
   { id: "settings", label: "Settings", href: "/settings", icon: "settings" },
 ]);
 

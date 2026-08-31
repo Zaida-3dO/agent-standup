@@ -78,8 +78,12 @@ export function SettingsView(props: SettingsViewProps) {
         </Link>
         {/* `budget.windows` is a nested map of boundaries whose legality is a
             question about every moment of a window, not about a single field
-            — so it has its own editor, and this is the way in. It is still
-            editable as raw JSON below, which stays the escape hatch. */}
+            — so it has its own editor, which the sidebar also reaches
+            directly. This link is kept alongside that one deliberately:
+            somebody who has found the raw JSON field below should be
+            offered the editor right beside it rather than having to know
+            to look elsewhere. It stays editable as raw JSON below, which
+            remains the escape hatch. */}
         <Link className={styles.link} href="/budget">
           Edit budget windows
         </Link>
