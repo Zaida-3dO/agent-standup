@@ -464,6 +464,16 @@ const RECORD_ARTIFACT_CONTRACT = {
       rule: "A `pull_request` artifact must carry the PR's http(s) URL in `ref`, and its `body`, when set, must be one of the pull-request statuses.",
     },
     {
+      fields: ["body", "kind"],
+      rule:
+        "A `check_run` artifact records a build's outcome: `body` is REQUIRED and must be one of " +
+        `${CHECK_RUN_STATUSES.join(", ")}. Record \`commitSha\` too wherever it is known — a build ` +
+        "is only evidence about the commit it ran against, so a status with no commit cannot be " +
+        "reported as current or superseded. `ref` is optional here (unlike on a `pull_request`) " +
+        "because the status is the answer and the build URL is a convenience, but when set it " +
+        "must be an http(s) URL. A build whose status has changed is a NEW check_run row.",
+    },
+    {
       fields: ["verdict", "kind"],
       rule: "Only `plan_review`, `code_review` and `visual_review` take a verdict; any other kind must leave it unset or `na`.",
     },
