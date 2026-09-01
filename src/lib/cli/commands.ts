@@ -227,6 +227,36 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   },
   {
     noun: "item",
+    verb: "stale",
+    operation: "get_stale_candidates",
+    summary:
+      "List open rows that another row's recorded work already named — the check that catches a stale row before a crew is dispatched onto it. Reports evidence and closes nothing. --include-unlanded also shows rows named only by a plan or a review.",
+    /**
+     * `--include-unlanded` is a bare switch, so it cannot go through
+     * `flagsToInput` (which refuses a valueless flag), and `--limit` is a
+     * `z.number()` field where a flag is always a string. Both are built
+     * here and declared consumed so neither reaches the operation twice
+     * under two spellings — the same shape `item list` uses for `--all`.
+     */
+    buildInput: (_rest, flags) => {
+      const includeUnlanded = booleanFlag(flags, "include-unlanded");
+      if (!includeUnlanded.ok) return includeUnlanded;
+      const limit = numericFlag(flags, "limit");
+      if (!limit.ok) return limit;
+      const built = flagsToInput(flags, ["include-unlanded", "limit"]);
+      if (!built.ok) return built;
+      return {
+        ok: true,
+        input: {
+          ...(built.input as Record<string, unknown>),
+          includeUnlanded: includeUnlanded.value,
+          ...(limit.value === undefined ? {} : { limit: limit.value }),
+        },
+      };
+    },
+  },
+  {
+    noun: "item",
     verb: "create",
     operation: "create_item",
     summary:
