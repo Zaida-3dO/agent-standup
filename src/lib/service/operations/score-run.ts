@@ -36,6 +36,7 @@ import {
   MIN_RUN_SCORE,
   checkAgentScoreWritable,
 } from "../../scoring/run-scores";
+import { declaredFacets } from "./derive-run-score";
 
 const facetScoreSchema = z
   .object({
@@ -62,8 +63,12 @@ const inputSchema = z
      */
     raterId: z.string().trim().min(1).optional(),
     /**
-     * One entry per facet scored. Only facets the item declared should be
-     * sent; nothing here invents a score for a facet nobody judged.
+     * One entry per facet scored.
+     *
+     * Only facets the item declared may be sent, and that is now enforced
+     * by the handler rather than requested here — see the contract note
+     * above `assertFacetsDeclared`. A facet the item never declared is
+     * refused by name.
      */
     scores: z.array(facetScoreSchema).min(1).max(FACETS.length),
   })
@@ -84,6 +89,76 @@ interface ScoreRow {
   facet: string;
   agent_score: number | null;
   user_score: number | null;
+}
+
+/**
+ * Refuses a facet the item never declared, by name.
+ *
+ * ── Why this belongs here and not only in the card ─────────────────────
+ *
+ * The review card filters its sliders to `facetsInPlay`, so a person
+ * clicking through the UI cannot score a facet the item never declared.
+ * That constraint lived ONLY in the browser: any direct caller — MCP, the
+ * HTTP route, the CLI — could write a score for a facet nobody judged into
+ * the same table as the honest ones. Nothing downstream can separate the
+ * two afterwards, because a row scored against an undeclared facet is
+ * structurally identical to a real one: same columns, same 1-5 value, same
+ * timestamp. The number is not merely wrong, it is indistinguishable from
+ * right, which is what makes it worth refusing at the write rather than
+ * filtering at the read.
+ *
+ * ── The contract, stated rather than implied ───────────────────────────
+ *
+ * An item that declared NOTHING is deliberately left unconstrained. This
+ * is a real permissive branch and it is here on purpose, not as an
+ * oversight: `Item.difficulty` is nullable, optional at creation, and no
+ * operation writes it, so an item that declares any facet at all is the
+ * exception rather than the rule. Refusing on an empty declaration would refuse essentially every
+ * `score_run` call — turning a correctness rule into an outage — and it
+ * would also be refusing something that contradicts nothing. "Rating a
+ * facet that did not happen" is only meaningful against a declaration that
+ * exists; with no declaration there is no claim to contradict.
+ *
+ * So: declare nothing and anything may be scored; declare something and
+ * only what was declared may be scored. `derive_run_score` reads the same
+ * column through the same `declaredFacets` reader, so the two write paths
+ * agree on what "declared" means rather than each inventing it.
+ */
+async function assertFacetsDeclared(
+  ctx: ServiceContext,
+  runId: string,
+  scored: readonly { readonly facet: string }[],
+): Promise<void> {
+  const items = await ctx.db.$queryRawUnsafe<{ difficulty: unknown }[]>(
+    `SELECT i."difficulty"
+       FROM "Run" r
+       JOIN "Item" i ON i."id" = r."itemId"
+      WHERE r."id" = $1`,
+    runId,
+  );
+  // No row here means the run has no item to read a declaration from. The
+  // run's own existence is checked by the caller, so this is not a
+  // not-found path — it is simply nothing declared.
+  const declared = declaredFacets(items[0]?.difficulty);
+  if (declared.length === 0) return;
+
+  const undeclared = scored
+    .map((entry) => entry.facet)
+    .filter((facet) => !declared.includes(facet as (typeof declared)[number]));
+  if (undeclared.length === 0) return;
+
+  // Named individually, and the declared set is named too: a caller that
+  // sent the wrong facet needs to know which one was rejected and what it
+  // could have sent instead, not merely that something was wrong.
+  throw new InvalidInputError(
+    "Facet " +
+      undeclared.join(", ") +
+      " was not declared by this run's item, so scoring it would record a judgement about " +
+      "work that was never in play. This item declared: " +
+      declared.join(", ") +
+      ".",
+    { fields: ["scores"] },
+  );
 }
 
 // Stryker disable all : module-level metadata read into the registry at
@@ -124,6 +199,11 @@ export const scoreRun = defineOperation({
     if (runs[0] === undefined) {
       throw new NotFoundError("No run with id " + input.runId + ".", { fields: ["runId"] });
     }
+
+    // After the run exists (so a bad id reports as not-found rather than as
+    // an undeclared facet) and before any write, so a call naming one good
+    // facet and one undeclared one writes neither.
+    await assertFacetsDeclared(ctx, input.runId, input.scores);
 
     const scored: ScoreRow[] = [];
 

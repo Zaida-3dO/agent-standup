@@ -119,6 +119,21 @@ describeIfDb("run scoring operations — against Postgres", () => {
     return runId;
   }
 
+  /**
+   * A run whose item DECLARES facets, which is the state the undeclared-facet
+   * refusal is about. The default `createRun` leaves `difficulty` null, so
+   * every test above it exercises the unconstrained branch.
+   */
+  async function createRunDeclaring(difficulty: Record<string, number>): Promise<string> {
+    const runId = await createRun();
+    const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
+    await prisma.item.update({
+      where: { id: run.itemId },
+      data: { difficulty },
+    });
+    return runId;
+  }
+
   /** The stored row, read outside the operation that wrote it. */
   async function storedScore(runId: string, facet: string) {
     const rows = await prisma.$queryRawUnsafe<
@@ -418,5 +433,134 @@ describeIfDb("run scoring operations — against Postgres", () => {
     const report = (await runtime.call("get_run_scores", {})) as GetRunScoresOutput;
     expect(report.scoredRuns).toBe(1);
     expect(report.unscoredRuns).toBe(1);
+  });
+
+  // ── Scoring a facet the item never declared ──────────────────────────
+  //
+  // The review card filters its sliders to the declared facets, so a person
+  // clicking through the UI cannot score one the item never declared. That
+  // is a constraint of the browser only, and it is not where the rule can
+  // live: a direct caller reaches the same table, and the row it writes is
+  // indistinguishable from an honest one — same columns, same 1-5 value —
+  // so nothing downstream can separate them. Hence the refusal below.
+
+  it("refuses a facet the item never declared, naming it", async () => {
+    const runId = await createRunDeclaring({ reasoning: 3, precision: 2 });
+    await expect(
+      runtime.call("score_run", {
+        runId,
+        raterType: "agent",
+        scores: [{ facet: "visual", score: 5 }],
+      }),
+    ).rejects.toThrow(/visual/);
+  });
+
+  it("names the facets that WERE declared, so the caller knows what it could send", async () => {
+    const runId = await createRunDeclaring({ reasoning: 3, precision: 2 });
+    // Asserted on both declared names, not merely on "it threw": a message
+    // that named only the rejected facet would leave the caller guessing.
+    const call = runtime.call("score_run", {
+      runId,
+      raterType: "agent",
+      scores: [{ facet: "visual", score: 5 }],
+    });
+    await expect(call).rejects.toThrow(/reasoning/);
+    await expect(
+      runtime.call("score_run", {
+        runId,
+        raterType: "agent",
+        scores: [{ facet: "visual", score: 5 }],
+      }),
+    ).rejects.toThrow(/precision/);
+  });
+
+  it("writes NOTHING when one facet is declared and another is not", async () => {
+    // The atomicity claim in the handler's comment, tested rather than
+    // asserted in prose. `reasoning` is declared and would otherwise be
+    // written before `visual` was reached, leaving a half-applied call.
+    const runId = await createRunDeclaring({ reasoning: 3 });
+    await expect(
+      runtime.call("score_run", {
+        runId,
+        raterType: "agent",
+        scores: [
+          { facet: "reasoning", score: 4 },
+          { facet: "visual", score: 5 },
+        ],
+      }),
+    ).rejects.toThrow(/visual/);
+    expect(await storedScore(runId, "reasoning")).toBeUndefined();
+    expect(await storedScore(runId, "visual")).toBeUndefined();
+  });
+
+  it("still accepts a declared facet on an item that declares some", async () => {
+    // The refusal must not be a blanket one: this is what would break if
+    // the check refused whenever any declaration existed.
+    const runId = await createRunDeclaring({ reasoning: 3, precision: 2 });
+    await runtime.call("score_run", {
+      runId,
+      raterType: "agent",
+      scores: [{ facet: "precision", score: 4 }],
+    });
+    expect((await storedScore(runId, "precision"))?.agentScore).toBe(4);
+  });
+
+  it("allows any facet when the item declared none, which is most items", async () => {
+    // The deliberate permissive branch. `difficulty` is nullable, optional
+    // at creation and written by no operation, so refusing here would
+    // refuse essentially every call this operation receives.
+    const runId = await createRun();
+    await runtime.call("score_run", {
+      runId,
+      raterType: "agent",
+      scores: [{ facet: "visual", score: 5 }],
+    });
+    expect((await storedScore(runId, "visual"))?.agentScore).toBe(5);
+  });
+
+  it("refuses an undeclared facet from a person too, not only from an agent", async () => {
+    // Both rater types write to the same table; a rule enforced on one
+    // would leave the other free to write the meaningless row.
+    const runId = await createRunDeclaring({ reasoning: 3 });
+    await expect(
+      runtime.call("score_run", {
+        runId,
+        raterType: "person",
+        raterId: "person-1",
+        scores: [{ facet: "autonomy", score: 2 }],
+      }),
+    ).rejects.toThrow(/autonomy/);
+    expect(await storedScore(runId, "autonomy")).toBeUndefined();
+  });
+
+  it("ignores a declared facet whose value is out of the 1-5 scale", async () => {
+    // `declaredFacets` drops a key whose value is not a valid score, on the
+    // grounds that the map is then not what the reader thinks it is. With
+    // `visual: 9` dropped, the item's real declaration is {reasoning}, so
+    // visual must still be refused rather than admitted by a malformed key.
+    const runId = await createRunDeclaring({ reasoning: 3, visual: 9 });
+    await expect(
+      runtime.call("score_run", {
+        runId,
+        raterType: "agent",
+        scores: [{ facet: "visual", score: 5 }],
+      }),
+    ).rejects.toThrow(/visual/);
+  });
+
+  it("accept_run_score cannot accept an undeclared facet either", async () => {
+    // The sibling operation shares the surface. It needs no explicit check
+    // because it copies only where `agentScore IS NOT NULL`, and an
+    // undeclared facet has no row to copy — but that is a claim about
+    // behaviour, so it is tested rather than assumed.
+    const runId = await createRunDeclaring({ reasoning: 3 });
+    await expect(
+      runtime.call("accept_run_score", {
+        runId,
+        facets: ["visual"],
+        raterId: "person-1",
+      }),
+    ).rejects.toThrow(/nothing to copy/);
+    expect(await storedScore(runId, "visual")).toBeUndefined();
   });
 });
