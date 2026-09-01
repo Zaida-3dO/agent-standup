@@ -114,7 +114,7 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
   }
 
   describe("AC1 — entering blocked requires its fields", () => {
-    it("refuses blocked with none of the required fields", async () => {
+    it("refuses blocked with none of the required fields, naming both of them at once", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
       const error = (await callTransition("apply", id, "blocked", {}, reg).catch(
@@ -122,7 +122,8 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
       )) as { code?: string; guard?: string; fields?: readonly string[] };
       expect(error.code).toBe("guard_rejected");
       expect(error.guard).toBe("state-machine.blocked_required_fields");
-      expect(error.fields).toEqual(["blocked_reason"]);
+      // Both static requirements, not just the first one reached.
+      expect(error.fields).toEqual(["blocked_reason", "blocked_on_type"]);
       const row = await readItem(id);
       expect(row.state).toBe("executing"); // refused — nothing written
     });
@@ -200,6 +201,149 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
         reg,
       ).catch((e: unknown) => e)) as { fields?: readonly string[] };
       expect(error.fields).toEqual(["unblock_at"]);
+    });
+
+    // ── Row a7f39116-9281-4269-8938-539b5bbbb987 ────────────────────────
+    // One refusal names every requirement it already knows about, and —
+    // the harder half — names no requirement that does not apply.
+
+    it("names all three coupled requirements in ONE refusal for a person block", async () => {
+      // The reported defect: a caller learned reason, then type, then
+      // person over three round trips. Supplying only the type that
+      // implies a person must surface the reason AND the person together.
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const error = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        { blocked_on_type: "person" },
+        reg,
+      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
+      expect(error.fields).toEqual(["blocked_reason", "blocked_on_person"]);
+      // Asserting the message text too, so reverting to a one-field-at-a-
+      // time chain fails here even if `fields` were somehow preserved.
+      expect(error.message).toContain("blocked_reason");
+      expect(error.message).toContain("blocked_on_person");
+    });
+
+    it("names reason and unblock_at together for a time block", async () => {
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const error = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        { blocked_on_type: "time" },
+        reg,
+      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
+      expect(error.fields).toEqual(["blocked_reason", "unblock_at"]);
+      expect(error.message).toContain("unblock_at");
+    });
+
+    it("does NOT demand a person for an external_process block", async () => {
+      // This is the defect in reverse, and worse: over-reporting sends a
+      // caller looking for a person who does not exist, with no value they
+      // could supply that helps. external_process requires nothing beyond
+      // reason + type, so a missing reason must be the ONLY field named.
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const error = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        { blocked_on_type: "external_process" },
+        reg,
+      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
+      expect(error.fields).toEqual(["blocked_reason"]);
+      expect(error.fields).not.toContain("blocked_on_person");
+      expect(error.fields).not.toContain("unblock_at");
+      expect(error.message).not.toContain("blocked_on_person");
+      expect(error.message).not.toContain("unblock_at");
+    });
+
+    it("does not demand a time block's unblock_at from a person block, or vice versa", async () => {
+      const reg = blockedPausedRegistry();
+      const personId = await createTask({ state: "executing" });
+      const personError = (await callTransition(
+        "apply",
+        personId,
+        "blocked",
+        { blocked_reason: "waiting", blocked_on_type: "person" },
+        reg,
+      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
+      expect(personError.fields).toEqual(["blocked_on_person"]);
+      expect(personError.fields).not.toContain("unblock_at");
+
+      const timeId = await createTask({ state: "executing" });
+      const timeError = (await callTransition(
+        "apply",
+        timeId,
+        "blocked",
+        { blocked_reason: "waiting", blocked_on_type: "time" },
+        reg,
+      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
+      expect(timeError.fields).toEqual(["unblock_at"]);
+      expect(timeError.fields).not.toContain("blocked_on_person");
+    });
+
+    it("with no type supplied, explains both branches in prose but demands neither field", async () => {
+      // `fields` must stay a list a caller can act on literally, so when
+      // the branch is genuinely undetermined the conditional fields are
+      // described rather than demanded.
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const error = (await callTransition("apply", id, "blocked", {}, reg).catch(
+        (e: unknown) => e,
+      )) as { fields?: readonly string[]; message?: string };
+      expect(error.fields).toEqual(["blocked_reason", "blocked_on_type"]);
+      expect(error.fields).not.toContain("blocked_on_person");
+      expect(error.fields).not.toContain("unblock_at");
+      // ...but the message still tells the caller what is coming, which is
+      // the whole point: they can supply everything on the first retry.
+      expect(error.message).toContain("blocked_on_person");
+      expect(error.message).toContain("unblock_at");
+      expect(error.message).toContain("person");
+      expect(error.message).toContain("external_process");
+      expect(error.message).toContain("time");
+    });
+
+    it("carries the full requirement set in details, including which types need nothing further", async () => {
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const error = (await callTransition("apply", id, "blocked", {}, reg).catch(
+        (e: unknown) => e,
+      )) as { details?: Record<string, unknown> };
+      expect(error.details?.required).toEqual(["blocked_reason", "blocked_on_type"]);
+      expect(error.details?.conditional).toEqual({
+        person: "blocked_on_person",
+        time: "unblock_at",
+        external_process: null,
+      });
+    });
+
+    it("a caller who supplies everything the one refusal named succeeds on the first retry", async () => {
+      // The end-to-end claim the row actually makes: two calls, not four.
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const error = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        { blocked_on_type: "person" },
+        reg,
+      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
+
+      // Satisfy exactly what was named — nothing more, nothing guessed.
+      const supplied: Record<string, unknown> = { blocked_on_type: "person" };
+      for (const field of error.fields ?? []) {
+        supplied[field] = field === "blocked_on_person" ? "user-a" : "waiting on user-a";
+      }
+      await callTransition("apply", id, "blocked", supplied, reg);
+
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedOnPersonId).toBe("user-a");
     });
 
     it("allows blocked_on_type=external_process with just reason + type", async () => {

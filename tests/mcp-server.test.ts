@@ -23,7 +23,7 @@ import {
   listOperations,
   type TransactionHandle,
 } from "@/lib/service";
-import { exposedOperations, isWaived } from "@/lib/adapters/waivers";
+import { exposedOperations, isWaived, waiverFor } from "@/lib/adapters/waivers";
 import { defaultSnapshot } from "@/lib/settings";
 import { callTool, createMcpServer, type McpCallerIdentity, type ServiceCall } from "@/lib/mcp";
 
@@ -344,5 +344,185 @@ describe("the core reaches no rule of its own", () => {
     const result = await client.callTool({ name: "mcp_orphan", arguments: {} });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("a tool this adapter withheld is reported as withheld, not as bad arguments", () => {
+  // A tool that is not served and a tool called with malformed arguments
+  // are different conditions wanting opposite responses — stop and find
+  // out what changed, versus fix the call and retry. The SDK reports an
+  // unregistered name with the code that means the parameters were
+  // invalid, which sends a caller to check arguments that were fine.
+  //
+  // `callTool` is exercised directly here rather than through a connected
+  // client, deliberately: a withheld tool is absent from the tool list, so
+  // the SDK answers before the adapter is reached. The adapter's own
+  // handling of the name is the thing under test.
+
+  /** An operation name genuinely withheld from this adapter. */
+  const withheldName = "backfill";
+
+  /**
+   * What a default-configured server actually registers.
+   *
+   * Passed explicitly because it is what decides an interception: the
+   * waiver says what this adapter withholds *by default*, but a mount
+   * handed an explicit operation list overrides that, and refusing a tool
+   * such a mount genuinely serves would be worse than the defect being
+   * fixed.
+   */
+  const SERVED_HERE: ReadonlySet<string> = new Set(
+    exposedOperations("mcp_http", listOperations()).map((operation) => operation.name),
+  );
+
+  it("answers a withheld name with not_found, not invalid_input", async () => {
+    // The whole point: `invalid_input` is the misleading code.
+    expect(isWaived("mcp_http", withheldName)).toBe(true);
+    const result = await callTool(
+      () => {
+        throw new Error("the service must not be called for a withheld tool");
+      },
+      "mcp-test",
+      withheldName,
+      {},
+      {},
+      "mcp_http",
+      SERVED_HERE,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.code).toBe("not_found");
+    expect(result.structuredContent?.code).not.toBe("invalid_input");
+  });
+
+  it("says the withholding was deliberate and that retrying cannot help", async () => {
+    const result = await callTool(realRuntimeCall(), "mcp-test", withheldName, {}, {}, "mcp_http");
+    const message = String(result.structuredContent?.message);
+    expect(message).toContain(withheldName);
+    expect(message).toContain("withheld");
+    // The actionable half — a caller told only "not found" still does not
+    // know whether to reconnect and try again.
+    expect(message).toContain("do not retry");
+  });
+
+  it("carries the waiver's own reason, so the caller learns the route that still works", async () => {
+    const waiver = waiverFor("mcp_http", withheldName);
+    expect(waiver).toBeDefined();
+    const result = await callTool(realRuntimeCall(), "mcp-test", withheldName, {}, {}, "mcp_http");
+    // The reason travels in the message rather than in a structured field:
+    // `Rejection` is the shape every adapter rebuilds from a wire body and
+    // is deliberately limited to what conformance compares, so widening it
+    // for one adapter's convenience is the wrong trade. The message is
+    // what an agent reads anyway.
+    expect(String(result.structuredContent?.message)).toContain(waiver!.reason);
+  });
+
+  it("never calls the service for a withheld name", async () => {
+    // The service has no opinion about which adapter serves what, so
+    // asking it would produce a differently-worded refusal at best.
+    let called = 0;
+    await callTool(
+      async () => {
+        called += 1;
+        return {};
+      },
+      "mcp-test",
+      withheldName,
+      {},
+      {},
+      "mcp_http",
+      SERVED_HERE,
+    );
+    expect(called).toBe(0);
+  });
+
+  it("does not intercept a name this adapter DOES serve", async () => {
+    // The failure that would matter most: shadowing a live tool would
+    // break every real call while looking like a helpful message.
+    let called = 0;
+    const served = "describe_tool";
+    expect(isWaived("mcp_http", served)).toBe(false);
+    await callTool(
+      async () => {
+        called += 1;
+        return { ok: true };
+      },
+      "mcp-test",
+      served,
+      {},
+      {},
+      "mcp_http",
+      SERVED_HERE,
+    );
+    expect(called).toBe(1);
+  });
+
+  it("does not intercept a name withheld by a DIFFERENT adapter only", async () => {
+    // Waivers are per-adapter. Answering for another adapter's waiver
+    // would withhold a tool this one actually serves.
+    const servedHereWithheldThere = listOperations()
+      .map((operation) => operation.name)
+      .find((name) => !isWaived("mcp_http", name) && isWaived("mcp_stdio", name));
+    if (servedHereWithheldThere === undefined) return; // nothing to assert against
+    let called = 0;
+    await callTool(
+      async () => {
+        called += 1;
+        return { ok: true };
+      },
+      "mcp-test",
+      servedHereWithheldThere,
+      {},
+      {},
+      "mcp_http",
+      SERVED_HERE,
+    );
+    expect(called).toBe(1);
+  });
+
+  it("does NOT refuse a withheld name that this mount was explicitly given", async () => {
+    // A caller may hand `createMcpServer` an operation list, which
+    // deliberately overrides the waiver for that mount. Intercepting on the
+    // waiver alone would refuse a tool the mount genuinely serves — worse
+    // than the defect being fixed, because it breaks a working call.
+    let called = 0;
+    const servedIncludingWithheld: ReadonlySet<string> = new Set([...SERVED_HERE, withheldName]);
+    await callTool(
+      async () => {
+        called += 1;
+        return { ok: true };
+      },
+      "mcp-test",
+      withheldName,
+      {},
+      {},
+      "mcp_http",
+      servedIncludingWithheld,
+    );
+    expect(called).toBe(1);
+  });
+
+  it("leaves the tool list alone — a withheld tool is still not advertised", async () => {
+    // The waiver exists to keep per-session context cost down, so the
+    // reply must not come at the price of re-listing the tool.
+    const client = await connect(realRuntimeCall());
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).not.toContain(withheldName);
+  });
+
+  it("without an adapter, nothing is intercepted", async () => {
+    // The parameter is optional, so a caller that supplies no adapter gets
+    // the previous behaviour rather than a silent change.
+    let called = 0;
+    await callTool(
+      async () => {
+        called += 1;
+        return { ok: true };
+      },
+      "mcp-test",
+      withheldName,
+      {},
+      {},
+    );
+    expect(called).toBe(1);
   });
 });

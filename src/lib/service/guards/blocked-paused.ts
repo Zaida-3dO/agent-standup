@@ -29,6 +29,35 @@ function isNonEmptyString(value: unknown): value is string {
  * `blocked_on_person` when the type is `person`, `unblock_at` when it's
  * `time`. `external_process` needs nothing further — SCHEMA.md §16 only
  * names an extra requirement for the other two.
+ *
+ * ── Why every missing requirement is named at once ──────────────────────
+ *
+ * Row a7f39116-9281-4269-8938-539b5bbbb987. A chain of early returns that
+ * each named one field would make a caller supplying nothing pay three
+ * round trips to learn `blocked_reason`, then `blocked_on_type`, then the
+ * conditional field. **The requirements are a static property of the
+ * state, not something discovered by evaluating the input** — this guard
+ * knows before it reads a single field that a person-shaped block will
+ * need a person named. Naming them all costs the same one message.
+ *
+ * The bar is this codebase's own `summaries/validate.ts`, which reports the
+ * field, the offending value and the cap together and says outright that it
+ * will not truncate for you, so a one-character overrun is fixable on the
+ * first retry. This now matches it.
+ *
+ * **What it must not do is over-report**, which is this defect in reverse
+ * and worse: demanding `blocked_on_person` for an `external_process` block
+ * sends a caller looking for a person who does not exist, and there is no
+ * value they can supply that helps. So the conditional requirement is only
+ * ever named when the supplied `blocked_on_type` actually implies it. When
+ * the type is absent entirely, neither conditional field is *demanded* —
+ * the message explains the branch ("if you block on a person…") in prose
+ * while `fields` stays limited to what is genuinely required right now.
+ * That keeps `fields` a list a caller can act on literally.
+ *
+ * An invalid (rather than absent) `blocked_on_type` still refuses on its
+ * own, because until the type is a legal value there is no branch to
+ * report and listing a conditional field alongside it would be a guess.
  */
 export const blockedRequiredFieldsGuard: Guard = {
   id: "state-machine.blocked_required_fields",
@@ -37,46 +66,80 @@ export const blockedRequiredFieldsGuard: Guard = {
     "when the type is person or unblock_at when the type is time.",
   appliesTo: (_from, to) => to === "blocked",
   check(input: GuardInput) {
-    const reason = input.fields.blocked_reason;
-    if (!isNonEmptyString(reason)) {
-      return guardRejected("blocked requires blocked_reason.", {
-        fields: ["blocked_reason"],
-      });
-    }
-
     const onType = input.fields.blocked_on_type;
-    if (typeof onType !== "string" || !BLOCKED_ON_TYPES_SET.has(onType)) {
-      // Named values, not just the field name — matches the convention
-      // `NOT_DONE_REASONS` validation already uses (summaries/validate.ts).
-      // Row c1ee5fbc-2926-4315-87dd-6d4ad2ab69e9: a caller who hits this
-      // with an internal-work blocker (waiting on another row, not a
-      // person/process/timer) got refused twice with no hint that `person`,
-      // `external_process` and `time` are the only legal values, and had to
-      // read the schema to find them. This does not add a value for that
-      // case — see the same row's note and docs/plans/SCHEMA.md §1.1 on why
-      // `blocked` is deliberately "an outside actor must act" — it only
-      // makes the refusal say what it is refusing against.
+    const onTypeSupplied = onType !== undefined && onType !== null && onType !== "";
+
+    // An invalid *value* is its own refusal — see the doc comment. Named
+    // values, not just the field name, matching the convention
+    // `NOT_DONE_REASONS` validation already uses (summaries/validate.ts).
+    // Row c1ee5fbc-2926-4315-87dd-6d4ad2ab69e9: a caller who hit this with
+    // an internal-work blocker got refused twice with no hint that
+    // `person`, `external_process` and `time` are the only legal values.
+    if (onTypeSupplied && (typeof onType !== "string" || !BLOCKED_ON_TYPES_SET.has(onType))) {
       return guardRejected(
         `blocked requires a valid blocked_on_type: must be one of ${BLOCKED_ON_TYPES.join(", ")}; got ${JSON.stringify(onType)}.`,
         { fields: ["blocked_on_type"] },
       );
     }
 
+    const missing: string[] = [];
+    if (!isNonEmptyString(input.fields.blocked_reason)) missing.push("blocked_reason");
+    if (!onTypeSupplied) missing.push("blocked_on_type");
     if (onType === "person" && !isNonEmptyString(input.fields.blocked_on_person)) {
-      return guardRejected("blocked_on_type of person requires blocked_on_person.", {
-        fields: ["blocked_on_person"],
-      });
+      missing.push("blocked_on_person");
     }
-
     if (onType === "time" && !isPresentValue(input.fields.unblock_at)) {
-      return guardRejected("blocked_on_type of time requires unblock_at.", {
-        fields: ["unblock_at"],
-      });
+      missing.push("unblock_at");
     }
 
-    return guardOk;
+    if (missing.length === 0) return guardOk;
+
+    return guardRejected(blockedRefusalMessage(missing, onTypeSupplied ? String(onType) : null), {
+      fields: missing,
+      // The full requirement set, so a caller can see what it is working
+      // towards rather than inferring it from the subset this call missed.
+      details: {
+        required: ["blocked_reason", "blocked_on_type"],
+        conditional: {
+          person: "blocked_on_person",
+          time: "unblock_at",
+          external_process: null,
+        },
+      },
+    });
   },
 };
+
+/**
+ * The one message that names everything missing.
+ *
+ * Built here rather than inline so the branch explanation and the
+ * already-satisfied case read as one piece of prose. `missing` is never
+ * empty when this is called.
+ */
+function blockedRefusalMessage(missing: readonly string[], onType: string | null): string {
+  const list = missing.join(", ");
+  const head = `blocked requires ${list}.`;
+
+  if (onType === null) {
+    // No type supplied, so the conditional requirement is not yet
+    // determined — explain the branch without demanding either field.
+    return (
+      `${head} blocked_on_type must be one of ${BLOCKED_ON_TYPES.join(", ")}; ` +
+      "a person block also requires blocked_on_person, and a time block also requires " +
+      "unblock_at. external_process requires nothing further. " +
+      "Supply them together — this will not be accepted one field at a time."
+    );
+  }
+
+  if (onType === "person") {
+    return `${head} blocked_on_type is person, which requires blocked_on_person (a person id).`;
+  }
+  if (onType === "time") {
+    return `${head} blocked_on_type is time, which requires unblock_at (a timestamp).`;
+  }
+  return `${head} blocked_on_type of ${onType} requires nothing further.`;
+}
 
 /** Requires `pause_reason` and `resume_condition` on every entry to `paused`. */
 export const pausedRequiredFieldsGuard: Guard = {

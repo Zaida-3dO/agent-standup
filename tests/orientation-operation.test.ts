@@ -633,6 +633,198 @@ describeIfDb("orientation against Postgres", () => {
       expect(bounded.whatChanged.map((e) => e.id)).toEqual(newestTwo);
     });
 
+    // -- Row 7da98aba-3ec1-4ea1-9c5c-787becfd39fe ------------------------
+    // A crew that cannot reach the board still builds and finishes, and
+    // leaves no trace, so the board reads as though nothing happened
+    // rather than as though a crew worked unrecorded. `silentCrew` turns
+    // that silent gap into a visible one.
+
+    interface SilentMember {
+      readonly assignmentId: string;
+      readonly sessionId: string;
+      readonly holderId: string;
+      readonly role: string;
+      readonly quietForSeconds: number;
+    }
+
+    /** Writes an event the way a real record does - attributed to its writer. */
+    async function appendAttributedEvent(
+      itemId: string,
+      sessionId: string,
+      assignmentId: string | null,
+    ): Promise<void> {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Event" ("itemId", "actorType", "actorId", "sessionId", "assignmentId", "type", "payload", "body")
+         VALUES ($1, 'agent'::"ActorType", 'crew-member', $2, $3, 'checkpoint'::"EventType", '{}'::jsonb, 'progress')`,
+        itemId,
+        sessionId,
+        assignmentId,
+      );
+    }
+
+    it("reports a holder that has recorded nothing since claiming", async () => {
+      const item = await makeItem({ title: "Silent crew subject" });
+      const assignment = (await claim({
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-silent",
+        sessionId: "session-silent",
+        machine: "laptop",
+      })) as { id: string };
+
+      const result = (await runtime.call("orientation", { itemId: item.id })) as {
+        silentCrew: readonly SilentMember[];
+      };
+
+      expect(result.silentCrew).toHaveLength(1);
+      expect(result.silentCrew[0]?.sessionId).toBe("session-silent");
+      expect(result.silentCrew[0]?.holderId).toBe("crew-silent");
+      expect(result.silentCrew[0]?.role).toBe("builder");
+      expect(result.silentCrew[0]?.assignmentId).toBe(assignment.id);
+      expect(result.silentCrew[0]?.quietForSeconds).toBeGreaterThanOrEqual(0);
+    });
+
+    it("does NOT report a holder that has recorded something", async () => {
+      // The failure that would matter most: reporting a working crew as
+      // silent makes the field noise, and a reader stops looking at it.
+      const item = await makeItem({ title: "Recorded crew subject" });
+      const assignment = (await claim({
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-recorded",
+        sessionId: "session-recorded",
+        machine: "laptop",
+      })) as { id: string };
+      await appendAttributedEvent(item.id, "session-recorded", assignment.id);
+
+      const result = (await runtime.call("orientation", { itemId: item.id })) as {
+        silentCrew: readonly SilentMember[];
+      };
+
+      expect(result.silentCrew).toHaveLength(0);
+    });
+
+    it("counts an event carrying only a sessionId as a trace", async () => {
+      // Not every writer resolves an assignment, so requiring one would
+      // count a real trace as silence.
+      const item = await makeItem({ title: "Session-only trace subject" });
+      await claim({
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-session-only",
+        sessionId: "session-only",
+        machine: "laptop",
+      });
+      await appendAttributedEvent(item.id, "session-only", null);
+
+      const result = (await runtime.call("orientation", { itemId: item.id })) as {
+        silentCrew: readonly SilentMember[];
+      };
+
+      expect(result.silentCrew).toHaveLength(0);
+    });
+
+    it("reports only the silent holders when a crew is mixed", async () => {
+      const item = await makeItem({ title: "Mixed crew subject" });
+      const speaking = (await claim({
+        itemId: item.id,
+        role: "orchestrator",
+        holderType: "agent",
+        holderId: "crew-speaking",
+        sessionId: "session-speaking",
+        machine: "laptop",
+      })) as { id: string };
+      await claim({
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-quiet",
+        sessionId: "session-quiet",
+        parentSessionId: "session-speaking",
+        rootSessionId: "session-speaking",
+        machine: "laptop",
+      });
+      await appendAttributedEvent(item.id, "session-speaking", speaking.id);
+
+      const result = (await runtime.call("orientation", { itemId: item.id })) as {
+        silentCrew: readonly SilentMember[];
+      };
+
+      expect(result.silentCrew).toHaveLength(1);
+      expect(result.silentCrew[0]?.sessionId).toBe("session-quiet");
+    });
+
+    it("is not fooled by another item's activity from the same session", async () => {
+      // A session working two items must not have one item's checkpoint
+      // count as a trace on the other, or a genuinely unrecorded item
+      // reads as covered.
+      const item = await makeItem({ title: "Cross-item subject" });
+      const other = await makeItem({ title: "Other item" });
+      await claim({
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-elsewhere",
+        sessionId: "session-elsewhere",
+        machine: "laptop",
+      });
+      await appendAttributedEvent(other.id, "session-elsewhere", null);
+
+      const result = (await runtime.call("orientation", { itemId: item.id })) as {
+        silentCrew: readonly SilentMember[];
+      };
+
+      expect(result.silentCrew).toHaveLength(1);
+      expect(result.silentCrew[0]?.sessionId).toBe("session-elsewhere");
+    });
+
+    it("reports a silent holder even when the crew list was truncated past it", async () => {
+      // The silent one is exactly the holder a reader would otherwise
+      // never hear about, so it must not depend on the display page.
+      const item = await makeItem({ title: "Truncated silent subject" });
+      const speaking = (await claim({
+        itemId: item.id,
+        role: "orchestrator",
+        holderType: "agent",
+        holderId: "crew-trunc-speaking",
+        sessionId: "session-trunc-speaking",
+        machine: "laptop",
+      })) as { id: string };
+      await claim({
+        itemId: item.id,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-trunc-quiet",
+        sessionId: "session-trunc-quiet",
+        parentSessionId: "session-trunc-speaking",
+        rootSessionId: "session-trunc-speaking",
+        machine: "laptop",
+      });
+      await appendAttributedEvent(item.id, "session-trunc-speaking", speaking.id);
+
+      const result = (await runtime.call("orientation", { itemId: item.id, limit: 1 })) as {
+        crew: readonly unknown[];
+        crewTruncated: boolean;
+        silentCrew: readonly SilentMember[];
+      };
+
+      expect(result.crewTruncated).toBe(true);
+      expect(result.crew).toHaveLength(1);
+      expect(result.silentCrew).toHaveLength(1);
+      expect(result.silentCrew[0]?.sessionId).toBe("session-trunc-quiet");
+    });
+
+    it("is empty when nobody holds the item", async () => {
+      const item = await makeItem({ title: "Unclaimed subject" });
+      const result = (await runtime.call("orientation", { itemId: item.id })) as {
+        silentCrew: readonly SilentMember[];
+      };
+      expect(result.silentCrew).toHaveLength(0);
+    });
+
     it("sets crewTruncated when more crew are live than `limit`, and false when they fit", async () => {
       // The crew list is bounded on the DISPLAY copy only — `liveAssignments`
       // stays unbounded because the claim guards must see every live row.
