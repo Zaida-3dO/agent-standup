@@ -183,7 +183,7 @@ export function createMcpServer({
         annotations: { readOnlyHint: tool.readOnly },
       },
       async (args: unknown): Promise<ToolResult> =>
-        callTool(call, transport, tool.name, args, identity, adapter),
+        callTool(call, transport, tool.name, args, identity),
     );
   }
 
@@ -223,13 +223,17 @@ export async function callTool(
   args: unknown,
   identity: McpCallerIdentity = {},
   adapter?: AdapterName,
+  served?: ReadonlySet<string>,
 ): Promise<ToolResult> {
   const requestId = newRequestId();
 
   // A name this adapter deliberately withheld is answered here, before the
-  // service is asked about it — see `withheldToolRejection`.
+  // service is asked about it — see `withheldToolRejection`. `served` is
+  // what this server actually registered, so a caller that overrode the
+  // waiver by passing an explicit operation list is never intercepted.
   if (adapter !== undefined) {
-    const withheld = withheldToolRejection(adapter, name);
+    const withheld =
+      served !== undefined && served.has(name) ? undefined : withheldToolRejection(adapter, name);
     if (withheld !== undefined) {
       log.debug("A withheld tool was called by name.", {
         requestId,
@@ -312,6 +316,14 @@ export async function callTool(
  * instead. `not_found` is the honest code — a named thing does not exist
  * on this surface — and it is a caller-fault code, so it does not page
  * anyone.
+ *
+ * **The waiver is not the last word — what this server actually registered
+ * is.** A caller may hand `createMcpServer` an explicit operation list,
+ * which deliberately overrides the waiver for that mount; intercepting on
+ * the waiver alone would then refuse a tool the mount is genuinely serving,
+ * which is a far worse failure than the one being fixed. So the check is
+ * "withheld AND not registered here", and the registered set is passed in
+ * rather than re-derived.
  *
  * **It does not re-register the tool.** The reply is produced inside a call
  * this adapter already handles; nothing is added to the tool list, so the

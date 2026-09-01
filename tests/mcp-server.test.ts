@@ -362,6 +362,19 @@ describe("a tool this adapter withheld is reported as withheld, not as bad argum
   /** An operation name genuinely withheld from this adapter. */
   const withheldName = "backfill";
 
+  /**
+   * What a default-configured server actually registers.
+   *
+   * Passed explicitly because it is what decides an interception: the
+   * waiver says what this adapter withholds *by default*, but a mount
+   * handed an explicit operation list overrides that, and refusing a tool
+   * such a mount genuinely serves would be worse than the defect being
+   * fixed.
+   */
+  const SERVED_HERE: ReadonlySet<string> = new Set(
+    exposedOperations("mcp_http", listOperations()).map((operation) => operation.name),
+  );
+
   it("answers a withheld name with not_found, not invalid_input", async () => {
     // The whole point: `invalid_input` is the misleading code.
     expect(isWaived("mcp_http", withheldName)).toBe(true);
@@ -374,6 +387,7 @@ describe("a tool this adapter withheld is reported as withheld, not as bad argum
       {},
       {},
       "mcp_http",
+      SERVED_HERE,
     );
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.code).toBe("not_found");
@@ -416,6 +430,7 @@ describe("a tool this adapter withheld is reported as withheld, not as bad argum
       {},
       {},
       "mcp_http",
+      SERVED_HERE,
     );
     expect(called).toBe(0);
   });
@@ -436,6 +451,7 @@ describe("a tool this adapter withheld is reported as withheld, not as bad argum
       {},
       {},
       "mcp_http",
+      SERVED_HERE,
     );
     expect(called).toBe(1);
   });
@@ -458,6 +474,29 @@ describe("a tool this adapter withheld is reported as withheld, not as bad argum
       {},
       {},
       "mcp_http",
+      SERVED_HERE,
+    );
+    expect(called).toBe(1);
+  });
+
+  it("does NOT refuse a withheld name that this mount was explicitly given", async () => {
+    // A caller may hand `createMcpServer` an operation list, which
+    // deliberately overrides the waiver for that mount. Intercepting on the
+    // waiver alone would refuse a tool the mount genuinely serves — worse
+    // than the defect being fixed, because it breaks a working call.
+    let called = 0;
+    const servedIncludingWithheld: ReadonlySet<string> = new Set([...SERVED_HERE, withheldName]);
+    await callTool(
+      async () => {
+        called += 1;
+        return { ok: true };
+      },
+      "mcp-test",
+      withheldName,
+      {},
+      {},
+      "mcp_http",
+      servedIncludingWithheld,
     );
     expect(called).toBe(1);
   });
