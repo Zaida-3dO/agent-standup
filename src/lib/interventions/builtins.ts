@@ -237,20 +237,29 @@ const broadProcessKill: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // row f53e667a-97da-4b10-bded-8a3c50836a85: this level is named
-  // `block-overridable`, but no override channel exists anywhere in the
-  // wire protocol — `ServerVerdict.decision` (`src/lib/hook/decide.ts`) is
-  // a plain `"block" | "allow"` with no field an agent's retry could carry
-  // a written reason on, and `hook-decision.ts`'s own input schema has none
-  // either. `block-overridable` and `hard-block` are handled identically by
-  // every consumer (`strongestLevel`, the block/allow mapping). The
-  // messages below used to promise "proceed with a written reason" as a
-  // second way through — a real agent tried it, verbatim, and was refused
-  // identically to a plain retry. Removed rather than left in: a message
-  // offering an exit that does not exist is worse than one that only offers
-  // the exit that does (narrow the kill to a pid). Wiring an actual
-  // override channel is a larger, separate change than this row's fix for
-  // the pid-scope defect and is not attempted here.
+  // This level is `block-overridable`, and as of the override channel
+  // (`src/lib/hook/override.ts`, wired into `decide.ts`) that name is now
+  // accurate: a caller can re-run the call naming this entry with a written
+  // reason, and `decide` releases it and records the reason against the
+  // finding.
+  //
+  // The history is worth keeping, because it is why the messages below read
+  // as they do. Row f53e667a-97da-4b10-bded-8a3c50836a85 found the level
+  // was a promise the protocol could not keep — `ServerVerdict.decision`
+  // was a plain `"block" | "allow"` with no field a retry could carry a
+  // reason on, so `block-overridable` and `hard-block` were handled
+  // identically by every consumer. The messages had offered "proceed with a
+  // written reason" as a second way through; a real agent tried it verbatim
+  // and was refused exactly as a plain retry was, so the offer was deleted
+  // rather than left in — an exit that does not exist being worse than none.
+  //
+  // The override now exists, so that reasoning no longer applies. The
+  // messages still do not mention it, and that is deliberate rather than
+  // stale: `overrideRemedy` appends the override instructions to every
+  // `block-overridable` refusal already, so spelling them out here would
+  // print them twice and would drift from the real minimum reason length.
+  // What the messages owe the caller is the *narrow* exit — which pid form
+  // to use — and that is what they say.
   messages: {
     plain:
       "This ends every process matching a name, including ones other sessions are relying on. " +
