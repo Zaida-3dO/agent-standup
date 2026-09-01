@@ -958,6 +958,20 @@ export function isWaived(adapter: AdapterName, operation: string): boolean {
   );
 }
 
+/**
+ * The waiver by which `adapter` withheld `operation`, if it did.
+ *
+ * Distinct from `isWaived` because a caller that named a withheld operation
+ * is owed the *reason*, not just a boolean: the reason is where the
+ * alternative route is stated ("reach it over HTTP or the command line"),
+ * and an adapter answering such a call has nothing else to offer.
+ */
+export function waiverFor(adapter: AdapterName, operation: string): AdapterWaiver | undefined {
+  return ADAPTER_WAIVERS.find(
+    (waiver) => waiver.adapter === adapter && waiver.operation === operation,
+  );
+}
+
 /** Every waiver for one adapter. */
 export function waiversFor(adapter: AdapterName): readonly AdapterWaiver[] {
   return ADAPTER_WAIVERS.filter((waiver) => waiver.adapter === adapter);

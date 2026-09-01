@@ -29,8 +29,14 @@
 // imports no database client; the service caller arrives as a parameter, so
 // this module has no way to construct one even if a handler wanted to.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { faultContext, listOperations, toServiceError, type AnyOperation } from "@/lib/service";
-import { exposedOperations } from "@/lib/adapters/waivers";
+import {
+  faultContext,
+  listOperations,
+  NotFoundError,
+  toServiceError,
+  type AnyOperation,
+} from "@/lib/service";
+import { exposedOperations, waiverFor } from "@/lib/adapters/waivers";
 import type { AdapterName } from "@/lib/adapters/registry";
 import { log, newRequestId } from "@/lib/log";
 import { toolRejection, toolSuccess, type ToolResult } from "./result";
@@ -177,7 +183,7 @@ export function createMcpServer({
         annotations: { readOnlyHint: tool.readOnly },
       },
       async (args: unknown): Promise<ToolResult> =>
-        callTool(call, transport, tool.name, args, identity),
+        callTool(call, transport, tool.name, args, identity, adapter),
     );
   }
 
@@ -216,8 +222,25 @@ export async function callTool(
   name: string,
   args: unknown,
   identity: McpCallerIdentity = {},
+  adapter?: AdapterName,
 ): Promise<ToolResult> {
   const requestId = newRequestId();
+
+  // A name this adapter deliberately withheld is answered here, before the
+  // service is asked about it — see `withheldToolRejection`.
+  if (adapter !== undefined) {
+    const withheld = withheldToolRejection(adapter, name);
+    if (withheld !== undefined) {
+      log.debug("A withheld tool was called by name.", {
+        requestId,
+        transport,
+        tool: name,
+        code: "not_found",
+      });
+      return withheld;
+    }
+  }
+
   try {
     return toolSuccess(
       await call(name, args, {
@@ -260,4 +283,55 @@ export async function callTool(
     }
     return toolRejection(serviceError);
   }
+}
+
+/**
+ * The answer to a call naming a tool this adapter deliberately does not
+ * serve, or `undefined` when the name was not withheld.
+ *
+ * ── The condition this exists to state ──────────────────────────────────
+ *
+ * A tool that is not being served and a tool whose arguments are malformed
+ * are different conditions that want opposite responses: the first means
+ * stop and find out what changed, the second means fix the call and retry.
+ * The MCP SDK reports an unregistered name with the code that means the
+ * parameters were invalid, so a caller meeting a withdrawn tool checks its
+ * arguments, re-fetches the schema, finds both correct, and is never told
+ * the actual condition.
+ *
+ * That reading is not hypothetical here. Operations are withheld from this
+ * surface **on purpose** — `ADAPTER_WAIVERS` withholds bulk-import, hook
+ * and scheduler, reference-entity administration and the individual loop
+ * verbs, each with a written reason — so the caller most likely to name a
+ * missing tool is one working from an older description of this surface,
+ * which is exactly the caller the SDK's message misdirects.
+ *
+ * **This adapter knows the answer**, which is why it can be given: the
+ * waiver carries both the fact that the withholding was deliberate and the
+ * route that still works, so the reply names the condition and what to do
+ * instead. `not_found` is the honest code — a named thing does not exist
+ * on this surface — and it is a caller-fault code, so it does not page
+ * anyone.
+ *
+ * **It does not re-register the tool.** The reply is produced inside a call
+ * this adapter already handles; nothing is added to the tool list, so the
+ * per-session context cost the waiver exists to avoid is not reintroduced.
+ * A name withheld from the list stays off the list.
+ */
+function withheldToolRejection(adapter: AdapterName, name: string): ToolResult | undefined {
+  const waiver = waiverFor(adapter, name);
+  if (waiver === undefined) return undefined;
+
+  return toolRejection(
+    new NotFoundError(
+      `The tool ${name} is not served by this adapter. It was withheld deliberately, ` +
+        `not dropped, and no arguments will make this call succeed — do not retry it. ` +
+        `Why: ${waiver.reason}`,
+      // No `details`: `Rejection` — the shape every adapter rebuilds from a
+      // wire body — carries only what conformance compares, and widening it
+      // for one adapter would make two adapters disagree about an identical
+      // refusal. Everything a caller needs is in the message.
+      {},
+    ),
+  );
 }
