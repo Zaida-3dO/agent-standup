@@ -62,7 +62,16 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { sweepLiveness, type LivenessSweepResult } from "@/lib/liveness";
 
-const inputSchema = z.object({}).strict();
+const inputSchema = z
+  .object({
+    dryRun: z
+      .boolean()
+      .optional()
+      .describe(
+        "Report what the sweep would age, release, exempt and escalate, and write nothing. Defaults to false, so an existing caller is unaffected.",
+      ),
+  })
+  .strict();
 
 export type SweepOperationInput = z.infer<typeof inputSchema>;
 
@@ -95,6 +104,24 @@ export interface SweepOperationOutput {
    * noticed because they happened to have the live agent list open.
    */
   readonly evictedWhileRunning: LivenessSweepResult["moves"];
+  /**
+   * Holders past the dead threshold whose claims were deliberately **not**
+   * released, because they have emitted no signal at all and registered no
+   * hook to emit one with. Their silence is how they were configured rather
+   * than evidence that they died.
+   *
+   * Reported rather than silently skipped for the same reason
+   * `evictedWhileRunning` is broken out: an operator who ran a sweep to
+   * reclaim a specific claim needs to see that it was spared on purpose,
+   * or the exemption is indistinguishable from the sweep not working. Each
+   * of these is reclaimable by hand with `takeover`.
+   */
+  readonly exempted: LivenessSweepResult["exempted"];
+  /**
+   * True when `dryRun` was requested: every field above says what the sweep
+   * *would* have done, and nothing was written.
+   */
+  readonly dryRun: boolean;
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -107,12 +134,10 @@ export const sweep = defineOperation({
   name: "sweep",
   kind: "write",
   summary:
-    "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped.",
+    "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. Pass `dryRun` to see what it would do and write nothing. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped. `exempted` lists holders left alone despite being past the threshold, because they registered no hook and have emitted no signal, so their silence says nothing about whether they are alive; reclaiming one is deliberate surgery, done with `takeover` [http/cli].",
   // Stryker restore all
   input: inputSchema,
-  // The input is declared and parsed (`.strict()` is what refuses a caller's
-  // stray field) but never read — the operation takes nothing, deliberately.
-  async handler(ctx: ServiceContext): Promise<SweepOperationOutput> {
+  async handler(ctx: ServiceContext, input: SweepOperationInput): Promise<SweepOperationOutput> {
     // The sweep is credited to whoever ran it when the caller identifies
     // itself, and to `system` otherwise — a scheduled invocation has no agent
     // behind it, and attributing it to one would put a name on every
@@ -121,9 +146,12 @@ export const sweep = defineOperation({
       ? ({ actorType: "agent", actorId: ctx.caller.actor } as const)
       : ({ actorType: "system", actorId: null } as const);
 
-    const result = await sweepLiveness(ctx.db, ctx.settings, actor);
+    const dryRun = input.dryRun ?? false;
+    const result = await sweepLiveness(ctx.db, ctx.settings, actor, { dryRun });
 
     return {
+      dryRun: result.dryRun,
+      exempted: result.exempted,
       // Serialised here rather than handed back as a `Date`: this is an
       // operation result, and every adapter renders it as JSON.
       checkedAt: result.checkedAt.toISOString(),

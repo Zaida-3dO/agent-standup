@@ -305,6 +305,61 @@ export interface EvictionInputs {
   readonly evictAfterSeconds: number;
 }
 
+/** The two timestamps and the one absence that say a holder has produced no signal. */
+export interface SignalEvidence {
+  /** `Assignment.lastActive` — stamped by `heartbeat` and by every telemetry flush. */
+  readonly lastActive: Date;
+  /** `Assignment.claimedAt` — where `lastActive` sits until something stamps it. */
+  readonly claimedAt: Date;
+  /** The session's most recent `ToolCall.ts`, or null when it has none. */
+  readonly lastToolCallAt: Date | null;
+}
+
+/**
+ * Whether this holder has emitted **no signal at all** since it claimed —
+ * neither a heartbeat, nor a telemetry flush, nor a single tool call.
+ *
+ * **This is the one place that question is answered, and it is exported so
+ * that it stays the one place.** Two reclamation paths consult it: the lazy
+ * eviction in `judgeEviction` below, and the liveness sweep in
+ * `src/lib/liveness.ts`. They reclaim on different triggers and different
+ * thresholds — one at contention on `evict_after_seconds`, one on a periodic
+ * pass at the much tighter `dead_after_seconds` — so a holder can be reached
+ * by either, and whichever arrives first decides its fate. That makes a
+ * single shared rule a correctness requirement rather than a tidiness one:
+ * if the two answer this question differently, the same holder gets a
+ * different outcome depending on timing alone, and the operator-facing
+ * promise on `settings/registry.ts`'s eviction threshold — that "a session
+ * that has never emitted a signal is not judged by its silence" — holds only
+ * on one of the two routes. Each path therefore asks this function rather
+ * than restating the rule; a second copy of the reasoning is what lets them
+ * drift apart.
+ *
+ * Note this is only half the exemption. It says the holder produced nothing;
+ * whether that silence is *evidence* additionally requires that the holder
+ * had no mechanism to produce anything, which is `Session.hookVersion` being
+ * null. Both callers check that half themselves, because a holder that
+ * declared a hook and then emitted nothing is a different and reportable
+ * situation rather than simply an exempt one — see
+ * `EvictionJudgement.declaredHookNeverSignalled`.
+ *
+ * `<=` rather than `===` on the two timestamps because both columns are
+ * `@default(now())` and the two defaults are evaluated by separate `now()`
+ * calls in a single INSERT: a stamp can only move `lastActive` forward, so
+ * an equality test would let a sub-millisecond ordering difference at insert
+ * decide a safety property.
+ */
+export function holderHasNeverSignalled(evidence: SignalEvidence): boolean {
+  // The most recent of the two signals, matching what `judgeEviction`
+  // measures elapsed quiet from. A session that only ever produces one of
+  // the two still counts as having spoken.
+  const lastSeenMs = Math.max(
+    evidence.lastActive.getTime(),
+    evidence.lastToolCallAt?.getTime() ?? Number.NEGATIVE_INFINITY,
+  );
+  return lastSeenMs <= evidence.claimedAt.getTime() && evidence.lastToolCallAt === null;
+}
+
 /**
  * Judges whether a holder is gone, given the evidence.
  *
@@ -380,8 +435,11 @@ export function judgeEviction(input: EvictionInputs): EvictionJudgement {
   // holder that reported a hook version had something that stamps on every
   // flush; if that has produced nothing for four hours the honest reading is
   // that the session is gone, which is the case eviction exists for.
-  const hasNeverSignalled =
-    lastSeenMs <= input.claimedAt.getTime() && input.lastToolCallAt === null;
+  const hasNeverSignalled = holderHasNeverSignalled({
+    lastActive: input.lastActive,
+    claimedAt: input.claimedAt,
+    lastToolCallAt: input.lastToolCallAt,
+  });
 
   if (hasNeverSignalled && input.holderHookVersion === null) {
     return {

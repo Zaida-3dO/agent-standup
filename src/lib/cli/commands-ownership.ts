@@ -171,12 +171,36 @@ function buildTakeoverInput(rest: readonly string[], flags: ParsedArgs["flags"])
   return { ok: true, input };
 }
 
+/**
+ * `sweep` takes one optional switch, `--dry-run`, and is otherwise a
+ * no-argument operation. The switch is read with `booleanFlag` for the same
+ * reason `--force` is on `takeover`: a bare `--dry-run` is the correct way to
+ * write it, and the pass-through refuses a valueless flag with "--dry-run
+ * needs a value", which is exactly backwards for a boolean.
+ *
+ * Everything else is still passed through untouched, so a stray flag is
+ * refused by the operation's `.strict()` schema with the offending field
+ * named rather than being dropped here, where the caller would never learn
+ * that their flag did nothing — which on an operation that releases other
+ * sessions' claims is the difference between a rehearsal and a live run.
+ */
 function buildSweepInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  // `sweep`'s schema is `z.object({}).strict()` — it takes nothing. A stray
-  // flag is therefore passed through and refused by that schema as
-  // `invalid_input` with the offending field named, rather than dropped here
-  // where the caller would never learn its flag did nothing.
-  return passThroughFlags(flags);
+  const dryRun = booleanFlag(flags, "dry-run");
+  if (!dryRun.ok) return dryRun;
+
+  const others = Object.fromEntries(
+    Object.entries(flags).filter(([name]) => name !== "dry-run"),
+  ) as ParsedArgs["flags"];
+  const passthrough = passThroughFlags(others);
+  if (!passthrough.ok) return passthrough;
+
+  const input: Record<string, unknown> = { ...passthrough.input };
+  // Sent only when actually given, matching `takeover`'s handling of
+  // `--force`: the schema declares it optional, and a call that never
+  // mentioned it should not be recorded as having explicitly asked for a
+  // live run.
+  if (flags["dry-run"] !== undefined) input.dryRun = dryRun.value;
+  return { ok: true, input };
 }
 
 function buildMyWorkInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
@@ -289,7 +313,7 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "sweep",
     operation: "sweep",
     summary:
-      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items.",
+      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. --dry-run reports what it would do and writes nothing.",
     buildInput: buildSweepInput,
   },
   {

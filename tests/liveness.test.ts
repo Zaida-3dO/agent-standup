@@ -663,4 +663,302 @@ describeIfDb("sweepLiveness — against a real database", () => {
       ]);
     });
   });
+  // -------------------------------------------------------------------------
+  // The hook-aware exemption, and the rehearsal. Both added for the incident
+  // where one sweep released the claims of two sessions that were alive and
+  // mid-build.
+  // -------------------------------------------------------------------------
+
+  describe("the exemption for a holder that never had a way to signal", () => {
+    /**
+     * Seeds a holder the way a real claim arrives: `lastActive` equal to
+     * `claimedAt`, because nothing has stamped it. `quietForSeconds` is then
+     * really the age of the claim, which is the whole point — this holder
+     * looks identically quiet whether it is working or dead.
+     */
+    async function seedNeverSignalledHolder(
+      itemId: string,
+      opts: { quietForSeconds: number; hookVersion: number | null; sessionId: string },
+    ) {
+      const stamp = new Date(Date.now() - opts.quietForSeconds * 1000);
+      await prisma.session.create({
+        data: {
+          id: opts.sessionId,
+          machine: "laptop",
+          transport: "cli_direct" as never,
+          hookVersion: opts.hookVersion,
+        },
+      });
+      const row = await prisma.assignment.create({
+        data: {
+          itemId,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-member",
+          sessionId: opts.sessionId,
+          rootSessionId: opts.sessionId,
+          machine: "laptop",
+          liveness: "running" as never,
+          lastActive: stamp,
+          claimedAt: stamp,
+        },
+      });
+      return row.id;
+    }
+
+    afterEach(async () => {
+      await prisma.toolCall.deleteMany({});
+      await prisma.session.deleteMany({});
+    });
+
+    it("does NOT release the claim of an unhooked holder quiet past the dead threshold", async () => {
+      // The incident, reduced. Past the 1800s dead threshold, and this holder
+      // registered no hook, so nothing was ever going to stamp `lastActive`
+      // for it. Its silence is its configuration, not evidence that it died.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 2_000,
+        hookVersion: null,
+        sessionId: "session-unhooked",
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "liveness.stale_after_seconds": 900, "liveness.dead_after_seconds": 1800 }),
+        actor,
+        { guards },
+      );
+
+      expect(result.released).toEqual([]);
+      expect(result.exempted).toEqual([
+        expect.objectContaining({ assignmentId, itemId, sessionId: "session-unhooked" }),
+      ]);
+
+      // The claim actually survives in the database — not merely absent from
+      // a returned list.
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(row.releasedAt).toBeNull();
+    });
+
+    it("still marks that exempt holder STALLED, so it is visible rather than hidden", async () => {
+      // The exemption caps the rung; it does not suppress the observation. An
+      // operator has to be able to see a quiet unhooked holder in order to
+      // reach for `takeover`, which is its only route back.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 2_000,
+        hookVersion: null,
+        sessionId: "session-unhooked-visible",
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "liveness.stale_after_seconds": 900, "liveness.dead_after_seconds": 1800 }),
+        actor,
+        { guards },
+      );
+
+      expect(result.moves).toEqual([{ assignmentId, itemId, from: "running", to: "stalled" }]);
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(row.liveness).toBe("stalled");
+    });
+
+    it("DOES release a hooked holder quiet for the same time — the exemption is not a blanket reprieve", async () => {
+      // Same silence, same threshold, one difference: this session declared a
+      // hook, so it had a mechanism that stamps on every flush. Silence from
+      // it is a real observation. This is the test that stops the exemption
+      // from simply disabling reclamation.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 2_000,
+        hookVersion: 3,
+        sessionId: "session-hooked",
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "liveness.stale_after_seconds": 900, "liveness.dead_after_seconds": 1800 }),
+        actor,
+        { guards },
+      );
+
+      expect(result.exempted).toEqual([]);
+      expect(result.released).toEqual([assignmentId]);
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(row.releasedAt).not.toBeNull();
+      expect(row.liveness).toBe("dead");
+    });
+
+    it("DOES release an unhooked holder that has emitted a tool call — one signal retires the exemption", async () => {
+      // The escape hatch, and the thing that keeps the exemption from being a
+      // permanent hiding place. This holder registered no hook but has
+      // demonstrably been seen, so its later silence is evidence again.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 2_000,
+        hookVersion: null,
+        sessionId: "session-unhooked-but-seen",
+      });
+      await prisma.toolCall.create({
+        data: {
+          sessionId: "session-unhooked-but-seen",
+          tool: "Read",
+          ts: new Date(Date.now() - 1_900 * 1000),
+        },
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "liveness.stale_after_seconds": 900, "liveness.dead_after_seconds": 1800 }),
+        actor,
+        { guards },
+      );
+
+      expect(result.exempted).toEqual([]);
+      expect(result.released).toEqual([assignmentId]);
+    });
+
+    it("does not exempt a row whose lastActive sits well BEHIND its own claim", async () => {
+      // The state the shared predicate's deliberately-loose `<=` also admits,
+      // and which is not the exempt case: an activity timestamp older than the
+      // claim it belongs to is an inconsistency, not silence. Without the
+      // ordering allowance this row would receive an indefinite claim.
+      const itemId = await seedItem();
+      const claimedAt = new Date(Date.now() - 2_000 * 1000);
+      const row = await prisma.assignment.create({
+        data: {
+          itemId,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-member",
+          sessionId: "session-inconsistent",
+          rootSessionId: "session-inconsistent",
+          machine: "laptop",
+          liveness: "running" as never,
+          lastActive: new Date(claimedAt.getTime() - 60 * 60 * 1000),
+          claimedAt,
+        },
+      });
+      await prisma.session.create({
+        data: {
+          id: "session-inconsistent",
+          machine: "laptop",
+          transport: "cli_direct" as never,
+          hookVersion: null,
+        },
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "liveness.stale_after_seconds": 900, "liveness.dead_after_seconds": 1800 }),
+        actor,
+        { guards },
+      );
+
+      expect(result.exempted).toEqual([]);
+      expect(result.released).toEqual([row.id]);
+    });
+  });
+
+  describe("dryRun — a rehearsal that writes nothing", () => {
+    it("reports the release it would make and leaves the database untouched", async () => {
+      // The assertion that matters is against the DATABASE, not against the
+      // returned shape: a rehearsal that reported correctly and still wrote
+      // would satisfy any check made on its return value alone.
+      const itemId = await seedItem();
+      const assignmentId = await seedAssignment(itemId, {
+        liveness: "stalled",
+        lastActive: new Date(Date.now() - 1_801_000),
+      });
+      const before = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      const eventsBefore = await prisma.event.count();
+      const itemBefore = await prisma.item.findUniqueOrThrow({ where: { id: itemId } });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "liveness.stale_after_seconds": 900, "liveness.dead_after_seconds": 1800 }),
+        actor,
+        { guards, dryRun: true },
+      );
+
+      // It still says what it would have done.
+      expect(result.dryRun).toBe(true);
+      expect(result.moves).toEqual([{ assignmentId, itemId, from: "stalled", to: "dead" }]);
+      expect(result.released).toEqual([assignmentId]);
+
+      // ...and nothing moved.
+      const after = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(after.liveness).toBe(before.liveness);
+      expect(after.releasedAt).toBeNull();
+      expect(await prisma.event.count()).toBe(eventsBefore);
+      const itemAfter = await prisma.item.findUniqueOrThrow({ where: { id: itemId } });
+      expect(itemAfter.resumeAttempts).toBe(itemBefore.resumeAttempts);
+      expect(itemAfter.state).toBe(itemBefore.state);
+    });
+
+    it("does not record a capability check", async () => {
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "notify.doc": "/docs/notify.md" }),
+        actor,
+        { guards, dryRun: true },
+      );
+
+      // Resolved and reported...
+      expect(result.capabilityChecks).toEqual([
+        { key: "notify.doc", path: "/docs/notify.md", result: "missing" },
+      ]);
+      // ...but not written down.
+      expect(await prisma.capabilityCheck.count()).toBe(0);
+    });
+
+    it("reports the escalation it would make without blocking the item", async () => {
+      // The subtlest write in the pass: a real sweep increments the resume
+      // count with `UPDATE ... RETURNING` and escalates on the result. The
+      // rehearsal has to reach the same verdict from a read.
+      const itemId = await seedItem({ resumeAttempts: 2 });
+      await seedAssignment(itemId, {
+        liveness: "stalled",
+        lastActive: new Date(Date.now() - 1_801_000),
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "dispatch.resume_attempts_before_blocked": 3,
+        }),
+        actor,
+        { guards, dryRun: true },
+      );
+
+      expect(result.escalated).toEqual([{ itemId, resumeAttempts: 3 }]);
+      const item = await prisma.item.findUniqueOrThrow({ where: { id: itemId } });
+      expect(item.state).not.toBe("blocked");
+      expect(item.resumeAttempts).toBe(2);
+    });
+
+    it("a real sweep still writes — the rehearsal flag is what suppresses it, not the code path", async () => {
+      // The control. Without this, every assertion above would still pass if
+      // the sweep had simply stopped working.
+      const itemId = await seedItem();
+      const assignmentId = await seedAssignment(itemId, {
+        liveness: "stalled",
+        lastActive: new Date(Date.now() - 1_801_000),
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({ "liveness.stale_after_seconds": 900, "liveness.dead_after_seconds": 1800 }),
+        actor,
+        { guards, dryRun: false },
+      );
+
+      expect(result.dryRun).toBe(false);
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(row.liveness).toBe("dead");
+      expect(row.releasedAt).not.toBeNull();
+    });
+  });
 });
