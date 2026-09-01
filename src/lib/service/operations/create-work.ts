@@ -165,7 +165,7 @@ export const createWork = defineOperation({
   name: "create_work",
   kind: "write",
   summary:
-    'Creates a project, a task or a subtask — say which with type, which is required and is never inferred. A task takes projectId (a project\'s id, or the literal "inbox" to file it in the configured inbox project); a subtask takes taskId; a project takes neither. A type that does not match the parent supplied is refused by name rather than guessed at, so you never receive a kind you did not ask for. Tasks and subtasks have their own state and can be transitioned; a project derives its column from its children and cannot.',
+    'Creates a project, a task or a subtask — say which with type; it is never inferred. A task takes projectId (a project\'s id, or the literal "inbox"); a subtask takes taskId; a project takes neither, and a mismatched pair is refused rather than guessed. Tasks and subtasks have their own state and can be transitioned; a project derives its column from its children and cannot.',
   contract: {
     rules: [
       {

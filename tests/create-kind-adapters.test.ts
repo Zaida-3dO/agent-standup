@@ -38,6 +38,33 @@ describe("the three explicit creates are registered operations", () => {
     expect(summary).toContain("inbox");
   });
 
+  // `create_work` is the tool MCP actually serves — the three above are
+  // waived from both transports and reached over HTTP and the command line
+  // — so its summary is the only one most agents ever read. It was the one
+  // create summary with no assertion on it at all, which a trim pass found
+  // by mutating the escape hatch out of it and watching every test pass.
+  //
+  // Each `toContain` names something a caller cannot learn anywhere else in
+  // the tool list: which pointer each type takes, and that `inbox` is the
+  // way to file a task whose project is not known. Dropping any one of them
+  // is the edit that makes the tool unusable without `describe_tool`.
+  it("create_work's summary names each type's parent and the inbox escape hatch", () => {
+    const summary = OPERATION_REGISTRY.create_work.summary;
+    expect(summary).toContain("projectId");
+    expect(summary).toContain("taskId");
+    expect(summary).toContain("inbox");
+    expect(summary).toContain("type");
+  });
+
+  // Fails if the summary stops saying a project has no state of its own —
+  // the surprise the explicit-type design exists to prevent, and the one
+  // thing a tool list can say to stop a caller trying to transition one.
+  it("create_work's summary warns that a project cannot be transitioned", () => {
+    expect(OPERATION_REGISTRY.create_work.summary.toLowerCase()).toMatch(
+      /no state|cannot be transitioned|derives its column/,
+    );
+  });
+
   it("create_subtask's summary names taskId and says it is not a project", () => {
     const summary = OPERATION_REGISTRY.create_subtask.summary;
     expect(summary).toContain("taskId");

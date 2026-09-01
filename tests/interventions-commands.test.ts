@@ -103,6 +103,45 @@ describe("isBroadProcessKill", () => {
     }
   });
 
+  // row c8e61fe9-179a-4475-b835-4bcce5da9d5a: the two forms a crew was
+  // refused three times, verbatim as reported. Both name a process id and
+  // neither names an image, so both must pass the entry whose message tells
+  // the caller to kill by process id.
+  it("does not recognise the pid-scoped forms reported as refused", () => {
+    for (const command of ["taskkill /PID 95040 /F", "Stop-Process -Id 95040 -Force"]) {
+      expect(isBroadProcessKill(command), command).toBe(false);
+    }
+  });
+
+  // The two doors that were still shut at the time of that row: a pid list
+  // in PowerShell's native plural spelling, and a pid alongside the flag
+  // that stops it erroring when the process has already gone.
+  it("does not recognise a pid list or a pid beside a reporting parameter", () => {
+    for (const command of [
+      "Stop-Process -Id 1,2,3 -Force",
+      "Stop-Process -Id 95040 -ErrorAction SilentlyContinue",
+      'powershell -NoProfile -Command "Stop-Process -Id 1,2,3 -ErrorAction SilentlyContinue"',
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(false);
+    }
+  });
+
+  // The paired negative control for that widening. Each differs from an
+  // allowed case above by one token, and each must still be refused —
+  // otherwise the pid-list and reporting-parameter paths have become a way
+  // to smuggle an image target past the entry.
+  it("still recognises a broad kill that carries a pid list or a reporting parameter", () => {
+    for (const command of [
+      "Stop-Process -Id 1,2 -Name node",
+      "Stop-Process -ErrorAction SilentlyContinue -Name node",
+      "Stop-Process -Id node,foo",
+      "Stop-Process -Id 1,,2",
+      "Stop-Process -ErrorAction SilentlyContinue",
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(true);
+    }
+  });
+
   // The negative control: the same wrappers must still read as broad when
   // the inner command actually is — this fix must not become "trust
   // anything a wrapper carries".

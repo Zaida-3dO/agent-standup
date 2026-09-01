@@ -237,20 +237,23 @@ const broadProcessKill: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // row f53e667a-97da-4b10-bded-8a3c50836a85: this level is named
-  // `block-overridable`, but no override channel exists anywhere in the
-  // wire protocol — `ServerVerdict.decision` (`src/lib/hook/decide.ts`) is
-  // a plain `"block" | "allow"` with no field an agent's retry could carry
-  // a written reason on, and `hook-decision.ts`'s own input schema has none
-  // either. `block-overridable` and `hard-block` are handled identically by
-  // every consumer (`strongestLevel`, the block/allow mapping). The
-  // messages below used to promise "proceed with a written reason" as a
-  // second way through — a real agent tried it, verbatim, and was refused
-  // identically to a plain retry. Removed rather than left in: a message
-  // offering an exit that does not exist is worse than one that only offers
-  // the exit that does (narrow the kill to a pid). Wiring an actual
-  // override channel is a larger, separate change than this row's fix for
-  // the pid-scope defect and is not attempted here.
+  // This level is `block-overridable`, and the name is accurate: a caller
+  // can re-run the call naming this entry with a written reason, and
+  // `decide` releases it and records that reason against the finding
+  // (`src/lib/hook/override.ts`).
+  //
+  // **The messages below deliberately do not mention the override.**
+  // `overrideRemedy` appends the override instructions to every
+  // `block-overridable` refusal, so naming it here would print it twice and
+  // would restate a minimum reason length that lives in one place. What a
+  // message owes the caller is the *narrow* exit — which pid form to use —
+  // and that is what these say.
+  //
+  // A message must only offer an exit the protocol can honour. An offer the
+  // caller cannot act on costs several attempts before anyone concludes it
+  // is not negotiable, which is the failure this whole entry is written
+  // against: the pid advice below is worth giving precisely because the
+  // parser reads every pid-scoped form it names.
   messages: {
     plain:
       "This ends every process matching a name, including ones other sessions are relying on. " +

@@ -340,7 +340,7 @@ export const getProjectDetail = defineOperation({
   name: "get_project_detail",
   kind: "read",
   summary:
-    "One project in full: its derived column, the distribution of its children by state and the single child that caused that reading, direct children, every blocked descendant at any depth, live crew, recent subtree activity, and whether a childless project repairs to a closeable or only a transitionable item. Archived descendants are excluded from the children list and every rollup number — pass includeArchived to audit them. An archived project still resolves by id.",
+    "One project in full: its derived column, the distribution of its children by state and the child that caused that reading, direct children, every blocked descendant at any depth, live crew, recent subtree activity, and whether a childless project repairs to a closeable or only a transitionable item. Archived descendants are excluded from the children list and every rollup number — pass includeArchived to audit them. An archived project still resolves by id.",
   // Stryker restore all
   input: inputSchema,
   contract: {

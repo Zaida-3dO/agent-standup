@@ -570,3 +570,114 @@ describe("normaliseExecutable", () => {
     expect(normaliseExecutable("node.exe.bak")).toBe("node.exe.bak");
   });
 });
+
+// ── Pid-scoped forms the guard used to refuse ──────────────────────────
+//
+// Row c8e61fe9-179a-4475-b835-4bcce5da9d5a: a crew was refused a kill it
+// had scoped to a process id, and told to kill by process id instead. The
+// two forms below reached `unparseable` — which the guard denies — despite
+// naming their targets outright.
+//
+// **What would make this block hollow.** Asserting only that these now
+// parse would pass against a parser that read *everything* as a pid list,
+// which is exactly the widening that would let `taskkill /IM node.exe`
+// through. So each allow case is paired with a deny case differing by one
+// token, and the elimination cases below pin the boundary: an unread
+// selector must stay `unparseable`, never become an empty or salvaged
+// target set.
+describe("comma-separated pid lists", () => {
+  it("Stop-Process -Id 1,2,3 targets three pids", () => {
+    // PowerShell's `-Id` takes an array and this is how it is spelled. It
+    // is strictly narrower than three separate calls, so refusing it
+    // argued for the broader action.
+    expect(parseKillCommand("Stop-Process -Id 1,2,3 -Force")).toEqual({
+      kind: "targets",
+      targets: [
+        { kind: "pid", value: "1" },
+        { kind: "pid", value: "2" },
+        { kind: "pid", value: "3" },
+      ],
+    });
+  });
+
+  it("a single id still reads as one pid", () => {
+    expect(parseKillCommand("Stop-Process -Id 95040 -Force")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "95040" }],
+    });
+  });
+
+  it.each([
+    // An empty element. Salvaging the numbers either side would report a
+    // target set the command does not have.
+    "Stop-Process -Id 1,,2",
+    "Stop-Process -Id 1,2,",
+    "Stop-Process -Id ,1",
+    // A bare comma names nothing at all.
+    "Stop-Process -Id ,",
+    // Names, not ids. Reading these as pids is the widening this must not
+    // do — `node` is an image and an image target is what makes a kill broad.
+    "Stop-Process -Id node,foo",
+    "Stop-Process -Id 12abc",
+    // Spaced lists arrive as separate tokens, so the selector is unread.
+    "Stop-Process -Id 1, 2, 3",
+  ])("%s cannot be decomposed", (command) => {
+    expect(parseKillCommand(command).kind).toBe("unparseable");
+  });
+
+  it("a pid list mixed with a name is still broad", () => {
+    // The list parses, but `-Name node` adds an executable target, and one
+    // executable target is what `isBroadProcessKill` turns on.
+    const parsed = parseKillCommand("Stop-Process -Id 1,2 -Name node");
+    expect(parsed.kind).toBe("targets");
+    expect(parsed.kind === "targets" && parsed.targets).toContainEqual({
+      kind: "executable",
+      value: "node",
+    });
+  });
+});
+
+describe("PowerShell reporting parameters", () => {
+  it("-ErrorAction does not hide the pid it accompanies", () => {
+    // The idiomatic way to stop a server without erroring if it has already
+    // exited. Before this, the unknown-flag branch made it `unparseable`
+    // and the guard told the caller to kill by process id — which it did.
+    expect(parseKillCommand("Stop-Process -Id 95040 -ErrorAction SilentlyContinue")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "95040" }],
+    });
+  });
+
+  it.each(["-Verbose", "-Debug", "-WhatIf"])("%s is a switch that names no target", (flag) => {
+    expect(parseKillCommand(`Stop-Process -Id 95040 ${flag}`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "95040" }],
+    });
+  });
+
+  it("a reporting parameter does not make a name-scoped kill narrow", () => {
+    // The load-bearing pairing: same flag, no pid. Skipping the flag must
+    // not skip the fact that the only target left is an image.
+    expect(parseKillCommand("Stop-Process -ErrorAction SilentlyContinue -Name node")).toEqual({
+      kind: "targets",
+      targets: [{ kind: "executable", value: "node" }],
+    });
+  });
+
+  it("a reporting parameter alone names no target", () => {
+    // Skipping the flag must not leave an empty target set that reads as a
+    // kill of nothing and is allowed.
+    expect(parseKillCommand("Stop-Process -ErrorAction SilentlyContinue").kind).toBe("unparseable");
+  });
+
+  it("a reporting parameter with no value is unparseable", () => {
+    expect(parseKillCommand("Stop-Process -Id 95040 -ErrorAction").kind).toBe("unparseable");
+  });
+
+  it("an unknown flag that takes a value is still unparseable", () => {
+    // The enumeration must stay an enumeration. `-InputObject` selects
+    // processes, and ignoring it would turn a machine-wide kill into an
+    // empty, allowable one.
+    expect(parseKillCommand("Stop-Process -InputObject $procs").kind).toBe("unparseable");
+  });
+});

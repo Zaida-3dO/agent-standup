@@ -326,6 +326,80 @@ export function normaliseExecutable(name: string): string {
 const PID_PATTERN = /^\d+$/;
 
 /**
+ * PowerShell parameters that cannot change *which* processes are killed.
+ *
+ * `Stop-Process -Id 95040 -ErrorAction SilentlyContinue` is the idiomatic
+ * way to stop a server without erroring if it has already exited, and it
+ * names its target in the command. Before this list, the unknown-flag
+ * branch reported it `unparseable` — so the guard refused it and told the
+ * caller to kill by process id, which is precisely what the command does.
+ * That is the contradiction row c8e61fe9-179a-4475-b835-4bcce5da9d5a is
+ * about, arriving through a different door than the one that was reported.
+ *
+ * Enumerated rather than skipped as a class. A blanket "ignore flags this
+ * build does not know" would drop `-InputObject` and `/FI` from the target
+ * set and turn a machine-wide kill into an empty, allowable one — the
+ * exact widening `parseWindowsKill`'s header forbids. Every entry here is
+ * a PowerShell *common* parameter whose effect is on reporting, not on
+ * selection, so adding one can only ever change a refusal into an allow
+ * for a command whose targets were already fully read.
+ *
+ * `-ErrorVariable`, `-OutVariable` and friends take a value; the rest are
+ * switches. Both are handled, because the value of a reporting parameter
+ * is never a target and skipping it cannot hide one.
+ */
+const POWERSHELL_COMMON_SWITCHES = new Set(["verbose", "debug", "whatif"]);
+const POWERSHELL_COMMON_VALUED = new Set([
+  "erroraction",
+  "warningaction",
+  "informationaction",
+  "errorvariable",
+  "warningvariable",
+  "informationvariable",
+  "outvariable",
+  "outbuffer",
+  "pipelinevariable",
+]);
+
+/**
+ * Reads the value of a `-Id`/`/PID` parameter into one or more pid targets.
+ *
+ * Returns `null` when the value is not a pid list this build can resolve,
+ * which the caller turns into `unparseable` — never into an empty target
+ * set, which would read as a kill of nothing and be allowed.
+ *
+ * ── Why a comma-separated list ─────────────────────────────────────────
+ *
+ * `Stop-Process -Id` takes an *array*, and `-Id 1,2,3` is how PowerShell
+ * spells it — the plural is the native form, not an exotic one. Reading
+ * only a single integer refused it as undecomposable and told the caller
+ * to kill by process id instead, which the command already did. It is
+ * also strictly *narrower* than the three separate calls the caller would
+ * otherwise be pushed into, so refusing it argued for the broader action.
+ *
+ * Every element must be entirely digits. An empty element (`1,,2`), a
+ * trailing comma (`1,2,`) or a name (`node,foo`) yields `null` and the
+ * command stays `unparseable`: the point is to read a list of process
+ * ids, not to salvage the numbers out of something this build does not
+ * understand. That keeps the widening confined to commands whose target
+ * set is known exactly.
+ */
+function readPidList(value: string | undefined): KillTarget[] | null {
+  if (value === undefined) return null;
+  const parts = value.split(",");
+  const targets: KillTarget[] = [];
+  for (const part of parts) {
+    // Not trimmed. `tokenise` has already split on whitespace, so a spaced
+    // list (`-Id 1, 2, 3`) arrives as separate tokens rather than as one
+    // value with spaces in it, and is refused as the unread selector it is
+    // — the safe direction, and one the tests pin.
+    if (!PID_PATTERN.test(part)) return null;
+    targets.push({ kind: "pid", value: part });
+  }
+  return targets.length === 0 ? null : targets;
+}
+
+/**
  * A flag that names a signal rather than a target.
  *
  * Deliberately a closed list of the signals that actually end a process,
@@ -681,13 +755,24 @@ function parseWindowsKill(verb: string, args: readonly string[]): KillCommandPar
 
     // Flags with no value that change nothing about the target set.
     if (flag === "f" || flag === "t" || flag === "force" || flag === "confirm") continue;
+    if (POWERSHELL_COMMON_SWITCHES.has(flag)) continue;
+
+    // Reporting parameters that take a value. The value is consumed with
+    // the flag so it cannot be mistaken for a positional target below.
+    if (POWERSHELL_COMMON_VALUED.has(flag)) {
+      if (args[index + 1] === undefined) {
+        return { kind: "unparseable", reason: `${verb} ${arg} was not followed by a value` };
+      }
+      index += 1;
+      continue;
+    }
 
     if (flag === "pid" || flag === "id") {
-      const value = args[index + 1];
-      if (value === undefined || !PID_PATTERN.test(value)) {
+      const pids = readPidList(args[index + 1]);
+      if (pids === null) {
         return { kind: "unparseable", reason: `${verb} ${arg} was not followed by a process id` };
       }
-      targets.push({ kind: "pid", value });
+      targets.push(...pids);
       index += 1;
       continue;
     }
