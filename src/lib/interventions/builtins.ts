@@ -237,29 +237,23 @@ const broadProcessKill: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // This level is `block-overridable`, and as of the override channel
-  // (`src/lib/hook/override.ts`, wired into `decide.ts`) that name is now
-  // accurate: a caller can re-run the call naming this entry with a written
-  // reason, and `decide` releases it and records the reason against the
-  // finding.
+  // This level is `block-overridable`, and the name is accurate: a caller
+  // can re-run the call naming this entry with a written reason, and
+  // `decide` releases it and records that reason against the finding
+  // (`src/lib/hook/override.ts`).
   //
-  // The history is worth keeping, because it is why the messages below read
-  // as they do. Row f53e667a-97da-4b10-bded-8a3c50836a85 found the level
-  // was a promise the protocol could not keep — `ServerVerdict.decision`
-  // was a plain `"block" | "allow"` with no field a retry could carry a
-  // reason on, so `block-overridable` and `hard-block` were handled
-  // identically by every consumer. The messages had offered "proceed with a
-  // written reason" as a second way through; a real agent tried it verbatim
-  // and was refused exactly as a plain retry was, so the offer was deleted
-  // rather than left in — an exit that does not exist being worse than none.
+  // **The messages below deliberately do not mention the override.**
+  // `overrideRemedy` appends the override instructions to every
+  // `block-overridable` refusal, so naming it here would print it twice and
+  // would restate a minimum reason length that lives in one place. What a
+  // message owes the caller is the *narrow* exit — which pid form to use —
+  // and that is what these say.
   //
-  // The override now exists, so that reasoning no longer applies. The
-  // messages still do not mention it, and that is deliberate rather than
-  // stale: `overrideRemedy` appends the override instructions to every
-  // `block-overridable` refusal already, so spelling them out here would
-  // print them twice and would drift from the real minimum reason length.
-  // What the messages owe the caller is the *narrow* exit — which pid form
-  // to use — and that is what they say.
+  // A message must only offer an exit the protocol can honour. An offer the
+  // caller cannot act on costs several attempts before anyone concludes it
+  // is not negotiable, which is the failure this whole entry is written
+  // against: the pid advice below is worth giving precisely because the
+  // parser reads every pid-scoped form it names.
   messages: {
     plain:
       "This ends every process matching a name, including ones other sessions are relying on. " +
