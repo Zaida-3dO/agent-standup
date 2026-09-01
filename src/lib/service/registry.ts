@@ -98,6 +98,11 @@ import { getItemBody } from "./operations/get-item-body";
 // "What needs this person", in one call (T24) — the union three separate
 // `list_items` reads used to assemble in the browser.
 import { getNeedsYou } from "./operations/get-needs-you";
+// Open rows that another row's recorded work already named — the check that
+// catches a stale row before a crew is dispatched onto it. A row goes stale
+// in exactly the case where the work went well, because every link between a
+// landing and the row it satisfied is written by hand and after the fact.
+import { getStaleCandidates } from "./operations/get-stale-candidates";
 import { getSettings } from "./operations/get-settings";
 import { getSetting } from "./operations/get-setting";
 import { patchSettings } from "./operations/patch-settings";
@@ -256,6 +261,7 @@ export const OPERATION_REGISTRY = {
   [getItemHistory.name]: getItemHistory,
   [getItemBody.name]: getItemBody,
   [getNeedsYou.name]: getNeedsYou,
+  [getStaleCandidates.name]: getStaleCandidates,
   [getSettings.name]: getSettings,
   [getSetting.name]: getSetting,
   [patchSettings.name]: patchSettings,

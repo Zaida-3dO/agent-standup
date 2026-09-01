@@ -1276,6 +1276,11 @@ describeIfDb("delete_item", () => {
         // admits outright — so an archived row that slipped past the
         // `archivedAt IS NULL` condition on that arm would show up here.
         get_needs_you: { personId: "sweep-person" },
+        // Ranges over every non-terminal item to decide which rows a
+        // citation could be about, so it is swept rather than exempted: an
+        // archived row that slipped past the `archivedAt IS NULL` condition
+        // would be offered as a candidate to dispatch against.
+        get_stale_candidates: { area: "archive-sweep", includeUnlanded: true },
         loop_list: { itemId: project.id },
         list_areas: {},
         list_repos: {},

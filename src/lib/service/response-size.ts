@@ -130,6 +130,8 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   get_board: "a single `column` with a smaller `limit`, or `full: false`",
   list_items: "a smaller `limit`, a `state` or `area` filter, or `full: false`",
   search: "a narrower `query` or a smaller `limit`",
+  get_stale_candidates:
+    "a smaller `limit`, or a `repo` or `area` filter to triage one backlog at a time",
   // **Not `limit`, and this is the correction rather than a wording
   // preference.** The advice here used to read "a smaller `limit`, or a
   // narrower time range", and neither remedy reaches this operation at any

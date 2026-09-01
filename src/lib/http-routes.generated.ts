@@ -78,6 +78,7 @@ export const HTTP_ROUTES: readonly HttpRoute[] = [
   { path: "/api/settings", methods: ["GET", "PATCH"] },
   { path: "/api/settings/{key}", methods: ["GET", "PUT", "DELETE"] },
   { path: "/api/settings/unrecognised/{key}", methods: ["DELETE"] },
+  { path: "/api/stale-candidates", methods: ["GET"] },
   { path: "/api/subtasks", methods: ["POST"] },
   { path: "/api/sweep", methods: ["POST"] },
   { path: "/api/tasks", methods: ["POST"] },

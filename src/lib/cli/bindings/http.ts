@@ -141,6 +141,14 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     request: (input) => ({ path: `/api/items${queryString(input)}` }),
     unwrap: (body) => body,
   },
+  // Stale candidates. `GET /api/stale-candidates` returns the result object
+  // unwrapped, like every other list-shaped read, so `unwrap` is the
+  // identity — the same shape `direct` returns for the same call.
+  get_stale_candidates: {
+    method: "GET",
+    request: (input) => ({ path: `/api/stale-candidates${queryString(input)}` }),
+    unwrap: (body) => body,
+  },
   // Row #105. `GET /search` returns the result object unwrapped, like every
   // other list-shaped read, so `unwrap` is the identity — the same shape
   // `direct` returns for the same call.
