@@ -14,6 +14,7 @@
 // parameter, so a test proves "at T+899s nothing fires, at T+901s it does"
 // without a real sleep — see tests/liveness.test.ts for why that matters
 // more here than almost anywhere else in this repository.
+import { holderHasNeverSignalled } from "./claim-eviction";
 import { NotFoundError } from "./service/errors";
 import { applyTransition } from "./service/state-machine/transition";
 import { guardRegistry, type GuardRegistry } from "./service/state-machine/guard";
@@ -26,6 +27,27 @@ import type { SettingsSnapshot } from "./settings";
 // ---------------------------------------------------------------------------
 
 export type LivenessRung = "running" | "stalled" | "dead";
+
+/**
+ * How far behind its own `claimedAt` an assignment's `lastActive` may sit
+ * and still count as "never stamped" rather than "stamped with something
+ * odd".
+ *
+ * Both columns are `@default(now())`, and Postgres evaluates the two
+ * defaults in one INSERT as separate `now()` calls, so on an untouched row
+ * they are equal or differ by a rounding artefact — the schema stores
+ * `Timestamptz(3)`, i.e. millisecond precision, so the largest difference
+ * an insert can manufacture is one millisecond. One second is three orders
+ * of magnitude of headroom over that and still four orders below the
+ * tightest liveness threshold (`stale_after_seconds`, default 900), so it
+ * cannot be reached by any real activity gap that matters here.
+ *
+ * It is a constant rather than a setting deliberately: it describes how the
+ * database fills two columns, which is not a thing an operator should be
+ * asked to tune, and exposing it would invite raising it into a way to
+ * exempt live rows from reclamation.
+ */
+const CLAIM_STAMP_ORDERING_ALLOWANCE_MS = 1_000;
 
 /**
  * Where one assignment sits on the ladder right now, given how long it has
@@ -66,6 +88,12 @@ interface LiveAssignmentRow {
   holderType: "person" | "agent";
   holderId: string;
   sessionId: string;
+  /** `Assignment.claimedAt` — where `lastActive` sits until something stamps it. */
+  claimedAt: Date;
+  /** The holder session's most recent `ToolCall.ts`, or null when it has none. */
+  lastToolCallAt: Date | null;
+  /** `Session.hookVersion` — null when the session never registered, or named no version. */
+  holderHookVersion: number | null;
 }
 
 /** Who ran the sweep — recorded on both the assignment moves and the capability checks. */
@@ -92,12 +120,44 @@ export interface CapabilityCheckOutcome {
   readonly result: "exists" | "missing" | "unverified";
 }
 
+/**
+ * A holder quiet past the dead threshold that was **not** released, because
+ * it has emitted no signal at all and has no hook to emit one with.
+ *
+ * Reported rather than merely skipped: an operator who ran a sweep expecting
+ * a claim to be reclaimed needs to know that it deliberately was not, and
+ * why, or the exemption looks like the sweep failing to do its job. Each of
+ * these is reclaimable by hand through `takeover`.
+ */
+export interface ExemptedHolder {
+  readonly assignmentId: string;
+  readonly itemId: string;
+  readonly sessionId: string;
+  /**
+   * How long the holder has been quiet. Reported because it is the number
+   * that *would* have released the claim, so the exemption can be judged.
+   * Note this is measured from `lastActive`, which for this holder is still
+   * its `claimedAt` — so it is really the age of the claim.
+   */
+  readonly quietForSeconds: number;
+}
+
 export interface LivenessSweepResult {
   readonly checkedAt: Date;
   readonly moves: readonly AssignmentMove[];
   readonly released: readonly string[];
   readonly escalated: readonly EscalatedItem[];
   readonly capabilityChecks: readonly CapabilityCheckOutcome[];
+  /**
+   * Holders past the dead threshold that were deliberately left alone. See
+   * `ExemptedHolder`, and the exemption's reasoning at its use site below.
+   */
+  readonly exempted: readonly ExemptedHolder[];
+  /**
+   * True when this pass wrote nothing — every field above describes what
+   * *would* have happened rather than what did.
+   */
+  readonly dryRun: boolean;
 }
 
 /**
@@ -125,27 +185,150 @@ export async function sweepLiveness(
   db: TransactionHandle,
   settings: SettingsSnapshot,
   actor: SweepActor,
-  options: { readonly now?: Date; readonly guards?: GuardRegistry } = {},
+  options: {
+    readonly now?: Date;
+    readonly guards?: GuardRegistry;
+    /**
+     * Report what this pass would do, and write nothing at all.
+     *
+     * Every write in this function is behind this flag — the rung `UPDATE`,
+     * the release, the release event, the resume-attempt increment, the
+     * escalation, and the capability-check upsert. The returned result is
+     * otherwise identical in shape and content to a real pass, so a caller
+     * reads a rehearsal exactly as it reads the thing it is rehearsing.
+     *
+     * Reading stays live: the rows below are read from the database as
+     * normal, so a rehearsal reports on the real current state rather than
+     * on a simulation of it.
+     *
+     * One consequence worth stating because it is easy to expect otherwise.
+     * The escalation check reads a resume-attempt count that a real pass
+     * would have incremented; under a rehearsal nothing is incremented, so
+     * the count is read as it stands and the escalation decision is made on
+     * the incremented value in memory without the write. That keeps the
+     * reported escalations faithful to what a real pass would do.
+     */
+    readonly dryRun?: boolean;
+  } = {},
 ): Promise<LivenessSweepResult> {
   const now = options.now ?? new Date();
   const guards = options.guards ?? guardRegistry;
+  const dryRun = options.dryRun ?? false;
   const staleAfterSeconds = settings.values["liveness.stale_after_seconds"];
   const deadAfterSeconds = settings.values["liveness.dead_after_seconds"];
   const resumeAttemptsBeforeBlocked = settings.values["dispatch.resume_attempts_before_blocked"];
 
+  // The two correlated subqueries are what let this pass ask
+  // `holderHasNeverSignalled` the same question the lazy eviction path asks.
+  // There is deliberately no join to `Session`: it has no foreign key from
+  // `Assignment` (a session may hold a claim without ever registering), so an
+  // inner join would silently drop exactly the holders this exemption is
+  // about, and a left join would say the same thing as this at more width.
   const rows = await db.$queryRawUnsafe<LiveAssignmentRow[]>(
-    `SELECT "id", "itemId", "liveness", "lastActive", "holderType", "holderId", "sessionId"
-     FROM "Assignment"
-     WHERE "releasedAt" IS NULL AND "liveness" IN ('running', 'stalled')`,
+    `SELECT a."id", a."itemId", a."liveness", a."lastActive", a."holderType", a."holderId",
+            a."sessionId", a."claimedAt",
+            (SELECT MAX(t."ts") FROM "ToolCall" t WHERE t."sessionId" = a."sessionId")
+              AS "lastToolCallAt",
+            (SELECT s."hookVersion" FROM "Session" s WHERE s."id" = a."sessionId")
+              AS "holderHookVersion"
+     FROM "Assignment" a
+     WHERE a."releasedAt" IS NULL AND a."liveness" IN ('running', 'stalled')`,
   );
 
   const moves: AssignmentMove[] = [];
   const released: string[] = [];
   const escalated: EscalatedItem[] = [];
+  const exempted: ExemptedHolder[] = [];
 
   for (const row of rows) {
     const quietForSeconds = (now.getTime() - row.lastActive.getTime()) / 1000;
-    const rung = nextLivenessRung({ quietForSeconds, staleAfterSeconds, deadAfterSeconds });
+    let rung = nextLivenessRung({ quietForSeconds, staleAfterSeconds, deadAfterSeconds });
+
+    // ── The exemption, shared with the lazy eviction path ──
+    //
+    // A holder that has emitted no signal at all since claiming, and whose
+    // registration names no hook to emit one with, is not quiet because it
+    // died — it is quiet because that is the only way it was ever going to
+    // be. Its `lastActive` is frozen at `claimedAt` by construction, so
+    // `quietForSeconds` above is measuring the age of the claim and calling
+    // it silence. Reading that as death is reading the absence of a
+    // mechanism as the absence of a session.
+    //
+    // The rule is shared with `judgeEviction`, and has to be. That path can
+    // reach the same holder at contention, and the operator-facing help on
+    // `liveness.evict_after_seconds` states the exemption as the product's
+    // behaviour. This pass runs on a threshold eight times tighter, so if it
+    // answered differently the holder's fate would turn on which route
+    // happened to reach it first — and the tighter route would win, taking
+    // the claim of a session that is quietly working.
+    //
+    // **The exemption caps the rung at `stalled`; it does not hide the
+    // holder.** Two reasons, and the distinction is the whole design:
+    //
+    //   - `dead` is not merely a label here. It is the rung that releases
+    //     the claim, and releasing a live session's claim is the harm — it
+    //     produces two sessions that each believe they own the item, which
+    //     is neither visible nor recoverable. That is the outcome this
+    //     declines.
+    //   - `stalled` is a label and nothing else. Nothing is released, no
+    //     resume attempt is counted, no item is escalated. So the holder is
+    //     still surfaced as quiet to anyone reading the board, which is what
+    //     an operator needs in order to notice a genuinely dead unhooked
+    //     session and reach for `takeover`. Suppressing the move entirely
+    //     would trade a false eviction for an invisible stranded claim.
+    //
+    // What is given up is stated plainly in `claim-eviction.ts`: an unhooked
+    // session that dies inside its first signal-less stretch keeps its claim
+    // until somebody takes it over by hand. That is a bounded, visible,
+    // reversible cost, and it is the same trade the other path already made.
+    // The escape is unchanged: one `heartbeat` call moves `lastActive` off
+    // `claimedAt` and puts the holder back under ordinary judgement forever.
+    // The third condition is not redundant with `holderHasNeverSignalled`,
+    // and the ordinary sweep tests are what demonstrate it: without this
+    // term, rows those tests expect to be reclaimed are exempted instead.
+    // That predicate asks `lastSeen <=
+    // claimedAt`, and its `<=` is deliberately loose — it defends against
+    // the two `@default(now())` columns being filled by separate `now()`
+    // calls within one INSERT, where `lastActive` can land a fraction of a
+    // millisecond *behind* `claimedAt` on a row that is perfectly ordinary.
+    //
+    // That looseness is right for the question it was written to answer, but
+    // it admits a second state that is not the exempt one: a row whose
+    // `lastActive` sits materially *earlier* than its own claim. Such a row
+    // is not a fresh holder that has said nothing — its activity column
+    // holds a value from before the claim existed, which is an inconsistency
+    // rather than silence, and reading it as "never signalled" would hand an
+    // indefinite claim to a row nobody reasoned about. A safety carve-out
+    // that fires on an unconsidered state is how a carve-out becomes a hole.
+    //
+    // So the sweep additionally requires that `lastActive` has not moved
+    // *backwards* from the claim by more than that insert-ordering
+    // allowance. The predicate is left exactly as the eviction path defines
+    // it: this is the sweep declining to widen a shared safety rule to suit
+    // itself, not a disagreement about what the rule means.
+    const lastActiveBehindClaimByMs = row.claimedAt.getTime() - row.lastActive.getTime();
+    const withinInsertOrderingAllowance =
+      lastActiveBehindClaimByMs <= CLAIM_STAMP_ORDERING_ALLOWANCE_MS;
+
+    const exemptFromRelease =
+      rung === "dead" &&
+      row.holderHookVersion === null &&
+      withinInsertOrderingAllowance &&
+      holderHasNeverSignalled({
+        lastActive: row.lastActive,
+        claimedAt: row.claimedAt,
+        lastToolCallAt: row.lastToolCallAt,
+      });
+
+    if (exemptFromRelease) {
+      exempted.push({
+        assignmentId: row.id,
+        itemId: row.itemId,
+        sessionId: row.sessionId,
+        quietForSeconds: Math.round(quietForSeconds),
+      });
+      rung = "stalled";
+    }
 
     // `nextLivenessRung` can only report `running`, `stalled` or `dead` —
     // it is never asked about a row already past `stalled` (the query above
@@ -154,11 +337,13 @@ export async function sweepLiveness(
     // case left standing.
     if (rung === row.liveness) continue;
 
-    await db.$executeRawUnsafe(
-      `UPDATE "Assignment" SET "liveness" = $1::"Liveness" WHERE "id" = $2`,
-      rung,
-      row.id,
-    );
+    if (!dryRun) {
+      await db.$executeRawUnsafe(
+        `UPDATE "Assignment" SET "liveness" = $1::"Liveness" WHERE "id" = $2`,
+        rung,
+        row.id,
+      );
+    }
     moves.push({
       assignmentId: row.id,
       itemId: row.itemId,
@@ -171,28 +356,43 @@ export async function sweepLiveness(
     // Going dead releases the claim (SCHEMA.md §2's ladder: "Stalled ->
     // dead, claim released") and, because that is what makes the item
     // dispatchable again, counts as one resume attempt on the item.
-    await db.$executeRawUnsafe(
-      `UPDATE "Assignment" SET "releasedAt" = $1 WHERE "id" = $2`,
-      now,
-      row.id,
-    );
+    if (!dryRun) {
+      await db.$executeRawUnsafe(
+        `UPDATE "Assignment" SET "releasedAt" = $1 WHERE "id" = $2`,
+        now,
+        row.id,
+      );
+    }
     released.push(row.id);
 
-    await appendEvent(db, {
-      itemId: row.itemId,
-      actor: { actorType: actor.actorType, actorId: actor.actorId },
-      assignmentId: row.id,
-      type: "release",
-      payload: { assignmentId: row.id, role: null, holderId: row.holderId },
-      body: "Released by the liveness sweep: no activity past the dead threshold.",
-    });
+    if (!dryRun) {
+      await appendEvent(db, {
+        itemId: row.itemId,
+        actor: { actorType: actor.actorType, actorId: actor.actorId },
+        assignmentId: row.id,
+        type: "release",
+        payload: { assignmentId: row.id, role: null, holderId: row.holderId },
+        body: "Released by the liveness sweep: no activity past the dead threshold.",
+      });
+    }
 
-    const attemptRows = await db.$queryRawUnsafe<{ resumeAttempts: number; state: string }[]>(
-      `UPDATE "Item" SET "resumeAttempts" = "resumeAttempts" + 1, "updatedAt" = now()
-       WHERE "id" = $1
-       RETURNING "resumeAttempts", "state"`,
-      row.itemId,
-    );
+    // The increment and the read are one statement in a real pass. A
+    // rehearsal cannot use it — `UPDATE ... RETURNING` writes — so it reads
+    // the current row instead and adds the one it would have added, which
+    // is the value the escalation check below must see to stay faithful.
+    // Reading and incrementing separately would be a race in a real pass;
+    // here it is safe precisely because nothing is written.
+    const attemptRows = dryRun
+      ? await db.$queryRawUnsafe<{ resumeAttempts: number; state: string }[]>(
+          `SELECT "resumeAttempts" + 1 AS "resumeAttempts", "state" FROM "Item" WHERE "id" = $1`,
+          row.itemId,
+        )
+      : await db.$queryRawUnsafe<{ resumeAttempts: number; state: string }[]>(
+          `UPDATE "Item" SET "resumeAttempts" = "resumeAttempts" + 1, "updatedAt" = now()
+           WHERE "id" = $1
+           RETURNING "resumeAttempts", "state"`,
+          row.itemId,
+        );
     const itemRow = attemptRows[0];
     if (!itemRow) {
       // The `UPDATE` matched nothing, so this item does not exist. Nothing
@@ -201,20 +401,29 @@ export async function sweepLiveness(
     }
 
     if (itemRow.resumeAttempts >= resumeAttemptsBeforeBlocked && itemRow.state !== "blocked") {
-      await escalateToBlocked(db, {
-        itemId: row.itemId,
-        resumeAttempts: itemRow.resumeAttempts,
-        actor,
-        settings,
-        guards,
-      });
+      if (!dryRun) {
+        await escalateToBlocked(db, {
+          itemId: row.itemId,
+          resumeAttempts: itemRow.resumeAttempts,
+          actor,
+          settings,
+          guards,
+        });
+      }
       escalated.push({ itemId: row.itemId, resumeAttempts: itemRow.resumeAttempts });
     }
   }
 
-  const capabilityChecks = await sweepCapabilityDocuments(db, settings, actor, now);
+  const capabilityChecks = await sweepCapabilityDocuments(
+    db,
+    settings,
+    actor,
+    now,
+    undefined,
+    dryRun,
+  );
 
-  return { checkedAt: now, moves, released, escalated, capabilityChecks };
+  return { checkedAt: now, moves, released, escalated, capabilityChecks, exempted, dryRun };
 }
 
 /**
@@ -310,6 +519,12 @@ export async function sweepCapabilityDocuments(
   actor: SweepActor,
   now: Date,
   fs: CapabilityFsCheck = defaultFsCheck,
+  /**
+   * Resolve the paths and report, but do not record the check. The read
+   * side stays live — a rehearsal that skipped the filesystem entirely
+   * would report a result it had not actually established.
+   */
+  dryRun = false,
 ): Promise<CapabilityCheckOutcome[]> {
   const outcomes: CapabilityCheckOutcome[] = [];
 
@@ -319,6 +534,8 @@ export async function sweepCapabilityDocuments(
 
     const result = await resolveCapabilityResult(path, fs);
     outcomes.push({ key, path, result });
+
+    if (dryRun) continue;
 
     await db.$executeRawUnsafe(
       `INSERT INTO "capability_checks"
