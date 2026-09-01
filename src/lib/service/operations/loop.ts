@@ -54,6 +54,7 @@
 // `tests/loop-fold.test.ts` asserts both halves directly.
 import { z } from "zod";
 import { InvalidInputError } from "../errors";
+import { parseDelegateInput } from "../shape-refusal";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { LOOP_KINDS } from "@/lib/open-loops";
@@ -194,64 +195,98 @@ export const loop = defineOperation({
       case "add":
         return loopAdd.handler(
           ctx,
-          loopAdd.input.parse({
-            itemId: input.itemId,
-            text: input.text,
-            ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
-            ...(input.kind === undefined ? {} : { kind: input.kind }),
-            ...actor,
-          }),
+          parseDelegateInput(
+            loopAdd.name,
+            loopAdd.input,
+            {
+              itemId: input.itemId,
+              text: input.text,
+              ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
+              ...(input.kind === undefined ? {} : { kind: input.kind }),
+              ...actor,
+            },
+            ctx.caller.transport,
+          ),
         );
       case "get":
         return loopGet.handler(
           ctx,
-          loopGet.input.parse({
-            itemId: input.itemId,
-            loopId: input.loopId,
-          }),
+          parseDelegateInput(
+            loopGet.name,
+            loopGet.input,
+            {
+              itemId: input.itemId,
+              loopId: input.loopId,
+            },
+            ctx.caller.transport,
+          ),
         );
       case "list":
         return loopList.handler(
           ctx,
-          loopList.input.parse({
-            itemId: input.itemId,
-            ...(input.includeClosed === undefined ? {} : { includeClosed: input.includeClosed }),
-            ...(input.includeDeleted === undefined ? {} : { includeDeleted: input.includeDeleted }),
-            ...(input.includeNonWork === undefined ? {} : { includeNonWork: input.includeNonWork }),
-            ...(input.limit === undefined ? {} : { limit: input.limit }),
-            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-          }),
+          parseDelegateInput(
+            loopList.name,
+            loopList.input,
+            {
+              itemId: input.itemId,
+              ...(input.includeClosed === undefined ? {} : { includeClosed: input.includeClosed }),
+              ...(input.includeDeleted === undefined
+                ? {}
+                : { includeDeleted: input.includeDeleted }),
+              ...(input.includeNonWork === undefined
+                ? {}
+                : { includeNonWork: input.includeNonWork }),
+              ...(input.limit === undefined ? {} : { limit: input.limit }),
+              ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+            },
+            ctx.caller.transport,
+          ),
         );
       case "edit":
         return loopEdit.handler(
           ctx,
-          loopEdit.input.parse({
-            itemId: input.itemId,
-            loopId: input.loopId,
-            text: input.text,
-            // Absent stays absent. This is the trap the header describes.
-            ...(input.kind === undefined ? {} : { kind: input.kind }),
-            ...actor,
-          }),
+          parseDelegateInput(
+            loopEdit.name,
+            loopEdit.input,
+            {
+              itemId: input.itemId,
+              loopId: input.loopId,
+              text: input.text,
+              // Absent stays absent. This is the trap the header describes.
+              ...(input.kind === undefined ? {} : { kind: input.kind }),
+              ...actor,
+            },
+            ctx.caller.transport,
+          ),
         );
       case "close":
         return loopClose.handler(
           ctx,
-          loopClose.input.parse({
-            itemId: input.itemId,
-            loopId: input.loopId,
-            ...actor,
-          }),
+          parseDelegateInput(
+            loopClose.name,
+            loopClose.input,
+            {
+              itemId: input.itemId,
+              loopId: input.loopId,
+              ...actor,
+            },
+            ctx.caller.transport,
+          ),
         );
       case "delete":
         return loopDelete.handler(
           ctx,
-          loopDelete.input.parse({
-            itemId: input.itemId,
-            loopId: input.loopId,
-            reason: input.reason,
-            ...actor,
-          }),
+          parseDelegateInput(
+            loopDelete.name,
+            loopDelete.input,
+            {
+              itemId: input.itemId,
+              loopId: input.loopId,
+              reason: input.reason,
+              ...actor,
+            },
+            ctx.caller.transport,
+          ),
         );
     }
   },

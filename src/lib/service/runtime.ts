@@ -8,7 +8,9 @@
 // resolves settings, and never touches the database client, so a rule
 // cannot be implemented inside one adapter and missing from another.
 import type { z } from "zod";
-import { toServiceError, InvalidInputError, NotFoundError } from "./errors";
+import { toServiceError, NotFoundError } from "./errors";
+import { invalidInputFromIssues } from "./shape-refusal";
+export type { ShapeFinding } from "./shape-refusal";
 import { faultContext } from "./fault-context";
 // A read whose response will not fit refuses rather than overflowing the
 // caller it was read in (MILESTONES.md #115).
@@ -238,23 +240,11 @@ export class ServiceRuntime {
 
     const parsed = operation.input.safeParse(input);
     if (!parsed.success) {
-      const issues = parsed.error.issues;
-      throw new InvalidInputError(shapeRefusalMessage(operation.name, issues, caller.transport), {
-        // The paths the schema objected to, so an adapter can point at
-        // the fields without re-parsing the message. Deduplicated
-        // because one field can raise several issues, and a caller
-        // reading "title, title, title" learns nothing extra.
-        fields: [
-          ...new Set(issues.map((issue) => issue.path.map((segment) => String(segment)).join("."))),
-        ].filter((path) => path.length > 0),
-        // The findings, structured, so an adapter can render them as a
-        // list rather than an adapter having to split the message back
-        // apart on a separator. `fields` above answers "which fields",
-        // which is a different question from "what was wrong with each" —
-        // a call refused for two unrelated reasons has two entries here
-        // and one line per entry in the message.
-        details: { findings: findingsFrom(issues) },
-      });
+      // The same conversion a facade operation applies to a delegate's
+      // schema (`shape-refusal.ts`). Shared so a caller cannot tell whether
+      // the rule that refused them sat on the tool they called or on the
+      // operation it dispatches to.
+      throw invalidInputFromIssues(operation.name, parsed.error.issues, caller.transport);
     }
 
     // Step 3 — once, here, for the whole call. Not in the operation, not
@@ -339,89 +329,6 @@ export class ServiceRuntime {
       return result;
     }
   }
-}
-
-/** One thing wrong with an input, on its own. */
-export interface ShapeFinding {
-  /** The field path, or `""` for an objection to the input as a whole. */
-  readonly field: string;
-  readonly message: string;
-}
-
-/**
- * Every objection the schema raised, as separate findings.
- *
- * A schema can refuse one call for several unrelated reasons at once, and
- * the reasons are genuinely independent — a value outside an enum and an
- * unrecognised key are two different mistakes that happen to have arrived
- * together. Joining them into one sentence reads as a single confusing
- * complaint, and a caller who fixes the half they understood is refused
- * again on the half they did not. Kept as a list, each is a finding that can
- * be read, and fixed, on its own.
- */
-function findingsFrom(issues: readonly z.ZodIssue[]): readonly ShapeFinding[] {
-  return issues.map((issue) => ({
-    field: issue.path.map((segment) => String(segment)).join("."),
-    message: issue.message,
-  }));
-}
-
-/**
- * The message a caller reads when their input does not match the schema.
- *
- * Two things it does beyond naming the problem, both from MILESTONES.md
- * #111:
- *
- *   - **It numbers multiple faults.** One call really did once fail for two
- *     independent undocumented reasons at once, and the session read one
- *     confusing message instead of two findings. Numbered lines make the
- *     count visible, which is the part that was lost: a caller who can see
- *     there are two problems does not fix one and resubmit.
- *   - **It names the call that would have prevented it.** A caller needs the
- *     contract exactly when a call fails, and that is the moment nothing
- *     otherwise points at it. Worded for the surface the caller is actually
- *     on (`surfaces.ts`) — telling an MCP caller to run a terminal
- *     command is the defect, not the fix.
- *
- * The pointer is appended for every operation, including those declaring no
- * `contract`. A caller who has just been refused cannot know whether the
- * tool they were refused by has conditional rules, so "ask and find there
- * are none" is a cheap answer and "no pointer, work it out" is not.
- */
-function shapeRefusalMessage(
-  operation: string,
-  issues: readonly z.ZodIssue[],
-  transport: string | undefined,
-): string {
-  const findings = findingsFrom(issues);
-  const pointer = invocationWithArgumentFor(
-    "describe_tool",
-    operation,
-    surfaceForTransport(transport),
-  );
-  const head = `Invalid input for ${operation}`;
-  const routing = `Call ${pointer} for the full contract, including the rules the schema cannot state.`;
-
-  if (findings.length === 1) {
-    // A single fault reads worse as a numbered list of one than as a
-    // sentence, and the count is not information when it is one.
-    return `${head}: ${describeFinding(findings[0]!)} ${routing}`;
-  }
-
-  const lines = findings.map((finding, index) => `  ${index + 1}. ${describeFinding(finding)}`);
-  return `${head} — ${findings.length} problems:\n${lines.join("\n")}\n${routing}`;
-}
-
-/**
- * One finding as a line.
- *
- * The field is named ahead of the message because Zod's own text often does
- * not contain it — "Required" and "Unrecognized key" say what is wrong and
- * leave a caller to infer where from a path they cannot see. Prefixing costs
- * a few characters and removes the inference.
- */
-function describeFinding(finding: ShapeFinding): string {
-  return finding.field.length > 0 ? `\`${finding.field}\`: ${finding.message}` : finding.message;
 }
 
 /**

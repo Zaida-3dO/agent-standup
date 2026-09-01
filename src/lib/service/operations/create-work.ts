@@ -43,6 +43,7 @@
 // times to describe one decision.
 import { z } from "zod";
 import { InvalidInputError } from "../errors";
+import { parseDelegateInput } from "../shape-refusal";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import {
@@ -198,13 +199,40 @@ export const createWork = defineOperation({
     // project parent reach the caller unedited.
     const { type, projectId, taskId, ...common } = input;
 
+    // `parseDelegateInput`, not a bare `.parse()`. The delegate schemas
+    // carry two cross-field rules this operation's own schema cannot state
+    // — exactly one of `area`/`areas`, and `originPersonId` when
+    // `originType` is `person` — so they are first applied here, below the
+    // runtime's parse. A bare `.parse()` throws a `ZodError`, which is not a
+    // `ServiceError` and so reaches the caller as `internal` with an empty
+    // `fields`: a mistake they could have fixed, reported as a server fault
+    // and reading as transient. See `shape-refusal.ts` for the full account.
     switch (type) {
       case "project":
-        return createProject.handler(ctx, createProject.input.parse(common));
+        return createProject.handler(
+          ctx,
+          parseDelegateInput(createProject.name, createProject.input, common, ctx.caller.transport),
+        );
       case "task":
-        return createTask.handler(ctx, createTask.input.parse({ ...common, projectId }));
+        return createTask.handler(
+          ctx,
+          parseDelegateInput(
+            createTask.name,
+            createTask.input,
+            { ...common, projectId },
+            ctx.caller.transport,
+          ),
+        );
       case "subtask":
-        return createSubtask.handler(ctx, createSubtask.input.parse({ ...common, taskId }));
+        return createSubtask.handler(
+          ctx,
+          parseDelegateInput(
+            createSubtask.name,
+            createSubtask.input,
+            { ...common, taskId },
+            ctx.caller.transport,
+          ),
+        );
     }
   },
 });
