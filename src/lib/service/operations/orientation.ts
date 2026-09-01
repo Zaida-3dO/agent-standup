@@ -20,7 +20,7 @@ import {
 } from "../items/row";
 import { checkpointHeadline } from "../items/checkpoint-headline";
 import { readSinceBounded, type EventRow } from "../../events";
-import { liveAssignments, type Assignment } from "../../claims";
+import { liveAssignments, type Assignment, type Role } from "../../claims";
 import { countsAsWork, deriveOpenLoops, type OpenLoop } from "../../open-loops";
 import { previewText } from "./loop-reads";
 import { loopEventsFor } from "./loop-shared";
@@ -225,6 +225,61 @@ export interface OrientationOutput {
   };
   /** Live assignments on this item — who is on it and in what role (SCHEMA.md §2). */
   readonly crew: readonly Assignment[];
+  /**
+   * Live holders that have recorded nothing against this item since they
+   * claimed it — a subset of `crew`, by assignment id.
+   *
+   * ── The failure this makes visible ──────────────────────────────────
+   *
+   * A crew that cannot reach the board still builds, still finishes, and
+   * simply leaves no trace. The board then reads as though nothing
+   * happened, which is indistinguishable from a crew that had nothing to
+   * record — and is worse than an obvious error, because nobody goes
+   * looking for notes that were never promised. Any interruption between
+   * a claim and the work produces it: a restart, a network partition, an
+   * endpoint that stops answering mid-run.
+   *
+   * The server can see this without being told. A claim is written by the
+   * dispatcher, so it exists even when the holder never reaches the
+   * service again — while every checkpoint, note and transition writes an
+   * event carrying the writer's assignment or session. A live holder with
+   * no event against this item has therefore left no trace on it.
+   *
+   * Note this is keyed on the **event ledger**, not on `lastActive`: that
+   * column is stamped by `heartbeat` and the telemetry hook and by neither
+   * `checkpoint` nor `note`, so a diligent unhooked crew would be reported
+   * silent by a timestamp comparison while its checkpoints sat in plain
+   * sight.
+   *
+   * **This is a report, not a judgement.** It does not evict, transition
+   * or escalate anything — a session may legitimately be quiet for a
+   * while, and a young claim is entirely ordinary. It turns a silent gap
+   * into a visible one and leaves what to do about it to the reader,
+   * which is the whole difference between a board that looks empty and a
+   * board that says four crews were dispatched and none of them reported.
+   *
+   * Deliberately **not** filtered by an age threshold. A threshold here
+   * would be a second, quieter policy competing with the liveness
+   * settings that already own that question, and would hide exactly the
+   * case worth seeing early. `quietForSeconds` is reported so a caller
+   * can apply its own bar.
+   */
+  readonly silentCrew: readonly SilentCrewMember[];
+}
+
+/**
+ * A live holder that has recorded nothing since it claimed.
+ *
+ * Carries only what identifies the holder and how long it has been quiet;
+ * the full row is already in `crew` under the same `assignmentId`.
+ */
+export interface SilentCrewMember {
+  readonly assignmentId: string;
+  readonly sessionId: string;
+  readonly holderId: string;
+  readonly role: Role;
+  /** Seconds between the claim and the read — how long this holder has been silent. */
+  readonly quietForSeconds: number;
 }
 
 interface RawCheckpointRow {
@@ -442,6 +497,67 @@ export const orientation = defineOperation({
     const crewTruncated = allCrew.length > input.limit;
     const crew = crewTruncated ? allCrew.slice(0, input.limit) : allCrew;
 
+    // Which live holders have written anything to this item's ledger.
+    //
+    // **Keyed on recorded events, deliberately NOT on `lastActive`.** That
+    // column looks like the obvious signal and is the wrong one here: it is
+    // stamped by `heartbeat` and by the hook's telemetry flush, and by
+    // neither `checkpoint` nor `note`. A holder running no hook that
+    // checkpoints diligently therefore leaves `lastActive` frozen at its
+    // claim, and keying on it would report the most conscientious
+    // unhooked crew on the board as having recorded nothing. The question
+    // being asked is "did this holder leave a trace", and the events are
+    // the trace.
+    //
+    // Matched on `assignmentId` OR `sessionId`: an event is attributed to
+    // the assignment when the writer resolved one, and some carry only the
+    // session, so requiring the first would count a real trace as silence.
+    //
+    // **`claim` and `dispatch_claimed` are excluded, and that exclusion is
+    // the crux.** Both are written *about* a holder at the moment it is
+    // given the work, not *by* it — `claimItem` appends a `claim` event
+    // carrying the new assignment and session in the same transaction that
+    // inserts the row. Counting them would mean every holder appeared to
+    // have left a trace the instant it was dispatched, and this field would
+    // be empty forever: it would report exactly nothing while looking like
+    // a working check, which is the same silent-green failure it exists to
+    // expose. What is wanted is a record the holder itself went on to
+    // write.
+    const crewSessionIds = allCrew.map((member) => member.sessionId);
+    const traceRows =
+      allCrew.length === 0
+        ? []
+        : await ctx.db.$queryRawUnsafe<{ assignmentId: string | null; sessionId: string | null }[]>(
+            `SELECT DISTINCT "assignmentId", "sessionId"
+               FROM "Event"
+              WHERE "itemId" = $1
+                AND "type" NOT IN ('claim', 'dispatch_claimed')
+                AND ("assignmentId" = ANY($2::text[]) OR "sessionId" = ANY($3::text[]))`,
+            input.itemId,
+            allCrew.map((member) => member.id),
+            crewSessionIds,
+          );
+    const sawAssignment = new Set(
+      traceRows.map((row) => row.assignmentId).filter((id): id is string => id !== null),
+    );
+    const sawSession = new Set(
+      traceRows.map((row) => row.sessionId).filter((id): id is string => id !== null),
+    );
+
+    // Computed over `allCrew`, not the truncated display copy: a silent
+    // holder that fell off the end of the page is exactly the one a reader
+    // would otherwise never hear about.
+    const readAt = Date.now();
+    const silentCrew: SilentCrewMember[] = allCrew
+      .filter((member) => !sawAssignment.has(member.id) && !sawSession.has(member.sessionId))
+      .map((member) => ({
+        assignmentId: member.id,
+        sessionId: member.sessionId,
+        holderId: member.holderId,
+        role: member.role,
+        quietForSeconds: Math.max(0, Math.round((readAt - member.claimedAt.getTime()) / 1000)),
+      }));
+
     return {
       item,
       checkpoint,
@@ -452,6 +568,7 @@ export const orientation = defineOperation({
       horizon: horizon.toString(),
       openLoops: { notDone, children, loops, loopsTruncated, loopTextTruncated, nonWorkExcluded },
       crew,
+      silentCrew,
     };
   },
 });
