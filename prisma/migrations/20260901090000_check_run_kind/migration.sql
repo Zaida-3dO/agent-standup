@@ -1,0 +1,42 @@
+-- `ArtifactKind`.'check_run' — a reported build status for this item's work.
+--
+-- ── The gap this closes ─────────────────────────────────────────────────
+--
+-- The board already records that an item HAS a pull request: a
+-- `pull_request` artifact carrying its URL. It could not record whether that
+-- pull request was passing. So the one question a crew asks most — measured
+-- as three thousand shell invocations across nine of thirteen sessions,
+-- making it the single most repeated action any crew performs — had no
+-- expression on this surface at all. Every crew left the board, asked a build
+-- service by hand, read the answer, and came back; what it learned was never
+-- written down, so the next session asked again.
+--
+-- ── Reported, not fetched ───────────────────────────────────────────────
+--
+-- This is a row a caller writes, not a value the server resolves. The server
+-- has no clone, no credential, and no field anywhere recording which build
+-- service a repository uses or how that service spells a checks API — the
+-- same three absences that made `pull_request` a recorded URL rather than a
+-- composed one. Resolving a status outbound would additionally hold a read
+-- transaction open across a third party's outage, on the most detailed read
+-- in the product. A reported status cannot hang, needs no secret, and works
+-- for any build service or none.
+--
+-- What it gives up is currency — so currency is measured rather than assumed.
+-- `createdAt` gives the age of the claim, and `commitSha` gives the commit it
+-- was true of, which the existing tip machinery already knows how to compare
+-- against the item's current tip. A build that passed against a superseded
+-- commit is reported as not-at-tip rather than as a pass.
+--
+-- Its own kind rather than a status on the `pull_request` row, for two
+-- reasons. A PR's status and its build's status change independently and at
+-- different rates — a single open PR is rebuilt on every push — so folding
+-- them would force a caller reporting a build to restate the PR's open/closed
+-- state it may not know. And `pull_request.body` is already a two-word status
+-- vocabulary, so a build status has nowhere to live on that row without
+-- breaking append-only rows that cannot be rewritten.
+--
+-- Additive only. No existing row changes meaning and no backfill is
+-- performed: there is no historical row that was recording a build status
+-- under another name, so there is nothing to reinterpret.
+ALTER TYPE "ArtifactKind" ADD VALUE IF NOT EXISTS 'check_run';

@@ -76,6 +76,8 @@ import {
 import { resolveItemId } from "../items/resolve-id";
 import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
 import type { ItemStateValue } from "../state-machine/states";
+import { foldBuildStatus, type BuildStatusView } from "../items/build-status";
+import { currentTipCommitSha, tipCommitLineage } from "../guards/artifact-tip";
 import {
   ALL_ITEM_ASSIGNMENTS_SQL,
   toItemDetailAssignment,
@@ -218,6 +220,29 @@ export interface ItemDetailOutput {
   /** True when the ledger has more entries than were returned — so the view can say so rather than imply completeness. */
   readonly historyTruncated: boolean;
   readonly summary: ItemDetailSummary | null;
+  /**
+   * The build status this item is reporting, or `null` when it has reported
+   * none.
+   *
+   * **Why this read answers it at all.** Asking a build service for a pull
+   * request's status is the single most repeated action a crew performs —
+   * three thousand shell invocations across nine of thirteen measured
+   * sessions — and the board could not answer it, despite already recording
+   * that the item *has* a pull request. So every crew left the board to ask,
+   * and what it learned was never written down, so the next session asked
+   * again. Reporting it here means asking about the item answers the
+   * question, which is the whole of the fix: the fact was already in the
+   * store, it was simply not read back.
+   *
+   * Folded from `artifacts` above rather than queried separately — the rows
+   * are already in hand, at the same instant as everything else in this
+   * payload, so the build status cannot disagree with the commit artifacts
+   * it is judged stale against.
+   *
+   * Carries its own age and its own at-tip fact; see `BuildStatusView`. A
+   * caller must never read the status without reading at least one of them.
+   */
+  readonly buildStatus: BuildStatusView | null;
   /**
    * Who holds this item right now — live assignments (`releasedAt IS NULL`),
    * newest claim first. Empty when nobody does, never absent.
@@ -430,6 +455,24 @@ export const getItemDetail = defineOperation({
       createdAt: row.createdAt.toISOString(),
     }));
 
+    // The build status, folded from the artifact rows already read above.
+    //
+    // The tip is read here rather than derived from `artifactRows` because
+    // the tip is not simply the newest `commit` row: `tipCommitLineage`
+    // walks the `supersedesSha` chain, so a build reported against a commit
+    // that a squash rewrote is still recognised as current. Re-deriving that
+    // walk locally would be a second implementation of the rule the merge
+    // gate decides on, free to drift from it — and the two disagreeing
+    // about what "at tip" means is exactly the confusion this field exists
+    // to remove.
+    //
+    // Both reads are inside the same transaction as everything else in this
+    // payload, so the status and the tip it is judged against are read at
+    // one instant.
+    const tipSha = await currentTipCommitSha(ctx.db, id);
+    const tipLineage = await tipCommitLineage(ctx.db, id);
+    const buildStatus = foldBuildStatus(artifactRows, tipSha, tipLineage, new Date());
+
     // History, newest first and capped. Read one row beyond the cap so
     // "there is more" is a fact rather than an inference from a full page —
     // a page that happens to be exactly `historyLimit` long is genuinely
@@ -506,6 +549,7 @@ export const getItemDetail = defineOperation({
       history,
       historyTruncated,
       summary,
+      buildStatus,
       assignments,
       previousHolders,
     };

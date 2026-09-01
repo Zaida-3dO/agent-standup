@@ -37,6 +37,7 @@ import {
 import type { ServiceFacts } from "@/lib/service/operations/describe-tool";
 import { currentBuildInfo, DEV_VERSION, UNKNOWN_REVISION } from "@/lib/build-info";
 import { OPERATION_NAMES } from "@/lib/service/registry";
+import { CHECK_RUN_STATUSES } from "@/lib/check-runs";
 import { SHIPPED_CHAR_CAP, SHIPPED_MAX, SHIPPED_MIN } from "@/lib/service/summaries/validate";
 import { invocationFor, invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
 import { assessVersion } from "@/lib/sessions";
@@ -138,6 +139,34 @@ describe("describe_tool returns one tool's full contract", () => {
     );
     expect(whatToTest).toBeDefined();
     expect(whatToTest!.rule).toMatch(/user_facing[\s\S]*true/);
+  });
+
+  it("states check_run's required status on record_artifact's contract", async () => {
+    // `kind` is a flat enum, so a caller picking `check_run` sees nothing
+    // saying its `body` is required or what may go in it — the rule lives in
+    // the handler and refuses only after the call. Every other kind carrying
+    // a per-kind requirement declares it here, and a kind that skipped it
+    // would be discoverable only by being refused.
+    //
+    // Fails if the rule is dropped, or if the status vocabulary drifts from
+    // the one the handler enforces — the assertion is derived from
+    // CHECK_RUN_STATUSES, so the contract and the guard cannot disagree
+    // about which words are legal.
+    const contract = await contractFor("record_artifact");
+
+    const rule = contract.rules.find(
+      (entry) => entry.fields.includes("kind") && /check_run/.test(entry.rule),
+    );
+    expect(rule).toBeDefined();
+    // Required, which is the half a caller cannot guess from a nullable field.
+    expect(rule!.rule).toMatch(/REQUIRED/);
+    for (const status of CHECK_RUN_STATUSES) {
+      expect(rule!.rule, status).toContain(status);
+    }
+    // The kind is reachable at all — a rule describing a kind the enum does
+    // not offer would be documentation for something uncallable.
+    const kindField = contract.fields.find((entry) => entry.name === "kind");
+    expect(kindField?.enumValues).toContain("check_run");
   });
 
   it("gives record_artifact.findings a concrete type, an element shape and a worked example", async () => {
