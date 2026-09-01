@@ -480,6 +480,30 @@ enum ArtifactKind {
   // at a review round. A column would hold one URL, lose the previous one
   // when work is re-proposed, and carry neither author nor timestamp.
   pull_request
+  // A reported build status for this item's work — `body` is the status
+  // (`src/lib/check-runs.ts`), `ref` the build's URL, `commitSha` the commit
+  // it ran against.
+  //
+  // Reported by a caller that already has the answer, never fetched by the
+  // server. The server has no clone, no credential, and no field recording
+  // which build service a repository uses — the same three absences that
+  // made `pull_request` a recorded URL rather than a composed one — and an
+  // outbound call would hold a read transaction open across a third party's
+  // outage.
+  //
+  // What that gives up is currency, so currency is MEASURED rather than
+  // assumed: `createdAt` gives the age of the claim and `commitSha` gives
+  // the commit it was true of, which the tip machinery already compares
+  // against the item's current tip. A build that passed against a superseded
+  // commit reads as not-at-tip, not as a pass.
+  //
+  // Its own kind rather than a status on the `pull_request` row: a PR's
+  // open/closed state and its build's state change independently and at
+  // different rates (one open PR is rebuilt on every push), so folding them
+  // would force a caller reporting a build to restate a PR state it may not
+  // know — and `pull_request.body` is already a two-word vocabulary with no
+  // room for a second one on rows that are append-only.
+  check_run
   screenshot
   // A named, reasoned decision to merge WITHOUT the approving review the
   // gate would otherwise require (SCHEMA.md §6c). Its own kind, for the

@@ -36,6 +36,7 @@ import {
   parseFindings,
 } from "@/lib/findings";
 import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib/pull-requests";
+import { CHECK_RUN_STATUSES, isCheckRunStatus } from "@/lib/check-runs";
 import { currentReviewRound } from "../guards/merge-review-round";
 import { MERGE_APPROVAL_KIND } from "../guards/merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH } from "../guards/merge-override";
@@ -56,6 +57,7 @@ const ARTIFACT_KINDS = [
   "commit",
   "historical_verification",
   "pull_request",
+  "check_run",
   "screenshot",
   "merge_override",
   "merge_approval",
@@ -156,16 +158,20 @@ const inputSchema = z
      */
     supersedesSha: z.string().trim().min(1).nullable().optional(),
     /**
-     * Prose on nine kinds — and a status enum on the tenth.
+     * Prose on most kinds — and a status enum on two of them.
      *
      * **On `pull_request`, `body` is the PR's status and must be one of
-     * `open` or `closed`**, not a description of the change. The guard that
-     * enforces it is good and stays; what was missing is that the constraint
-     * was discoverable only by violating it. One field shared across ten
-     * kinds, free text for nine of them, and nothing at the call site said
-     * which one was different — so a caller reading the schema could not
-     * see it, and a `body` that happened to read `"open"` for the wrong
-     * reason would have been accepted and meant something unintended.
+     * `open` or `closed`**, not a description of the change. **On
+     * `check_run` it is the build's status** — one of `passing`, `failing`,
+     * `pending`, `error` — and unlike the PR case it is **required**, since
+     * a build row that will not say how the build went records nothing.
+     * The guards that enforce both are good and stay; what was missing is
+     * that the constraint was discoverable only by violating it. One field
+     * shared across every kind, free text for most of them, and nothing at
+     * the call site said which were different — so a caller reading the
+     * schema could not see it, and a `body` that happened to read `"open"`
+     * for the wrong reason would have been accepted and meant something
+     * unintended.
      *
      * A separate `status` field would be cleaner and is deliberately not
      * what was built: `body` already carries the status on existing
@@ -181,9 +187,11 @@ const inputSchema = z
       .nullable()
       .optional()
       .describe(
-        "Free text on every artifact kind EXCEPT `pull_request`, where it is the PR's " +
-          `status and must be one of: ${PULL_REQUEST_STATUSES.join(", ")}. Record a PR that ` +
-          "has closed as a new pull_request artifact rather than editing the one that opened it.",
+        "Free text on every artifact kind EXCEPT `pull_request` and `check_run`, where it is a " +
+          `status. On pull_request it must be one of: ${PULL_REQUEST_STATUSES.join(", ")} — ` +
+          "record a PR that has closed as a new pull_request artifact rather than editing the " +
+          `one that opened it. On check_run it is REQUIRED and must be one of: ${CHECK_RUN_STATUSES.join(", ")} ` +
+          "— record a build whose status changed as a new check_run artifact.",
       ),
     ref: z.string().trim().min(1).nullable().optional(),
     /** Which browser session a visual review ran in (§6) — an opaque string to the core. */
@@ -575,6 +583,58 @@ export const recordArtifact = defineOperation({
             "Record a PR that has closed as a NEW pull_request row with status `closed` — artifacts " +
             "are append-only, so the row that opened it is never edited.",
           { fields: ["body"] },
+        );
+      }
+    }
+
+    // A `check_run` records a build's outcome, and `body` is that outcome.
+    //
+    // **Required, not defaulted, and this is the one place it differs from
+    // `pull_request` on purpose.** A PR recorded with no status defaults to
+    // `open`, because recording a PR is something a caller does at the
+    // moment it opens one, so the ordinary call means `open` and a default
+    // saves every caller a word. A build has no such ordinary case: a caller
+    // recording one is equally likely to be reporting a pass, a failure or a
+    // build still running, and there is no direction in which being wrong is
+    // cheap. A `check_run` with no status would be a row saying a build
+    // happened and refusing to say how it went — which is the state this
+    // kind exists to end, recorded under its own name.
+    //
+    // Refused rather than coerced, for the reason the PR guard gives: the
+    // read path reports an unrecognised status as unknown, so a caller
+    // writing `"green"` or `"success"` from a forge's own vocabulary would
+    // otherwise get a row that reads as nothing at all, silently, having
+    // been told the write succeeded.
+    if (input.kind === "check_run") {
+      if (input.body == null || !isCheckRunStatus(input.body.trim())) {
+        throw new InvalidInputError(
+          "A check_run artifact's `body` records the build's status and must be one of: " +
+            `${CHECK_RUN_STATUSES.join(", ")}. Record a build whose status has changed as a NEW ` +
+            "check_run row — artifacts are append-only, so the row that reported it running is " +
+            "never edited. Record `commitSha` too where it is known: a build is only evidence " +
+            "about the commit it ran against, and a status with no commit cannot be reported as " +
+            "current or superseded.",
+          { fields: ["body"] },
+        );
+      }
+      // `ref` is optional here where it is required on a `pull_request`, and
+      // the asymmetry is deliberate. A PR artifact exists to BE a link —
+      // with no URL it carries nothing, which is why that guard refuses one.
+      // A `check_run` carries the status, which is the whole answer on its
+      // own; the URL is a convenience for a reader who wants the log. So a
+      // build reported from a context that has no URL to hand — a local run,
+      // a script reading an exit code — is a legitimate call, and refusing
+      // it would push exactly those callers back to not recording anything.
+      //
+      // When a URL *is* supplied it is held to the same standard as a PR's,
+      // because it reaches a reader the same way: rendered as a link by
+      // whatever displays the item.
+      if (input.ref != null && !isLinkableUrl(input.ref)) {
+        throw new InvalidInputError(
+          "A check_run artifact's `ref` must be an http(s) URL — it is rendered as a link to the " +
+            "build, so anything else is either unclickable or an injection into whatever displays " +
+            "the item. Omit it entirely if there is no build URL to record.",
+          { fields: ["ref"] },
         );
       }
     }
