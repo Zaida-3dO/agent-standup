@@ -67,6 +67,38 @@ export function invokesGitSubcommand(statement: string, subcommand: string): boo
 }
 
 /**
+ * Whether a statement constrains git to a fast-forward, so it cannot create
+ * a merge commit.
+ *
+ * **Reads the flags in order, and lets the last one win**, because that is
+ * what git itself does: `--no-ff` after `--ff-only` leaves the command able
+ * to build a real merge, and a check that simply asked "does `--ff-only`
+ * appear anywhere" would wave exactly that through. This is the widening
+ * mistake worth guarding against, so it is written as a fold over the flags
+ * rather than as a `.includes`.
+ *
+ * `--ff` is not treated as re-permitting anything: it is git's default
+ * (fast-forward *when possible*, merge otherwise), so it leaves the command
+ * able to merge and therefore leaves the answer `false`.
+ *
+ * Under-matches like everything else in this module — an unrecognised flag
+ * spelling produces `false`, which means the command stays *recognised* as a
+ * merge attempt. A missed exclusion costs one spurious block; a wrong
+ * exclusion lets an unreviewed merge through, and those are not symmetric.
+ */
+export function allowsOnlyFastForward(statement: string): boolean {
+  let fastForwardOnly = false;
+  for (const token of statement.trim().split(/\s+/)) {
+    if (token === "--ff-only") fastForwardOnly = true;
+    // Both re-permit a merge commit: `--no-ff` forces one, and `--ff` is
+    // merely git's default, which falls back to a merge when the update is
+    // not a fast-forward.
+    else if (token === "--no-ff" || token === "--ff") fastForwardOnly = false;
+  }
+  return fastForwardOnly;
+}
+
+/**
  * Whether a command would merge or fast-forward something into the branch
  * that is checked out — I10's recognition half.
  *
@@ -110,38 +142,6 @@ export function invokesGitSubcommand(statement: string, subcommand: string): boo
  * and any other combination that re-permits a true merge — see
  * `allowsOnlyFastForward`.
  */
-/**
- * Whether a statement constrains git to a fast-forward, so it cannot create
- * a merge commit.
- *
- * **Reads the flags in order, and lets the last one win**, because that is
- * what git itself does: `--no-ff` after `--ff-only` leaves the command able
- * to build a real merge, and a check that simply asked "does `--ff-only`
- * appear anywhere" would wave exactly that through. This is the widening
- * mistake worth guarding against, so it is written as a fold over the flags
- * rather than as a `.includes`.
- *
- * `--ff` is not treated as re-permitting anything: it is git's default
- * (fast-forward *when possible*, merge otherwise), so it leaves the command
- * able to merge and therefore leaves the answer `false`.
- *
- * Under-matches like everything else in this module — an unrecognised flag
- * spelling produces `false`, which means the command stays *recognised* as a
- * merge attempt. A missed exclusion costs one spurious block; a wrong
- * exclusion lets an unreviewed merge through, and those are not symmetric.
- */
-export function allowsOnlyFastForward(statement: string): boolean {
-  let fastForwardOnly = false;
-  for (const token of statement.trim().split(/\s+/)) {
-    if (token === "--ff-only") fastForwardOnly = true;
-    // Both re-permit a merge commit: `--no-ff` forces one, and `--ff` is
-    // merely git's default, which falls back to a merge when the update is
-    // not a fast-forward.
-    else if (token === "--no-ff" || token === "--ff") fastForwardOnly = false;
-  }
-  return fastForwardOnly;
-}
-
 export function isMergeAttempt(command: string): boolean {
   return splitStatements(command).some((statement) => {
     const trimmed = statement.trim();
