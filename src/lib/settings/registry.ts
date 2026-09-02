@@ -572,6 +572,36 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  // The one thing that keeps the approved-but-unmerged finding worth
+  // reading. An approval recorded seconds ago is not stalled work — it is
+  // work in progress, and the session that just recorded it is the least
+  // likely party in the system to have forgotten it. Firing there would put
+  // a line on the response of the very call that was doing the right thing,
+  // and a signal that fires on everything is worse than none because
+  // readers learn to skip it.
+  //
+  // Half an hour by default, chosen against the failure it was drawn from
+  // rather than as a round number: the two field reports that produced this
+  // both describe reviewed work sitting for **over an hour** while the
+  // session moved on to the next thing. Thirty minutes is comfortably
+  // inside that and comfortably outside the few minutes a merge legitimately
+  // takes — recording the approval, pushing, waiting for checks.
+  "interventions.approved_unmerged_after_seconds": define({
+    schema: z.number().int().positive(),
+    default: 1800,
+    label: "Approved and unmerged after",
+    help: "How long an approving review may sit on an unmerged item before `my_work` says so. Measured from when the newest approving review artifact was recorded, not from the claim — a review artifact is stamped by the write itself, whereas `last_active` moves only for a session flushing telemetry while holding a claim. Counts every approving verdict, `lgtm_with_nits` and `lgtm_with_followups` included, because both are approvals. A large value means reviewed work can sit unmerged without anything remarking on it.",
+    // `Telemetry`, not `Liveness`, because the registry files every
+    // `interventions.` key there and the prefix invariant enforces it. The
+    // grouping is the honest one anyway: the liveness keys govern the sweep
+    // that reclaims dead claims, and this governs a finding a session reads.
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "shape.repeat_threshold": define({
     schema: z.number().int().positive(),
     default: 3,
