@@ -174,6 +174,119 @@ describeIfDb("the folded loop and create_work tools, against Postgres", () => {
       });
       expect(listed.loops.map((l) => l.loopId)).not.toContain(added.loopId);
     });
+
+    // ── Row fa83f2b9-3ce6-4e89-a930-aaf949720f8e ──────────────────────────
+    //
+    // The defect was a *successful* call that lost data: `reason` is on the
+    // shared schema for `delete`, so a close that supplied one was parsed,
+    // dropped by the branch, and answered with a success. Asserting the call
+    // succeeds would therefore have passed against the bug — so this reads
+    // the value back through a separate call, which is the only assertion
+    // that can tell "kept" from "accepted and discarded".
+    it("keeps the reason a loop was closed with, and reports it back", async () => {
+      const itemId = await seedItem();
+      const added = await call<{ loopId: string }>("loop", {
+        action: "add",
+        itemId,
+        text: "a loose end that will be resolved",
+      });
+
+      await call("loop", {
+        action: "close",
+        itemId,
+        loopId: added.loopId,
+        reason: "resolved by the capture-path fix, which made the retry unnecessary",
+      });
+
+      const afterClose = await call<LoopGetOutput>("loop", {
+        action: "get",
+        itemId,
+        loopId: added.loopId,
+      });
+      expect(afterClose.status).toBe("closed");
+      // Breaks if the `close` branch of the fold stops forwarding `reason`
+      // (the original defect), if `loop_close` stops writing it into the
+      // event payload, or if `deriveLoops` stops reading it back onto
+      // `closedReason`. Any one of those three returns null here.
+      expect(afterClose.closedReason).toBe(
+        "resolved by the capture-path fix, which made the retry unnecessary",
+      );
+    });
+
+    // The other half: a reason is genuinely optional on close, unlike on
+    // delete. Breaks if `reason` is made required on `loop_close`'s schema,
+    // or if the fold starts writing an empty string rather than omitting the
+    // key — a closed loop with no reason must read as "none was given".
+    it("closes without a reason, and reports none rather than failing", async () => {
+      const itemId = await seedItem();
+      const added = await call<{ loopId: string }>("loop", {
+        action: "add",
+        itemId,
+        text: "a loose end closed without explanation",
+      });
+
+      await call("loop", { action: "close", itemId, loopId: added.loopId });
+
+      const afterClose = await call<LoopGetOutput>("loop", {
+        action: "get",
+        itemId,
+        loopId: added.loopId,
+      });
+      expect(afterClose.status).toBe("closed");
+      expect(afterClose.closedReason).toBeNull();
+    });
+
+    // The asymmetry that made the original defect invisible: `delete` kept
+    // its reason, so a caller reasonably assumed `close` did too. Both are
+    // pinned in one test so the pair cannot drift back apart.
+    //
+    // Breaks if `deriveLoops` writes the closing reason into `deletedReason`
+    // or vice versa — a mix-up that a test reading only one of them cannot
+    // see.
+    it("keeps the two reasons apart: a closure is not a retraction", async () => {
+      const itemId = await seedItem();
+      const closed = await call<{ loopId: string }>("loop", {
+        action: "add",
+        itemId,
+        text: "a loose end that gets closed",
+      });
+      await call("loop", {
+        action: "close",
+        itemId,
+        loopId: closed.loopId,
+        reason: "finished the migration this was waiting on",
+      });
+
+      const closedLoop = await call<LoopGetOutput>("loop", {
+        action: "get",
+        itemId,
+        loopId: closed.loopId,
+      });
+      expect(closedLoop.closedReason).toBe("finished the migration this was waiting on");
+      expect(closedLoop.deletedReason).toBeNull();
+
+      const retracted = await call<{ loopId: string }>("loop", {
+        action: "add",
+        itemId,
+        text: "a loose end that should never have existed",
+      });
+      await call("loop", {
+        action: "delete",
+        itemId,
+        loopId: retracted.loopId,
+        reason: "a duplicate of the loop recorded moments earlier by mistake",
+      });
+
+      const retractedLoop = await call<LoopGetOutput>("loop", {
+        action: "get",
+        itemId,
+        loopId: retracted.loopId,
+      });
+      expect(retractedLoop.deletedReason).toBe(
+        "a duplicate of the loop recorded moments earlier by mistake",
+      );
+      expect(retractedLoop.closedReason).toBeNull();
+    });
   });
 
   describe("loop — the kind asymmetry between add and edit", () => {

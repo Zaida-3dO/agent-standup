@@ -88,11 +88,22 @@ export function parseOpenLoopPayload(payload: unknown): { loopId: string; text: 
 }
 
 /**
- * Validates the payload of an `open_loop_closed` event: `{ loopId }`. The
- * text is not repeated — the open event already carries it, and a second
- * copy is a second thing that can disagree.
+ * Validates the payload of an `open_loop_closed` event: `{ loopId }`, with
+ * an optional `reason`. The text is not repeated — the open event already
+ * carries it, and a second copy is a second thing that can disagree.
+ *
+ * The reason is optional on both the read and the write path, which is the
+ * one way it differs from `open_loop_deleted`'s: a retraction has to say why
+ * a loop should never have existed, because that sentence is what makes the
+ * retraction reviewable. A closure needs no such defence — "this is done" is
+ * the ordinary case and demanding prose for it would tax the commonest call
+ * on the tool. So a reason here is something a caller *may* say, and this
+ * parser reads every loop closed before the field existed as `null`.
  */
-export function parseOpenLoopClosedPayload(payload: unknown): { loopId: string } {
+export function parseOpenLoopClosedPayload(payload: unknown): {
+  loopId: string;
+  reason: string | null;
+} {
   if (!isRecord(payload)) {
     throw new InvalidOpenLoopPayloadError("must be an object");
   }
@@ -100,7 +111,8 @@ export function parseOpenLoopClosedPayload(payload: unknown): { loopId: string }
   if (typeof loopId !== "string" || loopId.trim() === "") {
     throw new InvalidOpenLoopPayloadError("loopId is required and must be a non-empty string");
   }
-  return { loopId };
+  const reason = payload.reason;
+  return { loopId, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null };
 }
 
 function toIso(ts: Date | string): string {
@@ -288,6 +300,14 @@ export interface DerivedLoop {
   readonly editedAt: string | null;
   /** ISO timestamp of the `open_loop_closed`, or null while open. */
   readonly closedAt: string | null;
+  /**
+   * Why it was closed, where the closing event recorded one.
+   *
+   * Null for a loop closed without a reason, which is both the ordinary case
+   * and every loop closed before the field existed — so an absent reason
+   * means "none was given", never "none was kept".
+   */
+  readonly closedReason: string | null;
   /** ISO timestamp of the `open_loop_deleted`, or null when not deleted. */
   readonly deletedAt: string | null;
   /** Why it was deleted, where the deleting event recorded one. */
@@ -365,7 +385,7 @@ function loopIdOf(event: LoopEventLike): string | null {
  * unreadable.
  */
 export function deriveLoops(events: readonly LoopEventLike[]): DerivedLoop[] {
-  const closedAt = new Map<string, string>();
+  const closedAt = new Map<string, { ts: string; reason: string | null }>();
   const deleted = new Map<string, { ts: string; reason: string | null }>();
   /** loopId -> the newest edit that supplied TEXT, by event id. */
   const edits = new Map<string, { id: bigint; text: string; ts: string }>();
@@ -391,8 +411,18 @@ export function deriveLoops(events: readonly LoopEventLike[]): DerivedLoop[] {
     const loopId = loopIdOf(event);
     if (loopId === null) continue;
     if (event.type === "open_loop_closed") {
-      // First close wins: a loop closed twice closed when it first closed.
-      if (!closedAt.has(loopId)) closedAt.set(loopId, toIso(event.ts));
+      // First close wins: a loop closed twice closed when it first closed —
+      // and it keeps the reason given at that first close for the same
+      // reason, so the timestamp and the explanation always describe the
+      // same event rather than being assembled from two different ones.
+      if (!closedAt.has(loopId)) {
+        const payload = event.payload as Record<string, unknown>;
+        const reason = payload.reason;
+        closedAt.set(loopId, {
+          ts: toIso(event.ts),
+          reason: typeof reason === "string" && reason.trim() !== "" ? reason : null,
+        });
+      }
     } else if (event.type === "open_loop_deleted") {
       if (!deleted.has(loopId)) {
         const payload = event.payload as Record<string, unknown>;
@@ -460,7 +490,8 @@ export function deriveLoops(events: readonly LoopEventLike[]): DerivedLoop[] {
       status,
       openedAt: toIso(event.ts),
       editedAt: edit?.ts ?? null,
-      closedAt: closed,
+      closedAt: closed?.ts ?? null,
+      closedReason: closed?.reason ?? null,
       deletedAt: gone?.ts ?? null,
       deletedReason: gone?.reason ?? null,
       eventId: String(event.id),

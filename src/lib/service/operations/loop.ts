@@ -51,7 +51,31 @@
 // is applied *only* on the `add` path, by the operation that owns it —
 // `loopAdd`'s own schema still carries `.default(DEFAULT_LOOP_KIND)` and
 // still applies it, because an absent `kind` is forwarded to it as absent.
-// `tests/loop-fold.test.ts` asserts both halves directly.
+// `tests/tool-folds.test.ts` asserts both halves directly.
+//
+// ── The hazard a fold creates: a field accepted by one action, sent to ──
+// ── another, and dropped on the floor ──────────────────────────────────
+//
+// Row fa83f2b9-3ce6-4e89-a930-aaf949720f8e. Because six verbs share one
+// schema, that schema is the **union** of their fields — so every action
+// accepts every field, and only the branch below decides which ones travel.
+// A field a branch forgets to forward is not refused: it is parsed,
+// validated, and silently discarded, and the caller is told the call
+// succeeded.
+//
+// That is exactly what happened to `reason` on `close`. It was on the schema
+// for `delete`, so a caller closing a loop with an explanation got a success
+// and no explanation stored — and `delete` keeping its reason made the
+// asymmetry invisible, because the obvious inference from one sibling
+// working is that the other does too. A crew writing a retraction as a
+// closure reason nearly shipped an explanation nobody could ever read.
+//
+// **So the rule for this switch is: a field this schema accepts must either
+// be forwarded by the branch, or be inert by a stated design.** The inert
+// ones are the `list` filters and they are documented as such on the schema.
+// Anything else that arrives and goes nowhere is the defect above, and it is
+// the kind that reports success. `tests/tool-folds.test.ts` pins the close
+// reason end to end — written, read back, and surviving the fold.
 import { z } from "zod";
 import { InvalidInputError } from "../errors";
 import { parseDelegateInput } from "../shape-refusal";
@@ -107,7 +131,18 @@ const inputSchema = z
      * this module's header.
      */
     kind: z.enum(LOOP_KINDS).optional(),
-    /** Why the loop should never have existed — `delete` only, and it is required there. */
+    /**
+     * Why the loop is being retired.
+     *
+     * Used by **both** terminal actions, and it means a different thing in
+     * each: on `delete` it is why the loop should never have existed and is
+     * required; on `close` it is how the loose end was resolved and is
+     * optional. Either way it is kept — a closed loop reports it as
+     * `closedReason`, a deleted one as `deletedReason`.
+     *
+     * Every other action ignores it. See this module's header for why that
+     * is stated rather than enforced.
+     */
     reason: z.string().trim().min(1).optional(),
     /** `list` filters, ignored by every other action. */
     includeClosed: z.boolean().optional(),
@@ -154,7 +189,7 @@ export const loop = defineOperation({
   name: "loop",
   kind: "write",
   summary:
-    "Works with the loose ends on an item — say which with action. add records one (kind defaults to work; pass note for a reference that is not work outstanding, or blocked_on_person for something waiting on a human). list and get read them. edit rewords one — omitting kind there LEAVES THE KIND ALONE rather than resetting it to work. close resolves a real loose end; delete retracts one that should never have existed and needs a reason.",
+    "Works with the loose ends on an item — say which with action. add records one (kind defaults to work; pass note for a reference that is not work outstanding, or blocked_on_person for something waiting on a human). list and get read them. edit rewords one — omitting kind there LEAVES THE KIND ALONE rather than resetting it to work. close resolves a real loose end and takes an optional reason saying how; delete retracts one that should never have existed and requires a reason. Both reasons are kept and reported back.",
   contract: {
     rules: [
       {
@@ -167,7 +202,7 @@ export const loop = defineOperation({
       },
       {
         fields: ["reason"],
-        rule: "delete needs a reason of at least 20 characters that does not describe a resolution — a loose end that was real and has been dealt with is closed with action close, not deleted.",
+        rule: "delete needs a reason of at least 20 characters that does not describe a resolution — a loose end that was real and has been dealt with is closed with action close, not deleted. close accepts one too, optionally, saying how it was resolved. Both are kept: a closed loop reports `closedReason` and a deleted one `deletedReason`. Every other action ignores `reason`.",
       },
     ],
   },
@@ -268,6 +303,11 @@ export const loop = defineOperation({
             {
               itemId: input.itemId,
               loopId: input.loopId,
+              // Row fa83f2b9-3ce6-4e89-a930-aaf949720f8e: this was the one
+              // field the fold accepted and then dropped. `reason` is on the
+              // shared schema for `delete`, so a close that supplied one was
+              // parsed, forwarded nowhere, and answered with a success.
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
               ...actor,
             },
             ctx.caller.transport,

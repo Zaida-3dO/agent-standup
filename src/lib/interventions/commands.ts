@@ -84,7 +84,64 @@ export function invokesGitSubcommand(statement: string, subcommand: string): boo
  * `git merge-tree`, which compute and write nothing. Each is a distinct
  * token, so each is excluded by name rather than by a pattern that might
  * one day exclude something else.
+ *
+ * ── `--ff-only`, and why it is not a merge ──────────────────────────────
+ *
+ * Row f296b059-e867-456f-af2a-d11af92a34c4. `git pull --ff-only` was read
+ * as a merge, and it is the command every session runs to catch up before
+ * it starts work — so the one false positive here was met constantly, and
+ * its message ("no approving review at its current tip commit") sent the
+ * reader to look at reviews, which is the wrong place. The session that
+ * isolated it spent six attempts and five wrong theories, and only found it
+ * by accident, when a command that merely returned to the trunk and updated
+ * it produced the identical refusal.
+ *
+ * `--ff-only` is excluded because of what git does with it, not because it
+ * is common: git **refuses and exits non-zero** unless the update is a
+ * fast-forward. A fast-forward moves the branch pointer to a commit that
+ * already has the current tip as an ancestor — it writes no merge commit
+ * and it introduces no history that was not already on the remote. There is
+ * nothing for a review-at-tip check to be protecting.
+ *
+ * The narrowing is exactly that flag, on `pull` and on `merge` alike. A
+ * bare `git pull` still counts: without `--ff-only` git will happily build
+ * a merge commit out of divergent history, which is precisely the unapproved
+ * merge this entry exists to catch. So does `git pull --ff-only --no-ff`
+ * and any other combination that re-permits a true merge — see
+ * `allowsOnlyFastForward`.
  */
+/**
+ * Whether a statement constrains git to a fast-forward, so it cannot create
+ * a merge commit.
+ *
+ * **Reads the flags in order, and lets the last one win**, because that is
+ * what git itself does: `--no-ff` after `--ff-only` leaves the command able
+ * to build a real merge, and a check that simply asked "does `--ff-only`
+ * appear anywhere" would wave exactly that through. This is the widening
+ * mistake worth guarding against, so it is written as a fold over the flags
+ * rather than as a `.includes`.
+ *
+ * `--ff` is not treated as re-permitting anything: it is git's default
+ * (fast-forward *when possible*, merge otherwise), so it leaves the command
+ * able to merge and therefore leaves the answer `false`.
+ *
+ * Under-matches like everything else in this module — an unrecognised flag
+ * spelling produces `false`, which means the command stays *recognised* as a
+ * merge attempt. A missed exclusion costs one spurious block; a wrong
+ * exclusion lets an unreviewed merge through, and those are not symmetric.
+ */
+export function allowsOnlyFastForward(statement: string): boolean {
+  let fastForwardOnly = false;
+  for (const token of statement.trim().split(/\s+/)) {
+    if (token === "--ff-only") fastForwardOnly = true;
+    // Both re-permit a merge commit: `--no-ff` forces one, and `--ff` is
+    // merely git's default, which falls back to a merge when the update is
+    // not a fast-forward.
+    else if (token === "--no-ff" || token === "--ff") fastForwardOnly = false;
+  }
+  return fastForwardOnly;
+}
+
 export function isMergeAttempt(command: string): boolean {
   return splitStatements(command).some((statement) => {
     const trimmed = statement.trim();
@@ -94,10 +151,20 @@ export function isMergeAttempt(command: string): boolean {
       // introduces a commit that has not been reviewed, so blocking them
       // would refuse the cleanup after a block rather than the merge.
       if (/\s--(abort|continue|quit)\b/.test(trimmed)) return false;
+      // Constrained to a fast-forward, so it can only advance the pointer to
+      // a descendant — it cannot write a merge commit, and git aborts rather
+      // than merging if the update is not a fast-forward.
+      if (allowsOnlyFastForward(trimmed)) return false;
       return true;
     }
 
-    if (invokesGitSubcommand(trimmed, "pull")) return true;
+    if (invokesGitSubcommand(trimmed, "pull")) {
+      // The false positive from row f296b059: catching up a tracking branch
+      // to a remote it already agrees with introduces no unreviewed work.
+      // A bare `git pull` still counts — see this function's header.
+      if (allowsOnlyFastForward(trimmed)) return false;
+      return true;
+    }
 
     // `gh pr merge`. Matched on the pair rather than on `gh` alone, so
     // `gh pr view` and `gh pr checks` — the two things a session watching
