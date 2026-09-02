@@ -34,6 +34,12 @@ import {
   type RawItemRow,
 } from "../items/row";
 import type { HolderType, Liveness, Role } from "../../claims";
+import {
+  APPROVING_VERDICT_VALUES,
+  findStalledWork,
+  type ApprovalFacts,
+  type StalledWorkFinding,
+} from "./stalled-work";
 
 const inputSchema = z
   .object({
@@ -110,6 +116,41 @@ export interface MyWorkOutput {
    * nothing has made no claim to contradict.
    */
   readonly declaredHookSilent: boolean;
+  /**
+   * Work this session holds that was approved and never merged.
+   *
+   * **The board records state transitions faithfully and never notices that
+   * a state has stopped changing.** Those are different capabilities and
+   * only the second one carries work to merge; this field is the second
+   * one, for the single situation this schema can answer without guessing.
+   * See `./stalled-work.ts` for why this predicate and not the three
+   * neighbouring ones in `docs/plans/INTERVENTIONS.md`.
+   *
+   * **Here rather than on the board read**, and the distinction is not
+   * arbitrary. `86a0930` declined to put `get_stale_candidates`' citation
+   * signal on `get_board`, for two reasons: a cross-row text scan "cannot
+   * back a filter that provably agrees with its marking", and it "would put
+   * an unbounded scan on the hottest read in the product". Neither applies
+   * here, but the second is worth being explicit about: this read is
+   * already scoped by `WHERE a."sessionId" = $1 AND a."releasedAt" IS
+   * NULL`, so the lookup is bounded by **what one session holds** rather
+   * than by the size of the board. `my_work` is also the read that already
+   * answers "what do I hold", which makes "and which of it is waiting on
+   * me" the same question one clause further on.
+   *
+   * **Empty is the ordinary answer**, and keeping it that way is the whole
+   * design. An approval younger than
+   * `interventions.approved_unmerged_after_seconds` produces nothing, a
+   * session holding unreviewed work produces nothing, and a merged item
+   * produces nothing. A signal that fires on everything is worse than no
+   * signal, because a reader learns to skip it.
+   *
+   * **It is a report, not a judgement** — the posture `orientation`'s
+   * `silentCrew` and `get_stale_candidates` both take deliberately. Nothing
+   * here transitions, merges, evicts or escalates anything; it states a
+   * fact and a duration and leaves the decision to the reader.
+   */
+  readonly stalledWork: readonly StalledWorkFinding[];
 }
 
 interface RawSessionAssignmentRow extends RawItemRow {
@@ -238,6 +279,54 @@ export const myWork = defineOperation({
       },
     }));
 
-    return { sessionId: input.sessionId, items, hooked, declaredHookSilent };
+    // A third statement, and like the second it answers a question the
+    // join above cannot: "which of these did a reviewer already approve,
+    // and when". It is skipped entirely when the session holds nothing —
+    // there is no item to have been approved, so the query would be a
+    // round trip guaranteed to return no rows.
+    //
+    // **Bounded by the ids already in hand**, never by a scan of `Item` or
+    // `Artifact`: `WHERE a."itemId" = ANY($1)` over the exact list this
+    // session holds, which is what keeps the cost proportional to one
+    // session's work rather than to the board. It reads the
+    // `[itemId, kind, reviewRound]` index on its leading column.
+    //
+    // `MAX("createdAt")` per item rather than every approving row, because
+    // the finding needs one fact — how long the newest approval has waited.
+    // Re-review is normal and a second approving round is *newer*
+    // evidence, so taking the max is what makes a re-approved item read as
+    // freshly approved rather than as having waited since round one.
+    const approvalRows =
+      rows.length === 0
+        ? []
+        : await ctx.db.$queryRawUnsafe<{ itemId: string; approvedAt: Date | null }[]>(
+            `SELECT a."itemId", MAX(a."createdAt") AS "approvedAt"
+               FROM "Artifact" a
+              WHERE a."itemId" = ANY($1::text[])
+                AND a."verdict" = ANY($2::"Verdict"[])
+              GROUP BY a."itemId"`,
+            rows.map((row) => row.id),
+            APPROVING_VERDICT_VALUES,
+          );
+
+    const approvedAtByItem = new Map(approvalRows.map((row) => [row.itemId, row.approvedAt]));
+
+    // `now` is read once and passed in, rather than each finding calling
+    // `Date.now()` for itself: two items approved at the same instant must
+    // report the same age, and a clock read per row cannot promise that.
+    const facts: ApprovalFacts[] = rows.map((row) => ({
+      itemId: row.id,
+      title: row.title,
+      state: row.state,
+      approvedAt: approvedAtByItem.get(row.id) ?? null,
+    }));
+
+    const stalledWork = findStalledWork(
+      facts,
+      ctx.settings.values["interventions.approved_unmerged_after_seconds"],
+      new Date(),
+    );
+
+    return { sessionId: input.sessionId, items, hooked, declaredHookSilent, stalledWork };
   },
 });
