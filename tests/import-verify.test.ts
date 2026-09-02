@@ -2,11 +2,12 @@
 // only, per CLAUDE.md's testing tenet. Mirrors tests/import-items.test.ts and
 // tests/import-assignments-artifacts.test.ts for scratch-database setup.
 // Skips without TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createRepo } from "@/lib/repos";
 import { importItems, STATUS_REMAP, type SourceTask } from "@/lib/import-items";
 import { importEvents } from "@/lib/import-events";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   importAssignmentsAndArtifacts,
   type SourceTaskAssignmentsArtifacts,
@@ -98,7 +99,7 @@ describeIfDb("import verification — against a real Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await createRepo(prisma, { id: "web", displayName: "Web", defaultBranch: "main" });
   }, 30_000);
 

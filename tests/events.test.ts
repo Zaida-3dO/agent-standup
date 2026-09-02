@@ -8,7 +8,7 @@
 // writing transaction rather than being a timestamp or counter in disguise.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -20,6 +20,7 @@ import {
 } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { appendEvent, readSinceBounded, recordFieldChanges, visibilityHorizon } from "@/lib/events";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -137,7 +138,7 @@ describeIfDb("the events ledger against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
 
     const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
     registry = OPERATION_REGISTRY as unknown as Record<string, unknown>;

@@ -6,9 +6,10 @@
 // write last-taken-wins rather than last-written-wins. An in-memory model
 // would prove none of them, and the ordering rule in particular is the one
 // a plausible refactor drops.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { promoteUsage } from "@/lib/budget/promote";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -28,7 +29,7 @@ describeIfDb("promoteUsage", () => {
 
   beforeAll(async () => {
     const scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {

@@ -6,10 +6,11 @@
 // `service/live.ts` constructs its singleton on module load.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { randomUUID } from "node:crypto";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -48,7 +49,7 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
     collectionRoute = await import("@/app/api/items/route");
     transitionRoute = await import("@/app/api/items/[id]/transition/route");
     completeRoute = await import("@/app/api/items/[id]/complete/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {

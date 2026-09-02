@@ -21,11 +21,12 @@
 // The negative half is asserted first in each block, deliberately. A guard
 // that has only been seen to *allow* something has not been shown to be doing
 // anything at all — the same reason CLAUDE.md gives for testing rejections.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, guardRegistry, prismaTransactionRunner } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { defaultSnapshot } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -48,7 +49,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     // `record_artifact` refuses a `createdByType: "person"` whose id names
     // nobody (#134), so the person these fixtures credit has to exist.

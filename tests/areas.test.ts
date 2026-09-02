@@ -1,8 +1,9 @@
 // Real Postgres only, per CLAUDE.md's testing tenet. See tests/repos.test.ts
 // for the scratch-database setup this mirrors. Skips without TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureArea, InvalidAreaNameError, listActiveAreas, normalizeAreaKey } from "@/lib/areas";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -61,7 +62,7 @@ describeIfDb("ensureArea — auto-create with normalisation", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 30_000);
 
   afterAll(async () => {

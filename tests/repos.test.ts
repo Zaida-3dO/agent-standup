@@ -4,9 +4,10 @@
 //
 // Needs TEST_DATABASE_URL (see tests/boot.test.ts for why that's not
 // DATABASE_URL). Skips rather than fails without it.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRepo, listActiveRepos, RepoAlreadyExistsError } from "@/lib/repos";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -23,7 +24,7 @@ describeIfDb("repos — deliberate create only", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 30_000);
 
   afterAll(async () => {

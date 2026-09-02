@@ -18,8 +18,9 @@
 // other.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   findItemsFromPath,
   findMintedItem,
@@ -103,7 +104,7 @@ describeIfDb("minting idempotency (#63)", () => {
         shell: process.platform === "win32",
       });
     }
-    prisma = new PrismaClient({ datasources: { db: { url } } });
+    prisma = createTestPrismaClient(url);
     await seedArea(prisma);
   }, 180_000);
 
@@ -348,7 +349,7 @@ describeIfDb("minting idempotency (#63)", () => {
       const ref = formatSourceRef("restart/a.md", hashSourceContent("one"));
       await mintOnce(prisma, ref, (db) => mintItem(db as PrismaClient, ref));
 
-      const reconnected = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+      const reconnected = createTestPrismaClient(databaseUrl);
       try {
         expect(await findMintedItem(reconnected, ref)).not.toBeNull();
 

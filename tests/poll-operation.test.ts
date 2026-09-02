@@ -9,11 +9,12 @@
 // The property the milestone actually asks for is that the machine side stays
 // dumb — so the assertions below are mostly about what the SERVER decided,
 // not about what the caller sent.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, type SettingsSnapshot } from "@/lib/settings";
 import type { BandDecision } from "@/lib/budget/bands";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -56,7 +57,7 @@ describeIfDb("the poll", () => {
 
   beforeAll(async () => {
     const scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     snapshot = defaultSnapshot();
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),

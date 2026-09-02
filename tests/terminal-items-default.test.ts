@@ -11,7 +11,7 @@
 // need no database and are asserted first. Everything after that needs real
 // Postgres, because what is being proved is a WHERE clause, and skips
 // without TEST_DATABASE_URL like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
@@ -25,6 +25,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import type { BoardOutput } from "@/lib/service/operations/get-board";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 describe("which states are terminal", () => {
   // Every route these cases call authenticates; this configures the
@@ -133,7 +134,7 @@ describeIfDb("terminal items are out of the default read", () => {
     process.env.DATABASE_URL = scratchUrl;
     boardRoute = await import("@/app/api/board/route");
     itemsRoute = await import("@/app/api/items/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

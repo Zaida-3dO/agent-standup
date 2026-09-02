@@ -20,7 +20,7 @@
 //     `toRejection()` excludes `details` by construction, so the route
 //     asserting only on the status would pass while the body omitted the
 //     one fact a caller needs to recover.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
@@ -32,6 +32,7 @@ import {
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { defaultSnapshot } from "@/lib/settings";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -56,7 +57,7 @@ describeIfDb("transition_item expectedFrom precondition", () => {
     // singleton on module load, so a later assignment would be read too late.
     process.env.DATABASE_URL = scratchUrl;
     transitionRoute = await import("@/app/api/items/[id]/transition/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
     // The real production guard set, not a scratch stand-in — a precondition

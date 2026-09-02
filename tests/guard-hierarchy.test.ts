@@ -4,13 +4,14 @@
 // Runs against a real Postgres, like `state-machine-transition.test.ts` —
 // the claims here are about rows actually written or refused, which an
 // in-memory model cannot settle. Skips without TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GuardRegistry, applyTransition, hierarchyGuard, rehearseTransition } from "@/lib/service";
 import type { GuardInput } from "@/lib/service";
 import { ITEM_STATES } from "@/lib/service/state-machine";
 import { defaultSnapshot } from "@/lib/settings";
 import type { TransactionHandle } from "@/lib/service";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -46,7 +47,7 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
   }, 60_000);
 

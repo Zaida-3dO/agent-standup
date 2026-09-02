@@ -9,7 +9,7 @@
 // through the shared schema, that the refusals survive the service layer with
 // the right codes, and that `sweep` is genuinely a caller for the ladder
 // rather than a name in the registry with nothing behind it.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   OPERATION_NAMES,
@@ -19,6 +19,7 @@ import {
   prismaTransactionRunner,
 } from "@/lib/service";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -106,7 +107,7 @@ describeIfDb("sweep / takeover operations — against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

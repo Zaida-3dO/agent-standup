@@ -13,10 +13,11 @@
 // test that cannot fail is visible as such rather than counted as coverage.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -57,7 +58,7 @@ describeIfDb("reparenting and retyping", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
@@ -591,7 +592,7 @@ describeIfDb("reparenting and retyping", () => {
 
     beforeAll(async () => {
       const url = (await createMigratedScratchDatabase(testDatabaseUrl!, repairDbName)).url;
-      repairPrisma = new PrismaClient({ datasourceUrl: url });
+      repairPrisma = createTestPrismaClient(url);
       repairRuntime = new ServiceRuntime({
         transaction: prismaTransactionRunner(repairPrisma),
         resolveSnapshot: async () => defaultSnapshot(),

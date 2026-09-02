@@ -19,12 +19,13 @@
 // Each test below names the single-character change that would break it.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { claimItem, type ClaimInput } from "@/lib/claims";
 import type { GetProjectsOutput, ProjectRollup } from "@/lib/service/operations/get-projects";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -44,7 +45,7 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
@@ -475,8 +476,7 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
         });
       }
 
-      const logged = new PrismaClient({
-        datasourceUrl: scratchUrl,
+      const logged = createTestPrismaClient(scratchUrl, {
         log: [{ emit: "event", level: "query" }],
       });
       const statements: string[] = [];
@@ -506,8 +506,7 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
     it("issues no assignment query at all when nothing matched", async () => {
       // Breaks if: the `ids.length === 0` guard is removed — the count
       // becomes 1.
-      const logged = new PrismaClient({
-        datasourceUrl: scratchUrl,
+      const logged = createTestPrismaClient(scratchUrl, {
         log: [{ emit: "event", level: "query" }],
       });
       const statements: string[] = [];

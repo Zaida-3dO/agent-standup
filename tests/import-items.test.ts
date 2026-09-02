@@ -3,9 +3,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createRepo } from "@/lib/repos";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   importItems,
   mapSourceStatus,
@@ -138,7 +139,7 @@ describeIfDb("importItems — against a real Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await createRepo(prisma, { id: "web", displayName: "Web", defaultBranch: "main" });
   }, 30_000);
 

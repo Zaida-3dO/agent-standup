@@ -17,12 +17,13 @@
 // The other half of the claim is that it ships SWITCHED OFF, so the default
 // case asserts that nothing is written, and the enabled case asserts that
 // something is.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { ServiceRuntime, guardRegistry, prismaTransactionRunner } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { defaultSnapshot, type SettingsSnapshot } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -63,7 +64,7 @@ describeIfDb("the run-scoring capture seam — against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
     for (const guard of ALL_GUARDS) {

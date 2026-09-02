@@ -17,12 +17,13 @@
 //
 // Runs against a real Postgres: the claims are about rows and about an enum
 // cast that only a real server checks. Skips without TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { deriveOpenLoops, type LoopEventLike } from "@/lib/open-loops";
 import type { OrientationOutput } from "@/lib/service/operations/orientation";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -45,7 +46,7 @@ describeIfDb("loop_add and loop_close (#100), against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),

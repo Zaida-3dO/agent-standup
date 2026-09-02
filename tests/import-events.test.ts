@@ -1,9 +1,10 @@
 // Real Postgres only, per CLAUDE.md's testing tenet. See tests/repos.test.ts
 // for the scratch-database setup this mirrors. Skips without TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRepo } from "@/lib/repos";
 import { importItems, type SourceTask } from "@/lib/import-items";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   importEvents,
   importEventsForTask,
@@ -31,7 +32,7 @@ describeIfDb("import-events — against a real Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await createRepo(prisma, { id: "web", displayName: "Web", defaultBranch: "main" });
     await prisma.person.create({ data: { id: "user-a", displayName: "User A" } });
     await prisma.agent.create({ data: { name: "agent-alpha" } });

@@ -9,7 +9,7 @@
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 // CI always sets it, so this always runs where it matters.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -20,6 +20,7 @@ import {
   type ServiceContext,
 } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -67,7 +68,7 @@ describeIfDb("the transaction boundary against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
 
     const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
     registry = OPERATION_REGISTRY as unknown as Record<string, unknown>;

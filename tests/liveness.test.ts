@@ -18,11 +18,12 @@
 // probabilistic, and there is no loop count to report for this file (unlike
 // claims.test.ts's genuine concurrency races, timing here is deterministic
 // by construction, not by chance).
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { BLOCKED_PAUSED_GUARDS, GuardRegistry } from "@/lib/service";
 import type { TransactionHandle } from "@/lib/service";
 import { resolveSettings } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   nextLivenessRung,
   sweepCapabilityDocuments,
@@ -111,7 +112,7 @@ describeIfDb("sweepLiveness — against a real database", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
 

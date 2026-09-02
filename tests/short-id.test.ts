@@ -9,13 +9,14 @@
 // everywhere. The resolution itself is a query, so it is DB-gated in the
 // same shape as every other database-backed file here — see
 // `scripts/check-db-gated-suites.mjs` for why that exact spelling matters.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { isServiceError } from "@/lib/service/errors";
 import { SHORT_ID_MIN_LENGTH, isFullUuid, isShortIdShape } from "@/lib/service/items/resolve-id";
 import { ID_DISPLAY_LENGTH, shortenSegment } from "@/lib/nav/breadcrumb";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -90,7 +91,7 @@ describeIfDb("resolving a short id against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

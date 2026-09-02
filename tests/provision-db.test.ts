@@ -18,7 +18,6 @@
 // one behind would accumulate across every CI run, not just this file's own
 // database.
 import { spawnSync } from "node:child_process";
-import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   ensureAppRole,
@@ -27,6 +26,7 @@ import {
 } from "../scripts/lib/provision-db.mjs";
 import { runMigrations } from "../scripts/lib/run-migrations.mjs";
 import { scratchDatabaseName } from "./helpers/scratch-db";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -98,7 +98,7 @@ describeIfDb("provisionAppDatabase against real Postgres", () => {
   });
 
   it("the application role can read and write a migrated table", async () => {
-    const prisma = new PrismaClient({ datasourceUrl: appUrl });
+    const prisma = createTestPrismaClient(appUrl);
     try {
       await prisma.$executeRawUnsafe(
         `INSERT INTO "Area" ("id", "displayName") VALUES ($1, $2)`,
@@ -116,7 +116,7 @@ describeIfDb("provisionAppDatabase against real Postgres", () => {
   });
 
   it("the application role CANNOT create a table — it has no DDL rights (the least-privilege proof)", async () => {
-    const prisma = new PrismaClient({ datasourceUrl: appUrl });
+    const prisma = createTestPrismaClient(appUrl);
     try {
       await expect(
         prisma.$executeRawUnsafe(`CREATE TABLE "should_not_be_allowed" ("id" text)`),
@@ -132,14 +132,12 @@ describeIfDb("provisionAppDatabase against real Postgres", () => {
     const oldAppUrl = appUrl;
     ensureAppRole(testDatabaseUrl!, roleName, "a-different-password-123", silentLog());
 
-    await expect(
-      new PrismaClient({ datasourceUrl: oldAppUrl }).$queryRaw`SELECT 1`,
-    ).rejects.toThrow();
+    await expect(createTestPrismaClient(oldAppUrl).$queryRaw`SELECT 1`).rejects.toThrow();
 
     const newUrl = new URL(migrateUrl);
     newUrl.username = roleName;
     newUrl.password = "a-different-password-123";
-    const prisma = new PrismaClient({ datasourceUrl: newUrl.toString() });
+    const prisma = createTestPrismaClient(newUrl.toString());
     try {
       const rows = await prisma.$queryRaw<{ ok: number }[]>`SELECT 1 AS ok`;
       expect(rows[0]?.ok).toBe(1);

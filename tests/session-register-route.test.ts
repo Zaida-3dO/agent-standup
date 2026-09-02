@@ -25,7 +25,7 @@
 // So the first case below is that one, written as the attack rather than as
 // a happy path: a body that disagrees with the path must lose.
 
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   TEST_MACHINE,
@@ -39,6 +39,7 @@ import {
 } from "./helpers/scratch-db";
 import { HOOK_PROTOCOL } from "@/lib/build-constants";
 import { CLI_TRANSPORT_HEADER } from "@/lib/session-transport-header";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -57,7 +58,7 @@ describeIfDb("POST /api/sessions/{id}/register", () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     route = await import("@/app/api/sessions/[id]/register/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {

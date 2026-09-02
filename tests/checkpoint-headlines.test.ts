@@ -16,7 +16,7 @@
 // Postgres, because what is being proved is that a column is written and
 // read back, and skips without TEST_DATABASE_URL like every other DB-backed
 // file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
@@ -32,6 +32,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { registerSessions } from "./helpers/register-sessions";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -119,7 +120,7 @@ describeIfDb("checkpoint headlines against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
@@ -335,7 +336,7 @@ describeIfDb("a checkpoint headline over HTTP", () => {
     checkpointRoute = await import("@/app/api/checkpoints/route");
     claimRoute = await import("@/app/api/claims/route");
     itemsRoute = await import("@/app/api/items/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 120_000);
 
   afterAll(async () => {

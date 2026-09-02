@@ -5,7 +5,7 @@
 // in-memory model of Postgres cannot prove.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -16,6 +16,7 @@ import {
 } from "./helpers/scratch-db";
 import { registerSessions } from "./helpers/register-sessions";
 import type { BoardEntry, BoardOutput } from "@/lib/service/operations/get-board";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 /** One column's entries, as `wholeBoard` below hands them to a case. */
 type BoardEntries = readonly BoardEntry[];
@@ -31,7 +32,7 @@ describeIfDb("get_board against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

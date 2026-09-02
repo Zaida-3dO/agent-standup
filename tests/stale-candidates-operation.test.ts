@@ -7,7 +7,7 @@
 // fail silently — a wrong `WHERE` clause narrows the corpus, and a detector
 // whose corpus is wrong reports "nothing found" exactly as convincingly as
 // one that genuinely found nothing.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -17,6 +17,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import type { GetStaleCandidatesOutput } from "@/lib/service/operations/get-stale-candidates";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -38,7 +39,7 @@ describeIfDb("get_stale_candidates against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

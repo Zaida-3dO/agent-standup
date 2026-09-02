@@ -12,10 +12,11 @@
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 // Every fixture is invented; this repository is public (CLAUDE.md).
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { BACKFILL_ENV_VAR } from "@/lib/backfill/enabled";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -73,7 +74,7 @@ describeIfDb("POST /api/backfill", () => {
     // reaches `service/live.ts`'s process-global singleton.
     process.env.DATABASE_URL = scratchUrl;
     route = await import("@/app/api/backfill/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 120_000);
 
   afterAll(async () => {

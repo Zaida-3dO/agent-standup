@@ -13,7 +13,7 @@
 // Runs against a real Postgres, because the claims are about a fold over
 // rows and about two enum labels only a real server accepts. Skips without
 // TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -39,6 +39,7 @@ import {
 } from "./helpers/scratch-db";
 import { claimItem } from "@/lib/claims";
 import { registerSessions } from "./helpers/register-sessions";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -66,7 +67,7 @@ describeIfDb("loop reads and the rest of the lifecycle, against Postgres", () =>
 
   beforeAll(async () => {
     const scratch = await createMigratedScratchDatabase(testDatabaseUrl!, dbName);
-    prisma = new PrismaClient({ datasourceUrl: scratch.url });
+    prisma = createTestPrismaClient(scratch.url);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),

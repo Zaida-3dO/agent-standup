@@ -11,7 +11,7 @@
 //
 // Placeholder identities throughout (`user-a`, `person-b`) — this is a
 // public repository and fixtures must not carry real names.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -23,6 +23,7 @@ import {
 import { parseStoredRules, loadPersonRules } from "@/lib/service/notify-on-change";
 import type { PersonAdminRecord } from "@/lib/service/admin/person-row";
 import type { ListPeopleOutput } from "@/lib/service/operations/list-people";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -35,7 +36,7 @@ describeIfDb("update_person against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

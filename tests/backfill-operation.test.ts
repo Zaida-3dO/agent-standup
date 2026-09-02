@@ -4,12 +4,13 @@
 //
 // The database half skips without TEST_DATABASE_URL. Every fixture is
 // invented — this repository is public (CLAUDE.md).
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { backfill } from "@/lib/service/operations/backfill";
 import { BACKFILL_ENV_VAR } from "@/lib/backfill/enabled";
 import { transactionBackedClient, UnsupportedQueryError } from "@/lib/backfill/transaction-client";
 import type { ServiceContext, TransactionHandle } from "@/lib/service/context";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -139,7 +140,7 @@ describeDb("backfill through the service operation (real database)", () => {
 
   beforeAll(async () => {
     const url = (await createMigratedScratchDatabase(testDatabaseUrl!, databaseName)).url;
-    prisma = new PrismaClient({ datasources: { db: { url } } });
+    prisma = createTestPrismaClient(url);
     ctx = {
       db: prisma,
       settings: { values: {} } as unknown as ServiceContext["settings"],

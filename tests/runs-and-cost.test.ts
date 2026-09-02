@@ -18,7 +18,7 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 // ⚠️ That means a run with no database reports these as *skipped* and exits
 // 0 — a green local run is not evidence any of this passed.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import type { GetCostsOutput, RecordToolCallsOutput } from "@/lib/service";
@@ -30,6 +30,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { registerSessions } from "./helpers/register-sessions";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -64,7 +65,7 @@ describeIfDb("runs and cost — the ingest's rollup against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => withPrices(defaultSnapshot(), prices),

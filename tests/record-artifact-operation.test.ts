@@ -14,10 +14,11 @@
 // worked to `merged` without anything reaching past the service layer. A
 // suite that only checked each guard separately could pass while that
 // sequence was still impossible.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner, type RecordedArtifact } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -41,7 +42,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     // `record_artifact` refuses a `createdByType: "person"` whose id names
     // nobody (#134), so the person these fixtures credit has to exist.
@@ -1093,7 +1094,7 @@ describeIfDb("request_review (#98), against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     // `record_artifact` refuses a `createdByType: "person"` whose id names
     // nobody (#134), so the person these fixtures credit has to exist.

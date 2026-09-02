@@ -38,9 +38,10 @@
 // Skips without TEST_DATABASE_URL, like every other database-backed file
 // here; CI's database job runs it, and `check:db-gated:require` fails there
 // if the URL is missing rather than skipping silently.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { assembleContext } from "@/lib/interventions/context";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -57,7 +58,7 @@ describeIfDb("I15 occupancy — against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     await prisma.repo.create({ data: { id: "repo-a", displayName: "repo-a" } });
     await prisma.repo.create({ data: { id: "repo-b", displayName: "repo-b" } });

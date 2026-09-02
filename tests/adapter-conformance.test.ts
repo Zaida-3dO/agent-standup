@@ -30,7 +30,7 @@
 // to fail — the negative controls in `adapter-conformance-assertions.test.ts`.
 // A gate that has only ever been observed to pass has never been run against
 // the thing it is for.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { stubAuthEnvironment } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
@@ -66,6 +66,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { routeFetch } from "./helpers/conformance-routes";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 /**
  * Operation names the web API actually serves, read from its route files.
@@ -169,7 +170,7 @@ describeIfDb("adapter conformance — every way in agrees", () => {
 
   beforeAll(async () => {
     const url = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: url });
+    prisma = createTestPrismaClient(url);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
     // The real guards, not a fixture. Registration is a module side effect,

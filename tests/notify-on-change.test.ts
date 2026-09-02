@@ -8,7 +8,7 @@
 // operations actually call the evaluator, against a real Postgres, because
 // "the caller exists" is the entire content of this row and only a real call
 // can settle it.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, guardRegistry, prismaTransactionRunner } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
@@ -21,6 +21,7 @@ import {
 import { NOTIFY_FIELD_WHITELIST, evaluateRules } from "@/lib/notifications";
 import type { ItemRecord } from "@/lib/service/items/row";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -323,7 +324,7 @@ describeIfDb("the mutations actually call the evaluator", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     for (const guard of ALL_GUARDS) {
       if (!guardRegistry.has(guard.id)) guardRegistry.register(guard);
