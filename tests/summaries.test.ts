@@ -891,3 +891,212 @@ describe("findSimilarityIssues tolerates malformed entries", () => {
     );
   });
 });
+
+/**
+ * Disclosure — the caps must be stated in the message the caller is reading,
+ * not only enforced when they are exceeded.
+ *
+ * A cap that is enforced but unstated has to be found by binary search: the
+ * caller submits, is refused, shortens by a guess, is refused again. Every
+ * *contract* refusal — the ones that enumerate what a field requires — must
+ * therefore carry the limits of the fields it is talking about, so the number
+ * arrives while the caller is reading the contract rather than after they
+ * have broken it.
+ *
+ * The assertions are on message TEXT and are interpolated from the exported
+ * constants, so they fail in both directions that matter: deleting a cap
+ * clause from a message, and changing a cap's value without updating the
+ * message that quotes it.
+ */
+describe("summary refusals disclose their limits", () => {
+  /** The contract refusal for a non-delivery close must name the decision floor AND cap. */
+  it.each([...NON_DELIVERY_STATES])(
+    "states the decision length bounds when decision is missing on %s",
+    (state) => {
+      const issues = validateSummaryShape(nonDeliveryCandidate({ decision: undefined }), state);
+      const required = issues.find((i) => i.field === "decision" && i.rule === "required");
+      expect(required).toBeDefined();
+      expect(required?.message).toContain(String(DECISION_CHAR_CAP));
+      expect(required?.message).toContain(String(DECISION_CHAR_MIN));
+    },
+  );
+
+  it("states the shipped entry cap when the shipped count is wrong", () => {
+    const issues = validateSummaryShape(baseCandidate({ shipped: [] }));
+    const count = issues.find((i) => i.field === "shipped" && i.rule === "count");
+    expect(count).toBeDefined();
+    expect(count?.message).toContain(String(SHIPPED_CHAR_CAP));
+  });
+
+  it("states the not_done text cap when the not_done count is over", () => {
+    const tooMany = Array.from({ length: NOT_DONE_MAX + 1 }, () => ({
+      text: "Deferred until the migration lands.",
+      reason: "deferred",
+    }));
+    const issues = validateSummaryShape(
+      baseCandidate({ not_done: tooMany } as Partial<SummaryCandidate>),
+    );
+    const count = issues.find((i) => i.field === "not_done" && i.rule === "count");
+    expect(count).toBeDefined();
+    expect(count?.message).toContain(String(NOT_DONE_TEXT_CHAR_CAP));
+  });
+
+  it("states the watch_for cap when the watch_for count is over", () => {
+    const tooMany = Array.from({ length: WATCH_FOR_MAX + 1 }, () => "Watch the queue depth.");
+    const issues = validateSummaryShape(baseCandidate({ watch_for: tooMany }));
+    const count = issues.find((i) => i.field === "watch_for" && i.rule === "count");
+    expect(count).toBeDefined();
+    expect(count?.message).toContain(String(WATCH_FOR_CHAR_CAP));
+  });
+
+  it("states the what_to_test cap when it is missing on a user-facing summary", () => {
+    const issues = validateSummaryShape(
+      baseCandidate({ user_facing: true, how_verified: undefined, what_to_test: [] }),
+    );
+    const count = issues.find((i) => i.field === "what_to_test" && i.rule === "count");
+    expect(count).toBeDefined();
+    expect(count?.message).toContain(String(WHAT_TO_TEST_TEXT_CHAR_CAP));
+  });
+
+  it("states the how_verified cap when it is missing on a non-user-facing summary", () => {
+    const issues = validateSummaryShape(baseCandidate({ how_verified: undefined }));
+    const required = issues.find((i) => i.field === "how_verified" && i.rule === "required");
+    expect(required).toBeDefined();
+    expect(required?.message).toContain(String(HOW_VERIFIED_CHAR_CAP));
+  });
+
+  /**
+   * The mutual exclusion between `how_verified` and `what_to_test` is a good
+   * rule that was only discoverable by breaking it. Both the required-side
+   * message and the not_applicable-side message must state it.
+   */
+  it("warns that how_verified is excluded when what_to_test is required", () => {
+    const issues = validateSummaryShape(
+      baseCandidate({ user_facing: true, how_verified: undefined, what_to_test: [] }),
+    );
+    const count = issues.find((i) => i.field === "what_to_test" && i.rule === "count");
+    expect(count?.message).toContain("how_verified");
+  });
+
+  it("warns that what_to_test is excluded when how_verified is required", () => {
+    const issues = validateSummaryShape(baseCandidate({ how_verified: undefined }));
+    const required = issues.find((i) => i.field === "how_verified" && i.rule === "required");
+    expect(required?.message).toContain("what_to_test");
+  });
+
+  it("names the target field's cap when redirecting how_verified to what_to_test", () => {
+    const issues = validateSummaryShape(
+      baseCandidate({
+        user_facing: true,
+        what_to_test: [{ text: "Open the board and confirm the row is gone." }],
+        how_verified: "Ran the suite and read the assertions.",
+      } as Partial<SummaryCandidate>),
+    );
+    const na = issues.find((i) => i.field === "how_verified" && i.rule === "not_applicable");
+    expect(na).toBeDefined();
+    expect(na?.message).toContain(String(WHAT_TO_TEST_TEXT_CHAR_CAP));
+  });
+
+  it("names the target field's cap when redirecting what_to_test to how_verified", () => {
+    const issues = validateSummaryShape(
+      baseCandidate({
+        what_to_test: [{ text: "Open the board and confirm the row is gone." }],
+      } as Partial<SummaryCandidate>),
+    );
+    const na = issues.find((i) => i.field === "what_to_test" && i.rule === "not_applicable");
+    expect(na).toBeDefined();
+    expect(na?.message).toContain(String(HOW_VERIFIED_CHAR_CAP));
+  });
+
+  it("names the decision bounds when redirecting shipped to decision", () => {
+    const issues = validateSummaryShape(
+      nonDeliveryCandidate({ shipped: ["Shipped something after all."] }),
+      "wont_do",
+    );
+    const na = issues.find((i) => i.field === "shipped" && i.rule === "not_applicable");
+    expect(na).toBeDefined();
+    expect(na?.message).toContain(String(DECISION_CHAR_CAP));
+  });
+
+  it("names the shipped cap when redirecting decision to shipped", () => {
+    const issues = validateSummaryShape(
+      baseCandidate({ decision: "Not applicable here, but supplied anyway." }),
+    );
+    const na = issues.find((i) => i.field === "decision" && i.rule === "not_applicable");
+    expect(na).toBeDefined();
+    expect(na?.message).toContain(String(SHIPPED_CHAR_CAP));
+  });
+});
+
+/**
+ * Overage — the length refusal must say how far over, not just quote the two
+ * numbers and leave the caller to subtract. This matters most when the
+ * overage is tiny: "241 characters" against an undisclosed 240 reads as a
+ * guess, "1 over" reads as an instruction.
+ */
+describe("length refusals state the overage", () => {
+  it("reports an over-by-one decision as 1 over, singular", () => {
+    const overLong = "x".repeat(DECISION_CHAR_CAP + 1);
+    const issues = validateSummaryShape(nonDeliveryCandidate({ decision: overLong }), "wont_do");
+    const tooLong = issues.find((i) => i.field === "decision" && i.rule === "max_length");
+    expect(tooLong).toBeDefined();
+    expect(tooLong?.message).toContain(`${DECISION_CHAR_CAP + 1} characters, 1 over`);
+    // Singular, and phrased as an instruction rather than arithmetic homework.
+    expect(tooLong?.message).toContain("Remove at least 1 character and");
+    expect(tooLong?.message).not.toContain("1 characters and");
+  });
+
+  it("reports a larger overage with the exact difference and a plural", () => {
+    const over = 49;
+    const overLong = "y".repeat(SHIPPED_CHAR_CAP + over);
+    const issues = validateSummaryShape(baseCandidate({ shipped: [overLong] }));
+    const tooLong = issues.find((i) => i.field === "shipped" && i.rule === "max_length");
+    expect(tooLong).toBeDefined();
+    expect(tooLong?.message).toContain(
+      `shipped[0] is ${SHIPPED_CHAR_CAP + over} characters, ${over} over the ` +
+        `${SHIPPED_CHAR_CAP}-character cap`,
+    );
+    expect(tooLong?.message).toContain(`Remove at least ${over} characters`);
+  });
+
+  it("still refuses to truncate, and still says so", () => {
+    // The policy is load-bearing: silently shortening a field that explains
+    // why work was abandoned would be worse than refusing it.
+    const issues = validateSummaryShape(
+      baseCandidate({ shipped: ["z".repeat(SHIPPED_CHAR_CAP + 1)] }),
+    );
+    const tooLong = issues.find((i) => i.field === "shipped" && i.rule === "max_length");
+    expect(tooLong?.message).toContain("not be truncated for you");
+  });
+});
+
+/**
+ * Aggregation — every length violation in one call, so fixing `decision`
+ * does not then reveal that `not_done` was also over.
+ *
+ * The validator collects issues from every field rather than returning at the
+ * first one, and this test holds it to that. The failure mode it guards
+ * against is an early return added to keep a refusal message short: that
+ * trades one long message for N round trips, which is the more expensive of
+ * the two by a wide margin.
+ */
+describe("all length violations are reported together", () => {
+  it("returns every over-cap field in a single validation pass", () => {
+    const issues = validateSummaryShape(
+      baseCandidate({
+        shipped: ["a".repeat(SHIPPED_CHAR_CAP + 1), "b".repeat(SHIPPED_CHAR_CAP + 2)],
+        not_done: [
+          { text: "c".repeat(NOT_DONE_TEXT_CHAR_CAP + 1), reason: "deferred" },
+        ] as unknown as SummaryCandidate["not_done"],
+        watch_for: ["d".repeat(WATCH_FOR_CHAR_CAP + 1)],
+        how_verified: "e".repeat(HOW_VERIFIED_CHAR_CAP + 1),
+      }),
+    );
+    const tooLong = issues.filter((i) => i.rule === "max_length");
+    // Five distinct violations across four fields, all in one call.
+    expect(tooLong).toHaveLength(5);
+    expect(new Set(tooLong.map((i) => i.field))).toEqual(
+      new Set(["shipped", "not_done", "watch_for", "how_verified"]),
+    );
+  });
+});

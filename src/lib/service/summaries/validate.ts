@@ -323,10 +323,18 @@ function pushIfTooLong(
 ): void {
   if (value.length > cap) {
     const label = index === undefined ? field : `${field}[${index}]`;
+    // State the overage, not just the two numbers. A caller who is over by a
+    // single character needs an instruction, not arithmetic: "1 over" says
+    // exactly what to cut, where two raw numbers leave them guessing closer
+    // in a sequence of calls that each teach nothing.
+    const over = value.length - cap;
     issues.push({
       field,
       rule: "max_length",
-      message: `${label} is ${value.length} characters, over the ${cap}-character cap. Shorten it and resubmit — it will not be truncated for you.`,
+      message:
+        `${label} is ${value.length} characters, ${over} over the ${cap}-character cap. ` +
+        `Remove at least ${over} character${over === 1 ? "" : "s"} and resubmit — it will ` +
+        `not be truncated for you.`,
     });
   }
 }
@@ -530,8 +538,9 @@ export function validateSummaryShape(
         rule: "required",
         message:
           `Closing as ${to} needs a decision: one or two sentences on why this work is not ` +
-          `being done. Nothing shipped, so shipped is not required and must be empty — say ` +
-          `what was decided instead.`,
+          `being done (${DECISION_CHAR_MIN}-${DECISION_CHAR_CAP} characters). Nothing ` +
+          `shipped, so shipped is not required and must be empty — say what was decided ` +
+          `instead.`,
       });
     } else {
       if (decision.trim().length < DECISION_CHAR_MIN) {
@@ -553,7 +562,8 @@ export function validateSummaryShape(
         rule: "not_applicable",
         message:
           `shipped must be empty when closing as ${to} — nothing was delivered. Put the ` +
-          `reasoning in decision instead.`,
+          `reasoning in decision instead (${DECISION_CHAR_MIN}-${DECISION_CHAR_CAP} ` +
+          `characters).`,
       });
     }
   } else {
@@ -561,7 +571,9 @@ export function validateSummaryShape(
       issues.push({
         field: "shipped",
         rule: "count",
-        message: `shipped must have ${SHIPPED_MIN}-${SHIPPED_MAX} entries; got ${candidate.shipped.length}.`,
+        message:
+          `shipped must have ${SHIPPED_MIN}-${SHIPPED_MAX} entries, each at most ` +
+          `${SHIPPED_CHAR_CAP} characters; got ${candidate.shipped.length}.`,
       });
     }
     if (candidate.decision !== null && candidate.decision !== undefined) {
@@ -569,8 +581,9 @@ export function validateSummaryShape(
         field: "decision",
         rule: "not_applicable",
         message:
-          "decision applies only when closing as wont_do or cancelled — for a completion that " +
-          "delivered something, list the outcomes in shipped.",
+          `decision applies only when closing as wont_do or cancelled — for a completion ` +
+          `that delivered something, list the outcomes in shipped (${SHIPPED_MIN}-` +
+          `${SHIPPED_MAX} entries, each at most ${SHIPPED_CHAR_CAP} characters).`,
       });
     }
   }
@@ -584,7 +597,9 @@ export function validateSummaryShape(
     issues.push({
       field: "not_done",
       rule: "count",
-      message: `not_done must have at most ${NOT_DONE_MAX} entries; got ${candidate.not_done.length}.`,
+      message:
+        `not_done must have at most ${NOT_DONE_MAX} entries, each with text of at most ` +
+        `${NOT_DONE_TEXT_CHAR_CAP} characters; got ${candidate.not_done.length}.`,
     });
   }
   sanitised.not_done.forEach(({ index, value: entry }) => {
@@ -606,7 +621,11 @@ export function validateSummaryShape(
       issues.push({
         field: "what_to_test",
         rule: "count",
-        message: `what_to_test is required when user_facing is true, with ${WHAT_TO_TEST_MIN}-${WHAT_TO_TEST_MAX} entries; got ${steps.length}.`,
+        message:
+          `what_to_test is required when user_facing is true, with ${WHAT_TO_TEST_MIN}-` +
+          `${WHAT_TO_TEST_MAX} entries, each with text of at most ` +
+          `${WHAT_TO_TEST_TEXT_CHAR_CAP} characters; got ${steps.length}. how_verified must ` +
+          `be omitted in this case — the two are mutually exclusive.`,
       });
     }
     // Counted above on the submitted array, but read here off the
@@ -623,7 +642,9 @@ export function validateSummaryShape(
         field: "how_verified",
         rule: "not_applicable",
         message:
-          "how_verified must be omitted when user_facing is true — use what_to_test instead.",
+          `how_verified must be omitted when user_facing is true — use what_to_test instead ` +
+          `(${WHAT_TO_TEST_MIN}-${WHAT_TO_TEST_MAX} entries, each at most ` +
+          `${WHAT_TO_TEST_TEXT_CHAR_CAP} characters).`,
       });
     }
   } else {
@@ -631,7 +652,11 @@ export function validateSummaryShape(
       issues.push({
         field: "how_verified",
         rule: "required",
-        message: "how_verified is required when user_facing is false.",
+        message:
+          `how_verified is required when user_facing is false (at most ` +
+          `${HOW_VERIFIED_CHAR_CAP} characters), and must say what was run and observed ` +
+          `live rather than only citing a CI or test run. what_to_test must be omitted in ` +
+          `this case — the two are mutually exclusive.`,
       });
     } else {
       pushIfTooLong(
@@ -656,7 +681,8 @@ export function validateSummaryShape(
         field: "what_to_test",
         rule: "not_applicable",
         message:
-          "what_to_test must be omitted when user_facing is false — use how_verified instead.",
+          `what_to_test must be omitted when user_facing is false — use how_verified instead ` +
+          `(at most ${HOW_VERIFIED_CHAR_CAP} characters).`,
       });
     }
   }
@@ -666,7 +692,9 @@ export function validateSummaryShape(
     issues.push({
       field: "watch_for",
       rule: "count",
-      message: `watch_for must have at most ${WATCH_FOR_MAX} entries; got ${candidate.watch_for.length}.`,
+      message:
+        `watch_for must have at most ${WATCH_FOR_MAX} entries, each at most ` +
+        `${WATCH_FOR_CHAR_CAP} characters; got ${candidate.watch_for.length}.`,
     });
   }
   sanitised.watch_for.forEach(({ index, value }) => {
