@@ -17,6 +17,7 @@ import {
 } from "../_shared/respond";
 import { ridesDigest } from "@/lib/interventions/digest";
 import type { InterventionFinding } from "@/lib/interventions/types";
+import { log } from "@/lib/log";
 
 export async function POST(request: Request) {
   const auth = authenticatedCaller(request);
@@ -42,7 +43,13 @@ export async function POST(request: Request) {
     // refuses to defer one. What is held is delivered on the next ordinary
     // service call this session makes, which is the natural juncture the
     // design asks for.
-    holdDeferred(result, sessionIdOf(body));
+    // The findings the accumulator would not hold. They still ride this
+    // response — `hook_decision` returns them and nothing removes them —
+    // so nothing is lost here; what is lost is their place in a later
+    // batch. Saying so is how a session hitting the bound becomes visible
+    // at all, rather than silently getting smaller digests than it earned.
+    const sessionId = sessionIdOf(body);
+    reportRefusedHolds(holdDeferred(result, sessionId), sessionId, requestId);
     // A session that says it is stopping will not read another digest, so
     // whatever is held for it is dropped now rather than waiting out the
     // accumulator's TTL. This is the tidy path, not the guarantee: a
@@ -71,6 +78,38 @@ function forgetOnStop(body: unknown): void {
   interventionDeliverer.forget(sessionId);
 }
 
+/**
+ * Says when the digest would not hold what it was offered.
+ *
+ * The accumulator refuses only at its per-session bound, so this is a
+ * session producing more than `maxPending` distinct digest-timed findings
+ * inside one window. That is a real situation about that session — it is
+ * the "same finding hundreds of times" case the bound exists for — and
+ * before this it was invisible: `hold` discarded the answer and nothing
+ * counted the drops.
+ *
+ * `warn` rather than `error`: the findings still ride this response, so
+ * nothing is broken. What it flags is a session whose later digests will
+ * be incomplete, which is worth seeing and is not a failure.
+ *
+ * The findings' ids travel, not their text. The ids are what identify a
+ * runaway entry, and a log line is not a place to copy session-derived
+ * message content into.
+ */
+function reportRefusedHolds(
+  refused: readonly InterventionFinding[],
+  sessionId: string | undefined,
+  requestId: string,
+): void {
+  if (refused.length === 0) return;
+  log.warn("digest declined to hold findings at the per-session bound", {
+    requestId,
+    sessionId,
+    refusedCount: refused.length,
+    findingIds: refused.map((finding) => finding.id),
+  });
+}
+
 /** The session a hook event names, when it names one this route can use as a key. */
 function sessionIdOf(body: unknown): string | undefined {
   if (typeof body !== "object" || body === null) return undefined;
@@ -80,20 +119,45 @@ function sessionIdOf(body: unknown): string | undefined {
 
 /**
  * Holds this decision's `digest`-timed findings for the session's next
- * ordinary service call.
+ * ordinary service call, and reports which of them could not be held.
  *
  * Defensive about the shape on purpose. It reads a result typed as
  * `unknown` at this boundary, and a malformed one must not fail a hook
  * response that has already been computed - the hook fails open by design
  * (DECISIONS.md sec.16) and an advisory batch is the last thing that should
  * ever change that.
+ *
+ * ── What the refusals mean on THIS path, precisely ────────────────────
+ *
+ * The accumulator refuses at its per-session bound. On the service path
+ * `decideDelivery` promotes a refused finding to immediate, because there
+ * the deferred findings were removed from the response and holding is the
+ * only thing keeping them alive.
+ *
+ * **Here they are not lost, and the difference is worth stating rather
+ * than assuming.** `hook_decision` returns every finding on `findings` in
+ * registry order, and the filter below only *reads* that array — it never
+ * removes anything. So a digest-timed finding rides this response whether
+ * or not the accumulator held it, and a refusal costs the session nothing
+ * on this call. What it costs is the *next* call: the finding will not
+ * appear in a later batch, because nothing is holding it.
+ *
+ * The refusals are surfaced anyway, for two reasons. They are the honest
+ * answer to "what did you take", so a caller reasoning about what a digest
+ * will contain is not misled; and a caller that *does* drop deferred
+ * findings from its response — as the service path does — depends on that
+ * answer to avoid losing them, so `hold` has to give it rather than leave
+ * each caller to discover the need for it.
  */
-function holdDeferred(result: unknown, sessionId: string | undefined): void {
-  if (sessionId === undefined) return;
-  if (typeof result !== "object" || result === null) return;
+function holdDeferred(
+  result: unknown,
+  sessionId: string | undefined,
+): readonly InterventionFinding[] {
+  if (sessionId === undefined) return [];
+  if (typeof result !== "object" || result === null) return [];
 
   const findings = (result as { findings?: unknown }).findings;
-  if (!Array.isArray(findings) || findings.length === 0) return;
+  if (!Array.isArray(findings) || findings.length === 0) return [];
 
   const deferred = findings.filter(
     (finding): finding is InterventionFinding =>
@@ -101,7 +165,7 @@ function holdDeferred(result: unknown, sessionId: string | undefined): void {
       finding !== null &&
       ridesDigest(finding as InterventionFinding),
   );
-  if (deferred.length === 0) return;
+  if (deferred.length === 0) return [];
 
-  interventionDeliverer.hold(sessionId, deferred, Date.now());
+  return interventionDeliverer.hold(sessionId, deferred, Date.now());
 }

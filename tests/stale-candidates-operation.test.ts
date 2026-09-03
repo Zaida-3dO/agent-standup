@@ -268,4 +268,219 @@ describeIfDb("get_stale_candidates against Postgres", () => {
       expect(stale!.confidence).toBe("high");
     });
   });
+
+  // The second signal: a row somebody held, whose claim ended, that nobody
+  // took back up. Every property below is one of the ways this quietly
+  // stops distinguishing abandoned work from the backlog it sits in:
+  //
+  //   - reporting rows nobody ever claimed, which is most of the board,
+  //   - reporting a row somebody still holds, which is not abandoned,
+  //   - reporting a row released seconds ago, which is a handoff in progress,
+  //   - measuring from the oldest claim rather than the newest, which ages
+  //     a re-worked row by the wrong span,
+  //   - losing the difference between a claim the sweep took back and one
+  //     a holder gave up, which is the whole reason the row is interesting.
+  describe("abandoned rows", () => {
+    const ABANDONED_ROW = "99999999-9999-4999-8999-999999999999";
+    const HELD_ROW = "aaaaaaaa-9999-4999-8999-999999999999";
+    const JUST_RELEASED_ROW = "bbbbbbbb-9999-4999-8999-999999999999";
+    const HANDED_OFF_ROW = "cccccccc-9999-4999-8999-999999999999";
+    const RECLAIMED_ROW = "dddddddd-9999-4999-8999-999999999999";
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    beforeAll(async () => {
+      const base = {
+        kind: "task" as const,
+        depth: 1,
+        body: "body",
+        originType: "auto" as const,
+        mergeAuthority: "pre_approved" as const,
+        area: "api",
+        state: "on_deck" as const,
+        repo: "web",
+      };
+
+      await prisma.item.createMany({
+        data: [
+          { ...base, id: ABANDONED_ROW, title: "Held, swept, never picked up" },
+          { ...base, id: HELD_ROW, title: "Somebody holds this right now" },
+          { ...base, id: JUST_RELEASED_ROW, title: "Released moments ago" },
+          { ...base, id: HANDED_OFF_ROW, title: "Holder released it deliberately" },
+          { ...base, id: RECLAIMED_ROW, title: "Released twice, worked recently" },
+        ],
+      });
+
+      // The shape the liveness sweep manufactures: claimed, worked, then
+      // released by the sweep, and never claimed again.
+      const sweptAssignment = await prisma.assignment.create({
+        data: {
+          itemId: ABANDONED_ROW,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-gone",
+          sessionId: "session-gone",
+          rootSessionId: "session-gone",
+          machine: "test-machine",
+          claimedAt: new Date(Date.now() - 5 * DAY_MS),
+          releasedAt: new Date(Date.now() - 3 * DAY_MS),
+        },
+      });
+      // The release event the sweep writes. Matched on its body, which is
+      // what separates a reclamation from a handoff.
+      await prisma.event.create({
+        data: {
+          itemId: ABANDONED_ROW,
+          assignmentId: sweptAssignment.id,
+          type: "release",
+          payload: {},
+          actorType: "system",
+          body: "Released by the liveness sweep: no activity past the dead threshold.",
+        },
+      });
+
+      // Still held: an open assignment, so not abandoned however old.
+      await prisma.assignment.create({
+        data: {
+          itemId: HELD_ROW,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-working",
+          sessionId: "session-working",
+          rootSessionId: "session-working",
+          machine: "test-machine",
+          claimedAt: new Date(Date.now() - 10 * DAY_MS),
+          releasedAt: null,
+        },
+      });
+
+      // Released one minute ago — under any sane threshold this is a
+      // handoff in progress, not abandonment.
+      await prisma.assignment.create({
+        data: {
+          itemId: JUST_RELEASED_ROW,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-recent",
+          sessionId: "session-recent",
+          rootSessionId: "session-recent",
+          machine: "test-machine",
+          claimedAt: new Date(Date.now() - DAY_MS),
+          releasedAt: new Date(Date.now() - 60_000),
+        },
+      });
+
+      // Released long ago with NO sweep event: the holder let it go itself.
+      await prisma.assignment.create({
+        data: {
+          itemId: HANDED_OFF_ROW,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-polite",
+          sessionId: "session-polite",
+          rootSessionId: "session-polite",
+          machine: "test-machine",
+          claimedAt: new Date(Date.now() - 6 * DAY_MS),
+          releasedAt: new Date(Date.now() - 4 * DAY_MS),
+        },
+      });
+
+      // Two closed claims: an ancient one and a recent one. "How long has
+      // it been unheld" must be measured from the NEWEST.
+      await prisma.assignment.create({
+        data: {
+          itemId: RECLAIMED_ROW,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-first",
+          sessionId: "session-first",
+          rootSessionId: "session-first",
+          machine: "test-machine",
+          claimedAt: new Date(Date.now() - 30 * DAY_MS),
+          releasedAt: new Date(Date.now() - 29 * DAY_MS),
+        },
+      });
+      await prisma.assignment.create({
+        data: {
+          itemId: RECLAIMED_ROW,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-second",
+          sessionId: "session-second",
+          rootSessionId: "session-second",
+          machine: "test-machine",
+          claimedAt: new Date(Date.now() - 3 * DAY_MS),
+          releasedAt: new Date(Date.now() - 2 * DAY_MS),
+        },
+      });
+    });
+
+    it("reports a row whose claim the sweep took back and nobody re-took", async () => {
+      const result = await call();
+      expect(result.abandoned.map((entry) => entry.item.id)).toContain(ABANDONED_ROW);
+    });
+
+    // The distinction the whole design rests on. Without this, the report
+    // could return every backlog row and stay green on the test above.
+    it("does NOT report a row nobody has ever claimed", async () => {
+      const result = await call();
+      const ids = result.abandoned.map((entry) => entry.item.id);
+      expect(ids).not.toContain(UNTOUCHED_ROW);
+      expect(ids).not.toContain(STALE_ROW);
+    });
+
+    it("does NOT report a row somebody still holds, however old the claim", async () => {
+      const result = await call();
+      expect(result.abandoned.map((entry) => entry.item.id)).not.toContain(HELD_ROW);
+    });
+
+    it("does NOT report a row released within the threshold", async () => {
+      const result = await call();
+      expect(result.abandoned.map((entry) => entry.item.id)).not.toContain(JUST_RELEASED_ROW);
+    });
+
+    it("says how long a row has been unheld, and who held it last", async () => {
+      const result = await call();
+      const found = result.abandoned.find((entry) => entry.item.id === ABANDONED_ROW);
+      expect(found!.lastHolderId).toBe("crew-gone");
+      expect(found!.lastHolderType).toBe("agent");
+      // Released three days ago. Asserted as a range rather than a value
+      // because the fixture is built relative to a clock that moves.
+      expect(found!.unheldForSeconds).toBeGreaterThan(2.5 * 86_400);
+      expect(found!.unheldForSeconds).toBeLessThan(3.5 * 86_400);
+    });
+
+    it("distinguishes a claim the sweep reclaimed from one the holder gave up", async () => {
+      const result = await call();
+      const swept = result.abandoned.find((entry) => entry.item.id === ABANDONED_ROW);
+      const handed = result.abandoned.find((entry) => entry.item.id === HANDED_OFF_ROW);
+      expect(swept!.releasedBySweep).toBe(true);
+      // Still reported — it is unheld either way — but not as a reclamation.
+      expect(handed).toBeDefined();
+      expect(handed!.releasedBySweep).toBe(false);
+    });
+
+    it("measures from the most recent claim to end, not the oldest", async () => {
+      const result = await call();
+      const found = result.abandoned.find((entry) => entry.item.id === RECLAIMED_ROW);
+      // Newest release was 2 days ago; the oldest was 29. Taking the min
+      // would put this near 29 days and pass a naive "is it reported" test.
+      expect(found!.unheldForSeconds).toBeLessThan(3 * 86_400);
+    });
+
+    it("reports the threshold it used, so the answer is interpretable", async () => {
+      const result = await call();
+      expect(result.abandonedAfterSeconds).toBe(86_400);
+    });
+
+    it("carries a caveat saying never-claimed rows are out of scope", async () => {
+      const result = await call();
+      expect(result.caveats.join(" ")).toMatch(/never claimed|nobody has ever claimed/i);
+    });
+
+    it("narrows abandoned rows by repo alongside the citation candidates", async () => {
+      const result = await call({ repo: "desktop" });
+      expect(result.abandoned.map((entry) => entry.item.id)).not.toContain(ABANDONED_ROW);
+    });
+  });
 });
