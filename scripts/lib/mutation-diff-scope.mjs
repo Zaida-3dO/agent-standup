@@ -110,8 +110,8 @@ export function parseChangedLineRanges(diffText) {
   for (const line of String(diffText ?? "").split("\n")) {
     // `+++ b/path/to/file.ts` names the new-side path for the hunks that
     // follow. `/dev/null` appears here for a deleted file — skipped, since a
-    // file that no longer exists has no lines to attribute a mutant to (and
-    // Stryker will not have mutated it either).
+    // deleted file has no lines to attribute a mutant to (and Stryker will
+    // not have mutated it either).
     if (line.startsWith("+++ ")) {
       const raw = line.slice(4).trim();
       currentFile = raw === "/dev/null" ? null : raw.replace(/^b\//, "");

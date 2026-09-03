@@ -17,54 +17,61 @@ Status: blank = still open · `closed` = decided and done.
 
 ---
 
-## G1 — Mutation testing is off
+## G1 — Mutation testing is off — **closed 2026-09-03**
 
-**State:** off on every branch, `main` included. `workflow_dispatch` runs it on demand.
+**State:** closed. Mutation testing runs on every pull request whose diff touches `src/**/*.ts(x)`,
+and `Mutation testing gate (required)` now reports that job's real result.
 
-**How it got here.** The owner's call, 2026-08-18: the job runs only when dispatched by hand, and the
-reasoning belongs beside the switch rather than in anyone's memory. It stays configured and runnable
-so that turning it on is a decision someone makes, not a job someone has to rebuild.
+**How it got here.** Held open on two recorded reasons, both of which turned out to be spent, plus a
+third that nobody had written down and which was the one that actually mattered.
 
-**Why off.** Two reasons, and the second decided it:
+**Why it is closed:**
 
-1. **It costs 22-57 minutes per run** — far and away the slowest job in the pipeline, against
-   single-digit minutes for everything else. On a pull request that lands directly on merge latency,
-   which is what decides how fast work moves through the queue. On `main` nobody waits on it, but
-   that is also why it gates nothing there: the merge has already happened, so a survivor is a
-   notification rather than a refusal.
-2. **Its first run against a service operation produced findings no test could act on.**
-   `sweep.ts` scored 33-38 with four survivors, all in the `defineOperation({…})` metadata. That
-   object is a module-level literal evaluated once at import, while Stryker activates a mutant at
-   *runtime*, so no test written any way can kill those mutants — a property of every operation
-   module rather than of one file. Left alone, each new operation entering scope would re-report the
-   same tool limitation at the cost of the slowest job in the pipeline.
+1. **Cost — measured, not estimated.** The 22–57 minute figure is a whole-tree run. The CI job is
+   `--changed-only` and always was. Against a real 5-file / 1004-line diff it took **1m43s** wall
+   clock, against 3m24s for static checks and 3m11s for the database suites on the same pull
+   request. It is not the slowest job in the pipeline at the scope it runs in.
+2. **Unkillable operation metadata.** Closed by issue #166 across all 60 operation modules, with
+   `scripts/check-operation-metadata-mutants.mjs` holding the annotations in place.
+3. **The unrecorded blocker: the verdict punished inherited code.** `thresholds.break: 60` was
+   compared against a single pooled score over every mutated file. On the measured run the two
+   newly written files scored 91.30 and 90.91 and the run failed anyway, dragged under by a
+   pre-existing container that a node-environment harness does not test by design. Switching the
+   gate on in that shape would have failed honest work for code the author inherited, taught people
+   to avoid touching weak files, and created exactly the pressure to lower `thresholds.break` that
+   the list below forbids.
 
-   **This one is largely handled.** Issue #166 addressed it across all 60 operation modules with a
-   scoped disable annotation on the metadata literal, plus `scripts/check-operation-metadata-mutants.mjs`
-   to keep the annotations in place, so the four false survivors are reported as `Ignored` rather
-   than as findings. Worth recording that #166's *first* diagnosis was wrong and was corrected by
-   running the tool rather than reasoning about it: the survivors were attributed to coverage
-   attribution, and the fix that followed from that — asserting the metadata inside a test body —
-   left all four alive. The reports showed `coveredBy: 3`, not 0. The mutants are unkillable by
-   construction, which is a different problem with a different answer.
+**What replaced it.** A `--changed-only` run is judged per hunk: a survivor fails the run only when
+it sits on a line the diff added or modified, and a survivor on an inherited line is printed as
+context and never gates. `NoCoverage` on a changed line fails too, so "add code no test calls" is not
+a way through. A full-scope run keeps the pooled `thresholds.break` comparison, which is a reasonable
+thing for a whole-tree audit to use.
 
-   Reason 1 — the cost — is the one that keeps this gate open.
+This answers the open condition below — *agreement on what a survivor obliges* — in the only way that
+is fair on a mixed diff: **a survivor on a line you wrote obliges you to kill it, or to say at a
+scoped disable why it cannot be killed; a survivor on a line you inherited obliges nothing.** It
+needs none of the three forbidden moves: no threshold lowered, no config narrowed, no live mutant
+annotated away.
 
-**What has to be true to turn it back on:**
+Reasoning and the rejected alternatives — an absolute per-file threshold, and a recorded baseline
+judged on score delta — are in `scripts/lib/mutation-diff-scope.mjs`.
 
-- ~~Issue #166 resolved, or a documented convention for what mutation testing is expected to reach in
-  an operation module~~ — **done.** The metadata mutants are annotated across all 60 operation
-  modules and a check keeps them there, so a run reports findings rather than a known residue.
-- A decision on scope and trigger: pull request, `main`-only, or nightly. The changed-files scope
-  already exists and keeps cost proportional to the diff; the open question is which event pays it.
-- Agreement on what a survivor obliges. On a pull request it can block; on `main` it can only be
-  filed, and filing findings nobody is committed to reading is how a check becomes decoration.
+**Demonstrated failing before being switched on.** Against a deliberately hollow test (asserting only
+`typeof x === "number"` and `not.toThrow()`) the run exits 1 and names 11 survivors by file, line and
+mutator, while the 7 inherited mutants in the same run scored 60% and did not contribute to the
+verdict. Against an honest test of the same source it exits 0. A gate nobody has watched fail is not
+evidence of anything.
 
-**What must not happen:** lowering `thresholds.break`, narrowing `stryker.config.json` to dodge a
-file, or annotating live mutants away to force a green. Any of those turns the check into something
-that reports success without providing it — which is the exact failure the job exists to catch, in
-the job itself. A `Stryker disable` scoped to provably unkillable mutants, with the reason stated at
-the disable and the behaviour asserted by a real test, is a different thing and is allowed.
+**Known limit, accepted.** A diff confined to `tests/**` mutates nothing, because
+`filterChangedSourceFiles` scopes to `src/`. A test weakened without touching source is therefore not
+caught. The honest fix — mutating the source that the changed tests cover — is a larger design
+question than this gate, and a narrow check that is on beats a broad one that is off.
+
+**What must not happen** (unchanged, and none of it was done here): lowering `thresholds.break`,
+narrowing `stryker.config.json` to dodge a file, or annotating live mutants away to force a green.
+Any of those turns the check into something that reports success without providing it. A `Stryker
+disable` scoped to provably unkillable mutants, with the reason stated at the disable, is a different
+thing and is allowed.
 
 ---
 

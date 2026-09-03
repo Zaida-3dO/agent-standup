@@ -46,11 +46,12 @@ describe("parseChangedLineRanges", () => {
     expect(parseChangedLineRanges(diff).get("src/lib/a.ts")).toEqual([[12, 16]]);
   });
 
-  // The old side is a different set of line numbers entirely once a diff has
-  // shifted anything. Stryker reports mutant locations against the new file,
-  // so reading the old side would judge lines that aren't the ones that
-  // changed — and would drift further the deeper into the file you go.
-  it("uses the new-side start, not the old-side start", () => {
+  // A hunk header carries two independent line numbers, and they diverge as
+  // soon as a diff shifts anything. Stryker reports mutant locations against
+  // the file as it now exists, so only the `+` side can be compared against
+  // them; reading the `-` side would judge unrelated lines, drifting further
+  // the deeper into the file you go.
+  it("reads the + side of the hunk header, not the - side", () => {
     const diff = ["+++ b/src/lib/a.ts", "@@ -100,2 +5,2 @@"].join("\n");
     const ranges = parseChangedLineRanges(diff).get("src/lib/a.ts");
     expect(ranges).toEqual([[5, 6]]);

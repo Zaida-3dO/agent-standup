@@ -180,16 +180,16 @@ describe("the gate distinguishes a paused job from a failing one", () => {
     expect(passesOnNoSource).toBe(true);
   });
 
-  // The gate passes on a `skipped` mutation job for two unrelated reasons,
-  // and it used to state only one of them. On a run where the job was off
-  // (it is limited to `workflow_dispatch`) and `build-and-test` was green,
-  // the required check reported "the suite it follows is already red" about
-  // a suite that had passed — observed on run 32374433954.
+  // Mutation testing runs on any pull request that changes `src/**/*.ts(x)`,
+  // so exactly ONE skip reason is legitimate: `build-and-test` was not green,
+  // which stops the mutation job from starting. Every other skip on a source
+  // change means the mutation job's `if:` fails to match a pull request, and
+  // the gate must fail rather than guess.
   //
   // A required gate whose stated reason is not the actual reason is the same
   // class of defect as one that passes without checking: the log is the only
-  // thing a reader has, and it was false. These pin each branch to the
-  // condition that makes its own message true.
+  // thing a reader has. These pin each branch to the condition that makes its
+  // own message true.
   describe("each pass branch states the reason that actually applies", () => {
     /** The step whose `if:` contains every one of `needles`. */
     function stepMatching(...needles: string[]): string {
@@ -201,17 +201,21 @@ describe("the gate distinguishes a paused job from a failing one", () => {
       return extractStepBlock(GATE, conditions[0] as string);
     }
 
-    it("attributes a skip on a non-dispatch run to the job being switched off", () => {
-      const step = stepMatching(
-        "needs.mutation-testing.result == 'skipped'",
-        "github.event_name != 'workflow_dispatch'",
-      );
-      expect(step).not.toBe("");
-      // It must not blame `build-and-test`, which may well have passed.
-      expect(step).not.toContain("already red");
-      // And it must be explicit that nothing about the code was checked,
-      // rather than reading as a clean bill of health.
-      expect(step).toContain("verified nothing");
+    // The gate must not carry a branch that passes because of the EVENT
+    // rather than because of the code. Such a branch matched every pull
+    // request, so the required check reported success in seconds on 100% of
+    // pull requests including ones that changed `src/` — a green tick
+    // asserting something nobody had checked.
+    //
+    // Fails the moment any `github.event_name` test reappears anywhere in
+    // this gate's conditions, which is the single edit that would restore
+    // the unconditional pass.
+    it("has no branch that passes on the triggering event rather than on a result", () => {
+      const eventBranches = gateConditions().filter((c) => c.includes("github.event_name"));
+      expect(
+        eventBranches,
+        `the gate must decide from job results, not from the event that triggered it; found: ${JSON.stringify(eventBranches)}`,
+      ).toEqual([]);
     });
 
     it("blames build-and-test only when build-and-test actually failed", () => {
@@ -233,6 +237,53 @@ describe("the gate distinguishes a paused job from a failing one", () => {
       expect(step).not.toBe("");
       expect(step).toContain("exit 1");
     });
+  });
+
+  // ── The job the gate reads must actually run on a pull request ────────
+  //
+  // Every assertion above is about `mutation-testing-gate`, which decides a
+  // verdict from `mutation-testing`'s result. None of them can see the
+  // mutation job's OWN `if:`, and that condition is what determines whether
+  // there is ever a result to read. A condition no pull request can satisfy
+  // makes the whole gate vacuous while every assertion above still passes —
+  // the required check goes green in seconds having mutated nothing, which is
+  // the precise failure this file exists to prevent, relocated one job away.
+  //
+  // Fails if `github.event_name` is reintroduced into the mutation job's
+  // condition — the single edit that would switch the gate off wholesale.
+  describe("the mutation job's own trigger condition", () => {
+    const JOB = extractJobBlock(WORKFLOW, "mutation-testing");
+
+    it("finds the job block and does not run vacuously", () => {
+      expect(JOB).not.toBe("");
+      expect(JOB).toContain("name: Mutation testing (changed files)");
+    });
+
+    it("is not gated on the triggering event, so a pull request reaches it", () => {
+      const condition =
+        /if:\s*(?:>-\s*\n)?((?:.|\n)*?)(?=\n\s*(?:runs-on|services|env|steps):)/.exec(JOB);
+      expect(condition, "the mutation job has no parseable if: condition").not.toBeNull();
+      const flattened = (condition?.[1] ?? "").replace(/\s+/g, " ").trim();
+      expect(flattened).not.toBe("");
+      expect(
+        flattened,
+        `the mutation job must run on pull requests, not only on a chosen event; got: ${flattened}`,
+      ).not.toContain("github.event_name");
+      // And it must still be scoped to a source change, so a docs-only pull
+      // request does not pay for a run with nothing to mutate.
+      expect(flattened).toContain("needs.changes.outputs.source == 'true'");
+    });
+  });
+
+  // The unrecognised-skip branch is the one that refuses to guess. Its value
+  // is entirely in failing loudly, so both halves are pinned: it must emit a
+  // workflow error annotation (what surfaces on the run page) AND exit
+  // non-zero. Softening either one turns it into a silent pass.
+  it("annotates and exits non-zero on a skip it cannot explain", () => {
+    const step = extractStepBlock(GATE, "needs.build-and-test.result == 'success'");
+    expect(step).not.toBe("");
+    expect(step).toContain("::error::");
+    expect(step).toContain("exit 1");
   });
 
   it("always runs, so a skipped dependency cannot skip the required check itself", () => {
@@ -356,8 +407,6 @@ describe("a branch that passes without verifying anything says so in the job sum
   const PASSING_BRANCHES = [
     // No source changed — nothing to mutate.
     "needs.changes.outputs.source == 'false'",
-    // Switched off repo-wide until pre-GA (issue #166).
-    "github.event_name != 'workflow_dispatch'",
     // Build & test is red, which is reported by that check instead.
     "needs.build-and-test.result != 'success'",
   ] as const;
