@@ -55,15 +55,36 @@ export interface ServiceDeliverer {
   /** The runtime's hook: result in, result-or-envelope out. */
   (result: unknown, caller: DeliveryCaller): unknown;
   /**
-   * Holds findings for a session's next digest.
+   * Holds findings for a session's next digest. Returns the ones it could
+   * not hold, in the order they were offered.
    *
    * The way findings *enter* this path. They are produced wherever a
    * situation is actually detected — the hook path, or any other producer —
    * and this is where they wait for a juncture at which to be delivered.
    * Separated from the delivery call itself because the two happen at
    * different moments, on different calls, and often for different reasons.
+   *
+   * ── Why this returns something rather than nothing ────────────────────
+   *
+   * `DigestAccumulator.add` answers whether it actually held each finding,
+   * and it refuses at the bound. This used to discard that answer, which
+   * made it the one caller of `add` that broke the contract `add` was
+   * written for: *"leaves the caller free to deliver it immediately if it
+   * would rather not lose it."* `decideDelivery` honours it by promoting a
+   * refused finding to immediate; this dropped it, so a finding entering
+   * through the hook path at the bound was delivered neither now nor later.
+   *
+   * The refused findings are returned rather than delivered here because
+   * this module holds no response to attach them to — the caller does. That
+   * keeps the decision about *what to do* with a refusal where the context
+   * to make it exists, which is the same reason `add` answers instead of
+   * acting.
    */
-  readonly hold: (sessionId: string, findings: readonly InterventionFinding[], at: number) => void;
+  readonly hold: (
+    sessionId: string,
+    findings: readonly InterventionFinding[],
+    at: number,
+  ) => readonly InterventionFinding[];
   /** Drops what is held for a session that has ended. */
   readonly forget: (sessionId: string) => void;
   /** How many findings are waiting for a session. For tests and diagnostics. */
@@ -119,8 +140,14 @@ export function createServiceDeliverer(options: ServiceDelivererOptions = {}): S
     sessionId: string,
     findings: readonly InterventionFinding[],
     at: number,
-  ): void => {
-    for (const finding of findings) accumulator.add(sessionId, finding, at);
+  ): readonly InterventionFinding[] => {
+    // Anything the accumulator declined is handed back rather than lost —
+    // the same rule `decideDelivery` applies, applied by the other caller.
+    const refused: InterventionFinding[] = [];
+    for (const finding of findings) {
+      if (!accumulator.add(sessionId, finding, at)) refused.push(finding);
+    }
+    return refused;
   };
   deliver.forget = (sessionId: string): void => accumulator.forget(sessionId);
   deliver.pendingCount = (sessionId: string): number => accumulator.pendingCount(sessionId);

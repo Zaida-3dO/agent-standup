@@ -305,6 +305,54 @@ describe("the deliverer the runtime is given", () => {
     expect(deliver.pendingCount("s1")).toBe(0);
   });
 
+  // `hold` used to discard `add`'s boolean, which made it the one caller of
+  // the accumulator that broke the contract `add` exists for. These four
+  // pin the answer it now gives, because a return value nobody asserts on
+  // is one a later refactor can quietly drop back to `void`.
+  it("reports nothing refused when every finding is held", () => {
+    const deliver = createServiceDeliverer({ now: () => 0 });
+    expect(deliver.hold("s1", [finding({ id: "a" }), finding({ id: "b" })], 0)).toEqual([]);
+    expect(deliver.pendingCount("s1")).toBe(2);
+  });
+
+  // The failure the row was filed for: at the bound, `add` refuses, and a
+  // caller that ignored it delivered the finding neither now nor later.
+  it("reports the findings the accumulator refused at its bound", () => {
+    const deliver = createServiceDeliverer({
+      accumulator: new DigestAccumulator({ maxPending: 2 }),
+      now: () => 0,
+    });
+
+    const refused = deliver.hold(
+      "s1",
+      [finding({ id: "a" }), finding({ id: "b" }), finding({ id: "over" })],
+      0,
+    );
+
+    expect(refused.map((entry) => entry.id)).toEqual(["over"]);
+    expect(deliver.pendingCount("s1")).toBe(2);
+  });
+
+  // A finding that does not ride the digest is also "not held", and `add`
+  // answers `false` for it too. The caller delivers that one itself, so it
+  // must be in the refusals rather than silently absent from both.
+  it("reports a finding that does not ride the digest as refused", () => {
+    const deliver = createServiceDeliverer({ now: () => 0 });
+    const refused = deliver.hold("s1", [finding({ id: "now", timing: "immediate" })], 0);
+    expect(refused.map((entry) => entry.id)).toEqual(["now"]);
+    expect(deliver.pendingCount("s1")).toBe(0);
+  });
+
+  // Dedupe answers `true` — the finding IS held, by the earlier copy — so a
+  // repeat must not be reported as refused. This is the case most likely to
+  // be got wrong by returning `!added` from the wrong branch.
+  it("does not report a deduplicated repeat as refused", () => {
+    const deliver = createServiceDeliverer({ now: () => 0 });
+    deliver.hold("s1", [finding({ id: "same" })], 0);
+    expect(deliver.hold("s1", [finding({ id: "same" })], 1)).toEqual([]);
+    expect(deliver.pendingCount("s1")).toBe(1);
+  });
+
   it("clears a batch once delivered, so it is not repeated in every later one", () => {
     let now = 0;
     const deliver = createServiceDeliverer({
