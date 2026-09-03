@@ -80,6 +80,16 @@ export interface ContextNeeds {
    * the `PreToolUse` path that decides whether a call may proceed.
    */
   readonly handsOn: boolean;
+  /**
+   * Whether an earlier agent reported a tool it could not use on this item
+   * — I19, one bounded query over `Event`.
+   *
+   * Gated on the **tool being a spawn**, not on any command shape: the
+   * situation is about dispatching, and a dispatch carries no command text
+   * to read. That keeps the query off every `Bash` and every read, which is
+   * the per-call cost this whole function exists to avoid.
+   */
+  readonly toolBlocks: boolean;
 }
 
 const NOTHING: ContextNeeds = {
@@ -87,6 +97,7 @@ const NOTHING: ContextNeeds = {
   approval: false,
   occupancy: false,
   handsOn: false,
+  toolBlocks: false,
 };
 
 /**
@@ -102,6 +113,28 @@ const CHECKOUT_WRITE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "Not
 
 function isCheckoutWrite(tool: string | undefined): boolean {
   return tool !== undefined && CHECKOUT_WRITE_TOOLS.has(tool);
+}
+
+/**
+ * Tools that dispatch a subagent — I19's gate.
+ *
+ * **The spawn is the one thing about a dispatch this server does observe.**
+ * It does not see the tool list the new agent is granted, which is why I19's
+ * catalogued detection stays unbuilt; but the hook reports the tool being
+ * called, and a spawn tool is a spawn. That is enough for the narrower
+ * question this entry actually asks — *is another agent about to be sent at
+ * an item whose last agent said it could not do the job?*
+ *
+ * A set rather than a single literal because the spelling is the client's,
+ * not this server's: `Task` is Claude Code's, `Agent` is what several other
+ * harnesses call the same call. A name this build does not recognise simply
+ * does not gate the query, which is the same no-finding-on-unknown direction
+ * every other reading here takes.
+ */
+const SPAWN_TOOLS: ReadonlySet<string> = new Set(["Task", "Agent"]);
+
+function isSpawn(tool: string | undefined): boolean {
+  return tool !== undefined && SPAWN_TOOLS.has(tool);
 }
 
 /**
@@ -174,29 +207,38 @@ export function needs(
   // entire purpose is to modify a file in the checkout, where there is no
   // command text to inspect.
   const occupancy = isCheckoutWrite(tool);
+  // I19 gates on the spawn tool for the same reason I15 gates on a file
+  // edit: a dispatch carries no command text, so the tool name is the only
+  // signal there is. It needs the assignment first, in order to know which
+  // item's reports to read.
+  const toolBlocks = isSpawn(tool);
 
   if (command === undefined || command.trim() === "") {
-    return occupancy || handsOn
-      ? { assignment: true, approval: false, occupancy, handsOn }
+    return occupancy || handsOn || toolBlocks
+      ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks }
       : NOTHING;
   }
 
   // A merge attempt is the only shape that needs to know whether an
   // approval sits at the tip, and it needs the assignment first in order to
   // know *which item's* tip to ask about.
-  if (isMergeAttempt(command)) return { assignment: true, approval: true, occupancy, handsOn };
+  if (isMergeAttempt(command))
+    return { assignment: true, approval: true, occupancy, handsOn, toolBlocks };
 
   // A broad `git add` needs to know whether the checkout is shared, which
   // is the claim's `worktree` — no artifact question is involved.
-  if (isBroadGitAdd(command)) return { assignment: true, approval: false, occupancy, handsOn };
+  if (isBroadGitAdd(command))
+    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks };
 
   // I13 needs only to know whether this session holds a claim at all, which
   // the assignment lookup answers on its own — no artifact question and no
   // occupancy question are involved.
   if (isWorkRecordingCommand(command))
-    return { assignment: true, approval: false, occupancy, handsOn };
+    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks };
 
-  return occupancy || handsOn ? { assignment: true, approval: false, occupancy, handsOn } : NOTHING;
+  return occupancy || handsOn || toolBlocks
+    ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks }
+    : NOTHING;
 }
 
 /** The one row shape the claim lookup reads. */
@@ -396,7 +438,14 @@ export async function assembleContext(options: {
       ? { ...withOccupancy, handsOnWork: await handsOnWorkFor(db, sessionId, handsOn) }
       : withOccupancy;
 
-  if (!wanted.approval) return withHandsOn;
+  // I19 — tool blocks an earlier agent on this item reported and nothing
+  // has cleared. Gated on the spawn tool above, so this runs only on a
+  // dispatch, never on the ordinary call path.
+  const withToolBlocks = wanted.toolBlocks
+    ? { ...withHandsOn, ...(await toolBlocksFor(db, claim.itemId)) }
+    : withHandsOn;
+
+  if (!wanted.approval) return withToolBlocks;
 
   // The merge gate's own primitives, reused rather than reimplemented. If
   // this asked the question differently from the guard that enforces it at
@@ -415,6 +464,91 @@ export async function assembleContext(options: {
     ...(tip === null ? {} : { hasApprovalAtTip: approved }),
     ...(claim.defaultBranch === null ? {} : { defaultBranch: claim.defaultBranch }),
   };
+}
+
+/**
+ * How many reported tool blocks are read on one dispatch.
+ *
+ * A bound rather than an unbounded read, like every other query here. An
+ * item with more than a handful of distinct unusable tools has a briefing
+ * problem no message can enumerate its way out of, so reading further would
+ * cost queries to produce a nudge nobody finishes.
+ */
+const TOOL_BLOCK_LIMIT = 5;
+
+/** One `report_blocked_on_tool` escalation, as the query returns it. */
+interface ToolBlockRow {
+  tool: string | null;
+  reason: string | null;
+  needed: string | null;
+}
+
+/**
+ * The tool blocks reported on this item that nothing has since cleared.
+ *
+ * ── What counts as cleared, and why it is this ─────────────────────────
+ *
+ * **A claim taken after the report.** The orchestrator's response to "I
+ * could not use this tool" is to fix the provisioning and dispatch again,
+ * and the new agent's `claim` is the first server-visible act of that
+ * dispatch. So a report older than the newest claim on the item has already
+ * been answered — by an agent that either did not need the tool or was
+ * given it — and saying so again would nag about settled history.
+ *
+ * The honest limit of that reading: an orchestrator that dispatches again
+ * **without** fixing anything also produces a claim, so the second crew
+ * clears the first crew's report. That is the correct trade rather than a
+ * flaw to work around. The alternative — treating a report as unresolved
+ * forever — fires on every subsequent dispatch for the life of the item,
+ * including the ones that did fix it, and an entry that cannot be satisfied
+ * is exactly the kind that earns a 1 and gets switched off. The second crew
+ * hitting the same wall files its own report, which is newer than that
+ * claim and fires again.
+ *
+ * `reason` and `needed` are read from the payload and the body the
+ * operation wrote, so the message can name the tool and the remedy rather
+ * than reminding in the abstract — which the catalogue explicitly asks for.
+ */
+async function toolBlocksFor(
+  db: TransactionHandle,
+  itemId: string,
+): Promise<Pick<InterventionContext, "unresolvedToolBlocks">> {
+  const rows = await db.$queryRawUnsafe<ToolBlockRow[]>(
+    `SELECT e."payload"->>'blocked_on_tool' AS "tool",
+            e."payload"->>'reason'          AS "reason",
+            e."body"                        AS "needed"
+       FROM "Event" e
+      WHERE e."itemId" = $1
+        AND e."type" = 'escalation'
+        AND e."payload" ? 'blocked_on_tool'
+        AND e."ts" > COALESCE(
+              (SELECT MAX(a."claimedAt") FROM "Assignment" a WHERE a."itemId" = $1),
+              '-infinity'::timestamptz)
+      ORDER BY e."ts" DESC
+      LIMIT $2`,
+    itemId,
+    TOOL_BLOCK_LIMIT,
+  );
+
+  // A row whose tool is missing is not a finding — the field is the whole
+  // point of the entry, and a nudge that cannot name the tool is the
+  // "generic reminder" the catalogue calls weak medicine.
+  const blocks = rows.flatMap((row) =>
+    row.tool === null
+      ? []
+      : [
+          {
+            tool: row.tool,
+            reason: row.reason ?? "unknown",
+            ...(row.needed === null ? {} : { needed: row.needed }),
+          },
+        ],
+  );
+
+  // Absent rather than empty, like every other optional field here: the
+  // predicate reads "did not look" and "looked and found none" the same way,
+  // so there is nothing an empty array would say that absence does not.
+  return blocks.length === 0 ? {} : { unresolvedToolBlocks: blocks };
 }
 
 /**

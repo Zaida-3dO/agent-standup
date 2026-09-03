@@ -118,6 +118,11 @@ import { takeover } from "./operations/takeover";
 import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
+// The stall channel a dispatched agent uses when its brief names a tool it
+// cannot use (INTERVENTIONS.md I19). Deliberately callable by a caller
+// holding no claim — a dispatched subagent normally holds none, and that is
+// the population it exists to serve.
+import { reportBlockedOnTool } from "./operations/report-blocked-on-tool";
 import { recordArtifact, requestReview } from "./operations/record-artifact";
 import { loopAdd, loopClose } from "./operations/open-loops";
 // The read half of open loops, and the rest of their lifecycle. Loops could
@@ -275,6 +280,7 @@ export const OPERATION_REGISTRY = {
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
   [note.name]: note,
+  [reportBlockedOnTool.name]: reportBlockedOnTool,
   [recordArtifact.name]: recordArtifact,
   [requestReview.name]: requestReview,
   [loopAdd.name]: loopAdd,

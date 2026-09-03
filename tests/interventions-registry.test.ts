@@ -916,6 +916,15 @@ describe("the catalogue entries that are deliberately not built", () => {
       I13: "work-recorded-against-no-item",
       I14: "orchestrator-doing-the-work",
       I15: "checkout-held-by-another-crew",
+      // Built as half of itself, and the half is named in both the
+      // catalogue row and the predicate's own header. The spawn-time
+      // detection the entry asks for is still unbuildable — this server
+      // never sees a spawn's tool grant — so what shipped fires on a
+      // *repeat* dispatch over a block a previous agent reported. Listed
+      // here rather than under the unbuilt entries for the reason I13 is:
+      // a shipped predicate with a narrowed signal is built, and saying
+      // otherwise would leave the registry entry undocumented.
+      I19: "dispatch-over-unresolved-tool-block",
       I23: "merged-check-by-ref-comparison",
       I24: "rebase-before-checking-for-conflicts",
       I25: "visual-reviews-in-flight-concurrently",

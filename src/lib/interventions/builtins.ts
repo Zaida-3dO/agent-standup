@@ -761,6 +761,150 @@ const batchVisualReviews: Intervention = {
   },
 };
 
+/**
+ * **I19, narrowed** — dispatching again over a tool block nobody cleared.
+ *
+ * ── What this is NOT, stated first ─────────────────────────────────────
+ *
+ * The catalogued I19 asks whether the agent being spawned *right now* has
+ * the tools its job needs. **That is still unbuilt and still unbuildable
+ * here**, and this entry must not be read as coverage of it. The full
+ * argument for why is recorded immediately below, under "Why the detection
+ * half is unbuildable on this schema".
+ *
+ * It is recorded *here* because there is nowhere else left for it. I19 no
+ * longer has an `UNIMPLEMENTED_CATALOGUE_ENTRIES` row to carry it: shipping
+ * this predicate required deleting that row, because
+ * `tests/interventions-registry.test.ts` asserts no catalogue id is both
+ * built and listed unbuilt, and the assertion is right to. Deleting the row
+ * without rehoming its reasoning would have discarded the analysis that
+ * justifies the narrowing — which is the part a future reader needs most,
+ * since "why was only half of this built" is the obvious question and the
+ * registry now answers it nowhere.
+ *
+ * ── Why the detection half is unbuildable on this schema ───────────────
+ *
+ * Verbatim from the catalogue entry this replaced, because the conclusion
+ * has not changed and the reasoning is the reason to trust it:
+ *
+ * > which tools a given job requires. The tool list a subagent was spawned
+ * > with is on the spawn; that a reviewer on a UI territory needed a
+ * > browser is a per-role judgement, and a rule that fires on every
+ * > subagent without one would fire on every subagent that correctly had
+ * > none. The `agent-standup` half reads as the tractable one and is not,
+ * > on this schema: no column records the tool list a session was spawned
+ * > with, and the hook event carries only the tool being called, so the
+ * > sole available proxy is that an agent has recorded nothing. That fires
+ * > on every agent which legitimately had nothing to record — a scout, a
+ * > short crew, one that failed early — which is a guard that costs more
+ * > than it saves. What would make it buildable is the spawn's tool list
+ * > being recorded at dispatch. **Re-examined against the owner's stronger
+ * > ask** — that a subagent lacking its tools should stall immediately and
+ * > report, as a hard block rather than limping on — and the conclusion is
+ * > unchanged for the detection half, for a reason worth stating
+ * > precisely: the request describes behaviour at the moment of
+ * > *spawning*, and this server never observes a spawn. It sees a
+ * > session's tool calls once that session is already running, so by the
+ * > time anything here could speak, the subagent has been dispatched and
+ * > is underway — which is exactly the situation the ask exists to
+ * > prevent. The stall-and-report half is genuinely reachable, but not
+ * > from here: it belongs to whatever performs the dispatch, which is the
+ * > only party holding both the requested tool list and the ability to
+ * > refuse before the agent starts. Building a server-side predicate that
+ * > fired after the fact would satisfy the letter of the entry while doing
+ * > none of what was asked, and would read as coverage on the settings
+ * > page.
+ *
+ * That argument leaves exactly one door open, and it is the one this entry
+ * goes through.
+ *
+ * ── The narrower thing that IS observable ──────────────────────────────
+ *
+ * Once a dispatched agent has *told* the board it could not use a tool —
+ * through `report_blocked_on_tool`, which exists for exactly this — the
+ * situation stops being an inference and becomes a row. An orchestrator
+ * that then spawns another agent on the same item, without having acted on
+ * that report, is about to reproduce the failure it was just told about.
+ * That is a fact established by a call rather than guessed from an absence,
+ * which is the standard every other built entry here is held to.
+ *
+ * The cost of the narrowing is honest and worth naming: **the first agent
+ * still hits the wall.** This cannot save it, because nothing here knows
+ * anything until that agent speaks. What it prevents is the *second* and
+ * the third — which is the shape both documented incidents actually took.
+ * Three crews on 2026-08-19 and four on 2026-08-23 each hit one gap, one
+ * after another, because nothing carried the first one's discovery forward
+ * to the next dispatch.
+ *
+ * ── Why the message names the tool and its reason ──────────────────────
+ *
+ * The catalogue asks that this *"name what a crew type is actually
+ * missing, not just remind in the abstract — the failure mode is a brief
+ * confidently asserting a capability, so a generic reminder is weak
+ * medicine."* The report carries the tool, the reason and the instruction
+ * that could not be followed, so the nudge can quote all three.
+ *
+ * The reason split is what makes the remedy correct rather than plausible,
+ * and getting it backwards wastes the round:
+ *
+ *   - **not_granted** — the tool is absent from the agent's definition. Add
+ *     it by full name; there are no wildcards. And the edit **only takes
+ *     effect in a new session**, so this session cannot test the fix it
+ *     just made.
+ *   - **refused** — the tool was granted and the call was refused anyway.
+ *     Editing the tool list changes nothing, because the tool is already
+ *     there. The fix is a different call, or handing over the claim the
+ *     operation requires.
+ *
+ * ── Why a nudge and not a block ────────────────────────────────────────
+ *
+ * The catalogue asks for `nudge`, and dispatching over a known tool block
+ * is often correct: the next agent may have a different job that never
+ * touches the tool, or the orchestrator may have already fixed the
+ * definition and be spawning the new session precisely because that is the
+ * only way to pick the fix up. Blocking would refuse the remedy.
+ */
+const dispatchOverUnresolvedToolBlock: Intervention = {
+  id: "dispatch-over-unresolved-tool-block",
+  source: "builtin",
+  summary:
+    "Spawning another agent on an item where a previous one reported a tool it could not use.",
+  phase: "pre",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "An agent on this item already stopped and reported a tool it could not use. Either grant " +
+      "that tool in the new agent's definition by its full name — there are no wildcards — or " +
+      "brief this one not to need it. Read the reason first: an agent-definition edit only takes " +
+      "effect in a NEW session, and it fixes nothing when the tool was granted and refused.",
+    prominent:
+      "⚠️ You are dispatching over a tool block that has not been cleared. An agent on this item " +
+      "already stopped to say a tool its brief named was unusable, and nothing since has " +
+      "resolved it — so this dispatch is about to repeat it. Either add the tool to the agent's " +
+      "definition by full name, or brief this agent not to need it. Read the reason before you " +
+      "choose: a tool that was never granted needs that edit, and the edit only takes effect in " +
+      "a NEW session — you cannot test it from this one. A tool that was granted and refused is " +
+      "already in the list, so editing it changes nothing: call a different operation, or hand " +
+      "over the claim the refused one requires.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    const blocks = context.unresolvedToolBlocks;
+    // Absent means the server did not look, or looked and found none —
+    // both read as no finding, like every other optional field here. An
+    // empty array is never written, so this covers both spellings.
+    if (blocks === undefined || blocks.length === 0) return { triggered: false };
+    return {
+      triggered: true,
+      data: {
+        tools: blocks.map((block) => block.tool),
+        reasons: blocks.map((block) => block.reason),
+      },
+    };
+  },
+};
+
 export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   mergeWithoutApprovalAtTip,
   broadGitAddOnSharedCheckout,
@@ -773,6 +917,7 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   squashMergeRefComparison,
   rebaseRestraint,
   batchVisualReviews,
+  dispatchOverUnresolvedToolBlock,
 ];
 
 /**
@@ -864,31 +1009,6 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "not hold, and comparing against nothing is how a nudge becomes noise. Wanted alongside it: " +
       "the recommendation recorded at dispatch, so the comparison is against what was advised " +
       "rather than against a guess made afterwards.",
-  },
-  {
-    id: "I19",
-    missing:
-      "which tools a given job requires. The tool list a subagent was spawned with is on the " +
-      "spawn; that a reviewer on a UI territory needed a browser is a per-role judgement, and a " +
-      "rule that fires on every subagent without one would fire on every subagent that correctly " +
-      "had none. The `agent-standup` half reads as the tractable one and is not, on this schema: " +
-      "no column records the tool list a session was spawned with, and the hook event carries " +
-      "only the tool being called, so the sole available proxy is that an agent has recorded " +
-      "nothing. That fires on every agent which legitimately had nothing to record — a scout, a " +
-      "short crew, one that failed early — which is a guard that costs more than it saves. What " +
-      "would make it buildable is the spawn's tool list being recorded at dispatch. " +
-      "**Re-examined against the owner's stronger ask** — that a subagent lacking its tools " +
-      "should stall immediately and report, as a hard block rather than limping on — and the " +
-      "conclusion is unchanged for the detection half, for a reason worth stating precisely: " +
-      "the request describes behaviour at the moment of *spawning*, and this server never " +
-      "observes a spawn. It sees a session's tool calls once that session is already running, " +
-      "so by the time anything here could speak, the subagent has been dispatched and is " +
-      "underway — which is exactly the situation the ask exists to prevent. The stall-and-report " +
-      "half is genuinely reachable, but not from here: it belongs to whatever performs the " +
-      "dispatch, which is the only party holding both the requested tool list and the ability " +
-      "to refuse before the agent starts. Building a server-side predicate that fired after the " +
-      "fact would satisfy the letter of the entry while doing none of what was asked, and would " +
-      "read as coverage on the settings page. Recorded here rather than shipped hollow.",
   },
   {
     id: "I20",

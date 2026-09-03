@@ -216,6 +216,42 @@ export interface InterventionContext {
    * review is not a batching opportunity, it is just a review.
    */
   readonly pendingVisualReviews?: number;
+  /**
+   * Tools an earlier agent on this item reported it could not use — I19,
+   * written by `report_blocked_on_tool`.
+   *
+   * **This is not the spawn's tool list, and the difference is the entry.**
+   * The catalogued I19 asks whether the agent being spawned right now has
+   * what its job needs, which this server cannot answer: it never observes
+   * a spawn's tool grant, and `builtins.ts` records that gap rather than
+   * papering over it. What it *can* see is that an earlier agent on this
+   * same item already stopped and said a named tool was unusable — a fact
+   * established by a call rather than inferred, and one the orchestrator is
+   * demonstrably about to repeat if it dispatches again without acting on it.
+   *
+   * Absent means the server did not look, or looked and found none; a
+   * predicate reads both as no finding. Empty is never written for the same
+   * reason every other field here stays absent rather than defaulted.
+   */
+  readonly unresolvedToolBlocks?: readonly UnresolvedToolBlock[];
+}
+
+/**
+ * One earlier report that a tool could not be used, as a predicate needs it.
+ *
+ * Carries `reason` because the remedy differs by it and the message says so:
+ * a tool that was never granted needs an edit to the agent definition — which
+ * only takes effect in a **new session** — while a tool that was granted and
+ * refused needs a different call or a handover of the claim, and editing the
+ * tool list would change nothing at all.
+ */
+export interface UnresolvedToolBlock {
+  /** The tool the earlier agent could not use. */
+  readonly tool: string;
+  /** Why, as that agent classified it. `unknown` when it could not tell. */
+  readonly reason: string;
+  /** What the brief had asked it to do with the tool. */
+  readonly needed?: string;
 }
 
 /**

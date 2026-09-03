@@ -53,6 +53,7 @@ describe("needs — what a call could possibly require", () => {
         approval: false,
         occupancy: false,
         handsOn: false,
+        toolBlocks: false,
       });
     }
   });
@@ -75,6 +76,7 @@ describe("needs — what a call could possibly require", () => {
         approval: false,
         occupancy: false,
         handsOn: false,
+        toolBlocks: false,
       });
     }
   });
@@ -94,6 +96,7 @@ describe("needs — what a call could possibly require", () => {
         approval: false,
         occupancy: false,
         handsOn: false,
+        toolBlocks: false,
       });
     }
   });
@@ -104,13 +107,46 @@ describe("needs — what a call could possibly require", () => {
       approval: true,
       occupancy: false,
       handsOn: false,
+      toolBlocks: false,
     });
     expect(needs("gh pr merge 12")).toEqual({
       assignment: true,
       approval: true,
       occupancy: false,
       handsOn: false,
+      toolBlocks: false,
     });
+  });
+
+  it("needs the item's tool-block reports on a spawn, and only on a spawn", () => {
+    // I19's gate is the TOOL, not the command — a dispatch carries no
+    // command text to read. Both spellings gate it, because the name is the
+    // client's rather than this server's.
+    for (const tool of ["Task", "Agent"]) {
+      expect(needs(undefined, tool), tool).toEqual({
+        assignment: true,
+        approval: false,
+        occupancy: false,
+        handsOn: false,
+        toolBlocks: true,
+      });
+    }
+  });
+
+  it("does not read tool blocks for a tool that is not a spawn", () => {
+    // The cost guard. `Bash` is the highest-volume call in the system, and
+    // putting an Event query behind it would be exactly the per-call price
+    // `needs` exists to avoid. A tool this build does not recognise is also
+    // not a spawn — the no-finding-on-unknown direction.
+    for (const tool of ["Bash", "Read", "Glob", "SomeToolFromAnotherHarness"]) {
+      expect(needs("ls -la", tool), tool).toEqual({
+        assignment: false,
+        approval: false,
+        occupancy: false,
+        handsOn: false,
+        toolBlocks: false,
+      });
+    }
   });
 
   it("needs only the claim for a broad git add", () => {
@@ -122,6 +158,7 @@ describe("needs — what a call could possibly require", () => {
       approval: false,
       occupancy: false,
       handsOn: false,
+      toolBlocks: false,
     });
   });
 });
@@ -162,6 +199,130 @@ describe("assembleContext — what it queries", () => {
     expect(db.queries).toHaveLength(1);
     expect(context.itemId).toBeUndefined();
     expect(context.hasApprovalAtTip).toBeUndefined();
+  });
+});
+
+describe("assembleContext — tool blocks an earlier agent reported (I19)", () => {
+  /**
+   * A handle answering the claim lookup with one row and the Event lookup
+   * with whatever the case supplies.
+   */
+  function handleWith(
+    events: Record<string, unknown>[],
+  ): TransactionHandle & { queries: string[] } {
+    const queries: string[] = [];
+    return {
+      queries,
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        queries.push(query);
+        // The Event query names `Assignment` inside its own subselect, so
+        // it has to be recognised FIRST — matching on `Assignment` alone
+        // would answer the tool-block read with a claim row and make every
+        // case below pass for the wrong reason.
+        if (query.includes(`FROM "Event"`)) return events as T;
+        if (query.includes(`FROM "Assignment"`)) {
+          return [
+            {
+              itemId: "i1",
+              worktree: null,
+              state: "executing",
+              defaultBranch: null,
+              role: "orchestrator",
+              repo: "r",
+              rootSessionId: "s1",
+              machine: "m",
+            },
+          ] as T;
+        }
+        return [] as T;
+      },
+      $executeRawUnsafe: async () => {
+        throw new Error("context assembly must never write");
+      },
+    } as TransactionHandle & { queries: string[] };
+  }
+
+  it("carries the tool, the reason and the instruction that could not be followed", async () => {
+    // The catalogue asks the message to NAME what is missing rather than
+    // reminding in the abstract, so all three fields have to survive the
+    // assembly — a row that arrived with only the tool would produce the
+    // generic nudge the entry exists to avoid.
+    const context = await assembleContext({
+      db: handleWith([
+        { tool: "checkpoint", reason: "refused", needed: "The brief said to checkpoint as I go." },
+      ]),
+      sessionId: "s1",
+      tool: "Task",
+    });
+
+    expect(context.unresolvedToolBlocks).toEqual([
+      { tool: "checkpoint", reason: "refused", needed: "The brief said to checkpoint as I go." },
+    ]);
+  });
+
+  it("only counts reports newer than the newest claim on the item", async () => {
+    // The clearing rule, asserted where it is actually implemented: a
+    // dispatch that answered a report produces a claim, and a report older
+    // than that claim has been answered. Asserted on the SQL because that
+    // is where the comparison lives — a test that fed pre-filtered rows
+    // through would pass with the WHERE clause deleted.
+    const db = handleWith([]);
+    await assembleContext({ db, sessionId: "s1", tool: "Task" });
+
+    const eventQuery = db.queries.find((query) => query.includes(`FROM "Event"`));
+    expect(eventQuery).toBeDefined();
+    expect(eventQuery).toContain(`MAX(a."claimedAt")`);
+    expect(eventQuery).toContain("blocked_on_tool");
+  });
+
+  it("leaves the field absent when nothing was reported", async () => {
+    // Absent rather than an empty array, like every other optional field
+    // here: the predicate reads "did not look" and "found none" the same
+    // way, so an empty array would say nothing absence does not.
+    const context = await assembleContext({
+      db: handleWith([]),
+      sessionId: "s1",
+      tool: "Task",
+    });
+
+    expect(context.unresolvedToolBlocks).toBeUndefined();
+  });
+
+  it("reads a report with no recorded reason as `unknown`, never as a specific one", async () => {
+    // The fallback has to be the honest value. `refused` and `not_granted`
+    // carry OPPOSITE remedies — one says edit the agent definition, the
+    // other says that edit will change nothing — so defaulting a row that
+    // recorded no reason to either of them would advise a fix at random,
+    // which is worse than saying the reason is not known.
+    const context = await assembleContext({
+      db: handleWith([{ tool: "checkpoint", reason: null, needed: "do the thing" }]),
+      sessionId: "s1",
+      tool: "Task",
+    });
+
+    expect(context.unresolvedToolBlocks).toEqual([
+      { tool: "checkpoint", reason: "unknown", needed: "do the thing" },
+    ]);
+  });
+
+  it("drops a row that cannot name its tool", async () => {
+    // A nudge that cannot say WHICH tool is the weak medicine the catalogue
+    // warns about, so a row missing the field is not a finding rather than
+    // a finding with a hole in it.
+    const context = await assembleContext({
+      db: handleWith([{ tool: null, reason: "unknown", needed: "something" }]),
+      sessionId: "s1",
+      tool: "Task",
+    });
+
+    expect(context.unresolvedToolBlocks).toBeUndefined();
+  });
+
+  it("reads no Event table at all when the call is not a spawn", async () => {
+    const db = handleWith([{ tool: "checkpoint", reason: "refused", needed: "x" }]);
+    await assembleContext({ db, sessionId: "s1", tool: "Bash", command: "git add -A" });
+
+    expect(db.queries.some((query) => query.includes(`FROM "Event"`))).toBe(false);
   });
 });
 
