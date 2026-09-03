@@ -36,6 +36,7 @@
     "check:db-imports": "node scripts/check-db-import-allowlist.mjs",
     "check:updater-side-effects": "node scripts/check-updater-side-effects.mjs",
     "check:event-emitters": "node scripts/check-event-emitters.mjs",
+    "check:hook-freshness": "node scripts/check-hook-freshness.mjs",
     "check:db-gated": "node scripts/check-db-gated-suites.mjs",
     "check:operation-metadata": "node scripts/check-operation-metadata-mutants.mjs",
     "check:db-gated:require": "node scripts/check-db-gated-suites.mjs --require-db",
