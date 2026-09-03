@@ -248,6 +248,11 @@ const closeInput = z
   .object({
     itemId: z.string().min(1),
     loopId: z.string().trim().min(1),
+    /**
+     * How the loose end was resolved. Optional — see `loop_close`'s summary
+     * for why it is not required the way `loop_delete`'s reason is.
+     */
+    reason: z.string().trim().min(1).optional(),
     actorType: z.enum(ACTOR_TYPES).optional(),
     actorId: z.string().min(1).nullable().optional(),
     sessionId: z.string().min(1).nullable().optional(),
@@ -265,7 +270,16 @@ export type LoopCloseInput = z.infer<typeof closeInput>;
 export const loopClose = defineOperation({
   name: "loop_close",
   kind: "write",
-  summary: "Closes an open loop on an item.",
+  summary:
+    "Closes an open loop on an item. Takes an optional reason saying how it was resolved, which is kept and reported with the closed loop.",
+  contract: {
+    rules: [
+      {
+        fields: ["reason"],
+        rule: 'Optional, and kept where given — a closed loop reports it as `closedReason`. Unlike action "delete", which requires a reason because a retraction has to justify itself, a closure without one is ordinary and is recorded as having none.',
+      },
+    ],
+  },
   // Stryker restore all
   input: closeInput,
   async handler(ctx: ServiceContext, input: LoopCloseInput): Promise<AppendedEvent> {
@@ -301,8 +315,14 @@ export const loopClose = defineOperation({
 
     const actor = await resolveActor(ctx, input);
 
-    // `{loopId}` only. The text is not repeated: the opening event carries it,
-    // and a second copy is a second thing that can disagree.
+    // `{loopId}`, plus `reason` when one was given. The text is not repeated:
+    // the opening event carries it, and a second copy is a second thing that
+    // can disagree.
+    //
+    // The reason key is omitted entirely when absent rather than written as
+    // null, so a payload says either "a reason was given, here it is" or
+    // nothing at all — the same shape `open_loop_deleted` writes, which is
+    // what lets one reading rule serve both.
     return appendEvent(ctx.db, {
       itemId: input.itemId,
       actor: {
@@ -312,7 +332,10 @@ export const loopClose = defineOperation({
       },
       assignmentId: actor.assignmentId,
       type: "open_loop_closed",
-      payload: { loopId: input.loopId },
+      payload: {
+        loopId: input.loopId,
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+      },
     });
   },
 });

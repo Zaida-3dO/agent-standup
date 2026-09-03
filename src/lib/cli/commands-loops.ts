@@ -230,7 +230,8 @@ export const LOOP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     noun: "item",
     verb: "loop-close",
     operation: "loop_close",
-    summary: "Closes an open loop on an item.",
+    summary:
+      "Closes an open loop on an item. --reason optionally records how it was resolved, and is reported with the closed loop.",
     buildInput: buildLoopCloseInput,
   },
   {

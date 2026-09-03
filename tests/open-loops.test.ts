@@ -142,9 +142,32 @@ describe("validating what may be written as a loop", () => {
       loopId: "loop-a",
       text: "untested",
     });
+    // A close carries an optional reason, so a payload without one reads as
+    // `null` — which is every loop closed before the field existed, and
+    // every close that simply did not explain itself.
     expect(parseOpenLoopClosedPayload({ loopId: "loop-a", extra: "ignored" })).toEqual({
       loopId: "loop-a",
+      reason: null,
     });
+  });
+
+  // Row fa83f2b9-3ce6-4e89-a930-aaf949720f8e. Breaks if the parser stops
+  // reading `reason` off the payload — the read half of the closure reason
+  // being kept rather than accepted and discarded.
+  it("reads a closing reason where one was recorded, and null where none was", () => {
+    expect(
+      parseOpenLoopClosedPayload({ loopId: "loop-a", reason: "resolved by the migration" }),
+    ).toEqual({ loopId: "loop-a", reason: "resolved by the migration" });
+
+    // Blank and non-string reasons are "no reason", not a reason of "". The
+    // same rule `parseOpenLoopDeletedPayload` applies, so the two terminal
+    // events cannot disagree about what an empty explanation means.
+    for (const reason of ["", "   ", 7, null]) {
+      expect(parseOpenLoopClosedPayload({ loopId: "loop-a", reason }), String(reason)).toEqual({
+        loopId: "loop-a",
+        reason: null,
+      });
+    }
   });
 
   it("refuses an open with no loopId — it could never be closed", () => {

@@ -8,7 +8,11 @@
 // distrust the guard. So each suite below pairs its matches with the
 // near-misses that would be caught by a lazier pattern.
 import { describe, expect, it } from "vitest";
-import { isBroadProcessKill, isMergeAttempt } from "@/lib/interventions/commands";
+import {
+  allowsOnlyFastForward,
+  isBroadProcessKill,
+  isMergeAttempt,
+} from "@/lib/interventions/commands";
 
 describe("isMergeAttempt", () => {
   it("recognises the three shapes that land work", () => {
@@ -59,6 +63,87 @@ describe("isMergeAttempt", () => {
     ]) {
       expect(isMergeAttempt(command), command).toBe(false);
     }
+  });
+
+  // ── Row f296b059-e867-456f-af2a-d11af92a34c4 ────────────────────────────
+  //
+  // Both directions, because this is the pair that matters: the fix is only
+  // worth having if the false positive is gone AND the true positive it was
+  // hiding among is still caught. The plausible mistake when narrowing an
+  // allow is widening it too far — letting a real merge through — so the
+  // second test below is the one to check first if either is ever edited.
+
+  it("does not recognise a fast-forward-only update as a merge", () => {
+    // Breaks if the `allowsOnlyFastForward` early return is removed from the
+    // `pull` branch of `isMergeAttempt` (deleting the one `return false`),
+    // which is the exact state that produced the false positive: `git pull
+    // --ff-only` is how every session catches up before starting work, and
+    // it was refused with a message about missing reviews.
+    //
+    // `--ff-only` makes git abort rather than merge when the update is not a
+    // fast-forward, so no unreviewed history can arrive by this route.
+    for (const command of [
+      "git pull --ff-only",
+      "git pull --ff-only origin main",
+      "git pull origin main --ff-only",
+      "git merge --ff-only origin/main",
+      // The compound form the isolating session actually ran.
+      "git checkout main && git pull --ff-only",
+      // Global options still have to be skipped to find the subcommand.
+      "git -C /some/path pull --ff-only",
+    ]) {
+      expect(isMergeAttempt(command), command).toBe(false);
+    }
+  });
+
+  it("still recognises a pull that can merge divergent history", () => {
+    // The direction the fix must not break. Breaks if the `pull` branch is
+    // widened to return false for any pull (e.g. changing the guarded
+    // `if (allowsOnlyFastForward(trimmed)) return false;` to a bare
+    // `return false`), or if `allowsOnlyFastForward` is loosened to a
+    // substring test that ignores flag order.
+    for (const command of [
+      // No constraint at all: git will build a merge commit out of divergent
+      // history without being asked.
+      "git pull",
+      "git pull origin main",
+      "git pull --no-rebase origin main",
+      // The last flag wins, exactly as it does in git. A `.includes("--ff-only")`
+      // check would wave both of these through, and they can merge.
+      "git pull --ff-only --no-ff origin main",
+      "git merge --ff-only --no-ff origin/main",
+      // `--ff` is git's default, not a constraint: it fast-forwards when it
+      // can and merges when it cannot.
+      "git pull --ff origin main",
+      "git merge --ff origin/main",
+      // A near-miss spelling is not the flag. Under-matching here is the
+      // safe direction — it stays recognised as a merge.
+      "git pull --ff-only=yes",
+      "git pull --ff-onlyish",
+    ]) {
+      expect(isMergeAttempt(command), command).toBe(true);
+    }
+  });
+});
+
+describe("allowsOnlyFastForward", () => {
+  it("reads the flags in order and lets the last one win", () => {
+    // Pinned separately from `isMergeAttempt` because this is where the
+    // widening mistake would actually be made. Breaks if the loop stops
+    // resetting on `--no-ff`/`--ff` (deleting the `else if` branch), which
+    // turns the function into "does --ff-only appear anywhere" — and that
+    // reading calls `git merge --ff-only --no-ff` fast-forward-only when it
+    // is a forced merge commit.
+    expect(allowsOnlyFastForward("git pull --ff-only")).toBe(true);
+    expect(allowsOnlyFastForward("git pull --no-ff --ff-only")).toBe(true);
+
+    expect(allowsOnlyFastForward("git pull --ff-only --no-ff")).toBe(false);
+    expect(allowsOnlyFastForward("git pull --ff-only --ff")).toBe(false);
+    expect(allowsOnlyFastForward("git pull")).toBe(false);
+    // A flag has to be its own token: `--ff-only` inside a longer word, or
+    // as part of a `--flag=value`, is a different flag.
+    expect(allowsOnlyFastForward("git pull --ff-onlyish")).toBe(false);
+    expect(allowsOnlyFastForward("git commit -m 'use --ff-only'")).toBe(false);
   });
 });
 

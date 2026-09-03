@@ -302,6 +302,15 @@ export interface LoopGetOutput {
   readonly openedAt: string;
   readonly editedAt: string | null;
   readonly closedAt: string | null;
+  /**
+   * Why it was closed, where the closing call gave a reason.
+   *
+   * Reported here and not on `LoopSummary` for the same reason
+   * `deletedReason` is: the list read is a recognise-and-act shape, and the
+   * explanations belong to the full read. Null means no reason was given —
+   * closing without one is ordinary and allowed.
+   */
+  readonly closedReason: string | null;
   readonly deletedAt: string | null;
   readonly deletedReason: string | null;
   /** The event id of the `open_loop`, stringified for the JSON boundary. */
@@ -361,6 +370,7 @@ export const loopGet = defineOperation({
       openedAt: loop.openedAt,
       editedAt: loop.editedAt,
       closedAt: loop.closedAt,
+      closedReason: loop.closedReason,
       deletedAt: loop.deletedAt,
       deletedReason: loop.deletedReason,
       eventId: loop.eventId,
