@@ -60,6 +60,25 @@
  *     repository's earlier false-PASS bug in `mutation.json`; this closes
  *     the same gap for the second file that now persists state.
  *
+ * ── What decides pass/fail ───────────────────────────────────────────────
+ *
+ * Two different verdicts, because the two run modes answer two different
+ * questions:
+ *
+ *   --changed-only  A survivor FAILS the run when it sits on a line the diff
+ *                   added or modified; a survivor on an inherited line is
+ *                   printed as context and never gates. The pooled
+ *                   `thresholds.break` comparison is deliberately NOT applied
+ *                   here — it judges a whole file's score, so it fails an
+ *                   author for weakness they inherited, which is what kept
+ *                   this gate switched off. Full reasoning, including why a
+ *                   recorded baseline and a score delta were both rejected,
+ *                   is in `scripts/lib/mutation-diff-scope.mjs`.
+ *
+ *   full scope      Keeps the pooled `thresholds.break` comparison. There is
+ *                   no diff to attribute anything to, and a pooled threshold
+ *                   is a reasonable thing for a whole-tree audit to use.
+ *
  * ── Usage ────────────────────────────────────────────────────────────────
  *   node scripts/run-mutation-tests.mjs [--changed-only] [--base <ref>]
  *
@@ -82,6 +101,12 @@ import {
   validateIncrementalCache,
 } from "./lib/mutation-report-guards.mjs";
 import { changedSourceFiles, buildMutateArg } from "./lib/mutation-scope.mjs";
+import {
+  changedLineRanges,
+  splitMutantsByChangedLines,
+  findingsFromSplit,
+  scoreOf,
+} from "./lib/mutation-diff-scope.mjs";
 
 const REPORT_PATH = path.resolve("reports/mutation/mutation.json");
 // Must match `incrementalFile` in stryker.config.json — passed explicitly
@@ -328,6 +353,76 @@ function main() {
         "must never be treated as a pass.",
     );
     process.exit(1);
+  }
+
+  // ── The verdict ────────────────────────────────────────────────────────
+  //
+  // For a --changed-only run the verdict is per-hunk, NOT the pooled score:
+  // a survivor is a failure when it sits on a line this diff added or
+  // modified, and is reported as context when it was inherited. The pooled
+  // score is still printed (above, and again below) because it is useful to
+  // know — it is just not what decides the outcome. See
+  // `scripts/lib/mutation-diff-scope.mjs` for why an absolute threshold on a
+  // pooled score fails honest work on inherited code, and why a recorded
+  // baseline was rejected too.
+  //
+  // A full-scope run has no diff to judge against, so it keeps the original
+  // `thresholds.break` behaviour. That is the whole-tree audit, not the PR
+  // gate, and a pooled threshold is a reasonable thing for an audit to use.
+  if (args.changedOnly) {
+    const ranges = changedLineRanges(args.base);
+    // null means the diff could not be computed. Treated as a hard failure,
+    // never as "no changed lines" — an empty set would read as "no survivor
+    // can be attributed, therefore pass", which turns a broken git
+    // invocation into a green required check.
+    if (ranges === null) {
+      console.error(
+        `\n[run-mutation-tests] could not compute the changed-line ranges against ${args.base}, so ` +
+          `no survivor can be attributed to this change. Refusing to report a pass on a scope ` +
+          `that could not be established.`,
+      );
+      process.exit(1);
+    }
+
+    const split = splitMutantsByChangedLines(report, ranges);
+    const findings = findingsFromSplit(split);
+    const changedScore = scoreOf(split.changed);
+    const inheritedScore = scoreOf(split.inherited);
+
+    console.log("\n=== Changed-line mutation verdict ===");
+    console.log(
+      `Mutants on lines this change touched: ${split.changed.length}` +
+        (changedScore == null ? "" : ` (score ${changedScore.toFixed(2)}%)`),
+    );
+    console.log(
+      `Mutants on inherited lines (reported, never gating): ${split.inherited.length}` +
+        (inheritedScore == null ? "" : ` (score ${inheritedScore.toFixed(2)}%)`),
+    );
+
+    if (findings.length > 0) {
+      console.error(
+        `\n[run-mutation-tests] ${findings.length} mutant(s) on lines this change added or ` +
+          `modified were not killed by any test:`,
+      );
+      for (const f of findings) {
+        console.error(
+          `  - ${f.filePath}:${f.line} [${f.mutatorName}] ${f.status}` +
+            (f.status === "NoCoverage" ? " (no test executed this line at all)" : ""),
+        );
+      }
+      console.error(
+        `\nEach one is a line written by this change that every test still passes without. ` +
+          `Kill it with a test that fails when the behaviour changes, or — if it is genuinely ` +
+          `unkillable — say so at a scoped Stryker disable with the reason stated there.`,
+      );
+      process.exit(1);
+    }
+
+    console.log(
+      `\n[run-mutation-tests] no surviving mutants on changed lines — all kills verified by ` +
+        `name. Pooled score across the whole mutated scope: ${score.toFixed(2)}%. PASS.`,
+    );
+    return;
   }
 
   if (breakThreshold != null && score < breakThreshold) {
