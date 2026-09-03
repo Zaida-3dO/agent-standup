@@ -30,6 +30,10 @@ import { buildCaptures } from "@/lib/interventions/capture";
 // it reads stdin to the end — so a constant exported from it could not be
 // read by the assertion that checks it against the server's.
 import { HOOK_PROTOCOL_VERSION } from "@/lib/hook/protocol";
+// The build stamp, for `--build-commit` below. Same reasoning as the
+// protocol version's own module: a value that has to be readable by a test
+// cannot live on this file, whose body runs on import.
+import { HOOK_BUILD_COMMIT, formatBuildStamp } from "@/lib/hook/build-stamp";
 
 /** Reads stdin to the end. Empty string if there is nothing on it. */
 async function readStdin(): Promise<string> {
@@ -50,6 +54,21 @@ async function main(): Promise<number> {
   // lives and therefore a second place it can be stale.
   if (process.argv.includes("--protocol-version")) {
     process.stdout.write(`${HOOK_PROTOCOL_VERSION}\n`);
+    return HOOK_EXIT.ALLOW;
+  }
+
+  // `--build-commit` answers the question `--protocol-version` cannot: not
+  // "what do you speak" but "which build are you". A vendored copy of this
+  // script ran every session for eight days carrying a build made before the
+  // capture loop it was meant to exercise; it declared the correct protocol
+  // version throughout, because no wire format had changed. Asking a built
+  // artifact directly is what makes staleness a comparison rather than an
+  // archaeology exercise in grepping a bundle for a symbol you already
+  // suspect is missing. Answered before stdin is read, for the same reason
+  // `--protocol-version` is: a caller asking a built file to identify itself
+  // is not sending it a hook event, and reading stdin would hang.
+  if (process.argv.includes("--build-commit")) {
+    process.stdout.write(`${formatBuildStamp(HOOK_BUILD_COMMIT)}\n`);
     return HOOK_EXIT.ALLOW;
   }
 
