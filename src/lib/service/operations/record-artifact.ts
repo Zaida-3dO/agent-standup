@@ -40,6 +40,10 @@ import { CHECK_RUN_STATUSES, isCheckRunStatus } from "@/lib/check-runs";
 import { currentReviewRound } from "../guards/merge-review-round";
 import { MERGE_APPROVAL_KIND } from "../guards/merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH } from "../guards/merge-override";
+import {
+  MIN_EVIDENCE_REASON_LENGTH,
+  REVIEW_EVIDENCE_OVERRIDE_KIND,
+} from "../guards/review-evidence-override";
 import { resolveItemId } from "../items/resolve-id";
 
 /**
@@ -60,6 +64,7 @@ const ARTIFACT_KINDS = [
   "check_run",
   "screenshot",
   "merge_override",
+  "review_evidence_override",
   "merge_approval",
   "other",
 ] as const;
@@ -720,6 +725,48 @@ export const recordArtifact = defineOperation({
             `${MIN_REASON_LENGTH}. Say what changed since the review and why it does not ` +
             "invalidate it — this row is kept permanently and is what a later reader has to " +
             "judge the merge by.",
+          { fields: ["body"] },
+        );
+      }
+    }
+
+    // A `review_evidence_override` carries the same mandatory reason as a
+    // `merge_override`, for the same reason: the stated reason is the whole
+    // difference between an audited override and a silent one, and a field
+    // satisfiable by "x" is an optional field with extra keystrokes.
+    //
+    // **It does NOT require a commitSha, and that difference is deliberate.**
+    // `merge_override` can insist on one because `merge.requires_commit`
+    // independently guarantees a tip exists on any item reaching that gate.
+    // The plan-tip clause has no such guarantee: `evidence-at-tip.ts` refuses
+    // both when the approval moved past the tip AND when the approval never
+    // recorded a commit at all — and in that second case there is no sha for
+    // an override to name. Demanding one would leave the commonest backfill
+    // case with a remedy it structurally cannot take, which is the
+    // unreachable-remedy failure this repository has already paid for twice.
+    //
+    // The scoping is not lost, it is moved to where it can be enforced
+    // truthfully: `reviewEvidenceOverrideSatisfies` requires the override to
+    // name the tip (or its lineage) whenever the item HAS a tip, and honours
+    // a sha-less override only on an item that records no commit. A caller
+    // cannot elect to have no tip, so this is a property of the item rather
+    // than a choice the override's author gets to make.
+    if (input.kind === REVIEW_EVIDENCE_OVERRIDE_KIND) {
+      const reason = input.body?.trim() ?? "";
+      if (reason.length === 0) {
+        throw new InvalidInputError(
+          "A review_evidence_override must record in `body` why the existing review evidence " +
+            "still stands. The stated reason is the whole difference between an override and a " +
+            "silent bypass.",
+          { fields: ["body"] },
+        );
+      }
+      if (reason.length < MIN_EVIDENCE_REASON_LENGTH) {
+        throw new InvalidInputError(
+          `A review_evidence_override's reason is ${reason.length} characters; it must be at ` +
+            `least ${MIN_EVIDENCE_REASON_LENGTH}. Say what moved since the review and why it ` +
+            "does not invalidate it — this row is kept permanently and is what a later reader " +
+            "has to judge the decision by.",
           { fields: ["body"] },
         );
       }

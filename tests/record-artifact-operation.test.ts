@@ -446,6 +446,79 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(artifact.createdById).toBe("agent-a");
     });
 
+    // SCHEMA.md §6c-bis — a `review_evidence_override` says the review
+    // evidence ALREADY RECORDED still stands, where a guard would otherwise
+    // demand fresh evidence. Same mandatory reason as a `merge_override`, for
+    // the same reason; deliberately NOT the same commitSha requirement.
+    it("refuses a review_evidence_override with no body", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "review_evidence_override",
+        commitSha: "abc1234",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+    });
+
+    it("refuses a review_evidence_override whose body is only whitespace", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "review_evidence_override",
+        commitSha: "abc1234",
+        body: "   \n  ",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+    });
+
+    it("refuses a review_evidence_override whose reason is too short to say anything", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "review_evidence_override",
+        commitSha: "abc1234",
+        body: "fine",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+      const text = (error as unknown as Error).message;
+      expect(text).toContain("4 characters");
+      expect(text).toContain("20");
+    });
+
+    it("ACCEPTS a review_evidence_override with no commitSha — unlike merge_override, and deliberately", async () => {
+      // The one place the two kinds differ at the write. `merge_override` can
+      // demand a sha because `merge.requires_commit` guarantees a tip exists
+      // at that gate. The plan-tip clause has no such guarantee — it refuses
+      // an approval that never recorded a commit, and on such an item there
+      // is no sha for an override to name. Demanding one would leave the
+      // commonest backfill case with a remedy nobody can take.
+      //
+      // The scoping is not lost, only moved to where it can be enforced
+      // truthfully: the GUARD honours a sha-less override only on an item
+      // that records no commit at all (see review-evidence-override.test.ts).
+      const itemId = await createTask();
+      const artifact = await record({
+        itemId,
+        kind: "review_evidence_override",
+        body: "Backfilled row; the work shipped days ago and no commit artifact was ever recorded.",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(artifact.kind).toBe("review_evidence_override");
+      expect(artifact.commitSha).toBeNull();
+      // No verdict, so nothing counting approvals can ever count this as one.
+      expect(artifact.verdict).toBeNull();
+    });
+
     // SCHEMA.md 6e - a `merge_approval` is a PERSON'S DECISION that this work
     // may land, and it is the only thing that satisfies
     // `merge_authority = needs_approval`. The properties that stop it being a

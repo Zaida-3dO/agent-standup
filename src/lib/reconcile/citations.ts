@@ -86,6 +86,17 @@ export const CITING_ARTIFACT_KINDS: readonly string[] = Object.freeze([
   "plan_review",
   "historical_verification",
   "merge_override",
+  // Included for the same reason `merge_override` is: its body is a written
+  // judgement about what changed since a review, which is exactly the kind
+  // of prose that names another row while explaining itself.
+  //
+  // Deliberately NOT added to `confidenceFor`'s landed set below. A
+  // `merge_override` names a real sha and accompanies a merge, so it is
+  // evidence something shipped; this kind says only that existing review
+  // evidence still stands, which can be true of work that has not landed and
+  // may never. Treating it as `high` would promote a currency judgement into
+  // a claim about reality that it does not make.
+  "review_evidence_override",
   "other",
 ]);
 

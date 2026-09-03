@@ -24,6 +24,10 @@
 import type { Guard, GuardInput } from "../state-machine/guard";
 import { guardOk, guardRejected } from "../state-machine/guard";
 import { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
+import {
+  reviewEvidenceOverrideRemedy,
+  reviewEvidenceOverrideSatisfies,
+} from "./review-evidence-override";
 
 export const evidenceAtTipGuard: Guard = {
   id: "artifact.evidence_at_tip",
@@ -43,6 +47,26 @@ export const evidenceAtTipGuard: Guard = {
 
     const atTip = await latestApprovalAtTip(input.db, input.item.id, "plan_review");
     if (!atTip) {
+      // ── The stated-reason override ──────────────────────────────────────
+      //
+      // Checked inside this clause rather than as a separate guard, for the
+      // structural reason `merge.ts` gives for the same decision: guards are
+      // AND-composed and the first rejection wins, so a new guard could only
+      // ever ADD a requirement — it could never satisfy the one this clause
+      // enforces. An alternative satisfier has to live where the requirement
+      // lives.
+      //
+      // Checked only AFTER `latestApprovalAtTip` has already said no, so an
+      // override is consumed only when the guard would actually have
+      // refused. An override recorded on an item whose approval is properly
+      // at the tip is inert — it costs nothing and, more importantly, is not
+      // counted as a firing, which keeps the override count an honest
+      // measure of how often this guard's default was judged wrong.
+      const override = await reviewEvidenceOverrideSatisfies(input.db, input.item.id);
+      if (override.satisfied) {
+        return guardOk;
+      }
+
       const tip = await currentTipCommitSha(input.db, input.item.id);
       // latestApprovalAtTip already treats an approval whose sha is a git
       // abbreviation of the tip (or of anything the tip's lineage stands in
@@ -54,11 +78,16 @@ export const evidenceAtTipGuard: Guard = {
       // out, but for a different reason worth naming honestly rather than
       // implying the plan moved when it may not have).
       return guardRejected(
-        tip
+        (tip
           ? `The most recent plan_review approval is not for the current tip commit (${tip}). ` +
-              "The plan has moved since it was approved — get it re-reviewed."
+            "The plan has moved since it was approved — get it re-reviewed."
           : "The most recent plan_review approval does not record which commit it applies to, " +
-              "so it cannot be trusted against the current tip. Get the plan re-reviewed.",
+            "so it cannot be trusted against the current tip. Get the plan re-reviewed.") +
+          // Named here because without it this refusal is absolute: a caller
+          // who judges the plan has not materially moved has no way to say so
+          // and no way past. The block still stands — it is a block someone
+          // can pass only by writing down why, and being counted for it.
+          ` ${reviewEvidenceOverrideRemedy(evidenceAtTipGuard.id, tip !== null)}`,
         { fields: ["state"] },
       );
     }
