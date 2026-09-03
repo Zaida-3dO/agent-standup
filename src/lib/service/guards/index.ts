@@ -79,6 +79,13 @@ export {
   type MergeOverrideOutcome,
 } from "./merge-override";
 export {
+  MIN_EVIDENCE_REASON_LENGTH,
+  REVIEW_EVIDENCE_OVERRIDE_KIND,
+  reviewEvidenceOverrideRemedy,
+  reviewEvidenceOverrideSatisfies,
+  type ReviewEvidenceOverrideOutcome,
+} from "./review-evidence-override";
+export {
   MERGE_APPROVAL_KIND,
   personHasApprovedMerge,
   type MergeApprovalResult,

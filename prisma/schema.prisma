@@ -519,6 +519,20 @@ enum ArtifactKind {
   // this installation overriding its own merge gate" is one query, which is
   // what makes a pattern of overriding detectable rather than anecdotal.
   merge_override
+  // A reasoned decision that review evidence ALREADY RECORDED still stands,
+  // where a guard would otherwise demand fresh evidence (SCHEMA.md §6c).
+  //
+  // Distinct from `merge_override`, which says "merge without the approving
+  // review the gate wants". This says "the review you have is still the
+  // right evidence" — most often after a commit moved for a reason that
+  // changed nothing material. Kept apart because counting one as the other
+  // would misstate how often this installation bypasses its merge gate,
+  // which is the number these kinds exist to make countable.
+  //
+  // Like every override on this list it widens what counts as review
+  // EVIDENCE and never who may AUTHORISE: `merge.requires_authorisation`
+  // reads `code_review` by a person and is untouched by this value.
+  review_evidence_override
   // A PERSON'S DECISION that this specific work may land — the evidence
   // `merge_authority = needs_approval` requires (SCHEMA.md §6d).
   //

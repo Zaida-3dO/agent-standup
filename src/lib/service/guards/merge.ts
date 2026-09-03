@@ -49,6 +49,7 @@ import {
 import { historicalVerificationSatisfies } from "./historical-verification";
 import { MERGE_APPROVAL_KIND, personHasApprovedMerge } from "./merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH, mergeOverrideSatisfies } from "./merge-override";
+import { reviewEvidenceOverrideSatisfies } from "./review-evidence-override";
 import {
   BLOCKING_SEVERITY_FLOOR,
   SEVERITY_GATED_VERDICT,
@@ -193,6 +194,26 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
     // reasoned row rather than a request field that evaporates.
     const override = await mergeOverrideSatisfies(input.db, input.item.id);
     if (override.satisfied) {
+      return guardOk;
+    }
+
+    // The same statement, made in the other kind. A caller who recorded a
+    // `review_evidence_override` — because that is the kind the plan-tip
+    // guard's refusal names, and a caller reasonably reaches for the kind it
+    // was just told about — is making a claim this clause accepts too: the
+    // review evidence already recorded still stands. Refusing it here purely
+    // because it was spelled with the other kind would be the "do the right
+    // thing and still be refused" split, and would teach callers to record
+    // both kinds every time, which would destroy the counting distinction
+    // that is the entire reason the kinds are separate.
+    //
+    // The kinds stay separate in what they RECORD (a merge bypass versus a
+    // currency judgement) while being interchangeable in what they SATISFY.
+    // That is deliberate: the count is for reading afterwards, and it stays
+    // honest precisely because a caller has no incentive to record the wrong
+    // one to get past a gate.
+    const evidenceOverride = await reviewEvidenceOverrideSatisfies(input.db, input.item.id);
+    if (evidenceOverride.satisfied) {
       return guardOk;
     }
 

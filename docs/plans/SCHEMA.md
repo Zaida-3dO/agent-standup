@@ -827,6 +827,58 @@ not depend on anyone remembering to close anything.
 **Never readable as a review.** Its own `kind`, carrying no `verdict`, for the reason §6b gives:
 a flag on `code_review` would be a distinction every existing reader ignores by default.
 
+#### 6c-bis. `review_evidence_override` — the same hatch, for the guard that had none
+
+§6c bounds the same hatch for one clause: the merge gate's code review. The reasoning there applies
+here unchanged and is not restated. What this section adds is **reach** — a second clause that needs
+the same exit.
+
+`artifact.evidence_at_tip` refuses `plan_review → executing` when the approved plan does not sit at
+the item's tip commit. Without an override that refusal is absolute: a caller who judges the plan
+has not materially moved has only two moves, obtain a re-review nobody believes is needed, or
+abandon the transition. That is the guard named first in the request this kind comes from:
+
+> *"the whole review is not at tip thing has been more disruptive than helpful — allow the
+> orchestrator manually say 'it's okay nothing much has changed since review so the review is still
+> valid', maybe make it be a nudge or a block overridable with reason?"* — and, of the
+> review-artifact requirement itself, *"especially when backfilling it's just a bunch of tokens
+> wasted."*
+
+The cost is measured, not supposed: closing five already-merged rows in one session took five
+`merge_override` artifacts in twenty minutes, because the gate wanted a fresh review of code that
+had shipped days earlier. **A guard correctly overridden five times running is reporting that its
+default is wrong.**
+
+`review_evidence_override` is therefore accepted as an alternative satisfier by **both**
+`artifact.evidence_at_tip` and the merge code-review clause. It inherits every bound in §6c —
+durable row, mandatory reason checked for content, commit-scoped, never satisfying `needs_approval`
+— with **one deliberate widening**:
+
+- **An override may be anchored to "no commit", but only on an item that has none.** §6c can insist
+  on a `commit_sha` because `merge.requires_commit` independently guarantees a tip exists at that
+  gate. The plan-tip clause has no such guarantee: it refuses both when the approval moved past the
+  tip **and when the approval never recorded a commit at all**, and in that second case there is no
+  sha for an override to name. Requiring one would leave the commonest backfill case with a remedy
+  it structurally cannot take — the unreachable-remedy failure this repository has already paid for
+  twice. So: when the item **has** a tip, an override must name it or its lineage, exactly as §6c
+  requires; when the item has **no** tip, a sha-less override applies. This is a property of the
+  item, not a choice its author makes — a caller cannot elect to have no tip, and the moment a
+  commit artifact exists the strict scoping is back.
+
+**Its own kind rather than a reuse of `merge_override`, and the two are not interchangeable in what
+they record.** `merge_override` claims *"merge this without the approving review the gate wants"*;
+this claims *"the review already recorded is still the right evidence"*. Counting one as the other
+would misstate how often this installation bypasses its merge gate — the number these kinds exist to
+make countable, and the input the intervention-scoring work reads to decide which guards earn their
+friction. They **are** interchangeable in what they *satisfy* at the merge clause, deliberately:
+refusing a caller purely for having spelled the claim with the other kind would teach callers to
+record both every time, destroying the very distinction the separation buys.
+
+**Attributable, not just countable.** Each refusal names the guard being overridden in its remedy
+text, so a later reader can ask "which guard's default is wrong" rather than only "how often did
+someone override something". A count that cannot be attributed to a guard says overriding happened
+without saying what should change.
+
 ### 6d. `supersedes_sha` — why review-at-tip was unsatisfiable under squash-merge
 
 `artifacts.supersedes_sha` records, on a `commit` artifact, the sha this commit is a **rewrite of**
@@ -1259,9 +1311,9 @@ Every `(from, to)` pair is legal. What's enforced is **what must be supplied**.
 | `paused` | `pause_reason` + `resume_condition`. |
 | anything, **from** `blocked`/`paused` | Those fields cleared in the same transaction. |
 | `in-review` | ≥1 `artifacts` row of kind `review-requested`. |
-| `executing` **from** `plan-review` | A `plan-review` artifact with `verdict = approved`. |
+| `executing` **from** `plan-review` | A `plan-review` artifact with `verdict = approved`, and that approval must be at the current tip commit (or a sha it supersedes, §6d). The currency clause has one alternative satisfier: `review_evidence_override` (§6c-bis, reason mandatory). The existence clause has none — an override says a recorded review still stands, which is not a claim anyone can make about a review that was never recorded. |
 | any `completed` state | A valid `summaries` row. |
-| `merged` | Plus `commit_sha`, plus an approving `code-review` artifact at the current `max(artifacts.review_round)`; plus an approving `visual-review` artifact iff `needs_visual_review`; plus an auth check per `merge_authority`. "At the tip commit" includes any sha the tip declares it supersedes (§6d). The code-review clause has two alternative satisfiers: `historical_verification` (§6b, env-gated) and `merge_override` (§6c, reason mandatory) — **neither satisfies the `needs_approval` auth check**, which requires a person-recorded `merge_approval` (§6e). An approving `lgtm_with_nits` additionally blocks when it records any finding graded `medium` or above (§6a). |
+| `merged` | Plus `commit_sha`, plus an approving `code-review` artifact at the current `max(artifacts.review_round)`; plus an approving `visual-review` artifact iff `needs_visual_review`; plus an auth check per `merge_authority`. "At the tip commit" includes any sha the tip declares it supersedes (§6d). The code-review clause has three alternative satisfiers: `historical_verification` (§6b, env-gated), `merge_override` (§6c, reason mandatory) and `review_evidence_override` (§6c-bis, reason mandatory) — **none of them satisfies the `needs_approval` auth check**, which requires a person-recorded `merge_approval` (§6e). An approving `lgtm_with_nits` additionally blocks when it records any finding graded `medium` or above (§6a). |
 | `backlog` from in-progress | No live `assignments` row. |
 
 `POST …/transition?dry_run=true` validates and returns the would-be rejection without mutating.

@@ -1,0 +1,42 @@
+-- `ArtifactKind`.'review_evidence_override' — a reasoned decision that
+-- existing review evidence still stands, where a guard would otherwise
+-- require fresh evidence.
+--
+-- ── The gap this closes ─────────────────────────────────────────────────
+--
+-- Two guards required review evidence to be current and offered no way to
+-- say "it still is". `merge.requires_approving_code_review` had one
+-- (`merge_override`), scoped to itself. `artifact.evidence_at_tip` — the
+-- guard refusing `plan_review -> executing` when an approved plan is no
+-- longer at the tip commit — had none at all: it was absolute, and a caller
+-- who believed the plan had not materially moved could only get a re-review
+-- nobody thought was needed, or give up on the transition.
+--
+-- The cost is measured rather than supposed. Closing five already-merged
+-- rows in one session took five `merge_override` artifacts in twenty
+-- minutes, because the gate wanted a fresh review of code that had shipped
+-- days earlier. A guard correctly overridden five times running is reporting
+-- that its default is wrong.
+--
+-- ── Why its own kind rather than reusing `merge_override` ───────────────
+--
+-- The claim is different, and the difference is the whole reason
+-- `merge_override` is its own kind rather than a flag on `code_review`.
+-- `merge_override` says "merge this without the approving review the gate
+-- wants". This says "the review already recorded is still the right
+-- evidence". Counting one as the other would misstate how often this
+-- installation bypasses its merge gate — which is exactly the number the
+-- kind exists to make countable, and the input the intervention-scoring work
+-- reads to decide which guards earn their friction.
+--
+-- ── What it deliberately does not touch ─────────────────────────────────
+--
+-- `merge.requires_authorisation` reads `kind = 'code_review' AND
+-- created_by_type = 'person'` and is unaffected by this value existing. An
+-- override widens what counts as review EVIDENCE, never who may AUTHORISE a
+-- merge; an agent may not supply a person's decision. That boundary is
+-- asserted by test, not merely intended.
+--
+-- Additive only. No existing row changes meaning and no backfill is
+-- performed: nothing was recording this claim under another name.
+ALTER TYPE "ArtifactKind" ADD VALUE IF NOT EXISTS 'review_evidence_override';
