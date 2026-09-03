@@ -201,6 +201,40 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  // How long a row sits unheld before `get_stale_candidates` will name it.
+  //
+  // Deliberately far above `dead_after_seconds`, and measured from a
+  // different event for a different reason. The liveness thresholds ask
+  // whether a *holder* is still there, from a signal that holder emits.
+  // This asks whether a *row* has been picked back up after its holder
+  // went, and nothing emits a signal for that — the row is simply quiet,
+  // which is indistinguishable from a row waiting its turn in the backlog.
+  // So the number has to be long enough that ordinary backlog latency does
+  // not read as abandonment, which is a question about how a team works
+  // rather than about how a process dies.
+  "liveness.abandoned_after_seconds": define({
+    schema: z.number().int().positive(),
+    default: 86_400,
+    label: "Abandoned after",
+    help:
+      "Seconds an open row may sit with no holder, after its last holder's claim ended, before " +
+      "`get_stale_candidates` reports it as abandoned. Measured from when the claim was released, " +
+      "not from the row's last write — a note or a field change does not mean anybody picked the " +
+      "work back up. Only rows that were held at some point are considered: a row nobody has ever " +
+      "claimed is a backlog row, not an abandoned one, and reporting those would return most of " +
+      "the board. A small value reports rows that are merely between crews; a large one means work " +
+      "whose crew went away sits unnoticed for longer.",
+    category: "Liveness",
+    // Read when the report is asked for, not on the sweep — nothing
+    // schedules this, exactly like `get_stale_candidates` itself.
+    appliesWhen: "next-call",
+    // Raising it hides abandoned work for longer, but it enforces nothing
+    // and releases nothing: the report only ever reports.
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   // The lazy-eviction threshold. Deliberately far above
   // `dead_after_seconds`, and it governs holders that *have* a liveness
   // signal and have stopped producing it. A holder that has produced no

@@ -144,10 +144,10 @@ function sessionIdOf(body: unknown): string | undefined {
  *
  * The refusals are surfaced anyway, for two reasons. They are the honest
  * answer to "what did you take", so a caller reasoning about what a digest
- * will contain is not misled; and this route is the only production caller
- * today, so leaving `hold` silent would mean the next caller — one that
- * *does* drop deferred findings from its response, as the service path
- * does — inherits the same silent loss with nothing to warn it.
+ * will contain is not misled; and a caller that *does* drop deferred
+ * findings from its response — as the service path does — depends on that
+ * answer to avoid losing them, so `hold` has to give it rather than leave
+ * each caller to discover the need for it.
  */
 function holdDeferred(
   result: unknown,

@@ -96,6 +96,21 @@ interface LiveAssignmentRow {
   holderHookVersion: number | null;
 }
 
+/**
+ * The body written on the `release` event when the sweep takes a claim back.
+ *
+ * Exported because it is read as well as written. `get_stale_candidates`
+ * distinguishes a claim the *server* reclaimed from one a holder gave up
+ * deliberately, and this string is the only durable record of which
+ * happened: the actor is supplied by whoever runs the sweep, so it cannot
+ * be relied on to say `system`. Sharing the constant is what keeps the
+ * reader and the writer from drifting into disagreeing about the same
+ * event — a matcher against a copied literal would silently stop matching
+ * the day this wording was improved.
+ */
+export const SWEEP_RELEASE_BODY =
+  "Released by the liveness sweep: no activity past the dead threshold.";
+
 /** Who ran the sweep — recorded on both the assignment moves and the capability checks. */
 export interface SweepActor {
   readonly actorType: "agent" | "system";
@@ -372,7 +387,7 @@ export async function sweepLiveness(
         assignmentId: row.id,
         type: "release",
         payload: { assignmentId: row.id, role: null, holderId: row.holderId },
-        body: "Released by the liveness sweep: no activity past the dead threshold.",
+        body: SWEEP_RELEASE_BODY,
       });
     }
 
