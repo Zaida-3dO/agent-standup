@@ -9,7 +9,7 @@
 // be quietly replaced later by a fabricated one.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -24,6 +24,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { registerSessions } from "./helpers/register-sessions";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -36,7 +37,7 @@ describeIfDb("progress_report against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

@@ -19,11 +19,12 @@
 // Runs against a real Postgres, because "what does the operation return" is
 // settled by the RETURNING clause and nothing shorter. Skips without
 // TEST_DATABASE_URL, the same convention as every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { serializeAppendedEvent } from "@/app/api/_shared/respond";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -43,7 +44,7 @@ describeIfDb("event responses conform across bindings, against Postgres", () => 
 
   beforeAll(async () => {
     const url = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: url });
+    prisma = createTestPrismaClient(url);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),

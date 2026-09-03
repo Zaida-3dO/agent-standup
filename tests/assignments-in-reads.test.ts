@@ -12,13 +12,14 @@
 // Each test below names the single-character change that would break it.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { claimItem, type ClaimInput } from "@/lib/claims";
 import type { BoardOutput } from "@/lib/service/operations/get-board";
 import type { ItemDetailOutput } from "@/lib/service/operations/get-item-detail";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -38,7 +39,7 @@ describeIfDb("the reads report who is on the work", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
@@ -495,8 +496,7 @@ describeIfDb("the reads report who is on the work", () => {
         ids.push(id);
       }
 
-      const logged = new PrismaClient({
-        datasourceUrl: scratchUrl,
+      const logged = createTestPrismaClient(scratchUrl, {
         log: [{ emit: "event", level: "query" }],
       });
       const statements: string[] = [];
@@ -531,8 +531,7 @@ describeIfDb("the reads report who is on the work", () => {
       //
       // Breaks if: the guard is removed — the count becomes 1 and this
       // fails.
-      const logged = new PrismaClient({
-        datasourceUrl: scratchUrl,
+      const logged = createTestPrismaClient(scratchUrl, {
         log: [{ emit: "event", level: "query" }],
       });
       const statements: string[] = [];

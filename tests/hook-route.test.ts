@@ -16,9 +16,10 @@
 // a route whose operation reads no settings has no settings behaviour to
 // prove, and a test that wrote one anyway would be asserting the plumbing of
 // a value nothing consumes.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -45,7 +46,7 @@ describeIfDb("POST /hook route against Postgres", () => {
     // reaches service/live.ts's process-global singleton.
     process.env.DATABASE_URL = scratchUrl;
     hookRoute = await import("@/app/api/hook/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {

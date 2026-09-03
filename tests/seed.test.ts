@@ -12,9 +12,10 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../prisma/seed.mjs";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -34,7 +35,7 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   });
 
   afterAll(async () => {
@@ -77,7 +78,7 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
     // idempotency on its own rather than depending on run order.
     const secondDbName = scratchDatabaseName("seed-twice");
     const secondUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, secondDbName)).url;
-    const client = new PrismaClient({ datasourceUrl: secondUrl });
+    const client = createTestPrismaClient(secondUrl);
 
     try {
       await seed(client);
@@ -140,7 +141,7 @@ describeIfDb("prisma/seed.mjs — against a real Postgres", () => {
       // nothing at all here, so this line is the first thing that fails.
       expect(stdout).toMatch(/Seeded \d+ people, \d+ agents?, \d+ accounts?\.?/i);
 
-      const client = new PrismaClient({ datasourceUrl: scratchUrl });
+      const client = createTestPrismaClient(scratchUrl);
       try {
         // The actual regression: on the broken guard this subprocess exits
         // 0 and every one of these tables is empty, because `main()` never

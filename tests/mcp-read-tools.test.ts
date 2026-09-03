@@ -23,12 +23,13 @@
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { claimItem, type ClaimInput } from "@/lib/claims";
 import { createMcpServer, type ServiceCall } from "@/lib/mcp";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -47,7 +48,7 @@ describeIfDb("MCP read tools against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

@@ -21,11 +21,12 @@
 // produces a green suite and two agents on one item in production. So the
 // live-holder cases are asserted from several directions: recently
 // heartbeated, never heartbeated but making tool calls, and freshly claimed.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, isServiceError, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, resolveSettings, SETTINGS_REGISTRY } from "@/lib/settings";
 import { evictStaleHolders, judgeEviction, type EvictionInputs } from "@/lib/claim-eviction";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -465,7 +466,7 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
 
@@ -1061,7 +1062,7 @@ describeIfDb("claim evicts a stale holder at contention — against Postgres", (
     // A second connection: the lock has to be held by a genuinely
     // concurrent transaction, and Prisma's interactive transaction runs on
     // one connection from its own pool.
-    const rival = new PrismaClient({ datasourceUrl: scratchUrl });
+    const rival = createTestPrismaClient(scratchUrl);
     let releaseRival: () => void = () => {};
     const rivalMayFinish = new Promise<void>((resolve) => (releaseRival = resolve));
     let rivalHasLock: () => void = () => {};

@@ -8,7 +8,7 @@
 // the database what it got. Needs TEST_DATABASE_URL; skips locally without
 // it, always runs in CI.
 import { spawnSync } from "node:child_process";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createScratchDatabase,
@@ -17,6 +17,7 @@ import {
 } from "./helpers/scratch-db";
 import { effectiveSourceGlobs, readMachineSourceGlobs } from "@/lib/settings/overrides";
 import { resolveSettings } from "@/lib/settings/resolve";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -41,7 +42,7 @@ describeIfDb("the settings migration, against a real database", () => {
       throw new Error(`migrate deploy failed:\n${applied.stderr || applied.stdout}`);
     }
 
-    client = new PrismaClient({ datasourceUrl: scratchUrl });
+    client = createTestPrismaClient(scratchUrl);
   }, 120_000);
 
   afterAll(async () => {

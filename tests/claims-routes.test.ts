@@ -8,7 +8,7 @@
 // tests/items-routes.test.ts documents.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
 import {
@@ -17,6 +17,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import { registerSessions } from "./helpers/register-sessions";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -44,7 +45,7 @@ describeIfDb("claim/release/heartbeat/checkpoint/note HTTP routes against Postgr
     heartbeatRoute = await import("@/app/api/claims/heartbeat/route");
     checkpointRoute = await import("@/app/api/checkpoints/route");
     notesRoute = await import("@/app/api/items/[id]/notes/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "route-area", displayName: "Route area" } });
     // §21 (MILESTONES.md #43): claiming needs a registered session. These
     // cases are about the routes' status codes, not registration, so their

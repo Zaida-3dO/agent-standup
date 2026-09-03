@@ -5,7 +5,7 @@
 // deliberately did not), which only Postgres can settle.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
@@ -19,6 +19,7 @@ import {
 } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { defaultSnapshot } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -49,7 +50,7 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
     // Register the real guards this row's operations run against — the same

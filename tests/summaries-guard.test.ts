@@ -8,7 +8,7 @@
 // list — the one thing the pure suite cannot exercise on its own. Same
 // real-Postgres, TEST_DATABASE_URL-gated pattern as
 // `tests/state-machine-transition.test.ts`.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GuardRegistry, applyTransition, rehearseTransition } from "@/lib/service/state-machine";
 import { summaryRequiredGuard } from "@/lib/service/summaries";
@@ -22,6 +22,7 @@ import { OPERATION_REGISTRY } from "@/lib/service/registry";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceContext } from "@/lib/service/context";
 import { z } from "zod";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -39,7 +40,7 @@ describeIfDb("the summaries guard, against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
     runtime = new ServiceRuntime({

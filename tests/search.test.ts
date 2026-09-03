@@ -24,12 +24,13 @@
 // is why `search-rank.ts` is a separate module: an opinion about ordering is
 // worth stating as an assertion about a function rather than inferring from
 // which of two seeded rows came back first.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { OPERATION_REGISTRY } from "@/lib/service/registry";
 import { EXCERPT_CONTEXT, buildExcerpt, rankMatch } from "@/lib/service/items/search-rank";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   escapeLikePattern,
   DEFAULT_SEARCH_LIMIT,
@@ -260,7 +261,7 @@ describeIfDb("search over a real corpus", () => {
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
@@ -553,7 +554,7 @@ describeIfDb("a query broader than the ranking ceiling", () => {
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

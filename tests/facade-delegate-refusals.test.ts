@@ -25,13 +25,14 @@
 // block pins that direction.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { InternalError } from "@/lib/service/errors";
 import { parseDelegateInput } from "@/lib/service/shape-refusal";
 import { z } from "zod";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -60,7 +61,7 @@ describeIfDb("a facade's delegate schema refuses by name", () => {
 
   beforeAll(async () => {
     const { url } = await createMigratedScratchDatabase(testDatabaseUrl!, dbName);
-    prisma = new PrismaClient({ datasourceUrl: url });
+    prisma = createTestPrismaClient(url);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),

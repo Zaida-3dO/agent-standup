@@ -32,7 +32,7 @@
 //   - "does not count an archived direct child"      → the SEED arm
 //   - "does not count an archived grandchild under a live child"
 //                                                    → the RECURSIVE arm
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -42,6 +42,7 @@ import {
   scratchDatabaseName,
 } from "./helpers/scratch-db";
 import type { BoardOutput, BoardEntry } from "@/lib/service/operations/get-board";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -57,7 +58,7 @@ describeIfDb("a board card counts the work beneath it", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
@@ -268,8 +269,7 @@ describeIfDb("a board card counts the work beneath it", () => {
         const listener = (event: { query: string }) => {
           if (event.query.includes("rollup_subtree")) seen++;
         };
-        const logged = new PrismaClient({
-          datasourceUrl: scratchUrl,
+        const logged = createTestPrismaClient(scratchUrl, {
           log: [{ emit: "event", level: "query" }],
         });
         logged.$on("query", listener);

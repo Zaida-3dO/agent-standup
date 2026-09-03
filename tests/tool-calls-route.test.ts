@@ -15,9 +15,10 @@
 // notion of a status code.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -41,7 +42,7 @@ describeIfDb("POST /api/tool-calls against Postgres", () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     route = await import("@/app/api/tool-calls/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {

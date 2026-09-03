@@ -7,7 +7,7 @@
 // `summaries-guard.test.ts` — AC3 ("that follow-up is genuinely blocked") is
 // a claim about a row actually written and then read back, which an
 // in-memory model cannot settle. Skips without TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   DEFERRAL_FOLLOW_UP_GUARD_ID,
@@ -21,6 +21,7 @@ import type { GuardInput } from "@/lib/service";
 import { NOT_DONE_REASONS } from "@/lib/service/summaries";
 import { defaultSnapshot } from "@/lib/settings";
 import type { TransactionHandle } from "@/lib/service";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -37,7 +38,7 @@ describeIfDb("the deferral-proof guard, against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     await prisma.person.createMany({
       data: [

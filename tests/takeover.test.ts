@@ -17,10 +17,11 @@
 // entire value of the feature is that displacing a *live* holder costs an
 // explicit acknowledgement and a written reason, so the cases that prove it
 // refuses are the ones that matter. They are marked below.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GuardRejectedError, ConflictError, NotFoundError } from "@/lib/service";
 import type { TransactionHandle } from "@/lib/service";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   ENFORCEMENT_NOTE,
   LIVE_HOLDER_GUARD,
@@ -265,7 +266,7 @@ describeIfDb("takeoverAssignment — against a real database", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
 

@@ -4,11 +4,12 @@
 // The database half skips without TEST_DATABASE_URL, mirroring
 // tests/import-items.test.ts. Every fixture is invented — this repository is
 // public (CLAUDE.md).
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { importItems, UnknownRepoAliasError } from "@/lib/import-items";
 import { VerdictNotStorableError } from "@/lib/import-assignments-artifacts";
 import type { BackfillPayload } from "@/lib/backfill/contract";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   actorsIn,
   deriveActorAliases,
@@ -309,7 +310,7 @@ describeDb("runBackfill (real database)", () => {
 
   beforeAll(async () => {
     const url = (await createMigratedScratchDatabase(testDatabaseUrl!, databaseName)).url;
-    prisma = new PrismaClient({ datasources: { db: { url } } });
+    prisma = createTestPrismaClient(url);
   }, 180_000);
 
   afterAll(async () => {

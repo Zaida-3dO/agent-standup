@@ -9,7 +9,7 @@
 // already proves for the operation directly, now proved through MCP.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
 import { createMcpServer, withRehearsalUnwrapping } from "@/lib/mcp";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -60,7 +61,7 @@ describeIfDb("MCP write tools against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
 
     // Same production guard set `transition-complete-operations.test.ts`
     // registers — this suite is proving the real wiring, not a scratch

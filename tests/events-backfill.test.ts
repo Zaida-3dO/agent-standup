@@ -9,13 +9,14 @@
 // millisecond through the driver, the cast and the column's own precision.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { appendEvent, type AppendEventInput } from "@/lib/events";
 import { appendBackfillEvent, InvalidBackfillTimestampError } from "@/lib/events-backfill";
 import type { TransactionHandle } from "@/lib/service/context";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -35,7 +36,7 @@ describeIfDb("the backfill-only event timestamp, against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "backfill-area", displayName: "Backfill area" } });
     await prisma.item.create({
       data: {

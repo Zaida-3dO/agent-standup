@@ -1,10 +1,11 @@
 // isNearDuplicate is pure — unit-tested directly, no database needed. The
 // DB-backed findNearDuplicateAreas suite below follows the same real-Postgres,
 // TEST_DATABASE_URL-gated pattern as tests/repos.test.ts and tests/areas.test.ts.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { findNearDuplicateAreas, isNearDuplicate } from "@/lib/near-duplicates";
 import { ensureArea } from "@/lib/areas";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -61,7 +62,7 @@ describeIfDb("findNearDuplicateAreas", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 30_000);
 
   afterAll(async () => {

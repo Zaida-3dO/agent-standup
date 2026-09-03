@@ -20,7 +20,7 @@
 // UPDATE statement, so nothing short of the real write settles it. Skips
 // without TEST_DATABASE_URL, the same convention as every other DB-backed
 // file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GuardRegistry, applyTransition, ITEM_STATES } from "@/lib/service/state-machine";
 import { isTerminalState, TERMINAL_STATES } from "@/lib/service/board/columns";
@@ -29,6 +29,7 @@ import { OPERATION_REGISTRY } from "@/lib/service/registry";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceContext } from "@/lib/service/context";
 import { z } from "zod";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -46,7 +47,7 @@ describeIfDb("completedAt follows the shared terminal-state list", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),

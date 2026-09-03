@@ -28,7 +28,7 @@
 // the refusals get, not just a unit test against a fake context.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createMigratedScratchDatabase,
@@ -37,6 +37,7 @@ import {
 } from "./helpers/scratch-db";
 import { HOOK_PROTOCOL } from "@/lib/build-constants";
 import { assessVersion } from "@/lib/sessions";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
@@ -53,7 +54,7 @@ describeIfDb("session registration and the claim refusal", () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     process.env.DATABASE_URL = scratchUrl;
     ({ service, settingsCache } = await import("@/lib/service/live"));
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "reg-area", displayName: "Registration area" } });
   }, 60_000);
 

@@ -25,7 +25,7 @@
 //   3. **The refusal names the field and says what to pass.** A bare
 //      "invalid type" is a regression against the bar the summary guards
 //      set, and would justify the objection this design answers.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
@@ -33,6 +33,7 @@ import { DEFAULT_LOOP_KIND } from "@/lib/open-loops";
 import { LOOP_ACTIONS } from "@/lib/service/operations/loop";
 import { CREATE_WORK_TYPES } from "@/lib/service/operations/create-work";
 import type { LoopGetOutput, LoopListOutput } from "@/lib/service/operations/loop-reads";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -66,7 +67,7 @@ describeIfDb("the folded loop and create_work tools, against Postgres", () => {
 
   beforeAll(async () => {
     const scratch = await createMigratedScratchDatabase(testDatabaseUrl!, dbName);
-    prisma = new PrismaClient({ datasourceUrl: scratch.url });
+    prisma = createTestPrismaClient(scratch.url);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
     runtime = new ServiceRuntime({
       transaction: prismaTransactionRunner(prisma),

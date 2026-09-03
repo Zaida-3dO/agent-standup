@@ -25,11 +25,12 @@
 // asserting that the test's own `if` matches the SQL, which is the mistake
 // rather than the coverage.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { displacedDetail, displacementFor } from "@/lib/service/session-displacement";
 import { takeoverAssignment } from "@/lib/takeover";
 import { enforcementRefusal, readSessionStatus } from "@/lib/hook/enforcement";
 import type { TransactionHandle } from "@/lib/service/context";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -155,7 +156,7 @@ describeIfDb("against a real database", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
 

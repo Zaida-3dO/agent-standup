@@ -16,9 +16,10 @@
 // test.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ConflictError, GuardRejectedError, isServiceError } from "@/lib/service";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   CUSTOM_ROLE_GUARD,
   ROOT_SESSION_GUARD,
@@ -188,7 +189,7 @@ describeIfDb("claims — against a real database", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 60_000);
 

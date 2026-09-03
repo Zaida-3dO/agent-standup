@@ -2,9 +2,10 @@
 // Real Postgres only, per CLAUDE.md's testing tenet. Mirrors
 // tests/import-items.test.ts and tests/claims.test.ts for scratch-database
 // setup. Skips without TEST_DATABASE_URL.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { FINDING_SEVERITIES, InvalidFindingError, parseFindings } from "@/lib/findings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   applySeverityAliases,
   UnknownSeverityError,
@@ -206,7 +207,7 @@ describeIfDb("importAssignments / importArtifacts — against a real Postgres", 
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "test-area", displayName: "Test area" } });
   }, 30_000);
 

@@ -20,9 +20,10 @@
 // claim is about the process-global cache in `service/live.ts` and the
 // singleton it wires. Skips without TEST_DATABASE_URL, the same convention
 // as every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -53,7 +54,7 @@ describeIfDb("a settings write is visible to the next read, with no sleep", () =
     collectionRoute = await import("@/app/api/settings/route");
     keyRoute = await import("@/app/api/settings/[key]/route");
     live = await import("@/lib/service/live");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {

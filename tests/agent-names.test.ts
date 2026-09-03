@@ -17,9 +17,10 @@
 // iteration fails here instead of silently weakening the test.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ConflictError, NotFoundError, isServiceError } from "@/lib/service";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   assignName,
   handOutName,
@@ -51,7 +52,7 @@ describeIfDb("agent-names — against a real database", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {

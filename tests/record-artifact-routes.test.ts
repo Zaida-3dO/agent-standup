@@ -8,9 +8,10 @@
 // — the same ordering constraint tests/claims-routes.test.ts documents.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -37,7 +38,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
     process.env.DATABASE_URL = scratchUrl;
     artifactsRoute = await import("@/app/api/items/[id]/artifacts/route");
     reviewRequestsRoute = await import("@/app/api/items/[id]/review-requests/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "route-area", displayName: "Route area" } });
     // `record_artifact` refuses a `createdByType: "person"` whose id names
     // nobody (#134), so the person these fixtures credit has to exist.

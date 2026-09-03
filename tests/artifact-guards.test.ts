@@ -6,7 +6,7 @@
 // and `Event`, which an in-memory model cannot settle, and staleness in
 // particular is a claim about which of several real rows is newest. Skips
 // without TEST_DATABASE_URL, same convention as every other DB-backed file.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { GuardRegistry, applyTransition } from "@/lib/service/state-machine";
@@ -30,6 +30,7 @@ import { OPERATION_REGISTRY } from "@/lib/service/registry";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceContext } from "@/lib/service/context";
 import { z } from "zod";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -46,7 +47,7 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
   }, 60_000);
 

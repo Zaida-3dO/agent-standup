@@ -23,11 +23,12 @@
 // DB-backed file here.
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, guardRegistry, prismaTransactionRunner } from "@/lib/service";
 import { ALL_GUARDS } from "@/lib/service/guards";
 import { defaultSnapshot } from "@/lib/settings";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -148,7 +149,7 @@ describeIfDb("item mutations attribute their events (#102)", () => {
 
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
     await prisma.area.create({ data: { id: "web", displayName: "web" } });
 
     for (const guard of ALL_GUARDS) {

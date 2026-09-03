@@ -5,9 +5,10 @@
 // (which reaches `service/live.ts`'s process-global singleton) is imported.
 //
 // Skips without TEST_DATABASE_URL, like every other DB-backed file here.
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { authenticatedRequest, stubAuthEnvironment } from "./helpers/authenticated-requests";
+import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
   dropScratchDatabase,
@@ -33,7 +34,7 @@ describeIfDb("board HTTP route against Postgres", () => {
     process.env.DATABASE_URL = scratchUrl;
     boardRoute = await import("@/app/api/board/route");
     itemsRoute = await import("@/app/api/items/route");
-    prisma = new PrismaClient({ datasourceUrl: scratchUrl });
+    prisma = createTestPrismaClient(scratchUrl);
   }, 60_000);
 
   afterAll(async () => {
