@@ -6,9 +6,10 @@
 // `docs/plans/INTERVENTIONS.md` I19 asks for a subagent that discovers it
 // lacks a tool to *"immediately stall and return telling the orchestrator
 // they can't continue"*. That entry's detection half is unbuildable here and
-// remains unbuilt, for the reason recorded against it in `builtins.ts`: this
-// server never observes a spawn, so nothing on this schema can compare the
-// tool list an agent was given against the one its job needed. What that
+// remains unbuilt, for the reason recorded in full on the
+// `dispatchOverUnresolvedToolBlock` header in `@/lib/interventions/builtins`:
+// this server never observes a spawn, so nothing on this schema can compare
+// the tool list an agent was given against the one its job needed. What that
 // analysis also says is that the stall-and-report half **is** reachable, and
 // belongs to whatever performs the dispatch.
 //

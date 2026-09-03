@@ -768,11 +768,55 @@ const batchVisualReviews: Intervention = {
  *
  * The catalogued I19 asks whether the agent being spawned *right now* has
  * the tools its job needs. **That is still unbuilt and still unbuildable
- * here**, for the reason its `UNIMPLEMENTED_CATALOGUE_ENTRIES` line gives
- * and which nothing since has changed: this server never observes a spawn's
- * tool grant, so it cannot compare what an agent was given against what its
- * job required. That entry keeps its line below; this does not replace it,
- * and it must not be read as coverage of it.
+ * here**, and this entry must not be read as coverage of it. The full
+ * argument for why is recorded immediately below, under "Why the detection
+ * half is unbuildable on this schema".
+ *
+ * It is recorded *here* because there is nowhere else left for it. I19 no
+ * longer has an `UNIMPLEMENTED_CATALOGUE_ENTRIES` row to carry it: shipping
+ * this predicate required deleting that row, because
+ * `tests/interventions-registry.test.ts` asserts no catalogue id is both
+ * built and listed unbuilt, and the assertion is right to. Deleting the row
+ * without rehoming its reasoning would have discarded the analysis that
+ * justifies the narrowing — which is the part a future reader needs most,
+ * since "why was only half of this built" is the obvious question and the
+ * registry now answers it nowhere.
+ *
+ * ── Why the detection half is unbuildable on this schema ───────────────
+ *
+ * Verbatim from the catalogue entry this replaced, because the conclusion
+ * has not changed and the reasoning is the reason to trust it:
+ *
+ * > which tools a given job requires. The tool list a subagent was spawned
+ * > with is on the spawn; that a reviewer on a UI territory needed a
+ * > browser is a per-role judgement, and a rule that fires on every
+ * > subagent without one would fire on every subagent that correctly had
+ * > none. The `agent-standup` half reads as the tractable one and is not,
+ * > on this schema: no column records the tool list a session was spawned
+ * > with, and the hook event carries only the tool being called, so the
+ * > sole available proxy is that an agent has recorded nothing. That fires
+ * > on every agent which legitimately had nothing to record — a scout, a
+ * > short crew, one that failed early — which is a guard that costs more
+ * > than it saves. What would make it buildable is the spawn's tool list
+ * > being recorded at dispatch. **Re-examined against the owner's stronger
+ * > ask** — that a subagent lacking its tools should stall immediately and
+ * > report, as a hard block rather than limping on — and the conclusion is
+ * > unchanged for the detection half, for a reason worth stating
+ * > precisely: the request describes behaviour at the moment of
+ * > *spawning*, and this server never observes a spawn. It sees a
+ * > session's tool calls once that session is already running, so by the
+ * > time anything here could speak, the subagent has been dispatched and
+ * > is underway — which is exactly the situation the ask exists to
+ * > prevent. The stall-and-report half is genuinely reachable, but not
+ * > from here: it belongs to whatever performs the dispatch, which is the
+ * > only party holding both the requested tool list and the ability to
+ * > refuse before the agent starts. Building a server-side predicate that
+ * > fired after the fact would satisfy the letter of the entry while doing
+ * > none of what was asked, and would read as coverage on the settings
+ * > page.
+ *
+ * That argument leaves exactly one door open, and it is the one this entry
+ * goes through.
  *
  * ── The narrower thing that IS observable ──────────────────────────────
  *
