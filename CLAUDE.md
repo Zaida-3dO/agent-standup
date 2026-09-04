@@ -239,9 +239,9 @@ step is enforced rather than merely documented — see `scripts/lib/prisma-clien
 `npm install` (or `npm ci`) wires a pre-push git hook (`.githooks/pre-push`, installed by the
 `prepare` script — nothing to run by hand) that runs `format:check` and `lint` before a push
 leaves the machine. Those are the two fastest checks CI runs, and the two that need nothing but
-the source tree — no database, no container. The hook does **not** run the test suite or the
-mutation harness: both need a live database and take minutes, and a slow hook is one that gets
-bypassed and then protects nothing. It works identically on Windows and Linux — git runs a
+the source tree — no database, no container. The hook does **not** run the test suite: it needs a
+live database and takes minutes, and a slow hook is one that gets bypassed and then protects
+nothing. It works identically on Windows and Linux — git runs a
 `core.hooksPath` script with `sh`, and Git for Windows ships one for that purpose, so there is
 nothing to install or branch on per platform.
 
@@ -391,7 +391,7 @@ does not block a merge, and `main` moving while you work does not invalidate you
 **What this means for you:**
 
 - **Do not rebase onto `main` just to be current.** It is not required and it is not wanted. It burns
-  a full CI cycle, including the ~9-minute mutation gate, for no gain.
+  a full CI cycle for no gain.
 - **Only bring `main` in if you actually need to** — a genuine textual conflict blocking the merge, or
   a fix on `main` your work truly depends on.
 - **If you do have to resolve a conflict: resolve it once, push, and hand back.** Do not re-pull

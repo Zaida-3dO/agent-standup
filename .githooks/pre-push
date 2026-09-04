@@ -3,8 +3,8 @@
 # before any push leaves this machine. It only runs the checks that need
 # nothing but the source tree — no database, no container — because those are
 # also the checks CI fails on most often. A slow hook gets bypassed and then
-# protects nothing, so the full test suite and the mutation harness are
-# deliberately NOT here; they still run in CI, on every PR.
+# protects nothing, so the full test suite is deliberately NOT here; it still
+# runs in CI, on every PR.
 #
 # Installed automatically by `npm install` via the `prepare` script, which
 # points git at this directory with `git config core.hooksPath .githooks`.

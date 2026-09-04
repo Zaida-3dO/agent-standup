@@ -1,5 +1,5 @@
-// Three required checks in `.github/workflows/ci.yml` — `Actionlint
-// (required)`, `Docker build (required)` and `Mutation testing (required)` —
+// Two required checks in `.github/workflows/ci.yml` — `Actionlint
+// (required)` and `Docker build (required)` —
 // decide their verdict from a string another job produced
 // (`needs.changes.outputs.*`). That string is `'true'` or `'false'` only when
 // the `changes` job ran to completion. A job that errors publishes **no**
@@ -15,8 +15,8 @@
 // recognise. These assertions check that branch is present and is the shape
 // that actually catches an empty string.
 //
-// **What a green run here does and does not mean.** Like
-// `ci-mutation-gate.test.ts`, this reads the workflow's conditions as text.
+// **What a green run here does and does not mean.** This reads the workflow's
+// conditions as text.
 // It proves each gate is *configured* with a fail-closed branch; it does not
 // run GitHub Actions' expression evaluator, so it cannot prove the runner
 // agrees with this reading of an `if:`. It is a backstop against the specific
@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { extractJobBlock, extractStepBlock } from "./ci-mutation-gate.test.js";
+import { extractJobBlock, extractStepBlock } from "./helpers/ci-workflow-blocks";
 
 function repoRoot(): string {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
@@ -36,17 +36,12 @@ const WORKFLOW = readFileSync(path.join(repoRoot(), ".github/workflows/ci.yml"),
 
 /**
  * Every gate job, paired with the `changes` output whose scope it consumes.
- * Kept as data so that adding a fourth gate without its fail-closed branch is
+ * Kept as data so that adding a third gate without its fail-closed branch is
  * a one-line test edit that then fails, rather than a gap nobody notices.
  */
 const GATES = [
   { job: "actionlint-gate", output: "workflows", checkName: "Actionlint (required)" },
   { job: "docker-build-gate", output: "docker", checkName: "Docker build (required)" },
-  {
-    job: "mutation-testing-gate",
-    output: "source",
-    checkName: "Mutation testing gate (required)",
-  },
 ] as const;
 
 /** The `if:` conditions inside a job block, with whitespace and folding flattened. */

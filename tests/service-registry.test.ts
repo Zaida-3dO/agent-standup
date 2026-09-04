@@ -33,24 +33,13 @@ import { z } from "zod";
 /**
  * The real, git-tracked repo root — deliberately NOT `import.meta.dirname`.
  *
- * Under mutation testing, Stryker copies the whole tree into a sandbox
- * directory and rewrites (instruments) every source file it mutates before
- * running the suite there. `import.meta.dirname` inside that sandbox still
- * resolves to *a* `tests/` directory, but it's the sandbox's own copy — so
- * a scan rooted on it reads Stryker's rewritten source
- * (`defineOperation({ name: "create_item"` becomes
- * `defineOperation(stryMutAct_9fa48("182")...`), the regex below finds
- * nothing, and this test fails for a reason that has nothing to do with
- * the registry it's supposed to be checking — which aborts the whole
- * mutation run (see `scripts/run-mutation-tests.mjs`).
- *
- * Stryker's sandbox has no `.git` of its own; it lives nested inside the
- * real repo's working tree (default: a `sandbox-<id>` dir under
- * `.stryker-tmp/`), so walking up from wherever this process's cwd happens
- * to be with
- * `git rev-parse --show-toplevel` always lands on the real repo root and
- * therefore the real, un-instrumented source — both when run normally and
- * when run from inside a Stryker sandbox.
+ * This test scans real source files on disk, so it needs the root of the
+ * actual working tree rather than wherever this module happens to sit.
+ * `git rev-parse --show-toplevel` walks up from the process's cwd and lands
+ * on the real repo root, which is correct however the suite is invoked —
+ * including from a copied or nested tree, where `import.meta.dirname` would
+ * resolve to *a* `tests/` directory that is not the one under test — and a
+ * scan rooted there would read that copy's source rather than the real one.
  */
 function repoRoot(): string {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();

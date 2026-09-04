@@ -36,9 +36,8 @@ That indirection is what lets the work be reorganised — split, renamed, added 
 branch protection, which matches on the context NAME. `Build & test` is the name to keep stable, and
 it belongs to the gate rather than to any one job doing the verifying.
 
-Every other job (`changes`, `actionlint`, `static-checks`, `db-tests`, `mutation-testing*`,
-`docker-build`) is either a helper, a worker behind one of those gates, or — in mutation testing's
-case — not a required check at all.
+Every other job (`changes`, `actionlint`, `static-checks`, `db-tests`, `docker-build`) is either a
+helper or a worker behind one of those gates.
 
 ---
 
@@ -134,9 +133,6 @@ to that one cause.
   to contain it. Confirmed by reading `git.ts`'s `getChanges`/`ensureRefAvailable`. This means the
   `changes` job (which does a default shallow `actions/checkout@v6`, no `fetch-depth` override) still
   resolves correctly on `merge_group` — no separate fetch-depth fix was needed there.
-  `mutation-testing`'s own `fetch-depth: 0` was already correct for the same reason for a different
-  mechanism (`origin/main...HEAD` three-dot diff against a fully-fetched history) — see the comment
-  added next to that step in `ci.yml`.
 - `actions/checkout`'s `fetch-depth: 0` fetches full history for **all branches**, regardless of
   triggering event — confirmed from the action's own README, not assumed to also apply to
   `merge_group` by analogy.
@@ -159,7 +155,7 @@ repos/Zaida-3dO/agent-standup/branches/main/protection` and `gh api repos/Zaida-
   be certain.
 - Real end-to-end timing — whether the ~9-minute CI run comfortably clears whatever status-check-timeout
   ends up configured, under real queue batching (a batch of several PRs runs the _combined_ diff, which
-  could scope in more mutation-testing / docker-build work than any single PR would trigger alone).
+  could scope in more docker-build work than any single PR would trigger alone).
 - That no _other_ required or soon-to-be-required check gets added later without its own `merge_group`
   trigger — this is a wiring convention, not something enforced by the code, hence the explicit
   reminder in the "Stalled" section above to check on any future required check, not just to trust this
