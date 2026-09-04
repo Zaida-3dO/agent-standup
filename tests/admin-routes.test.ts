@@ -9,12 +9,11 @@
 // exposes them — the route handlers, `admin-respond.ts`'s error-to-status
 // mapping, and JSON parsing of the request body — none of which the
 // operations tests exercise at all. It was also written to cover ground the
-// mutation harness could not see at the time: Stryker used to drop any file
-// whose path contains `[` (Next.js's bracket-path route directories,
-// `repos/[id]`, `areas/[id]`, `machines/[name]`, `accounts/[id]`), silently
-// excluding all four from instrumentation. That bug is now fixed (#64,
-// `scripts/lib/mutation-scope.mjs`) — those four files are mutation-tested
-// like any other as of this commit — but the tests below stay written as
+// mutation harness could not see at the time: it used to drop any file whose
+// path contains `[` (Next.js's bracket-path route directories, `repos/[id]`,
+// `areas/[id]`, `machines/[name]`, `accounts/[id]`), silently excluding all
+// four from instrumentation. That harness has since been removed entirely
+// (see `docs/ci-required-checks.md`), but the tests below stay written as
 // thoroughly as when no mutation harness could see them at all, because a
 // route layer is exactly the kind of thin, easy-to-under-test shell where a
 // green mutation score is the least reassuring signal available.

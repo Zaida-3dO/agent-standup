@@ -34,8 +34,8 @@ on:
 #
 # Tag pushes are also not the problem this change exists for: they are rare,
 # deliberate, one-at-a-time events, not the "pushed a PR branch three times
-# in five minutes" pattern that makes CI's mutation-testing job worth
-# cancelling. There is no evidence of wasted runs here to fix.
+# in five minutes" pattern that makes CI's expensive jobs worth cancelling.
+# There is no evidence of wasted runs here to fix.
 #
 # What this does NOT cover: two releases publishing concurrently can still
 # race on which one's `latest` Docker tag write lands last, independent of

@@ -13,9 +13,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 // Reused rather than re-implemented: these walk the YAML structurally, and a
-// second copy would be a second thing to keep correct. `ci-mutation-gate`
-// owns them and tests them directly.
-import { extractJobBlock, extractStepBlock } from "./ci-mutation-gate.test";
+// second copy would be a second thing to keep correct.
+import { extractJobBlock, extractStepBlock } from "./helpers/ci-workflow-blocks";
 
 /**
  * The real, git-tracked repo root — not `import.meta.dirname`, which under

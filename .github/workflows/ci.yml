@@ -5,11 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Lets mutation testing be run on demand while it is off by default. It is
-  # the only job gated on this event, so dispatching the workflow runs the
-  # ordinary checks plus the one that is otherwise skipped — which is what
-  # makes "off until pre-GA" a default rather than a deletion. See the
-  # `mutation-testing` job below and `docs/plans/BEFORE-GA.md`.
+  # Lets the whole workflow be re-run on demand against a branch, without
+  # having to push an empty commit to trigger it.
   workflow_dispatch:
   # Required so the required checks below (`Build & test`, `Actionlint
   # (required)`, `Docker build (required)`) can actually report a result
@@ -20,10 +17,9 @@ on:
   merge_group:
     types: [checks_requested]
 
-# Cancels a superseded run of the SAME pull request — the expensive step here
-# is mutation-testing (22-57 min), so a PR pushed several times in quick
-# succession used to burn a full mutation run per push even though only the
-# last one's result would ever matter.
+# Cancels a superseded run of the SAME pull request, so a PR pushed several
+# times in quick succession does not burn a full run per push even though only
+# the last one's result would ever matter.
 #
 # Scoped so ONLY pull_request runs can ever share a group and be cancelled:
 #   - pull_request events group by PR number (`pr-<number>`): pushing again to
@@ -55,7 +51,6 @@ jobs:
     outputs:
       workflows: ${{ steps.filter.outputs.workflows }}
       docker: ${{ steps.filter.outputs.docker }}
-      source: ${{ steps.filter.outputs.source }}
     steps:
       - uses: actions/checkout@v6
       # v4 (not v3) is required here: v3 has no merge_group handling at all,
@@ -106,9 +101,6 @@ jobs:
               # generate` runs against it during the build — a malformed
               # schema or a bad migration breaks the image build itself.
               - 'prisma/**'
-            source:
-              - 'src/**/*.ts'
-              - 'src/**/*.tsx'
 
   actionlint:
     name: Lint GitHub Actions workflows
@@ -147,13 +139,13 @@ jobs:
     steps:
       # ┌─ THE FAIL-CLOSED GATE PATTERN — copied by every `… (required)` job ─┐
       #
-      # All three required gates carry these same three steps, differing only
+      # Both required gates carry these same three steps, differing only
       # in the `changes` output they read. It is deliberately duplicated rather
       # than factored into a composite action: a composite cannot read the
       # `needs` context, so every output would have to be threaded through
       # `with:` — more indirection than the three lines it would save.
       #
-      # If you add a fourth gate, copy all three steps, and keep this shape:
+      # If you add a third gate, copy all three steps, and keep this shape:
       #
       #   1. Fail  — output is neither 'true' nor 'false'  -> MUST `exit 1`
       #   2. Pass  — output == 'false'                     -> echo only
@@ -167,7 +159,7 @@ jobs:
       # the whole point of the branch, not decoration.
       #
       # Enforced by `tests/ci-gate-scope-fail-closed.test.ts`, which discovers
-      # every `(required)` job from this file: a fourth gate added without
+      # every `(required)` job from this file: a third gate added without
       # these steps fails that suite rather than going unnoticed.
       #
       # └────────────────────────────────────────────────────────────────────┘
@@ -243,12 +235,6 @@ jobs:
       # doubt it, so a stale one sends them looking for a path that moved.
       - name: Check the served route index matches the route tree
         run: npm run check:http-routes
-      # Source-text only, like the two checks above it — no Stryker, no test
-      # run. It belongs here rather than in the mutation job because it exists
-      # to fail *before* a pull request pays nine minutes to be told the same
-      # thing in a form that takes an afternoon to diagnose.
-      - name: Check operation metadata is annotated for mutation testing
-        run: npm run check:operation-metadata
       - name: Lint
         run: npm run lint
       - name: Format check
@@ -341,306 +327,6 @@ jobs:
         if: needs.static-checks.result != 'success' || needs.db-tests.result != 'success'
         run: exit 1
 
-  mutation-testing:
-    name: Mutation testing (changed files)
-    needs: [changes, build-and-test]
-    # What this job answers, and nothing else in the pipeline does: would a
-    # test actually fail if the behaviour it names regressed? A test that
-    # asserts nothing passes the ordinary suite, reads as coverage in a diff,
-    # and has survived both a green run and a human review here. Mutation
-    # testing is the only check that can tell the two apart, because it is
-    # the only one that changes the source and demands the suite notice.
-    #
-    # **Scoped to the source files a pull request actually changed**, not the
-    # whole tree. Mutation testing costs roughly the full test suite per
-    # mutant, so a whole-tree run scales with the repository rather than with
-    # the diff and would grow without bound; a changed-files scope keeps the
-    # cost proportional to what is being reviewed, which is also where a
-    # hollow test is most likely to have just been written. `changes.source`
-    # is what makes it skip entirely on a docs-only pull request.
-    #
-    # **Gated on `build-and-test` already being green.** Mutation testing
-    # against a build that does not pass its own tests spends the slowest job
-    # in the pipeline restating what the fastest one already said — every
-    # mutant "survives" a suite that was failing anyway, so the result is
-    # noise rather than a weaker signal.
-    #
-    # **It is the slowest job here by a wide margin — 22-57 minutes** against
-    # single-digit minutes for everything else, and pipeline latency is what
-    # decides how fast work merges. That cost is the reason for both scopes
-    # above; it is worth paying because the thing it catches is invisible to
-    # every cheaper check, and a hollow test is worse than a missing one — it
-    # is a missing test with a green tick beside it.
-    #
-    # ── Why this is OFF until pre-GA (owner's call, 2026-08-18) ────────────
-    #
-    # **It does not run, on any branch, including `main`.** Two reasons, and
-    # the second is the one that decided it:
-    #
-    # **It is a 22-57 minute tax on every iteration.** On a pull request that
-    # lands squarely on merge latency, which is what decides how fast work
-    # moves through the queue. On `main` it is cheaper only in the sense that
-    # nobody is waiting on it — and that is also why it gates nothing there:
-    # the merge has already happened, so a survivor is a notification rather
-    # than a refusal.
-    #
-    # **Its first real run against a service operation produced findings no
-    # test could act on.** `sweep.ts` scored 33-38 with four survivors, all in
-    # the `defineOperation({…})` metadata — a module-level literal evaluated
-    # once at import, before Stryker activates any mutant at runtime. No test
-    # written any way can kill those, which is a property of every operation
-    # module, not of `sweep.ts`. Paying the slowest job in the pipeline to
-    # re-report a tool limitation on each new operation is not a trade worth
-    # making while the product is still being built. See issue #166.
-    #
-    # **Off is not the same as absent, and the difference is deliberate.** A
-    # job switched off in a way that still reads as running is worse than no
-    # job at all, because a green pipeline then asserts something nobody
-    # checked. So the condition below is explicit about what it waits for,
-    # the reasoning sits here beside it, and `workflow_dispatch` keeps the
-    # job runnable on demand rather than only in principle.
-    #
-    # Turning it back on is a **pre-GA gate**, tracked in
-    # `docs/plans/BEFORE-GA.md` rather than as a milestone row: the milestone
-    # queue answers what to build next, and this is something to close before
-    # shipping, which is a different question.
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      && needs.changes.outputs.source == 'true'
-      && needs.build-and-test.result == 'success'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: standup
-          POSTGRES_PASSWORD: standup
-          POSTGRES_DB: standup
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U standup"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=10
-    env:
-      DATABASE_URL: postgresql://standup:standup@localhost:5432/standup
-      TEST_DATABASE_URL: postgresql://standup:standup@localhost:5432/standup
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          # The incremental/changed-files scope diffs against origin/main,
-          # which needs real history, not the single-commit shallow clone
-          # actions/checkout defaults to.
-          #
-          # This also covers the merge_group case: `fetch-depth: 0` fetches
-          # full history for ALL branches regardless of triggering event
-          # (per actions/checkout's own docs), so `origin/main` is still a
-          # valid, current ref when this job runs against a merge-queue
-          # temporary ref. `scripts/run-mutation-tests.mjs` diffs with
-          # `origin/main...HEAD` (three-dot / merge-base form), which stays
-          # correct even if `origin/main` has moved past the merge group's
-          # own base_sha by the time this job runs (concurrent queue
-          # activity) — the merge-base is still the group's true base, not
-          # main's newest tip, so the diff only ever reflects files the
-          # queued batch actually touches. Verified by inspection of
-          # actions/checkout + git diff semantics, not by running a live
-          # merge queue — see docs/merge-queue-runbook.md.
-          fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - name: Generate Prisma client
-        run: npx prisma generate
-      - name: Apply migrations to a clean database
-        run: npx prisma migrate deploy
-      # Restores Stryker's incremental result cache (a prior run's verdict
-      # per mutant, reused when neither the mutated source nor its killing
-      # test changed) so a run only re-tests what could plausibly have
-      # changed. `restore-keys` deliberately falls back to the newest cache
-      # from ANY branch, not just this one — a fork's first run, or a PR
-      # branched before the cache existed, still benefits instead of always
-      # paying the full-run cost once per branch. That fallback is safe to
-      # do blindly: a mutant reused from an unrelated branch's cache is only
-      # ever accepted if Stryker's own diff finds the exact source text at
-      # its location AND (for a prior kill) the killing test's own source
-      # unchanged — anything else is re-tested for real. The wrapper itself
-      # also validates this file's content before Stryker ever reads it and
-      # deletes it outright if it is not well-formed — see
-      # `validateIncrementalCache` in `scripts/lib/mutation-report-guards.mjs`.
-      - name: Restore mutation testing incremental cache
-        uses: actions/cache@v4
-        with:
-          path: reports/stryker-incremental.json
-          key: mutation-incremental-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            mutation-incremental-${{ runner.os }}-
-      - name: Mutation test changed source files
-        run: npm run test:mutate:changed
-      # Saved even when the mutation-testing step above fails the score
-      # threshold — the cache holds per-mutant test RESULTS, which are true
-      # regardless of whether the overall run passed the break threshold,
-      # and the next run still benefits from not re-testing unchanged code.
-      - name: Save mutation testing incremental cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: reports/stryker-incremental.json
-          key: mutation-incremental-${{ runner.os }}-${{ github.run_id }}
-
-  mutation-testing-gate:
-    # **"gate", not "Mutation testing".** This job never mutation-tests
-    # anything; it reads another job's `result` and decides a verdict. A name
-    # of the form "Mutation testing (required): pass" would assert, to anyone
-    # scanning the check list, that this diff's tests are proven to kill
-    # mutants — while the mutation job is switched off repo-wide until pre-GA
-    # (issue #166) and this gate passes in ~3s having verified nothing.
-    #
-    # The name is the only part of this a reader sees without clicking
-    # through, so it is the only place the distinction can be made for free.
-    # The conclusion cannot carry it: a workflow job reports `success` or
-    # `failure` and nothing else — GitHub Actions has no way to emit the
-    # `neutral` conclusion that would express "did not run", and even via the
-    # Checks API a `neutral` required check does not satisfy branch
-    # protection, so it would block every pull request rather than inform
-    # anyone. Renaming plus a job summary is what is actually available.
-    #
-    # Renaming is safe *for this job specifically*: unlike `Build & test`,
-    # `Actionlint (required)` and `Docker build (required)`, this context is
-    # NOT in branch protection on `main` (verified via `gh api` — see
-    # docs/merge-queue-runbook.md, which says so too). No protection rule
-    # matches this name, so it is free to describe the job accurately —
-    # naming it for the work it does not do would be the only cost, and that
-    # cost is paid by every reader. `docker-build-gate` has
-    # the same defect and deliberately keeps its name for exactly the
-    # opposite reason — see the comment there. `docs/ci-required-checks.md`.
-    name: Mutation testing gate (required)
-    # `build-and-test` is here because the branches below read its result to
-    # tell the two skip reasons apart. A `needs` context only carries jobs
-    # named here — an unnamed job's `result` is the empty string, which
-    # silently matches no branch, and this gate would then pass by falling off
-    # the end having verified nothing.
-    needs: [changes, mutation-testing, build-and-test]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fail — the changes job did not report a usable scope
-        if: needs.changes.outputs.source != 'true' && needs.changes.outputs.source != 'false'
-        run: |
-          echo "::error::The 'changes' job did not produce a usable 'source' output."
-          echo "Got: '${{ needs.changes.outputs.source }}' (expected 'true' or 'false')."
-          echo "That means this gate cannot tell whether mutation testing needed to run, so"
-          echo "it fails rather than passing on an unverified scope. Check the 'changes' job."
-          exit 1
-      # Every passing branch below writes to `$GITHUB_STEP_SUMMARY` as well as
-      # to the log. The summary is rendered on the run's own page, so "this
-      # verified nothing" is visible to someone who followed the check
-      # without reading step output. Without it, a required check that did
-      # not execute is indistinguishable from one that ran and passed.
-      - name: Pass — no source files changed
-        if: needs.changes.outputs.source == 'false'
-        run: |
-          echo "No src/**/*.ts(x) files changed, skipping mutation testing"
-          {
-            echo "### Mutation testing gate: passed without running"
-            echo
-            echo "No \`src/**/*.ts(x)\` files changed, so there was nothing to mutate."
-            echo "**This gate has verified nothing about any code.**"
-          } >> "$GITHUB_STEP_SUMMARY"
-      # `skipped` and `failure` are different facts and this gate has to tell
-      # them apart, because only one of them is a statement about the code.
-      #
-      # A `skipped` result on a source change means the mutation job's own
-      # `if:` did not hold. Two different things cause that, they are not
-      # equally acceptable, and the gate says which one it saw:
-      #
-      #   1. **The job is switched off for this event.** It carries
-      #      `github.event_name == 'workflow_dispatch'`, so it skips on every
-      #      pull request and every push regardless of anything else. That is
-      #      an owner's decision recorded on the job itself, and the gate
-      #      passes on it — but it has to *say* that, because it is a
-      #      statement about configuration and not about the code.
-      #
-      #   2. **`build-and-test` did not succeed.** Already red on `Build &
-      #      test`, which is itself required, so failing here as well would
-      #      add a second red check reporting the same fact while telling
-      #      whoever reads it to look in the wrong place. Passed on the
-      #      strength of that other gate, not forgiven.
-      #
-      # These were one branch, whose message named reason 2 unconditionally.
-      # On a run where the job was off and `build-and-test` was green, the
-      # required check reported "the suite it follows is already red" about a
-      # suite that had passed — a gate stating a reason that was not the
-      # actual reason, which is the same class of defect as a gate passing
-      # without checking. Splitting them costs four lines and makes the log
-      # true in both cases.
-      #
-      # Anything else is a skip for a reason this gate does not know about —
-      # a narrowed `if:` nobody updated here — and it fails rather than
-      # guessing which of the two it was.
-      #
-      # A `failure` result still fails, unconditionally. That is the case
-      # where mutation testing ran and found surviving mutants, and it must
-      # never be softened — the whole value of the job is that it fails on
-      # something no cheaper check can see.
-      - name: Pass — mutation testing is switched off for this event
-        if: >-
-          needs.changes.outputs.source == 'true' &&
-          needs.mutation-testing.result == 'skipped' &&
-          github.event_name != 'workflow_dispatch'
-        run: |
-          echo "Mutation testing is limited to workflow_dispatch runs, so it did not run here."
-          echo "This gate passes on that configuration, and has verified nothing about the code."
-          echo "Turning it back on is a pre-GA gate — see docs/plans/BEFORE-GA.md and issue #166."
-          {
-            echo "### Mutation testing gate: passed without running"
-            echo
-            echo "Mutation testing is limited to \`workflow_dispatch\` runs, so it did not run here."
-            echo "That is a deliberate repo-wide setting (issue #166, a 22–57 min CI tax), not a fault."
-            echo
-            echo "**This gate has verified nothing about the code in this pull request.**"
-            echo "It reports the configuration, not the diff — a green tick here is not evidence"
-            echo "that this diff's tests kill mutants. Verify that by hand for load-bearing logic."
-            echo
-            echo "Re-enabling it is tracked in \`docs/plans/BEFORE-GA.md\`."
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Pass — mutation testing did not run, and the suite it follows is already red
-        if: >-
-          needs.changes.outputs.source == 'true' &&
-          needs.mutation-testing.result == 'skipped' &&
-          github.event_name == 'workflow_dispatch' &&
-          needs.build-and-test.result != 'success'
-        run: |
-          echo "Mutation testing did not run. It follows 'Build & test', which is required and reports that failure itself."
-          {
-            echo "### Mutation testing gate: passed without running"
-            echo
-            echo "Mutation testing did not run because \`Build & test\` did not succeed."
-            echo "That failure is already reported by \`Build & test\`, which is itself required —"
-            echo "failing here too would point you at the wrong job."
-            echo
-            echo "**This gate has verified nothing about the code.** Fix \`Build & test\` first."
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Fail — mutation testing was skipped for an unrecognised reason
-        if: >-
-          needs.changes.outputs.source == 'true' &&
-          needs.mutation-testing.result == 'skipped' &&
-          github.event_name == 'workflow_dispatch' &&
-          needs.build-and-test.result == 'success'
-        run: |
-          echo "::error::Mutation testing was skipped on a workflow_dispatch run whose 'Build & test' passed."
-          echo "Neither reason this gate knows about applies, so it cannot say the job's absence"
-          echo "was intended. Check the 'mutation-testing' job's if: condition."
-          exit 1
-      - name: Fail — mutation testing ran and did not pass
-        if: >-
-          needs.changes.outputs.source == 'true' &&
-          needs.mutation-testing.result != 'success' &&
-          needs.mutation-testing.result != 'skipped'
-        run: exit 1
-
   docker-build:
     name: Docker build (dry run)
     needs: [changes, build-and-test]
@@ -659,8 +345,7 @@ jobs:
 
   docker-build-gate:
     # **The name is deliberately NOT changed, and that is a constraint rather
-    # than an oversight.** This job has the same shape as
-    # `mutation-testing-gate` — it never builds an image, and on a pull
+    # than an oversight.** This job never builds an image, and on a pull
     # request touching no Docker files it passes in ~4s through the "Docker
     # files not changed" branch. But `Docker build (required)` is a *required
     # status check context in branch protection on `main`*

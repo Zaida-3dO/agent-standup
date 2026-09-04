@@ -367,9 +367,7 @@ describe("jargon denylist (SCHEMA.md §5, static validator 3) — AC5", () => {
       findJargonHits("x", undefined, "got an LGTM from review").some((h) => h.rule === "jargon"),
     ).toBe(true);
     expect(
-      findJargonHits("x", undefined, "ran scripts/run-mutation-tests.mjs").some(
-        (h) => h.rule === "jargon",
-      ),
+      findJargonHits("x", undefined, "ran scripts/run-tests.mjs").some((h) => h.rule === "jargon"),
     ).toBe(true);
   });
 

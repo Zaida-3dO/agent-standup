@@ -238,8 +238,7 @@ function main() {
 
   // `shell: false` on POSIX is what makes the status trustworthy: there is
   // no pipeline for it to be reassigned by. Windows needs `npx.cmd` through
-  // a shell because `.cmd` is not directly executable, matching the pattern
-  // already used in scripts/run-mutation-tests.mjs; the status still comes
+  // a shell because `.cmd` is not directly executable; the status still comes
   // back from the one child, so nothing is masked there either.
   const result = spawnSync(isWindows ? "npx.cmd" : "npx", ["vitest", "run", ...args], {
     encoding: "utf8",

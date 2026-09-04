@@ -12,10 +12,6 @@ dist/
 # testing / coverage
 coverage/
 
-# mutation testing — generated reports and Stryker's sandbox/work dir
-reports/
-.stryker-tmp/
-
 # env files — never commit a real one
 .env
 .env.*
