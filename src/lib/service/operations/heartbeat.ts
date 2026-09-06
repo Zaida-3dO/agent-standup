@@ -34,6 +34,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
+import { assignmentRequiredRule } from "../items/assignment-refusal";
 
 const inputSchema = z
   .object({
@@ -56,6 +57,19 @@ export const heartbeat = defineOperation({
   summary:
     "Still alive. Unnecessary if your hook is flushing tool calls — that stamps it. " +
     "Call it if you run no hook and are working a long stretch, or your claim can look idle.",
+  contract: {
+    rules: [
+      assignmentRequiredRule("a heartbeat"),
+      {
+        fields: ["itemId", "sessionId"],
+        rule: "Stamps `lastActive` on that assignment and appends NO event — a heartbeat is a liveness signal on the row, not something that happened, so it will not appear in the item's history. There is nothing to undo and nothing to read back except the timestamp on the assignment itself.",
+      },
+    ],
+    example: {
+      itemId: "b1f0c3d2-0000-4000-8000-000000000000",
+      sessionId: "725c8167",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: HeartbeatOperationInput): Promise<Assignment> {

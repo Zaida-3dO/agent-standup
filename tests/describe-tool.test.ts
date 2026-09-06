@@ -253,13 +253,158 @@ describe("describe_tool returns one tool's full contract", () => {
   });
 
   it("returns an empty rules list, not an error, for a tool fully described by its schema", async () => {
-    // `get_item` declares no contract. An empty list is the honest answer
-    // ("nothing else to know") and a caller must be able to tell it apart
-    // from a failure — so this asserts it succeeds AND that the list is
-    // empty, not merely that it did not throw.
+    // `get_item` declares no contract. Returning an empty list rather than
+    // failing is the behaviour under test, and a caller must be able to tell
+    // it apart from a failure — so this asserts it succeeds AND that the
+    // list is empty, not merely that it did not throw.
+    //
+    // Note what this does NOT assert, because the earlier comment here did
+    // and it was wrong: an empty list is not a statement that the operation
+    // has no preconditions. It says only that none were declared. `get_item`
+    // is a read whose schema genuinely says everything; the four operations
+    // that reported the same empty list while enforcing an assignment check
+    // are covered below.
     const contract = await contractFor("get_item");
     expect(contract.rules).toEqual([]);
     expect(contract.fields.length).toBeGreaterThan(0);
+  });
+});
+
+// ── The rules that were enforced and undeclared ───────────────────────
+//
+// The regression these exist for is not a crash. `checkpoint`, `release`,
+// `heartbeat` and `claim` each refuse callers on a check the database
+// performs, and each reported `rules: []` — which read as "no preconditions"
+// and was acted on as such: three documents were corrected to say
+// `checkpoint` needs no claim, and three sessions were refused on the
+// strength of them.
+//
+// So these assert the SUBSTANCE of each rule, not its presence. A test that
+// asserted `rules.length > 0` would pass against a contract declaring
+// anything at all — including a rule about something else entirely — and
+// would therefore not have caught the thing that happened. Each case below
+// names the field pairing and the words a caller needs to find in it, so
+// deleting a rule fails, and so does gutting its guidance while keeping the
+// entry.
+describe("describe_tool declares the assignment rules its callers were refused by", () => {
+  /** The three operations that make one assignment lookup for one reason. */
+  const ASSIGNMENT_OPERATIONS = ["checkpoint", "release", "heartbeat"] as const;
+
+  it.each(ASSIGNMENT_OPERATIONS)(
+    "%s declares that it needs the caller's own live assignment",
+    async (name) => {
+      const contract = await contractFor(name);
+
+      // Matched on the field pairing the refusal itself carries —
+      // `fields: ["itemId", "sessionId"]` — which is what `OperationRule.fields`
+      // is for: a caller holding a refusal can find the rule that refused it
+      // without matching on prose.
+      const rule = contract.rules.find(
+        (entry) => entry.fields.includes("sessionId") && entry.fields.includes("itemId"),
+      );
+      expect(rule, `${name} declares no rule about itemId + sessionId`).toBeDefined();
+
+      // The substance. "Live assignment" is the condition, `releasedAt` is
+      // the column that decides it, and a rule stating the requirement
+      // without naming the way out leaves a refused caller exactly where it
+      // started — which is the failure this row is about.
+      expect(rule!.rule).toContain("live assignment");
+      expect(rule!.rule).toContain("releasedAt");
+      expect(rule!.rule).toContain("claim");
+      expect(rule!.rule).toContain("note");
+    },
+  );
+
+  it("checkpoint's rule says note is the alternative that needs no assignment", async () => {
+    // The exact sentence whose absence caused the incident. A dispatched
+    // agent that has not claimed has two correct moves — claim, or use
+    // `note` — and the documentation written instead told it to checkpoint
+    // regardless.
+    const text = ruleText(await contractFor("checkpoint"));
+    expect(text).toContain("needs no assignment");
+    // The negative that matters: nothing in checkpoint's own contract may
+    // suggest the assignment is optional.
+    expect(text).not.toMatch(/no claim (is )?(needed|required)/i);
+  });
+
+  it("checkpoint declares that it records per agent, not merely per item", async () => {
+    // SCHEMA.md §4's reason for the requirement. Without it the rule reads as
+    // an arbitrary gate rather than as the thing giving each agent its own
+    // resume point, and an arbitrary-looking gate is the kind that gets
+    // documented away.
+    expect(ruleText(await contractFor("checkpoint"))).toContain("PER AGENT");
+  });
+
+  it("heartbeat declares that it appends no event", async () => {
+    // A caller looking for its heartbeat in the item history will not find
+    // one, and no schema can say so.
+    expect(ruleText(await contractFor("heartbeat"))).toContain("NO event");
+  });
+
+  it("release points at takeover for somebody else's claim", async () => {
+    expect(ruleText(await contractFor("release"))).toContain("takeover");
+  });
+});
+
+describe("describe_tool declares claim's crew and uniqueness rules", () => {
+  it("says rootSessionId defaults to the caller's own sessionId", async () => {
+    // The defect that refused a dispatched agent sent to help: omitting
+    // `rootSessionId` does not mean "unknown", it means "I am my own crew",
+    // and the schema's `.optional()` reads as the opposite. A dispatched
+    // agent must pass the ORCHESTRATOR's session id.
+    const contract = await contractFor("claim");
+    const rule = contract.rules.find((entry) => entry.fields.includes("rootSessionId"));
+    expect(rule, "claim declares no rule about rootSessionId").toBeDefined();
+    expect(rule!.rule).toContain("defaults");
+    expect(rule!.rule).toContain("sessionId");
+    // Naming the dispatched case specifically, since that is the caller who
+    // gets this wrong and the one an empty contract stranded.
+    expect(rule!.rule.toLowerCase()).toContain("dispatched");
+  });
+
+  it("declares both uniqueness rules, which are indexes rather than input checks", async () => {
+    const text = ruleText(await contractFor("claim"));
+    // One live row per session per item, and one live orchestrator per item
+    // — both real, both refusing callers, neither expressible in a schema.
+    expect(text).toContain("ONE LIVE ROW PER SESSION PER ITEM");
+    expect(text).toContain("ONE LIVE ORCHESTRATOR PER ITEM");
+  });
+
+  it("declares that an unregistered session cannot omit machine", async () => {
+    const contract = await contractFor("claim");
+    const rule = contract.rules.find((entry) => entry.fields.includes("machine"));
+    expect(rule, "claim declares no rule about machine").toBeDefined();
+    expect(rule!.rule).toContain("register_session");
+  });
+
+  it("declares the role/roleCustom pairing in both directions", async () => {
+    const contract = await contractFor("claim");
+    const rule = contract.rules.find((entry) => entry.fields.includes("roleCustom"));
+    expect(rule).toBeDefined();
+    expect(rule!.rule).toContain("required");
+    // The quieter half: a name beside a real role is refused, not ignored.
+    expect(rule!.rule).toContain("refused");
+  });
+});
+
+describe("an operation that reads the database to refuse declares that it does", () => {
+  // The generalisation of the incident, as a standing check rather than four
+  // named cases. `describe_tool` cannot detect an undeclared rule — that is
+  // its structural limit — so the guard against the next one has to be a
+  // test that knows which operations perform an assignment lookup.
+  //
+  // This list is deliberately hand-maintained and deliberately short: it is
+  // the set whose refusals were being misread as "no preconditions". Adding
+  // an operation to it without declaring that operation's rule fails, which
+  // is the point.
+  const ASSIGNMENT_GATED = ["checkpoint", "release", "heartbeat", "claim"] as const;
+
+  it.each(ASSIGNMENT_GATED)("%s does not report an empty rules list", async (name) => {
+    const contract = await contractFor(name);
+    expect(
+      contract.rules,
+      `${name} refuses callers on a database check; an empty contract tells them the opposite`,
+    ).not.toEqual([]);
   });
 });
 

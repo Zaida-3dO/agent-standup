@@ -14,6 +14,7 @@ import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
+import { assignmentRequiredRule } from "../items/assignment-refusal";
 
 const inputSchema = z
   .object({
@@ -34,6 +35,19 @@ export const release = defineOperation({
   name: "release",
   kind: "write",
   summary: "Gives up ownership of an item.",
+  contract: {
+    rules: [
+      assignmentRequiredRule("a release"),
+      {
+        fields: ["itemId", "sessionId"],
+        rule: "A session can only release its OWN live row, which is why this takes an item plus your session rather than an assignment id. To end somebody else's claim you want `takeover` [http/cli], which is a different operation with its own guards — and it releases the holder without assigning the item to you, so it is not a way to release-and-claim in one call.",
+      },
+    ],
+    example: {
+      itemId: "b1f0c3d2-0000-4000-8000-000000000000",
+      sessionId: "725c8167",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ReleaseOperationInput): Promise<Assignment> {

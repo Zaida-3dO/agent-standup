@@ -153,6 +153,39 @@ export const claim = defineOperation({
   name: "claim",
   kind: "write",
   summary: "Takes ownership of an item in a role. Atomic — two agents can't both win.",
+  contract: {
+    rules: [
+      {
+        fields: ["rootSessionId", "sessionId"],
+        rule: "ONE CREW PER ITEM. A claim is refused when the item's live assignments carry a different `rootSessionId` than this one. **`rootSessionId` defaults to your own `sessionId` when omitted**, which means a DISPATCHED agent claiming alongside its orchestrator must pass the orchestrator's session id explicitly — omit it and you declare yourself a second crew and are refused as one, even though you were sent to help. Pass the root of your own session tree, not your own id, whenever somebody else already holds the item.",
+      },
+      {
+        fields: ["sessionId", "itemId"],
+        rule: "ONE LIVE ROW PER SESSION PER ITEM. A session that already holds a live assignment on this item cannot claim a second one — change roles by releasing first. Enforced by a partial unique index rather than a pre-read, so it is decided by the database and refuses with `conflict` naming the row you already hold.",
+      },
+      {
+        fields: ["role", "itemId"],
+        rule: 'ONE LIVE ORCHESTRATOR PER ITEM. A second `role: "orchestrator"` claim is refused while the first is live; any number of builders, reviewers and scouts may hold the item alongside it. Also enforced by a partial unique index.',
+      },
+      {
+        fields: ["roleCustom", "role"],
+        rule: "`roleCustom` is required when `role` is `custom` and refused when it is not. Both directions are checked, so a name supplied beside a real role is an error rather than being ignored — that is what stops `roleCustom` becoming a shadow role field some readers consult.",
+      },
+      {
+        fields: ["machine", "sessionId"],
+        rule: "`machine` is optional only for a session that has already registered: it is inherited from `Session.machine`. An UNREGISTERED session omitting it is refused by name rather than having a machine guessed for it — either `register_session` first, or pass `machine` on this call.",
+      },
+    ],
+    example: {
+      itemId: "b1f0c3d2-0000-4000-8000-000000000000",
+      role: "builder",
+      holderType: "agent",
+      holderId: "poe-3f1",
+      sessionId: "725c8167",
+      rootSessionId: "cd1575a9",
+      machine: "laptop",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ClaimOperationInput): Promise<ClaimResult> {

@@ -108,3 +108,44 @@ export function describeAssignmentRefusal(input: AssignmentRefusalInputs): Assig
       `alongside a session that holds it, use note instead — note needs no assignment.`,
   };
 }
+
+/**
+ * The contract rule for the lookup above, stated as a caller must satisfy it.
+ *
+ * Declared here, beside the case split it describes, rather than three times
+ * in the three operations that make this lookup — the same reasoning
+ * `OperationRule` gives for declaring a rule at the site of its check. Three
+ * copies of one sentence is three chances for a correction to reach one copy
+ * and miss the other two, leaving the surface disagreeing with itself.
+ *
+ * **Why it exists at all**, which is the incident this function was written
+ * for. `describe_tool` derives `rules` from the `contract` an operation
+ * declares, and these three operations declared none — so the honest answer
+ * "this operation states no rules" was returned in a shape indistinguishable
+ * from "this operation has no preconditions", against operations whose
+ * precondition is a database read that refuses callers daily. Three separate
+ * documents were then "corrected" to say `checkpoint` needs no claim, on the
+ * strength of an empty list, and three sessions were refused acting on them.
+ * A rule that is enforced and undeclared is worse than one that is neither,
+ * because it reads as a guarantee that it is absent.
+ *
+ * Takes the action so each operation's rule names what the caller was doing,
+ * matching the refusal message they will actually be shown.
+ */
+export function assignmentRequiredRule(action: string): {
+  readonly fields: readonly string[];
+  readonly rule: string;
+} {
+  return {
+    fields: ["itemId", "sessionId"],
+    rule:
+      `Requires YOUR OWN live assignment on this item — a row on \`Assignment\` matching both ` +
+      `\`itemId\` and \`sessionId\` with \`releasedAt\` unset. This is a database check, so no ` +
+      `schema can state it and a valid-looking call is refused with \`conflict\` when it is not ` +
+      `met. Holding no assignment, ${action} has nothing to attribute to: if you were dispatched ` +
+      `to this item, \`claim\` it first; if you are reporting alongside the session that holds it, ` +
+      `use \`note\`, which needs no assignment. A claim that has been released, or reclaimed after ` +
+      `going quiet, also fails this — the refusal names which of those three cases you are in and ` +
+      `what to do about it, including when re-claiming would take the item from somebody.`,
+  };
+}
