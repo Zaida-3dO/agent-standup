@@ -118,11 +118,31 @@ describeIfDb("the backfill-only event timestamp, against Postgres", () => {
     const before = Date.now();
     const appended = await inTransaction((db) => appendEvent(db, { ...base, body: "live" }));
     const after = Date.now();
-    // Millisecond truncation on the column (`@db.Timestamptz(3)`) can put
-    // the stored value up to 1ms below `before`; the bound is widened by
-    // that one millisecond rather than left flaky.
-    expect(appended.ts.getTime()).toBeGreaterThanOrEqual(before - 1);
-    expect(appended.ts.getTime()).toBeLessThanOrEqual(after + 1);
+    // This brackets a POSTGRES clock against the HOST's, and those are two
+    // different clocks whenever the database runs in a container — so the
+    // tolerance has to cover their disagreement, not just the 1ms truncation
+    // of `@db.Timestamptz(3)`.
+    //
+    // Measured on a containerised Postgres, the skew is a sawtooth: it grows
+    // steadily (~35ms per second of wall time) as the guest clock runs fast,
+    // then snaps back when the hypervisor resynchronises it. Sampled either
+    // side of a resync it reached -551ms and +584ms, and it changes SIGN
+    // between runs — which is what distinguishes it from a code defect, since
+    // a wrong timestamp written by the code could not flip direction. At ±1ms
+    // this assertion failed on three consecutive runs against unmodified
+    // main while passing in CI, where host and database share a clock.
+    //
+    // Five seconds is chosen to sit above that observed range with room for a
+    // longer resync interval, and it costs the test nothing, because the
+    // thing it discriminates against is not close. The failure this guards is
+    // a backfill timestamp reaching the normal path — `HISTORICAL` above is
+    // 2023, so a leak misses by YEARS. Anything that writes neither `now()`
+    // nor a plausible clock reading is still caught; only the gap between two
+    // clocks that agree to within a few seconds is waved through, and that
+    // gap contains no bug this test could name.
+    const CLOCK_SKEW_TOLERANCE_MS = 5_000;
+    expect(appended.ts.getTime()).toBeGreaterThanOrEqual(before - CLOCK_SKEW_TOLERANCE_MS);
+    expect(appended.ts.getTime()).toBeLessThanOrEqual(after + CLOCK_SKEW_TOLERANCE_MS);
   });
 
   it("the backfill path refuses an unusable Date rather than passing it to Postgres", async () => {
