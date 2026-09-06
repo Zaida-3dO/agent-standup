@@ -17,6 +17,7 @@ import { appendEvent, type AppendedEvent } from "@/lib/events";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
 import {
+  assignmentRequiredRule,
   describeAssignmentRefusal,
   type CurrentHolder,
   type PriorAssignment,
@@ -61,6 +62,21 @@ export const checkpoint = defineOperation({
   kind: "write",
   summary:
     "Records what you tried, what you ruled out, what's next. A headline gives it a one-line BLUF that reads pick up without the prose.",
+  contract: {
+    rules: [
+      assignmentRequiredRule("a checkpoint"),
+      {
+        fields: ["itemId", "sessionId"],
+        rule: "A checkpoint is recorded PER AGENT, not merely per item: it attributes to the assignment the pair above identifies, so two sessions working one item keep separate resume points and a stalled builder still has its own. That is why the call takes your `sessionId` rather than an assignment id — a session holds at most one live row per item, so there is nothing left to disambiguate.",
+      },
+    ],
+    example: {
+      itemId: "b1f0c3d2-0000-4000-8000-000000000000",
+      sessionId: "725c8167",
+      body: "Reproduced the refusal against a scratch database. It is the assignment lookup, not the schema. Next: declare the rule beside the check.",
+      headline: "Refusal traced to the assignment lookup",
+    },
+  },
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: CheckpointOperationInput): Promise<AppendedEvent> {

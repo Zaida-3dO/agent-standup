@@ -16,10 +16,18 @@
 // `advertisedSchema` (`mcp/tools.ts`) exists to keep that true. So this
 // operation is not a workaround for an invisible schema. What no schema can
 // carry is the conditional rules — `create_item`'s `originType: "person"` →
-// `originPersonId`, `complete_item`'s cardinality and conditional presence —
-// because JSON Schema cannot state "required only when", and because a check
-// that reads the database is not expressible at all. Those live in
-// `.refine()` calls and runtime validators, and a client sees neither.
+// `originPersonId`, `complete_item`'s cardinality and conditional presence,
+// `checkpoint`'s requirement of the caller's own live assignment — because
+// JSON Schema cannot state "required only when", and because a check that
+// reads the database is not expressible in a schema at all. Those live in
+// `.refine()` calls, runtime validators and plain queries, and a client sees
+// none of them.
+//
+// **Which is exactly why an undeclared rule is the failure mode here.** This
+// operation reports what an operation DECLARES, and it cannot detect a rule
+// that is enforced and undeclared — see `ToolContract.rules` for the
+// incident where four operations reported no rules while refusing callers
+// for rules they had.
 //
 // ── Why the answer is derived ───────────────────────────────────────────
 //
@@ -123,9 +131,32 @@ export interface ToolContract {
   /** Every field of the input, read off the schema it is rejected by. */
   readonly fields: readonly FieldDescriptor[];
   /**
-   * The rules the schema cannot express. Empty for a tool fully described by
-   * its schema — an empty list is a real answer ("nothing else to know"),
-   * not a missing one.
+   * The rules the schema cannot express, **as the operation declares them**.
+   *
+   * ── An empty list does not mean "no preconditions" ──────────────────────
+   *
+   * This is derived from the operation's `contract`, so it is empty in two
+   * situations that a caller cannot tell apart from the value alone: an
+   * operation that genuinely has nothing to add to its schema, and one that
+   * enforces something and has not declared it. **A caller must not infer
+   * the absence of a precondition from an empty list.** What an empty list
+   * warrants is that nothing further was declared here — not that nothing
+   * further is checked.
+   *
+   * That distinction was learned rather than anticipated. `checkpoint`,
+   * `release`, `heartbeat` and `claim` all enforced database-backed
+   * preconditions while declaring no contract, so every one of them reported
+   * `rules: []` — and the sentence that used to stand here read that as a
+   * positive answer ("nothing else to know"). Three documents were corrected
+   * on the strength of it to say `checkpoint` needs no claim, and three
+   * sessions were refused acting on them. The rules those four operations
+   * were missing are now declared; this comment is corrected so the next
+   * undeclared rule is not read as an absent one.
+   *
+   * The remedy is on the operation, not here: an operation that refuses for
+   * a reason its schema cannot carry declares that reason beside the check,
+   * and `tests/describe-tool.test.ts` holds the assertions that keep the
+   * known ones present.
    */
   readonly rules: readonly OperationRule[];
   /** A minimal call satisfying every rule, when the operation declares one. */

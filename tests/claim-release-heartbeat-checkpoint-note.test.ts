@@ -486,6 +486,92 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
       expect(message).not.toContain("safe");
     });
 
+    it("a REGISTERED session handed an item it never claimed is still refused a checkpoint", async () => {
+      // The exact reported flow, end to end: `register_session`, then
+      // `checkpoint` against an item id the session was *given* rather than
+      // *claimed*. This is what a dispatched subagent does when its brief
+      // hands it an item id, and it is the flow three documents were rewritten
+      // to describe as working.
+      //
+      // Registration is the part worth spelling out. It is the one
+      // precondition a caller in this position genuinely has satisfied —
+      // §21's gate lets it claim — so a reader who knows registration
+      // succeeded can reasonably expect the next call to work. It does not,
+      // and the reason is a second, separate requirement. Proving the refusal
+      // *after* a successful registration is what distinguishes "the session
+      // was not allowed in" from "the session was allowed in and still holds
+      // nothing", which is the confusion that produced the wrong docs.
+      const itemId = await seedItem();
+      await registerSessions(prisma, ["dispatched-crew"]);
+
+      const error = await runtime
+        .call("checkpoint", { itemId, sessionId: "dispatched-crew", body: "starting work" })
+        .catch((e: unknown) => e);
+
+      expect((error as { code: string }).code).toBe("conflict");
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "never_held",
+      );
+
+      // Nothing was written. A refusal that still appended the event would
+      // make the requirement advisory, and the board would show progress from
+      // a session holding nothing.
+      const events = await prisma.event.findMany({ where: { itemId, type: "checkpoint" } });
+      expect(events).toHaveLength(0);
+
+      // Both routes out are named, because they are what the caller does
+      // next and the reason it is not simply stuck.
+      const message = (error as { message: string }).message;
+      expect(message).toContain("claim");
+      expect(message).toContain("note");
+    });
+
+    it("note succeeds on the same item and session that checkpoint just refused", async () => {
+      // The other half of the advice, proved rather than asserted. The
+      // refusal above tells a dispatched caller to use `note` instead; a
+      // suggestion nothing tests is exactly how the docs drifted in the first
+      // place. If `note` ever grows an assignment requirement of its own,
+      // this fails and the refusal message stops being true the same day.
+      const itemId = await seedItem();
+      await registerSessions(prisma, ["dispatched-crew-2"]);
+
+      await runtime
+        .call("checkpoint", { itemId, sessionId: "dispatched-crew-2", body: "x" })
+        .catch(() => undefined);
+
+      await runtime.call("note", {
+        itemId,
+        body: "Dispatched here; reporting without a claim.",
+        actorType: "agent",
+        actorId: "dispatched-crew-2",
+        sessionId: "dispatched-crew-2",
+      });
+
+      const notes = await prisma.event.findMany({ where: { itemId, type: "note" } });
+      expect(notes).toHaveLength(1);
+      expect(notes[0]?.body).toContain("without a claim");
+    });
+
+    it("the same session CAN checkpoint once it claims, which is the other route out", async () => {
+      // Completes the pair: the refusal names two recoveries and both work.
+      // Without this, the assignment requirement could be satisfied by
+      // nothing at all and the suite would still be green — every checkpoint
+      // case above would pass against an operation that refused everyone.
+      const itemId = await seedItem();
+      await registerSessions(prisma, ["dispatched-crew-3"]);
+
+      await runtime.call("claim", claimInput(itemId, { sessionId: "dispatched-crew-3" }));
+      await runtime.call("checkpoint", {
+        itemId,
+        sessionId: "dispatched-crew-3",
+        body: "now attributable",
+      });
+
+      const events = await prisma.event.findMany({ where: { itemId, type: "checkpoint" } });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.assignmentId).not.toBeNull();
+    });
+
     it("two agents on the same item get INDEPENDENT checkpoint history (per-agent, not just per-item)", async () => {
       // SCHEMA.md §4: "Per agent, not just per item — assignment_id carries
       // that, so a stalled builder still has its own resume point." This is
