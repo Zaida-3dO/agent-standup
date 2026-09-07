@@ -303,6 +303,79 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
       };
       expect(second.role).toBe("reviewer");
     });
+
+    // `release` states the same assignment precondition `checkpoint` does,
+    // and its contract rule promises the refusal names which of three cases
+    // the caller is in. These prove the operation actually reaches each one
+    // against real rows — the rule was true of `checkpoint` alone for as
+    // long as it was declared on all three, which is the regression here.
+    it("distinguishes NEVER HELD, and does not send a releaser to write a note", async () => {
+      const itemId = await seedItem();
+      const error = await runtime
+        .call("release", { itemId, sessionId: "ghost" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "never_held",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("never held an assignment");
+      // A releaser holding nothing has already got what it asked for. The
+      // refusal must say so rather than sending it to claim the item purely
+      // in order to give it back.
+      expect(message).toContain("do not claim the item in order to release it");
+      expect(message).not.toContain("use note instead");
+    });
+
+    it("distinguishes a RELEASED claim with the item free, and says re-claiming is safe", async () => {
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      await runtime.call("release", { itemId, sessionId: "s1" });
+
+      const error = await runtime
+        .call("release", { itemId, sessionId: "s1" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "released_free",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("No other session holds this item");
+      expect(message).not.toContain("Do NOT claim");
+    });
+
+    it("distinguishes a TAKEN OVER item, names the holder and warns against re-claiming", async () => {
+      // The case that matters most for `release` specifically: a session
+      // told only "you do not hold this" may re-claim in order to release
+      // cleanly, which would take the item from the session now working it.
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      await runtime.call("release", { itemId, sessionId: "s1" });
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s2" }));
+
+      const error = await runtime
+        .call("release", { itemId, sessionId: "s1" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "taken_over",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("s2");
+      expect(message).toContain("Do NOT claim");
+      expect(message).toContain("nothing here for you to give up");
+      // The harmful-guess guard: this case must never call re-claiming safe.
+      expect(message).not.toContain("safe");
+    });
+
+    it("a refused release still releases nothing — the refusal is not advisory", async () => {
+      // A message that named the case but let the write through would be a
+      // worse defect than the bare string it replaced.
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+
+      await runtime.call("release", { itemId, sessionId: "ghost" }).catch(() => undefined);
+
+      const live = await prisma.assignment.findFirst({ where: { itemId, releasedAt: null } });
+      expect(live?.sessionId).toBe("s1");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -362,6 +435,76 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
         .call("heartbeat", { itemId, sessionId: "s1" })
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("conflict");
+    });
+
+    // As for `release`: the shared contract rule promises a three-case
+    // refusal, so the operation has to deliver one. A failing heartbeat is
+    // the signal of a session that believes it holds a claim and does not,
+    // which is exactly when knowing whether the item is free matters.
+    it("distinguishes NEVER HELD, and does not claim a write it never makes", async () => {
+      const itemId = await seedItem();
+      const error = await runtime
+        .call("heartbeat", { itemId, sessionId: "ghost" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "never_held",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("never held an assignment");
+      // A heartbeat appends no event; it stamps a column. Telling its
+      // caller the write had "nothing to attribute to" describes an
+      // operation this one does not perform.
+      expect(message).toContain("no assignment row to stamp");
+      expect(message).not.toContain("nothing to attribute to");
+    });
+
+    it("distinguishes a RELEASED claim with the item free, and says re-claiming is safe", async () => {
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      await runtime.call("release", { itemId, sessionId: "s1" });
+
+      const error = await runtime
+        .call("heartbeat", { itemId, sessionId: "s1" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "released_free",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("safe");
+      expect(message).not.toContain("Do NOT claim");
+    });
+
+    it("distinguishes a TAKEN OVER item, names the holder and warns against re-claiming", async () => {
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      await runtime.call("release", { itemId, sessionId: "s1" });
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s2" }));
+
+      const error = await runtime
+        .call("heartbeat", { itemId, sessionId: "s1" })
+        .catch((e: unknown) => e);
+      expect((error as { details?: { refusalCase?: string } }).details?.refusalCase).toBe(
+        "taken_over",
+      );
+      const message = (error as { message: string }).message;
+      expect(message).toContain("s2");
+      expect(message).toContain("Do NOT claim");
+      expect(message).not.toContain("safe");
+    });
+
+    it("a refused heartbeat stamps nobody else's lastActive", async () => {
+      // The `UPDATE` is filtered by session, and the refusal path runs
+      // after it. A filter that matched the item alone would refresh the
+      // real holder's liveness on a stranger's call — making a dead session
+      // look alive because an unrelated one pinged.
+      const itemId = await seedItem();
+      await runtime.call("claim", claimInput(itemId, { role: "builder", sessionId: "s1" }));
+      const before = await prisma.assignment.findFirst({ where: { itemId, sessionId: "s1" } });
+
+      await runtime.call("heartbeat", { itemId, sessionId: "ghost" }).catch(() => undefined);
+
+      const after = await prisma.assignment.findFirst({ where: { itemId, sessionId: "s1" } });
+      expect(after?.lastActive.getTime()).toBe(before?.lastActive.getTime());
     });
   });
 

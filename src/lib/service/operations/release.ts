@@ -14,7 +14,7 @@ import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
-import { assignmentRequiredRule } from "../items/assignment-refusal";
+import { assignmentRequiredRule, refuseForMissingAssignment } from "../items/assignment-refusal";
 
 const inputSchema = z
   .object({
@@ -74,14 +74,46 @@ export const release = defineOperation({
     );
     const live = rows[0];
     if (!live) {
-      // Distinguishing "no such item" from "not held by this session" would
-      // need a second query for a case a caller can already tell apart
-      // itself — it knows whether it ever claimed. Both report as a
-      // conflict: the caller asked to give up something it does not hold.
-      throw new ConflictError(
-        `Session ${input.sessionId} does not hold a live assignment on ${input.itemId}.`,
-        { fields: ["itemId", "sessionId"] },
-      );
+      // Still one conflict — the caller asked to give up something it does
+      // not hold — but which of three situations produced it decides what
+      // they should do next, so the refusal names the case.
+      //
+      // "No such item" is deliberately still not distinguished here: a
+      // caller can already tell that apart itself, because it knows whether
+      // it ever claimed. The split below is a different question, and it is
+      // one the caller cannot answer alone — whether somebody else holds
+      // this item *now* is a fact only the database has.
+      //
+      // That distinction matters most for `release` of all three callers.
+      // A session told merely "you do not hold this" may reasonably re-claim
+      // in order to release cleanly, and in the taken-over case that takes
+      // the item from a session that is working on it — the exact harmful
+      // recovery the refusal exists to warn against.
+      const refusal = await refuseForMissingAssignment(ctx.db, {
+        itemId: input.itemId,
+        sessionId: input.sessionId,
+        action: "a release",
+        // A release does append an event, so the default "nothing to
+        // attribute to" is not false here — but it names the wrong
+        // obstacle. The caller's problem is that the ownership it asked to
+        // give up is already gone, which is also the fact that makes the
+        // `never_held` advice below correct.
+        consequence: "has no live claim of yours to give up",
+        // A releaser is carrying nothing to write down, so the default
+        // "use note to record what you have" would invent content it does
+        // not have. What it needs is the fact that the outcome it wanted
+        // already holds.
+        takenOverAdvice:
+          "You are not the holder, so there is nothing here for you to give up — leave it alone " +
+          "and check with whoever dispatched you.",
+        neverHeldAlternative:
+          ", but if you are simply making sure you hold nothing, that is already true and this " +
+          "call is unnecessary — do not claim the item in order to release it",
+      });
+      throw new ConflictError(refusal.message, {
+        fields: ["itemId", "sessionId"],
+        details: { refusalCase: refusal.case },
+      });
     }
 
     const released = await ctx.db.$queryRawUnsafe<Assignment[]>(

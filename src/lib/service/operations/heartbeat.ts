@@ -34,7 +34,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
-import { assignmentRequiredRule } from "../items/assignment-refusal";
+import { assignmentRequiredRule, refuseForMissingAssignment } from "../items/assignment-refusal";
 
 const inputSchema = z
   .object({
@@ -93,10 +93,39 @@ export const heartbeat = defineOperation({
     );
     const assignment = rows[0];
     if (!assignment) {
-      throw new ConflictError(
-        `Session ${input.sessionId} does not hold a live assignment on ${input.itemId}.`,
-        { fields: ["itemId", "sessionId"] },
-      );
+      // The `UPDATE` above matched nothing, so nothing was stamped and there
+      // is no live assignment. The extra reads behind this refusal are on
+      // the failing path only — a heartbeat that lands is still one
+      // statement, which is what keeps a call meant to be cheap and frequent
+      // cheap.
+      //
+      // A heartbeat is the one caller where a rich refusal is *most* worth
+      // the two reads rather than least. This operation exists for sessions
+      // the eviction path cannot otherwise tell apart from a crash, so a
+      // heartbeat that fails means a session believes it holds a claim and
+      // does not — which is exactly when it needs to know whether the item
+      // is free to re-claim or has been taken over.
+      const refusal = await refuseForMissingAssignment(ctx.db, {
+        itemId: input.itemId,
+        sessionId: input.sessionId,
+        action: "a heartbeat",
+        // This operation appends no event; it stamps `lastActive` on the
+        // assignment row. "Nothing to attribute to" would describe a write
+        // it does not make, so it says what is actually missing.
+        consequence: "has no assignment row to stamp",
+        // A liveness ping carries no content, so `note` is not the
+        // alternative here — being seen is, and the hook does that without
+        // this call.
+        takenOverAdvice:
+          "Your liveness is not what is being measured on this item any more, so nothing here " +
+          "needs a heartbeat from you — check with whoever dispatched you.",
+        neverHeldAlternative:
+          " — a heartbeat only says an existing claim is still alive, and cannot stand in for one",
+      });
+      throw new ConflictError(refusal.message, {
+        fields: ["itemId", "sessionId"],
+        details: { refusalCase: refusal.case },
+      });
     }
     return assignment;
   },

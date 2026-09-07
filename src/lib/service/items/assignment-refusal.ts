@@ -31,6 +31,8 @@
 // reader's next move, and it stays correct if supersession is ever wired
 // up, because a superseding holder is a live holder.
 
+import type { TransactionHandle } from "../context";
+
 /** The most recent assignment this session has held on the item, if any. */
 export interface PriorAssignment {
   readonly releasedAt: Date | null;
@@ -50,6 +52,41 @@ export interface AssignmentRefusalInputs {
   readonly action: string;
   readonly prior: PriorAssignment | null;
   readonly currentHolder: CurrentHolder | null;
+  /**
+   * Why the missing assignment stops this particular call, as a clause
+   * following "so {action} ".
+   *
+   * Parameterised because the shared default — "has nothing to attribute
+   * to" — is only true of the callers that write something attributed to
+   * the assignment. `heartbeat` deliberately appends no event at all; it
+   * stamps a column on the assignment row. Telling its caller the write had
+   * nothing to attribute to describes an operation it is not making, which
+   * is the same class of confidently-wrong help this module exists to
+   * remove — one layer further in.
+   */
+  readonly consequence?: string;
+  /**
+   * What to do with work in hand, when another session holds the item.
+   *
+   * Also parameterised, and for the sharper of the two reasons. "Use note to
+   * record what you have" is good advice for a checkpoint, which is carrying
+   * prose worth preserving. A `release` or a `heartbeat` is carrying
+   * nothing: one is giving up ownership and the other is a liveness ping, so
+   * directing either to write a note invents content it does not have and
+   * costs the reader a call to find that out.
+   */
+  readonly takenOverAdvice?: string;
+  /**
+   * The alternative offered to a caller that never held the item, as a
+   * clause following "claim it first" and before the closing full stop.
+   *
+   * `note` is the right redirect only for a caller carrying something to
+   * record. For `release` there is a better answer than either claiming or
+   * noting — a session that holds nothing has already achieved what a
+   * release would have done — and saying so is what stops the reader
+   * claiming an item purely in order to give it back.
+   */
+  readonly neverHeldAlternative?: string;
 }
 
 /** Which of the three situations the caller is in. */
@@ -70,6 +107,16 @@ export interface AssignmentRefusal {
  */
 export function describeAssignmentRefusal(input: AssignmentRefusalInputs): AssignmentRefusal {
   const { sessionId, itemId, action, prior, currentHolder } = input;
+  // The defaults describe a caller that writes something attributed to the
+  // assignment, which is what `checkpoint` and `release` both do. An
+  // operation for which either sentence is untrue passes its own.
+  const consequence = input.consequence ?? "has nothing to attribute to";
+  const takenOverAdvice =
+    input.takenOverAdvice ??
+    "Use note to record what you have, and check with whoever dispatched you.";
+  const neverHeldAlternative =
+    input.neverHeldAlternative ??
+    "; if you are reporting alongside a session that holds it, use note instead — note needs no assignment";
 
   // Case 3 first: it is the only one where the obvious recovery is harmful,
   // so it must win any overlap with the others. A caller whose own claim was
@@ -85,7 +132,7 @@ export function describeAssignmentRefusal(input: AssignmentRefusalInputs): Assig
       message:
         `${heldBefore} Do NOT claim it to get ${action} through without checking first — ` +
         `another session is on this item and claiming would take it from them. ` +
-        `Use note to record what you have, and check with whoever dispatched you.`,
+        takenOverAdvice,
     };
   }
 
@@ -93,7 +140,7 @@ export function describeAssignmentRefusal(input: AssignmentRefusalInputs): Assig
     return {
       case: "released_free",
       message:
-        `Your assignment on ${itemId} was released, so ${action} has nothing to attribute to. ` +
+        `Your assignment on ${itemId} was released, so ${action} ${consequence}. ` +
         `No other session holds this item, so claiming it again is safe and is the intended ` +
         `recovery — a claim that goes quiet for long enough is reclaimed, and a long silent ` +
         `stretch of work looks the same as a session that died. Claim it again and carry on.`,
@@ -103,10 +150,52 @@ export function describeAssignmentRefusal(input: AssignmentRefusalInputs): Assig
   return {
     case: "never_held",
     message:
-      `Session ${sessionId} has never held an assignment on ${itemId}, and ${action} attributes ` +
-      `to one. If you were dispatched to work on this item, claim it first; if you are reporting ` +
-      `alongside a session that holds it, use note instead — note needs no assignment.`,
+      `Session ${sessionId} has never held an assignment on ${itemId}, and ${action} ` +
+      `${consequence}. If you were dispatched to work on this item, claim it first` +
+      `${neverHeldAlternative}.`,
   };
+}
+
+/**
+ * Reads the two facts the case split needs, and describes the refusal.
+ *
+ * Taken only on the failing path, by all three operations that make the
+ * assignment lookup — so a call that succeeds costs exactly what it did
+ * before, and the two extra reads are paid only by a caller who is about to
+ * be refused and needs to know why.
+ *
+ * Here rather than in each operation for the reason `assignmentRequiredRule`
+ * is: three copies of this pair of queries is three chances for a fix to
+ * reach one copy and miss the others, and the resulting divergence is
+ * invisible — every copy still refuses, just with a different amount of
+ * help. That is the failure this module was written to end, so reproducing
+ * it three times inside the fix would be an odd way to finish.
+ */
+export async function refuseForMissingAssignment(
+  db: TransactionHandle,
+  input: Omit<AssignmentRefusalInputs, "prior" | "currentHolder">,
+): Promise<AssignmentRefusal> {
+  const priorRows = await db.$queryRawUnsafe<PriorAssignment[]>(
+    `SELECT "releasedAt", "liveness"::text AS "liveness" FROM "Assignment"
+     WHERE "itemId" = $1 AND "sessionId" = $2
+     ORDER BY "claimedAt" DESC
+     LIMIT 1`,
+    input.itemId,
+    input.sessionId,
+  );
+  const holderRows = await db.$queryRawUnsafe<CurrentHolder[]>(
+    `SELECT "sessionId", "role"::text AS "role" FROM "Assignment"
+     WHERE "itemId" = $1 AND "sessionId" <> $2 AND "releasedAt" IS NULL
+     ORDER BY "claimedAt" ASC
+     LIMIT 1`,
+    input.itemId,
+    input.sessionId,
+  );
+  return describeAssignmentRefusal({
+    ...input,
+    prior: priorRows[0] ?? null,
+    currentHolder: holderRows[0] ?? null,
+  });
 }
 
 /**

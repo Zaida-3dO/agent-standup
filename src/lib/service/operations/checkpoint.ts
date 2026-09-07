@@ -16,12 +16,7 @@ import type { ServiceContext } from "../context";
 import { appendEvent, type AppendedEvent } from "@/lib/events";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
-import {
-  assignmentRequiredRule,
-  describeAssignmentRefusal,
-  type CurrentHolder,
-  type PriorAssignment,
-} from "../items/assignment-refusal";
+import { assignmentRequiredRule, refuseForMissingAssignment } from "../items/assignment-refusal";
 
 const inputSchema = z
   .object({
@@ -108,28 +103,10 @@ export const checkpoint = defineOperation({
       // directions — so the refusal names the case rather than reporting the
       // bare fact. Two extra reads, taken only on the failing path, so the
       // successful checkpoint costs exactly what it did before.
-      const priorRows = await ctx.db.$queryRawUnsafe<PriorAssignment[]>(
-        `SELECT "releasedAt", "liveness"::text AS "liveness" FROM "Assignment"
-         WHERE "itemId" = $1 AND "sessionId" = $2
-         ORDER BY "claimedAt" DESC
-         LIMIT 1`,
-        input.itemId,
-        input.sessionId,
-      );
-      const holderRows = await ctx.db.$queryRawUnsafe<CurrentHolder[]>(
-        `SELECT "sessionId", "role"::text AS "role" FROM "Assignment"
-         WHERE "itemId" = $1 AND "sessionId" <> $2 AND "releasedAt" IS NULL
-         ORDER BY "claimedAt" ASC
-         LIMIT 1`,
-        input.itemId,
-        input.sessionId,
-      );
-      const refusal = describeAssignmentRefusal({
-        sessionId: input.sessionId,
+      const refusal = await refuseForMissingAssignment(ctx.db, {
         itemId: input.itemId,
+        sessionId: input.sessionId,
         action: "a checkpoint",
-        prior: priorRows[0] ?? null,
-        currentHolder: holderRows[0] ?? null,
       });
       throw new ConflictError(refusal.message, {
         fields: ["itemId", "sessionId"],
