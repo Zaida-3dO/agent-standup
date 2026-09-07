@@ -201,6 +201,34 @@ covered by the integration tests" is not an answer when those don't exist yet.
 
 If a change is genuinely untestable, say why in the PR rather than skipping quietly.
 
+### Hand-mutation proves a test asserts something — run it TARGETED
+
+CI mutation testing was removed in #371 in favour of hand-mutating your own diff, so this is now
+a thing you do by hand and nothing reminds you how. Break the behaviour deliberately, run the
+tests, and confirm they fail. A test that still passes against broken code is asserting nothing,
+and that is the failure this catches — a `rules.length > 0`-style assertion once let a wrong
+contract through precisely because it checked presence rather than substance.
+
+**Run the affected test FILES, not the suite.** Measured on this repo: one targeted file is
+**~38s**, the full suite is **~3m10s**. That 5x multiplies by every mutation — five mutations is
+the difference between ~3 minutes and ~16.
+
+```bash
+npx vitest run tests/assignment-refusal.test.ts tests/claim-release-heartbeat-checkpoint-note.test.ts
+```
+
+**Batch files into one invocation.** Nearly all of that 38s is fixed startup — migrations,
+transform, import — while the assertions themselves ran in **8ms**. The cost is per *invocation*,
+so two files in one command cost barely more than one.
+
+**Run the full suite once at the end**, not before each mutation. And if a known flake is already
+documented (see the two below), cite it rather than re-running the suite to re-measure it.
+
+**Size the effort to the change.** A contract surface, an auth path, or anything that has already
+caused an incident earns thorough treatment. A small follow-up with green CI usually needs two or
+three mutations on the genuinely load-bearing assertion. Over-verifying is a real cost, not a free
+safety margin.
+
 ### Every gating script ships a self-test
 
 Any script used as a gate — the checks under `scripts/*.mjs` that CI runs on every PR — must ship a
