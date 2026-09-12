@@ -276,7 +276,9 @@ export function deriveInterventionScore(
       confidence: "none",
       repeated,
       proceeded,
-      reasons: ["advisory only — what the session did next says nothing about whether it was right"],
+      reasons: [
+        "advisory only — what the session did next says nothing about whether it was right",
+      ],
     };
   }
 

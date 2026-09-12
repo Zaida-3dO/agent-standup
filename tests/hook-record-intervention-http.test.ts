@@ -40,7 +40,11 @@ function capture(overrides: Partial<InterventionCapture> = {}): InterventionCapt
 
 const BATCH: InterventionCaptureBatch = { sessionId: "s-1", captures: [capture()] };
 
-function stubFetch(status: number, ok = status >= 200 && status < 300, body: unknown = { recorded: [] }) {
+function stubFetch(
+  status: number,
+  ok = status >= 200 && status < 300,
+  body: unknown = { recorded: [] },
+) {
   const calls: { url: string; init: Parameters<FetchLike>[1] }[] = [];
   const fetch: FetchLike = async (url, init) => {
     calls.push({ url, init });

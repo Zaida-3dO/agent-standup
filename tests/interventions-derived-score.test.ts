@@ -193,9 +193,7 @@ describe("the response window bounds what counts as a response", () => {
     // responding to the refusal.
     const result = deriveInterventionScore(
       firing({
-        followUps: [
-          { at: AT + RESPONSE_WINDOW_MS + 1, tool: "Bash", command: "git merge main" },
-        ],
+        followUps: [{ at: AT + RESPONSE_WINDOW_MS + 1, tool: "Bash", command: "git merge main" }],
       }),
     );
 
@@ -249,9 +247,9 @@ describe("comparing two calls", () => {
   it("does not treat the same command through a different tool as a repeat", () => {
     // Running a string through a different tool is a different act, and
     // the tool is the only thing distinguishing them.
-    expect(
-      isSameCall(firing(), { at: AT + 1, tool: "Write", command: "git merge main" }),
-    ).toBe(false);
+    expect(isSameCall(firing(), { at: AT + 1, tool: "Write", command: "git merge main" })).toBe(
+      false,
+    );
   });
 
   it("does not treat a different command through the same tool as a repeat", () => {
@@ -261,15 +259,19 @@ describe("comparing two calls", () => {
   it("never matches when either side has no command", () => {
     // Unknown is not a match. Treating it as one would score every
     // command-less firing as routed around.
-    expect(isSameCall(firing({ command: undefined }), { at: AT + 1, tool: "Bash", command: "x" })).toBe(
-      false,
-    );
+    expect(
+      isSameCall(firing({ command: undefined }), { at: AT + 1, tool: "Bash", command: "x" }),
+    ).toBe(false);
     expect(isSameCall(firing(), { at: AT + 1, tool: "Bash" })).toBe(false);
   });
 
   it("never matches when the firing has no tool", () => {
     expect(
-      isSameCall(firing({ tool: undefined }), { at: AT + 1, tool: "Bash", command: "git merge main" }),
+      isSameCall(firing({ tool: undefined }), {
+        at: AT + 1,
+        tool: "Bash",
+        command: "git merge main",
+      }),
     ).toBe(false);
   });
 });
