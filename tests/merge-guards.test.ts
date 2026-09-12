@@ -365,9 +365,17 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         fields?: readonly string[];
       };
       expect(error.guard).toBe("merge.requires_approving_code_review");
+      // "last recorded commit", not "tip commit": the value is derived from
+      // the item's own commit artifacts, and calling it the tip sent a caller
+      // to `git log` to find the guard wrong. Asserted as message text
+      // because the wording IS the fix here — the check is unchanged.
       expect(error.message).toMatch(
-        /not for the current review round \(1\) and tip commit \(commit-b\)/,
+        /not for the current review round \(1\) and last recorded commit \(commit-b\)/,
       );
+      // The remedy the refusal used to omit entirely, and the only one that
+      // does not require writing something untrue.
+      expect(error.message).toMatch(/DESCENDANT/);
+      expect(error.message).toMatch(/Record a `commit` artifact at the reviewed commit/);
       expect(error.fields).toEqual(["state"]);
       expect(await readState(id)).toBe("in_review");
     });

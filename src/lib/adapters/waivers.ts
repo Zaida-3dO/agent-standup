@@ -12,6 +12,39 @@
 // adapter could decline to expose the operations that are hard to get right
 // and pass the comparison assertions vacuously. Every entry below has to
 // satisfy that, and the reason field is where the argument is made.
+//
+// **A waiver can also be wrong for a reason §22's bound does not catch.** The
+// bound asks whether a *guard* loses coverage. It does not ask whether the
+// operation is the remedy a guard's own refusal text tells an agent to
+// perform. Two operations were waived from both MCP transports under one
+// shared sentence — "structural repair — person-driven surgery" — which
+// reads as obviously right and was not for either of them:
+//
+//   - `reparent_item`. `deferral.follow_up_must_be_blocked` refuses a
+//     completion whose follow-up is parented underneath the work and ends
+//     "Move it to the same parent as this item." Only `reparent_item`
+//     performs that move.
+//   - `takeover`. `claims.one_crew_per_item` refuses a claim on a held item
+//     and ends "Take it over through supersession rather than claiming
+//     alongside it." Only `takeover` performs that.
+//
+// In both cases the refusal is raised by an operation MCP *does* expose
+// (`complete_item`, `claim`), so the audience for the prescribing sentence
+// is an agent on the MCP surface. The waivers therefore left registered
+// guards instructing an agent to do the one thing its surface could not do
+// — and the two costs were different in kind, which is why neither was
+// caught by the other's absence. The `reparent_item` gap stranded an item
+// and every follow-up beneath it below any terminal state reachable by an
+// agent. The `takeover` gap sent two separate sessions hunting for a tool
+// named "supersession", and both independently settled on calling `release`
+// on the dead holder — an undocumented answer arrived at by guesswork, which
+// one of them noted came close to a plausible-looking wrong call on the
+// operation that decides ownership.
+//
+// Structural repair stopped being rare the moment a guard started
+// prescribing it. The remediation test below is what makes this class of
+// mistake fail rather than needing to be noticed.
+
 import { ADAPTER_NAMES, type AdapterName } from "./registry";
 
 export interface AdapterWaiver {
@@ -555,20 +588,6 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
   },
   {
     adapter: "mcp_http",
-    operation: "reparent_item",
-    reason:
-      "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
-      "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
-      "It runs no state transition through the guarded path, so no registered guard can reject it " +
-      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
-  },
-  {
-    adapter: "mcp_stdio",
-    operation: "reparent_item",
-    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
-  },
-  {
-    adapter: "mcp_http",
     operation: "retype_to_task",
     reason:
       "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
@@ -607,20 +626,6 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
   {
     adapter: "mcp_stdio",
     operation: "delete_item",
-    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
-  },
-  {
-    adapter: "mcp_http",
-    operation: "takeover",
-    reason:
-      "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
-      "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
-      "It runs no state transition through the guarded path, so no registered guard can reject it " +
-      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
-  },
-  {
-    adapter: "mcp_stdio",
-    operation: "takeover",
     reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
   },
   {

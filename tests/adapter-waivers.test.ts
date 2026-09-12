@@ -182,11 +182,72 @@ describe("the waiver list", () => {
     // other two process operations are how that registry is read and
     // closed. Waiving any of them from MCP would leave a refusal message
     // pointing at a tool the refused agent cannot call.
-    const AGENT_REMEDIATION_OPERATIONS = ["register_process", "end_process", "list_processes"];
+    //
+    // **Why this list is written down when the other two corpora are
+    // derived.** A guard's refusal text prescribes a remedy in prose, for a
+    // reader: `deferral.follow_up_must_be_blocked` ends "Move it to the same
+    // parent as this item" and names no operation at all. There is no token
+    // to scan for -- deriving this corpus would mean matching English
+    // against a tool list, which fails in both directions. So the pairing of
+    // "guard that prescribes" to "operation that performs" is a judgement,
+    // recorded here with the guard that makes each one load-bearing, and the
+    // cost of that choice is stated plainly: adding a guard whose refusal
+    // names a new remedy will NOT fail here until someone adds the row.
+    const AGENT_REMEDIATION_OPERATIONS = [
+      // `kill.ownership` refuses a machine-wide kill and its refusal text
+      // names `register_process` as the way to make the call succeed
+      // (`@/lib/kill/ownership`); the other two are how that registry is
+      // read and closed.
+      "register_process",
+      "end_process",
+      "list_processes",
+      // `deferral.follow_up_must_be_blocked` (`@/lib/service/guards/deferral`)
+      // refuses a completion whose linked follow-up sits underneath the
+      // completing item and ends: "Move it to the same parent as this item."
+      // `reparent_item` is the only operation that performs that move, and
+      // the guard runs inside `complete_item` -- an operation MCP exposes.
+      // So an agent can be refused over MCP, told exactly what to do, and
+      // have no MCP tool that does it. It was waived here for a year on the
+      // reasoning that reparenting is rare person-driven surgery; that is
+      // true of a person tidying a board and false of the agent this guard
+      // is talking to, which is what made the waiver wrong.
+      "reparent_item",
+    ];
     for (const operation of AGENT_REMEDIATION_OPERATIONS) {
       expect(isWaived("mcp_http", operation)).toBe(false);
       expect(isWaived("mcp_stdio", operation)).toBe(false);
     }
+  });
+
+  it("keeps the move remedy reachable for the guard that actually prescribes it", () => {
+    // The test above asserts `reparent_item` is exposed. This one asserts
+    // the *reason* it has to be, by reading the guard's own refusal text
+    // rather than trusting a comment about it. The two fail for different
+    // causes on purpose: delete the waiver row and the test above fails;
+    // reword the guard so it stops prescribing a move and this one fails,
+    // which is the signal that the entry above may no longer be load
+    // bearing and should be re-argued rather than silently kept.
+    const guardSource = readFileSync(
+      path.join(repoRoot(), "src/lib/service/guards/deferral.ts"),
+      "utf-8",
+    );
+
+    // The refusal is assembled from concatenated string literals, so the
+    // sentence does not exist contiguously in the source. Collapsing the
+    // quote-plus-operator seams is what lets the prose be matched as the
+    // reader sees it.
+    const collapsed = guardSource.replace(/"\s*\+\s*"/g, "");
+    expect(collapsed).toContain("Move it to the same parent as this item.");
+
+    // ...and the operation that performs that move is on the surface the
+    // refused agent is using. This is the whole invariant in one line.
+    expect(isWaived("mcp_http", "reparent_item")).toBe(false);
+    expect(isWaived("mcp_stdio", "reparent_item")).toBe(false);
+
+    // The guard reaches agents through `complete_item`, which MCP exposes.
+    // If that ever stopped being true the refusal could not reach an MCP
+    // caller and the coupling would not matter.
+    expect(isWaived("mcp_http", "complete_item")).toBe(false);
   });
 });
 

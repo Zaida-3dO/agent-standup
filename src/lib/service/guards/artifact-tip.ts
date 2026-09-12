@@ -409,3 +409,35 @@ export async function latestApprovalAtTip(
   }
   return null;
 }
+
+/**
+ * Whether the item's approvals of `kind` are unusable against the tip
+ * **because none of them names a commit at all** — as opposed to naming an
+ * earlier one.
+ *
+ * Purely diagnostic: no guard's verdict depends on it, and adding it changes
+ * nothing about what merges. It exists so a refusal can tell two situations
+ * apart that the tip comparison itself is right to treat identically.
+ *
+ * `shaMatchesTipOrLineage` refuses a `null` `commitSha` against a real tip,
+ * and that is correct — an approval that cannot say which commit it covers
+ * cannot be shown to cover this one. But "reviewed an earlier commit" and
+ * "never named a commit" have different causes and different honest
+ * remedies, and a message that calls the second one staleness sends the
+ * reader looking for a change that never happened. A review with no sha is
+ * the honest record for work that produced no commit; the cheapest way to
+ * satisfy a staleness complaint about it is to attach the current tip to a
+ * review that was not about that commit, which puts something false in the
+ * ledger to clear a gate.
+ *
+ * Answers `false` when there are no approvals at all — "never approved" is a
+ * third situation with its own refusal, raised before this is ever reached.
+ */
+export async function approvalsExistButNameNoCommit(
+  db: TransactionHandle,
+  itemId: string,
+  kind: string,
+): Promise<boolean> {
+  const rows = await approvedArtifacts(db, itemId, kind);
+  return rows.length > 0 && rows.every((row) => row.commitSha === null);
+}
