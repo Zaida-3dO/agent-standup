@@ -141,9 +141,9 @@ export const recordIntervention = defineOperation({
     //
     // Runs after the inserts and cannot affect them: it swallows its own
     // failures, and its result is reported rather than acted on. A firing
-    // recorded is the caller's real work; measuring an older one is
-    // bookkeeping, and bookkeeping must not be able to fail the write that
-    // carries it.
+    // recorded is the caller's real work; measuring an earlier firing in the
+    // same session is bookkeeping, and bookkeeping must not be able to fail
+    // the write that carries it.
     const derivedScores = await scoreBlockedFirings(ctx, input.sessionId);
 
     return { recorded, derivedScores };
