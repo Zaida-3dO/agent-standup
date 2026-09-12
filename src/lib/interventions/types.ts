@@ -234,6 +234,73 @@ export interface InterventionContext {
    * reason every other field here stays absent rather than defaulted.
    */
   readonly unresolvedToolBlocks?: readonly UnresolvedToolBlock[];
+  /**
+   * Where the item's committed work has got to on its way to being merged —
+   * I26 and I27.
+   *
+   * One value rather than two booleans, because the two questions the
+   * entries ask are **stages of one pipeline** and reading them as
+   * independent flags produces a state that cannot exist: "has a pull
+   * request but no commit" is not a situation, and a predicate keyed on a
+   * pair of booleans has to remember not to handle it. A stage names where
+   * the work actually stopped, so each entry matches the one stage it is
+   * about and is silent everywhere else — including on the stages *after*
+   * its own, which is what stops I26 firing for the whole life of an item
+   * that went on to open a pull request perfectly well.
+   *
+   * Absent means the server did not look, or the item has no commit
+   * artifact at all — read as no finding, like every other optional field
+   * here. An item nobody has committed to has not stalled on its way to a
+   * pull request; it has not started.
+   */
+  readonly deliveryStage?: DeliveryStage;
+  /**
+   * A merged review whose nits nothing is tracking — I28.
+   *
+   * Present only when the situation is live: the item's governing review
+   * carried `lgtm_with_nits` **with** findings, and no follow-up item is
+   * linked to it. Absent covers every other case — no review, a different
+   * verdict, a nits verdict that recorded no findings, or findings that
+   * already have somewhere to go.
+   *
+   * Carries the count because the message's whole job is to say how many
+   * observations are about to age out with a closed row, and "nine
+   * findings" is a different sentence from "a finding".
+   */
+  readonly untrackedNits?: UntrackedNits;
+}
+
+/**
+ * How far an item's committed work has got toward being merged.
+ *
+ * Deliberately a small closed vocabulary rather than a set of flags, so a
+ * predicate compares against a literal and an unrecognised value — from a
+ * newer server talking to an older predicate — matches nothing rather than
+ * being read as one of the others.
+ *
+ *   - `committed` — a commit artifact exists and no pull request does.
+ *   - `pull_request_open` — a pull request exists, and nothing has asked
+ *     for a review of it.
+ *   - `review_requested` — a review has been requested. Nothing further to
+ *     say: from here the existing flow entries (I1) take over.
+ */
+export const DELIVERY_STAGES = ["committed", "pull_request_open", "review_requested"] as const;
+export type DeliveryStage = (typeof DELIVERY_STAGES)[number];
+
+/**
+ * A `lgtm_with_nits` review whose findings nothing is tracking, as a
+ * predicate needs it.
+ *
+ * `findingCount` rather than the findings themselves: the entry's message
+ * names a number and points at the artifact, and carrying the text of every
+ * finding through the context would put review prose into a nudge that has
+ * no room for it — and into the event payload the firing is recorded on.
+ */
+export interface UntrackedNits {
+  /** How many findings that review recorded. Never zero — absent instead. */
+  readonly findingCount: number;
+  /** The review round the verdict was given at, so the message can point at it. */
+  readonly reviewRound?: number;
 }
 
 /**

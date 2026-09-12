@@ -365,3 +365,25 @@ export function isRebaseOrDivergenceCheck(command: string): boolean {
     return false;
   });
 }
+
+/**
+ * Whether a command opens a pull request — the fourth shape that advances
+ * an item's delivery stage, and the one git has no subcommand for.
+ *
+ * Used only as a **gate** on context assembly (`./context.ts`), never as a
+ * predicate's own signal. That distinction is what keeps it cheap to be
+ * wrong: the entries it serves key on artifact rows, so a command this
+ * misses costs at most a nudge deferred to the next call that does match,
+ * and one it over-matches costs a single query on a call that was going to
+ * be allowed regardless. Neither is a wrong answer to a caller.
+ *
+ * Deliberately narrow. `gh pr create` is the shape in use here; `gh pr
+ * view`, `gh pr list` and `gh pr checks` are ordinary reads a session runs
+ * constantly and must stay off the query path, so the subcommand pair is
+ * matched rather than the tool name alone.
+ */
+export function isPullRequestOpen(command: string): boolean {
+  return splitStatements(command).some((statement) =>
+    /(^|\s)gh\s+pr\s+create(\s|$)/.test(statement.trim()),
+  );
+}
