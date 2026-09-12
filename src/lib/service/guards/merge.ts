@@ -279,9 +279,9 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
       // ── The "reviewed nothing in particular" case ─────────────────────
       //
       // An approval carrying no `commitSha` at all is refused by the same
-      // clause as a genuinely stale one, and used to be told the same
-      // thing: "the item has moved since it was approved". That is not what
-      // happened. A review with a null sha is not a review of an earlier
+      // clause as a genuinely stale one, so it needs a different sentence:
+      // "the item has moved since it was approved" is not what happened.
+      // A review with a null sha is not a review of an earlier
       // commit — it is a review that never named a commit, which is the
       // honest thing to record for work that produced no commit (a research
       // row, a review of live-deployment behaviour). Telling that caller
@@ -422,11 +422,11 @@ export const mergeRequiresVisualReviewGuard: Guard = {
           // That is not hypothetical. A session walking a finished board hit
           // this gate fourth in a chain, having already produced three
           // artifacts to clear the previous three, and stopped here — the
-          // right call, and it reported that by then it "was no longer
-          // recording review events that happened" but producing whatever
-          // the next guard asked for. The next session cleared the same rows
-          // honestly in one field each, by correcting `needsVisualReview`
-          // rather than satisfying it.
+          // right call, and it reported that at that point it was producing
+          // whatever the next guard asked for rather than recording review
+          // events that happened. The same rows close honestly in one field
+          // each, by correcting `needsVisualReview` rather than satisfying
+          // it.
           //
           // `merge.requires_authorisation` already names its own standing-
           // grant escape, and that sentence is how the pattern was found at

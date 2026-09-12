@@ -477,7 +477,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         fields?: readonly string[];
       };
       expect(error.guard).toBe("merge.requires_visual_review");
-      expect(error.message).toMatch(/not for the current tip commit \(commit-b\)/);
+      // Same wording fix as the code_review guard: "last recorded commit",
+      // and the ledger-is-behind remedy named before the re-review one.
+      expect(error.message).toMatch(/not for the last recorded commit \(commit-b\)/);
+      expect(error.message).toMatch(/DESCENDANT/);
       expect(error.fields).toEqual(["state"]);
       expect(await readState(id)).toBe("in_review");
     });

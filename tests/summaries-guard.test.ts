@@ -13,6 +13,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GuardRegistry, applyTransition, rehearseTransition } from "@/lib/service/state-machine";
 import { summaryRequiredGuard } from "@/lib/service/summaries";
 import {
+  DECISION_CHAR_CAP,
+  HOW_VERIFIED_CHAR_CAP,
+  SHIPPED_CHAR_CAP,
+  SHIPPED_MAX,
+} from "@/lib/service/summaries/validate";
+import {
   defineOperation,
   isServiceError,
   prismaTransactionRunner,
@@ -185,6 +191,38 @@ describeIfDb("the summaries guard, against Postgres", () => {
       // The ambiguous word must not appear at all — it is the only reading
       // that costs the caller a wasted round trip.
       expect(error.message).not.toContain("branch");
+    });
+
+    // The caps are part of the contract this refusal is already explaining,
+    // and a cap the message omits is discoverable only by being refused for
+    // exceeding it. Asserted against the constants rather than the literal
+    // numbers so the message cannot drift from what the validator enforces.
+    //
+    // Fails if the caps are dropped from either branch of the message.
+    it("states the character caps for the fields it asks for", async () => {
+      const reg = registryWithSummaryGuard();
+      const id = await createTask("executing");
+      const error = (await callTransition("apply", id, "merged", reg).catch((e: unknown) => e)) as {
+        message?: string;
+      };
+      // The delivery branch asks for `shipped`, so it states `shipped`'s
+      // count range and per-entry cap, and `how_verified`'s cap.
+      expect(error.message).toContain(String(SHIPPED_CHAR_CAP));
+      expect(error.message).toContain(String(SHIPPED_MAX));
+      expect(error.message).toContain(String(HOW_VERIFIED_CHAR_CAP));
+    });
+
+    it("states the decision cap when closing as a non-delivery state", async () => {
+      const reg = registryWithSummaryGuard();
+      const id = await createTask("executing");
+      const error = (await callTransition("apply", id, "wont_do", reg).catch(
+        (e: unknown) => e,
+      )) as {
+        message?: string;
+      };
+      // The non-delivery branch asks for `decision`, so it states that cap
+      // and not `shipped`'s — the field it explicitly says must be empty.
+      expect(error.message).toContain(String(DECISION_CHAR_CAP));
     });
 
     it("allows entering 'merged' with a valid summary supplied", async () => {

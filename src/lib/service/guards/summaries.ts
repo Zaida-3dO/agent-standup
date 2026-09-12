@@ -15,6 +15,11 @@
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import {
   COMPLETED_STATES as COMPLETED_STATE_LIST,
+  DECISION_CHAR_CAP,
+  HOW_VERIFIED_CHAR_CAP,
+  SHIPPED_CHAR_CAP,
+  SHIPPED_MAX,
+  SHIPPED_MIN,
   isNonDeliveryState,
   isTooSimilar,
   validateSummaryShape,
@@ -197,14 +202,33 @@ export const summaryRequiredGuard: Guard = {
       // the delivery/non-delivery split exists to remove, and it would be
       // reintroduced here if this one sentence stayed generic.
       return guardRejected(
+        // ── Why the caps are stated HERE ──────────────────────────────────
+        //
+        // This message already enumerates every required field and the
+        // conditional rules between them, and it is the one moment the
+        // caller is actually reading the contract. The per-field character
+        // caps belong in it for the same reason: a cap the message omits is
+        // discoverable only by collision, which costs a caller a sequence of
+        // rejections — 489 characters, then 259, then 241 against a 240 cap
+        // — where every call but the last exists only to find a number the
+        // product already knows. Being refused for ONE character over an
+        // undisclosed limit is where a good refusal reads as a puzzle.
+        //
+        // Stated as the caps that apply to the fields this branch asks for,
+        // rather than all of them, so the sentence stays readable: the
+        // non-delivery branch is about `decision`, the delivery branch about
+        // `shipped`. Interpolated from the constants, never retyped, so a
+        // cap cannot drift from the number the validator enforces.
         isNonDeliveryState(input.to)
           ? `A summary is required to complete this item — closing as ${input.to} needs a ` +
-              "decision saying why the work is not being done, plus not_done and user_facing, " +
+              `decision (at most ${DECISION_CHAR_CAP} characters) saying why the work is not ` +
+              "being done, plus not_done and user_facing, " +
               "and what user_facing then requires: what_to_test when it is true, how_verified " +
               "when it is false. shipped is not required and must be empty."
-          : "A summary is required to complete this item — supply shipped, not_done and " +
-              "user_facing, plus what user_facing then requires: what_to_test when it is true, " +
-              "how_verified when it is false.",
+          : `A summary is required to complete this item — supply shipped (${SHIPPED_MIN}-` +
+              `${SHIPPED_MAX} entries, at most ${SHIPPED_CHAR_CAP} characters each), not_done ` +
+              "and user_facing, plus what user_facing then requires: what_to_test when it is " +
+              `true, how_verified (at most ${HOW_VERIFIED_CHAR_CAP} characters) when it is false.`,
         { fields: ["summary"] },
       );
     }
