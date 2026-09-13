@@ -254,14 +254,38 @@ const broadProcessKill: Intervention = {
   // is not negotiable, which is the failure this whole entry is written
   // against: the pid advice below is worth giving precisely because the
   // parser reads every pid-scoped form it names.
+  // ── Why the messages describe the finding rather than the command ──────
+  //
+  // `isBroadProcessKill` blocks on TWO different findings: a kill that names
+  // an executable, and a kill this build cannot decompose at all
+  // (`unparseable` — a `/FI` filter, a selector it cannot read). A message
+  // asserting "this ends every process matching a name" is true of the
+  // first and false of the second, so it cannot be stated flatly on both.
+  //
+  // A false sentence here is the expensive kind: specific, confident, and
+  // about the caller's own command. A reader who can falsify the first
+  // sentence has reason to discount the second, and the second sentence —
+  // kill by process id — is the part worth keeping.
+  //
+  // So the wording states only what is known at the point of refusal: the
+  // command ends processes and this build cannot tell which. That holds on
+  // both branches, since an image name is itself an unread selector one
+  // target wide. The pid advice is safe to give because the parser honours
+  // every pid-scoped form it names — `-Force`, `/F`, a comma list, and a
+  // shell wrapper all decompose to pid targets.
   messages: {
     plain:
-      "This ends every process matching a name, including ones other sessions are relying on. " +
-      "Kill by process id instead — name the specific process(es) rather than the image name.",
+      "This ends processes without naming which ones — it selects them by image name, or by a " +
+      "selector this build cannot read, so it cannot tell what would be killed. Other sessions " +
+      "on this machine are likely running something that matches. Kill by process id instead: " +
+      "a command naming literal process ids is accepted however many it names, and a force flag " +
+      "does not change that.",
     prominent:
-      "⚠️ Do not proceed until you have read this. This kill is not scoped to a specific process " +
-      "— it ends everything matching the name, and other sessions on this machine are very " +
-      "likely running something that matches. Find the process id and kill that instead.",
+      "⚠️ Do not proceed until you have read this. This kill is not scoped to specific " +
+      "processes — it selects them by name, or by a selector this build cannot decompose, and " +
+      "other sessions on this machine are very likely running something that matches. Find the " +
+      "process ids and kill those instead; naming literal ids is what makes a kill narrow, not " +
+      "the absence of a force flag.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };

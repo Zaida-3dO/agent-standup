@@ -41,12 +41,16 @@
 // is a hold that does not hold.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 import {
+  approvalsExistButNameNoCommit,
   currentTipCommitSha,
   hasApproval,
   latestApprovalAtTip,
   tipCommitLineage,
 } from "./artifact-tip";
-import { historicalVerificationSatisfies } from "./historical-verification";
+import {
+  HISTORICAL_VERIFICATION_KIND,
+  historicalVerificationSatisfies,
+} from "./historical-verification";
 import { MERGE_APPROVAL_KIND, personHasApprovedMerge } from "./merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH, mergeOverrideSatisfies } from "./merge-override";
 import { reviewEvidenceOverrideSatisfies } from "./review-evidence-override";
@@ -135,6 +139,32 @@ export const mergeRequiresCommitGuard: Guard = {
  * plan-review case there is no separate guard registered on this exact
  * clause to hand the second cause to — SCHEMA.md §16 states this as a
  * single required clause, not two.
+ *
+ * ── Why the refusal says "last recorded commit", not "tip commit" ───────
+ *
+ * `currentTipCommitSha` derives the tip from the item's own `commit`
+ * artifacts, never from the repository — DECISIONS.md §13a, and the right
+ * design: the ledger should not silently trust a working tree it cannot
+ * see. But the two diverge exactly when a commit lands without an artifact,
+ * and the refusal used to call the artifact value "tip commit" anyway.
+ *
+ * The cost of that wording is measured. A caller was refused against a sha
+ * that `git merge-base --is-ancestor` proved to be an ANCESTOR of the
+ * commit their review named — the guard called a review of the *newer*
+ * commit stale against an *older* one, and said "the item has moved since
+ * it was approved" when the item had moved forward and the review had moved
+ * with it. Sent to `git log` by the word "tip", they found the guard was
+ * wrong, and then had reason to doubt a guard that was right about other
+ * things. The remedy was one `commit` artifact at the reviewed sha — the
+ * one option the message did not list, while offering two that would each
+ * have put something false in the ledger (`supersedesSha` asserts a rewrite
+ * that did not happen; a `merge_override` files a demonstrable fact as a
+ * judgement call).
+ *
+ * So the message now names the value for what it is, and names that remedy
+ * first. Deliberately a **message** change: the check is unchanged, because
+ * requiring the commit to be recorded is the property that makes the tip
+ * derivable at all.
  */
 export const mergeRequiresApprovingCodeReviewGuard: Guard = {
   id: "merge.requires_approving_code_review",
@@ -245,10 +275,51 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
     if (!atCurrentRoundAndTip) {
       const round = await currentReviewRound(input.db, input.item.id);
       const tip = await currentTipCommitSha(input.db, input.item.id);
+
+      // ── The "reviewed nothing in particular" case ─────────────────────
+      //
+      // An approval carrying no `commitSha` at all is refused by the same
+      // clause as a genuinely stale one, so it needs a different sentence:
+      // "the item has moved since it was approved" is not what happened.
+      // A review with a null sha is not a review of an earlier
+      // commit — it is a review that never named a commit, which is the
+      // honest thing to record for work that produced no commit (a research
+      // row, a review of live-deployment behaviour). Telling that caller
+      // the item "has moved" sends them to look for a change that does not
+      // exist, and the cheapest way out of it is to attach the current tip
+      // to a review that was not about that commit — writing something
+      // slightly untrue to satisfy a gate, which is the one habit this
+      // file's refusals are otherwise careful to discourage.
+      //
+      // The check is unchanged and still refuses: with a commit recorded,
+      // an approval that cannot say which commit it covers genuinely cannot
+      // be shown to cover this one. Only the diagnosis is corrected, and
+      // the two honest exits are named.
+      if (
+        tip !== null &&
+        (await approvalsExistButNameNoCommit(input.db, input.item.id, "code_review"))
+      ) {
+        return guardRejected(
+          `The most recent code_review approval does not record which commit it applies to, so ` +
+            `it cannot be shown to cover the last recorded commit (${tip}). This is not ` +
+            `staleness — the review never named a commit. If it did review this commit, ` +
+            `re-record it with commitSha set; if the work is not about a commit at all, that is ` +
+            `what ${HISTORICAL_VERIFICATION_KIND} and ${MERGE_OVERRIDE_KIND} are for. ` +
+            OVERRIDE_REMEDY,
+          { fields: ["state"] },
+        );
+      }
+
       return guardRejected(
         `The most recent code_review approval is not for the current review round (${round}) ` +
-          `and tip commit (${tip ?? "none"}). The item has moved since it was approved — get it ` +
-          "re-reviewed." +
+          `and last recorded commit (${tip ?? "none"}).` +
+          // The ledger-is-behind case, named FIRST because it is the cheapest
+          // remedy and the one this refusal used to omit entirely.
+          " If the review you are relying on names a commit that is a DESCENDANT of that sha," +
+          " the item has not moved past its review — the ledger is behind the repository, and" +
+          " nothing here is stale. Record a `commit` artifact at the reviewed commit and this" +
+          " approval applies to it." +
+          " Otherwise the item has moved since it was approved — get it re-reviewed." +
           // Named here specifically, because this is the refusal that used to
           // be unsatisfiable and the two remedies are for different causes.
           // If the sha moved because the forge rewrote the commit — a squash
@@ -338,7 +409,34 @@ export const mergeRequiresVisualReviewGuard: Guard = {
     const approvedAtAll = await hasApproval(input.db, input.item.id, "visual_review");
     if (!approvedAtAll) {
       return guardRejected(
-        "This item needs visual review and has no approved visual_review artifact — get it visually reviewed before merging.",
+        "This item needs visual review and has no approved visual_review artifact — get it " +
+          "visually reviewed before merging. " +
+          // ── Naming the "this does not apply here" exit ──────────────────
+          //
+          // `needsVisualReview` is commonly set for a whole repo, so it also
+          // lands on rows with nothing to look at — a release row, a CI
+          // guard, a workflow change. The only exit this refusal used to
+          // name was "produce an artifact", which on such a row means
+          // recording a visual review nobody performed.
+          //
+          // That is not hypothetical. A session walking a finished board hit
+          // this gate fourth in a chain, having already produced three
+          // artifacts to clear the previous three, and stopped here — the
+          // right call, and it reported that at that point it was producing
+          // whatever the next guard asked for rather than recording review
+          // events that happened. The same rows close honestly in one field
+          // each, by correcting `needsVisualReview` rather than satisfying
+          // it.
+          //
+          // `merge.requires_authorisation` already names its own standing-
+          // grant escape, and that sentence is how the pattern was found at
+          // all. This is the same sentence for this gate. It weakens
+          // nothing: clearing the flag is a claim about whether the item has
+          // a UI, recorded on the item and visible afterwards, not a
+          // judgement that an unreviewed UI is fine to ship.
+          "If this item has nothing to look at — a CI, release or workflow row — then the " +
+          "requirement does not apply and the flag is what is wrong: clear it with " +
+          "update_item {needsVisualReview: false} rather than recording a review nobody performed.",
         { fields: ["state"] },
       );
     }
@@ -347,8 +445,12 @@ export const mergeRequiresVisualReviewGuard: Guard = {
       const tip = await currentTipCommitSha(input.db, input.item.id);
       return guardRejected(
         tip
-          ? `The most recent visual_review approval is not for the current tip commit (${tip}). ` +
-              "The item has moved since it was visually approved — get it re-reviewed."
+          ? `The most recent visual_review approval is not for the last recorded commit ` +
+              `(${tip}) — "last recorded" because the tip is derived from this item's own commit ` +
+              `artifacts, not from the repository. If the approval names a commit that is a ` +
+              `DESCENDANT of that sha, nothing is stale and the ledger is simply behind: record ` +
+              `a commit artifact at the reviewed commit. Otherwise the item has moved since it ` +
+              `was visually approved — get it re-reviewed.`
           : "The most recent visual_review approval does not record which commit it applies to, " +
               "so it cannot be trusted against the current tip. Get it re-reviewed.",
         { fields: ["state"] },
