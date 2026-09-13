@@ -923,15 +923,40 @@ async function untrackedNitsFor(
   db: TransactionHandle,
   itemId: string,
 ): Promise<Pick<InterventionContext, "untrackedNits">> {
-  const rows = await db.$queryRawUnsafe<{ findingCount: number; reviewRound: number | null }[]>(
+  // ── Why the verdict is tested OUTSIDE the row selection ───────────────
+  //
+  // The inner query picks the **governing** review — the latest one
+  // carrying a verdict — and the outer conditions then ask whether *that*
+  // row is the situation. Pushing `verdict = 'lgtm_with_nits'` into the
+  // inner `WHERE` reads as equivalent and is not: it would skip *past* a
+  // newer `changes_required` to find an older nits verdict underneath, and
+  // fire on an item that is being reworked. A superseded verdict is not a
+  // live situation, which is the same reason the selection is ordered at
+  // all.
+  //
+  // `kind` is restricted to the review kinds for the same reason the
+  // verdict is tested: `Verdict` is a column on `Artifact` generally, so
+  // without it a `plan_review` — or any future kind that carries one —
+  // can be the row this entry speaks about.
+  const rows = await db.$queryRawUnsafe<
+    {
+      findingCount: number;
+      reviewRound: number | null;
+      verdict: string | null;
+      hasFollowUp: boolean;
+    }[]
+  >(
     `SELECT CASE
               WHEN jsonb_typeof("findings") = 'array' THEN jsonb_array_length("findings")
               ELSE 0
-            END::int         AS "findingCount",
-            "reviewRound"    AS "reviewRound"
+            END::int                          AS "findingCount",
+            "reviewRound"                     AS "reviewRound",
+            "verdict"::text                   AS "verdict",
+            ("followUpItemId" IS NOT NULL)    AS "hasFollowUp"
        FROM "Artifact"
       WHERE "itemId" = $1
         AND "verdict" IS NOT NULL
+        AND "kind"::text IN ('code_review', 'visual_review', 'plan_review')
       ORDER BY "createdAt" DESC, "seq" DESC
       LIMIT 1`,
     itemId,
@@ -939,6 +964,16 @@ async function untrackedNitsFor(
 
   const row = rows[0];
   if (row === undefined) return {};
+  // The verdict this entry is about, and only it. `changes_required` is the
+  // verdict *most* likely to carry findings, and it is already blocking —
+  // nudging about its findings would fire on the commonest review there is,
+  // and this entry is the one timed `immediate`, so it would not even be
+  // batched.
+  if (row.verdict !== "lgtm_with_nits") return {};
+  // A linked follow-up is exactly the remedy this entry asks for. Nudging
+  // the reviewer who already did it is how a guard teaches its users to
+  // ignore it.
+  if (row.hasFollowUp) return {};
   if (row.findingCount < 1) return {};
   return {
     untrackedNits: {
