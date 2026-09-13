@@ -1297,6 +1297,16 @@ model InterventionScore {
   // which they are looking at.
   note  String? @db.Text
 
+  // How far the *derived* rater thought the behavioural record went —
+  // `none`, `low` or `high`, from `DerivedConfidence` in
+  // `src/lib/interventions/derived-score.ts`. Only ever set on a derived
+  // score, which computes it precisely because it knows it is a weak rater;
+  // null on testimony, where the concept does not apply, and null on derived
+  // rows written before the column existed. Text rather than an enum so the
+  // vocabulary stays defined in the module that produces it — see the
+  // migration for the full reasoning.
+  confidence String?
+
   ratedAt DateTime @default(now()) @map("rated_at") @db.Timestamptz(3)
 
   // One score per rater per firing. A rater changing its mind updates the

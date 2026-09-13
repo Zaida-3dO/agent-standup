@@ -13,6 +13,29 @@
 // minded and an entry nobody was ever asked about — and the second is a gap
 // in the loop rather than a verdict on the entry.
 //
+// ── Derived and volunteered scores are reported apart ──────────────────
+//
+// Two things rate a firing: somebody who was there (`score_intervention`,
+// by a person or an agent) and the server itself, which infers a score from
+// what the session did next (`../telemetry/score-blocked-firings.ts`). Both
+// land in one table, and this report used to select the score alone — so a
+// machine's guess about a machine was indistinguishable from a rater's
+// verdict.
+//
+// That is not a cosmetic gap in this corpus. At the time of writing there
+// are hundreds of firings and no human ratings at all, so every aggregate
+// here is ~entirely derived — in the very report whose purpose is deciding
+// which guards to retire. An entry removed on the strength of the server
+// agreeing with itself is exactly the failure the scoring work exists to
+// prevent.
+//
+// So `mean` and `count` still span everything, for the callers that already
+// read them, and `testimony`/`derived` carry each population's own figures
+// beside them. `flaggedEvidence` then says which of the two a flag actually
+// rests on, because the single question a maintainer brings to this report
+// is "can I act on this", and a flag resting only on inference is a reason
+// to go and look rather than a verdict.
+//
 // ── The aggregate is computed in TypeScript, not SQL ───────────────────
 //
 // `summariseScores` and `flagEntriesForReview` already exist, are pure, and
@@ -32,9 +55,12 @@ import {
   flagEntriesForReview,
   summariseScores,
   type EntryScoreSummary,
+  type PopulationSummary,
+  type RaterPopulation,
   type ScoreDistribution,
   type ScoredFiring,
 } from "../../interventions/scoring";
+import { DERIVED_RATER_ID } from "../../interventions/derived-score";
 
 const inputSchema = z
   .object({
@@ -68,6 +94,36 @@ export interface InterventionEntryReport {
   readonly notes: readonly string[];
   /** Set when the scores say a maintainer should look at this entry. */
   readonly flaggedReason?: string;
+  /**
+   * The ratings a person or an agent actually made, on their own. Null when
+   * nobody testified — the state nearly every entry is currently in.
+   */
+  readonly testimony: PopulationSummary | null;
+  /** The ratings the server derived from behaviour, on their own. */
+  readonly derived: PopulationSummary | null;
+  /**
+   * What the flag rests on, when there is one.
+   *
+   * `testimony` — at least one person or agent rated it, so somebody stands
+   * behind the flag. `derived` — every rating is the server's own inference,
+   * which is a prompt to go and look rather than grounds to retire an entry.
+   *
+   * Stated per entry rather than left for a caller to work out from the two
+   * summaries above, because working it out is exactly the step a reader
+   * skips.
+   */
+  readonly flaggedEvidence?: "testimony" | "derived";
+  /**
+   * How many derived scores carried each confidence, keyed by the
+   * derivation's own vocabulary (`none`, `low`, `high`). `unrecorded` counts
+   * derived rows written before the confidence column existed.
+   *
+   * Empty when nothing was derived. A derived population that is entirely
+   * `low` is a different thing from one that is entirely `high`: `low` is
+   * "the session complied", which is evidence the guard was not an obstacle
+   * and is not evidence it helped.
+   */
+  readonly derivedConfidence: Readonly<Record<string, number>>;
 }
 
 export interface GetInterventionScoresOutput {
@@ -76,6 +132,16 @@ export interface GetInterventionScoresOutput {
   readonly flagged: readonly string[];
   readonly totalFirings: number;
   readonly totalRated: number;
+  /**
+   * How many of `totalRated` came from each population.
+   *
+   * The headline number this report was missing. With 872 firings and no
+   * human ratings, `totalRated` alone reads as a corpus of judgements when
+   * it is a corpus of inferences — and this report's purpose is deciding
+   * which guards to retire.
+   */
+  readonly totalTestimony: number;
+  readonly totalDerived: number;
 }
 
 interface FiringRow {
@@ -88,6 +154,23 @@ interface ScoreRow {
   entry_id: string;
   score: number;
   note: string | null;
+  rater_type: string;
+  rater_id: string | null;
+  confidence: string | null;
+}
+
+/**
+ * Which population a stored row belongs to.
+ *
+ * A derived score is an `agent` row under the reserved `DERIVED_RATER_ID`
+ * (`../../interventions/derived-score.ts`), which is exactly why that id was
+ * reserved: it keeps a derivation's row from ever occupying the slot a real
+ * agent's own answer would take, and it is the only thing in the table that
+ * distinguishes the two after the fact.
+ */
+function populationOf(row: ScoreRow): RaterPopulation {
+  if (row.rater_type === "agent" && row.rater_id === DERIVED_RATER_ID) return "derived";
+  return row.rater_type === "person" ? "person" : "agent";
 }
 
 // Stryker disable all : module-level metadata read into the registry at
@@ -123,8 +206,19 @@ export const getInterventionScores = defineOperation({
       entryId,
     );
 
+    // `rater_type` and `rater_id` are selected because who rated a firing is
+    // the difference between a judgement and an inference, and this report
+    // is read to decide which guards to retire. Selecting only the score
+    // made a machine's guess about a machine indistinguishable from a
+    // rater's verdict — in the one report where that distinction decides
+    // whether an entry survives.
     const scoreRows = await ctx.db.$queryRawUnsafe<ScoreRow[]>(
-      `SELECT e."entry_id", s."score", s."note"
+      `SELECT e."entry_id",
+              s."score",
+              s."note",
+              s."rater_type"::text AS "rater_type",
+              s."rater_id",
+              s."confidence"
          FROM "intervention_scores" s
          JOIN "intervention_events" e ON e."id" = s."event_id"
         WHERE ($1::timestamptz IS NULL OR e."ts" >= $1::timestamptz)
@@ -137,8 +231,28 @@ export const getInterventionScores = defineOperation({
     const scored: ScoredFiring[] = scoreRows.map((row) => ({
       entryId: row.entry_id,
       score: row.score,
+      population: populationOf(row),
       ...(row.note === null ? {} : { note: row.note }),
+      ...(row.confidence === null ? {} : { confidence: row.confidence }),
     }));
+
+    // Derived confidence, tallied per entry. Counted from the rows rather
+    // than from the summaries because `summariseScores` is deliberately
+    // arithmetic over the scale alone — confidence is a property of how a
+    // score was arrived at, not a point on the owner's scale, and pushing it
+    // into the pure aggregate would make that module answer a question about
+    // provenance it has no business holding.
+    const confidenceByEntry = new Map<string, Record<string, number>>();
+    for (const row of scoreRows) {
+      if (populationOf(row) !== "derived") continue;
+      const tally = confidenceByEntry.get(row.entry_id) ?? {};
+      // A derived row predating the confidence column is counted as
+      // `unrecorded` rather than dropped or folded into `none`. `none` is a
+      // thing the derivation said; this is the absence of anything said.
+      const key = row.confidence ?? "unrecorded";
+      tally[key] = (tally[key] ?? 0) + 1;
+      confidenceByEntry.set(row.entry_id, tally);
+    }
 
     const summaries = summariseScores(scored);
     const byEntry = new Map<string, EntryScoreSummary>(
@@ -152,6 +266,7 @@ export const getInterventionScores = defineOperation({
     const entries: InterventionEntryReport[] = firingRows.map((row) => {
       const summary = byEntry.get(row.entry_id);
       const reason = reasonByEntry.get(row.entry_id);
+      const testimony = summary?.testimony ?? null;
       return {
         entryId: row.entry_id,
         firings: Number(row.firings),
@@ -161,7 +276,19 @@ export const getInterventionScores = defineOperation({
         removalSignals: summary?.removalSignals ?? 0,
         unhelpful: summary?.unhelpful ?? 0,
         notes: summary?.notes ?? [],
+        testimony,
+        derived: summary?.derived ?? null,
+        derivedConfidence: confidenceByEntry.get(row.entry_id) ?? {},
         ...(reason === undefined ? {} : { flaggedReason: reason }),
+        // Only stated where there is a flag to qualify. A reader scanning
+        // for this field is asking "should I act on this one", and answering
+        // it on entries that were never flagged would put the word
+        // "derived" beside entries nothing is claiming anything about.
+        ...(reason === undefined
+          ? {}
+          : {
+              flaggedEvidence: testimony === null ? ("derived" as const) : ("testimony" as const),
+            }),
       };
     });
 
@@ -170,6 +297,12 @@ export const getInterventionScores = defineOperation({
       flagged: flagged.map((entry) => entry.entryId),
       totalFirings: entries.reduce((sum, entry) => sum + entry.firings, 0),
       totalRated: entries.reduce((sum, entry) => sum + entry.rated, 0),
+      // Summed from the per-entry summaries rather than from `scoreRows`, so
+      // these agree with what the entries report: `summariseScores` drops
+      // scores outside the scale, and a total counted from raw rows would
+      // exceed the sum of the entries by exactly the invalid ones.
+      totalTestimony: entries.reduce((sum, entry) => sum + (entry.testimony?.count ?? 0), 0),
+      totalDerived: entries.reduce((sum, entry) => sum + (entry.derived?.count ?? 0), 0),
     };
   },
 });

@@ -27,6 +27,7 @@ import {
   MIN_INTERVENTION_SCORE,
   SCALE_POINTS,
   flagEntriesForReview,
+  isHumanOrAgentTestimony,
   isRemovalSignal,
   isValidInterventionScore,
   summariseScores,
@@ -201,6 +202,103 @@ describe("summariseScores", () => {
 
   it("is empty for no input", () => {
     expect(summariseScores([])).toEqual([]);
+  });
+});
+
+describe("populations — testimony against inference", () => {
+  // Kills: `population !== "derived"` → `population === "person"` in
+  // isHumanOrAgentTestimony. An agent rating its own session's firing was
+  // there and applied the scale; the derivation was not and inferred one.
+  // Drawing the line at person/agent instead would reclassify every real
+  // agent's rating as a machine guess.
+  it("counts an agent's own rating as testimony, and only the derivation as derived", () => {
+    expect(isHumanOrAgentTestimony("person")).toBe(true);
+    expect(isHumanOrAgentTestimony("agent")).toBe(true);
+    expect(isHumanOrAgentTestimony("derived")).toBe(false);
+  });
+
+  // Kills: `firing.population ?? "person"` → `?? "derived"`. The default
+  // decides what an unlabelled caller's scores become, and defaulting to
+  // derived would silently demote every existing caller's ratings to
+  // inferences — the exact misreporting this split exists to prevent,
+  // introduced by the fix for it.
+  it("treats an unlabelled score as testimony rather than as a guess", () => {
+    const [summary] = summariseScores([{ entryId: "I10", score: 4 }]);
+
+    expect(summary?.testimony?.count).toBe(1);
+    expect(summary?.derived).toBeNull();
+  });
+
+  // Kills: routing derived scores into the testimony bucket, or vice versa.
+  // The two means are what a retirement decision reads, and swapping them
+  // inverts the verdict.
+  it("gives each population its own mean, distribution and removal signals", () => {
+    const [summary] = summariseScores([
+      { entryId: "I10", score: 5, population: "person" },
+      { entryId: "I10", score: 1, population: "derived" },
+      { entryId: "I10", score: 1, population: "derived" },
+    ]);
+
+    // The headline still spans everything, so existing callers are unmoved.
+    expect(summary?.count).toBe(3);
+    expect(summary?.mean).toBeCloseTo(7 / 3);
+
+    expect(summary?.testimony?.count).toBe(1);
+    expect(summary?.testimony?.mean).toBe(5);
+    expect(summary?.testimony?.removalSignals).toBe(0);
+
+    expect(summary?.derived?.count).toBe(2);
+    expect(summary?.derived?.mean).toBe(1);
+    expect(summary?.derived?.removalSignals).toBe(2);
+    expect(summary?.derived?.distribution).toEqual({ 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 });
+  });
+
+  // **The property this whole change exists for.** Kills: returning a
+  // zeroed PopulationSummary instead of null for an empty population. A
+  // count of 0 with a mean of 0 reads as an opinion — and 0 is not a point
+  // on this scale — where null says "nobody has ever vouched for this".
+  // With 872 firings and no human ratings, that is the single most
+  // important thing this report can say.
+  it("reports no testimony as null, never as a zeroed summary", () => {
+    const [summary] = summariseScores([
+      { entryId: "I10", score: 2, population: "derived" },
+      { entryId: "I10", score: 4, population: "derived" },
+    ]);
+
+    expect(summary?.testimony).toBeNull();
+    expect(summary?.derived?.count).toBe(2);
+    // The headline mean is still computed, and is exactly the thing that
+    // would mislead if read alone: it looks like a rated entry.
+    expect(summary?.mean).toBe(3);
+  });
+
+  // Kills: sharing one population accumulator across entries — the same
+  // hoisted-accumulator bug the distribution test above pins, in the new
+  // buckets, which would make every entry report every other's populations.
+  it("keeps populations independent per entry", () => {
+    const summaries = summariseScores([
+      { entryId: "A", score: 5, population: "person" },
+      { entryId: "B", score: 1, population: "derived" },
+    ]);
+
+    expect(summaries[0]?.testimony?.count).toBe(1);
+    expect(summaries[0]?.derived).toBeNull();
+    expect(summaries[1]?.testimony).toBeNull();
+    expect(summaries[1]?.derived?.count).toBe(1);
+  });
+
+  // Kills: bucketing an out-of-scale score into a population before the
+  // validity check drops it. The populations must sum to `count`, or the
+  // report's own totals disagree with its entries.
+  it("drops an invalid score from the populations too", () => {
+    const [summary] = summariseScores([
+      { entryId: "I10", score: 4, population: "person" },
+      { entryId: "I10", score: 9, population: "derived" },
+    ]);
+
+    expect(summary?.count).toBe(1);
+    expect(summary?.testimony?.count).toBe(1);
+    expect(summary?.derived).toBeNull();
   });
 });
 

@@ -186,15 +186,22 @@ export async function scoreBlockedFirings(
       if (!isDerivableScore(derived.score)) continue;
 
       const note = derived.reasons[0];
+      // `confidence` is persisted rather than recomputed on read, and that
+      // is the point of storing it at all: it is the derivation's own
+      // statement of how far the behavioural record went, made against the
+      // evidence as it stood at the time. A reader cannot reconstruct it
+      // later — the session's tail has moved on — so a score written without
+      // it is a machine's guess with the machine's own caveat discarded.
       await ctx.db.$executeRawUnsafe(
         `INSERT INTO "intervention_scores"
-           ("id", "event_id", "rater_type", "rater_id", "score", "note")
-         VALUES (gen_random_uuid()::text, $1, 'agent', $2, $3, $4)
+           ("id", "event_id", "rater_type", "rater_id", "score", "note", "confidence")
+         VALUES (gen_random_uuid()::text, $1, 'agent', $2, $3, $4, $5)
          ON CONFLICT ("event_id", "rater_type", "rater_id") DO NOTHING`,
         firing.id,
         DERIVED_RATER_ID,
         derived.score,
         note ?? null,
+        derived.confidence,
       );
       scored.push(String(firing.id));
     }

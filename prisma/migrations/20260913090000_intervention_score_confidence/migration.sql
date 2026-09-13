@@ -1,0 +1,43 @@
+-- `intervention_scores.confidence` — keeping the derivation's own caveat.
+--
+-- ── The gap this closes ─────────────────────────────────────────────────
+--
+-- `deriveInterventionScore` computes a `confidence` (`none` | `low` |
+-- `high`) precisely because it knows it is a weak rater: a block the session
+-- routed around is `high`, a block it merely complied with is `low`, because
+-- compliance is evidence the guard was not an obstacle and is NOT evidence
+-- it saved anything. That field was computed on every derived score and then
+-- dropped at the INSERT, which listed only id/event/rater/score/note.
+--
+-- So the system knew how much to trust itself and threw the information
+-- away. This column is where it goes instead.
+--
+-- ── Why it cannot be backfilled ─────────────────────────────────────────
+--
+-- Confidence is a judgement about the behavioural record *as it stood when
+-- the score was derived* — what the session did inside the response window
+-- after the firing. Recomputing it now would read a tail that has since
+-- moved on, and would attach a fresh inference to an old row while looking
+-- exactly like the original. Existing derived rows are therefore left NULL,
+-- which honestly reports "this was written before the caveat was kept"
+-- rather than inventing one.
+--
+-- NULL is consequently meaningful in two different ways, and both are
+-- correct readings of the same absence: a testimony row has no confidence
+-- because the concept does not apply to a rater who was there, and an old
+-- derived row has none because it was not recorded. Neither is a defect.
+--
+-- ── Text, not an enum ───────────────────────────────────────────────────
+--
+-- The three values come from `DerivedConfidence` in
+-- `src/lib/interventions/derived-score.ts`, which is where the scale that
+-- produces them is defined and reasoned about. A Postgres enum would put a
+-- second copy of that vocabulary in a place no test compares against the
+-- first, and widening it would need a migration to say something the
+-- derivation already decides on its own. The column records what the
+-- derivation said; it is not the authority on what it may say.
+--
+-- Additive only. One nullable column, no existing row or column changes
+-- meaning, and no backfill.
+
+ALTER TABLE "intervention_scores" ADD COLUMN "confidence" TEXT;
