@@ -3,10 +3,11 @@
 //
 // The defect these pin: the read side selected `entry_id, score, note` and
 // never `rater_id`/`rater_type`, so a machine's inference about a machine
-// was indistinguishable from a rater's verdict. At the time of writing this
-// installation has hundreds of firings and no human ratings at all, which
-// makes every aggregate in the report ~entirely derived — in the very
-// report whose purpose is deciding which guards to retire.
+// was indistinguishable from a rater's verdict. Firings accumulate on every
+// session while ratings have to be volunteered, so the derived population
+// can outnumber the volunteered one by any margin — and where it does,
+// every aggregate in the report is ~entirely derived, in the very report
+// whose purpose is deciding which guards to retire.
 //
 // These run against an in-memory handle rather than Postgres, deliberately.
 // The claims here are about how rows are CLASSIFIED and rolled up, which is

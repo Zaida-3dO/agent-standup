@@ -18,23 +18,23 @@
 // Two things rate a firing: somebody who was there (`score_intervention`,
 // by a person or an agent) and the server itself, which infers a score from
 // what the session did next (`../telemetry/score-blocked-firings.ts`). Both
-// land in one table, and this report used to select the score alone — so a
-// machine's guess about a machine was indistinguishable from a rater's
-// verdict.
+// land in one table, so selecting the score alone makes a machine's guess
+// about a machine indistinguishable from a rater's verdict.
 //
-// That is not a cosmetic gap in this corpus. At the time of writing there
-// are hundreds of firings and no human ratings at all, so every aggregate
-// here is ~entirely derived — in the very report whose purpose is deciding
-// which guards to retire. An entry removed on the strength of the server
-// agreeing with itself is exactly the failure the scoring work exists to
-// prevent.
+// That is not a cosmetic distinction. Firings accumulate on every session
+// while ratings have to be volunteered, so the derived population can
+// outnumber the volunteered one by any margin — and where it does, every
+// aggregate here is ~entirely derived, in the very report whose purpose is
+// deciding which guards to retire. An entry removed on the strength of the
+// server agreeing with itself is exactly the failure the scoring work
+// exists to prevent.
 //
-// So `mean` and `count` still span everything, for the callers that already
-// read them, and `testimony`/`derived` carry each population's own figures
-// beside them. `flaggedEvidence` then says which of the two a flag actually
-// rests on, because the single question a maintainer brings to this report
-// is "can I act on this", and a flag resting only on inference is a reason
-// to go and look rather than a verdict.
+// So `mean` and `count` span everything, for the callers that read them,
+// and `testimony`/`derived` carry each population's own figures beside
+// them. `flaggedEvidence` then says which of the two a flag actually rests
+// on, because the single question a maintainer brings to this report is
+// "can I act on this", and a flag resting only on inference is a reason to
+// go and look rather than a verdict.
 //
 // ── The aggregate is computed in TypeScript, not SQL ───────────────────
 //
@@ -96,7 +96,7 @@ export interface InterventionEntryReport {
   readonly flaggedReason?: string;
   /**
    * The ratings a person or an agent actually made, on their own. Null when
-   * nobody testified — the state nearly every entry is currently in.
+   * nobody testified, which an entry can be for its whole life.
    */
   readonly testimony: PopulationSummary | null;
   /** The ratings the server derived from behaviour, on their own. */
@@ -135,10 +135,9 @@ export interface GetInterventionScoresOutput {
   /**
    * How many of `totalRated` came from each population.
    *
-   * The headline number this report was missing. With 872 firings and no
-   * human ratings, `totalRated` alone reads as a corpus of judgements when
-   * it is a corpus of inferences — and this report's purpose is deciding
-   * which guards to retire.
+   * Where derived scores outnumber volunteered ones, `totalRated` alone
+   * reads as a corpus of judgements when it is a corpus of inferences —
+   * and this report's purpose is deciding which guards to retire.
    */
   readonly totalTestimony: number;
   readonly totalDerived: number;

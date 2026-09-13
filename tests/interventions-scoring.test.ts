@@ -257,8 +257,10 @@ describe("populations — testimony against inference", () => {
   // zeroed PopulationSummary instead of null for an empty population. A
   // count of 0 with a mean of 0 reads as an opinion — and 0 is not a point
   // on this scale — where null says "nobody has ever vouched for this".
-  // With 872 firings and no human ratings, that is the single most
-  // important thing this report can say.
+  // Firings accumulate on every session while ratings have to be
+  // volunteered, so an entry can carry a derived population and no
+  // testimony at all — and saying so is the single most important thing
+  // this report can do for a retirement decision.
   it("reports no testimony as null, never as a zeroed summary", () => {
     const [summary] = summariseScores([
       { entryId: "I10", score: 2, population: "derived" },
