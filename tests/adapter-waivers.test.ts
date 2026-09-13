@@ -225,8 +225,8 @@ describe("the waiver list", () => {
     // rather than trusting a comment about it. The two fail for different
     // causes on purpose: delete the waiver row and the test above fails;
     // reword the guard so it stops prescribing a move and this one fails,
-    // which is the signal that the entry above may no longer be load
-    // bearing and should be re-argued rather than silently kept.
+    // which is the signal that the entry above may have stopped being
+    // load bearing and should be re-argued rather than silently kept.
     const guardSource = readFileSync(
       path.join(repoRoot(), "src/lib/service/guards/deferral.ts"),
       "utf-8",
