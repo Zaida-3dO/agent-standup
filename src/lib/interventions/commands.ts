@@ -384,6 +384,18 @@ export function isRebaseOrDivergenceCheck(command: string): boolean {
  */
 export function isPullRequestOpen(command: string): boolean {
   return splitStatements(command).some((statement) =>
-    /(^|\s)gh\s+pr\s+create(\s|$)/.test(statement.trim()),
+    // **Anchored at the start of the statement, not merely at a word
+    // boundary.** The first version of this allowed any preceding
+    // whitespace, which matched the phrase wherever it appeared — so
+    // `echo gh pr create` was read as opening a pull request. A negative
+    // control in `tests/interventions-delivery.test.ts` caught it, which is
+    // the argument for writing the negative half first: the positive cases
+    // all passed against the broken matcher.
+    //
+    // The same reasoning `invokesGitSubcommand` applies to git: a command
+    // is what a statement *starts* with, and a statement is already split
+    // on `&&`, `;` and `|` before it reaches here, so anchoring costs
+    // nothing a real caller would notice.
+    /^gh\s+pr\s+create(\s|$)/.test(statement.trim()),
   );
 }

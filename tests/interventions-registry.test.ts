@@ -928,6 +928,9 @@ describe("the catalogue entries that are deliberately not built", () => {
       I23: "merged-check-by-ref-comparison",
       I24: "rebase-before-checking-for-conflicts",
       I25: "visual-reviews-in-flight-concurrently",
+      I26: "committed-with-no-pull-request",
+      I27: "pull-request-with-no-review-requested",
+      I28: "nits-merged-with-nothing-tracking-them",
     };
     const shipped = new Set(BUILTIN_INTERVENTIONS.map((entry) => entry.id));
 

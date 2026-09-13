@@ -54,6 +54,7 @@ describe("needs — what a call could possibly require", () => {
         occupancy: false,
         handsOn: false,
         toolBlocks: false,
+        delivery: false,
       });
     }
   });
@@ -77,6 +78,7 @@ describe("needs — what a call could possibly require", () => {
         occupancy: false,
         handsOn: false,
         toolBlocks: false,
+        delivery: false,
       });
     }
   });
@@ -97,6 +99,7 @@ describe("needs — what a call could possibly require", () => {
         occupancy: false,
         handsOn: false,
         toolBlocks: false,
+        delivery: false,
       });
     }
   });
@@ -108,6 +111,7 @@ describe("needs — what a call could possibly require", () => {
       occupancy: false,
       handsOn: false,
       toolBlocks: false,
+      delivery: false,
     });
     expect(needs("gh pr merge 12")).toEqual({
       assignment: true,
@@ -115,6 +119,7 @@ describe("needs — what a call could possibly require", () => {
       occupancy: false,
       handsOn: false,
       toolBlocks: false,
+      delivery: false,
     });
   });
 
@@ -129,6 +134,7 @@ describe("needs — what a call could possibly require", () => {
         occupancy: false,
         handsOn: false,
         toolBlocks: true,
+        delivery: false,
       });
     }
   });
@@ -145,6 +151,7 @@ describe("needs — what a call could possibly require", () => {
         occupancy: false,
         handsOn: false,
         toolBlocks: false,
+        delivery: false,
       });
     }
   });
@@ -159,6 +166,7 @@ describe("needs — what a call could possibly require", () => {
       occupancy: false,
       handsOn: false,
       toolBlocks: false,
+      delivery: false,
     });
   });
 });

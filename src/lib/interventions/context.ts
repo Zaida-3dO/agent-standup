@@ -47,6 +47,7 @@ import type { TransactionHandle } from "@/lib/service/context";
 import { currentTipCommitSha } from "@/lib/service/guards/artifact-tip";
 import { hasApprovingArtifactAtCurrentRoundAndTip } from "@/lib/service/guards/merge-review-round";
 import { isWriteTool } from "@/lib/telemetry/shape";
+import { TERMINAL_STATES } from "@/lib/service/board/columns";
 import { isMergeAttempt, isPullRequestOpen, isWorkRecordingCommand } from "./commands";
 import { isBroadGitAdd } from "./builtins";
 import type { InterventionContext, InterventionPhase } from "./types";
@@ -264,8 +265,7 @@ export function needs(
   const delivery =
     phase === "post" &&
     (isHandsOnTool(tool) ||
-      (command !== undefined &&
-        (isWorkRecordingCommand(command) || isPullRequestOpen(command))));
+      (command !== undefined && (isWorkRecordingCommand(command) || isPullRequestOpen(command))));
 
   if (command === undefined || command.trim() === "") {
     return occupancy || handsOn || toolBlocks || delivery
@@ -277,21 +277,21 @@ export function needs(
   // approval sits at the tip, and it needs the assignment first in order to
   // know *which item's* tip to ask about.
   if (isMergeAttempt(command))
-    return { assignment: true, approval: true, occupancy, handsOn, toolBlocks };
+    return { assignment: true, approval: true, occupancy, handsOn, toolBlocks, delivery };
 
   // A broad `git add` needs to know whether the checkout is shared, which
   // is the claim's `worktree` — no artifact question is involved.
   if (isBroadGitAdd(command))
-    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks };
+    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks, delivery };
 
   // I13 needs only to know whether this session holds a claim at all, which
   // the assignment lookup answers on its own — no artifact question and no
   // occupancy question are involved.
   if (isWorkRecordingCommand(command))
-    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks };
+    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks, delivery };
 
-  return occupancy || handsOn || toolBlocks
-    ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks }
+  return occupancy || handsOn || toolBlocks || delivery
+    ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks, delivery }
     : NOTHING;
 }
 
@@ -978,16 +978,24 @@ async function untrackedNitsFor(
 async function pendingVisualReviewsFor(
   db: TransactionHandle,
 ): Promise<Pick<InterventionContext, "pendingVisualReviews">> {
+  // `TERMINAL_STATES` rather than a list written out here, for the reason
+  // `findings.ts` gives about the severity ladder: a second copy of a
+  // vocabulary is free to drift from the first, in a place no test reads.
+  // The hand-written version of this query got it wrong in both directions
+  // at once — it invented a `done` state the enum does not have, and
+  // omitted `research_done`, which it does. Bound as a parameter and
+  // compared as text, the same shape `list-items.ts` and `search.ts` use.
   const rows = await db.$queryRawUnsafe<{ pending: number }[]>(
     `SELECT COUNT(*)::int AS "pending"
        FROM "Item" i
       WHERE i."needsVisualReview" = true
         AND i."archivedAt" IS NULL
-        AND i."state"::text NOT IN ('merged', 'done', 'cancelled', 'wont_do')
+        AND NOT (i."state"::text = ANY($1::text[]))
         AND NOT EXISTS (
           SELECT 1 FROM "Artifact" a
            WHERE a."itemId" = i."id" AND a."kind" = 'visual_review'
         )`,
+    TERMINAL_STATES,
   );
 
   const row = rows[0];

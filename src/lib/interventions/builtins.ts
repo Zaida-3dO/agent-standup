@@ -962,12 +962,12 @@ const committedWithNoPullRequest: Intervention = {
   messages: {
     plain:
       "This item has committed work on a branch and no pull request. A branch nobody opened a " +
-      "pull request for will not merge on its own — open one, or record plainly what it is " +
-      "waiting on.",
+      "pull request for will not merge on its own. Create the pull request, or record plainly " +
+      "what it is waiting on.",
     prominent:
       "⚠️ This item's work is committed to a branch and no pull request exists for it. Nothing " +
       "downstream is watching a branch: no review will be requested, no CI verdict will be read, " +
-      "and it will sit exactly as it is until somebody notices. Open the pull request now, or " +
+      "and it will sit exactly as it is until somebody notices. Create the pull request now, or " +
       "record on the item what it is still waiting on so the next session does not have to " +
       "rediscover it.",
   },
@@ -1081,8 +1081,8 @@ const pullRequestWithNoReviewRequested: Intervention = {
  * the difference is the window. I26 and I27 describe work that will still
  * be there in five minutes. This one describes a row that is **closing** —
  * once the session moves on, the findings are behind a merged item and the
- * session that knew what they meant is gone. A digest that arrives after
- * that asks someone who no longer remembers.
+ * session that knew what they meant is gone. The moment to ask is while the
+ * reader still holds the context that makes the answer cheap.
  *
  * ── What a false positive costs ────────────────────────────────────────
  *
