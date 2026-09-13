@@ -85,12 +85,58 @@ export function isRemovalSignal(score: number): boolean {
   return score === MIN_INTERVENTION_SCORE;
 }
 
+/**
+ * Who produced a rating.
+ *
+ * `person` and `agent` are the two `InterventionRaterType` values the table
+ * stores. `derived` is **not** a third rater type in the database — it is an
+ * `agent` row written under the reserved `DERIVED_RATER_ID` by
+ * `../service/telemetry/score-blocked-firings.ts`, and it is split out here
+ * because the question this module exists to answer cannot be asked without
+ * it: a machine's inference about a machine is not the same evidence as a
+ * rater who was there.
+ */
+export type RaterPopulation = "person" | "agent" | "derived";
+
+/**
+ * The populations whose judgement is somebody's rather than an inference.
+ *
+ * A person rating a firing and an agent rating its own session's firing are
+ * both *testimony* — a rater applying the owner's scale to something it
+ * experienced. A derived score is an inference drawn from behaviour by a
+ * module that cannot see whether the advice was correct, only whether it was
+ * followed. That is the line worth drawing, and it is not the
+ * `person`/`agent` line.
+ */
+export function isHumanOrAgentTestimony(population: RaterPopulation): boolean {
+  return population !== "derived";
+}
+
 /** One score as an aggregate reads it. */
 export interface ScoredFiring {
   readonly entryId: string;
   readonly score: number;
   /** Optional one-liner from the rater. */
   readonly note?: string;
+  /**
+   * Who rated it. Optional, and absent means `person`.
+   *
+   * The default is the conservative direction rather than the convenient
+   * one: an unlabelled score counts as testimony, so a caller that has not
+   * been taught to pass this cannot silently have its ratings reclassified
+   * as machine guesses. A derived score only ever counts as derived because
+   * something explicitly said so.
+   */
+  readonly population?: RaterPopulation;
+  /**
+   * How much the *derived* rater trusted its own reading, when it said.
+   *
+   * Only ever set on a derived score — `deriveInterventionScore` computes it
+   * precisely because it knows it is a weak rater. Absent on testimony,
+   * where it would be meaningless, and absent on derived rows written before
+   * the column existed.
+   */
+  readonly confidence?: string;
 }
 
 /**
@@ -114,6 +160,39 @@ export interface EntryScoreSummary {
   readonly unhelpful: number;
   /** Notes raters left, in the order given. Empty when none. */
   readonly notes: readonly string[];
+  /**
+   * The same figures over testimony alone — every rating a person or an
+   * agent actually made, with the derived inferences excluded.
+   *
+   * Null when nothing testified, which is distinct from a count of zero in
+   * the same way `mean` is: it is the difference between an entry nobody
+   * vouched for and one whose raters all said something.
+   *
+   * **This is the population a retirement decision should rest on.** The
+   * headline `mean`/`count` above deliberately still span everything, so
+   * every existing caller keeps reading what it has always read — but a
+   * mean that mixes a machine's guess with a rater's judgement is the
+   * hazard this split exists to expose, not to average.
+   */
+  readonly testimony: PopulationSummary | null;
+  /** The same figures over derived scores alone. Null when none. */
+  readonly derived: PopulationSummary | null;
+}
+
+/**
+ * One population's standing on its own.
+ *
+ * Deliberately carries its own `count` and `mean` rather than only counts.
+ * "Nine derived 4s and one human 1" and "nine human 4s and one derived 1"
+ * roll up to the same headline mean and call for opposite actions, and that
+ * is unanswerable without each side's mean stated separately.
+ */
+export interface PopulationSummary {
+  readonly count: number;
+  readonly mean: number;
+  readonly distribution: ScoreDistribution;
+  readonly removalSignals: number;
+  readonly unhelpful: number;
 }
 
 /**
@@ -164,12 +243,29 @@ export const SCALE_POINTS = [5, 4, 3, 2, 1] as const satisfies readonly (keyof S
  * changes between runs is one whose diffs cannot be read.
  */
 export function summariseScores(firings: readonly ScoredFiring[]): EntryScoreSummary[] {
-  const byEntry = new Map<string, { scores: number[]; notes: string[] }>();
+  const byEntry = new Map<
+    string,
+    { scores: number[]; notes: string[]; testimony: number[]; derived: number[] }
+  >();
 
   for (const firing of firings) {
     if (!isValidInterventionScore(firing.score)) continue;
-    const bucket = byEntry.get(firing.entryId) ?? { scores: [], notes: [] };
+    const bucket = byEntry.get(firing.entryId) ?? {
+      scores: [],
+      notes: [],
+      testimony: [],
+      derived: [],
+    };
     bucket.scores.push(firing.score);
+    // An unlabelled score counts as testimony. See `ScoredFiring.population`
+    // for why the default points this way: a caller that has not been taught
+    // to label its scores must not have them silently reclassified as
+    // machine guesses.
+    if (isHumanOrAgentTestimony(firing.population ?? "person")) {
+      bucket.testimony.push(firing.score);
+    } else {
+      bucket.derived.push(firing.score);
+    }
     if (firing.note !== undefined && firing.note.trim() !== "") {
       bucket.notes.push(firing.note.trim());
     }
@@ -198,10 +294,40 @@ export function summariseScores(firings: readonly ScoredFiring[]): EntryScoreSum
       removalSignals: distribution[1],
       unhelpful: distribution[1] + distribution[2],
       notes: bucket.notes,
+      testimony: summarisePopulation(bucket.testimony),
+      derived: summarisePopulation(bucket.derived),
     });
   }
 
   return summaries.sort((a, b) => a.entryId.localeCompare(b.entryId));
+}
+
+/**
+ * Rolls one population's scores up, or reports null when it has none.
+ *
+ * Null rather than a zeroed summary, for the reason the header of
+ * `EntryScoreSummary.testimony` gives: a mean of zero is not a point on this
+ * scale, so a zeroed summary would read as an opinion rather than as an
+ * absence — and "no human has ever rated this" is the single most important
+ * thing this report can say about the current corpus.
+ */
+function summarisePopulation(scores: readonly number[]): PopulationSummary | null {
+  if (scores.length === 0) return null;
+
+  const distribution = emptyDistribution();
+  let total = 0;
+  for (const score of scores) {
+    distribution[score as keyof ScoreDistribution] += 1;
+    total += score;
+  }
+
+  return {
+    count: scores.length,
+    mean: total / scores.length,
+    distribution,
+    removalSignals: distribution[1],
+    unhelpful: distribution[1] + distribution[2],
+  };
 }
 
 /**
