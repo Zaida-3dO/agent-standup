@@ -47,7 +47,8 @@ import type { TransactionHandle } from "@/lib/service/context";
 import { currentTipCommitSha } from "@/lib/service/guards/artifact-tip";
 import { hasApprovingArtifactAtCurrentRoundAndTip } from "@/lib/service/guards/merge-review-round";
 import { isWriteTool } from "@/lib/telemetry/shape";
-import { isMergeAttempt, isWorkRecordingCommand } from "./commands";
+import { TERMINAL_STATES } from "@/lib/service/board/columns";
+import { isMergeAttempt, isPullRequestOpen, isWorkRecordingCommand } from "./commands";
 import { isBroadGitAdd } from "./builtins";
 import type { InterventionContext, InterventionPhase } from "./types";
 import { normaliseWorktree, sameWorktree } from "./worktree";
@@ -90,6 +91,30 @@ export interface ContextNeeds {
    * the per-call cost this whole function exists to avoid.
    */
   readonly toolBlocks: boolean;
+  /**
+   * How far the item's committed work has got, whether several items are
+   * waiting on a visual review, and whether a merged nits verdict left
+   * findings behind — I25, I26, I27 and I28, on the `post` path only.
+   *
+   * **Gated on the phase, and then narrowed again inside `assembleContext`.**
+   * All four are `post` nudges about work that has stopped moving, so none
+   * of them can ever be the reason a `pre` call is allowed or refused, and
+   * reading them there would put queries on the path that decides whether a
+   * command may run. The second gate is the assignment itself: with no live
+   * claim there is no item whose delivery could have stalled, and the
+   * assembler returns before any of this is asked.
+   *
+   * Unlike `handsOn` this is **not** narrowed by tool, and the difference is
+   * what each measures. `handsOn` counts a session's own edits, so a `post`
+   * event for a read can never carry the count over its threshold and
+   * deferring to the next edit costs nothing. These four read facts about
+   * the *item* that are equally true whatever call surfaced them — the work
+   * is committed and unmerged whether the session just ran `git status` or
+   * just edited a file — and gating on writes would silence them for
+   * exactly the session that has stopped working, which is the situation
+   * they exist to catch.
+   */
+  readonly delivery: boolean;
 }
 
 const NOTHING: ContextNeeds = {
@@ -98,6 +123,7 @@ const NOTHING: ContextNeeds = {
   occupancy: false,
   handsOn: false,
   toolBlocks: false,
+  delivery: false,
 };
 
 /**
@@ -212,10 +238,38 @@ export function needs(
   // signal there is. It needs the assignment first, in order to know which
   // item's reports to read.
   const toolBlocks = isSpawn(tool);
+  // I25/I26/I27/I28 — the flow nudges, on the `post` phase only.
+  //
+  // **The phase alone is not the gate, for the reason I14 already
+  // establishes.** Roughly half of all hook events are `PostToolUse`, so
+  // keying on it by itself would put the assignment query behind every
+  // `Read`, every `ls` and every `git status` — the per-call cost this
+  // whole function exists to avoid, pinned by a case in
+  // `hook-decision-operation.test.ts` that a phase-only gate fails.
+  //
+  // So it is gated on the phase **and** on the call being one that could
+  // plausibly have moved the work along: a file edit, or a git command.
+  // That is a wider net than I14's — which needs an *edit* specifically,
+  // because it is counting edits — and deliberately so: these entries read
+  // facts about the item rather than about this session's typing, and a
+  // `git push` or a `gh pr create` is exactly the moment the delivery stage
+  // has just changed. What it still excludes is the ordinary read traffic
+  // that can never be the subject of any of them — `git status`, `ls`,
+  // `npm test` and every `Read` stay free, which the zero-query suite pins.
+  //
+  // `isWorkRecordingCommand` is reused rather than restated: it already
+  // recognises exactly `git commit` and `git push` and already excludes
+  // `--amend` and `--dry-run`, which is the same "work has just moved"
+  // question asked for I13. `isPullRequestOpen` adds the one shape it has
+  // no reason to know about.
+  const delivery =
+    phase === "post" &&
+    (isHandsOnTool(tool) ||
+      (command !== undefined && (isWorkRecordingCommand(command) || isPullRequestOpen(command))));
 
   if (command === undefined || command.trim() === "") {
-    return occupancy || handsOn || toolBlocks
-      ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks }
+    return occupancy || handsOn || toolBlocks || delivery
+      ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks, delivery }
       : NOTHING;
   }
 
@@ -223,21 +277,21 @@ export function needs(
   // approval sits at the tip, and it needs the assignment first in order to
   // know *which item's* tip to ask about.
   if (isMergeAttempt(command))
-    return { assignment: true, approval: true, occupancy, handsOn, toolBlocks };
+    return { assignment: true, approval: true, occupancy, handsOn, toolBlocks, delivery };
 
   // A broad `git add` needs to know whether the checkout is shared, which
   // is the claim's `worktree` — no artifact question is involved.
   if (isBroadGitAdd(command))
-    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks };
+    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks, delivery };
 
   // I13 needs only to know whether this session holds a claim at all, which
   // the assignment lookup answers on its own — no artifact question and no
   // occupancy question are involved.
   if (isWorkRecordingCommand(command))
-    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks };
+    return { assignment: true, approval: false, occupancy, handsOn, toolBlocks, delivery };
 
-  return occupancy || handsOn || toolBlocks
-    ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks }
+  return occupancy || handsOn || toolBlocks || delivery
+    ? { assignment: true, approval: false, occupancy, handsOn, toolBlocks, delivery }
     : NOTHING;
 }
 
@@ -445,7 +499,19 @@ export async function assembleContext(options: {
     ? { ...withHandsOn, ...(await toolBlocksFor(db, claim.itemId)) }
     : withHandsOn;
 
-  if (!wanted.approval) return withToolBlocks;
+  // I25/I26/I27/I28 — where the work has got to, and what it left behind.
+  // Gated on the `post` phase and a delivery-shaped call above, so this
+  // never runs on the path that decides whether a command may proceed.
+  const withDelivery = wanted.delivery
+    ? {
+        ...withToolBlocks,
+        ...(await deliveryFor(db, claim.itemId)),
+        ...(await untrackedNitsFor(db, claim.itemId)),
+        ...(await pendingVisualReviewsFor(db)),
+      }
+    : withToolBlocks;
+
+  if (!wanted.approval) return withDelivery;
 
   // The merge gate's own primitives, reused rather than reimplemented. If
   // this asked the question differently from the guard that enforces it at
@@ -456,7 +522,17 @@ export async function assembleContext(options: {
   const approved = await hasApprovingArtifactAtCurrentRoundAndTip(db, claim.itemId, "code_review");
 
   return {
-    ...withHandsOn,
+    // **`withDelivery`, not `withHandsOn`.** This spread was written when
+    // the approval branch was the last one added and `withHandsOn` was the
+    // newest accumulator; every field gathered after it — I19's tool blocks,
+    // and now the delivery fields — was silently discarded on any call that
+    // also needed the approval lookup. It never showed in behaviour because
+    // the overlap is narrow (a merge attempt that is also a spawn, or a
+    // `git push` on the `post` phase) and the loss is an entry going quiet
+    // rather than misfiring, which is the failure mode nobody notices.
+    // Spreading the last accumulator is what makes adding the next branch
+    // safe, so this is the shape to keep rather than a one-off correction.
+    ...withDelivery,
     // With no commit artifact at all there is no tip for an approval to be
     // at, so "is there an approval at tip" has no true answer and the field
     // stays absent. An item nobody has committed to is not an item somebody
@@ -751,4 +827,216 @@ async function occupancyFor(
         : { lastActiveSecondsAgo: holder.lastActiveSecondsAgo }),
     },
   };
+}
+
+/**
+ * How far this item's committed work has got toward being merged — I26/I27.
+ *
+ * **One query over `Artifact` and `Event` rather than three.** The stages
+ * are mutually exclusive and derived from the same two facts, so asking
+ * separately would let two of them describe different moments: a pull
+ * request opened between a "has it committed" read and a "has it a pull
+ * request" read would report the impossible pair.
+ *
+ * ── What "no commit artifact" means, and why it is absent rather than a
+ * stage ────────────────────────────────────────────────────────────────
+ *
+ * An item nobody has committed to has not stalled on its way to a pull
+ * request — it has not started, and it is usually mid-build. Reporting a
+ * stage there would fire I26 on every item from the moment it was claimed
+ * until its first commit, which is most of an item's working life and
+ * exactly the "fires on the ordinary case" failure that teaches a reader to
+ * skip the digest. So the field stays absent, like every other unknown
+ * here, and both entries decline.
+ *
+ * ── Why `review_requested` is a stage rather than simply absent ────────
+ *
+ * It carries no finding of its own; it exists so that I27 has something to
+ * be silent *about*. Without it, "a review has been requested" and "this
+ * item has no pull request" would both have to be spelled as the absence of
+ * the `pull_request_open` stage, and a later entry keyed on that absence
+ * would be unable to tell them apart.
+ */
+async function deliveryFor(
+  db: TransactionHandle,
+  itemId: string,
+): Promise<Pick<InterventionContext, "deliveryStage">> {
+  const rows = await db.$queryRawUnsafe<
+    { hasCommit: boolean; hasPullRequest: boolean; hasReviewRequest: boolean }[]
+  >(
+    `SELECT EXISTS (SELECT 1 FROM "Artifact" WHERE "itemId" = $1 AND "kind" = 'commit')
+              AS "hasCommit",
+            EXISTS (SELECT 1 FROM "Artifact" WHERE "itemId" = $1 AND "kind" = 'pull_request')
+              AS "hasPullRequest",
+            EXISTS (SELECT 1 FROM "Event" WHERE "itemId" = $1 AND "type" = 'review_requested')
+              AS "hasReviewRequest"`,
+    itemId,
+  );
+
+  const row = rows[0];
+  if (row === undefined) return {};
+  // A review already requested settles it whatever else is true: from here
+  // the existing flow entries take over, and neither I26 nor I27 has
+  // anything left to say.
+  if (row.hasReviewRequest) return { deliveryStage: "review_requested" };
+  if (row.hasPullRequest) return { deliveryStage: "pull_request_open" };
+  if (row.hasCommit) return { deliveryStage: "committed" };
+  return {};
+}
+
+/**
+ * A `lgtm_with_nits` review whose findings nothing is tracking — I28.
+ *
+ * ── Why the *latest* review rather than any review ─────────────────────
+ *
+ * Keyed on the newest review artifact carrying a verdict, because a verdict
+ * is superseded by the next round rather than accumulated: an item whose
+ * round-1 review said `lgtm_with_nits` and whose round-2 review said
+ * `changes_required` is not sitting on untracked nits, it is being reworked.
+ * Reading every review instead would fire on the settled history of any
+ * item that ever received the verdict, for the rest of its life.
+ *
+ * ── What counts as tracked ─────────────────────────────────────────────
+ *
+ * `followUpItemId` being set on that artifact — the same column
+ * `lgtm_with_followups` already uses for exactly this relationship, reused
+ * rather than given a parallel mechanism. A reviewer that minted a row and
+ * linked it has done the thing this entry asks for, and must not then be
+ * nudged about it.
+ *
+ * **Not** counted as tracked: the nits having been fixed in the change
+ * itself. Nothing records that, and the entry says so — its message accepts
+ * "actioned here" as an answer rather than demanding a row, because the
+ * alternative trains callers to mint bookkeeping items for work already
+ * done. That is the accepted false positive, and it is named in the entry.
+ *
+ * ── Why `jsonb_array_length` and why the guard around it ───────────────
+ *
+ * `findings` is a jsonb document, and a nits verdict that recorded no
+ * findings has nothing to lose — so the count is the signal rather than the
+ * verdict alone. The type check is not defensive padding: the column is
+ * nullable and historical rows may hold a non-array document, and
+ * `jsonb_array_length` raises on one rather than returning null, which
+ * would turn a malformed old artifact into a failed hook call.
+ */
+async function untrackedNitsFor(
+  db: TransactionHandle,
+  itemId: string,
+): Promise<Pick<InterventionContext, "untrackedNits">> {
+  // ── Why the verdict is tested OUTSIDE the row selection ───────────────
+  //
+  // The inner query picks the **governing** review — the latest one
+  // carrying a verdict — and the outer conditions then ask whether *that*
+  // row is the situation. Pushing `verdict = 'lgtm_with_nits'` into the
+  // inner `WHERE` reads as equivalent and is not: it would skip *past* a
+  // newer `changes_required` to find an older nits verdict underneath, and
+  // fire on an item that is being reworked. A superseded verdict is not a
+  // live situation, which is the same reason the selection is ordered at
+  // all.
+  //
+  // `kind` is restricted to the review kinds for the same reason the
+  // verdict is tested: `Verdict` is a column on `Artifact` generally, so
+  // without it a `plan_review` — or any future kind that carries one —
+  // can be the row this entry speaks about.
+  const rows = await db.$queryRawUnsafe<
+    {
+      findingCount: number;
+      reviewRound: number | null;
+      verdict: string | null;
+      hasFollowUp: boolean;
+    }[]
+  >(
+    `SELECT CASE
+              WHEN jsonb_typeof("findings") = 'array' THEN jsonb_array_length("findings")
+              ELSE 0
+            END::int                          AS "findingCount",
+            "reviewRound"                     AS "reviewRound",
+            "verdict"::text                   AS "verdict",
+            ("followUpItemId" IS NOT NULL)    AS "hasFollowUp"
+       FROM "Artifact"
+      WHERE "itemId" = $1
+        AND "verdict" IS NOT NULL
+        AND "kind"::text IN ('code_review', 'visual_review', 'plan_review')
+      ORDER BY "createdAt" DESC, "seq" DESC
+      LIMIT 1`,
+    itemId,
+  );
+
+  const row = rows[0];
+  if (row === undefined) return {};
+  // The verdict this entry is about, and only it. `changes_required` is the
+  // verdict *most* likely to carry findings, and it is already blocking —
+  // nudging about its findings would fire on the commonest review there is,
+  // and this entry is the one timed `immediate`, so it would not even be
+  // batched.
+  if (row.verdict !== "lgtm_with_nits") return {};
+  // A linked follow-up is exactly the remedy this entry asks for. Nudging
+  // the reviewer who already did it is how a guard teaches its users to
+  // ignore it.
+  if (row.hasFollowUp) return {};
+  if (row.findingCount < 1) return {};
+  return {
+    untrackedNits: {
+      findingCount: row.findingCount,
+      ...(row.reviewRound === null ? {} : { reviewRound: row.reviewRound }),
+    },
+  };
+}
+
+/**
+ * How many items are waiting on a visual review right now — I25.
+ *
+ * **This entry shipped with no assembler at all.** Its predicate reads
+ * `pendingVisualReviews`, the field was declared, and nothing in this file
+ * ever wrote it — so the entry could not fire, in any installation, ever.
+ * That is precisely the failure `./builtins.ts` warns about twice in its own
+ * header: *"a registry entry that cannot trigger is worse than an absent
+ * one: it reads as coverage on the settings page and provides none."* The
+ * signal was available the whole time (`Item.needsVisualReview` is a column);
+ * only the wiring was missing.
+ *
+ * ── Counted across the board, not for this session ─────────────────────
+ *
+ * The entry is about **concurrency**, which is a property of the queue
+ * rather than of any one item — so this deliberately takes no `itemId`. An
+ * orchestrator deciding whether to batch needs to know how many are in
+ * flight altogether, and a count scoped to its own claim would answer at
+ * most one and never trigger.
+ *
+ * ── What "waiting" means ───────────────────────────────────────────────
+ *
+ * Flagged as needing a visual review, not yet closed, and with no visual
+ * review artifact recorded. Archived and terminal rows are excluded because
+ * an item nobody can act on is not a batching opportunity — including them
+ * would let long-closed history accumulate into a permanent standing nudge.
+ */
+async function pendingVisualReviewsFor(
+  db: TransactionHandle,
+): Promise<Pick<InterventionContext, "pendingVisualReviews">> {
+  // `TERMINAL_STATES` rather than a list written out here, for the reason
+  // `findings.ts` gives about the severity ladder: a second copy of a
+  // vocabulary is free to drift from the first, in a place no test reads.
+  // The hand-written version of this query got it wrong in both directions
+  // at once — it invented a `done` state the enum does not have, and
+  // omitted `research_done`, which it does. Bound as a parameter and
+  // compared as text, the same shape `list-items.ts` and `search.ts` use.
+  const rows = await db.$queryRawUnsafe<{ pending: number }[]>(
+    `SELECT COUNT(*)::int AS "pending"
+       FROM "Item" i
+      WHERE i."needsVisualReview" = true
+        AND i."archivedAt" IS NULL
+        AND NOT (i."state"::text = ANY($1::text[]))
+        AND NOT EXISTS (
+          SELECT 1 FROM "Artifact" a
+           WHERE a."itemId" = i."id" AND a."kind" = 'visual_review'
+        )`,
+    TERMINAL_STATES,
+  );
+
+  const row = rows[0];
+  // No row at all is the server not having answered, which is "cannot
+  // tell" rather than zero. Zero is a real count and is carried through —
+  // the predicate is silent at anything below two regardless.
+  if (row === undefined) return {};
+  return { pendingVisualReviews: row.pending };
 }

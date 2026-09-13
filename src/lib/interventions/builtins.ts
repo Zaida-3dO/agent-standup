@@ -929,6 +929,234 @@ const dispatchOverUnresolvedToolBlock: Intervention = {
   },
 };
 
+/**
+ * **I26** — work committed to a branch that never became a pull request.
+ *
+ * ── Why this exists, and why it is `post` ──────────────────────────────
+ *
+ * The prompting incident is concrete: a branch committed, unmerged, with a
+ * headline that said in so many words *"needs the mobile check and a PR"*,
+ * sitting untouched for weeks. **No entry caught it, because none can fire
+ * on a session that simply stops.**
+ *
+ * That is a category difference rather than a difficulty, and it decides
+ * the phase. A `pre` entry fires on the **presence** of a call it can
+ * inspect; this failure is the **absence** of one. There is no tool call at
+ * the moment of failure — the session commits, and then nothing happens.
+ * "Nothing" is not an event a matcher can match, so an entry that tried to
+ * block here would be waiting for a call that by definition never comes.
+ *
+ * So it fires on some **later** tool call, whenever this session or the
+ * next one touches the item again. The honest framing is *"soon after the
+ * work stopped"*, never *"when the work stopped"* — and the digest timing
+ * matches that: nothing here is urgent to the second, and a batch arriving
+ * at a natural juncture is acted on where a trickle is skipped.
+ *
+ * ── Why the stage, and not a pair of booleans ──────────────────────────
+ *
+ * Keyed on `deliveryStage === "committed"`, which means a commit artifact
+ * exists and no pull request does. The stage is deliberately exclusive: an
+ * item that went on to open a pull request reports a later stage and this
+ * entry goes quiet, rather than needing a second condition to remember to
+ * check. An entry that kept firing after the situation was resolved is the
+ * shape that earns a 1 and gets switched off.
+ *
+ * ── What a false positive costs ────────────────────────────────────────
+ *
+ * One digest line on an item whose branch is deliberately not a pull
+ * request yet — work in progress, an experiment, a branch parked on
+ * purpose. That is a real and reasonably common case, and it is why this is
+ * a nudge on the digest rather than anything louder: the cost is a line of
+ * advice the reader disagrees with, and the message says "or say what it is
+ * waiting on" precisely so that the parked case has an answer that is not
+ * "open a pull request you did not want".
+ *
+ * **It cannot be a block in any case** — `post` entries structurally
+ * cannot, and holding a finished session hostage to bookkeeping would be
+ * wrong even if they could.
+ */
+const committedWithNoPullRequest: Intervention = {
+  id: "committed-with-no-pull-request",
+  source: "builtin",
+  summary: "An item with committed work on a branch and no pull request opened for it.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "digest",
+  messages: {
+    plain:
+      "This item has committed work on a branch and no pull request. A branch nobody opened a " +
+      "pull request for will not merge on its own. Create the pull request, or record plainly " +
+      "what it is waiting on.",
+    prominent:
+      "⚠️ This item's work is committed to a branch and no pull request exists for it. Nothing " +
+      "downstream is watching a branch: no review will be requested, no CI verdict will be read, " +
+      "and it will sit exactly as it is until somebody notices. Create the pull request now, or " +
+      "record on the item what it is still waiting on so the next session does not have to " +
+      "rediscover it.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.deliveryStage !== "committed") return { triggered: false };
+    return {
+      triggered: true,
+      ...(context.itemId === undefined ? {} : { data: { itemId: context.itemId } }),
+    };
+  },
+};
+
+/**
+ * **I27** — a pull request exists and nothing has asked for a review of it.
+ *
+ * The easy one, and it is easy for a reason worth stating: **both halves
+ * are already first-class records.** A `pull_request` artifact is a row,
+ * and `request_review` writes a `review_requested` event. So this judges no
+ * intent and infers nothing from an absence of activity — it compares two
+ * things the server already stores, which is the standard every other built
+ * entry here is held to.
+ *
+ * ── Its relationship to I1, which it deliberately does not duplicate ───
+ *
+ * `finished-with-no-reviewer` keys on the item's **state** (`in_review`
+ * with no approval at tip) — an item that has already announced it is
+ * waiting. This fires one step earlier, at the point the pull request
+ * exists and nobody has asked for anything yet, which is a different
+ * moment and a different remedy: I1 says *spawn a reviewer for work that is
+ * waiting*, this says *the work is ready and has not asked*. The stage
+ * vocabulary keeps them from both firing on one situation — once a review
+ * is requested this entry is silent, and I1 takes over.
+ *
+ * ── What a false positive costs ────────────────────────────────────────
+ *
+ * One digest line where a reviewer was dispatched out of band without
+ * `request_review` being called. That case is real, and the message treats
+ * it as an answer rather than an error: recording the request is the point,
+ * because a review nobody recorded is one the board cannot see either.
+ */
+const pullRequestWithNoReviewRequested: Intervention = {
+  id: "pull-request-with-no-review-requested",
+  source: "builtin",
+  summary: "A pull request opened on an item where nothing has requested a review of it.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "digest",
+  messages: {
+    plain:
+      "This item has an open pull request and no review has been requested for it. Request one, " +
+      "or record that a reviewer is already looking.",
+    prominent:
+      "⚠️ A pull request exists on this item and nothing has requested a review of it. The pull " +
+      "request will not route itself to anyone: request the review now. If a reviewer was " +
+      "already dispatched out of band, record the request anyway — a review the board cannot " +
+      "see is one nothing downstream can wait for.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.deliveryStage !== "pull_request_open") return { triggered: false };
+    return {
+      triggered: true,
+      ...(context.itemId === undefined ? {} : { data: { itemId: context.itemId } }),
+    };
+  },
+};
+
+/**
+ * **I28** — a `lgtm_with_nits` merge whose findings nothing is tracking.
+ *
+ * ── Why this is not I5, which is catalogued unbuilt for a good reason ──
+ *
+ * I5 covers `lgtm_with_followups` with no linked follow-up, and it is
+ * listed unbuilt because **nothing is missing**: `merge.requires_linked_followup`
+ * already refuses that exact combination at the merge gate, so an entry
+ * would be a second voice on a decision already made.
+ *
+ * `lgtm_with_nits` is the opposite case, and the asymmetry is the whole
+ * finding. Beneath that verdict a finding at `medium` or above blocks the
+ * merge (`service/guards/merge-findings.ts`), which is correct — the
+ * verdict claims only cosmetic work remains, so a non-cosmetic finding
+ * contradicts its own terms. An `info` or `low` finding correctly does
+ * **not** block. And that is the whole of its effect: below the blocking
+ * threshold a finding is written to durable storage and then has no further
+ * lifecycle at all — no state, no owner, no follow-up, no expiry. The
+ * findings live inside an artifact on a row that is now closed. Technically
+ * retrievable; practically invisible.
+ *
+ * ── The equilibrium this is really protecting ──────────────────────────
+ *
+ * The cost is not the individual forgotten nit. It is that a reviewer who
+ * wants a finding to survive has exactly one lever — **inflate it to
+ * `medium` so it blocks** — while a reviewer who grades honestly watches
+ * the finding evaporate. Over enough reviews that either inflates
+ * severities or trains reviewers to stop recording sub-blocking findings,
+ * and the second is worse: it removes the evidence that the problem exists.
+ * A recorded, reported instance had nine findings age out against a closed
+ * row, one of which was a live hazard for the feature being built next, and
+ * a person rather than the product was the backstop.
+ *
+ * ── Why a nudge, and why `immediate` ───────────────────────────────────
+ *
+ * A nudge because the verdict's entire meaning is *this does not block*,
+ * and an entry that blocked here would contradict the thing it is
+ * enforcing. Overridable in the only sense a nudge can be: it names the
+ * number and asks where the findings went, and *"actioned in this pull
+ * request"*, *"minted as an item"* and *"judged not worth doing"* are all
+ * complete answers. Silence is the only one that is not.
+ *
+ * `immediate` rather than the digest, unlike its two siblings above, and
+ * the difference is the window. I26 and I27 describe work that will still
+ * be there in five minutes. This one describes a row that is **closing** —
+ * once the session moves on, the findings are behind a merged item and the
+ * session that knew what they meant is gone. The moment to ask is while the
+ * reader still holds the context that makes the answer cheap.
+ *
+ * ── What a false positive costs ────────────────────────────────────────
+ *
+ * One immediate line where the nits were genuinely actioned inside the same
+ * pull request — which is common, and is the most likely wrong match by
+ * some distance. It is cheap on purpose: nothing is blocked, and the
+ * message accepts "already done here" without demanding a row be minted to
+ * prove it. The alternative reading — requiring a linked item — would push
+ * callers to mint bookkeeping rows for nits they had already fixed, which
+ * is how a guard teaches its users to route around it.
+ */
+const nitsMergedWithNothingTrackingThem: Intervention = {
+  id: "nits-merged-with-nothing-tracking-them",
+  source: "builtin",
+  summary:
+    "A merged item whose review returned lgtm_with_nits with findings that nothing is tracking.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This item's review returned lgtm_with_nits with findings, and nothing is tracking them. " +
+      "Say where they went: actioned in this change, minted as an item, or judged not worth " +
+      "doing. Any of those is fine; silence is not.",
+    prominent:
+      "⚠️ This item merged on a lgtm_with_nits verdict carrying findings that nothing is now " +
+      "tracking. They were correctly not blocking — and below that threshold a finding has no " +
+      "owner, no state and no expiry, so it will age out inside an artifact on a closed row. " +
+      "Record where they went: actioned in this change, minted as a follow-up item, or " +
+      "deliberately dropped. If recording them is consistently this manual, that is the reason " +
+      "reviewers inflate severities to make findings survive.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    const nits = context.untrackedNits;
+    // Absent means the server did not look, or looked and found the
+    // situation resolved — both read as no finding. A zero count is never
+    // written: a nits verdict that recorded nothing has nothing to lose.
+    if (nits === undefined || nits.findingCount < 1) return { triggered: false };
+    return {
+      triggered: true,
+      data: {
+        findingCount: nits.findingCount,
+        ...(context.itemId === undefined ? {} : { itemId: context.itemId }),
+        ...(nits.reviewRound === undefined ? {} : { reviewRound: nits.reviewRound }),
+      },
+    };
+  },
+};
+
 export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   mergeWithoutApprovalAtTip,
   broadGitAddOnSharedCheckout,
@@ -942,6 +1170,9 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   rebaseRestraint,
   batchVisualReviews,
   dispatchOverUnresolvedToolBlock,
+  committedWithNoPullRequest,
+  pullRequestWithNoReviewRequested,
+  nitsMergedWithNothingTrackingThem,
 ];
 
 /**
