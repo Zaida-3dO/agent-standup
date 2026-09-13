@@ -636,6 +636,42 @@ export const SETTINGS_REGISTRY = {
     formerEnv: [],
   }),
 
+  // Deriving a score from a firing ships **on**, which is the opposite of
+  // how `scoring.auto_derive` ships, and the difference is deliberate
+  // rather than an inconsistency.
+  //
+  // A mechanism that ships switched off is the right shape when the risk
+  // is writing something wrong. Here the demonstrated risk runs the other
+  // way. The scoring tables have stood complete and empty for their whole
+  // existence — schema, aggregate, flagging thresholds, all of it — for
+  // exactly one reason: every writer was something a person or an agent
+  // had to remember to invoke, and nobody ever did. Shipping one more
+  // dormant writer would reproduce that outcome precisely, and the
+  // aggregate would still read zero.
+  //
+  // What makes defaulting on safe is the narrowness of what gets written.
+  // The derivation only scores a firing that actually **blocked** a call,
+  // it never awards the scale's top point, and it writes under a reserved
+  // rater id that no human or agent answer can collide with — so a
+  // volunteered score always sits beside a derived one rather than being
+  // replaced by it. The worst case is a table of weak, correctly-labelled
+  // evidence, which is strictly more than nothing; the worst case of the
+  // other default is another year of zero.
+  //
+  // Turning it off remains a settings change, and the derivation is
+  // reported either way.
+  "interventions.derive_scores": define({
+    schema: z.boolean(),
+    default: true,
+    label: "Derive intervention scores",
+    help: "Whether a blocked intervention firing is scored automatically from what the session did next — routing around it scores low, changing course scores higher. Derived scores are written under a reserved rater id, so a score volunteered by an agent or a person is recorded alongside rather than overwritten, and the two can always be told apart. Never awards the top of the scale, which asserts what would have happened otherwise and cannot be observed.",
+    category: "Telemetry",
+    appliesWhen: "next-call",
+    sensitive: false,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
   "shape.repeat_threshold": define({
     schema: z.number().int().positive(),
     default: 3,

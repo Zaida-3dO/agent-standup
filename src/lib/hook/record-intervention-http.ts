@@ -36,11 +36,20 @@
 
 import type { InterventionCapture } from "../interventions/capture";
 
-/** The subset of `fetch` this adapter uses. Injected so tests need no network. */
+/**
+ * The subset of `fetch` this adapter uses. Injected so tests need no
+ * network.
+ *
+ * `json()` is part of the subset because the response body carries the row
+ * ids, and those ids are the only handle anything has on a firing. A
+ * client that read only `ok` would make every firing it recorded
+ * unscoreable by construction — the id would exist, in a table, addressed
+ * by nothing.
+ */
 export type FetchLike = (
   input: string,
   init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
-) => Promise<{ ok: boolean; status: number }>;
+) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 /**
  * How long to wait for the ingest before giving up, in milliseconds.
@@ -123,18 +132,79 @@ export function toWireBatch(batch: InterventionCaptureBatch): Record<string, unk
   };
 }
 
+/** What one recorded firing came back as. */
+export interface RecordedFiring {
+  /** The `intervention_events` row id — the handle a score is written against. */
+  readonly id: string;
+  readonly entryId: string;
+}
+
+/**
+ * What a send produced.
+ *
+ * A shape rather than a boolean, and the difference is the whole point of
+ * this adapter existing. The ids are what makes a firing addressable: the
+ * scale, the survey and the scoring operation all attribute an answer to a
+ * firing by id, so a client that reduced the answer to "it worked" would
+ * leave every one of them with nothing to name.
+ *
+ * `recorded` is empty on every failure, so a caller that ignores `ok` and
+ * reads only the ids still cannot mistake a lost capture for a recorded
+ * one.
+ */
+export interface RecordInterventionResult {
+  readonly ok: boolean;
+  readonly recorded: readonly RecordedFiring[];
+}
+
+/**
+ * Reads the ids off a response body.
+ *
+ * Each entry validated on its own and a malformed one dropped rather than
+ * failing the whole read — the same direction every reader on this path
+ * takes, and it matters for the same reason: a dropped entry costs one
+ * unscoreable firing, whereas a throw would lose the ones that were fine
+ * alongside it. A body that is not the expected shape at all yields an
+ * empty list, which is exactly what a caller does with a failed send.
+ *
+ * Exported for the test that pins it. Asserting this through the sender
+ * would prove the sender calls something; the property worth protecting is
+ * what *this* function accepts and what it refuses.
+ */
+export function readRecordedFirings(body: unknown): RecordedFiring[] {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return [];
+  const recorded = (body as Record<string, unknown>).recorded;
+  if (!Array.isArray(recorded)) return [];
+
+  return recorded.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+    const row = entry as Record<string, unknown>;
+    const id = row.id;
+    const entryId = row.entryId;
+    if (typeof id !== "string" || id.trim() === "") return [];
+    if (typeof entryId !== "string" || entryId.trim() === "") return [];
+    return [{ id: id.trim(), entryId: entryId.trim() }];
+  });
+}
+
 /**
  * Builds the sender `standup-hook.ts` calls from `runHook`'s `onFindings`.
  *
- * Never throws — every failure is swallowed to `false`, for the reason
- * `flush-http.ts` gives for the same shape: a caller that had to enumerate
- * failure modes could forget one and treat it as success, and here that
- * would only ever cost a log line no one reads, since nothing retries a
- * failed capture the way a flush retries a failed batch.
+ * Never throws — every failure collapses to `{ ok: false, recorded: [] }`,
+ * for the reason `flush-http.ts` gives for the same shape: a caller that
+ * had to enumerate failure modes could forget one and treat it as success,
+ * and here that would only ever cost a log line no one reads, since
+ * nothing retries a failed capture the way a flush retries a failed batch.
+ *
+ * **An unreadable body is not a failed send.** The rows were written — the
+ * server said so with its status — and reporting `ok: false` would tell a
+ * caller the capture was lost when it was not. What is lost is the ids, so
+ * `recorded` is empty and `ok` stays true: the evidence exists and this
+ * process cannot name it, which is a weaker and more accurate statement.
  */
 export function createRecordInterventionHttp(
   options: RecordInterventionHttpOptions,
-): (batch: InterventionCaptureBatch) => Promise<boolean> {
+): (batch: InterventionCaptureBatch) => Promise<RecordInterventionResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_RECORD_TIMEOUT_MS;
   const makeSignal =
     options.timeoutSignal ??
@@ -142,7 +212,7 @@ export function createRecordInterventionHttp(
       typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(ms) : undefined);
 
   return async (batch) => {
-    if (batch.captures.length === 0) return true;
+    if (batch.captures.length === 0) return { ok: true, recorded: [] };
 
     const signal = makeSignal(timeoutMs);
     try {
@@ -160,9 +230,19 @@ export function createRecordInterventionHttp(
           ...(signal === undefined ? {} : { signal }),
         },
       );
-      return response.ok;
+      if (!response.ok) return { ok: false, recorded: [] };
+
+      // The body is read inside its own `try`, so a server that answered
+      // successfully with something unparseable is still reported as the
+      // successful write it was. Collapsing that to a failed send would be
+      // the one lie this adapter is in a position to tell.
+      try {
+        return { ok: true, recorded: readRecordedFirings(await response.json()) };
+      } catch {
+        return { ok: true, recorded: [] };
+      }
     } catch {
-      return false;
+      return { ok: false, recorded: [] };
     }
   };
 }

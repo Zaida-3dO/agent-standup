@@ -33,6 +33,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { INTERVENTION_OUTCOMES } from "../../interventions/capture";
 import { MAX_CAPTURED_COMMAND } from "../../interventions/capture";
+import { scoreBlockedFirings } from "../telemetry/score-blocked-firings";
 
 const captureSchema = z
   .object({
@@ -71,6 +72,18 @@ export type RecordInterventionInput = z.infer<typeof inputSchema>;
 export interface RecordInterventionOutput {
   /** The written rows, in the order they were supplied. */
   readonly recorded: readonly { readonly id: string; readonly entryId: string }[];
+  /**
+   * Ids of this session's earlier firings that were scored as a result of
+   * this call — see `../telemetry/score-blocked-firings.ts`.
+   *
+   * Reported rather than silent, and that is the whole reason the field
+   * exists: a derivation whose only effect is a row in another table is one
+   * whose failure is indistinguishable from its success, and the table it
+   * writes to stayed empty for its entire existence without anything
+   * saying so. Empty on the overwhelming majority of calls, which have
+   * nothing older to score.
+   */
+  readonly derivedScores: readonly string[];
 }
 
 interface InsertedRow {
@@ -121,6 +134,18 @@ export const recordIntervention = defineOperation({
       recorded.push({ id: String(row.id), entryId: row.entry_id });
     }
 
-    return { recorded };
+    // The capture seam. Scores this session's EARLIER blocked firings —
+    // never the ones just written, which nothing has happened after yet.
+    // See `../telemetry/score-blocked-firings.ts` for why a later firing is
+    // the trigger and what that leaves unscored.
+    //
+    // Runs after the inserts and cannot affect them: it swallows its own
+    // failures, and its result is reported rather than acted on. A firing
+    // recorded is the caller's real work; measuring an earlier firing in the
+    // same session is bookkeeping, and bookkeeping must not be able to fail
+    // the write that carries it.
+    const derivedScores = await scoreBlockedFirings(ctx, input.sessionId);
+
+    return { recorded, derivedScores };
   },
 });

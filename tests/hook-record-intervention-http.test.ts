@@ -2,16 +2,22 @@
 // captures (`src/lib/hook/record-intervention-http.ts`).
 //
 // Same posture as `tests/hook-flush-http.test.ts`, over the sibling sender:
-// shape the request, reduce every failure to `false`, authenticate when a
-// token is configured. The one property this row's design turns on and
-// `flush-http` has no equivalent of: **a capture is never spooled**, so
+// shape the request, reduce every failure to a not-ok result, authenticate
+// when a token is configured. The one property this row's design turns on
+// and `flush-http` has no equivalent of: **a capture is never spooled**, so
 // there is no retry and no `onFailure` — a failed send is simply a lost
 // capture, silently, and that silence is asserted here rather than assumed.
+//
+// The sender also reads the row ids back off the response, and the group at
+// the bottom covers that: those ids are the only handle anything has on a
+// firing, so a sender that dropped them would leave every firing it
+// recorded impossible to score.
 import { describe, expect, it, vi } from "vitest";
 import {
   createRecordInterventionHttp,
   toWireBatch,
   DEFAULT_RECORD_TIMEOUT_MS,
+  readRecordedFirings,
   type FetchLike,
   type InterventionCaptureBatch,
 } from "@/lib/hook/record-intervention-http";
@@ -34,11 +40,15 @@ function capture(overrides: Partial<InterventionCapture> = {}): InterventionCapt
 
 const BATCH: InterventionCaptureBatch = { sessionId: "s-1", captures: [capture()] };
 
-function stubFetch(status: number, ok = status >= 200 && status < 300) {
+function stubFetch(
+  status: number,
+  ok = status >= 200 && status < 300,
+  body: unknown = { recorded: [] },
+) {
   const calls: { url: string; init: Parameters<FetchLike>[1] }[] = [];
   const fetch: FetchLike = async (url, init) => {
     calls.push({ url, init });
-    return { ok, status };
+    return { ok, status, json: async () => body };
   };
   return { fetch, calls };
 }
@@ -81,14 +91,14 @@ describe("the request is shaped the way record_intervention accepts it", () => {
   it("treats the created status as success", async () => {
     const { fetch } = stubFetch(201);
     const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
-    expect(await send(BATCH)).toBe(true);
+    expect((await send(BATCH)).ok).toBe(true);
   });
 
   it("does not call fetch at all for an empty batch", async () => {
     const { fetch, calls } = stubFetch(201);
     const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
 
-    expect(await send({ sessionId: "s-1", captures: [] })).toBe(true);
+    expect((await send({ sessionId: "s-1", captures: [] })).ok).toBe(true);
     expect(calls).toHaveLength(0);
   });
 });
@@ -100,7 +110,7 @@ describe("every failure answers false, and nothing retries", () => {
     // failure-reason channel to build here.
     const { fetch } = stubFetch(400, false);
     const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
-    expect(await send(BATCH)).toBe(false);
+    expect((await send(BATCH)).ok).toBe(false);
   });
 
   it("answers false without throwing when the server is unreachable", async () => {
@@ -108,7 +118,7 @@ describe("every failure answers false, and nothing retries", () => {
       throw new Error("ECONNREFUSED");
     };
     const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
-    expect(await send(BATCH)).toBe(false);
+    expect((await send(BATCH)).ok).toBe(false);
   });
 });
 
@@ -221,5 +231,103 @@ describe("the override reason reaches the request body", () => {
 
     const captures = wire.captures as Record<string, unknown>[];
     expect(captures[0]).not.toHaveProperty("overrideReason");
+  });
+});
+
+// ── The row ids come back ───────────────────────────────────────────────
+//
+// The seam that decides whether a firing is scoreable at all. Everything
+// that attributes a judgement to a firing — the scale, the session-end
+// survey, `score_intervention` — names it by the id this response carries,
+// so a sender that read only the status would write evidence into a table
+// and leave nothing able to address it.
+//
+// The direction of every assertion below is the same: a malformed entry
+// costs its own id and nothing else, and an unreadable body is reported as
+// the successful write it was rather than as a lost capture.
+describe("the sender reads the recorded row ids back", () => {
+  it("returns the ids the server reported", async () => {
+    const { fetch } = stubFetch(201, true, {
+      recorded: [
+        { id: "41", entryId: "I10" },
+        { id: "42", entryId: "I14" },
+      ],
+    });
+    const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
+
+    const result = await send(BATCH);
+
+    expect(result.ok).toBe(true);
+    expect(result.recorded).toEqual([
+      { id: "41", entryId: "I10" },
+      { id: "42", entryId: "I14" },
+    ]);
+  });
+
+  it("reports a successful write whose body could not be parsed as written, not lost", async () => {
+    // The rows exist — the server said so with its status. Answering
+    // `ok: false` here would tell the caller the capture was lost when it
+    // was not; what was lost is the ids, which is the weaker and accurate
+    // statement.
+    const fetch: FetchLike = async () => ({
+      ok: true,
+      status: 201,
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
+
+    const result = await send(BATCH);
+
+    expect(result.ok).toBe(true);
+    expect(result.recorded).toEqual([]);
+  });
+
+  it("reports no ids for a failed send, so a lost capture cannot look recorded", async () => {
+    const { fetch } = stubFetch(400, false, { recorded: [{ id: "41", entryId: "I10" }] });
+    const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
+
+    const result = await send(BATCH);
+
+    expect(result.ok).toBe(false);
+    expect(result.recorded).toEqual([]);
+  });
+});
+
+describe("reading ids off a body keeps the good entries and drops the bad", () => {
+  it("drops an entry with no id but keeps its siblings", () => {
+    expect(
+      readRecordedFirings({
+        recorded: [{ entryId: "I10" }, { id: "42", entryId: "I14" }],
+      }),
+    ).toEqual([{ id: "42", entryId: "I14" }]);
+  });
+
+  it("drops an entry whose id is blank rather than trusting an empty handle", () => {
+    // A blank id is worse than a missing one: it is a string, so a reader
+    // that only checked the type would write a score against `""`.
+    expect(readRecordedFirings({ recorded: [{ id: "   ", entryId: "I10" }] })).toEqual([]);
+  });
+
+  it("drops an entry whose id is a number, since the handle travels as a string", () => {
+    // The column is a bigint and the operation stringifies it precisely so
+    // no precision is lost in transit. Accepting a raw number here would
+    // undo that at the last step.
+    expect(readRecordedFirings({ recorded: [{ id: 42, entryId: "I10" }] })).toEqual([]);
+  });
+
+  it("trims surrounding whitespace off an id rather than keeping an unusable one", () => {
+    expect(readRecordedFirings({ recorded: [{ id: " 42 ", entryId: " I14 " }] })).toEqual([
+      { id: "42", entryId: "I14" },
+    ]);
+  });
+
+  it("yields nothing for a body that is not the expected shape", () => {
+    expect(readRecordedFirings(null)).toEqual([]);
+    expect(readRecordedFirings("recorded")).toEqual([]);
+    expect(readRecordedFirings([{ id: "42", entryId: "I10" }])).toEqual([]);
+    expect(readRecordedFirings({ recorded: "42" })).toEqual([]);
+    expect(readRecordedFirings({})).toEqual([]);
   });
 });
