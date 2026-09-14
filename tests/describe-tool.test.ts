@@ -39,6 +39,7 @@ import { currentBuildInfo, DEV_VERSION, UNKNOWN_REVISION } from "@/lib/build-inf
 import { OPERATION_NAMES } from "@/lib/service/registry";
 import { CHECK_RUN_STATUSES } from "@/lib/check-runs";
 import { SHIPPED_CHAR_CAP, SHIPPED_MAX, SHIPPED_MIN } from "@/lib/service/summaries/validate";
+import { HEADLINE_MAX_CHARS } from "@/lib/service/items/row";
 import { invocationFor, invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
 import { assessVersion } from "@/lib/sessions";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
@@ -267,6 +268,167 @@ describe("describe_tool returns one tool's full contract", () => {
     const contract = await contractFor("get_item");
     expect(contract.rules).toEqual([]);
     expect(contract.fields.length).toBeGreaterThan(0);
+  });
+});
+
+// ── repo and headline: enforced but undiscoverable before the call ──────
+//
+// `create_work` (and the three creates it shares COMMON_CREATE_RULES with)
+// refused a real repo name with only "No such repo: X." — naming the input,
+// never the valid set. `headline`'s 200-char cap was refused correctly but
+// was equally invisible beforehand. Both are now declared rules, and
+// `update_item` — which enforces the identical repo check and had NO
+// contract at all — gets its first one.
+//
+// Substance, not presence (#372's standard): a rule that keeps the `repo`
+// or `headline` entry but drops the guidance must fail here. An MCP caller
+// cannot call `list_repos` (waived off every MCP transport), so the
+// reachable-route assertion below checks for `get_board`/`list_items` —
+// the routes an MCP caller can actually use — not merely that some prose
+// exists.
+describe("describe_tool declares create_work's repo and headline rules", () => {
+  const CREATE_OPERATIONS = [
+    "create_work",
+    "create_task",
+    "create_project",
+    "create_subtask",
+  ] as const;
+
+  it.each(CREATE_OPERATIONS)(
+    "%s's repo rule names the MCP-reachable route and the archived caveat",
+    async (name) => {
+      const contract = await contractFor(name);
+      const rule = contract.rules.find((entry) => entry.fields.includes("repo"));
+      expect(rule).toBeDefined();
+      // The reachable route for an MCP caller — list_repos is waived off MCP,
+      // so pointing only at it would strand the entire reported population.
+      expect(rule!.rule).toContain("get_board");
+      expect(rule!.rule).toContain("list_items");
+      // The direct enumeration is still named, but marked as non-MCP so the
+      // advice-defect checker does not (correctly) flag it as unreachable.
+      expect(rule!.rule).toContain("list_repos");
+      expect(rule!.rule).toContain("[http/cli]");
+      // Pre-registration and the archived caveat are the two facts an MCP
+      // caller cannot get any other way.
+      expect(rule!.rule.toLowerCase()).toContain("archived");
+      expect(rule!.rule).toContain("Repo");
+    },
+  );
+
+  it.each(CREATE_OPERATIONS)(
+    "%s's headline rule states the real cap and that it is optional",
+    async (name) => {
+      const contract = await contractFor(name);
+      const rule = contract.rules.find((entry) => entry.fields.includes("headline"));
+      expect(rule).toBeDefined();
+      // Interpolated from the constant, per the complete_item precedent above
+      // — a cap change and a stale doc are both caught.
+      expect(rule!.rule).toContain(String(HEADLINE_MAX_CHARS));
+      expect(rule!.rule.toLowerCase()).toContain("optional");
+    },
+  );
+
+  it("update_item declares its first-ever contract, with the same two rules restated for editing", async () => {
+    // Meaningful because an operation declaring zero rules is otherwise
+    // indistinguishable from one with none to declare — exactly #372's
+    // regression shape, now closed for this operation too.
+    const contract = await contractFor("update_item");
+    expect(contract.rules.length).toBeGreaterThan(0);
+
+    const repoRule = contract.rules.find((entry) => entry.fields.includes("repo"));
+    expect(repoRule).toBeDefined();
+    expect(repoRule!.rule).toContain("get_board");
+    expect(repoRule!.rule).toContain("list_items");
+    expect(repoRule!.rule).toContain("list_repos");
+    expect(repoRule!.rule).toContain("[http/cli]");
+    expect(repoRule!.rule.toLowerCase()).toContain("archived");
+    // update's distinguishing behaviour a create rule does not have: an
+    // explicit null clears the field.
+    expect(repoRule!.rule).toContain("null");
+
+    const headlineRule = contract.rules.find((entry) => entry.fields.includes("headline"));
+    expect(headlineRule).toBeDefined();
+    expect(headlineRule!.rule).toContain(String(HEADLINE_MAX_CHARS));
+    expect(headlineRule!.rule).toContain("null");
+  });
+});
+
+// The end-to-end refusal message: proves the same instruction reaches the
+// actual thrown error, not only the contract. Neither case needs a real
+// database — `create_work`'s repo lookup fails against `runtime()`'s inert
+// handle (any query returns []), and `update_item`'s case supplies a small
+// fake handle that answers the one `Item` lookup so the repo-refusal branch
+// is reached without a Postgres instance. Runs locally, ordinary unit test.
+describe("the repo refusal message names the MCP-reachable route, not just the bad input", () => {
+  it("create_work's refusal names get_board/list_items and marks list_repos non-MCP", async () => {
+    const error = await refusal("create_work", {
+      type: "project",
+      title: "probe",
+      body: "probe",
+      area: "web",
+      originType: "auto",
+      repo: "definitely-not-a-real-repo-id",
+    });
+    expect(error.message).toContain("No such repo:");
+    expect(error.message).toContain("get_board");
+    expect(error.message).toContain("list_items");
+    expect(error.message).toContain("list_repos");
+    expect(error.message).toContain("[http/cli]");
+  });
+
+  it("update_item's refusal carries the identical two-route wording", async () => {
+    // No real database: a small fake handle answers the one `Item` lookup
+    // `update_item` makes before it ever reaches the repo check, so the
+    // repo-refusal branch is reached without a Postgres instance.
+    const fakeItemRow = {
+      id: "11111111-1111-1111-1111-111111111111",
+      parentId: null,
+      kind: "task",
+      depth: 1,
+      title: "probe",
+      headline: null,
+      body: "probe",
+      state: "in_progress",
+      priority: "P2",
+      originType: "auto",
+      originPersonId: null,
+      area: "web",
+      areas: ["web"],
+      repo: null,
+      branch: null,
+      needsVisualReview: false,
+      driveMode: "autonomous",
+      mergeAuthority: "pre_approved",
+      customFields: null,
+    };
+    const fakeHandle: TransactionHandle = {
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        if (query.includes('FROM "Repo"')) return [] as T;
+        if (query.includes('FROM "Item"')) return [fakeItemRow] as T;
+        return [] as T;
+      },
+      $executeRawUnsafe: async (): Promise<number> => 0,
+    };
+    const fakeRuntime = new ServiceRuntime({
+      transaction: (body) => body(fakeHandle),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+    let error: NotFoundError | undefined;
+    try {
+      await fakeRuntime.call("update_item", {
+        id: fakeItemRow.id,
+        repo: "definitely-not-a-real-repo-id",
+      });
+    } catch (caught) {
+      if (isServiceError(caught)) error = caught as NotFoundError;
+      else throw caught;
+    }
+    expect(error).toBeDefined();
+    expect(error!.message).toContain("No such repo:");
+    expect(error!.message).toContain("get_board");
+    expect(error!.message).toContain("list_items");
+    expect(error!.message).toContain("list_repos");
+    expect(error!.message).toContain("[http/cli]");
   });
 });
 
@@ -580,6 +742,80 @@ describe("a shape refusal names the call that would have prevented it", () => {
   it("routes from complete_item, the other operation with invisible rules", async () => {
     const error = await refusal("complete_item", { id: "i", to: "merged" }, "mcp-stdio");
     expect(error.message).toContain('describe_tool("complete_item")');
+  });
+});
+
+// The headline-overage refusal a source note praised by name: "the message
+// is genuinely GOOD; the problem is purely that the cap is invisible
+// beforehand." So this pins the composed refusal a caller actually reads,
+// not a hand-authored string — there is no custom message anywhere in the
+// source (`headline` is a bare `z.string().trim().min(1).max(HEADLINE_MAX_CHARS)`
+// with no `.refine()` message), the text is composed at call time from
+// zod's own overage wording plus shape-refusal.ts's routing suffix. Pinning
+// the interpolated cap, not the literal 200, means a cap change is caught
+// rather than the test silently drifting out of sync with it. Pure zod +
+// shapeRefusalMessage, no database in the path — runs locally.
+describe("the praised headline-overage refusal is unchanged by this item's edits", () => {
+  it("create_work still emits zod's overage wording plus the describe_tool routing suffix", async () => {
+    const error = await refusal("create_work", {
+      type: "project",
+      title: "probe",
+      body: "probe",
+      area: "web",
+      originType: "auto",
+      headline: "x".repeat(HEADLINE_MAX_CHARS + 1),
+    });
+    expect(error.message).toContain(`at most ${HEADLINE_MAX_CHARS} character(s)`);
+    expect(error.message).toContain(
+      "for the full contract, including the rules the schema cannot state.",
+    );
+  });
+
+  it("update_item's headline-overage refusal carries the identical two fragments", async () => {
+    const fakeItemRow = {
+      id: "22222222-2222-2222-2222-222222222222",
+      parentId: null,
+      kind: "task",
+      depth: 1,
+      title: "probe",
+      headline: null,
+      body: "probe",
+      state: "in_progress",
+      priority: "P2",
+      originType: "auto",
+      originPersonId: null,
+      area: "web",
+      areas: ["web"],
+      repo: null,
+      branch: null,
+      needsVisualReview: false,
+      driveMode: "autonomous",
+      mergeAuthority: "pre_approved",
+      customFields: null,
+    };
+    const fakeHandle: TransactionHandle = {
+      $queryRawUnsafe: async <T = unknown>(): Promise<T> => [fakeItemRow] as T,
+      $executeRawUnsafe: async (): Promise<number> => 0,
+    };
+    const fakeRuntime = new ServiceRuntime({
+      transaction: (body) => body(fakeHandle),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+    let error: InvalidInputError | undefined;
+    try {
+      await fakeRuntime.call("update_item", {
+        id: fakeItemRow.id,
+        headline: "x".repeat(HEADLINE_MAX_CHARS + 1),
+      });
+    } catch (caught) {
+      if (isServiceError(caught)) error = caught as InvalidInputError;
+      else throw caught;
+    }
+    expect(error).toBeDefined();
+    expect(error!.message).toContain(`at most ${HEADLINE_MAX_CHARS} character(s)`);
+    expect(error!.message).toContain(
+      "for the full contract, including the rules the schema cannot state.",
+    );
   });
 });
 
