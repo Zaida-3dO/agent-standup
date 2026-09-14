@@ -122,6 +122,37 @@ export function actorLabel(event: SinceEvent): string {
 }
 
 /**
+ * `feed.events`, newest first, for display.
+ *
+ * **Why this exists as its own step, separate from the fetch.** `get_events`
+ * reads `WHERE id > since ORDER BY id ASC` (`readSinceBounded`) and hands
+ * back a cursor that is the slice's *highest* id, because paging here walks
+ * forward into newer events — see `SinceLastVisit.tsx`'s "Which direction
+ * 'more' goes". That ascending order is load-bearing for the cursor and the
+ * "Load newer entries" control and must not change. What was wrong was
+ * showing that same ascending order to a reader: a catch-up list's whole
+ * job is "what happened while I was away", and ascending order buries the
+ * answer at the bottom of up to 50 rows (Ope, 2026-09-14). So the reversal
+ * happens once, here, between the fetch and everything that renders —
+ * `groupByItem` still just takes whatever order it is given.
+ *
+ * Sorted on `id` rather than `ts`: `id` is the ledger's real total order —
+ * two events can share a millisecond timestamp, `id` cannot tie — and it is
+ * the same key the server itself orders by. `id` is a stringified `bigint`
+ * (JSON cannot carry one past 2^53), so the comparison goes through
+ * `BigInt` rather than a numeric or lexical string compare, either of which
+ * would misorder once ids run past a few digits' difference.
+ *
+ * A new array, not a mutation: `feed.events` is caller-held state (React or
+ * a test fixture) and sorting in place would corrupt whatever else holds a
+ * reference to it — the same reason `applySeen`/`appendPage` return rather
+ * than mutate.
+ */
+export function newestFirst(events: readonly SinceEvent[]): SinceEvent[] {
+  return [...events].sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? 1 : -1));
+}
+
+/**
  * The events grouped under the item they happened to, in the order those
  * items first appear.
  *
@@ -133,7 +164,8 @@ export function actorLabel(event: SinceEvent): string {
  * are real changes a reader wants to know about.
  *
  * Insertion order rather than sorted: the caller has already ordered the
- * feed, and re-sorting here would silently override whatever it chose.
+ * feed (see `newestFirst`), and re-sorting here would silently override
+ * whatever it chose.
  */
 export interface SinceGroup {
   readonly itemId: string | null;

@@ -8,7 +8,7 @@
 // is what actually proves these branches. `SinceLastVisit.tsx` is the thin
 // client container that fetches and hands this component its props.
 import type { SinceLoadState } from "@/lib/since/state";
-import { emptyStateMessage, groupByItem, unseenEventIds } from "@/lib/since/view";
+import { emptyStateMessage, groupByItem, newestFirst, unseenEventIds } from "@/lib/since/view";
 import { EventRow } from "./EventRow";
 import styles from "./SinceLastVisit.module.css";
 
@@ -59,7 +59,12 @@ export function SinceLastVisitView({
 
   const feed = loadState.feed;
   const empty = emptyStateMessage(feed);
-  const groups = groupByItem(feed.events);
+  // Newest first for display (Ope, 2026-09-14) — the fetch and its cursor
+  // stay ascending (see `newestFirst`'s header); only what is shown is
+  // reordered. `unseenEventIds` below still reads `feed.events` directly,
+  // not this reordered copy — "mark all" doesn't care what order the rows
+  // render in, only which ids are unseen.
+  const groups = groupByItem(newestFirst(feed.events));
   const unseen = unseenEventIds(feed.events);
   // The seen actions need somebody to attribute the read to — `personId`
   // is what `POST /events/{id}/seen` requires. With no profile chosen the
