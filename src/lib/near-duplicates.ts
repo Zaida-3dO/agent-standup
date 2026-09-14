@@ -18,8 +18,15 @@
 import type { PrismaClient } from "@prisma/client";
 import { listActiveAreas } from "./areas";
 
-/** Classic Levenshtein edit distance — insert/delete/substitute, unit cost. */
-function levenshtein(a: string, b: string): number {
+/**
+ * Classic Levenshtein edit distance — insert/delete/substitute, unit cost.
+ *
+ * Exported for reuse beyond this module's own near-duplicate scan: the
+ * refusal that lists valid repo ids (`../service/items/no-such-repo.ts`)
+ * orders its candidates by the same distance, so a caller who mistyped one
+ * character sees the likely match first rather than an alphabetical list.
+ */
+export function levenshtein(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
   if (m === 0) return n;

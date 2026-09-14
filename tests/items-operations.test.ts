@@ -652,6 +652,29 @@ describeIfDb("item service operations against Postgres", () => {
       const events = await eventsFor(created.id);
       expect(events).toHaveLength(1); // only the create event, nothing from the failed update
     });
+
+    // Ope, 2026-09-14 (closing `80c23a90-1070-4edf-b6c8-0a32209dca44`):
+    // `update_item`'s repo refusal names the valid repos against a real
+    // database, not just the fake-handle unit test in describe-tool.test.ts.
+    it("an unrecognised repo's refusal names an existing one, against a real database", async () => {
+      await runtime.call("create_repo", {
+        id: "repo-for-update-refusal",
+        displayName: "Findable",
+        defaultBranch: "main",
+      });
+      const created = (await runtime.call("create_item", {
+        title: "Refusal names the valid set",
+        body: "x",
+        area: "editing",
+        originType: "auto",
+      })) as { id: string };
+
+      const error = await runtime
+        .call("update_item", { id: created.id, repo: "no-such-repo-anywhere" })
+        .catch((e: unknown) => e);
+      expect((error as { code: string }).code).toBe("not_found");
+      expect((error as { message: string }).message).toContain("repo-for-update-refusal");
+    });
   });
 
   describe("list_items", () => {

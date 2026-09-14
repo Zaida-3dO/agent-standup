@@ -407,13 +407,22 @@ describe("describe_tool declares create_work's repo and headline rules", () => {
 });
 
 // The end-to-end refusal message: proves the same instruction reaches the
-// actual thrown error, not only the contract. Neither case needs a real
-// database — `create_work`'s repo lookup fails against `runtime()`'s inert
-// handle (any query returns []), and `update_item`'s case supplies a small
-// fake handle that answers the one `Item` lookup so the repo-refusal branch
-// is reached without a Postgres instance. Runs locally, ordinary unit test.
-describe("the repo refusal message names the MCP-reachable route, not just the bad input", () => {
-  it("create_work's refusal names get_board/list_items and marks list_repos non-MCP", async () => {
+// actual thrown error, not only the contract.
+//
+// Ope's 2026-09-14 decision (closing `80c23a90-1070-4edf-b6c8-0a32209dca44`)
+// changed what the *thrown* refusal says: it now names the valid repo ids
+// itself, rather than pointing at `get_board`/`list_items` as the only
+// MCP-reachable route to them. The contract prose above (the *static*
+// per-operation documentation) still names those routes as background — an
+// MCP caller has no other way to enumerate `Repo` before ever calling
+// `create_work`/`update_item` — but the live refusal is the enumeration now.
+//
+// Two shapes are exercised per operation: an empty `Repo` table (the inert
+// handle every other test in this file uses, and the honest "nothing is
+// registered yet" case), and a populated one built with a small fake handle,
+// which is also what proves the cap and the near-miss ordering.
+describe("the repo refusal message names the valid repo ids, not just the bad input", () => {
+  it("create_work's refusal reports 'no repos registered' against an empty table", async () => {
     const error = await refusal("create_work", {
       type: "project",
       title: "probe",
@@ -423,16 +432,93 @@ describe("the repo refusal message names the MCP-reachable route, not just the b
       repo: "definitely-not-a-real-repo-id",
     });
     expect(error.message).toContain("No such repo:");
-    expect(error.message).toContain("get_board");
-    expect(error.message).toContain("list_items");
-    expect(error.message).toContain("list_repos");
+    expect(error.message).toContain("No repos are registered yet");
+    expect(error.message).toContain("create_repo");
     expect(error.message).toContain("[http/cli]");
   });
 
-  it("update_item's refusal carries the identical two-route wording", async () => {
+  it("create_work's refusal lists valid ids, closest match first, when repos exist", async () => {
+    const repoIds = ["joda-creative-studio", "fynance", "agent-standup"];
+    const fakeHandle: TransactionHandle = {
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        // The existence check (`WHERE "id" = $1`) must miss — that is what
+        // triggers the refusal in the first place. Only the enumeration
+        // query (no `id` filter) sees the fake table.
+        if (query.includes('FROM "Repo"') && query.includes('"id" = $1')) return [] as T;
+        if (query.includes('FROM "Repo"')) return repoIds.map((id) => ({ id })) as T;
+        return [] as T;
+      },
+      $executeRawUnsafe: async (): Promise<number> => 0,
+    };
+    const fakeRuntime = new ServiceRuntime({
+      transaction: (body) => body(fakeHandle),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+    let error: NotFoundError | undefined;
+    try {
+      await fakeRuntime.call("create_work", {
+        type: "project",
+        title: "probe",
+        body: "probe",
+        area: "web",
+        originType: "auto",
+        // A case/punctuation slip on the real "joda-creative-studio" id —
+        // the near-miss case straight from the reported bug.
+        repo: "Joda-creative-studio",
+      });
+    } catch (caught) {
+      if (isServiceError(caught)) error = caught as NotFoundError;
+      else throw caught;
+    }
+    expect(error).toBeDefined();
+    expect(error!.message).toContain("No such repo: Joda-creative-studio");
+    // Closest match (one substitution away) leads the list.
+    const idx = (needle: string) => error!.message.indexOf(needle);
+    expect(idx("joda-creative-studio")).toBeGreaterThan(-1);
+    expect(idx("joda-creative-studio")).toBeLessThan(idx("fynance"));
+    expect(idx("joda-creative-studio")).toBeLessThan(idx("agent-standup"));
+  });
+
+  it("caps a long repo list and states how many more there are", async () => {
+    const repoIds = Array.from({ length: 15 }, (_, i) => `repo-${String(i).padStart(2, "0")}`);
+    const fakeHandle: TransactionHandle = {
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        if (query.includes('FROM "Repo"') && query.includes('"id" = $1')) return [] as T;
+        if (query.includes('FROM "Repo"')) return repoIds.map((id) => ({ id })) as T;
+        return [] as T;
+      },
+      $executeRawUnsafe: async (): Promise<number> => 0,
+    };
+    const fakeRuntime = new ServiceRuntime({
+      transaction: (body) => body(fakeHandle),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+    let error: NotFoundError | undefined;
+    try {
+      await fakeRuntime.call("create_work", {
+        type: "project",
+        title: "probe",
+        body: "probe",
+        area: "web",
+        originType: "auto",
+        repo: "not-a-real-repo",
+      });
+    } catch (caught) {
+      if (isServiceError(caught)) error = caught as NotFoundError;
+      else throw caught;
+    }
+    expect(error).toBeDefined();
+    // 15 repos, capped at 10 (no-such-repo.ts's MAX_LISTED_REPOS) leaves 5 more.
+    expect(error!.message).toContain("and 5 more");
+    // Not a dump of all 15 ids.
+    expect(error!.message).not.toContain("repo-14");
+  });
+
+  it("update_item's refusal carries the identical enumeration, not the static route wording", async () => {
     // No real database: a small fake handle answers the one `Item` lookup
-    // `update_item` makes before it ever reaches the repo check, so the
-    // repo-refusal branch is reached without a Postgres instance.
+    // `update_item` makes before it ever reaches the repo check, and the
+    // one `Repo` lookup that builds the valid-set list, so the repo-refusal
+    // branch is reached without a Postgres instance.
     const fakeItemRow = {
       id: "11111111-1111-1111-1111-111111111111",
       parentId: null,
@@ -454,9 +540,11 @@ describe("the repo refusal message names the MCP-reachable route, not just the b
       mergeAuthority: "pre_approved",
       customFields: null,
     };
+    const repoIds = ["joda-creative-studio", "fynance"];
     const fakeHandle: TransactionHandle = {
       $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
-        if (query.includes('FROM "Repo"')) return [] as T;
+        if (query.includes('FROM "Repo"') && query.includes('"id" = $1')) return [] as T;
+        if (query.includes('FROM "Repo"')) return repoIds.map((id) => ({ id })) as T;
         if (query.includes('FROM "Item"')) return [fakeItemRow] as T;
         return [] as T;
       },
@@ -478,10 +566,8 @@ describe("the repo refusal message names the MCP-reachable route, not just the b
     }
     expect(error).toBeDefined();
     expect(error!.message).toContain("No such repo:");
-    expect(error!.message).toContain("get_board");
-    expect(error!.message).toContain("list_items");
-    expect(error!.message).toContain("list_repos");
-    expect(error!.message).toContain("[http/cli]");
+    expect(error!.message).toContain("joda-creative-studio");
+    expect(error!.message).toContain("fynance");
   });
 });
 

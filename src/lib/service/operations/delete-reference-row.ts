@@ -56,6 +56,7 @@ import {
   type ReferenceCount,
   type ReferenceEntity,
 } from "../admin/reference-counts";
+import { noSuchRepoMessage } from "../items/no-such-repo";
 
 /** The guard name a refusal carries, so adapters compare it rather than prose. */
 export const REFERENCED_ROW_GUARD = "referenced_row_not_deletable";
@@ -153,7 +154,17 @@ async function deleteReferenceRow(
     id,
   );
   if (existing.length === 0) {
-    throw new NotFoundError(`No such ${words.noun}: ${id}.`, { fields: ["id"] });
+    // `repo` gets the enriched, valid-set-listing message (Ope, 2026-09-14 —
+    // see `../items/no-such-repo.ts`); `area` and `person` keep the plain
+    // form because neither has the same hole: an area is auto-created on
+    // first use (there is no "guess an existing one" step to help with), and
+    // a person is resolved from session identity or named by someone who
+    // already has the id from `list_people`/an existing item's attribution,
+    // not blind-guessed the way a repo id is.
+    throw new NotFoundError(
+      entity === "repo" ? await noSuchRepoMessage(ctx.db, id) : `No such ${words.noun}: ${id}.`,
+      { fields: ["id"] },
+    );
   }
 
   const counts = await countReferences(ctx, entity, id);

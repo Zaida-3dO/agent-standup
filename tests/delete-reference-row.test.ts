@@ -245,6 +245,34 @@ describeIfDb("hard-deleting a reference row", () => {
 
       expect(error).toMatchObject({ code: "not_found" });
     });
+
+    // Ope, 2026-09-14 (closing `80c23a90-1070-4edf-b6c8-0a32209dca44`): every
+    // "no such repo" refusal names the valid repos, not just this operation's
+    // reported case (`create_work`). `delete_repo` is one of the operations
+    // this criterion covers — it validates `id` against the same `Repo`
+    // table before it will touch anything.
+    it("delete_repo's not_found names a valid repo id, not just the bad one", async () => {
+      await insertRepo("repo-still-here");
+
+      const error = await runtime
+        .call("delete_repo", { id: "never-existed", hardDelete: true })
+        .catch((e) => e);
+
+      expect((error as { message: string }).message).toContain("repo-still-here");
+    });
+
+    // `area` and `person` are the sibling entities this same handler serves,
+    // and deliberately do NOT get the enriched message — see the comment at
+    // the throw site (`delete-reference-row.ts`). Pinned here so the
+    // asymmetry is a decision under test, not an accident that silently
+    // reverses later.
+    it("delete_area's not_found stays the plain form — an area is not blind-guessed", async () => {
+      const error = await runtime
+        .call("delete_area", { id: "never-existed-area", hardDelete: true })
+        .catch((e) => e);
+
+      expect((error as { message: string }).message).toBe("No such area: never-existed-area.");
+    });
   });
 
   describe("archiving remains the other operation", () => {
