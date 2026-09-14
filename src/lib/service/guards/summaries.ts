@@ -13,6 +13,10 @@
 // transition-and-complete operation directly, without going through the
 // guard registry at all, exactly as this file reuses it here.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+// The key name comes from the accepted-key table rather than a literal
+// here — see `../state-machine/transition-fields.ts` for why consumption
+// derives from declaration.
+import { TRANSITION_FIELD } from "../state-machine/transition-fields";
 import {
   COMPLETED_STATES as COMPLETED_STATE_LIST,
   DECISION_CHAR_CAP,
@@ -50,7 +54,7 @@ const COMPLETED_STATES = new Set<string>(COMPLETED_STATE_LIST);
  * rather than this function guessing at partial input.
  */
 function readCandidate(fields: Readonly<Record<string, unknown>>): SummaryCandidate | undefined {
-  const raw = fields.summary;
+  const raw = fields[TRANSITION_FIELD.summary];
   if (raw === null || raw === undefined || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   return {

@@ -15,6 +15,12 @@
 // (see transition.ts's own comment on why the clearing step is guarded by
 // `to`, not just `from`, for the reason that matters here).
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+// The literal key names come from the accepted-key table, not from string
+// literals here: a key this guard consumes but that table does not declare
+// would be refused at the door by `assertTransitionFieldsAccepted` and then
+// demanded by this guard — the contradiction the table exists to make
+// unrepresentable. See `../state-machine/transition-fields.ts`.
+import { TRANSITION_FIELD } from "../state-machine/transition-fields";
 
 const BLOCKED_ON_TYPES = ["person", "external_process", "time"] as const;
 const BLOCKED_ON_TYPES_SET: ReadonlySet<string> = new Set(BLOCKED_ON_TYPES);
@@ -66,7 +72,7 @@ export const blockedRequiredFieldsGuard: Guard = {
     "when the type is person or unblock_at when the type is time.",
   appliesTo: (_from, to) => to === "blocked",
   check(input: GuardInput) {
-    const onType = input.fields.blocked_on_type;
+    const onType = input.fields[TRANSITION_FIELD.blocked_on_type];
     const onTypeSupplied = onType !== undefined && onType !== null && onType !== "";
 
     // An invalid *value* is its own refusal — see the doc comment. Named
@@ -83,13 +89,18 @@ export const blockedRequiredFieldsGuard: Guard = {
     }
 
     const missing: string[] = [];
-    if (!isNonEmptyString(input.fields.blocked_reason)) missing.push("blocked_reason");
-    if (!onTypeSupplied) missing.push("blocked_on_type");
-    if (onType === "person" && !isNonEmptyString(input.fields.blocked_on_person)) {
-      missing.push("blocked_on_person");
+    if (!isNonEmptyString(input.fields[TRANSITION_FIELD.blocked_reason])) {
+      missing.push(TRANSITION_FIELD.blocked_reason);
     }
-    if (onType === "time" && !isPresentValue(input.fields.unblock_at)) {
-      missing.push("unblock_at");
+    if (!onTypeSupplied) missing.push(TRANSITION_FIELD.blocked_on_type);
+    if (
+      onType === "person" &&
+      !isNonEmptyString(input.fields[TRANSITION_FIELD.blocked_on_person])
+    ) {
+      missing.push(TRANSITION_FIELD.blocked_on_person);
+    }
+    if (onType === "time" && !isPresentValue(input.fields[TRANSITION_FIELD.unblock_at])) {
+      missing.push(TRANSITION_FIELD.unblock_at);
     }
 
     if (missing.length === 0) return guardOk;
@@ -99,10 +110,10 @@ export const blockedRequiredFieldsGuard: Guard = {
       // The full requirement set, so a caller can see what it is working
       // towards rather than inferring it from the subset this call missed.
       details: {
-        required: ["blocked_reason", "blocked_on_type"],
+        required: [TRANSITION_FIELD.blocked_reason, TRANSITION_FIELD.blocked_on_type],
         conditional: {
-          person: "blocked_on_person",
-          time: "unblock_at",
+          person: TRANSITION_FIELD.blocked_on_person,
+          time: TRANSITION_FIELD.unblock_at,
           external_process: null,
         },
       },
@@ -147,12 +158,14 @@ export const pausedRequiredFieldsGuard: Guard = {
   description: "Entering paused requires pause_reason and resume_condition.",
   appliesTo: (_from, to) => to === "paused",
   check(input: GuardInput) {
-    if (!isNonEmptyString(input.fields.pause_reason)) {
-      return guardRejected("paused requires pause_reason.", { fields: ["pause_reason"] });
+    if (!isNonEmptyString(input.fields[TRANSITION_FIELD.pause_reason])) {
+      return guardRejected("paused requires pause_reason.", {
+        fields: [TRANSITION_FIELD.pause_reason],
+      });
     }
-    if (!isNonEmptyString(input.fields.resume_condition)) {
+    if (!isNonEmptyString(input.fields[TRANSITION_FIELD.resume_condition])) {
       return guardRejected("paused requires resume_condition.", {
-        fields: ["resume_condition"],
+        fields: [TRANSITION_FIELD.resume_condition],
       });
     }
     return guardOk;

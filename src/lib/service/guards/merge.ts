@@ -40,6 +40,9 @@
 // satisfiable only by an act this guard's own message calls dishonest — which
 // is a hold that does not hold.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+// Key name from the accepted-key table, not a literal — see
+// `../state-machine/transition-fields.ts`.
+import { TRANSITION_FIELD } from "../state-machine/transition-fields";
 import {
   approvalsExistButNameNoCommit,
   currentTipCommitSha,
@@ -512,16 +515,31 @@ export const mergeRequiresVisualReviewGuard: Guard = {
     const atTip = await latestApprovalAtTip(input.db, input.item.id, "visual_review");
     if (!atTip) {
       const tip = await currentTipCommitSha(input.db, input.item.id);
+      // The same "this requirement does not apply here" exit the
+      // no-approval limb above already names.
+      //
+      // It was added there and not here, which left these two limbs telling
+      // a caller on a row with nothing to look at that their only way out
+      // was a re-review — of a UI that does not exist. A row whose
+      // `needsVisualReview` was set repo-wide reaches THIS branch just as
+      // easily as the one above: it only takes someone having recorded a
+      // visual_review once, before the commit that is now the tip. Naming
+      // one exit in one limb of a three-limbed guard is how a caller
+      // concludes the gate is unsatisfiable rather than misconfigured.
+      const doesNotApply =
+        " If this item has nothing to look at — a CI, release or workflow row — then the " +
+        "requirement does not apply and the flag is what is wrong: clear it with " +
+        "update_item {needsVisualReview: false} rather than recording a review nobody performed.";
       return guardRejected(
-        tip
+        (tip
           ? `The most recent visual_review approval is not for the last recorded commit ` +
-              `(${tip}) — "last recorded" because the tip is derived from this item's own commit ` +
-              `artifacts, not from the repository. If the approval names a commit that is a ` +
-              `DESCENDANT of that sha, nothing is stale and the ledger is simply behind: record ` +
-              `a commit artifact at the reviewed commit. Otherwise the item has moved since it ` +
-              `was visually approved — get it re-reviewed.`
+            `(${tip}) — "last recorded" because the tip is derived from this item's own commit ` +
+            `artifacts, not from the repository. If the approval names a commit that is a ` +
+            `DESCENDANT of that sha, nothing is stale and the ledger is simply behind: record ` +
+            `a commit artifact at the reviewed commit. Otherwise the item has moved since it ` +
+            `was visually approved — get it re-reviewed.`
           : "The most recent visual_review approval does not record which commit it applies to, " +
-              "so it cannot be trusted against the current tip. Get it re-reviewed.",
+            "so it cannot be trusted against the current tip. Get it re-reviewed.") + doesNotApply,
         { fields: ["state"] },
       );
     }
@@ -630,10 +648,10 @@ export const mergeRequiresAuthorisationGuard: Guard = {
     }
 
     // agent_judgement
-    if (!isNonEmptyString(input.fields.merge_rationale)) {
+    if (!isNonEmptyString(input.fields[TRANSITION_FIELD.merge_rationale])) {
       return guardRejected(
         "merge_authority is agent_judgement — merging requires a recorded one-line merge_rationale.",
-        { fields: ["merge_rationale"] },
+        { fields: [TRANSITION_FIELD.merge_rationale] },
       );
     }
     return guardOk;

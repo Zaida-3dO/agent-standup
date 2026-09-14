@@ -12,6 +12,10 @@ import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
 import { guardRegistry, runGuards, type GuardableItem, type GuardRegistry } from "./guard";
 import { isItemState, type ItemStateValue } from "./states";
 import type { ServiceContext } from "../context";
+// The six writable key names come from the accepted-key table rather than
+// literals here, so a column written from `fields` is by construction a key
+// the door accepts. See `./transition-fields.ts`.
+import { TRANSITION_FIELD } from "./transition-fields";
 
 export interface TransitionRequest {
   readonly itemId: string;
@@ -343,15 +347,23 @@ export async function applyTransition(
   // `CASE`, not this one's.
   const enteringBlocked = to === "blocked";
   const enteringPaused = to === "paused";
-  const blockedReason = enteringBlocked ? toNullableString(request.fields?.blocked_reason) : null;
-  const blockedOnType = enteringBlocked ? toNullableString(request.fields?.blocked_on_type) : null;
-  const blockedOnPersonId = enteringBlocked
-    ? toNullableString(request.fields?.blocked_on_person)
+  const blockedReason = enteringBlocked
+    ? toNullableString(request.fields?.[TRANSITION_FIELD.blocked_reason])
     : null;
-  const unblockAt = enteringBlocked ? toNullableDate(request.fields?.unblock_at) : null;
-  const pauseReason = enteringPaused ? toNullableString(request.fields?.pause_reason) : null;
+  const blockedOnType = enteringBlocked
+    ? toNullableString(request.fields?.[TRANSITION_FIELD.blocked_on_type])
+    : null;
+  const blockedOnPersonId = enteringBlocked
+    ? toNullableString(request.fields?.[TRANSITION_FIELD.blocked_on_person])
+    : null;
+  const unblockAt = enteringBlocked
+    ? toNullableDate(request.fields?.[TRANSITION_FIELD.unblock_at])
+    : null;
+  const pauseReason = enteringPaused
+    ? toNullableString(request.fields?.[TRANSITION_FIELD.pause_reason])
+    : null;
   const resumeCondition = enteringPaused
-    ? toNullableString(request.fields?.resume_condition)
+    ? toNullableString(request.fields?.[TRANSITION_FIELD.resume_condition])
     : null;
 
   await ctx.db.$executeRawUnsafe(

@@ -160,6 +160,21 @@ export const claim = defineOperation({
         rule: "ONE CREW PER ITEM. A claim is refused when the item's live assignments carry a different `rootSessionId` than this one. **`rootSessionId` defaults to your own `sessionId` when omitted**, which means a DISPATCHED agent claiming alongside its orchestrator must pass the orchestrator's session id explicitly — omit it and you declare yourself a second crew and are refused as one, even though you were sent to help. Pass the root of your own session tree, not your own id, whenever somebody else already holds the item.",
       },
       {
+        fields: ["itemId", "sessionId"],
+        // ── Word order here is load-bearing, not style ──────────────────
+        //
+        // `attributeTo` (`../describe/advice.ts`) binds a mentioned field
+        // to the LAST operation named before it in the text, which is how
+        // the prose reads. So the `claim` again clause has to come BEFORE
+        // the `force`/`reason` sentence: with the order reversed, the
+        // trailing mention of `claim` re-attributes `force` and `reason` to
+        // `claim`, which has no such keys, and `findAdviceDefects` reports
+        // a `parameter` defect that fails the build. That is the very
+        // defect class this rule was added to fix, so getting it wrong here
+        // would be the joke writing itself.
+        rule: "TAKING A HELD ITEM OVER. When `claims.one_crew_per_item` refuses this claim, the item belongs to another crew and no amount of re-claiming will win it — supersede the holder with `takeover {itemId, fromSessionId: <the holder's sessionId>, bySessionId: <yours>, holderType, holderId}`. A takeover releases the holder's assignment but does NOT assign the item to you, so call `claim` again afterwards to actually take it. When the holder is still live — liveness `running` or `stalled` rather than `dead` — `takeover` additionally requires `force: true` and a written `reason`, because taking work from a session that may still be doing it is a decision somebody has to own in the record.",
+      },
+      {
         fields: ["sessionId", "itemId"],
         rule: "ONE LIVE ROW PER SESSION PER ITEM. A session that already holds a live assignment on this item cannot claim a second one — change roles by releasing first. Enforced by a partial unique index rather than a pre-read, so it is decided by the database and refuses with `conflict` naming the row you already hold.",
       },

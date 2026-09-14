@@ -40,7 +40,7 @@ export const release = defineOperation({
       assignmentRequiredRule("a release"),
       {
         fields: ["itemId", "sessionId"],
-        rule: "A session can only release its OWN live row, which is why this takes an item plus your session rather than an assignment id. To end somebody else's claim you want `takeover` [http/cli], which is a different operation with its own guards — and it releases the holder without assigning the item to you, so it is not a way to release-and-claim in one call.",
+        rule: "A session can only release its OWN live row, which is why this takes an item plus your session rather than an assignment id. To end somebody else's claim you want `takeover`, which is a different operation with its own guards — and it releases the holder without assigning the item to you, so it is not a way to release-and-claim in one call.",
       },
     ],
     example: {

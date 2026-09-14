@@ -61,6 +61,9 @@
 // the mechanism it is built on top of already converts gaming into
 // visibility.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+// Key name from the accepted-key table, not a literal — see
+// `../state-machine/transition-fields.ts`.
+import { TRANSITION_FIELD } from "../state-machine/transition-fields";
 import type { NotDoneEntry } from "../summaries/validate";
 
 /** The four completed states (SCHEMA.md §1.1's "Completed" column). Matches `summaries.ts`'s own set. */
@@ -132,7 +135,7 @@ interface LinkedItemRow {
  * already parses as one of the three typed reasons.
  */
 function readNotDone(fields: Readonly<Record<string, unknown>>): NotDoneEntry[] {
-  const raw = fields.summary;
+  const raw = fields[TRANSITION_FIELD.summary];
   if (raw === null || raw === undefined || typeof raw !== "object") return [];
   const notDone = (raw as Record<string, unknown>).not_done;
   return Array.isArray(notDone) ? (notDone as NotDoneEntry[]) : [];
