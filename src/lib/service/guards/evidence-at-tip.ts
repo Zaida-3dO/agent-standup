@@ -77,12 +77,42 @@ export const evidenceAtTipGuard: Guard = {
       // a commit at all (unverifiable, and re-review is also the only way
       // out, but for a different reason worth naming honestly rather than
       // implying the plan moved when it may not have).
+      //
+      // ── Why the no-tip sentence blames the ITEM, not the approval ───────
+      //
+      // With no tip there is exactly ONE reachable situation, so this branch
+      // states it outright rather than hedging across two.
+      // `latestApprovalAtTip` walks EVERY approval and returns the first at
+      // the tip; with no `commit` artifact the tip is null, and
+      // `shaMatchesTipOrLineage` treats a null approval against a null tip
+      // as current. So an approval naming no commit ALWAYS satisfies this
+      // guard when the item has no commit, and the only way to arrive here
+      // with `tip === null` is for every approval to have named a sha — the
+      // approval is the specific record and the item is the empty one.
+      //
+      // Enumerated against real Postgres across all five no-commit shapes —
+      // all-null, all-named, and both mixed orderings — and in every shape
+      // that refused, the approvals named a commit. There is therefore no
+      // second case to branch on: a conditional here would be dead code,
+      // and `approvalsExistButNameNoCommit` (the helper `merge.ts` uses to
+      // draw this distinction on `code_review`, where a real tip makes both
+      // sides genuinely reachable) has nothing to distinguish on this path.
+      //
+      // The remedy named is therefore a `commit` artifact rather than a
+      // re-review. Nothing moved, so asking for re-review would send the
+      // reader to change a plan that was approved perfectly well, and the
+      // cheapest way to satisfy such a request is to attach a sha to a
+      // review that was not about it — putting something false in the
+      // ledger to clear a gate, which every refusal in this file is
+      // otherwise careful not to invite.
       return guardRejected(
         (tip
           ? `The most recent plan_review approval is not for the current tip commit (${tip}). ` +
             "The plan has moved since it was approved — get it re-reviewed."
-          : "The most recent plan_review approval does not record which commit it applies to, " +
-            "so it cannot be trusted against the current tip. Get the plan re-reviewed.") +
+          : "The most recent plan_review approval names a commit, but this item records no " +
+            "`commit` artifact for it to be checked against. This is not staleness — nothing " +
+            "has moved, and the approval is not the vague one here. Record a `commit` " +
+            "artifact for the commit that was approved and this approval applies to it.") +
           // Named here because without it this refusal is absolute: a caller
           // who judges the plan has not materially moved has no way to say so
           // and no way past. The block still stands — it is a block someone

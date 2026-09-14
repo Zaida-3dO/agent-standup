@@ -181,6 +181,46 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(kindField?.enumValues).toContain("check_run");
   });
 
+  it("tells a caller that only commitSha is read as evidence and ref is not", async () => {
+    // `ref` and `commitSha` both accept a sha and both store it without
+    // complaint, but every evidence gate reads `commitSha` alone. A caller
+    // who puts the sha in `ref` is refused later by a guard that reports the
+    // artifact as naming no commit — which is true, and unguessable from the
+    // write surface. This cost a real transition (item 78d144ee) before the
+    // rule existed.
+    //
+    // Asserted through `contractFor`, the same renderer a caller reaches, so
+    // this fails if the rule is dropped from RECORD_ARTIFACT_CONTRACT.rules
+    // or if the rules array stops being served — not merely if a string
+    // vanishes from the source file.
+    const contract = await contractFor("record_artifact");
+
+    const rule = contract.rules.find(
+      (entry) => entry.fields.includes("ref") && entry.fields.includes("commitSha"),
+    );
+    expect(rule).toBeDefined();
+
+    // The asymmetry itself, which is the whole point of the rule: a reader
+    // who comes away thinking either field will do has learned nothing.
+    // Single-character mutation this catches: dropping `"commitSha"` from
+    // that rule's `fields` array leaves `rule` undefined and fails above;
+    // rewording the text to stop naming the gates fails here.
+    expect(rule!.rule).toMatch(/only `?commitSha`?/i);
+    for (const gate of [
+      "artifact.evidence_at_tip",
+      "merge.requires_approving_code_review",
+      "merge.requires_authorisation",
+    ]) {
+      expect(rule!.rule, gate).toContain(gate);
+    }
+
+    // Both fields are really on this operation — a rule contrasting a field
+    // the caller cannot pass would be documentation for nothing.
+    expect(contract.fields.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(["ref", "commitSha"]),
+    );
+  });
+
   it("gives record_artifact.findings a concrete type, an element shape and a worked example", async () => {
     // Row 94eed34b: `findings` was declared `z.unknown()`, so this field
     // reported `type: "unknown"` with `rules: []` on a tool where every

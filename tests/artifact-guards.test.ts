@@ -457,6 +457,113 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
       expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
     });
 
+    it("ALLOWS: a genuinely fresh item — approved plan, no sha, no commit artifact — so the guard is not unsatisfiable at the only moment this transition is taken", async () => {
+      // Pins the finding that killed this row's original premise. The claim
+      // under investigation was that `artifact.evidence_at_tip` demands
+      // evidence at a tip that cannot exist on `plan_review -> executing`,
+      // since an item about to start executing has produced no commit. It
+      // does not: `shaMatchesTipOrLineage` treats a null approval against a
+      // null tip as current, so the fresh shape passes untouched.
+      //
+      // This test exists so that stops being a thing anyone has to
+      // rediscover by probing. If a later change makes the guard fire on
+      // fresh items — the failure mode that would block every first build —
+      // this goes red rather than being found by three crews in a wave.
+      // Single-character mutation it catches: flipping `candidate === null`
+      // to `candidate !== null` in shaMatchesTipOrLineage's tip-null arm.
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: null,
+      });
+
+      await callTransition(id, "executing", reg);
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("REFUSES an approval that names a sha on an item with no commit artifact, and blames the MISSING COMMIT rather than the approval", async () => {
+      // With no `commit` artifact the tip is null, and the only way to reach
+      // a refusal here is for the approval to have named a sha — so the
+      // approval is the one thing that IS specific, and the item is what
+      // records nothing. A refusal saying the approval "does not record
+      // which commit it applies to" would therefore be describing the
+      // situation backwards, and would send a reader to re-review a plan
+      // that was approved perfectly well when the missing row is a commit
+      // artifact.
+      //
+      // The negative assertion is the load-bearing half: an allow/refuse or
+      // guard-id-only test passes against a wrong sentence indefinitely.
+      // Single-character mutation this catches:
+      // negating `approvalNamesNoCommit` in evidence-at-tip.ts swaps the two
+      // branches and fails both the positive and negative assertions below.
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "commit-a",
+      });
+
+      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
+      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const message = (error as { message: string }).message;
+      // Names the real gap: the item records no commit artifact.
+      expect(message).toContain("records no");
+      expect(message).toContain("commit");
+      // And does NOT assert the backwards thing about the approval, nor
+      // claim staleness — nothing moved.
+      expect(message).not.toContain("does not record which commit it applies to");
+      expect(message).not.toContain("has moved since it was approved");
+      expect(await readState(id)).toBe("plan_review");
+    });
+
+    it("ALLOWS a no-sha approval on a commitless item even when an OLDER approval named a sha — which is what makes the refusal above have only one meaning", async () => {
+      // This is the test that licenses the single unconditional sentence in
+      // the no-tip refusal. `latestApprovalAtTip` walks every approval and
+      // returns the first at the tip, so on a commitless item ANY approval
+      // carrying a null sha satisfies the guard — regardless of what the
+      // other approvals say. Enumerating all five no-commit shapes against
+      // Postgres showed the refusal fires only when EVERY approval names a
+      // sha, so "the approval does not record which commit it applies to"
+      // was not merely backwards on this path, it was unreachable.
+      //
+      // Pinned because it is the premise the message depends on. If a change
+      // ever makes a null-sha approval stop qualifying here, the no-tip
+      // refusal silently acquires a second meaning and its now-unconditional
+      // sentence starts lying again — this test goes red first.
+      // Single-character mutation it catches: `return candidate === null` to
+      // `return candidate !== null` in shaMatchesTipOrLineage's tip-null arm.
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "commit-a",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: null,
+        createdAt: new Date(),
+      });
+
+      await callTransition(id, "executing", reg);
+      expect(await readState(id)).toBe("executing");
+    });
+
     it("does not reject when there is no approval at all — that is plan_approval.ts's rejection, not this guard's", async () => {
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
