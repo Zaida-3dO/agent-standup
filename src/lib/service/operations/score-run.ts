@@ -165,10 +165,60 @@ async function assertFacetsDeclared(
 // import, before any test body runs — a mutation here is unkillable by
 // construction rather than untested. See
 // `scripts/check-operation-metadata-mutants.mjs`.
+/**
+ * The rules a caller cannot read off the schema — chiefly what one entry of
+ * `scores` contains, which the type name `array<object>` does not say.
+ *
+ * Every vocabulary here is INTERPOLATED from the constant the handler
+ * enforces, never retyped, so the documented facets and the documented range
+ * cannot drift from the ones a caller is actually refused by.
+ */
+const SCORE_RUN_CONTRACT = {
+  rules: [
+    {
+      fields: ["scores", "scores.facet", "scores.score"],
+      rule:
+        "`scores` is an array of objects, each with exactly two keys: `facet`, one of " +
+        `${FACETS.join(", ")}; and \`score\`, an integer from ${MIN_RUN_SCORE} to ` +
+        `${MAX_RUN_SCORE} inclusive. Both are required, and no other key is accepted — the ` +
+        "element is strict, so a misspelled or extra key is refused rather than ignored. Send " +
+        `between 1 and ${FACETS.length} entries, and name each facet at most once; the write is ` +
+        "keyed on (run, facet), so a repeated facet would silently decide its own winner. " +
+        'Example: [{"facet": "reasoning", "score": 4}, {"facet": "precision", "score": 3}].',
+    },
+    {
+      fields: ["scores", "scores.facet"],
+      rule:
+        "Only a facet the item DECLARED may be scored, and an undeclared one is refused by " +
+        "name. An item that declared nothing is unconstrained — that permissive branch is " +
+        "deliberate, because an item declaring any facet at all is the exception.",
+    },
+    {
+      fields: ["raterType", "raterId"],
+      rule:
+        "`raterId` is required when `raterType` is `person`, and is the id recorded as who " +
+        "judged: two people may score the same work differently and collapsing them loses that.",
+    },
+    {
+      fields: ["raterType", "scores"],
+      rule:
+        "An agent score is FROZEN once written. A second write of a facet already carrying an " +
+        "agent score is refused rather than merged, because that number is the only copy of " +
+        "what the agent thought. A person score may be rewritten freely.",
+    },
+  ],
+  example: {
+    runId: "run_7f3a",
+    raterType: "agent",
+    scores: [{ facet: FACETS[0], score: MAX_RUN_SCORE - 1 }],
+  },
+} as const;
+
 export const scoreRun = defineOperation({
   name: "score_run",
   kind: "write",
   summary: "Records how a run went per facet. The agent score is frozen once written.",
+  contract: SCORE_RUN_CONTRACT,
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ScoreRunInput): Promise<ScoreRunOutput> {

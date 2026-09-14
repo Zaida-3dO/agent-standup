@@ -200,7 +200,19 @@ export interface ToolContract {
   readonly summary: string;
   /** How to call it on each surface, so a caller is not left translating. */
   readonly invocation: SurfaceSpelling;
-  /** Every field of the input, read off the schema it is rejected by. */
+  /**
+   * Every field of the input, read off the schema it is rejected by.
+   *
+   * Flat by design: a nested parameter renders as `array<object>` or
+   * `object` and stops, because `fields.ts` deliberately does not
+   * reimplement JSON Schema. **A nested field's element shape is documented
+   * in `rules` instead, keyed by the field name** — either naming it
+   * outright or addressing a key inside it through a dotted path such as
+   * `scores.facet`. So a caller who needs the element of an `array<object>`
+   * reads the rules of the same response, not a deeper type. A required
+   * `array<object>` with no such rule is a documentation defect and the
+   * advice sweep fails the build on it.
+   */
   readonly fields: readonly FieldDescriptor[];
   /**
    * The rules the schema cannot express, **as the operation declares them**.

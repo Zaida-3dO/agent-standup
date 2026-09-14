@@ -94,10 +94,61 @@ interface InsertedRow {
 // Stryker disable all : module-level metadata read into the registry at
 // import, before any test body runs. See
 // `scripts/check-operation-metadata-mutants.mjs`.
+/**
+ * What one `captures` entry contains — the fact `array<object>` withholds.
+ *
+ * The outcome vocabulary is interpolated from `INTERVENTION_OUTCOMES`, the
+ * same constant the schema enforces, so the documented set cannot drift from
+ * the accepted one.
+ */
+const RECORD_INTERVENTION_CONTRACT = {
+  rules: [
+    {
+      fields: ["captures", "captures.entryId", "captures.outcome"],
+      rule:
+        "`captures` is an array of objects, one per intervention that fired in a single " +
+        "decision. Each entry REQUIRES `entryId` (the catalogue entry that fired), `outcome` " +
+        `(one of ${INTERVENTION_OUTCOMES.join(", ")}), \`level\`, and \`phase\`. Each may also ` +
+        "carry `itemId`, `tool`, `command`, `message` and `overrideReason`. The element is " +
+        "strict: an extra or misspelled key is refused, not dropped. Example: " +
+        '[{"entryId": "broad-git-add-on-shared-checkout", "outcome": "blocked", ' +
+        '"level": "block-overridable", "phase": "pre", "tool": "Bash"}].',
+    },
+    {
+      fields: ["captures", "captures.overrideReason"],
+      rule:
+        `Send between 1 and 50 entries — one decision produces at most one entry per catalogue ` +
+        "entry, so a larger batch is a malformed caller rather than a busy one. Set " +
+        "`overrideReason` only on an entry whose `outcome` is `overridden`: it is the record of " +
+        "why a block was walked past, and it is the only place that reason survives.",
+    },
+    {
+      fields: ["sessionId", "rootSessionId"],
+      rule:
+        "`sessionId` is whose decision this was, and sits on the envelope rather than on each " +
+        "entry because one call carries one session's single decision. Pass `rootSessionId` too " +
+        "when the session is part of a crew, so firings can be surveyed per crew rather than " +
+        "per agent.",
+    },
+  ],
+  example: {
+    sessionId: "sess_4b19",
+    captures: [
+      {
+        entryId: "broad-process-kill",
+        outcome: INTERVENTION_OUTCOMES[2],
+        level: "block-overridable",
+        phase: "pre",
+      },
+    ],
+  },
+} as const;
+
 export const recordIntervention = defineOperation({
   name: "record_intervention",
   kind: "write",
   summary: "Records intervention firings from one decision, so they can be surveyed and scored.",
+  contract: RECORD_INTERVENTION_CONTRACT,
   // Stryker restore all
   input: inputSchema,
   async handler(
