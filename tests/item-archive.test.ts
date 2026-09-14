@@ -1204,6 +1204,17 @@ describeIfDb("delete_item", () => {
         // operation ranges over no set of items, and there is no id to leak
         // *into* — the caller already has to know it.
         "get_item_body",
+        // Reads one item's artifacts **by id**, paged — the same shape and
+        // the same reason as the two reads immediately above. Reaching an
+        // archived item by an id already in hand still resolves, and its
+        // artifacts are exactly the record of how it was planned, reviewed
+        // and closed, which is the audit trail archiving must not destroy.
+        // It ranges over no set of items, so there is nothing for an
+        // archived row to leak *into*: every result is scoped to the one
+        // `itemId` the caller supplied, and `artifactId` is scoped to that
+        // item too, so an artifact id from elsewhere returns nothing rather
+        // than reading across.
+        "get_item_artifacts",
         // Aggregates intervention firings per catalogue entry. It ranges
         // over `intervention_events` and `intervention_scores` and returns
         // counts keyed by entry id — the same "ranges over no items" reason

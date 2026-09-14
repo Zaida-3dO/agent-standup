@@ -16,9 +16,10 @@
 // **A waiver can also be wrong for a reason §22's bound does not catch.** The
 // bound asks whether a *guard* loses coverage. It does not ask whether the
 // operation is the remedy a guard's own refusal text tells an agent to
-// perform. Two operations were waived from both MCP transports under one
-// shared sentence — "structural repair — person-driven surgery" — which
-// reads as obviously right and was not for either of them:
+// perform. Three operations were waived from an MCP transport under a
+// sentence that reads as obviously right and was right for none of them —
+// two under "structural repair — person-driven surgery", one under "a
+// user-interface read":
 //
 //   - `reparent_item`. `deferral.follow_up_must_be_blocked` refuses a
 //     completion whose follow-up is parented underneath the work and ends
@@ -27,13 +28,28 @@
 //   - `takeover`. `claims.one_crew_per_item` refuses a claim on a held item
 //     and ends "Take it over through supersession rather than claiming
 //     alongside it." Only `takeover` performs that.
+//   - `get_item_history`. A third instance, found the same way and removed
+//     for the same reason. It was waived as "a user-interface read" backing
+//     the Activity tab, and the operative half of that reason was simply
+//     false: it claimed "an agent asks about its own work with get_item,
+//     my_work and progress_report", and none of those three returns the
+//     body text of a note or a checkpoint for an arbitrary item. So when
+//     the response-size guard refused `get_item_detail` on a long-lived
+//     item, the only call that could still reach that item's notes was off
+//     the caller's surface. Two separate sessions reported it: one tried
+//     six routes and found nothing, another lost a spec it had written
+//     into a note. Un-waived here, which is what lets the refusal advice
+//     in `response-size.ts` name it as a remedy at all — `advice.ts`'s
+//     `unreachable` check fails the build on advice naming a waived tool,
+//     so the waiver and the advice are now coupled in the build rather
+//     than by anyone remembering.
 //
-// In both cases the refusal is raised by an operation MCP *does* expose
-// (`complete_item`, `claim`), so the audience for the prescribing sentence
-// is an agent on the MCP surface. The waivers therefore left registered
+// In every case the refusal is raised by an operation MCP *does* expose
+// (`complete_item`, `claim`, `get_item_detail`), so the audience for the
+// prescribing sentence is an agent on the MCP surface. The waivers therefore left registered
 // guards instructing an agent to do the one thing its surface could not do
-// — and the two costs were different in kind, which is why neither was
-// caught by the other's absence. The `reparent_item` gap stranded an item
+// — and the costs were different in kind each time, which is why no one of
+// them was caught by another's absence. The `reparent_item` gap stranded an item
 // and every follow-up beneath it below any terminal state reachable by an
 // agent. The `takeover` gap sent two separate sessions hunting for a tool
 // named "supersession", and both independently settled on calling `release`
@@ -683,21 +699,6 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
   {
     adapter: "mcp_stdio",
     operation: "get_needs_you",
-    reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
-  },
-  {
-    adapter: "mcp_http",
-    operation: "get_item_history",
-    reason:
-      "A user-interface read (§22 names 'the board is a user-interface read' as the archetypal " +
-      "waiver). This one backs a specific screen — the needs-you inbox, the Activity tab's paging, " +
-      "the unread marker — and its shape is chosen for that screen rather than for a session. An " +
-      "agent asks about its own work with get_item, my_work and progress_report. It runs no state " +
-      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
-  },
-  {
-    adapter: "mcp_stdio",
-    operation: "get_item_history",
     reason: "Same as mcp_http — one MCP surface, two transports, same reasoning.",
   },
   {

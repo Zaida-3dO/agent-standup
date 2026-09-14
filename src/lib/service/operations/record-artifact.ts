@@ -52,7 +52,7 @@ import { resolveItemId } from "../items/resolve-id";
  * without a decision about what it means here is a compile-time mismatch in
  * the tests, not a silently-accepted string.
  */
-const ARTIFACT_KINDS = [
+export const ARTIFACT_KINDS = [
   "plan",
   "plan_review",
   "code_review",
