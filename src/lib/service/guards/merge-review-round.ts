@@ -38,6 +38,47 @@ export async function currentReviewRound(db: TransactionHandle, itemId: string):
   return rows[0]?.reviewRound ?? 1;
 }
 
+interface KindAtRoundRow {
+  kind: string;
+}
+
+/**
+ * The artifact **kinds** sitting at `round` for the item, newest first.
+ *
+ * Exists only so a refusal can name the thing that moved the round.
+ * `currentReviewRound` above answers "what round is it" with a bare number.
+ * A bare number is the whole of what a refusal resting on it can say, and
+ * that is precisely what makes the round limb easy to misdiagnose. "The item is at round 2" is true and useless; "round 2 was set by a
+ * `check_run`" is the sentence that ends the investigation, because it names
+ * a row the reader can go and look at and tells them nothing about the code
+ * changed.
+ *
+ * Purely diagnostic: **no guard verdict depends on this**, and nothing here
+ * is consulted before deciding to refuse. It runs only on a branch that has
+ * already decided to refuse, to choose words.
+ *
+ * Not scoped by verdict or by kind, deliberately — the point is to report
+ * whatever actually carries the max round, including the non-review kinds
+ * (`commit`, `check_run`, `historical_verification`) that are the usual
+ * cause and the ones a reader is least likely to suspect.
+ */
+export async function artifactKindsAtRound(
+  db: TransactionHandle,
+  itemId: string,
+  round: number,
+): Promise<string[]> {
+  const rows = await db.$queryRawUnsafe<KindAtRoundRow[]>(
+    `SELECT DISTINCT "kind"::text AS "kind", MAX("seq") AS "seq"
+       FROM "Artifact"
+      WHERE "itemId" = $1 AND "reviewRound" = $2
+      GROUP BY "kind"
+      ORDER BY MAX("seq") DESC`,
+    itemId,
+    round,
+  );
+  return rows.map((row) => row.kind);
+}
+
 export interface ArtifactRow {
   id: string;
   verdict: string | null;
@@ -124,10 +165,112 @@ export async function approvingArtifactAtCurrentRoundAndTip(
   itemId: string,
   kind: string,
 ): Promise<ArtifactRow | null> {
+  const resolution = await resolveApprovingArtifactAtCurrentRoundAndTip(db, itemId, kind);
+  return resolution.matched ?? null;
+}
+
+/**
+ * The same question as `approvingArtifactAtCurrentRoundAndTip`, answered with
+ * **which of its three conjuncts failed** instead of a bare `null`.
+ *
+ * This function decides nothing. `matched` is exactly the row the older
+ * function returns — same query, same ordering, same comparison — so a caller
+ * that reads only `matched` is byte-identical in behaviour to one calling the
+ * older function, which is why the older function is now a wrapper over this
+ * one rather than a parallel implementation. **Everything else on the result
+ * is words for a refusal that has already been decided.**
+ *
+ * It exists because "not at the current round and tip" is a conjunction of
+ * three genuinely different situations, and collapsing them to `null` threw
+ * away the only fact a reader needed:
+ *
+ * - **`none`** — no approving artifact of `kind` at this round at all. The
+ *   review may exist at another round, or not exist.
+ * - **`round`** — an approving artifact exists, but at a lower round. Nothing
+ *   is stale; the item's round moved out from under a review that was never
+ *   compared against a commit at all. `roundSetBy` names the kinds sitting at
+ *   the current round, which is the sentence that identifies the culprit:
+ *   the round is `MAX(reviewRound)` across **every** kind, so a `check_run`
+ *   or a `commit` recorded after an approval silently demotes it.
+ * - **`sha`** — an approving artifact exists at the right round, but its
+ *   `commitSha` does not match the tip or its lineage. This is the only one
+ *   of the three that is actually staleness, and the only one where "the item
+ *   moved since it was approved" is a true sentence.
+ *
+ * The distinction is not cosmetic. A refusal that says "not for the current
+ * review round (2) and last recorded commit (abc123)" describes all three at
+ * once and therefore describes none of them: a reader hunting a sha mismatch
+ * when the real cause was a `check_run` bumping the round finds nothing wrong
+ * with the sha, because nothing is wrong with the sha.
+ */
+export interface ApprovalResolution {
+  /**
+   * The qualifying row, or `null`. **The complete verdict** — every other
+   * field on this object is diagnostic and must not be consulted to decide
+   * whether to allow. `null` here is exactly the `null` the wrapper returns.
+   */
+  matched: ArtifactRow | null;
+  /**
+   * Which conjunct failed, or `null` when `matched` is non-null. Ordered by
+   * how the check actually proceeds: existence, then round, then sha.
+   */
+  failedOn: "none" | "round" | "sha" | null;
+  /** The item's current review round — `MAX(reviewRound)` across all kinds. */
+  round: number;
+  /** The item's tip commit sha, or `null` when no `commit` artifact exists. */
+  tip: string | null;
+  /**
+   * The artifact kinds sitting at the current round, newest first. Populated
+   * only for `failedOn: "round"`, where naming them is the entire point.
+   */
+  roundSetBy: string[];
+  /**
+   * Rounds at which an approving artifact of `kind` does exist, with the sha
+   * each names. Populated only for `failedOn: "round"` — it is what lets a
+   * refusal say "your review is at round 1" rather than leaving the reader to
+   * discover that themselves.
+   */
+  approvalsAtOtherRounds: { round: number; commitSha: string | null }[];
+  /**
+   * The sha the newest same-round approval names, for `failedOn: "sha"`.
+   * `null` both when no approval names one and when this is not the sha case.
+   */
+  reviewedSha: string | null;
+}
+
+export async function resolveApprovingArtifactAtCurrentRoundAndTip(
+  db: TransactionHandle,
+  itemId: string,
+  kind: string,
+): Promise<ApprovalResolution> {
   const round = await currentReviewRound(db, itemId);
   const rows = await approvingArtifactsAtRound(db, itemId, kind, round);
   if (rows.length === 0) {
-    return null;
+    // Nothing approving at THIS round. Distinguish "approved at an earlier
+    // round and demoted" from "never approved" — the caller's refusal reads
+    // completely differently for the two, and only the first one has a cheap
+    // remedy (re-record the review at the current round).
+    const elsewhere = await approvingArtifactsAtOtherRounds(db, itemId, kind, round);
+    if (elsewhere.length === 0) {
+      return {
+        matched: null,
+        failedOn: "none",
+        round,
+        tip: await currentTipCommitSha(db, itemId),
+        roundSetBy: [],
+        approvalsAtOtherRounds: [],
+        reviewedSha: null,
+      };
+    }
+    return {
+      matched: null,
+      failedOn: "round",
+      round,
+      tip: await currentTipCommitSha(db, itemId),
+      roundSetBy: await artifactKindsAtRound(db, itemId, round),
+      approvalsAtOtherRounds: elsewhere,
+      reviewedSha: null,
+    };
   }
   const tip = await currentTipCommitSha(db, itemId);
   // "At the tip" is the tip **or any sha the tip was declared a rewrite of**
@@ -155,7 +298,60 @@ export async function approvingArtifactAtCurrentRoundAndTip(
   // of the tip. Row `e09aa150` proved this concretely: the same approval
   // that `latestApprovalAtTip` matched (routed through `shaMatches`) was
   // refused here while this function still compared shas directly.
-  return rows.find((row) => shaMatchesTipOrLineage(row.commitSha, tip, lineage)) ?? null;
+  const matched = rows.find((row) => shaMatchesTipOrLineage(row.commitSha, tip, lineage)) ?? null;
+  if (matched) {
+    return {
+      matched,
+      failedOn: null,
+      round,
+      tip,
+      roundSetBy: [],
+      approvalsAtOtherRounds: [],
+      reviewedSha: matched.commitSha,
+    };
+  }
+  // Approving artifacts exist at the right round; none is at the tip. This is
+  // the genuine staleness case — the one place the word "stale" is honest.
+  return {
+    matched: null,
+    failedOn: "sha",
+    round,
+    tip,
+    roundSetBy: [],
+    approvalsAtOtherRounds: [],
+    reviewedSha: rows[0]?.commitSha ?? null,
+  };
+}
+
+interface OtherRoundRow {
+  reviewRound: number;
+  commitSha: string | null;
+}
+
+/**
+ * Approving artifacts of `kind` at rounds **other than** `round`, newest
+ * first. Diagnostic only, and queried only once the current round has already
+ * come up empty — it answers "so where IS the review, then", which is the
+ * question a reader asks next and would otherwise answer by hand.
+ */
+async function approvingArtifactsAtOtherRounds(
+  db: TransactionHandle,
+  itemId: string,
+  kind: string,
+  round: number,
+): Promise<{ round: number; commitSha: string | null }[]> {
+  const rows = await db.$queryRawUnsafe<OtherRoundRow[]>(
+    `SELECT "reviewRound", "commitSha"
+       FROM "Artifact"
+      WHERE "itemId" = $1 AND "kind" = $2::"ArtifactKind"
+        AND "reviewRound" <> $3 AND "verdict" = ANY($4::"Verdict"[])
+      ORDER BY "reviewRound" DESC, "createdAt" DESC, "seq" DESC`,
+    itemId,
+    kind,
+    round,
+    APPROVING_VERDICTS,
+  );
+  return rows.map((row) => ({ round: row.reviewRound, commitSha: row.commitSha }));
 }
 
 /**

@@ -60,7 +60,10 @@ import {
   blockingFindings,
   describeBlockingFindings,
 } from "./merge-findings";
-import { approvingArtifactAtCurrentRoundAndTip, currentReviewRound } from "./merge-review-round";
+import {
+  approvingArtifactAtCurrentRoundAndTip,
+  resolveApprovingArtifactAtCurrentRoundAndTip,
+} from "./merge-review-round";
 import { APPROVING_VERDICTS, requiresLinkedFollowUp } from "../../verdicts";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement"]);
@@ -266,15 +269,27 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
         { fields: ["state"] },
       );
     }
-    const resolvedApproval = await approvingArtifactAtCurrentRoundAndTip(
+    // Resolved through the diagnostic form, which returns the SAME row this
+    // clause always rested on (`resolution.matched`) plus which of its three
+    // conjuncts failed. The verdict is unchanged — `matched` is exactly what
+    // `approvingArtifactAtCurrentRoundAndTip` returns, and that function is
+    // now a wrapper over this call. Only the refusal wording below differs,
+    // and only on a branch that had already decided to refuse.
+    //
+    // `resolvedApproval` stays the full `ArtifactRow`, not a boolean: the
+    // severity clause further down grades `resolvedApproval.findings` against
+    // the very artifact this clause came to rest on, and collapsing it here
+    // would silently disable that gate.
+    const resolution = await resolveApprovingArtifactAtCurrentRoundAndTip(
       input.db,
       input.item.id,
       "code_review",
     );
+    const resolvedApproval = resolution.matched;
     const atCurrentRoundAndTip = resolvedApproval !== null;
     if (!atCurrentRoundAndTip) {
-      const round = await currentReviewRound(input.db, input.item.id);
-      const tip = await currentTipCommitSha(input.db, input.item.id);
+      const round = resolution.round;
+      const tip = resolution.tip;
 
       // ── The "reviewed nothing in particular" case ─────────────────────
       //
@@ -306,6 +321,60 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
             `re-record it with commitSha set; if the work is not about a commit at all, that is ` +
             `what ${HISTORICAL_VERIFICATION_KIND} and ${MERGE_OVERRIDE_KIND} are for. ` +
             OVERRIDE_REMEDY,
+          { fields: ["state"] },
+        );
+      }
+
+      // ── The round-drift case ──────────────────────────────────────────
+      //
+      // An approving review exists and names a commit; it is simply at a
+      // LOWER round than the item now sits at. Nothing here is staleness —
+      // the sha was never even compared, because the round conjunct failed
+      // first. The generic message below says "not for the current review
+      // round (N) and last recorded commit (S)", which describes a sha
+      // mismatch and a round mismatch with the same words, and that single
+      // ambiguity cost seven separate investigations: each one went looking
+      // for a moved commit, found the shas matching perfectly, and concluded
+      // the guard was broken.
+      //
+      // What actually happened is that `currentReviewRound` is
+      // `MAX(reviewRound)` across EVERY artifact kind (see its doc), so a
+      // `check_run`, a `commit` or a `historical_verification` recorded after
+      // an approval pushes the item to a new round and demotes that approval
+      // without touching a line of code. Naming the kind that did it is the
+      // one fact that ends the search, so this branch says it outright.
+      //
+      // The verdict is deliberately NOT changed. Cross-kind round drift is
+      // load-bearing: it is the mechanism by which a higher-round
+      // verification demotes an `lgtm_with_followups` whose follow-up is dead
+      // (see the cluster in tests/merge-guards.test.ts). Making an orphaned
+      // review qualify again would convert refusals into merges. The remedy
+      // offered is therefore the honest cheap one — re-record the review at
+      // the round that is actually current.
+      if (resolution.failedOn === "round") {
+        const approvals = resolution.approvalsAtOtherRounds;
+        const where = approvals
+          .map(
+            (a) =>
+              `round ${a.round}${a.commitSha ? ` naming sha ${a.commitSha}` : " naming no sha"}`,
+          )
+          .join(", ");
+        const movers = resolution.roundSetBy.filter((k) => k !== "code_review");
+        const blame =
+          movers.length > 0
+            ? `Round ${round} was set by ${movers.map((k) => `\`${k}\``).join(", ")}.`
+            : `Round ${round} was set by another artifact on this item.`;
+        return guardRejected(
+          `An approving code_review exists for this item at ${where}, but the item is now at ` +
+            `review round ${round}, so that approval does not qualify. ${blame} ` +
+            "This is NOT staleness: the review's commit was never compared against the tip " +
+            `(last recorded commit ${tip ?? "none"}) — the round check failed first. The item's ` +
+            "review round is MAX(review_round) across EVERY artifact kind, so recording a " +
+            "non-review artifact after a review demotes that review without anything about the " +
+            "code changing. Re-record the code_review at round " +
+            `${round} if it still applies to the current commit, or, if review really was ` +
+            "re-requested, get the re-review that the new round is asking for." +
+            ` ${OVERRIDE_REMEDY}`,
           { fields: ["state"] },
         );
       }

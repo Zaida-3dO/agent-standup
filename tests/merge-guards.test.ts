@@ -301,8 +301,115 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         fields?: readonly string[];
       };
       expect(error.guard).toBe("merge.requires_approving_code_review");
-      expect(error.message).toMatch(/not for the current review round \(2\)/);
+      // The VERDICT is what this test is for — a genuine re-review at a
+      // higher round outranks the earlier approval, which is the whole point
+      // of the round-currency clause. The wording assertions below only
+      // require the refusal to name the round limb explicitly, since a
+      // sentence that describes a round mismatch and a sha mismatch in the
+      // same words identifies neither.
+      expect(error.message).toMatch(/review round 2/);
+      expect(error.message).toMatch(/round 1/);
+      // And it must not call this staleness — nothing about the commit moved.
+      expect(error.message).toContain("NOT staleness");
       expect(error.fields).toEqual(["state"]);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    // ── The round limb names WHICH artifact kind moved the round ─────────
+    //
+    // Occurrence seven's shape, and the reason this whole row exists. An
+    // honest code_review approves at round 1 naming the exact sha that is
+    // also the tip; a `check_run` then lands at round 2 and silently demotes
+    // it. A refusal phrased as "not for the current review round (2) and
+    // last recorded commit (9a2d2df...)" invites the reader to check the
+    // sha, find it matching perfectly, and conclude the guard is broken. It
+    // is not — the ROUND conjunct failed, and the sha was never compared at
+    // all. Seven separate investigations went that way.
+    //
+    // The verdict here is deliberately unchanged: this still REFUSES, and it
+    // should, because cross-kind round drift is the mechanism by which a
+    // higher-round verification demotes a dead-follow-up lgtm_with_followups.
+    // What this test pins is that the refusal now says which limb failed and
+    // names the kind that did it.
+    it("REFUSES on the ROUND limb and names the artifact kind that moved the round — a check_run demoting a matching review", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      const sha = "9a2d2df75a0f49da5aedfe37d26f77801431dc48";
+      await createArtifact({ itemId: id, kind: "commit", commitSha: sha, reviewRound: 1 });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: sha,
+        reviewRound: 1,
+      });
+      // The demoting artifact. Not a review, carries no verdict on the code,
+      // and names the very same commit — nothing about the work changed.
+      await createArtifact({ itemId: id, kind: "check_run", commitSha: sha, reviewRound: 2 });
+
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_approving_code_review");
+      // The one word that would have ended all seven investigations.
+      expect(error.message).toContain("check_run");
+      // Both rounds named, so the reader can see the drift without querying.
+      expect(error.message).toMatch(/round 1/);
+      expect(error.message).toMatch(/review round 2/);
+      // The reviewed sha is reported as what it is — a match, not a mismatch.
+      expect(error.message).toContain(sha);
+      // And the refusal must NOT send the reader hunting a moved commit.
+      expect(error.message).toContain("NOT staleness");
+      expect(error.message).not.toMatch(/has moved since it was approved/);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    // ── The sha limb — occurrence SIX, the one true positive ──────────────
+    //
+    // THE acceptance-criteria test. Of the seven firings investigated, six
+    // were misdiagnoses and this one was correct: a review at sha S, a commit
+    // at a different sha F, no `supersedesSha` linking them, same round. The
+    // work really did move past its review and the guard was right to refuse.
+    //
+    // It asserts the LIMB, not merely refuse/allow. An allow/refuse-only test
+    // would keep passing for the wrong reason if a later change routed this
+    // into the round limb or the null-tip branch, which is exactly the class
+    // of silent regression this row's diagnosis work is meant to prevent.
+    it("REFUSES on the SHA limb — a review at one commit, a later unrelated commit at the tip (occurrence six)", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      const reviewedSha = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
+      const fixSha = "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1";
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        commitSha: reviewedSha,
+        reviewRound: 1,
+      });
+      // No `supersedesSha`: this is genuinely new work, not a rewrite of the
+      // reviewed commit, so the lineage is {fixSha} alone and the approval
+      // correctly fails to match it.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: fixSha,
+        reviewRound: 1,
+      });
+
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_approving_code_review");
+      // The sha limb, not the round limb — both shas named, and the message
+      // is the staleness one, because here staleness is the honest word.
+      expect(error.message).toContain(fixSha);
+      expect(error.message).toContain("has moved since it was approved");
+      expect(error.message).not.toContain("NOT staleness");
       expect(await readState(id)).toBe("in_review");
     });
 
