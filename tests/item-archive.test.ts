@@ -1254,6 +1254,22 @@ describeIfDb("delete_item", () => {
         // id is in the row regardless. The `item_archived` test below pins
         // this direction, since exempting it here means the sweep does not.
         "get_activity",
+        // Reads the same append-only ledger as `get_events` and
+        // `get_activity` above, and is exempt on the identical argument: it
+        // returns events, never items. Its answer is computed by
+        // `crewSlice` (`@/lib/crew/wait-core`), which reads through
+        // `readSinceBounded` and filters by event *type* — it never selects
+        // from `Item`, never joins to it, and returns no item field beyond
+        // the `itemId` already stamped on each ledger row.
+        //
+        // The direction that matters more here is the opposite one, and it
+        // is why this must not be swept: an orchestrator waiting on crew
+        // has to be woken by an event even when the item it concerns is
+        // later archived. Suppressing those rows would make a wait go quiet
+        // exactly when something notable happened to the work, which is the
+        // supervision gap the wait exists to close. What archiving withholds
+        // is the row from item reads, not its history from the ledger.
+        "wait_for_crew",
         // Resolves one session **by id** and reports that session's own
         // assignments, tool calls and newest ledger slice. Two reasons it
         // is exempt rather than swept, and they point the same way: it
