@@ -205,15 +205,36 @@ runs only when something invokes it. Measured on an installation running without
 one: the first manual sweep released **174** stale claims that had been sitting
 for three days, every one of them blocking ownership of its item.
 
-**Running it is the deployment's job, and this compose file ships nothing to do
-it.** The application deliberately has no internal timer. It runs as a bundle
-that may be one replica or several, so a timer inside it fires once _per
-replica_ — a multiple of the intended rate on a scaled deployment, or not at all
-if the replica holding it is the one that restarted — and neither mistake
-produces any output to notice. Invoke it from outside the process, where there
-is exactly one of whatever you choose.
+**The application deliberately has no internal timer.** It runs as a bundle that
+may be one replica or several, so a timer inside it fires once _per replica_ — a
+multiple of the intended rate on a scaled deployment, or not at all if the
+replica holding it is the one that restarted — and neither mistake produces any
+output to notice. Invoke it from outside the process, where there is exactly one
+of whatever you choose.
 
-Either surface works, and nothing in the application distinguishes the callers:
+`docker-compose.prod.yml` ships a `sweep-scheduler` service that does exactly
+that: the same image, one replica, `node scripts/sweep-schedule.mjs`. It needs
+its own machine entry in `STANDUP_TOKENS` and that machine's token in
+`SWEEP_TOKEN`:
+
+```bash
+STANDUP_TOKENS=browser:AAA,laptop:BBB,sweeper:CCC
+SWEEP_TOKEN=CCC
+```
+
+**It proves it can authenticate before it schedules anything** — one real
+`{"dryRun": true}` sweep at startup, which writes nothing — and refuses to start
+if the server rejects the token. A 401 or 403 at any later point is fatal too,
+because a revoked or mistyped token will never start working on its own; every
+other failure (the app restarting, a timeout, a 500) is retried at the next tick.
+That asymmetry matters because of how a scheduler fails badly: one that treats a
+rejected credential as retryable logs a 401 every tick, sits `Up` in `docker ps`,
+and sweeps exactly zero times while looking correctly configured. A scheduler
+that reports healthy while doing nothing is worse than no scheduler, so an
+unusable credential stops it outright.
+
+If you would rather run it from outside compose, either surface works and
+nothing in the application distinguishes the callers:
 
 ```bash
 # Host cron, every five minutes — over HTTP:

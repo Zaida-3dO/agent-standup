@@ -48,22 +48,28 @@ function assignment(overrides: Partial<FleetAssignment> = {}): FleetAssignment {
 }
 
 describe("groupByLiveness", () => {
-  it("returns all four bands even when every one is empty", () => {
+  // Every row here is fresh unless a test says otherwise, so grouping is by
+  // the stored column and the derived `overdue` band stays empty.
+  const NOW = Date.parse("2026-08-18T12:00:00.000Z");
+  const DEAD_AFTER = 1800; // 30 minutes
+  const FRESH = "2026-08-18T11:59:00.000Z";
+
+  it("returns all five bands even when every one is empty", () => {
     // Breaks if: bands are filtered to only those with matches — the whole
     // point is a reader sees "Dead (0)" rather than the band disappearing.
-    const groups = groupByLiveness([]);
+    const groups = groupByLiveness([], NOW, DEAD_AFTER);
     expect(groups.map((g) => g.liveness)).toEqual(LIVENESS_BANDS);
     expect(groups.every((g) => g.assignments.length === 0)).toBe(true);
   });
 
-  it("buckets each assignment under its own liveness, in band order", () => {
+  it("buckets each fresh assignment under its own liveness, in band order", () => {
     const rows = [
-      assignment({ id: "a1", liveness: "dead" }),
-      assignment({ id: "a2", liveness: "running" }),
-      assignment({ id: "a3", liveness: "superseded" }),
-      assignment({ id: "a4", liveness: "stalled" }),
+      assignment({ id: "a1", liveness: "dead", lastActive: FRESH }),
+      assignment({ id: "a2", liveness: "running", lastActive: FRESH }),
+      assignment({ id: "a3", liveness: "superseded", lastActive: FRESH }),
+      assignment({ id: "a4", liveness: "stalled", lastActive: FRESH }),
     ];
-    const groups = groupByLiveness(rows);
+    const groups = groupByLiveness(rows, NOW, DEAD_AFTER);
     expect(groups.find((g) => g.liveness === "running")!.assignments.map((a) => a.id)).toEqual([
       "a2",
     ]);
@@ -76,9 +82,84 @@ describe("groupByLiveness", () => {
     ]);
   });
 
-  it("labels every liveness value distinctly", () => {
+  it("labels every band distinctly", () => {
     const labels = LIVENESS_BANDS.map(livenessLabel);
-    expect(new Set(labels).size).toBe(4);
+    expect(new Set(labels).size).toBe(5);
+  });
+
+  // ---- The bug Ope reported: "Running (27)" over 27 days-dead rows. ----
+
+  it("does NOT count a stale row under Running, even though the column still says running", () => {
+    // THE regression test. Breaks if `groupByLiveness` goes back to
+    // `a.liveness === liveness` — the stale row would reappear under
+    // Running, which is exactly the count that could not be trusted.
+    const rows = [
+      assignment({ id: "live", liveness: "running", lastActive: FRESH }),
+      assignment({ id: "phantom", liveness: "running", lastActive: "2026-08-15T12:00:00.000Z" }),
+    ];
+    const groups = groupByLiveness(rows, NOW, DEAD_AFTER);
+    expect(groups.find((g) => g.liveness === "running")!.assignments.map((a) => a.id)).toEqual([
+      "live",
+    ]);
+    expect(groups.find((g) => g.liveness === "overdue")!.assignments.map((a) => a.id)).toEqual([
+      "phantom",
+    ]);
+  });
+
+  it("moves a stale `stalled` row out of Stalled and into Overdue too", () => {
+    const rows = [
+      assignment({ id: "s", liveness: "stalled", lastActive: "2026-08-15T12:00:00.000Z" }),
+    ];
+    const groups = groupByLiveness(rows, NOW, DEAD_AFTER);
+    expect(groups.find((g) => g.liveness === "stalled")!.assignments).toHaveLength(0);
+    expect(groups.find((g) => g.liveness === "overdue")!.assignments.map((a) => a.id)).toEqual([
+      "s",
+    ]);
+  });
+
+  it("leaves an already-dead row in Dead rather than re-banding it as overdue", () => {
+    // A row the ladder already moved IS dead; `overdue` is for rows the
+    // ladder has not caught up with. Breaks if `bandOf` stops deferring to
+    // `isOverdueForSweep`'s dead/superseded exclusion.
+    const rows = [
+      assignment({ id: "d", liveness: "dead", lastActive: "2026-08-15T12:00:00.000Z" }),
+      assignment({ id: "sup", liveness: "superseded", lastActive: "2026-08-15T12:00:00.000Z" }),
+    ];
+    const groups = groupByLiveness(rows, NOW, DEAD_AFTER);
+    expect(groups.find((g) => g.liveness === "dead")!.assignments.map((a) => a.id)).toEqual(["d"]);
+    expect(groups.find((g) => g.liveness === "superseded")!.assignments.map((a) => a.id)).toEqual([
+      "sup",
+    ]);
+    expect(groups.find((g) => g.liveness === "overdue")!.assignments).toHaveLength(0);
+  });
+
+  it("every row lands in exactly one band, so the counts sum to the total", () => {
+    // Breaks if a row could match two bands: the sum would exceed the input
+    // length, which is the arithmetic a reader does when they add the
+    // headings up and compare against "N live assignments".
+    const rows = [
+      assignment({ id: "a", liveness: "running", lastActive: FRESH }),
+      assignment({ id: "b", liveness: "running", lastActive: "2026-08-15T12:00:00.000Z" }),
+      assignment({ id: "c", liveness: "stalled", lastActive: FRESH }),
+      assignment({ id: "d", liveness: "dead", lastActive: "2026-08-15T12:00:00.000Z" }),
+      assignment({ id: "e", liveness: "superseded", lastActive: FRESH }),
+    ];
+    const groups = groupByLiveness(rows, NOW, DEAD_AFTER);
+    const total = groups.reduce((sum, g) => sum + g.assignments.length, 0);
+    expect(total).toBe(rows.length);
+  });
+
+  it("bands by the same predicate the row flag uses, so heading and flag cannot disagree", () => {
+    // The UI contradicting itself on one screen was the reported symptom:
+    // the row said "overdue for sweep" while the heading counted it Running.
+    const rows = [
+      assignment({ id: "x", liveness: "running", lastActive: "2026-08-18T11:29:00.000Z" }),
+    ];
+    const flagged = isOverdueForSweep(rows[0]!, NOW, DEAD_AFTER);
+    const banded =
+      groupByLiveness(rows, NOW, DEAD_AFTER).find((g) => g.liveness === "overdue")!.assignments
+        .length === 1;
+    expect(banded).toBe(flagged);
   });
 });
 

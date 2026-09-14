@@ -102,7 +102,7 @@ export function FleetView({
 
   const all = loadState.assignments;
   const filtered = filterFleet(all, filters);
-  const groups = groupByLiveness(filtered);
+  const groups = groupByLiveness(filtered, now, deadAfterSeconds);
   const hasFilter = filters.machine !== null || filters.agent !== null;
 
   return (
