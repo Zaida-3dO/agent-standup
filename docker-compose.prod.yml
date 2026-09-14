@@ -102,3 +102,42 @@ services:
       # otherwise report as unhealthy while it's actually still booting
       # correctly.
       start_period: 240s
+
+  # The liveness sweep. **A deployment that never runs the sweep leaks claims
+  # that can never be handed back** — a session that crashes rather than
+  # releasing leaves its claim behind, and every later claim on that item is
+  # refused as already-held. Measured on an installation running without one:
+  # the first manual sweep released 174 stale claims sitting for three days.
+  #
+  # Its own service rather than a timer inside the app, because the app may
+  # run as several replicas and an internal timer fires once per replica (a
+  # multiple of the intended rate) or not at all (if the replica holding it
+  # restarted). There is exactly one of this.
+  #
+  # **It needs its own entry in STANDUP_TOKENS.** POST /api/sweep
+  # authenticates like every other route. Give it a machine name of its own
+  # (`sweeper` below) so it can be revoked without touching any other
+  # machine's token, and so an automatic release is attributable.
+  #
+  # It verifies it can authenticate at startup — one real `dryRun` sweep that
+  # writes nothing — and REFUSES TO START if the server rejects the token. A
+  # 401 mid-run is likewise fatal. This is deliberate: a scheduler that treats
+  # a rejected credential as retryable would sit `Up` forever, sweeping zero
+  # times while looking correctly configured. `restart: unless-stopped` turns
+  # a broken credential into a visible restart loop instead.
+  sweep-scheduler:
+    container_name: agent-standup-sweep
+    image: ${GHCR_IMAGE:?Set GHCR_IMAGE in .env.production, e.g. ghcr.io/OWNER/agent-standup:latest}
+    restart: unless-stopped
+    command: ["node", "scripts/sweep-schedule.mjs"]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      # The app over the compose network — not the published host port.
+      STANDUP_URL: ${SWEEP_URL:-http://agent-standup:3000}
+      # Must match one `machine:token` pair in STANDUP_TOKENS above.
+      STANDUP_TOKEN: ${SWEEP_TOKEN:?Set SWEEP_TOKEN in .env.production to the token whose machine name is the sweeper's, and add that machine to STANDUP_TOKENS}
+      SWEEP_INTERVAL_SECONDS: ${SWEEP_INTERVAL_SECONDS:-300}
+      SWEEP_TIMEOUT_SECONDS: ${SWEEP_TIMEOUT_SECONDS:-30}
+      TZ: ${TZ:-UTC}

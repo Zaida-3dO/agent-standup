@@ -105,7 +105,17 @@ describe("FleetView — loading and error", () => {
 });
 
 describe("FleetView — grouping, M10 T16's central requirement", () => {
-  it("renders all four liveness groups even when three of them are empty", () => {
+  /** The band each rendered section is for, in render order. */
+  function bandsOf(element: ReturnType<typeof FleetView>): string[] {
+    return [...walk(element)]
+      .filter(
+        (el) =>
+          (el.props as { "data-liveness-group"?: string })["data-liveness-group"] !== undefined,
+      )
+      .map((el) => (el.props as { "data-liveness-group": string })["data-liveness-group"]);
+  }
+
+  it("renders all five bands even when four of them are empty", () => {
     // Breaks if: empty bands are filtered out of the render — a reader
     // asking "is anything dead" would then see no evidence either way.
     const loadState: FleetLoadState = {
@@ -113,14 +123,39 @@ describe("FleetView — grouping, M10 T16's central requirement", () => {
       assignments: [assignment({ liveness: "running" })],
     };
     const element = FleetView({ ...baseViewProps, loadState });
-    const groupSections = [...walk(element)].filter(
+    expect(bandsOf(element)).toEqual(["running", "overdue", "stalled", "dead", "superseded"]);
+  });
+
+  it("counts a days-quiet row under Overdue, not Running, before any sweep has run", () => {
+    // The reported bug, at the component layer: the heading said
+    // "Running (N)" over rows the same screen was flagging as overdue for
+    // sweep. `liveness: "running"` is the STORED column, and with no sweep
+    // having run it is stale — so the row must not be counted as running.
+    //
+    // Breaks if FleetView stops passing `now`/`deadAfterSeconds` into
+    // `groupByLiveness`: the row would land back under "running".
+    const loadState: FleetLoadState = {
+      status: "loaded",
+      assignments: [
+        // 2 hours quiet against a 30-minute dead threshold.
+        assignment({ id: "phantom", liveness: "running", lastActive: "2026-08-18T10:00:00.000Z" }),
+        assignment({ id: "live", liveness: "running", lastActive: "2026-08-18T11:59:00.000Z" }),
+      ],
+    };
+    const element = FleetView({ ...baseViewProps, loadState });
+    const sections = [...walk(element)].filter(
       (el) => (el.props as { "data-liveness-group"?: string })["data-liveness-group"] !== undefined,
     );
-    expect(
-      groupSections.map(
-        (el) => (el.props as { "data-liveness-group": string })["data-liveness-group"],
-      ),
-    ).toEqual(["running", "stalled", "dead", "superseded"]);
+    const bandRows = (band: string) =>
+      findAllByType(
+        sections.find(
+          (el) => (el.props as { "data-liveness-group": string })["data-liveness-group"] === band,
+        )!,
+        FleetRow,
+      ).map((r) => (r.props as { assignment: FleetAssignment }).assignment.id);
+
+    expect(bandRows("running")).toEqual(["live"]);
+    expect(bandRows("overdue")).toEqual(["phantom"]);
   });
 
   it("hands one FleetRow per assignment, distinguishing all four liveness values", () => {

@@ -14,39 +14,91 @@
 // gained by pushing the filter to the server.
 import type { FleetAssignment, Liveness } from "./types";
 
-/** Liveness bands, in the order the fleet page groups and shows them. */
-export const LIVENESS_BANDS: readonly Liveness[] = ["running", "stalled", "dead", "superseded"];
+/**
+ * The display-only band key. Every `Liveness` value is a band, plus one that
+ * is **not** a liveness value and deliberately cannot be: `overdue`.
+ *
+ * `Liveness` is the stored `Assignment.liveness` column's type, shared with
+ * the board. `overdue` is a band the fleet page *derives* at render time from
+ * `lastActive` and the dead threshold — nothing writes it, no row holds it,
+ * and adding it to `Liveness` would claim the sweep can produce a rung it
+ * cannot. Keeping it out of that union is what stops this display concern
+ * from leaking into the ladder.
+ */
+export type FleetBand = Liveness | "overdue";
 
-const LIVENESS_LABELS: Readonly<Record<Liveness, string>> = {
+/** Bands in the order the fleet page groups and shows them. */
+export const LIVENESS_BANDS: readonly FleetBand[] = [
+  "running",
+  "overdue",
+  "stalled",
+  "dead",
+  "superseded",
+];
+
+const LIVENESS_LABELS: Readonly<Record<FleetBand, string>> = {
   running: "Running",
+  overdue: "Overdue for sweep",
   stalled: "Stalled",
   dead: "Dead",
   superseded: "Superseded",
 };
 
-export function livenessLabel(liveness: Liveness): string {
+export function livenessLabel(liveness: FleetBand): string {
   return LIVENESS_LABELS[liveness];
 }
 
-/** One liveness band, with its assignments in the order the read returned them. */
+/** One band, with its assignments in the order the read returned them. */
 export interface FleetGroup {
-  readonly liveness: Liveness;
+  readonly liveness: FleetBand;
   readonly label: string;
   readonly assignments: readonly FleetAssignment[];
 }
 
 /**
- * Groups assignments by liveness, in `LIVENESS_BANDS` order — **every band
+ * The band a row belongs in: its stored liveness, **except** that a row the
+ * sweep would already have moved is banded `overdue` instead.
+ *
+ * This is the fix for the count Ope could not trust. `Assignment.liveness` is
+ * a stored column advanced only by the sweep, so between sweeps it reports
+ * the last sweep's verdict, not the current one — and with no sweep ever
+ * having run, it reported "running" for sessions that had been gone for days.
+ * The page already knew better per-row (`isOverdueForSweep` drew the flag on
+ * the row) while the heading above went on counting those same rows under
+ * "Running". Banding here is what makes the heading agree with the flag.
+ */
+export function bandOf(
+  assignment: FleetAssignment,
+  now: number,
+  deadAfterSeconds: number,
+): FleetBand {
+  return isOverdueForSweep(assignment, now, deadAfterSeconds) ? "overdue" : assignment.liveness;
+}
+
+/**
+ * Groups assignments by band, in `LIVENESS_BANDS` order — **every band
  * present, even empty ones.** A `dead` band that disappears when nothing is
  * dead is exactly the state this screen exists to make visible reliably: a
  * reader scanning for "is anything dead right now" should see "Dead (0)"
  * rather than wonder whether the band was ever going to render at all.
+ *
+ * Takes `now` and `deadAfterSeconds` because the `overdue` band is derived
+ * rather than stored — see `bandOf`. They are required rather than optional
+ * on purpose: an overload defaulting to "band by the stored column" would let
+ * a caller opt back into a count that cannot be trusted simply by not passing
+ * them, and a correctness property that holds only when the caller remembers
+ * an argument is not a property.
  */
-export function groupByLiveness(assignments: readonly FleetAssignment[]): FleetGroup[] {
+export function groupByLiveness(
+  assignments: readonly FleetAssignment[],
+  now: number,
+  deadAfterSeconds: number,
+): FleetGroup[] {
+  const bands = assignments.map((a) => bandOf(a, now, deadAfterSeconds));
   return LIVENESS_BANDS.map((liveness) => ({
     liveness,
     label: livenessLabel(liveness),
-    assignments: assignments.filter((a) => a.liveness === liveness),
+    assignments: assignments.filter((_, i) => bands[i] === liveness),
   }));
 }
 
