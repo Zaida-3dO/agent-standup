@@ -45,10 +45,13 @@
 //
 //   - Having `onApprove` close over a stale id — the recurring defect —
 //     fails "approves the row that was pressed, not the first row".
-//   - Dropping `deciding` from the row props, or making it global rather
-//     than per-item, fails "disables only the row being decided".
-//   - Posting to `/deny` from the approve handler fails the same test.
-//   - Not clearing `deciding` after a failed decision fails "re-enables the
+//   - Dropping `busy` from the row props, or making it global rather than
+//     per-item, fails "disables only the row being decided".
+//   - Recording a `code_review` instead of a `merge_approval` for a
+//     `needs_approval` row fails "approves the row that was pressed" — the
+//     kind is asserted at this seam too, because it is the difference
+//     between a click that lands the merge and one that cannot.
+//   - Not clearing `busy` after a failed decision fails "re-enables the
 //     row after a refusal", which is what would otherwise strand a phone
 //     user on a dead row with no way to retry.
 import { createElement, StrictMode } from "react";
@@ -77,6 +80,10 @@ const ITEMS = [
     mergeAuthority: "needs_approval",
     updatedAt: "2026-08-25T09:00:00.000Z",
     blockedReason: null,
+    needsVisualReview: false,
+    // Both rows carry a commit, because a merge approval names the sha it
+    // applies to and a row without one offers no approve button at all.
+    tipCommitSha: "1111111111111111111111111111111111111111",
   },
   {
     id: "second-row",
@@ -87,14 +94,34 @@ const ITEMS = [
     mergeAuthority: "needs_approval",
     updatedAt: "2026-08-25T09:00:00.000Z",
     blockedReason: null,
+    needsVisualReview: false,
+    tipCommitSha: "2222222222222222222222222222222222222222",
   },
 ];
+
+/**
+ * Two rows waiting on a *look* rather than on a merge decision — the case
+ * that has a rejecting control. `needs_approval` deliberately has none (an
+ * approval is withheld, not refused on the record), so the "reject the row
+ * that was pressed" wiring is exercised on the reason that actually offers
+ * it.
+ */
+const VISUAL_ITEMS = ITEMS.map((item) => ({
+  ...item,
+  reason: "needs_visual_review",
+  mergeAuthority: "agent_judgement",
+  needsVisualReview: true,
+}));
+
+/** What the next `GET /needs-you` answers with. Replaced per test. */
+let inboxItems: Record<string, unknown>[] = ITEMS;
 
 beforeEach(() => {
   // React 19 reads this to decide it is in a test environment; without it
   // `act` warns and the scheduling paths are not the ones we mean to drive.
   (globalThis as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   writes.length = 0;
+  inboxItems = ITEMS;
   decideResponse = { ok: true, status: 200, body: { ok: true } };
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -109,7 +136,7 @@ beforeEach(() => {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ items: ITEMS, total: ITEMS.length }),
+          json: () => Promise.resolve({ items: inboxItems, total: inboxItems.length }),
         } as Response);
       }
 
@@ -198,8 +225,10 @@ describe("deciding from the inbox", () => {
 
     // Guards the guard: if the rows never rendered, every assertion below
     // would pass vacuously by finding zero buttons and clicking nothing.
-    expect(buttonsLabelled("Approve")).toHaveLength(2);
-    expect(buttonsLabelled("Deny")).toHaveLength(2);
+    expect(buttonsLabelled("Approve merge")).toHaveLength(2);
+    // No rejecting control on a merge authorisation: it is given or
+    // withheld, never refused on the record.
+    expect(buttonsLabelled("Deny")).toHaveLength(0);
   });
 
   it("approves the row that was pressed, not the first row", async () => {
@@ -208,7 +237,7 @@ describe("deciding from the inbox", () => {
     // The second one, deliberately: a handler closing over a stale id — the
     // defect that has shipped three times — sends the first row's id here
     // and passes any test that only ever presses the first button.
-    await click(buttonsLabelled("Approve")[1]!);
+    await click(buttonsLabelled("Approve merge")[1]!);
 
     // An approval records an artifact and then transitions, so more than one
     // write is expected — the point is WHICH row every one of them names.
@@ -217,7 +246,17 @@ describe("deciding from the inbox", () => {
       expect(write.url).toContain("second-row");
       expect(write.url).not.toContain("first-row");
     }
-    expect(writes[0]!.body).toMatchObject({ verdict: "lgtm" });
+    // The kind and the sha, asserted at this seam as well as in the unit
+    // test: this is the only place that proves the sha travelling with the
+    // approval is the PRESSED row's, not the first row's. A handler closing
+    // over a stale item would pin a human's authorisation to another item's
+    // commit while still posting to the right URL.
+    expect(writes[0]!.body).toMatchObject({
+      kind: "merge_approval",
+      createdByType: "person",
+      createdById: "ope",
+      commitSha: "2222222222222222222222222222222222222222",
+    });
 
     // The transition carries the row's OWN server-reported state as its
     // precondition (#257/#292). Asserted here rather than only in
@@ -232,16 +271,22 @@ describe("deciding from the inbox", () => {
     expect(transition!.body).toMatchObject({ to: "merged", expectedFrom: "in_review" });
   });
 
-  it("denies the row that was pressed, and does not approve it", async () => {
+  it("rejects the row that was pressed, and does not approve it", async () => {
+    // Exercised on the visual-review reason, which is the one with a
+    // rejecting control.
+    inboxItems = VISUAL_ITEMS;
     await mountInbox();
 
-    await click(buttonsLabelled("Deny")[1]!);
+    await click(buttonsLabelled("Needs changes")[1]!);
 
     expect(writes[0]!.url).toContain("second-row");
-    // Approve and Deny post to the SAME endpoint and differ only in the
+    // Approve and reject post to the SAME endpoint and differ only in the
     // verdict they carry, so the id alone cannot tell them apart — a handler
     // wired to the wrong one is invisible to a test that checks only the id.
-    expect(writes[0]!.body).toMatchObject({ verdict: "changes_required" });
+    expect(writes[0]!.body).toMatchObject({
+      kind: "visual_review",
+      verdict: "changes_required",
+    });
     expect(writes[0]!.body).not.toMatchObject({ verdict: "lgtm" });
   });
 
@@ -257,7 +302,7 @@ describe("deciding from the inbox", () => {
           return Promise.resolve({
             ok: true,
             status: 200,
-            json: () => Promise.resolve({ items: ITEMS, total: ITEMS.length }),
+            json: () => Promise.resolve({ items: inboxItems, total: inboxItems.length }),
           } as Response);
         }
         writes.push({ method, url, body: null });
@@ -268,10 +313,10 @@ describe("deciding from the inbox", () => {
     );
 
     await mountInbox();
-    const approves = buttonsLabelled("Approve");
+    const approves = buttonsLabelled("Approve merge");
     await click(approves[1]!);
 
-    const after = buttonsLabelled("Approve");
+    const after = buttonsLabelled("Approve merge");
     // The pressed row is locked...
     expect(after[1]!.disabled).toBe(true);
     // ...and the other row is emphatically not: a global flag here would
@@ -293,10 +338,48 @@ describe("deciding from the inbox", () => {
     };
 
     await mountInbox();
-    await click(buttonsLabelled("Approve")[1]!);
+    await click(buttonsLabelled("Approve merge")[1]!);
 
     // Stranding a phone user on a permanently disabled row with no way to
     // retry is the failure this pins.
-    expect(buttonsLabelled("Approve")[1]!.disabled).toBe(false);
+    expect(buttonsLabelled("Approve merge")[1]!.disabled).toBe(false);
+  });
+
+  it("sends an answer for the row it was typed into, not the first row", async () => {
+    // The `blocked_on_you` composition, which has no unit-testable
+    // equivalent: the reply text lives in the container keyed by item id,
+    // and a handler reading the wrong key would post one row's answer
+    // against another's id while every pure function stayed correct.
+    inboxItems = ITEMS.map((item) => ({
+      ...item,
+      reason: "blocked_on_you",
+      state: "blocked",
+      blockedReason: "Which option do you want?",
+    }));
+    await mountInbox();
+
+    const boxes = Array.from(container.querySelectorAll("textarea"));
+    expect(boxes).toHaveLength(2);
+
+    const second = boxes[1]!;
+    // React installs its own value setter on the instance, so assigning
+    // `.value` directly does not notify it. Calling the prototype setter is
+    // how a controlled textarea is driven from a test.
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(second, "Go with the second option.");
+      second.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await click(buttonsLabelled("Send answer")[1]!);
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.url).toContain("second-row");
+    expect(writes[0]!.url).toContain("/notes");
+    expect(writes[0]!.body).toMatchObject({
+      body: "Go with the second option.",
+      actorType: "person",
+      actorId: "ope",
+    });
   });
 });

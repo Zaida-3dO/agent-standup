@@ -98,6 +98,8 @@ describe("fetchNeedsYou", () => {
           blockedReason: "needs a decision",
           mergeAuthority: "needs_approval",
           updatedAt: "2026-08-19T09:00:00.000Z",
+          needsVisualReview: true,
+          tipCommitSha: "a1b2c3d4e5f6",
         }),
       ],
       total: 1,
@@ -113,8 +115,29 @@ describe("fetchNeedsYou", () => {
         blockedReason: "needs a decision",
         mergeAuthority: "needs_approval",
         updatedAt: "2026-08-19T09:00:00.000Z",
+        needsVisualReview: true,
+        // The commit an approval on this row would be pinned to, carried
+        // from the server rather than derived here.
+        tipCommitSha: "a1b2c3d4e5f6",
       },
     ]);
+  });
+
+  it("defaults the decision fields when a response omits them, rather than throwing", async () => {
+    // An older server that predates these fields must still render a row
+    // saying the item needs you — losing the row entirely is the one
+    // outcome an inbox must not have. The row simply offers no
+    // commit-pinned control, which `canDecide` derives from a null sha.
+    const { fetchImpl } = recordingFetch({
+      items: [{ ...row({ id: "old" }), needsVisualReview: undefined, tipCommitSha: undefined }],
+      total: 1,
+    });
+    const { items } = await fetchNeedsYou("me", fetchImpl);
+    expect(items[0]).toMatchObject({
+      id: "old",
+      needsVisualReview: false,
+      tipCommitSha: null,
+    });
   });
 
   it("takes the reason the server derived rather than recomputing one from the state", async () => {

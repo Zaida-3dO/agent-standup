@@ -11,21 +11,33 @@ import styles from "./NeedsYouInbox.module.css";
 export interface NeedsYouInboxViewProps {
   readonly loadState: NeedsYouLoadState;
   readonly now: number;
-  /** The id of the item whose decision is in flight, or null — disables only that row's buttons. */
-  readonly decidingId: string | null;
+  /** The id of the item whose response is in flight, or null — disables only that row's controls. */
+  readonly busyId: string | null;
   readonly onApprove: (itemId: string) => void;
-  readonly onDeny: (itemId: string) => void;
-  /** A decision's own failure, surfaced above the list without discarding what already loaded. */
-  readonly decideError: string | null;
+  readonly onReject: (itemId: string) => void;
+  readonly onAnswer: (itemId: string) => void;
+  readonly onGrantStanding: (itemId: string) => void;
+  /** Per-row reply text, keyed by item id — held here so the row stays hook-free. */
+  readonly replyTexts: Readonly<Record<string, string>>;
+  readonly onReplyTextChange: (itemId: string, value: string) => void;
+  /** A response's own failure, surfaced above the list without discarding what already loaded. */
+  readonly respondError: string | null;
+  /** Confirmation that the last response landed — an action with no visible result reads as a no-op. */
+  readonly respondNotice: string | null;
 }
 
 export function NeedsYouInboxView({
   loadState,
   now,
-  decidingId,
+  busyId,
   onApprove,
-  onDeny,
-  decideError,
+  onReject,
+  onAnswer,
+  onGrantStanding,
+  replyTexts,
+  onReplyTextChange,
+  respondError,
+  respondNotice,
 }: NeedsYouInboxViewProps) {
   if (loadState.status === "loading") {
     return (
@@ -52,14 +64,20 @@ export function NeedsYouInboxView({
       <div className={styles.head}>
         <h1 className={styles.title}>Needs you</h1>
         <p className={styles.subtitle}>
-          Blocked on you, plans awaiting approval, and merges waiting on your sign-off — not
-          everything that is paused or blocked on something else.
+          Blocked on you, plans awaiting approval, work waiting for you to look at it, and merges
+          waiting on your sign-off — answer each one here.
         </p>
       </div>
 
-      {decideError && (
+      {respondError && (
         <p className={styles.decideError} role="alert">
-          {decideError}
+          {respondError}
+        </p>
+      )}
+
+      {respondNotice && (
+        <p className={styles.decideNotice} role="status">
+          {respondNotice}
         </p>
       )}
 
@@ -72,9 +90,13 @@ export function NeedsYouInboxView({
               key={item.id}
               item={item}
               now={now}
-              deciding={decidingId === item.id}
+              busy={busyId === item.id}
               onApprove={onApprove}
-              onDeny={onDeny}
+              onReject={onReject}
+              onAnswer={onAnswer}
+              onGrantStanding={onGrantStanding}
+              replyText={replyTexts[item.id] ?? ""}
+              onReplyTextChange={onReplyTextChange}
             />
           ))}
         </ul>

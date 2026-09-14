@@ -4,6 +4,7 @@
 // `tests/board-view-component.test.ts` and `tests/board-column-bounded.test.ts`
 // (which is also where the "find the shared state component by type and
 // assert on its props, don't grep for text" convention comes from).
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import Link from "next/link";
 import { NeedsYouInboxView } from "@/components/needs-you/NeedsYouInboxView";
@@ -23,72 +24,251 @@ function item(overrides: Partial<NeedsYouItem> = {}): NeedsYouItem {
     blockedReason: null,
     updatedAt: "2026-08-18T10:00:00.000Z",
     mergeAuthority: "agent_judgement",
+    needsVisualReview: false,
+    tipCommitSha: null,
     ...overrides,
   };
 }
 
-describe("NeedsYouRow — the decide affordance", () => {
-  it("shows Approve/Deny for a plan_review item, and calls back with the item id", () => {
+/** The row's callback props, all stubbed — a test overrides only what it asserts on. */
+function rowProps(overrides: Partial<Parameters<typeof NeedsYouRow>[0]> = {}) {
+  return {
+    item: item(),
+    now: Date.now(),
+    busy: false,
+    onApprove: vi.fn(),
+    onReject: vi.fn(),
+    onAnswer: vi.fn(),
+    onGrantStanding: vi.fn(),
+    replyText: "",
+    onReplyTextChange: vi.fn(),
+    ...overrides,
+  };
+}
+
+/** The view's props, all stubbed. */
+function viewProps(overrides: Partial<Parameters<typeof NeedsYouInboxView>[0]> = {}) {
+  return {
+    loadState: { status: "loaded", items: [], total: 0 } as const,
+    now: Date.now(),
+    busyId: null,
+    onApprove: vi.fn(),
+    onReject: vi.fn(),
+    onAnswer: vi.fn(),
+    onGrantStanding: vi.fn(),
+    replyTexts: {},
+    onReplyTextChange: vi.fn(),
+    respondError: null,
+    respondNotice: null,
+    ...overrides,
+  };
+}
+
+/** Every `<button>` in the tree, by its rendered label. */
+function buttonLabels(tree: ReactNode): string[] {
+  return findAllByType(tree, "button").map((button) =>
+    String((button.props as { children: unknown }).children),
+  );
+}
+
+describe("NeedsYouRow — the control matches the reason", () => {
+  it("offers approve and reject for plan_review, calling back with the item id", () => {
     const onApprove = vi.fn();
-    const onDeny = vi.fn();
-    const tree = NeedsYouRow({
-      item: item({ id: "item-x", reason: "plan_review" }),
-      now: Date.now(),
-      deciding: false,
-      onApprove,
-      onDeny,
-    });
+    const onReject = vi.fn();
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ id: "item-x", reason: "plan_review", state: "plan_review" }),
+        onApprove,
+        onReject,
+      }),
+    );
+
     const buttons = findAllByType(tree, "button");
     expect(buttons).toHaveLength(2);
     (buttons[0]!.props as { onClick: () => void }).onClick();
     expect(onApprove).toHaveBeenCalledWith("item-x");
     (buttons[1]!.props as { onClick: () => void }).onClick();
-    expect(onDeny).toHaveBeenCalledWith("item-x");
+    expect(onReject).toHaveBeenCalledWith("item-x");
   });
 
-  it("disables both buttons while a decision is in flight for this item", () => {
-    const tree = NeedsYouRow({
-      item: item({ reason: "needs_approval" }),
-      now: Date.now(),
-      deciding: true,
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
-    });
-    const buttons = findAllByType(tree, "button");
-    for (const button of buttons) {
+  it("offers no reject button for needs_approval — an approval is withheld, not refused", () => {
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({
+          reason: "needs_approval",
+          state: "in_review",
+          mergeAuthority: "needs_approval",
+          tipCommitSha: "abc1234def",
+        }),
+      }),
+    );
+
+    const labels = buttonLabels(tree);
+    // The approve button and the standing-grant link-button, and nothing
+    // that would record a rejecting row in a person's name.
+    expect(labels).toContain("Approve merge");
+    expect(labels.some((label) => /reject|deny|request changes/i.test(label))).toBe(false);
+  });
+
+  it("names the act on the button rather than a generic Approve", () => {
+    const visual = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_visual_review", state: "in_review", tipCommitSha: "abc1234" }),
+      }),
+    );
+    expect(buttonLabels(visual)).toContain("Looks right");
+
+    const merge = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_approval", state: "in_review", tipCommitSha: "abc1234" }),
+      }),
+    );
+    expect(buttonLabels(merge)).toContain("Approve merge");
+  });
+
+  it("disables the row's controls while a response is in flight for it", () => {
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_approval", state: "in_review", tipCommitSha: "abc1234" }),
+        busy: true,
+      }),
+    );
+    for (const button of findAllByType(tree, "button")) {
       expect((button.props as { disabled?: boolean }).disabled).toBe(true);
     }
   });
 
-  it("offers no Approve/Deny for blocked_on_you — only a link to the item", () => {
-    const tree = NeedsYouRow({
-      item: item({ reason: "blocked_on_you" }),
-      now: Date.now(),
-      deciding: false,
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
+  it("offers no decision button when the item has no commit to pin an approval to", () => {
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_approval", state: "in_review", tipCommitSha: null }),
+      }),
+    );
+    // The standing grant remains (it pins no commit); what must not appear
+    // is an approve button that could only fail server-side.
+    expect(buttonLabels(tree)).not.toContain("Approve merge");
+  });
+
+  it("shows the short sha a decision will be recorded against", () => {
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({
+          reason: "needs_approval",
+          state: "in_review",
+          tipCommitSha: "a1b2c3d4e5f6a7b8",
+        }),
+      }),
+    );
+    const spans = findAllByType(tree, "span").map((el) =>
+      String((el.props as { children: unknown }).children),
+    );
+    expect(spans.some((text) => text.includes("a1b2c3d"))).toBe(true);
+  });
+});
+
+describe("NeedsYouRow — the standing grant is a separate, quieter act", () => {
+  it("offers it only for needs_approval, where a merge hold exists to lift", () => {
+    const withHold = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_approval", state: "in_review", tipCommitSha: "abc1234" }),
+      }),
+    );
+    expect(buttonLabels(withHold).some((label) => /always approve/i.test(label))).toBe(true);
+
+    const withoutHold = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_visual_review", state: "in_review", tipCommitSha: "abc1234" }),
+      }),
+    );
+    expect(buttonLabels(withoutHold).some((label) => /always approve/i.test(label))).toBe(false);
+  });
+
+  it("is a different control from approve, and says so", () => {
+    const onApprove = vi.fn();
+    const onGrantStanding = vi.fn();
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ id: "item-z", reason: "needs_approval", tipCommitSha: "abc1234" }),
+        onApprove,
+        onGrantStanding,
+      }),
+    );
+
+    const standing = findAllByType(tree, "button").find((button) =>
+      /always approve/i.test(String((button.props as { children: unknown }).children)),
+    );
+    (standing!.props as { onClick: () => void }).onClick();
+
+    // Clicking the standing grant must never also record a one-off approval:
+    // they are different acts and conflating them would grant far more than
+    // the reader intended.
+    expect(onGrantStanding).toHaveBeenCalledWith("item-z");
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+});
+
+describe("NeedsYouRow — blocked_on_you gets a reply, not a decision", () => {
+  it("renders a reply box and sends its text", () => {
+    const onAnswer = vi.fn();
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ id: "item-q", reason: "blocked_on_you" }),
+        replyText: "Yes, go with the second option.",
+        onAnswer,
+      }),
+    );
+
+    expect(findAllByType(tree, "textarea")).toHaveLength(1);
+    const send = findAllByType(tree, "button").find((button) =>
+      /send/i.test(String((button.props as { children: unknown }).children)),
+    );
+    (send!.props as { onClick: () => void }).onClick();
+    expect(onAnswer).toHaveBeenCalledWith("item-q");
+  });
+
+  it("disables sending an empty reply", () => {
+    const tree = NeedsYouRow(
+      rowProps({ item: item({ reason: "blocked_on_you" }), replyText: "   " }),
+    );
+    const send = findAllByType(tree, "button").find((button) =>
+      /send/i.test(String((button.props as { children: unknown }).children)),
+    );
+    expect((send!.props as { disabled?: boolean }).disabled).toBe(true);
+  });
+
+  it("reports typing back to the container, which owns the text", () => {
+    const onReplyTextChange = vi.fn();
+    const tree = NeedsYouRow(
+      rowProps({ item: item({ id: "item-q", reason: "blocked_on_you" }), onReplyTextChange }),
+    );
+    const textarea = findOneByType(tree, "textarea");
+    (textarea.props as { onChange: (e: unknown) => void }).onChange({
+      target: { value: "typed" },
     });
-    expect(findAllByType(tree, "button")).toHaveLength(0);
-    // The title and the "Open item" link both go to the bare item — there
-    // is no review artifact for a blocked_on_you row to deep-link into.
-    const links = findAllByType(tree, Link);
-    expect(links).toHaveLength(2);
-    for (const link of links) {
+    expect(onReplyTextChange).toHaveBeenCalledWith("item-q", "typed");
+  });
+
+  it("links to the bare item — there is no review artifact to deep-link into", () => {
+    const tree = NeedsYouRow(rowProps({ item: item({ reason: "blocked_on_you" }) }));
+    for (const link of findAllByType(tree, Link)) {
       expect((link.props as { href: string }).href).toBe("/items/item-a");
     }
   });
 
-  it("links every affordance on a decidable row to the item's Reviews tab, never the bare item", () => {
-    const tree = NeedsYouRow({
-      item: item({ id: "item-y", reason: "plan_review" }),
-      now: Date.now(),
-      deciding: false,
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
-    });
-    // A decidable row carries two links (the title, and "See findings") —
-    // both must point at the Reviews tab, so approving is never one click
-    // away from the findings behind it.
+  it("offers no approve or reject control at all", () => {
+    const tree = NeedsYouRow(rowProps({ item: item({ reason: "blocked_on_you" }) }));
+    const labels = buttonLabels(tree);
+    expect(labels.some((label) => /approve|reject|looks right/i.test(label))).toBe(false);
+  });
+});
+
+describe("NeedsYouRow — decision rows link to their findings", () => {
+  it("points every link on a decision row at the Reviews tab", () => {
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ id: "item-y", reason: "plan_review", state: "plan_review" }),
+      }),
+    );
     const links = findAllByType(tree, Link);
     expect(links.length).toBeGreaterThanOrEqual(2);
     for (const link of links) {
@@ -99,27 +279,15 @@ describe("NeedsYouRow — the decide affordance", () => {
 
 describe("NeedsYouInboxView — load branches and ordering", () => {
   it("hands the error message to ErrorState on a failed load", () => {
-    const tree = NeedsYouInboxView({
-      loadState: { status: "error", message: "the API said no" },
-      now: Date.now(),
-      decidingId: null,
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
-      decideError: null,
-    });
+    const tree = NeedsYouInboxView(
+      viewProps({ loadState: { status: "error", message: "the API said no" } }),
+    );
     const error = findOneByType(tree, ErrorState);
     expect((error.props as { message: string }).message).toBe("the API said no");
   });
 
   it("shows the empty state when the loaded list is empty", () => {
-    const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [], total: [].length },
-      now: Date.now(),
-      decidingId: null,
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
-      decideError: null,
-    });
+    const tree = NeedsYouInboxView(viewProps());
     const empty = findOneByType(tree, EmptyState);
     expect((empty.props as { kind: string }).kind).toBe("empty");
     expect(findAllByType(tree, NeedsYouRow)).toHaveLength(0);
@@ -128,14 +296,9 @@ describe("NeedsYouInboxView — load branches and ordering", () => {
   it("orders the loaded list oldest-first", () => {
     const newer = item({ id: "newer", updatedAt: "2026-08-18T12:00:00.000Z" });
     const older = item({ id: "older", updatedAt: "2026-08-18T08:00:00.000Z" });
-    const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [newer, older], total: 2 },
-      now: Date.now(),
-      decidingId: null,
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
-      decideError: null,
-    });
+    const tree = NeedsYouInboxView(
+      viewProps({ loadState: { status: "loaded", items: [newer, older], total: 2 } }),
+    );
     const rows = findAllByType(tree, NeedsYouRow);
     expect(rows.map((row) => (row.props as { item: NeedsYouItem }).item.id)).toEqual([
       "older",
@@ -143,42 +306,64 @@ describe("NeedsYouInboxView — load branches and ordering", () => {
     ]);
   });
 
-  it("passes decidingId through so only the matching row is disabled", () => {
+  it("passes busyId through so only the matching row is disabled", () => {
     const a = item({ id: "a", reason: "plan_review", updatedAt: "2026-08-18T08:00:00.000Z" });
     const b = item({ id: "b", reason: "plan_review", updatedAt: "2026-08-18T09:00:00.000Z" });
-    const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [a, b], total: 2 },
-      now: Date.now(),
-      decidingId: "a",
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
-      decideError: null,
-    });
+    const tree = NeedsYouInboxView(
+      viewProps({ loadState: { status: "loaded", items: [a, b], total: 2 }, busyId: "a" }),
+    );
     const rows = findAllByType(tree, NeedsYouRow);
     const byId = new Map(rows.map((row) => [(row.props as { item: NeedsYouItem }).item.id, row]));
-    expect((byId.get("a")!.props as { deciding: boolean }).deciding).toBe(true);
-    expect((byId.get("b")!.props as { deciding: boolean }).deciding).toBe(false);
+    expect((byId.get("a")!.props as { busy: boolean }).busy).toBe(true);
+    expect((byId.get("b")!.props as { busy: boolean }).busy).toBe(false);
   });
 
-  it("surfaces a decision failure above the list without discarding what loaded", () => {
-    const tree = NeedsYouInboxView({
-      loadState: { status: "loaded", items: [item()], total: 1 },
-      now: Date.now(),
-      decidingId: null,
-      onApprove: vi.fn(),
-      onDeny: vi.fn(),
-      decideError: "Could not record the approval.",
-    });
+  it("gives each row its own reply text, keyed by item id", () => {
+    const a = item({ id: "a", updatedAt: "2026-08-18T08:00:00.000Z" });
+    const b = item({ id: "b", updatedAt: "2026-08-18T09:00:00.000Z" });
+    const tree = NeedsYouInboxView(
+      viewProps({
+        loadState: { status: "loaded", items: [a, b], total: 2 },
+        replyTexts: { a: "answer for a" },
+      }),
+    );
+    const rows = findAllByType(tree, NeedsYouRow);
+    const byId = new Map(rows.map((row) => [(row.props as { item: NeedsYouItem }).item.id, row]));
+    expect((byId.get("a")!.props as { replyText: string }).replyText).toBe("answer for a");
+    // Absent rather than leaking the neighbour's draft.
+    expect((byId.get("b")!.props as { replyText: string }).replyText).toBe("");
+  });
+
+  it("surfaces a failure above the list without discarding what loaded", () => {
+    const tree = NeedsYouInboxView(
+      viewProps({
+        loadState: { status: "loaded", items: [item()], total: 1 },
+        respondError: "Could not record the approval.",
+      }),
+    );
     expect(findAllByType(tree, NeedsYouRow)).toHaveLength(1);
-    // The failure text itself lives directly in the view's own tree (not a
-    // shared component), so it is asserted on the raw props of the <p> that
-    // carries it.
     const alerts = findAllByType(tree, "p").filter(
       (el) => (el.props as { role?: string }).role === "alert",
     );
     expect(alerts).toHaveLength(1);
     expect((alerts[0]!.props as { children: string }).children).toBe(
       "Could not record the approval.",
+    );
+  });
+
+  it("confirms a response that landed — a vanished row alone reads as a no-op", () => {
+    const tree = NeedsYouInboxView(
+      viewProps({
+        loadState: { status: "loaded", items: [item()], total: 1 },
+        respondNotice: "Merge approved — recorded against the commit.",
+      }),
+    );
+    const notices = findAllByType(tree, "p").filter(
+      (el) => (el.props as { role?: string }).role === "status",
+    );
+    expect(notices).toHaveLength(1);
+    expect((notices[0]!.props as { children: string }).children).toBe(
+      "Merge approved — recorded against the commit.",
     );
   });
 });

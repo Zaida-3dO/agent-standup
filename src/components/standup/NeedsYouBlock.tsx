@@ -3,21 +3,18 @@
 // `TopBar.tsx`'s header for the reasoning every component here follows.
 import Link from "next/link";
 import type { NeedsYouItem } from "@/lib/needs-you/types";
-import { REASON_LABELS, isDecidable, sortByWaiting, waitingFor } from "@/lib/needs-you/view";
+import { REASON_LABELS, linksToReviews, sortByWaiting, waitingFor } from "@/lib/needs-you/view";
 import { EmptyState } from "@/components/states";
 import styles from "./Standup.module.css";
 
 /**
- * Where a row's title links. `#reviews` (the item detail's deep-linkable
- * Reviews tab hash) only for a decidable reason — `blocked_on_you` has no
- * review artifact to point at, so its link goes to the item itself. Mirrors
- * `NeedsYouRow` (`@/components/needs-you/NeedsYouRow.tsx`) exactly, so the
- * same item links to the same place whether a reader reaches it from this
- * preview or from the full inbox.
+ * Where a row's title links — `linksToReviews` (`@/lib/needs-you/view`),
+ * shared with `NeedsYouRow` so the same item links to the same place
+ * whether a reader reaches it from this preview or from the full inbox.
  */
 function itemHref(item: NeedsYouItem): string {
   const base = `/items/${encodeURIComponent(item.id)}`;
-  return isDecidable(item) ? `${base}#reviews` : base;
+  return linksToReviews(item) ? `${base}#reviews` : base;
 }
 
 export interface NeedsYouBlockProps {
