@@ -72,11 +72,20 @@ const broadGitAddOnSharedCheckout: Intervention = {
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
   // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
-  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): no
-  // override channel exists anywhere in the wire protocol, so "say why: the
-  // reason is recorded" promised an exit that no caller could ever take.
-  // Removed; the message still names the one remedy that actually works —
-  // staging by path.
+  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): "say
+  // why: the reason is recorded" promised an exit that no caller could ever
+  // take. Removed; the message still names the one remedy that actually
+  // works — staging by path.
+  //
+  // Two halves of that, and both need saying, because the first half alone
+  // reads as false. An override channel DOES exist in the wire
+  // protocol (`src/lib/hook/override.ts`), it is honoured, and it is
+  // tested. But it is read from the TOP LEVEL of the hook payload only, by
+  // design, and an agent influences nothing there — its tool call arrives
+  // in `tool_input`, where a claim is refused. This entry's audience is
+  // `agent`. So the conclusion the original comment drew is still exactly
+  // right for everyone this message is shown to, even though its premise
+  // is not: the exit is real, and unreachable from here.
   messages: {
     plain:
       "This stages every modified file in a checkout other sessions are also working in, so it " +
@@ -179,19 +188,57 @@ const mergeWithoutApprovalAtTip: Intervention = {
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
   // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
-  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): no
-  // override channel exists anywhere in the wire protocol, so "proceed with
-  // a written reason" promised an exit that no caller could ever take.
-  // Removed; the message still names the one remedy that actually works —
-  // requesting a review against the current tip.
+  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): the
+  // override channel exists in the wire protocol and `decide` honours it,
+  // but it is read from the TOP LEVEL of the payload only, and an agent's
+  // tool call reaches nothing but `tool_input`. So "proceed with a written
+  // reason" promised an exit that this entry's audience — `agent`, above —
+  // could never take. Removed; the message names the remedy that actually
+  // works instead.
+  //
+  // That remedy has to name a CALL, not an outcome. The previous wording,
+  // "request a review against this commit", is what the caller already
+  // wants; it says nothing about how to get it, which is why the override
+  // sentence was the only part of the refusal that looked executable. Two
+  // sessions lost their merge phase here.
+  //
+  // The round half is named because it is the half that is missed. The
+  // service-side guard (`merge.requires_approving_code_review`) does the
+  // per-limb diagnosis once a merge is actually attempted — it knows the
+  // round number, the tip, and which artifact kinds moved the round, and
+  // says so. This message runs earlier, on the command, with none of those
+  // facts resolved, so it deliberately does NOT restate that analysis. It
+  // names the call and warns which conjunct usually failed; the service
+  // refusal supplies the numbers if the caller still gets it wrong.
+  //
+  // **Backticks here mean "this is a call", and nothing else.** Only
+  // `record_artifact` is backticked below; the artifact kinds and verdicts
+  // are written as bare prose on purpose. `tests/interventions-message-
+  // remedies.test.ts` sweeps every message for backticked snake_case and
+  // requires each token to be a real operation, because a message naming a
+  // call that does not exist sends the reader hunting for a tool it will
+  // never find. Backticking `code_review` or `check_run` — which are
+  // artifact kinds, not operations — trips that sweep, and it is right to:
+  // the reader cannot tell the two apart from the formatting alone.
   messages: {
     plain:
-      "This merges work that has no approving review at its current tip commit. Request a review " +
-      "against this commit and land it instead of merging now.",
+      "This merges work that has no approving review at its current tip commit. Call " +
+      "`record_artifact` with kind code_review and an approving verdict, naming the commit " +
+      "being merged, and land it instead of merging now. If a review was already approved and " +
+      "this still refuses, check the review ROUND before you check the sha: the item's review " +
+      "round is the highest round across every artifact kind, so recording a check_run or a " +
+      "commit artifact after an approval demotes that approval without anything about the code " +
+      "changing. Re-recording the approval at the current round is what clears it.",
     prominent:
       "⚠️ Do not proceed until you have read this. This would merge a change that nothing has " +
-      "approved at the commit being merged — either it was never reviewed, or it was reviewed and " +
-      "then changed. Request a review against the current tip instead of merging now.",
+      "approved at the commit being merged — either it was never reviewed, or it was reviewed " +
+      "and then changed. Instead of merging now: call `record_artifact` with kind code_review, " +
+      "an approving verdict, and the commit being merged as its sha — then merge. If you " +
+      "believe an approving review already exists, check its ROUND before you check its sha. " +
+      "The item's review round is the highest round across EVERY artifact kind, so a check_run " +
+      "or a commit artifact recorded after the approval silently demotes it, and the sha you " +
+      "are looking at will match the tip perfectly while the merge still refuses. Re-record the " +
+      "approval at the current round and it applies again.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
@@ -237,17 +284,24 @@ const broadProcessKill: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // This level is `block-overridable`, and the name is accurate: a caller
-  // can re-run the call naming this entry with a written reason, and
-  // `decide` releases it and records that reason against the finding
-  // (`src/lib/hook/override.ts`).
+  // This level is `block-overridable`, and the name is accurate about the
+  // protocol: a caller CAN re-run the call naming this entry with a written
+  // reason, and `decide` releases it and records that reason against the
+  // finding (`src/lib/hook/override.ts`). That path is live and tested.
   //
-  // **The messages below deliberately do not mention the override.**
-  // `overrideRemedy` appends the override instructions to every
-  // `block-overridable` refusal, so naming it here would print it twice and
-  // would restate a minimum reason length that lives in one place. What a
+  // **It is not reachable from this entry's audience, which is `agent`.**
+  // The claim is read from the top level of the hook payload only; an
+  // agent's tool call reaches `tool_input` and nothing else, and a claim
+  // there is refused by design. The channel is therefore real for a caller
+  // that composes its own stdin, and unavailable to every caller who will
+  // ever read the messages below.
+  //
+  // **So the messages below deliberately do not mention the override, and
+  // neither does anything else any more.** `overrideRemedy` used to append
+  // a generic override offer to every `block-overridable` refusal; it now
+  // returns `null` for exactly the reason this comment gives. What a
   // message owes the caller is the *narrow* exit — which pid form to use —
-  // and that is what these say.
+  // and that is now the whole of what a refusal here says.
   //
   // A message must only offer an exit the protocol can honour. An offer the
   // caller cannot act on costs several attempts before anyone concludes it
@@ -390,13 +444,20 @@ const checkoutHeldByAnotherCrew: Intervention = {
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
   // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
-  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): no
-  // override channel exists anywhere in the wire protocol, so "proceed with
-  // a written reason" / "say why: the reason is recorded" promised an exit
-  // that no caller could ever take — in all three of this entry's messages,
-  // including the dynamic one built in the predicate below. Removed; each
-  // still names the one remedy that actually works — taking your own
-  // worktree.
+  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85):
+  // "proceed with a written reason" / "say why: the reason is recorded"
+  // promised an exit that no caller could ever take — in all three of this
+  // entry's messages, including the dynamic one built in the predicate
+  // below. Removed; each still names the one remedy that actually works —
+  // taking your own worktree.
+  //
+  // Stated precisely, because the short version above is false on its face
+  // now: an override channel DOES exist in the wire protocol and `decide`
+  // honours it. It is read from the top level of the payload only, and an
+  // agent — this entry's audience — can reach nothing but `tool_input`. So
+  // the promise is keepable in principle and unkeepable by anyone who will
+  // read these messages, which is why they carry no override offer and why
+  // `overrideRemedy` returns `null` rather than adding one.
   //
   // Each message also names **the working tree it matched**, at the request
   // of the third crew to hit the false positive: *"the fix with the best
