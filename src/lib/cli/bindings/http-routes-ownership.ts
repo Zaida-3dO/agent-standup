@@ -99,4 +99,16 @@ export const OWNERSHIP_HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object
     request: (input) => ({ path: "/api/crew/name", body: input }),
     unwrap: (body) => property(body, "name"),
   },
+  // The wait (MILESTONES.md #64, SCHEMA.md §19 `GET /crew/wait?since=&timeout=`).
+  //
+  // Everything goes in the query string and nothing in a body, which is what
+  // makes the same call typeable by hand against the API and legible in a
+  // log. `unwrap` is the identity because the route returns the operation's
+  // result object as-is — the same shape `direct` returns, which is the
+  // property the one-interface test compares.
+  wait_for_crew: {
+    method: "GET",
+    request: (input) => ({ path: `/api/crew/wait${queryString(input)}` }),
+    unwrap: (body) => body,
+  },
 });
