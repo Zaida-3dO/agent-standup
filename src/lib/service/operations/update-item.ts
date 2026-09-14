@@ -129,6 +129,29 @@ export const updateItem = defineOperation({
   name: "update_item",
   kind: "write",
   summary: "Edits an item's non-state fields.",
+  contract: {
+    rules: [
+      {
+        fields: ["repo"],
+        rule:
+          "`repo` must name an existing, non-archived row in the Repo table, or be explicit `null` " +
+          "to clear it. Repos are deliberate-create only and are never auto-created from this field; " +
+          "an id naming an archived repo is refused the same as one that never existed. The schema " +
+          "cannot enumerate valid ids because the set is a database table, not a fixed list. From " +
+          "MCP: `get_board` shows `repo` by default, and `list_items` shows it with `full: true`, so " +
+          "the ids already in play are visible on the items you can already list — there is no " +
+          "operation that enumerates the Repo table itself from MCP. The direct enumeration is " +
+          "`list_repos` [http/cli], for HTTP/CLI callers only.",
+      },
+      {
+        fields: ["headline"],
+        rule:
+          `\`headline\` is capped at ${HEADLINE_MAX_CHARS} characters, or explicit \`null\` to clear ` +
+          "it back to unwritten. The cap is enforced but not visible in the schema (a bare capped " +
+          "string), so this is the only place it is stated before you are refused for it.",
+      },
+    ],
+  },
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: UpdateItemInput): Promise<UpdateItemResult> {
@@ -187,7 +210,11 @@ export const updateItem = defineOperation({
         edits.repo,
       );
       if (repoRows.length === 0) {
-        throw new NotFoundError(`No such repo: ${edits.repo}.`, { fields: ["repo"] });
+        throw new NotFoundError(
+          `No such repo: ${edits.repo}. Repos are pre-registered — check \`get_board\`/\`list_items\` ` +
+            "with a repo filter for ids in use, or `list_repos` [http/cli] to enumerate the table directly.",
+          { fields: ["repo"] },
+        );
       }
     }
 
