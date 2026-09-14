@@ -955,6 +955,32 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     reason:
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is identical on both.",
   },
+  // The one waiver here whose reason is not about context cost. Every other
+  // entry above withholds something an MCP client *could* usefully call but
+  // should not pay for on every session; this one withholds something the
+  // transport cannot actually serve.
+  {
+    adapter: "mcp_http",
+    operation: "wait_for_crew",
+    reason:
+      "SCHEMA.md §18 states this directly: it is `standup crew wait`, 'because only a shell call " +
+      "can be backgrounded — and backgrounding is the whole point'. A wait is useful precisely " +
+      "while the caller does something else, and an MCP tool call blocks the session that made " +
+      "it, so a waiting agent would sit idle for exactly the interval the wait was supposed to " +
+      "free up. The transport cannot soften that either: this mount is stateless, so there is no " +
+      "server-initiated message and no progress notification to report on a call still running " +
+      "(`@/lib/mcp/http.ts` names this wait as the one thing that would need them). It is a read " +
+      "that runs no state transition, so no registered guard can reject it and §22's bound on " +
+      "waivers is satisfied. Reach it from a shell with `standup crew wait`, or over HTTP at " +
+      "`GET /api/crew/wait` for a client that can hold a request open itself.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "wait_for_crew",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and a tool call blocks the calling " +
+      "session on both. Backgrounding is the whole point, so the command line is the door.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

@@ -26,6 +26,9 @@ export type { CommandMatch, CommandSpec, LookupResult } from "./commands";
 // Row #83 — `standup config`.
 export { CONFIG_COMMANDS, parseSettingValue } from "./config-command";
 
+// MILESTONES #64 — `standup crew wait`, the backgroundable wait §18 keeps off MCP.
+export { CREW_COMMANDS } from "./commands-crew";
+
 export { describeResolution, firstDefined, resolveConfig } from "./config";
 export type {
   CliEnvironment,

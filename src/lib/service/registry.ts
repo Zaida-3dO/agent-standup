@@ -166,6 +166,14 @@ import { listAccounts } from "./operations/list-accounts";
 import { getAccount } from "./operations/get-account";
 import { updateAccount } from "./operations/update-account";
 import { getCrewName } from "./operations/get-crew-name";
+// Waiting for the crew to do something (MILESTONES.md #64, SCHEMA.md §18/§19).
+// The wait itself was built and proven in `@/lib/crew/wait-core` and then
+// never given a caller, so the two `crew.wait_*` settings tuned code nothing
+// could reach. This registration is what makes them live; the command line's
+// `standup crew wait` is the door §18 says it has to be, because only a shell
+// call can be backgrounded. It is waived on both MCP adapters for that same
+// reason (`@/lib/adapters/waivers`).
+import { waitForCrewOperation } from "./operations/wait-for-crew";
 import { listPeople } from "./operations/list-people";
 // The `people` write path (MILESTONES.md #116). `list_people` read a table
 // nothing could populate until this row; see the operation's header for the
@@ -323,6 +331,7 @@ export const OPERATION_REGISTRY = {
   [getAccount.name]: getAccount,
   [updateAccount.name]: updateAccount,
   [getCrewName.name]: getCrewName,
+  [waitForCrewOperation.name]: waitForCrewOperation,
   [listPeople.name]: listPeople,
   [updatePerson.name]: updatePerson,
   [deletePerson.name]: deletePerson,

@@ -33,6 +33,7 @@ export const HTTP_ROUTES: readonly HttpRoute[] = [
   { path: "/api/claims/takeover", methods: ["POST"] },
   { path: "/api/costs", methods: ["GET"] },
   { path: "/api/crew/name", methods: ["POST"] },
+  { path: "/api/crew/wait", methods: ["GET"] },
   { path: "/api/events", methods: ["GET"] },
   { path: "/api/events/{id}/seen", methods: ["POST"] },
   { path: "/api/fleet", methods: ["GET"] },

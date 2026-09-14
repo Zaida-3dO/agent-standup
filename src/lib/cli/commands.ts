@@ -22,6 +22,7 @@ import { BACKFILL_COMMANDS } from "./commands-backfill";
 import { ARTIFACT_COMMANDS } from "./commands-artifacts"; // row #98 — artifact writes
 import { LOOP_COMMANDS } from "./commands-loops"; // row #100 - open-loop writes
 import { SESSION_COMMANDS } from "./commands-sessions";
+import { CREW_COMMANDS } from "./commands-crew"; // MILESTONES #64 — `standup crew wait`
 
 /** What building an input produced. */
 export type InputResult =
@@ -397,6 +398,10 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   ...ARTIFACT_COMMANDS, // row #98 — artifact writes
   ...LOOP_COMMANDS, // row #100 - open-loop writes
   ...SESSION_COMMANDS, // the registration handshake (MILESTONES.md #43, SCHEMA.md §21)
+  // The wait (MILESTONES.md #64). The command line is the *only* adapter that
+  // serves it — §18 keeps it off MCP because only a shell call can be
+  // backgrounded, which makes this entry the feature's sole agent-facing door.
+  ...CREW_COMMANDS,
 ]);
 
 /**
