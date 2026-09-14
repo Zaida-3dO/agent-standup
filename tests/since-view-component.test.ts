@@ -108,6 +108,32 @@ describe("SinceLastVisitView — the loaded list", () => {
     expect(findAllByType(tree, EventRow)).toHaveLength(3);
   });
 
+  it("renders newest event first, even though the feed arrives oldest first", () => {
+    // Ope, 2026-09-14: "Since your last visit" showed its oldest six cards
+    // at the top and buried the newest at the bottom of 50 rows. The feed
+    // (as `get_events` returns it) is ascending by id; the rendered rows
+    // must be descending.
+    const tree = SinceLastVisitView({
+      loadState: {
+        status: "loaded",
+        feed: feed({
+          events: [
+            event({ id: "1", itemId: "a", itemTitle: "Item A" }),
+            event({ id: "2", itemId: "a", itemTitle: "Item A" }),
+            event({ id: "3", itemId: "a", itemTitle: "Item A" }),
+          ],
+        }),
+      },
+      personId: "user-a",
+    });
+    const rows = findAllByType(tree, EventRow);
+    expect(rows.map((row) => (row.props as { event: SinceEvent }).event.id)).toEqual([
+      "3",
+      "2",
+      "1",
+    ]);
+  });
+
   it("gives an unscoped event an honest heading rather than hiding it", () => {
     const tree = SinceLastVisitView({
       loadState: {

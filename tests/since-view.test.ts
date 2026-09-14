@@ -11,6 +11,7 @@ import {
   emptyStateMessage,
   eventSummary,
   groupByItem,
+  newestFirst,
   unseenEventIds,
 } from "@/lib/since/view";
 import type { SinceEvent, SinceFeed } from "@/lib/since/types";
@@ -132,6 +133,34 @@ describe("actorLabel", () => {
   it("never renders an empty label when an actor id is missing", () => {
     expect(actorLabel(event({ actorType: "agent", actorId: null }))).toBe("An agent");
     expect(actorLabel(event({ actorType: "person", actorId: null }))).toBe("Someone");
+  });
+});
+
+describe("newestFirst — the catch-up list leads with the most recent event", () => {
+  it("reverses ascending (fetch) order into descending (display) order", () => {
+    // `get_events` reads `id ASC` (oldest first, so the pager can walk
+    // forward into newer rows) — this is what turns that into what a
+    // catch-up reader actually wants to see first.
+    const sorted = newestFirst([event({ id: "1" }), event({ id: "2" }), event({ id: "3" })]);
+    expect(sorted.map((e) => e.id)).toEqual(["3", "2", "1"]);
+  });
+
+  it("sorts by id numerically, not lexically", () => {
+    // A lexical string sort would put "9" ahead of "10" — wrong once ids
+    // run past a single digit's difference, which any real feed does.
+    const sorted = newestFirst([event({ id: "9" }), event({ id: "10" }), event({ id: "2" })]);
+    expect(sorted.map((e) => e.id)).toEqual(["10", "9", "2"]);
+  });
+
+  it("does not mutate the array it was given", () => {
+    const original = [event({ id: "1" }), event({ id: "2" })];
+    const copy = [...original];
+    newestFirst(original);
+    expect(original).toEqual(copy);
+  });
+
+  it("returns an empty array for an empty feed", () => {
+    expect(newestFirst([])).toEqual([]);
   });
 });
 
