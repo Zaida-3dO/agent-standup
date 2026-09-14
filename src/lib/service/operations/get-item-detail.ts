@@ -76,7 +76,11 @@ import {
 import { resolveItemId } from "../items/resolve-id";
 import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
 import type { ItemStateValue } from "../state-machine/states";
-import { foldBuildStatus, type BuildStatusView } from "../items/build-status";
+import {
+  foldBuildStatus,
+  type BuildStatusView,
+  type CheckRunArtifactRow,
+} from "../items/build-status";
 import { currentTipCommitSha, tipCommitLineage } from "../guards/artifact-tip";
 import {
   ALL_ITEM_ASSIGNMENTS_SQL,
@@ -100,6 +104,19 @@ const inputSchema = z
      * failure #103 exists to stop happening elsewhere.
      */
     historyLimit: z.number().int().min(1).max(500).default(100),
+    /**
+     * How many artifacts to return. Bounded for the same reason
+     * `historyLimit` is, and added because it was the axis that was
+     * missing: artifacts carry `body` and `findings`, the two unbounded
+     * columns on that table, so on a long-lived item they are frequently
+     * the whole reason this read is refused for size — and `historyLimit`
+     * could not shrink them, which is exactly the dead end two sessions
+     * reported.
+     *
+     * **The NEWEST artifacts are kept when this truncates**, not the
+     * oldest. See the query for why that direction is load-bearing.
+     */
+    artifactLimit: z.number().int().min(1).max(500).default(100),
   })
   .strict();
 
@@ -214,7 +231,15 @@ export interface ItemDetailOutput {
   readonly column: BoardColumn;
   /** Every descendant, depth-first, deepest nesting included. Empty for a leaf. */
   readonly subtasks: readonly ItemDetailSubtaskNode[];
+  /**
+   * Artifacts, oldest first, capped at `artifactLimit`. When the cap bites
+   * it is the **oldest** that are dropped — the array always ends at the
+   * newest artifact, because every consumer of this array scans it forward
+   * keeping the last match.
+   */
   readonly artifacts: readonly ItemDetailArtifact[];
+  /** True when the item has more artifacts than were returned — so a reader can say so rather than imply completeness. */
+  readonly artifactsTruncated: boolean;
   /** History newest-first, capped at `historyLimit`. */
   readonly history: readonly ItemDetailHistoryEntry[];
   /** True when the ledger has more entries than were returned — so the view can say so rather than imply completeness. */
@@ -433,14 +458,47 @@ export const getItemDetail = defineOperation({
       // record rather than a transient render. `seq` ASC, matching
       // `createdAt ASC`: within the array the client scans forward with
       // `>=`, so ASC ordering is what makes "last seen" mean "most recent".
+      //
+      // ── The LIMIT, and why it keeps the TAIL ────────────────────────────
+      //
+      // Bounded because `body` and `findings` are unbounded columns and this
+      // was the read that returned every one of them. One row beyond the cap
+      // is read so "there is more" is a fact rather than an inference from a
+      // page that happens to be exactly `artifactLimit` long.
+      //
+      // **The window is the NEWEST `artifactLimit` rows, taken by ordering
+      // DESC in Postgres and reversing in JS — not the first N of the ASC
+      // list.** That direction is not a preference, it is correctness. Every
+      // consumer of this array scans it forward keeping the *last* match:
+      // `foldBuildStatus` here, and four mirrors in `item-detail/view.ts`
+      // (`artifactsByRound`, `latestVerdict`, `newestVerification`,
+      // `currentTipCommitSha`). Head-truncating an ASC list drops precisely
+      // the rows all five of them are looking for, and it does so silently —
+      // `currentTipCommitSha`'s answer is written back as a durable
+      // `historical_verification` artifact by `ItemDetailContainer`, so a
+      // wrong tip here is a wrong permanent record rather than a stale
+      // render. Keeping the tail makes all five correct by construction,
+      // with no truncation flag for them to consult and forget to check.
+      //
+      // The cost is the honest one: the *oldest* artifacts fall off a
+      // heavily-worked item. `get_item_artifacts` pages to them.
       `SELECT "id", "kind"::text AS "kind", "verdict"::text AS "verdict", "reviewRound",
               "commitSha", "ref", "body", "findings", "followUpItemId",
               "createdByType"::text AS "createdByType", "createdById", "createdAt"
        FROM "Artifact" WHERE "itemId" = $1
-       ORDER BY "reviewRound" ASC, "createdAt" ASC, "seq" ASC`,
+       ORDER BY "reviewRound" DESC, "createdAt" DESC, "seq" DESC
+       LIMIT $2`,
       id,
+      input.artifactLimit + 1,
     );
-    const artifacts: ItemDetailArtifact[] = artifactRows.map((row) => ({
+    const artifactsTruncated = artifactRows.length > input.artifactLimit;
+    // Back to ascending, which is the order this response has always been in
+    // and which the forward-scanning consumers above require. The DESC above
+    // exists only to make Postgres choose *which* rows to send.
+    const artifactWindow = (
+      artifactsTruncated ? artifactRows.slice(0, input.artifactLimit) : artifactRows
+    ).reverse();
+    const artifacts: ItemDetailArtifact[] = artifactWindow.map((row) => ({
       id: row.id,
       kind: row.kind,
       verdict: row.verdict,
@@ -471,7 +529,35 @@ export const getItemDetail = defineOperation({
     // one instant.
     const tipSha = await currentTipCommitSha(ctx.db, id);
     const tipLineage = await tipCommitLineage(ctx.db, id);
-    const buildStatus = foldBuildStatus(artifactRows, tipSha, tipLineage, new Date());
+
+    // ── Query B: the build-status fold reads its own rows ─────────────────
+    //
+    // Deliberately NOT folded from the artifact rows above, and this is the
+    // whole reason the bounded read needed a second query rather than a
+    // `slice`. `foldBuildStatus` keeps the **last** `check_run` row it is
+    // handed, so feeding it a truncated list would make the reported build
+    // depend on how many *unrelated* artifacts an item happens to have
+    // accumulated — a silently wrong status, with no error and nothing in
+    // the response to hint at it.
+    //
+    // It is unbounded by count but narrow by column: `check_run` is the only
+    // kind the fold inspects, and `CheckRunArtifactRow` is the exact column
+    // list it reads. So this stays small for the reason that matters — it
+    // never selects `body`'s sibling `findings`, and `body` on a `check_run`
+    // is a status word ("passing", "failing"), not prose. Filtering by kind
+    // in SQL rather than in JS is what keeps that true.
+    //
+    // `ORDER BY "reviewRound" ASC, "createdAt" ASC, "seq" ASC` is preserved
+    // exactly from the original single query and is load-bearing: the fold
+    // has no notion of "newest" beyond the order its caller supplies, so
+    // reversing this would silently invert which build gets reported.
+    const checkRunRows = await ctx.db.$queryRawUnsafe<CheckRunArtifactRow[]>(
+      `SELECT "kind"::text AS "kind", "body", "ref", "commitSha", "reviewRound", "createdAt"
+       FROM "Artifact" WHERE "itemId" = $1 AND "kind" = 'check_run'
+       ORDER BY "reviewRound" ASC, "createdAt" ASC, "seq" ASC`,
+      id,
+    );
+    const buildStatus = foldBuildStatus(checkRunRows, tipSha, tipLineage, new Date());
 
     // History, newest first and capped. Read one row beyond the cap so
     // "there is more" is a fact rather than an inference from a full page —
@@ -547,6 +633,7 @@ export const getItemDetail = defineOperation({
       subtasks,
       artifacts,
       history,
+      artifactsTruncated,
       historyTruncated,
       summary,
       buildStatus,

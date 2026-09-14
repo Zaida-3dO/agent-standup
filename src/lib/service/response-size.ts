@@ -180,8 +180,39 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // remedy this table has carried — so the wording is now checked rather
   // than reviewed: `advice.ts`'s `unreachable` class fails the build on a
   // remedy naming a tool the caller cannot call.
+  // **The two remedies that reach artifacts and notes are named first,
+  // because they are the only ones that return the data a caller refused
+  // here was reading.** The other routes named below — the loops, the body,
+  // the slim record — each shrink a *different* part of the payload, and
+  // none of them returns an artifact or a note body at all. A caller
+  // refused while reading an item's plans or reviews needs a route to
+  // plans and reviews; a route to something else answers a question they
+  // did not ask, and does it in a form that reads like an answer. An empty
+  // result from the wrong call is worse than the refusal, because the
+  // refusal is at least legible as a failure.
+  //
+  // Both are named with the parameter that makes them useful rather than by
+  // name alone: `kind` and `artifactId` are what turn "page through the
+  // artifacts" into "fetch the plan I recorded", and `full: true` is what
+  // makes `get_item_history` return note text rather than a slim ledger.
+  // `artifactLimit` is named alongside `historyLimit` because artifacts
+  // were the unbounded axis on this read until they were capped, and
+  // lowering it is the cheapest fix for a caller who wants this exact
+  // response, only smaller.
+  //
+  // **The clause order is constrained, not stylistic, and this entry is
+  // the reason the constraint is worth stating twice.**
+  // `describe/advice.ts`'s `attributeTo` walks every tool mentioned before
+  // an instructed field and keeps the LAST one, falling back to the entry's
+  // own operation only when no tool precedes it. `artifactLimit` and
+  // `historyLimit` are *this* operation's parameters and no other tool
+  // named here accepts either — so they lead the string. Written anywhere
+  // later they get attributed to whichever tool was named most recently
+  // (`loop` and `get_item_body` were both tried while building this, and
+  // both failed the build as `parameter` defects). The check is doing its
+  // job in each case; the fix is the ordering, not an exemption.
   get_item_detail:
-    '`loop` with `action: "list"` for this item\'s loops, `get_item_body` to read a large body in windows, or `get_item` with `full: false` for the slim record',
+    "a smaller `artifactLimit` or `historyLimit`, `get_item_artifacts` to read this item's artifacts (`kind` to filter, `artifactId` for one in full), `get_item_history` with `full: true` for its notes and checkpoints, `loop` with `action: \"list\"` for this item's loops, `get_item_body` to read a large body in windows, or `get_item` with `full: false` for the slim record",
   // **Now names `limit`, which is the parameter that actually bounds this
   // response.** The advice here predated `orientation` gaining a working
   // `limit`, so it could only redirect a caller to a different call — the
@@ -213,6 +244,12 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // (`MAX_BODY_CHUNK_CHARS`'s own default already sits well under the
   // ceiling — see that constant's header), but a caller is free to lower it
   // further, and naming it is more useful than the default fallback.
+  // The new read's own entry. It is already the slim shape by default, so
+  // the remedy is the page size rather than the shape — unless a caller
+  // asked for `full`, where the bodies are the whole cost and `artifactId`
+  // fetches the one they actually wanted instead of a page of them.
+  get_item_artifacts:
+    "a smaller `limit`, or `full: false` for the slim shape, or `artifactId` to fetch one artifact instead of a page",
   get_item_body: "a smaller `limit`",
 };
 

@@ -17,6 +17,7 @@ import {
   waiversNameRegisteredAdapters,
 } from "@/lib/adapters/waivers";
 import { listOperations, OPERATION_NAMES } from "@/lib/service";
+import { narrowerCallFor } from "@/lib/service/response-size";
 import { createMcpServer } from "@/lib/mcp/server";
 import { toolsFromOperations } from "@/lib/mcp/tools";
 
@@ -212,8 +213,64 @@ describe("the waiver list", () => {
       // true of a person tidying a board and false of the agent this guard
       // is talking to, which is what made the waiver wrong.
       "reparent_item",
+      // `guard.response_too_large` (`@/lib/service/response-size`) refuses
+      // `get_item_detail` on an item whose payload will not fit, and its
+      // advice names `get_item_history` as the way to reach that item's
+      // notes and checkpoints. Nothing else returns them: `get_item`,
+      // `my_work` and `progress_report` -- the three the waiver's own
+      // reason claimed covered this -- return no note or checkpoint body
+      // for an arbitrary item at all, so the waiver's operative claim was
+      // simply false. It was waived as "a user-interface read" backing the
+      // Activity tab, which is true of one caller and not of the agent the
+      // refusal is addressed to. Two sessions reported the dead end within
+      // a day; one tried six routes and found nothing.
+      "get_item_history",
+      // Same refusal, same advice, the other half of it: `get_item_artifacts`
+      // is what reaches the artifacts, and on a long-lived item those are
+      // frequently the whole reason the response did not fit.
+      "get_item_artifacts",
     ];
     for (const operation of AGENT_REMEDIATION_OPERATIONS) {
+      expect(isWaived("mcp_http", operation)).toBe(false);
+      expect(isWaived("mcp_stdio", operation)).toBe(false);
+    }
+  });
+
+  it("keeps the bounded-read remedies reachable for the guard that prescribes them", () => {
+    // The companion to the two rows added to AGENT_REMEDIATION_OPERATIONS
+    // above, and it fails for a different cause on purpose: restore either
+    // waiver and the test above fails; reword the advice so it stops
+    // naming these tools and this one fails, which is the signal that the
+    // rows above may have stopped being load-bearing and should be
+    // re-argued rather than silently kept.
+    //
+    // Read out of `response-size.ts` rather than restated here, so this
+    // checks the text a refused caller is actually shown.
+    const adviceSource = readFileSync(
+      path.join(repoRoot(), "src/lib/service/response-size.ts"),
+      "utf-8",
+    );
+    const collapsed = adviceSource.replace(/"\s*\+\s*"/g, "");
+
+    const detailAdvice = narrowerCallFor("get_item_detail");
+    expect(detailAdvice).toBeDefined();
+    // The two remedies that reach the data. Before this change the advice
+    // named neither, and every route it did name answered a different
+    // question than the one the refused caller had asked.
+    expect(detailAdvice).toContain("get_item_artifacts");
+    expect(detailAdvice).toContain("get_item_history");
+    // Named with the parameter that makes each useful, not by name alone:
+    // `get_item_history` returns a slim ledger without `full`, which is
+    // not the note text the caller was refused while reading.
+    expect(detailAdvice).toContain("full: true");
+    expect(collapsed).toContain("get_item_artifacts");
+
+    // And both are genuinely callable, which is the half a string
+    // assertion cannot see. This is the same coupling `advice.ts`'s
+    // `unreachable` check enforces at build time, asserted here against
+    // the waiver table directly so the reason survives even if that
+    // checker is ever relaxed.
+    for (const operation of ["get_item_artifacts", "get_item_history"]) {
       expect(isWaived("mcp_http", operation)).toBe(false);
       expect(isWaived("mcp_stdio", operation)).toBe(false);
     }

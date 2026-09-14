@@ -88,6 +88,7 @@ import { getItemDetail } from "./operations/get-item-detail";
 // The ledger past `get_item_detail`'s cap, paged server-side (T24). Its own
 // read with its own snapshot rather than an offset threaded through the
 // detail payload — see its header for why that trade is the right one.
+import { getItemArtifacts } from "./operations/get-item-artifacts";
 import { getItemHistory } from "./operations/get-item-history";
 // `body` past what `get_item`/`get_item_detail` can return whole (row
 // 977dc07e): a body over the response-size cap had no read that reached it
@@ -271,6 +272,7 @@ export const OPERATION_REGISTRY = {
   [markEventSeen.name]: markEventSeen,
   [getItemDetail.name]: getItemDetail,
   [getItemHistory.name]: getItemHistory,
+  [getItemArtifacts.name]: getItemArtifacts,
   [getItemBody.name]: getItemBody,
   [getNeedsYou.name]: getNeedsYou,
   [getStaleCandidates.name]: getStaleCandidates,

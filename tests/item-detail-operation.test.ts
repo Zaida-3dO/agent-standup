@@ -392,6 +392,144 @@ describeIfDb("get_item_detail against Postgres", () => {
     });
   });
 
+  describe("the artifact bound", () => {
+    // A local fixture rather than reaching into the `artifacts` block's
+    // helper: these tests need a `body`, which that one deliberately does
+    // not set, and they need to control the ordering columns precisely.
+    async function addArtifact(
+      itemId: string,
+      fields: { kind: string; body?: string; sha?: string; round?: number },
+    ): Promise<void> {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "Artifact"
+           ("id", "itemId", "kind", "reviewRound", "commitSha", "body", "createdByType", "createdById")
+         VALUES (gen_random_uuid(), $1, $2::"ArtifactKind", $3, $4, $5, 'agent'::"HolderType", $6)`,
+        itemId,
+        fields.kind,
+        fields.round ?? 1,
+        fields.sha ?? null,
+        fields.body ?? null,
+        "test-agent",
+      );
+    }
+
+    it("caps the artifacts and says so", async () => {
+      const project = await createItem({ area: "detail-art-cap" });
+      const task = await createItem({ area: "detail-art-cap", parentId: project.id });
+      for (let index = 0; index < 5; index++) {
+        await addArtifact(task.id, { kind: "plan", body: `plan-${index}` });
+      }
+
+      const capped = await detailOf(task.id, { artifactLimit: 3 });
+      expect(capped.artifacts).toHaveLength(3);
+      expect(capped.artifactsTruncated).toBe(true);
+
+      // Not truncated when everything fits — the flag is a fact about this
+      // response, not a constant. Pinning both directions is what stops
+      // `artifactsTruncated: true` (or `false`) hardcoded from passing.
+      const whole = await detailOf(task.id, { artifactLimit: 100 });
+      expect(whole.artifacts).toHaveLength(5);
+      expect(whole.artifactsTruncated).toBe(false);
+
+      // Exactly at the cap is the ambiguous case the extra row exists to
+      // settle: five artifacts and a limit of five is NOT truncated.
+      const exact = await detailOf(task.id, { artifactLimit: 5 });
+      expect(exact.artifacts).toHaveLength(5);
+      expect(exact.artifactsTruncated).toBe(false);
+    });
+
+    it("keeps the NEWEST artifacts when it truncates, not the oldest", async () => {
+      const project = await createItem({ area: "detail-art-tail" });
+      const task = await createItem({ area: "detail-art-tail", parentId: project.id });
+      for (let index = 0; index < 5; index++) {
+        await addArtifact(task.id, { kind: "plan", body: `plan-${index}` });
+      }
+
+      const capped = await detailOf(task.id, { artifactLimit: 2 });
+      // Still ascending, which every forward-scanning consumer requires...
+      expect(capped.artifacts.map((a) => a.body)).toEqual(["plan-3", "plan-4"]);
+      // ...and it is the tail that survived. Head-truncate instead and this
+      // is ["plan-0", "plan-1"] — the exact silent-wrong-answer the four
+      // `item-detail/view.ts` mirrors would then compute.
+    });
+
+    it("reports the build status from a check_run outside the cap", async () => {
+      const project = await createItem({ area: "detail-art-build" });
+      const task = await createItem({ area: "detail-art-build", parentId: project.id });
+
+      // The check_run goes in FIRST, so it is the oldest row and falls
+      // outside a tail-kept window of 2.
+      await addArtifact(task.id, { kind: "check_run", body: "passing", sha: "abc1234" });
+      for (let index = 0; index < 4; index++) {
+        await addArtifact(task.id, { kind: "plan", body: `plan-${index}` });
+      }
+
+      const capped = await detailOf(task.id, { artifactLimit: 2 });
+      // The check_run is genuinely not in the returned array...
+      expect(capped.artifacts.some((a) => a.kind === "check_run")).toBe(false);
+      // ...and the build status is reported anyway, because it is folded
+      // from its own query. Fold from the truncated rows instead and this
+      // is null: a build silently reported as "never run" because the item
+      // accumulated unrelated artifacts. That is the whole reason the
+      // second query exists.
+      expect(capped.buildStatus).not.toBeNull();
+      expect(capped.buildStatus?.status).toBe("passing");
+      expect(capped.buildStatus?.commitSha).toBe("abc1234");
+    });
+
+    it("folds the build status from the LAST check_run, under truncation", async () => {
+      const project = await createItem({ area: "detail-art-build-order" });
+      const task = await createItem({ area: "detail-art-build-order", parentId: project.id });
+
+      // Two check_runs at ascending rounds. The fold keeps the last of the
+      // ASC order, so round 2 must win. Reverse Query B's ORDER BY and this
+      // reports "failing" — a stale build presented as current, with no
+      // error anywhere to notice.
+      await addArtifact(task.id, { kind: "check_run", body: "failing", sha: "old1234", round: 1 });
+      await addArtifact(task.id, { kind: "check_run", body: "passing", sha: "new1234", round: 2 });
+      for (let index = 0; index < 4; index++) {
+        await addArtifact(task.id, { kind: "plan", body: `plan-${index}`, round: 3 });
+      }
+
+      const capped = await detailOf(task.id, { artifactLimit: 1 });
+      expect(capped.buildStatus?.status).toBe("passing");
+      expect(capped.buildStatus?.commitSha).toBe("new1234");
+    });
+
+    it("asks Postgres for a bounded artifact query rather than trimming in JS", async () => {
+      // The response cannot tell a `LIMIT`ed query from one that selected
+      // every row and sliced the array afterwards — and the second is
+      // exactly the non-fix this change exists to avoid, since it still
+      // transfers every `body` and `findings` before discarding them. So
+      // this asserts against the operation's source text.
+      const source = await import("node:fs/promises").then((fs) =>
+        fs.readFile("src/lib/service/operations/get-item-detail.ts", "utf8"),
+      );
+      const artifactQuery = source.slice(
+        source.indexOf('FROM "Artifact" WHERE "itemId" = $1'),
+        source.indexOf("const artifactsTruncated"),
+      );
+      expect(artifactQuery).toMatch(/LIMIT \$2/);
+      expect(artifactQuery).toMatch(/ORDER BY "reviewRound" DESC, "createdAt" DESC, "seq" DESC/);
+    });
+
+    it("keeps the build-status query narrow and in ascending order", async () => {
+      const source = await import("node:fs/promises").then((fs) =>
+        fs.readFile("src/lib/service/operations/get-item-detail.ts", "utf8"),
+      );
+      const buildQuery = source.slice(
+        source.indexOf("const checkRunRows"),
+        source.indexOf("const buildStatus"),
+      );
+      // Narrow by kind in SQL, not by filtering in JS — otherwise the
+      // "unbounded" second query really would read every artifact body.
+      expect(buildQuery).toMatch(/WHERE "itemId" = \$1 AND "kind" = 'check_run'/);
+      expect(buildQuery).not.toMatch(/"findings"/);
+      // The ordering the fold's notion of "newest" depends on entirely.
+      expect(buildQuery).toMatch(/ORDER BY "reviewRound" ASC, "createdAt" ASC, "seq" ASC/);
+    });
+  });
+
   describe("history", () => {
     it("returns the item's events newest first", async () => {
       const project = await createItem({ area: "detail-history" });
