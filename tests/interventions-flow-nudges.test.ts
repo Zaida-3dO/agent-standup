@@ -206,4 +206,59 @@ describe("the gate that decides whether any of this is looked up", () => {
     expect(isPullRequestOpen("gh pr checks")).toBe(false);
     expect(isPullRequestOpen("echo gh pr create")).toBe(false);
   });
+
+  it("turns on at the merge, which is the moment I28 is about", () => {
+    // The defect this replaced: the gate covered commit/push/`gh pr create`
+    // and stopped short of the close, so I28 fired while a row was still
+    // being worked and went silent at the exact event where its findings
+    // stop being visible. Each of these is `false` without the
+    // `isMergeLanding` clause.
+    expect(needs("gh pr merge 61 --squash", "Bash", "post").delivery).toBe(true);
+    expect(needs("gh pr merge 61 --merge --delete-branch", "Bash", "post").delivery).toBe(true);
+    expect(needs("git merge origin/main", "Bash", "post").delivery).toBe(true);
+    expect(needs("git merge --no-ff feature", "Bash", "post").delivery).toBe(true);
+  });
+
+  it("stays off `git pull`, which catches up rather than closing", () => {
+    // **The negative control that decided the shape of the fix.** The
+    // obvious implementation reuses `isMergeAttempt`, which also matches a
+    // bare `git pull` — correct for the approval limb, wrong here. A pull
+    // is the opposite of a close: nothing lands, so no finding can become
+    // invisible, and it is the highest-frequency git command a session
+    // runs. Catching it would put the assignment and artifact lookups on
+    // that path for zero possible findings.
+    //
+    // This case fails if anyone later "simplifies" the clause back to
+    // `isMergeAttempt`, which is precisely why it is written by name.
+    expect(needs("git pull", "Bash", "post").delivery).toBe(false);
+    expect(needs("git pull --ff-only", "Bash", "post").delivery).toBe(false);
+    expect(needs("git pull origin main", "Bash", "post").delivery).toBe(false);
+    expect(needs("git pull --no-ff origin main", "Bash", "post").delivery).toBe(false);
+  });
+
+  it("stays off the merge shapes that land nothing", () => {
+    // Finishing or discarding a merge already in progress, and the
+    // fast-forward that only moves a pointer. None of them closes a row.
+    expect(needs("git merge --abort", "Bash", "post").delivery).toBe(false);
+    expect(needs("git merge --continue", "Bash", "post").delivery).toBe(false);
+    expect(needs("git merge --quit", "Bash", "post").delivery).toBe(false);
+    expect(needs("git merge --ff-only origin/main", "Bash", "post").delivery).toBe(false);
+    // The reads a session runs while watching its own PR.
+    expect(needs("gh pr view 61", "Bash", "post").delivery).toBe(false);
+    expect(needs("gh pr checks 61", "Bash", "post").delivery).toBe(false);
+    // Not a merge at all, and the shapes that merely mention one.
+    expect(needs("git merge-base main HEAD", "Bash", "post").delivery).toBe(false);
+    expect(needs("echo gh pr merge 61", "Bash", "post").delivery).toBe(false);
+  });
+
+  it("never turns the merge on at the pre phase", () => {
+    // `pre` is the blocking path. I28 is a `post` nudge, so reading it here
+    // would add queries to the path that decides whether a call proceeds,
+    // for a finding that could never be the reason.
+    expect(needs("gh pr merge 61 --squash", "Bash", "pre").delivery).toBe(false);
+    expect(needs("git merge origin/main", "Bash", "pre").delivery).toBe(false);
+    // And the approval limb the merge DOES feed is untouched by all this.
+    expect(needs("gh pr merge 61 --squash", "Bash", "pre").approval).toBe(true);
+    expect(needs("git pull", "Bash", "pre").approval).toBe(true);
+  });
 });

@@ -12,6 +12,7 @@ import {
   allowsOnlyFastForward,
   isBroadProcessKill,
   isMergeAttempt,
+  isMergeLanding,
 } from "@/lib/interventions/commands";
 
 describe("isMergeAttempt", () => {
@@ -123,6 +124,91 @@ describe("isMergeAttempt", () => {
     ]) {
       expect(isMergeAttempt(command), command).toBe(true);
     }
+  });
+});
+
+describe("isMergeLanding", () => {
+  // The delivery limb's recogniser, deliberately narrower than
+  // `isMergeAttempt`. The two answer different questions and the suite
+  // below exists mostly to pin the ONE case where they disagree.
+
+  it("recognises the shapes that close a row", () => {
+    for (const command of [
+      "git merge feature",
+      "git merge --no-ff feature",
+      "git merge origin/main",
+      "gh pr merge 12 --squash",
+      "gh pr merge --squash --delete-branch",
+      // Global options before the subcommand, as `isMergeAttempt` handles.
+      "git -C /some/path merge feature",
+      "git --no-pager merge feature",
+      // `gh` with its own options before the subcommand pair.
+      "gh --repo owner/name pr merge 12",
+    ]) {
+      expect(isMergeLanding(command), command).toBe(true);
+    }
+  });
+
+  it("does NOT recognise `git pull`, which is where it parts from isMergeAttempt", () => {
+    // **The case this function exists for.** Breaks if the body is ever
+    // reduced to a call to `isMergeAttempt` — the obvious simplification,
+    // and the wrong one. A pull catches a branch *up*; it closes nothing,
+    // so no finding can become invisible because of it, and it is the
+    // highest-frequency git command a session runs. Widening the delivery
+    // gate onto it would buy zero findings and put two lookups on that
+    // path.
+    for (const command of [
+      "git pull",
+      "git pull origin main",
+      "git pull --ff-only",
+      "git pull --no-ff origin main",
+      "git pull --no-rebase origin main",
+      "git -C /some/path pull",
+    ]) {
+      expect(isMergeLanding(command), command).toBe(false);
+      // And the contrast that makes the point: the approval limb's
+      // recogniser still catches the ones that can write a merge commit.
+      // If these two ever agree on `git pull`, one of them is wrong.
+      if (!command.includes("--ff-only")) {
+        expect(isMergeAttempt(command), command).toBe(true);
+      }
+    }
+  });
+
+  it("does not recognise the merge shapes that land nothing", () => {
+    for (const command of [
+      // End a merge already in progress rather than starting one. Breaks if
+      // the `--(abort|continue|quit)` early return is deleted.
+      "git merge --abort",
+      "git merge --continue",
+      "git merge --quit",
+      // Moves a pointer to a descendant; writes no merge commit. Breaks if
+      // the `allowsOnlyFastForward` early return is deleted.
+      "git merge --ff-only origin/main",
+      // Compute-only, and a distinct subcommand token.
+      "git merge-base main HEAD",
+      "git merge-tree main feature",
+      // The reads a session runs constantly while watching its own PR.
+      // Breaks if the `gh` pattern is loosened to match `gh pr` alone.
+      "gh pr view 12",
+      "gh pr list",
+      "gh pr checks",
+      // Anchored at the statement start, so a mention is not an invocation.
+      "echo gh pr merge 12",
+      "echo git merge feature",
+    ]) {
+      expect(isMergeLanding(command), command).toBe(false);
+    }
+  });
+
+  it("reads each statement of a compound command", () => {
+    // Breaks if `splitStatements` is dropped and the whole string is tested
+    // at once, since the anchored `gh` pattern would then miss a merge that
+    // is not the first statement.
+    expect(isMergeLanding("npm test && gh pr merge 12 --squash")).toBe(true);
+    expect(isMergeLanding("git fetch && git merge origin/main")).toBe(true);
+    // Still false when every statement is innocent.
+    expect(isMergeLanding("git fetch && git pull --ff-only")).toBe(false);
   });
 });
 

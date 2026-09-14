@@ -377,6 +377,23 @@ describe("the operation touches no table on the ordinary path", () => {
       // file-editing tool for that reason, and this is the case that pins it.
       { tool: "Read", command: undefined, eventType: "PostToolUse" },
       { tool: "Bash", command: "ls -la", eventType: "PostToolUse" },
+      // **`git pull --ff-only` at `post`.** This is the command every
+      // session runs to catch up before it starts work, and it is on this
+      // list because it can neither land unreviewed history (git aborts
+      // unless the update is a fast-forward) nor close a row.
+      //
+      // Note what is deliberately NOT here: a *bare* `git pull`. That one
+      // already costs the assignment lookup on both phases and always has,
+      // because it feeds the approval limb — git will build a merge commit
+      // out of divergent history without being asked. That is row
+      // f296b059's distinction and it is not this gate's to make.
+      //
+      // What the delivery widening had to preserve is that a bare pull does
+      // not additionally gain the *delivery* lookups, which is pinned
+      // directly as `delivery === false` in
+      // `tests/interventions-flow-nudges.test.ts` — the assertion that
+      // fails if the clause is ever "simplified" to `isMergeAttempt`.
+      { tool: "Bash", command: "git pull --ff-only", eventType: "PostToolUse" },
     ];
 
     for (const entry of ordinary) {
