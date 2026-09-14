@@ -10,11 +10,26 @@
 // rather than listing is how this adapter satisfies the first half without
 // any per-operation maintenance at all.
 //
-// Nothing in this module knows what a transport is. It turns operations into
-// descriptors; `./server.ts` registers them; `./http.ts` decides how bytes
-// arrive.
+// This module knows which *adapter* it is building for — `mcp_http` or
+// `mcp_stdio`, the same `AdapterName` `./server.ts` already threads through —
+// but nothing here knows how bytes arrive. That is `./http.ts`'s and
+// `./stdio.ts`'s job. The adapter name exists solely so the stdio surface can
+// carry the short note below; it decides nothing about registration,
+// dispatch or rejection shape, all of which stay identical across adapters.
+//
+// ── Why stdio gets a suffix and http does not ────────────────────────────
+//
+// A no-server installation (DECISIONS.md §13f) runs `standup mcp` with no
+// hook able to reach it: `src/lib/hook/` flushes and asks over HTTP only, so
+// a stdio session's tool calls are never observed and no server-side
+// intervention can act on them. Nothing else on the tool surface says so —
+// the schema is identical either way — so the one line this module adds is
+// the only place an agent on that surface learns its session is unguarded.
+// Deliberately not a direct hook binding (out of scope; see the item this
+// row shipped against): the absence is made legible, not compensated for.
 import type { z } from "zod";
 import type { AnyOperation } from "@/lib/service";
+import type { AdapterName } from "@/lib/adapters/registry";
 
 /**
  * One MCP tool, as this adapter describes it to a client.
@@ -132,17 +147,44 @@ function shapeOf(schema: z.ZodTypeAny): unknown {
 }
 
 /**
+ * Appended to every tool's description on the `mcp_stdio` adapter only.
+ *
+ * One sentence, on purpose — `describe-tool.ts`'s header states the cost
+ * this module inherits: anything added to a description is sent to the
+ * model on every turn, charged to every session for the installation's
+ * whole life, whether or not it is ever read. This is not a place to explain
+ * the no-server topology; it is a pointer an agent that hits a claim refusal
+ * or notices nothing is intervening can follow to the reason. The full
+ * rationale lives in this module's header and in `describe_tool`'s
+ * transport report, both read on demand rather than paid for by default.
+ */
+const STDIO_DESCRIPTION_SUFFIX =
+  " (Direct/stdio session: unobserved by any server-side hook, so no intervention applies here — " +
+  "and hook.require_registration_to_claim must stay off, or this session cannot claim.)";
+
+/**
  * Every service operation, as an MCP tool.
  *
  * Takes the operation list as a parameter rather than importing the
  * registry, so a test can hand it a set it controls — and so this module
  * has no opinion about which operations exist, only about how one becomes a
  * tool.
+ *
+ * `adapter` is optional and defaults to no suffix at all, not to either
+ * adapter's behaviour — a caller that does not say which adapter it is
+ * building for (a test exercising the derivation in isolation, say) gets
+ * the operation's own summary verbatim, the one behaviour this function had
+ * before adapter-awareness existed and the one `mcp_http` still gets. Only
+ * `mcp_stdio` adds anything.
  */
-export function toolsFromOperations(operations: readonly AnyOperation[]): McpToolDescriptor[] {
+export function toolsFromOperations(
+  operations: readonly AnyOperation[],
+  adapter?: AdapterName,
+): McpToolDescriptor[] {
+  const suffix = adapter === "mcp_stdio" ? STDIO_DESCRIPTION_SUFFIX : "";
   return operations.map((operation) => ({
     name: operation.name,
-    description: operation.summary,
+    description: operation.summary + suffix,
     inputSchema: operation.input as unknown as z.ZodTypeAny,
     readOnly: operation.kind === "read",
   }));

@@ -46,7 +46,18 @@ import { defaultSnapshot, resolveSettings } from "@/lib/settings";
 import { z } from "zod";
 import { FINDING_SEVERITIES, parseFindings } from "@/lib/findings";
 
-/** A handle no test here needs to reach — `describe_tool` touches no table. */
+/**
+ * A handle almost no test here needs to reach.
+ *
+ * `describe_tool` touches one table now, not zero: the no-`tool` branch
+ * reads `_prisma_migrations` for the migration-drift report
+ * (`migrationDriftReport` in the operation itself). Every query this handle
+ * receives answers `[]`, which the drift comparison reads as "no migrations
+ * recorded as applied yet" — `severity: "none"`, not a failure — so tests
+ * with no opinion about migration state are unaffected by the read they did
+ * not know they were making. The migration-drift describe_tool tests below
+ * build their own handle that answers the query with real rows.
+ */
 const inertHandle: TransactionHandle = {
   $queryRawUnsafe: async <T = unknown>(): Promise<T> => [] as T,
   $executeRawUnsafe: async (): Promise<number> => 0,
@@ -1224,6 +1235,124 @@ describe("describe_tool with no tool answers what the build is", () => {
     const contract = await contractFor("create_item");
     expect(contract.name).toBe("create_item");
     expect(contract.fields.length).toBeGreaterThan(0);
+  });
+});
+
+describe("describe_tool reports the transport it was called on", () => {
+  /** Calls describe_tool with no `tool`, over the given transport (or none). */
+  async function factsOn(transport?: string): Promise<ServiceFacts> {
+    const rt = new ServiceRuntime({
+      transaction: (body) => body(inertHandle),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+    return (await rt.call(
+      "describe_tool",
+      {},
+      transport ? { caller: { transport } } : undefined,
+    )) as ServiceFacts;
+  }
+
+  it("names the mcp_stdio adapter and its transport, on that transport", async () => {
+    const answer = await factsOn("mcp-stdio");
+    expect(answer.transport.transport).toBe("mcp-stdio");
+    expect(answer.transport.adapter).toBe("mcp_stdio");
+  });
+
+  it("names the mcp_http adapter and its transport, on that transport", async () => {
+    const answer = await factsOn("mcp-http");
+    expect(answer.transport.transport).toBe("mcp-http");
+    expect(answer.transport.adapter).toBe("mcp_http");
+  });
+
+  it("reports no adapter for a non-MCP transport — HTTP and the CLI carry no adapter waivers", async () => {
+    const answer = await factsOn("http");
+    expect(answer.transport.transport).toBe("http");
+    expect(answer.transport.adapter).toBeNull();
+    expect(answer.transport.waived).toBeNull();
+  });
+
+  it("reports both fields null when the call carried no transport at all", async () => {
+    const answer = await factsOn(undefined);
+    expect(answer.transport.transport).toBeNull();
+    expect(answer.transport.adapter).toBeNull();
+  });
+
+  it("lists this adapter's waived operations with their reasons, on mcp_stdio", async () => {
+    const answer = await factsOn("mcp-stdio");
+    expect(answer.transport.waived).not.toBeNull();
+    const waived = answer.transport.waived ?? [];
+    expect(waived.length).toBeGreaterThan(0);
+    // backfill is waived on both MCP adapters (adapters/waivers.ts) — a
+    // concrete member proves this is the real waiver list, not an empty
+    // array that would pass "not toBeNull" vacuously.
+    const backfill = waived.find((entry) => entry.operation === "backfill");
+    expect(backfill).toBeDefined();
+    expect(backfill?.reason.length).toBeGreaterThan(0);
+  });
+
+  it("says poll is waived on mcp_stdio too, so the surface does not imply a difference that is not there", async () => {
+    // The item's own scope note: poll is already waived on BOTH MCP
+    // transports, and the reporting should make that discoverable rather
+    // than implying stdio lost something http has.
+    const stdio = await factsOn("mcp-stdio");
+    const http = await factsOn("mcp-http");
+    const stdioHasPoll = (stdio.transport.waived ?? []).some((entry) => entry.operation === "poll");
+    const httpHasPoll = (http.transport.waived ?? []).some((entry) => entry.operation === "poll");
+    expect(stdioHasPoll).toBe(true);
+    expect(httpHasPoll).toBe(true);
+  });
+});
+
+describe("describe_tool reports migration drift", () => {
+  /** A transaction handle whose `_prisma_migrations` query answers with the given applied migration names. */
+  function handleWithAppliedMigrations(names: readonly string[]): TransactionHandle {
+    return {
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        if (query.includes("_prisma_migrations")) {
+          return names.map((name) => ({ name })) as T;
+        }
+        return [] as T;
+      },
+      $executeRawUnsafe: async (): Promise<number> => 0,
+    };
+  }
+
+  async function factsWithAppliedMigrations(names: readonly string[]): Promise<ServiceFacts> {
+    const rt = new ServiceRuntime({
+      transaction: (body) => body(handleWithAppliedMigrations(names)),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+    return (await rt.call("describe_tool", {})) as ServiceFacts;
+  }
+
+  it("reports no drift when the database has applied nothing yet", async () => {
+    const answer = await factsWithAppliedMigrations([]);
+    expect(answer.migrations.severity).toBe("none");
+  });
+
+  it("reports database_ahead when the database has applied a migration this checkout does not ship", async () => {
+    // The real `prisma/migrations` directory backs this test (no filesystem
+    // fake here — `defaultMigrationsDir()` resolves against the real repo
+    // checkout tests run from), so any name that plausibly postdates every
+    // real migration folder proves the comparison reads live migration
+    // names, not a fixture.
+    const answer = await factsWithAppliedMigrations(["99999999999999_a_migration_from_the_future"]);
+    expect(answer.migrations.severity).toBe("incompatible");
+    // Whether this checkout's oldest recognised migration is older than the
+    // database's only applied one — which it always is here, since the
+    // fabricated name sorts after every real one, making it the *oldest and
+    // newest* applied migration at once, and therefore unrecognised — is
+    // exactly the incompatible case, not merely "ahead". Asserted via the
+    // severity rather than re-deriving the sort, which `state.test.ts`
+    // already covers exhaustively; this test's job is only to prove
+    // describe_tool wires the real filesystem read through.
+    expect(answer.migrations.databaseNewest).toBe("99999999999999_a_migration_from_the_future");
+  });
+
+  it("carries the message a startup warning would print verbatim", async () => {
+    const answer = await factsWithAppliedMigrations(["99999999999999_a_migration_from_the_future"]);
+    expect(typeof answer.migrations.message).toBe("string");
+    expect(answer.migrations.message.length).toBeGreaterThan(0);
   });
 });
 
