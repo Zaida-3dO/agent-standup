@@ -23,6 +23,7 @@ import {
   rehearseTransition,
   type TransitionOutcome,
 } from "../state-machine/transition";
+import { assertTransitionFieldsAccepted } from "../state-machine/transition-fields";
 import { RehearsalRollback } from "./rehearsal-rollback";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { appendEvent } from "@/lib/events";
@@ -35,9 +36,18 @@ const inputSchema = z
     to: z.string().min(1),
     /**
      * Extra fields the guards for the target state need — `blocked_reason`
-     * entering `blocked`, `summary` entering a completed state, and so on.
-     * Passed straight through to the guard layer unchanged (SCHEMA.md §16);
-     * this operation does not interpret them.
+     * entering `blocked`, `summary` entering a completed state, and so on
+     * (SCHEMA.md §16).
+     *
+     * **A closed set, checked before any guard runs.** This comment used to
+     * promise the record was "passed straight through to the guard layer
+     * unchanged", and that was true in the worst way: a key no guard read
+     * was discarded in silence while the operation still answered
+     * `allowed: true`. The reported case sent
+     * `fields: {mergeAuthority: "pre-approved"}` and got back a success
+     * whose own response body still showed `needs_approval`. The accepted
+     * keys, and the refusal naming the exit for each class of wrong one,
+     * are in `../state-machine/transition-fields.ts`.
      */
     fields: z.record(z.string(), z.unknown()).optional(),
     /**
@@ -146,6 +156,21 @@ export const transitionItem = defineOperation({
       ...input,
       id: await resolveItemId(ctx.db, input.id, "id"),
     };
+
+    // Before the guards, and before the rehearsal branch below.
+    //
+    // Before the *guards*, because a caller who mistyped one key should not
+    // have to satisfy an unrelated guard to find that out. The reported
+    // sequence was exactly that: `blockedReason`/`blockedOnType` were
+    // accepted and dropped, and then the blocked guard refused for the
+    // snake_case fields being absent — so one call produced two
+    // contradictory statements about the same two fields, and neither
+    // mentioned the spelling.
+    //
+    // Before the *rehearsal* branch, because `dry_run` exists to report
+    // what a real call would do. A dry run that passed a bad key while the
+    // real call refused it would be the same lie one step further back.
+    assertTransitionFieldsAccepted(input.fields, input.to, "transition_item");
 
     if (input.dryRun) {
       // Evaluate for real — same guard path a real transition takes,

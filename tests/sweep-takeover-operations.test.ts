@@ -88,8 +88,15 @@ describe("sweep and takeover are registered service operations", () => {
     // Pinned verbatim rather than by shape: the summary is the whole of what
     // an agent sees before choosing this tool, and "releases claims held by
     // dead sessions" is the part that has to survive an edit.
+    //
+    // No `[http/cli]` marker on `takeover`. That marker means "this name is
+    // deliberately not callable from MCP", and it is read by the advice
+    // lint, which suppresses its unreachability check for any text carrying
+    // it. `takeover` is registered on every adapter, so the marker told an
+    // MCP caller a reachable tool was out of reach and switched off the one
+    // check that would have noticed if that ever became true.
     expect(OPERATION_REGISTRY.sweep.summary).toBe(
-      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. Pass `dryRun` to see what it would do and write nothing. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped. `exempted` lists holders left alone despite being past the threshold, because they registered no hook and have emitted no signal, so their silence says nothing about whether they are alive; reclaiming one is deliberate surgery, done with `takeover` [http/cli].",
+      "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. Pass `dryRun` to see what it would do and write nothing. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped. `exempted` lists holders left alone despite being past the threshold, because they registered no hook and have emitted no signal, so their silence says nothing about whether they are alive; reclaiming one is deliberate surgery, done with `takeover`.",
     );
   });
 });

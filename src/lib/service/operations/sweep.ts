@@ -134,7 +134,7 @@ export const sweep = defineOperation({
   name: "sweep",
   kind: "write",
   summary:
-    "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. Pass `dryRun` to see what it would do and write nothing. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped. `exempted` lists holders left alone despite being past the threshold, because they registered no hook and have emitted no signal, so their silence says nothing about whether they are alive; reclaiming one is deliberate surgery, done with `takeover` [http/cli].",
+    "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. Pass `dryRun` to see what it would do and write nothing. `evictedWhileRunning` singles out the sessions taken from running straight to dead — the releases most likely to have hit a session that was working quietly rather than one that had stopped. `exempted` lists holders left alone despite being past the threshold, because they registered no hook and have emitted no signal, so their silence says nothing about whether they are alive; reclaiming one is deliberate surgery, done with `takeover`.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: SweepOperationInput): Promise<SweepOperationOutput> {

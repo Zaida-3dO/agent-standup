@@ -26,6 +26,7 @@ import {
   type RawItemRow,
 } from "../items/row";
 import { applyTransition } from "../state-machine/transition";
+import { assertTransitionFieldsAccepted } from "../state-machine/transition-fields";
 import {
   COMPLETED_STATES as COMPLETED_STATE_LIST,
   DECISION_CHAR_CAP,
@@ -132,6 +133,18 @@ const inputSchema = z
     full: z.boolean().default(false),
   })
   .strict()
+  // Kept at the schema boundary, not folded into the accepted-key table
+  // that `assertTransitionFieldsAccepted` checks in the handler.
+  //
+  // The table knows this same fact — `summary` is `acceptedBy:
+  // ["transition_item"]` — and would refuse the key with the same wording
+  // if this `.refine` were removed. It stays because it refuses *earlier*,
+  // at parse time, with the exact message callers and tests have had since
+  // this operation shipped; that message is a correct, already-landed
+  // example of the refuse-by-name behaviour the table generalises, so it is
+  // preserved rather than replaced. The two cannot disagree: both read the
+  // same rule about the same key, and `tests/transition-fields-accepted.test.ts`
+  // asserts the table would reach the same verdict.
   .refine((value) => value.fields === undefined || !("summary" in value.fields), {
     message: "fields.summary is not allowed — pass the summary in the top-level summary field.",
     path: ["fields", "summary"],
@@ -412,6 +425,20 @@ export const completeItem = defineOperation({
       ...input,
       id: await resolveItemId(ctx.db, input.id, "id"),
     };
+
+    // The same closed-set check `transition_item` runs, against the
+    // **caller's** `fields` — deliberately here, well before the
+    // `{...input.fields, summary: input.summary}` merge further down.
+    //
+    // That ordering is the whole subtlety of this operation. `complete_item`
+    // refuses a caller-supplied `fields.summary` (the `.refine` on the input
+    // schema) and then puts the top-level `summary` into that same record
+    // itself, because the guard reads it from there. Checking the merged
+    // record instead would refuse this operation's own injected key and
+    // make every completion impossible — which is why the accepted-key
+    // table is per-operation rather than per-state, and why `summary` is
+    // listed as accepted on `transition_item` only.
+    assertTransitionFieldsAccepted(input.fields, input.to, "complete_item");
 
     const candidate = toCandidate(input.summary);
 

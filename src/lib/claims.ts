@@ -148,9 +148,29 @@ export function assertSameCrew(live: readonly Assignment[], rootSessionId: strin
   if (holder) {
     throw new GuardRejectedError(
       ROOT_SESSION_GUARD,
+      // ── Naming the call, not the concept ────────────────────────────
+      //
+      // This used to end "Take it over through supersession rather than
+      // claiming alongside it", which names no tool. Two separate sessions
+      // read it, went hunting for an operation called `supersession`, found
+      // none, and both independently settled on calling `release` on the
+      // holder — which cannot work (`release` scopes its lookup to the
+      // caller's OWN row and refuses a non-holder) and is a plausible-
+      // looking wrong call on the operation that decides ownership.
+      // `adapters/waivers.ts` records that episode as the reason `takeover`
+      // is deliberately left un-waived on MCP.
+      //
+      // The clause order matters for the same reason it does in `claim`'s
+      // contract rule: `force`/`reason` must follow `takeover` as the
+      // nearest operation named before them, so the `claim` again sentence
+      // comes first. See `describe/advice.ts`'s `attributeTo`.
       `Item ${holder.itemId} is already held by another crew ` +
         `(root session ${holder.rootSessionId}, held as ${holder.role} by ${holder.sessionId}). ` +
-        `Take it over through supersession rather than claiming alongside it.`,
+        `Supersede the holder with \`takeover {itemId, fromSessionId: ${holder.sessionId}, ` +
+        `bySessionId: <yours>, holderType, holderId}\` — it releases their assignment but does ` +
+        `not assign the item to you, so call \`claim\` again afterwards. When that holder is ` +
+        `still live (liveness \`running\` or \`stalled\`), \`takeover\` also requires ` +
+        `\`force: true\` and a written \`reason\`.`,
       {
         fields: ["rootSessionId"],
         details: {
