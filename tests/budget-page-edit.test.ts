@@ -225,6 +225,29 @@ describe("windowFromDraft", () => {
     const off = windowToDraft({ ...aWindow(), enabled: false });
     expect(windowFromDraft(off)?.enabled).toBe(false);
   });
+
+  it("carries `reads` through, so editing a window cannot re-point it", () => {
+    // The form shows no control for this field, which is exactly why it has
+    // to be round-tripped explicitly: a draft is rebuilt into a whole window
+    // from nothing but itself. Dropping it would mean opening a weekly
+    // window and saving it silently re-measured that window against the
+    // five-hour figure — changing what live configuration MEANS with no
+    // diff anywhere recording it.
+    //
+    // Fails the moment either `windowToDraft` or `windowFromDraft` stops
+    // copying the field.
+    const weekly: BudgetWindow = { ...aWindow(), lengthHours: 168, reads: "usageWeekly" };
+    expect(windowFromDraft(windowToDraft(weekly))).toEqual(weekly);
+    expect(windowFromDraft(windowToDraft(weekly))?.reads).toBe("usageWeekly");
+  });
+
+  it("leaves a window that declares no reading without one", () => {
+    // Absent must stay absent rather than becoming an explicit default.
+    // The two band identically, so writing the default in would look
+    // harmless — and it would mean a later change to that default silently
+    // did not apply to any window that had ever been through the editor.
+    expect("reads" in windowFromDraft(windowToDraft(aWindow()))!).toBe(false);
+  });
 });
 
 describe("draftIncompleteness", () => {

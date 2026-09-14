@@ -34,7 +34,13 @@
 // which is what a typed setting is for. An evaluator with a threshold baked
 // into it would make that decision by accident and hide it where nobody
 // would look.
-import { boundaryAt, type BudgetWindow, type BudgetWindows } from "../settings/budget-windows";
+import {
+  DEFAULT_USAGE_READING,
+  boundaryAt,
+  type BudgetWindow,
+  type BudgetWindows,
+  type UsageReadingKey,
+} from "../settings/budget-windows";
 import type { UsageReading } from "./reading";
 
 /**
@@ -150,8 +156,21 @@ export function bandFor(
 export interface AccountBandInput {
   /** The windows in force: the account's override, or the global setting. */
   readonly windows: BudgetWindows;
-  /** The usage reading, already resolved for staleness. */
-  readonly reading: UsageReading;
+  /**
+   * The usage readings, already resolved for staleness, keyed by which
+   * figure each one is.
+   *
+   * A map rather than a single reading because an account carries more than
+   * one, and each window declares which it is measured against (`reads` on
+   * the window). One shared reading would mean a weekly window banding
+   * against a five-hour percentage — not approximately wrong, but
+   * meaningless, since the two numbers describe different periods.
+   *
+   * A key absent from this map is the same fact as a reading whose status
+   * is `absent`: nothing has been measured for that figure. Both produce an
+   * unbanded verdict WITH A REASON rather than a permissive one.
+   */
+  readonly readings: Readonly<Partial<Record<UsageReadingKey, UsageReading>>>;
   /**
    * How far into each window the account is, keyed by the same window names
    * as windows.
@@ -184,39 +203,62 @@ export function decideBand(input: AccountBandInput, budgetEnabled: boolean): Ban
   const enabled = names.filter((name) => input.windows[name]!.enabled);
   if (enabled.length === 0) return { status: "unbanded", reason: "window-disabled", verdicts: [] };
 
-  // The reading is checked after the configuration, so an installation with
-  // budgets switched off is never told its usage pipeline is broken — it is
-  // not being asked to have one.
-  if (input.reading.status === "absent") {
-    return { status: "unbanded", reason: "reading-absent", verdicts: [] };
-  }
-  if (input.reading.status === "stale") {
-    // The whole reason #56 lands before this row. A stale figure is not
-    // quietly used: acting on it applies an earlier window's headroom to the
-    // current one, and a reading that has stopped arriving usually means the
-    // machine reporting it has stopped, which is when usage is least
-    // predictable.
-    return { status: "unbanded", reason: "reading-stale", verdicts: [] };
-  }
-  const usage = input.reading.value;
-
+  // The readings are checked after the configuration, so an installation
+  // with budgets switched off is never told its usage pipeline is broken —
+  // it is not being asked to have one.
+  //
+  // Checked PER WINDOW rather than once for the account, because each window
+  // reads its own figure: an account with a current short reading and no
+  // weekly one can band its 5h window perfectly well, and must not be held
+  // unbanded by the absence of a figure no enabled window asked for.
+  //
+  // `unusable` remembers why a window could not be banded, so an account
+  // that ends up with no verdicts at all can still say WHICH failure caused
+  // it. Reporting "no reading" as though it were "free" is the one outcome
+  // forbidden outright — it makes a broken usage pipeline look like an
+  // account with room to spare, which is how a budget gets spent without
+  // anyone noticing.
+  const unusable: NoBandReason[] = [];
   const verdicts: WindowVerdict[] = [];
   for (const name of enabled) {
+    const window = input.windows[name]!;
+    const reading = input.readings[window.reads ?? DEFAULT_USAGE_READING];
+
+    if (reading === undefined || reading.status === "absent") {
+      unusable.push("reading-absent");
+      continue;
+    }
+    if (reading.status === "stale") {
+      // A stale figure is not quietly used: acting on it applies an earlier
+      // window's headroom to the current one, and a reading that has stopped
+      // arriving usually means the machine reporting it has stopped, which
+      // is when usage is least predictable.
+      unusable.push("reading-stale");
+      continue;
+    }
+
     const elapsedHours = input.elapsedHours[name];
     if (elapsedHours === undefined) continue;
-    const evaluated = bandFor(input.windows[name]!, usage, elapsedHours);
-    if (evaluated === null) continue;
+    const evaluated = bandFor(window, reading.value, elapsedHours);
+    if (evaluated === null) {
+      unusable.push("boundary-undefined");
+      continue;
+    }
     verdicts.push({
       window: name,
       band: evaluated.band,
       boundaries: evaluated.boundaries,
-      usage,
+      usage: reading.value,
       elapsedHours,
     });
   }
 
   if (verdicts.length === 0) {
-    return { status: "unbanded", reason: "boundary-undefined", verdicts: [] };
+    // The first reason in the enabled windows' sorted order, so the answer
+    // is deterministic rather than dependent on object iteration. Falls back
+    // to `boundary-undefined` for the remaining way to reach here: every
+    // enabled window had a usable reading but no elapsed figure.
+    return { status: "unbanded", reason: unusable[0] ?? "boundary-undefined", verdicts: [] };
   }
 
   // Strictest wins. Strictly greater than on the fold, so a tie keeps the

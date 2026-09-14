@@ -68,6 +68,39 @@ export const boundarySchema = z.discriminatedUnion("kind", [
 export type Boundary = z.infer<typeof boundarySchema>;
 
 /**
+ * Which stored usage figure a window is measured against.
+ *
+ * An account carries more than one reading — a rolling short-window
+ * percentage and a longer weekly one — and they are different numbers about
+ * different periods. A window banded against the wrong one is not
+ * approximately right, it is meaningless: a weekly allowance compared to a
+ * five-hour percentage would report a session that had barely started as
+ * having consumed most of its week.
+ *
+ * **Declared explicitly rather than inferred from `lengthHours`.** Inferring
+ * it would mean a window's meaning changed when somebody edited its length —
+ * so adjusting an existing window from 168 to 160 hours would silently
+ * re-point it at a different figure, with no diff anywhere saying so. It
+ * would also make the mapping a rule nobody wrote down, which is the shape
+ * that gets two readers disagreeing about a boundary case.
+ */
+export const usageReadingSchema = z.enum(["usage5h", "usageWeekly"]);
+
+export type UsageReadingKey = z.infer<typeof usageReadingSchema>;
+
+/**
+ * What a window measures when it does not say.
+ *
+ * The short reading, because that is the only figure any window was banded
+ * against before this field existed. A default of anything else would
+ * silently re-point every already-configured window at a number it was never
+ * written for — changing what live configuration MEANS without changing the
+ * configuration, which is precisely the failure this default exists to
+ * prevent.
+ */
+export const DEFAULT_USAGE_READING: UsageReadingKey = "usage5h";
+
+/**
  * One window. `length` is what turns a `remaining` anchor and a per-hour
  * slope into a point on the same axis, so it is required rather than
  * inferred: without it "the final hour" has no location.
@@ -76,6 +109,11 @@ const windowShape = z
   .object({
     enabled: z.boolean(),
     lengthHours: z.number().positive(),
+    /**
+     * Optional so every window that predates this field keeps banding
+     * against exactly the figure it always did — see `DEFAULT_USAGE_READING`.
+     */
+    reads: usageReadingSchema.optional(),
     boundaries: z
       .object({
         selective: boundarySchema,

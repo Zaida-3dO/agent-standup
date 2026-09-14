@@ -231,12 +231,14 @@ async function bandsForMachine(
     {
       id: string;
       usage5h: unknown;
+      usageWeekly: unknown;
       usageAt: Date | string | null;
       budgetWindows: unknown;
     }[]
   >(
     `SELECT a."id",
             a."usage5h",
+            a."usageWeekly",
             a."usageAt",
             a."budget_windows" AS "budgetWindows"
        FROM "Account" a
@@ -252,13 +254,29 @@ async function bandsForMachine(
 
   const bands: Record<string, BandDecision> = {};
   for (const row of rows) {
-    const reading = resolveReading(
-      { value: row.usage5h as string | number | null, takenAt: row.usageAt },
-      now,
-      staleAfter,
-    );
+    // Both figures are resolved, and each window bands against the one it
+    // declares it reads. Resolving only the short reading is what made an
+    // enabled weekly window structurally incapable of enforcing: the figure
+    // it needed was stored, promoted and carried, but never selected here.
+    //
+    // They share `usageAt` because that is the schema's shape — one
+    // timestamp for the snapshot both figures arrived in — so a machine that
+    // has gone quiet ages both readings together, which is correct: neither
+    // number is current if the reporter has stopped.
+    const readings = {
+      usage5h: resolveReading(
+        { value: row.usage5h as string | number | null, takenAt: row.usageAt },
+        now,
+        staleAfter,
+      ),
+      usageWeekly: resolveReading(
+        { value: row.usageWeekly as string | number | null, takenAt: row.usageAt },
+        now,
+        staleAfter,
+      ),
+    };
     const { windows } = effectiveBudgetWindows(row.budgetWindows, ctx.settings);
-    bands[row.id] = decideBand({ windows, reading, elapsedHours }, budgetEnabled);
+    bands[row.id] = decideBand({ windows, readings, elapsedHours }, budgetEnabled);
   }
   return bands;
 }

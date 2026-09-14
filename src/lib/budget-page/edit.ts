@@ -26,6 +26,7 @@ import {
   type Boundary,
   type BudgetWindow,
   type BudgetWindows,
+  type UsageReadingKey,
 } from "../settings/budget-windows";
 
 /** The three boundaries, in the order a form shows them. */
@@ -76,6 +77,20 @@ export interface BoundaryDraft {
 export interface WindowDraft {
   readonly enabled: boolean;
   readonly lengthHours: string;
+  /**
+   * Which stored figure the window is measured against, carried through the
+   * editor untouched.
+   *
+   * Held here even though no field edits it, because a draft is a whole
+   * window and `windowFromDraft` rebuilds one from nothing but this object.
+   * Omitting it would mean opening any window and saving it silently
+   * re-pointed that window at the default reading — a weekly allowance
+   * quietly re-measured against a five-hour percentage, with no diff
+   * anywhere recording the change. Round-tripping a field the form does not
+   * show is what keeps an edit to one part of a window from destroying
+   * another.
+   */
+  readonly reads?: UsageReadingKey;
   readonly boundaries: Readonly<Record<BandKey, BoundaryDraft>>;
 }
 
@@ -173,6 +188,7 @@ export function windowToDraft(window: BudgetWindow): WindowDraft {
   return {
     enabled: window.enabled,
     lengthHours: numberToField(window.lengthHours),
+    ...(window.reads === undefined ? {} : { reads: window.reads }),
     boundaries: {
       selective: boundaryToDraft(window.boundaries.selective),
       windDown: boundaryToDraft(window.boundaries.windDown),
@@ -254,6 +270,7 @@ export function windowFromDraft(draft: WindowDraft): BudgetWindow | null {
   return {
     enabled: draft.enabled,
     lengthHours,
+    ...(draft.reads === undefined ? {} : { reads: draft.reads }),
     boundaries: { selective, windDown, stop },
   };
 }
