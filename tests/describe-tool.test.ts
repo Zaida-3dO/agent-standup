@@ -1015,6 +1015,36 @@ describe("describe_tool touches no table", () => {
   });
 });
 
+describe("describe_tool declares the transport-retry rule on itself", () => {
+  // The layer below #390's `retryable`/`committed` on MCP write FAILURES —
+  // this is about the call that never landed at all. "Unable to connect" is
+  // raised by the MCP client before a request reaches this server, so no
+  // response can ever carry a flag for it; the only honest place to answer
+  // "is this worth retrying" is a rule read on a PRIOR successful call.
+  // `describe_tool` is that surface, so it documents this about itself.
+  it("says retry once, then stop and report", async () => {
+    const text = ruleText(await contractFor("describe_tool"));
+    expect(text).toContain("Unable to connect");
+    expect(text).toContain("ONCE");
+    expect(text).toContain("stop and report");
+  });
+
+  it("defers to committed for writes, so a blanket retry cannot double-write", async () => {
+    // Inherited from #390 (errors.ts: "`committed` outranks `retryable`,
+    // always"), not invented here. Without this clause, "retry once" against
+    // an append-only store with no dedupe (note, checkpoint) double-writes.
+    const text = ruleText(await contractFor("describe_tool"));
+    expect(text).toContain("committed");
+    expect(text).toContain("retryable");
+    expect(text.toLowerCase()).toContain("append-only");
+  });
+
+  it("does not report an empty rules list", async () => {
+    const contract = await contractFor("describe_tool");
+    expect(contract.rules).not.toEqual([]);
+  });
+});
+
 describe("the summary contract states its two element types", () => {
   // ── Why these exist ───────────────────────────────────────────────────
   //

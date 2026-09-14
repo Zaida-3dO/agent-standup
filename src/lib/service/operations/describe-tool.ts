@@ -209,6 +209,29 @@ export const describeTool = defineOperation({
   // tool list as much as to any other.
   summary:
     "The full contract for one tool: its fields, and the conditional rules its schema cannot state. Omit `tool` for what this build is and the limits it enforces.",
+  contract: {
+    rules: [
+      {
+        // Attributed to `tool` — the field this operation's whole answer
+        // turns on — because `OperationRule.fields` must name at least one
+        // real field of the described operation (`findRuleFieldDefects`,
+        // and "gives every declared rule a non-empty statement and at least
+        // one field" in tests/describe-tool.test.ts). The rule itself is
+        // about the transport, not about `tool`'s value, but this call is
+        // where a caller reads it, so it is attributed to the call it rides
+        // on rather than left with nothing to attribute to.
+        fields: ["tool"],
+        rule:
+          'A transport-level failure ("Unable to connect") is raised by your MCP client ' +
+          "before the request reaches this server, so no response carries `retryable`. " +
+          "Retry an identical call ONCE. If the retry also fails, the endpoint is genuinely " +
+          "unreachable — stop and report rather than investigating local networking. " +
+          "For a failure that DID reach the server, read `retryable` on the rejection " +
+          "instead. A retry is safe for reads; for writes see `committed`, which outranks " +
+          "`retryable` because these writes are append-only with no dedupe.",
+      },
+    ],
+  },
   // Stryker restore all
   input: inputSchema,
   async handler(
