@@ -391,10 +391,64 @@ async function liveAssignment(
 // `scripts/check-operation-metadata-mutants.mjs` requires this and carries
 // the full reasoning, including why moving the assertions into a test body
 // does not help.
+/**
+ * What one `calls` entry contains — the fact `array<object>` withholds.
+ *
+ * The batch cap is interpolated from `MAX_BATCH_SIZE`, which the schema
+ * enforces, so the documented ceiling cannot drift from the accepted one.
+ */
+const RECORD_TOOL_CALLS_CONTRACT = {
+  rules: [
+    {
+      fields: ["calls", "calls.tool", "calls.ts"],
+      rule:
+        "`calls` is an array of objects, one per tool call. Each entry REQUIRES only `tool` " +
+        "(the tool's name) and `ts` (when the call happened). Each may also carry `command`, " +
+        "`paths` (an array of strings), the four token counts `inputTokens`, `outputTokens`, " +
+        "`cacheWriteTokens` and `cacheReadTokens`, plus `model`, `effort`, `usage5h` and " +
+        "`usageWeekly`. The element is strict, so an extra or misspelled key is refused rather " +
+        'than ignored. Example: [{"tool": "Bash", "ts": "2026-09-14T09:00:00Z", ' +
+        '"command": "npm test", "inputTokens": 1200, "outputTokens": 340}].',
+    },
+    {
+      fields: ["calls", "calls.ts"],
+      rule:
+        `Send between 1 and ${MAX_BATCH_SIZE} entries. Give each entry the time the call ` +
+        "actually happened, NOT the time the batch is being uploaded: a spool flushed minutes " +
+        "later that stamps every entry with now attributes the whole batch to whichever state " +
+        "the item had reached by then, which silently corrupts every cost-per-stage figure " +
+        "derived from it.",
+    },
+    {
+      fields: ["calls", "calls.inputTokens", "calls.outputTokens"],
+      rule:
+        "Token counts are measurements and are never clamped — a value past two billion is " +
+        "refused by name rather than rounded down, because a plausible-looking fabricated " +
+        "number would hide a client bug inside data whose whole purpose is to be trusted. " +
+        "Omit a count that was not reported rather than sending a zero, which is a real " +
+        "measurement of nothing used.",
+    },
+    {
+      fields: ["sessionId"],
+      rule:
+        "`sessionId` sits on the envelope, not on each entry: one flush is one session's work. " +
+        "It is CAPPED on the way in, and the value the rows were actually stored under is " +
+        "echoed back — so a client sending an over-long id must read the response to know " +
+        "which key to look under. Writes are NOT de-duplicated and there is no idempotency " +
+        "key, so a retried batch stores a second set of rows.",
+    },
+  ],
+  example: {
+    sessionId: "sess_4b19",
+    calls: [{ tool: "Bash", ts: "2026-09-14T09:00:00Z", inputTokens: 1200, outputTokens: 340 }],
+  },
+} as const;
+
 export const recordToolCalls = defineOperation({
   name: "record_tool_calls",
   kind: "write",
   summary: "Records a batch of tool calls as telemetry, with the item's state at the time.",
+  contract: RECORD_TOOL_CALLS_CONTRACT,
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RecordToolCallsInput): Promise<RecordToolCallsOutput> {

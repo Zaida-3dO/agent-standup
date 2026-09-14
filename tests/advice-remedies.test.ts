@@ -46,12 +46,15 @@ import {
   findAdviceDefects,
   findRuleFieldDefects,
   findUndocumentedConditionalRequirements,
+  findUndocumentedNestedShapes,
   requiredFieldNames,
   instructedIdentifiers,
   operationsOffMcp,
   NON_MCP_REFERENCE_MARKER,
 } from "@/lib/service/describe/advice";
 import { narrowerCallFor } from "@/lib/service/response-size";
+import { listOperations } from "@/lib/service/registry";
+import { z } from "zod";
 
 /** How a defect reads in a failure, so a reader gets the remedy and not just a count. */
 function describeDefects(defects: readonly { operation: string; detail: string }[]): string {
@@ -587,5 +590,86 @@ describe("the swept corpus covers every advice surface", () => {
     // and a copy is pasted in, this drifts and fails rather than passing on
     // a stale duplicate.
     expect(notices.some((entry) => entry.text.includes("Loop text was not searched"))).toBe(true);
+  });
+});
+
+describe("a required array<object> says what one element contains", () => {
+  // ── Why this sweep exists ─────────────────────────────────────────────
+  //
+  // `describe_tool` renders a nested parameter as the bare type
+  // `array<object>` and stops — deliberately, since `fields.ts` refuses to
+  // reimplement JSON Schema and leaves nesting to the schema itself. That
+  // is only tenable while the element shape is documented SOMEWHERE, and
+  // the somewhere is `contract.rules`, which is where `record_artifact` and
+  // `complete_item` already put theirs.
+  //
+  // Nothing enforced that, so `score_run.scores` shipped as a REQUIRED
+  // `array<object>` with `rules: []` — a field a caller must send and
+  // cannot construct from the operation whose whole job is to describe it.
+  // The 2026-09-12 note was filed by someone who hit exactly that.
+
+  it("documents the element of every required array<object>", () => {
+    const defects = findUndocumentedNestedShapes();
+    expect(
+      defects,
+      `required array<object> fields with no rule describing an element:
+${describeDefects(defects)}`,
+    ).toEqual([]);
+  });
+
+  // The anti-hollowness half. The check above reports zero against the
+  // current tree, which is also what a detector that stopped looking
+  // reports — so the registry is not enough to prove it fires, and the
+  // detector takes an operation list precisely so this control can exist.
+  it("still detects one when the documenting rule is taken away", () => {
+    const undocumented = {
+      name: "probe_op",
+      input: z.object({ rows: z.array(z.object({ a: z.string() })) }).strict(),
+    };
+    const defects = findUndocumentedNestedShapes([undocumented]);
+    expect(defects).toHaveLength(1);
+    expect(defects[0]!.named).toBe("rows");
+    expect(defects[0]!.operation).toBe("probe_op");
+  });
+
+  it("does not flag an OPTIONAL array<object>", () => {
+    // The required half of the condition, isolated. Same schema as the
+    // control above and same absence of any rule, differing only in
+    // `.optional()` — so this goes red if the required check is dropped,
+    // rather than passing for the unrelated reason that a rule covered it.
+    const defects = findUndocumentedNestedShapes([
+      {
+        name: "probe_op",
+        input: z.object({ rows: z.array(z.object({ a: z.string() })).optional() }).strict(),
+      },
+    ]);
+    expect(defects).toEqual([]);
+  });
+
+  it("does not flag a required array<object> a dotted rule describes", () => {
+    // The documentation half, isolated, and it pins the DOTTED form
+    // specifically: `score_run` addresses its element as `scores.facet`,
+    // so a lookup that only matched bare field names would flag the very
+    // rules this row was written to add.
+    const defects = findUndocumentedNestedShapes([
+      {
+        name: "probe_op",
+        input: z.object({ rows: z.array(z.object({ a: z.string() })).min(1) }).strict(),
+        contract: { rules: [{ fields: ["rows.a"], rule: "each row carries `a`." }] },
+      } as unknown as { name: string; input: unknown },
+    ]);
+    expect(defects).toEqual([]);
+  });
+
+  it("flags score_run.scores again once its rules are removed", () => {
+    // The real defect this row was filed over, pinned verbatim rather than
+    // by a synthetic stand-in: `score_run`'s own live schema with its
+    // contract stripped. Goes red if someone deletes the rules that were
+    // added here, which a purely synthetic control would not catch.
+    const scoreRunOp = listOperations().find((op) => op.name === "score_run")!;
+    const stripped = { name: scoreRunOp.name, input: scoreRunOp.input };
+    const defects = findUndocumentedNestedShapes([stripped]);
+    expect(defects).toHaveLength(1);
+    expect(defects[0]!.named).toBe("scores");
   });
 });

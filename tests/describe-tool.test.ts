@@ -45,6 +45,8 @@ import { assessVersion } from "@/lib/sessions";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
 import { z } from "zod";
 import { FINDING_SEVERITIES, parseFindings } from "@/lib/findings";
+import { FACETS, MAX_RUN_SCORE, MIN_RUN_SCORE } from "@/lib/scoring/run-scores";
+import { INTERVENTION_OUTCOMES } from "@/lib/interventions/capture";
 
 /**
  * A handle almost no test here needs to reach.
@@ -1388,3 +1390,91 @@ describe("describe_tool reports migration drift", () => {
 
 /** Silences the unused-import lint for a type used only in annotations above. */
 export type _Ctx = ServiceContext;
+
+describe("a required array<object> is constructable from its own contract", () => {
+  // Row 227013f0, from the 2026-09-12 note. `describe_tool` is the one read
+  // whose subject is the contract rather than the data, and it renders a
+  // nested parameter as the bare type `array<object>` — correctly, since
+  // `fields.ts` refuses to reimplement JSON Schema. That only works while
+  // the element shape is documented in `contract.rules`, and for these
+  // three operations it was not documented at all.
+  //
+  // `score_run.scores` is the one the note's author was actually blocked
+  // on: REQUIRED, `array<object>`, and `rules: []`. Unconstructable from
+  // the tool whose entire job is to describe it.
+
+  it("gives score_run.scores its facets, its range and a worked example", async () => {
+    const contract = await contractFor("score_run");
+
+    const field = contract.fields.find((entry) => entry.name === "scores");
+    expect(field).toBeDefined();
+    // The container's type is unchanged and deliberately so — this row
+    // documents the element rather than expanding the rendering.
+    expect(field!.type).toBe("array<object>");
+    expect(field!.required).toBe(true);
+
+    const rule = contract.rules.find((entry) => entry.fields.includes("scores"));
+    expect(rule).toBeDefined();
+
+    const text = ruleText(contract);
+    // Both element keys are named. Single-character mutation this catches:
+    // renaming `facet` in score-run.ts's facetScoreSchema.
+    expect(text).toContain("facet");
+    expect(text).toContain("score");
+    // The vocabulary is interpolated from FACETS and the range constants
+    // rather than retyped, so the documented set cannot drift from the
+    // enforced one.
+    for (const facet of FACETS) {
+      expect(text).toContain(facet);
+    }
+    expect(text).toContain(String(MIN_RUN_SCORE));
+    expect(text).toContain(String(MAX_RUN_SCORE));
+
+    // A worked example that the operation's own schema accepts. An example
+    // the validator would refuse is worse than none.
+    const example = contract.example as Record<string, unknown> | undefined;
+    expect(example).toBeDefined();
+    expect(Array.isArray(example!.scores)).toBe(true);
+    expect(OPERATION_REGISTRY.score_run.input.safeParse(example).success).toBe(true);
+  });
+
+  it("gives record_intervention.captures its required keys and outcomes", async () => {
+    const contract = await contractFor("record_intervention");
+
+    const field = contract.fields.find((entry) => entry.name === "captures");
+    expect(field!.type).toBe("array<object>");
+    expect(field!.required).toBe(true);
+    expect(contract.rules.some((entry) => entry.fields.includes("captures"))).toBe(true);
+
+    const text = ruleText(contract);
+    expect(text).toContain("entryId");
+    expect(text).toContain("outcome");
+    for (const outcome of INTERVENTION_OUTCOMES) {
+      expect(text).toContain(outcome);
+    }
+
+    const example = contract.example as Record<string, unknown> | undefined;
+    expect(example).toBeDefined();
+    expect(OPERATION_REGISTRY.record_intervention.input.safeParse(example).success).toBe(true);
+  });
+
+  it("gives record_tool_calls.calls its required keys and a worked example", async () => {
+    const contract = await contractFor("record_tool_calls");
+
+    const field = contract.fields.find((entry) => entry.name === "calls");
+    expect(field!.type).toBe("array<object>");
+    expect(field!.required).toBe(true);
+    expect(contract.rules.some((entry) => entry.fields.includes("calls"))).toBe(true);
+
+    // `tool` and `ts` are the only two required keys, and `ts` carries the
+    // rule a caller gets wrong silently: the time of the CALL, not of the
+    // flush.
+    const text = ruleText(contract);
+    expect(text).toContain("tool");
+    expect(text).toContain("ts");
+
+    const example = contract.example as Record<string, unknown> | undefined;
+    expect(example).toBeDefined();
+    expect(OPERATION_REGISTRY.record_tool_calls.input.safeParse(example).success).toBe(true);
+  });
+});

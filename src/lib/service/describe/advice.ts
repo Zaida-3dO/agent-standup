@@ -808,3 +808,91 @@ export function findRuleFieldDefects(): readonly AdviceDefect[] {
   }
   return defects;
 }
+
+/**
+ * A required `array<object>` parameter whose element shape no contract rule
+ * describes — a field a caller MUST send and cannot construct.
+ *
+ * ── Why this is the shape of the check ─────────────────────────────────
+ *
+ * `describe_tool` is the one read whose subject is the contract rather than
+ * the data, and `fields.ts` renders a nested parameter as the bare type
+ * `array<object>` on purpose: its founding comment refuses to reimplement
+ * JSON Schema, and leaves nesting to the schema itself. That is the right
+ * call — the facts a caller is actually refused by are conditional ones no
+ * type expansion can carry ("`how_verified` is required when `user_facing`
+ * is false"), and `complete_item` and `record_artifact` both already
+ * document their nested shapes properly, in `contract.rules` with dotted
+ * `fields`.
+ *
+ * So the gap was never expressive power. It was that **nothing enforced the
+ * rule existing**, which is how `score_run.scores` shipped as a required
+ * `array<object>` with `rules: []` — literally unconstructable from the
+ * operation whose entire job is to describe it. This check closes that, and
+ * closes it where the documentation already lives rather than by growing
+ * every response.
+ *
+ * ── Why REQUIRED, and why `array<object>` only ─────────────────────────
+ *
+ * Both narrowings are deliberate, and each was measured rather than
+ * guessed. Flagging every nested field — `object` and `record` too,
+ * required or not — reports 19 of the 23 that exist, and ten of those are
+ * `customFields`/`difficulty` repeated across the five minting operations:
+ * free-form key/value bags where "document the element shape" is close to
+ * meaningless, because the caller chooses the keys. A build-failing lint
+ * whose first run reports nineteen pre-existing gaps does not get fixed, it
+ * gets switched off — the same fate this module's header warns an
+ * over-reporting check earns.
+ *
+ * ── The parameter exists so this check can be proved to fire ───────────
+ *
+ * Defaulted to the live registry, which is how it runs. It is injectable
+ * because a detector that reads only the registry can be tested for zero
+ * defects and nothing else — and zero is also what a detector that stopped
+ * working reports. Passing a synthetic operation is the only way to show
+ * this one still fires, which is the anti-hollowness control its tests use.
+ *
+ * Required-and-`array<object>` is the subset where the caller has no way
+ * out: they cannot omit the field, and they cannot infer the element from
+ * the type name. An optional nested field is at least skippable, and a bare
+ * `object` is usually a bag rather than a shape. Silence over guessing, as
+ * everywhere else here — this under-reports on purpose, and the fields it
+ * leaves are a later row rather than noise now.
+ */
+export function findUndocumentedNestedShapes(
+  operations: readonly { readonly name: string; readonly input: unknown }[] = listOperations(),
+): readonly AdviceDefect[] {
+  const defects: AdviceDefect[] = [];
+  for (const operation of operations) {
+    const rules = contractRulesOf(operation);
+    for (const field of describeFields(operation.input as Parameters<typeof describeFields>[0])) {
+      if (!field.required || field.type !== "array<object>") continue;
+      // Documented if any rule claims the field — either naming it outright
+      // or addressing something inside it through a dotted path. The same
+      // `fields` lookup a refused caller performs, and the same leaf
+      // resolution `findUndocumentedConditionalRequirements` uses.
+      const documented = rules.some((rule) =>
+        rule.fields.some((declared) => {
+          const root = declared.includes(".") ? declared.slice(0, declared.indexOf(".")) : declared;
+          return root === field.name;
+        }),
+      );
+      if (documented) continue;
+      defects.push({
+        operation: operation.name,
+        source: `${operation.name} contract.rules`,
+        named: field.name,
+        attributedTo: operation.name,
+        kind: "parameter",
+        detail:
+          `\`${field.name}\` is a REQUIRED \`array<object>\`, and no contract rule describes ` +
+          `what one element contains — so \`describe_tool("${operation.name}")\` renders it as ` +
+          `\`array<object>\` and stops, leaving a caller who must send it unable to construct ` +
+          `it. Add a rule naming \`${field.name}\` in its \`fields\`, stating the element's keys, ` +
+          `which are required, and their permitted values; a worked \`example\` alongside is ` +
+          `what callers actually copy.`,
+      });
+    }
+  }
+  return defects;
+}
