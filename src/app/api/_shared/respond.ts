@@ -11,7 +11,15 @@
 // happen to import which copy.
 import { NextResponse } from "next/server";
 import { log } from "@/lib/log";
-import { faultContext, toServiceError, type ServiceErrorCode } from "@/lib/service";
+import {
+  faultContext,
+  InternalError,
+  renderableInternalKind,
+  retryableFor,
+  toServiceError,
+  type ServiceError,
+  type ServiceErrorCode,
+} from "@/lib/service";
 import { REQUEST_ID_HEADER, requestIdForHttpRequest } from "@/lib/request-id-header";
 import { authenticate } from "@/lib/auth";
 
@@ -43,6 +51,42 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
  */
 function detailsOf(error: { readonly details?: Readonly<Record<string, unknown>> }) {
   return error.details === undefined ? {} : { details: error.details };
+}
+
+/**
+ * What a caller needs in order to decide what to do next, spread alongside
+ * the rejection exactly as `detailsOf` is and for the same reason.
+ *
+ * `retryable` is the question a failed write leaves a caller holding, and it
+ * is answered on every code — `false` on every caller fault, because a
+ * refusal about the content of a call does not change when the same bytes
+ * are sent again.
+ *
+ * `internalKind` is included only for the buckets `renderableInternalKind`
+ * permits, which excludes `constraint_violation`: naming that one would tell
+ * a caller its input collided with a stored row, which is a fact about
+ * stored data rather than about the request.
+ *
+ * **`committed` is deliberately absent on this adapter.** Determining it
+ * requires separating the service call from the rendering of its answer, and
+ * on HTTP the route does the rendering, not this responder — anything
+ * reaching here threw from inside the call. Emitting a `committed: false`
+ * that this function cannot actually observe would be a claim, not a fact,
+ * and the one place that must never be wrong is the one that says a write
+ * did not happen.
+ */
+export function diagnosisOf(serviceError: ServiceError) {
+  const internalKind =
+    serviceError instanceof InternalError
+      ? renderableInternalKind(serviceError.internalKind)
+      : undefined;
+  return {
+    retryable: retryableFor(
+      serviceError.code,
+      serviceError instanceof InternalError ? serviceError.internalKind : undefined,
+    ),
+    ...(internalKind === undefined ? {} : { internalKind }),
+  };
 }
 
 /**
@@ -78,7 +122,18 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
   }
   return withRequestId(
     NextResponse.json(
-      { error: { message: serviceError.message, ...rejection, ...detailsOf(serviceError) } },
+      {
+        error: {
+          message: serviceError.message,
+          ...rejection,
+          ...detailsOf(serviceError),
+          ...diagnosisOf(serviceError),
+          // Also in the body, not only in `X-Request-Id`. A caller reporting
+          // a failure quotes what it can see, and a great many clients read
+          // a JSON body while never surfacing a response header.
+          ...(requestId === undefined ? {} : { requestId }),
+        },
+      },
       { status },
     ),
     requestId,

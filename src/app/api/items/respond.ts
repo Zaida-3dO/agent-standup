@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import { log } from "@/lib/log";
 import { faultContext, toServiceError, type ServiceErrorCode } from "@/lib/service";
-import { authenticatedCaller, withRequestId } from "../_shared/respond";
+import { authenticatedCaller, diagnosisOf, withRequestId } from "../_shared/respond";
 
 const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   invalid_input: 400,
@@ -76,7 +76,19 @@ export function serviceErrorResponse(error: unknown, requestId?: string): NextRe
   }
   return withRequestId(
     NextResponse.json(
-      { error: { message: serviceError.message, ...rejection, ...detailsOf(serviceError) } },
+      {
+        error: {
+          message: serviceError.message,
+          ...rejection,
+          ...detailsOf(serviceError),
+          // Imported rather than restated, on the same terms as
+          // `withRequestId` above: what `retryable` means for a code is one
+          // rule with nothing for two copies to disagree about, unlike the
+          // status mapping each row owns.
+          ...diagnosisOf(serviceError),
+          ...(requestId === undefined ? {} : { requestId }),
+        },
+      },
       { status },
     ),
     requestId,

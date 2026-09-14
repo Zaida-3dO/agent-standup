@@ -31,10 +31,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   faultContext,
+  internalMessageFor,
+  InternalError,
   listOperations,
   NotFoundError,
+  renderableInternalKind,
+  retryabilityOf,
   toServiceError,
   type AnyOperation,
+  type Committed,
+  type ServiceError,
 } from "@/lib/service";
 import { exposedOperations, waiverFor } from "@/lib/adapters/waivers";
 import type { AdapterName } from "@/lib/adapters/registry";
@@ -211,10 +217,28 @@ export function createMcpServer({
  *
  * The request id is minted **here**, not left to the runtime, because the
  * adapter is where the call begins: minting it here is what lets the line
- * below and the runtime's own lines carry the same id, and what would let a
- * future transport echo it to a client. Nothing about it crosses into the
- * rendered result — `toolRejection` is unchanged, and the caller learns
- * exactly what it learned before.
+ * below and the runtime's own lines carry the same id.
+ *
+ * ── What the caller is told ─────────────────────────────────────────────
+ *
+ * A rejection carries the request id, whether a retry could work, whether
+ * the write landed, and — for the buckets that disclose nothing about
+ * stored rows — how the server broke.
+ *
+ * That fuller answer belongs here specifically because of what this
+ * transport lacks. `InternalError` argues for keeping fault detail
+ * log-only, and grounds it on the caller "already ha[ving] the code, and
+ * the request id echoed as `X-Request-Id`" — a header. **MCP has no
+ * headers.** On this transport that reasoning leaves a failed write
+ * rendering as `{"code":"internal"}` and nothing else: an agent cannot tell
+ * a rolled-back write from a committed one, cannot tell whether to retry,
+ * and has no id to quote in a report, so the failure reaches no log anyone
+ * can find. An operation reporting three crews unblocked can fail that way
+ * and be believed.
+ *
+ * The redaction boundary is **unmoved**: `cause` does not cross,
+ * `constraint_violation` is not named to a caller, and every string sent is
+ * from a fixed set rather than built from the error.
  */
 export async function callTool(
   call: ServiceCall,
@@ -245,48 +269,149 @@ export async function callTool(
     }
   }
 
+  // ── Why this is two blocks and not one ────────────────────────────────
+  //
+  // Calling the service and rendering its answer are separated because they
+  // fail in ways that mean opposite things to a caller:
+  //
+  //   first block throws  -> pre-commit  -> committed: false
+  //   second block throws -> post-commit -> committed: true
+  //
+  // A throw from inside `call` means the transaction rolled back and nothing
+  // was written. A throw from `toolSuccess` means the transaction
+  // **committed** and only the rendering failed — `bigintSafe` and
+  // `JSON.stringify` (`result.ts`) both run after the write is durable, and
+  // a value that will not serialise is enough to reach it.
+  //
+  // Collapsed into one statement — `return toolSuccess(await call(...))` —
+  // both land in one `catch` and become indistinguishable, which reports an
+  // already-recorded write as having not happened. A caller told that
+  // retries, and on an append-only operation with no dedupe it gets two
+  // rows. Keeping them apart is the whole of what makes `committed`
+  // knowable.
+  //
+  // ⚠️ **NOTHING MAY BE ADDED BETWEEN THESE TWO BLOCKS.** The first block
+  // returning IS the commit proof, and it is proof only because there is no
+  // step between the transaction returning and `toolSuccess` that could roll
+  // anything back. Inserting one — a post-commit hook, a second write, a
+  // late validation — would silently turn `committed: true` into a lie
+  // without changing a line of this comment. Put such a step inside the
+  // first block, where a throw still means "not committed".
+  let value: unknown;
   try {
-    return toolSuccess(
-      await call(name, args, {
-        // Spread conditionally rather than assigned unconditionally: an
-        // explicit `sessionId: undefined` is a different value from an
-        // absent key to anything reading the object with `in` or
-        // `Object.keys`, and the whole point of an unidentified call is
-        // that it carries no claim about who made it.
-        caller: {
-          transport,
-          requestId,
-          ...(identity.sessionId === undefined ? {} : { sessionId: identity.sessionId }),
-          ...(identity.actor === undefined ? {} : { actor: identity.actor }),
-          ...(identity.machine === undefined ? {} : { machine: identity.machine }),
-        },
-      }),
-    );
+    value = await call(name, args, {
+      // Spread conditionally rather than assigned unconditionally: an
+      // explicit `sessionId: undefined` is a different value from an
+      // absent key to anything reading the object with `in` or
+      // `Object.keys`, and the whole point of an unidentified call is
+      // that it carries no claim about who made it.
+      caller: {
+        transport,
+        requestId,
+        ...(identity.sessionId === undefined ? {} : { sessionId: identity.sessionId }),
+        ...(identity.actor === undefined ? {} : { actor: identity.actor }),
+        ...(identity.machine === undefined ? {} : { machine: identity.machine }),
+      },
+    });
   } catch (error) {
     const serviceError = toServiceError(error);
-    // Split on `fault`, the same table every other adapter uses, so an
-    // operator filtering one stream on `fault:server` sees MCP failures
-    // beside HTTP ones rather than having to know each adapter's spelling.
-    if (serviceError.fault === "server") {
-      log.error("MCP tool call failed unexpectedly.", {
-        requestId,
-        transport,
-        tool: name,
-        ...faultContext(serviceError),
-        err: serviceError,
-      });
-    } else {
-      log.debug("MCP tool call refused.", {
-        requestId,
-        transport,
-        tool: name,
-        code: serviceError.code,
-        ...faultContext(serviceError),
-        ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
-      });
-    }
-    return toolRejection(serviceError);
+    // A transaction that timed out is the one pre-commit case that is not
+    // honestly `false`. The driver reports the same thing whether a commit
+    // landed just before the connection dropped or never ran at all, so
+    // neither this process nor the caller can tell, and claiming `false`
+    // would invite the double write that reporting this exists to prevent.
+    //
+    // This reads the coarse bucket, which makes it **wider than it strictly
+    // needs to be**: a pool-acquisition timeout is in the same bucket and
+    // could not have committed. That is the accepted trade. Narrowing it
+    // means reading driver-specific codes here, at an adapter, which is the
+    // dependency the bucket exists to contain — and the error is in the
+    // direction of a wasted re-read rather than a silent duplicate.
+    const committed: Committed =
+      serviceError instanceof InternalError && serviceError.internalKind === "timeout"
+        ? "unknown"
+        : false;
+    return rejectionFor(serviceError, { requestId, transport, name, committed });
   }
+
+  try {
+    return toolSuccess(value);
+  } catch (error) {
+    // Reached only after `call` resolved, so the write is durable and this
+    // is a rendering failure over the top of a successful operation.
+    const serviceError = toServiceError(error);
+    return rejectionFor(serviceError, { requestId, transport, name, committed: true });
+  }
+}
+
+/**
+ * Logs a failed call and renders it, with everything the caller needs to
+ * decide what to do next.
+ *
+ * Both catch blocks route through here so the logging rule and the rendering
+ * rule are stated once. The id written to the log is the id rendered to the
+ * caller, by construction rather than by two call sites agreeing — an
+ * echoed id that names no log line is worse than echoing none, because it
+ * sends an operator looking for a record that does not exist.
+ */
+function rejectionFor(
+  serviceError: ServiceError,
+  context: {
+    readonly requestId: string;
+    readonly transport: string;
+    readonly name: string;
+    readonly committed: Committed;
+  },
+): ToolResult {
+  const { requestId, transport, name, committed } = context;
+  // Split on `fault`, the same table every other adapter uses, so an
+  // operator filtering one stream on `fault:server` sees MCP failures
+  // beside HTTP ones rather than having to know each adapter's spelling.
+  if (serviceError.fault === "server") {
+    log.error("MCP tool call failed unexpectedly.", {
+      requestId,
+      transport,
+      tool: name,
+      committed,
+      ...faultContext(serviceError),
+      err: serviceError,
+    });
+  } else {
+    log.debug("MCP tool call refused.", {
+      requestId,
+      transport,
+      tool: name,
+      code: serviceError.code,
+      ...faultContext(serviceError),
+      ...(serviceError.guard === undefined ? {} : { guard: serviceError.guard }),
+    });
+  }
+
+  // A caller fault carries no `committed` and no `internalKind`: the call
+  // was refused on its content before any write was attempted, so "did it
+  // land" has no meaning, and an omitted key is one less empty field to read
+  // past. `retryable` is still sent — `false` on every caller fault — because
+  // that is the question being answered and silence answers it ambiguously.
+  const isServerFault = serviceError.fault === "server";
+  const internalKind =
+    serviceError instanceof InternalError
+      ? renderableInternalKind(serviceError.internalKind)
+      : undefined;
+  const retryable = retryabilityOf(
+    serviceError.code,
+    serviceError instanceof InternalError ? serviceError.internalKind : undefined,
+    isServerFault ? committed : false,
+  );
+
+  return toolRejection(serviceError, {
+    requestId,
+    retryable,
+    ...(isServerFault ? { committed, internalKind } : {}),
+    // Only a server fault gets a replacement message. A refusal already
+    // explains itself in the service's own words, and those words are what
+    // an agent reads to decide how to fix its call.
+    ...(isServerFault ? { message: internalMessageFor(committed, retryable) } : {}),
+  });
 }
 
 /**

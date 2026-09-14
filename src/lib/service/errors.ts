@@ -145,17 +145,230 @@ export type InternalKind = (typeof INTERNAL_KINDS)[number];
  * `P1xxx` is Prisma's initialisation/connection family and `P2xxx` its
  * query family; `P2024` is pool-timeout and is bucketed as a timeout rather
  * than a constraint, which is why it is tested before the `P2` prefix.
+ *
+ * `P2028` (transaction API error) and `P2034` (transaction write conflict /
+ * deadlock, which Prisma documents as retry-able) join it on that same line
+ * and for the same reason. **The line they are on is load-bearing.** Added
+ * below the `P2` prefix test instead, they would be unreachable — a
+ * transaction that timed out would classify as `constraint_violation`,
+ * which is worse than the `unexpected` default, because it names a specific
+ * wrong cause: it asserts the caller's input collided with a stored row
+ * when in fact the store was too busy to finish. A transaction failure is a
+ * timing fact about the installation, not a fact about the payload.
  */
 export function classifyCause(cause: unknown): InternalKind {
   const code = (cause as { code?: unknown } | null | undefined)?.code;
   if (typeof code === "string") {
-    if (code === "P1002" || code === "P1008" || code === "P2024") return "timeout";
+    if (
+      code === "P1002" ||
+      code === "P1008" ||
+      code === "P2024" ||
+      code === "P2028" ||
+      code === "P2034"
+    )
+      return "timeout";
     if (code === "ETIMEDOUT") return "timeout";
     if (code.startsWith("P1")) return "database_unavailable";
     if (code.startsWith("P2")) return "constraint_violation";
   }
   if (cause instanceof Error && cause.name === "TimeoutError") return "timeout";
   return "unexpected";
+}
+
+// ── What a caller may do about it ────────────────────────────────────────
+//
+// `fault` says whose problem it is and `internalKind` says how the server
+// broke; neither tells a caller the one thing it has to decide, which is
+// **whether sending the same call again could work**. Four independent
+// reports of a write failing with a bare `internal` and succeeding on an
+// identical retry are what this exists to answer: every one of those
+// callers guessed, and a caller guessing wrong in the unsafe direction
+// either loses a write or makes two.
+//
+// **Derived from `code` + `internalKind`, never declared at a throw site**,
+// for the reason `FAULT_BY_CODE` gives verbatim: there is one rule and ~200
+// throw sites, so asking each to restate it is asking for the one that gets
+// it wrong.
+
+/**
+ * Whether repeating the identical call could plausibly succeed.
+ *
+ * A `Record` keyed on the closed union, so **adding a code without
+ * classifying it is a type error** — the same property that makes
+ * `FAULT_BY_CODE` safe to extend.
+ *
+ * Every caller fault is `false`: the call was refused on its content, and
+ * nothing about sending the same bytes again changes that. `not_implemented`
+ * is `false` for the reason it is a *server* fault — no input would have
+ * worked, and this build will not grow the operation between two attempts.
+ * Only `internal` is conditional, and `internalKind` decides it.
+ */
+const RETRYABLE_BY_CODE: Record<ServiceErrorCode, boolean | "by_kind"> = {
+  invalid_input: false,
+  not_found: false,
+  guard_rejected: false,
+  conflict: false,
+  forbidden: false,
+  not_implemented: false,
+  internal: "by_kind",
+};
+
+/**
+ * Whether an `internal` of each kind is worth repeating.
+ *
+ * `constraint_violation` is **`false`**: the store refused the write on its
+ * content, so it will refuse it again. That is the one bucket where an
+ * `internal` is really a caller fault wearing a 500, and telling a caller to
+ * retry it would be telling it to spin.
+ *
+ * `unexpected` — a bug, the honest default — is **`true`**, and the
+ * reasoning is worth stating because the obvious one is wrong. It is *not*
+ * that these writes are idempotent: `note`, `checkpoint` and
+ * `record_artifact` are append-only with no idempotency key, no dedupe and
+ * no uniqueness constraint, so a retry **duplicates** rather than being
+ * absorbed. The argument is asymmetric cost. A duplicated note is visibly
+ * redundant, human-readable and trivially ignored; a *lost* checkpoint is
+ * silent, and silence is the failure this whole item exists to stop — a
+ * checkpoint reporting three crews unblocked failed, and had the caller not
+ * checked, an orchestrator would have gone on believing them blocked.
+ *
+ * This default is safe to state only because `committed` outranks it
+ * (`retryabilityOf`): the case where a retry would actually double-write is
+ * the case where the write already landed, and that is reported as
+ * `retryable: false` regardless of what this table says.
+ */
+const RETRYABLE_BY_INTERNAL_KIND: Record<InternalKind, boolean> = {
+  database_unavailable: true,
+  timeout: true,
+  constraint_violation: false,
+  unexpected: true,
+};
+
+/**
+ * Whether a failure is worth repeating, before `committed` is considered.
+ *
+ * A free function taking the pair rather than a method, because the CLI's
+ * `http` binding rebuilds a rejection from a JSON body and never holds a
+ * `ServiceError` — it has these two values and needs the same answer.
+ */
+export function retryableFor(code: ServiceErrorCode, internalKind?: InternalKind): boolean {
+  const byCode = RETRYABLE_BY_CODE[code];
+  if (byCode !== "by_kind") return byCode;
+  return internalKind === undefined ? true : RETRYABLE_BY_INTERNAL_KIND[internalKind];
+}
+
+// ── What crosses to the caller, and what stays in the log ────────────────
+
+/**
+ * The internal kinds an adapter may render to a caller.
+ *
+ * **A deliberate subset, not the whole union.** `InternalError.internalKind`
+ * is documented log-only, and the half of that argument which still holds is
+ * about `constraint_violation`: it says the caller's input reached a write
+ * and collided with a stored row, which is a fact about stored data rather
+ * than about the request. It stays log-only and reports as `unexpected`.
+ *
+ * `timeout` and `database_unavailable` are the two that changed, because the
+ * rest of that argument does not survive contact with MCP. It justified
+ * withholding the bucket on the grounds that the caller "already has the
+ * code, and the request id echoed as `X-Request-Id`" — true over HTTP, and
+ * simply false over MCP, which has no headers and, until this change,
+ * rendered nothing but `{"code":"internal"}`. All four reports arrived over
+ * `mcp-http`. Both of these buckets say "the store was unreachable or too
+ * slow", which discloses nothing about stored rows and is exactly what tells
+ * a caller its retry is worth making.
+ *
+ * `unexpected` is withheld too, and not because it is sensitive — it is the
+ * honest default and says nothing at all. It is withheld because it adds
+ * nothing a caller can act on while *looking* like a diagnosis, and because
+ * rendering it would put the key on every result and make its absence
+ * meaningless. `tests/log-adapters.test.ts` asserts the key is absent here,
+ * on exactly this bucket.
+ */
+const RENDERABLE_INTERNAL_KINDS: ReadonlySet<InternalKind> = new Set<InternalKind>([
+  "timeout",
+  "database_unavailable",
+]);
+
+/**
+ * The internal kind to show a caller, or `undefined` to show none.
+ *
+ * Returns a member of the frozen `INTERNAL_KINDS` union or nothing at all —
+ * **never a stringified cause, an interpolation, or anything read off
+ * Prisma's `meta`**, which is what keeps `cause` from crossing the boundary
+ * by a new route. Prisma puts constraint and column names in `meta.target`.
+ *
+ * A withheld bucket returns `undefined`, so the key is **omitted** rather
+ * than reported as `"unexpected"`. Substituting a placeholder was the first
+ * thing tried here and it is wrong twice over: it renders a kind on a
+ * failure whose kind was deliberately not disclosed, and it destroys the
+ * meaning of absence, which is what lets a reader tell "we are not saying"
+ * from "we do not know".
+ */
+export function renderableInternalKind(internalKind?: InternalKind): InternalKind | undefined {
+  if (internalKind === undefined) return undefined;
+  return RENDERABLE_INTERNAL_KINDS.has(internalKind) ? internalKind : undefined;
+}
+
+// ── Whether the write landed ─────────────────────────────────────────────
+
+/**
+ * Whether the work a failed call was asking for actually happened.
+ *
+ * - **`false`** — it did not. The failure came from inside the transaction,
+ *   so there is nothing to undo and nothing was recorded.
+ * - **`true`** — it did, and the *response* is what failed. The caller was
+ *   told the call failed; the write is in the database regardless.
+ * - **`"unknown"`** — the transaction timed out or the connection dropped
+ *   around the boundary, so neither this process nor the caller can tell.
+ *   A bounded residue rather than a catch-all: it is reachable only from
+ *   the `timeout` bucket, never from an ordinary failure.
+ */
+export type Committed = boolean | "unknown";
+
+/**
+ * The retryability a caller is actually told, after `committed` is applied.
+ *
+ * **`committed` outranks `retryable`, always.** `retryable: true` sitting
+ * beside `committed: true` is not merely confusing, it is an instruction to
+ * double-write — and on append-only operations with no dedupe, a caller that
+ * follows it gets two rows. So a committed write is reported `false` no
+ * matter what the code/kind table says.
+ *
+ * `"unknown"` is left retryable by the table, because the alternative is
+ * worse: refusing to retry a write that may never have landed is how a
+ * checkpoint goes missing silently. The message is what carries the caution,
+ * directing a re-read first.
+ */
+export function retryabilityOf(
+  code: ServiceErrorCode,
+  internalKind: InternalKind | undefined,
+  committed: Committed,
+): boolean {
+  if (committed === true) return false;
+  return retryableFor(code, internalKind);
+}
+
+/**
+ * What to tell a caller about a server fault, given what is known.
+ *
+ * One of a fixed set of strings. **Never caller-supplied, never
+ * driver-supplied, never interpolated** — this is the same redaction
+ * boundary `InternalError`'s fixed message already held, widened only to say
+ * something useful rather than to say something new. Each string answers the
+ * one question the caller is stuck on: do I send this again?
+ */
+export function internalMessageFor(committed: Committed, retryable: boolean): string {
+  if (committed === true) {
+    return "The write completed, but the response could not be rendered. Re-read before retrying: retrying would record it a second time.";
+  }
+  if (committed === "unknown") {
+    return "The connection was lost while the write was in flight, so it may or may not have been recorded. Re-read before retrying.";
+  }
+  if (retryable) {
+    return "The operation failed before anything was recorded, for a reason that may be temporary. It is safe to retry.";
+  }
+  return "The operation failed unexpectedly and nothing was recorded. Retrying is unlikely to help; quote the request id when reporting it.";
 }
 
 export interface ServiceErrorOptions {
