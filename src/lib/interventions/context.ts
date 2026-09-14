@@ -44,7 +44,7 @@
 // rather than once per catalogue entry.
 
 import type { TransactionHandle } from "@/lib/service/context";
-import { currentTipCommitSha } from "@/lib/service/guards/artifact-tip";
+import { currentTipCommitSha, hasApproval } from "@/lib/service/guards/artifact-tip";
 import { hasApprovingArtifactAtCurrentRoundAndTip } from "@/lib/service/guards/merge-review-round";
 import { isWriteTool } from "@/lib/telemetry/shape";
 import { TERMINAL_STATES } from "@/lib/service/board/columns";
@@ -166,6 +166,27 @@ const SPAWN_TOOLS: ReadonlySet<string> = new Set(["Task", "Agent"]);
 
 function isSpawn(tool: string | undefined): boolean {
   return tool !== undefined && SPAWN_TOOLS.has(tool);
+}
+
+/**
+ * Tools that put a question to the person and wait for an answer — I31's
+ * gate.
+ *
+ * Named by the harness rather than by this server, exactly as `SPAWN_TOOLS`
+ * is, and for the same reason: a name this build does not recognise simply
+ * does not gate anything, which is the no-finding-on-unknown direction
+ * every reading here takes. `AskUserQuestion` is Claude Code's;
+ * `AskUser` and `ask_user` are what other harnesses call the same call.
+ *
+ * **This is recognition, not judgement.** Whether a question was worth
+ * asking is not knowable from the tool name — that is the whole difficulty
+ * of I31 and the reason it is a nudge that fires on every question rather
+ * than a guard that tries to pick out the unjustified ones.
+ */
+const ASK_TOOLS: ReadonlySet<string> = new Set(["AskUserQuestion", "AskUser", "ask_user"]);
+
+function isAsk(tool: string | undefined): boolean {
+  return tool !== undefined && ASK_TOOLS.has(tool);
 }
 
 /**
@@ -433,6 +454,12 @@ export async function assembleContext(options: {
     sessionId,
     ...(tool === undefined ? {} : { tool }),
     ...(command === undefined ? {} : { command }),
+    // I31 — read off the tool name, so it is on the base context rather
+    // than behind the assignment gate. A session that stops to ask a
+    // question very often holds no claim, and gating this on one would
+    // silence the entry for exactly the callers it is addressed to. It
+    // costs no query, which is what makes that affordable.
+    ...(isAsk(tool) ? { isAskingUser: true } : {}),
   };
 
   const wanted = needs(command, tool, phase);
@@ -526,7 +553,16 @@ export async function assembleContext(options: {
   // has cleared. Gated on the spawn tool above, so this runs only on a
   // dispatch, never on the ordinary call path.
   const withToolBlocks = wanted.toolBlocks
-    ? { ...withHandsOn, ...(await toolBlocksFor(db, claim.itemId)) }
+    ? {
+        ...withHandsOn,
+        ...(await toolBlocksFor(db, claim.itemId)),
+        // I29 — how wide this crew already is. Shares I19's gate exactly:
+        // both questions are only worth asking on a dispatch, and both are
+        // answered against the same claim, so the spawn gate that already
+        // earns its keep for one covers the other at one extra query on a
+        // path that runs only when an agent is actually being spawned.
+        ...(await crewWidthFor(db, claim)),
+      }
     : withHandsOn;
 
   // I25/I26/I27/I28 — where the work has got to, and what it left behind.
@@ -538,6 +574,10 @@ export async function assembleContext(options: {
         ...(await deliveryFor(db, claim.itemId)),
         ...(await untrackedNitsFor(db, claim.itemId)),
         ...(await pendingVisualReviewsFor(db)),
+        // I30 — a visual review this item needed, deferred to nowhere.
+        // Rides the same delivery gate as I25/I26/I27/I28: it is a fact
+        // about where the item got to, asked on the `post` path only.
+        ...(await deferredVisualReviewFor(db, claim.itemId)),
       }
     : withToolBlocks;
 
@@ -550,6 +590,16 @@ export async function assembleContext(options: {
   // no way to see why.
   const tip = await currentTipCommitSha(db, claim.itemId);
   const approved = await hasApprovingArtifactAtCurrentRoundAndTip(db, claim.itemId, "code_review");
+  // The second approval question, and the one that separates a merge nobody
+  // reviewed from a merge whose review was demoted by later bookkeeping.
+  //
+  // **Only asked when the first one said no.** An approval standing at the
+  // tip already answers "has this ever been approved" — reading the wider
+  // question anyway would put a second artifact query on every approved
+  // merge to compute a value no entry can act on, since both entries below
+  // require `hasApprovalAtTip === false` before they look at this at all.
+  const everApproved =
+    tip !== null && !approved ? await hasApproval(db, claim.itemId, "code_review") : undefined;
 
   return {
     // **`withDelivery`, not `withHandsOn`.** This spread was written when
@@ -568,6 +618,7 @@ export async function assembleContext(options: {
     // stays absent. An item nobody has committed to is not an item somebody
     // is merging without review; it is one that has not got there yet.
     ...(tip === null ? {} : { hasApprovalAtTip: approved }),
+    ...(everApproved === undefined ? {} : { hasAnyApproval: everApproved }),
     ...(claim.defaultBranch === null ? {} : { defaultBranch: claim.defaultBranch }),
   };
 }
@@ -1069,4 +1120,121 @@ async function pendingVisualReviewsFor(
   // the predicate is silent at anything below two regardless.
   if (row === undefined) return {};
   return { pendingVisualReviews: row.pending };
+}
+
+/**
+ * How many distinct items this session's crew holds at once.
+ *
+ * ── Why the root session, and not the machine or the board ─────────────
+ *
+ * `Assignment.rootSessionId` is the field that already means "one crew" —
+ * `occupancyFor` above compares on it for exactly this reason, because a
+ * worker its own orchestrator spawned is not a stranger. Counting on it
+ * here answers the only question the reader can act on: *how wide have I
+ * spread myself right now.* A board-wide count would fold in every other
+ * orchestrator's crews, which is a number this session cannot do anything
+ * about and would fire on a healthy busy system.
+ *
+ * ── Why DISTINCT items rather than assignments ─────────────────────────
+ *
+ * Because the cost this measures is breadth of work in flight, and two
+ * agents on one item — a builder and its reviewer, which is the normal and
+ * correct shape — are not two fronts. Counting assignments would make the
+ * ordinary review handoff look like a widening crew and fire on the very
+ * pattern the system is trying to encourage.
+ *
+ * ── Live assignments only ──────────────────────────────────────────────
+ *
+ * `releasedAt IS NULL`, so a retired crewmate stops counting the moment it
+ * releases. Without that the number would only ever climb, and a session
+ * that had correctly finished four items in sequence would be nudged as
+ * though it were running four at once.
+ */
+async function crewWidthFor(
+  db: TransactionHandle,
+  claim: AssignmentRow,
+): Promise<Pick<InterventionContext, "concurrentCrewItems">> {
+  // No null guard on `rootSessionId`: `Assignment.rootSessionId` is
+  // non-nullable in the schema, and `occupancyFor` above already relies on
+  // that by comparing it directly. A defensive check here would be dead
+  // code asserting the opposite of what the column guarantees.
+  const rows = await db.$queryRawUnsafe<{ items: number }[]>(
+    `SELECT COUNT(DISTINCT a."itemId")::int AS "items"
+       FROM "Assignment" a
+       JOIN "Item" i ON i."id" = a."itemId"
+      WHERE a."rootSessionId" = $1
+        AND a."releasedAt" IS NULL
+        AND i."archivedAt" IS NULL
+        AND NOT (i."state"::text = ANY($2::text[]))`,
+    claim.rootSessionId,
+    TERMINAL_STATES,
+  );
+
+  const row = rows[0];
+  // No row is the query not having answered, which is "cannot tell" rather
+  // than zero — the same reading every other optional field here takes.
+  if (row === undefined) return {};
+  return { concurrentCrewItems: row.items };
+}
+
+/**
+ * Whether this item's visual review was deferred with nothing recording it.
+ *
+ * ── The three conditions, and why all three are needed ─────────────────
+ *
+ * The finding is a conjunction, and dropping any limb breaks it in a way
+ * worth naming:
+ *
+ *   1. **`needsVisualReview`** — without it this would fire on every item
+ *      that never needed a visual review, which is most of the board.
+ *   2. **A terminal state** — the entry is about a row that is *closing*.
+ *      Firing on an open item would nudge work that simply has not reached
+ *      its review yet, which is every item mid-flight.
+ *   3. **No visual review artifact, and no artifact linking a follow-up.**
+ *      The first is the review itself having happened; the second is the
+ *      deferral having been recorded the way `Artifact.followUpItemId` is
+ *      already used for `lgtm_with_followups`. Either one is a complete
+ *      answer, so both must be absent for there to be a finding at all.
+ *
+ * ── Why `followUpItemId` on ANY artifact, not just a visual review ─────
+ *
+ * Because the deferral is recorded by the artifact that *stood in for* the
+ * review — most naturally the code review that merged the work, carrying a
+ * link to the item minted to do the visual pass later. Requiring the link
+ * to hang off a `visual_review` artifact would require the reviewer to
+ * record a visual review in order to say that it had not done one, which is
+ * the bookkeeping-for-its-own-sake shape that teaches callers to route
+ * around a guard.
+ *
+ * Returns a real `false` when the question was asked and the item is fine —
+ * distinct from absent, which is the question not having been asked.
+ */
+async function deferredVisualReviewFor(
+  db: TransactionHandle,
+  itemId: string,
+): Promise<Pick<InterventionContext, "visualReviewDeferredUnrecorded">> {
+  const rows = await db.$queryRawUnsafe<{ deferred: boolean }[]>(
+    `SELECT (
+              i."needsVisualReview" = true
+              AND i."state"::text = ANY($2::text[])
+              AND NOT EXISTS (
+                SELECT 1 FROM "Artifact" a
+                 WHERE a."itemId" = i."id" AND a."kind" = 'visual_review'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM "Artifact" a
+                 WHERE a."itemId" = i."id" AND a."followUpItemId" IS NOT NULL
+              )
+            ) AS "deferred"
+       FROM "Item" i
+      WHERE i."id" = $1`,
+    itemId,
+    TERMINAL_STATES,
+  );
+
+  const row = rows[0];
+  // No row means the item vanished between the claim lookup and this query,
+  // which is "cannot tell" rather than a finding.
+  if (row === undefined) return {};
+  return { visualReviewDeferredUnrecorded: row.deferred };
 }

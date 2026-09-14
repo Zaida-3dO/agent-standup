@@ -147,6 +147,28 @@ export interface InterventionContext {
   /** Whether an approving review artifact exists at the current tip. */
   readonly hasApprovalAtTip?: boolean;
   /**
+   * Whether an approving review artifact exists on this item **at all**,
+   * regardless of round or tip.
+   *
+   * The companion to `hasApprovalAtTip`, and the pair is what separates two
+   * situations that a single field conflated into one refusal:
+   *
+   *   - **Never approved** (`hasAnyApproval === false`) — nothing has ever
+   *     reviewed this work. A merge here is an unreviewed merge, which is
+   *     the situation worth blocking.
+   *   - **Approved, but not at the tip** (`hasAnyApproval === true`) — a
+   *     review exists and does not stand at the tip. Usually nothing about
+   *     the code changed: recording a `check_run` or a commit artifact
+   *     after an approval raises the item's review round and demotes that
+   *     approval on its own. That is a bookkeeping artefact rather than unreviewed
+   *     work, and blocking on it produced fourteen false refusals for one
+   *     true catch.
+   *
+   * Absent, like every optional field here, means the server did not ask —
+   * never "no". Read it strictly against `true`/`false`.
+   */
+  readonly hasAnyApproval?: boolean;
+  /**
    * The default branch of the repository the claimed item belongs to.
    *
    * Absent means **unknown**, and it is unknown far more often than one
@@ -234,6 +256,49 @@ export interface InterventionContext {
    * reason every other field here stays absent rather than defaulted.
    */
   readonly unresolvedToolBlocks?: readonly UnresolvedToolBlock[];
+  /**
+   * How many items this session's crew is holding at once, counting only
+   * live assignments held by agents under the same root session.
+   *
+   * Scoped to the **crew**, not to the whole board, and that is the
+   * difference between a signal and a noise source. A board-wide count of
+   * concurrent agents says nothing about whether *this* orchestrator is
+   * over-extended — several orchestrators each running two crews is a busy
+   * system working correctly. A count under one root session is the one
+   * this entry can act on, because the reader is the party who can stage
+   * the wave.
+   *
+   * Absent means the server did not count — never zero. A session holding a
+   * claim always counts at least itself, so a genuine zero cannot occur on
+   * the path that assembles it.
+   */
+  readonly concurrentCrewItems?: number;
+  /**
+   * Whether this item needs a visual review, is closing or closed without
+   * one, and nothing links the review that will carry it out.
+   *
+   * A single boolean rather than its three parts, because no entry has a
+   * use for the parts: the finding is the conjunction, and exposing the
+   * components would invite a second entry to recombine them differently
+   * and disagree with this one.
+   *
+   * Absent means the server did not ask — never "no". A `false` is a real
+   * answer: the question was asked and the item is fine.
+   */
+  readonly visualReviewDeferredUnrecorded?: boolean;
+  /**
+   * Whether this call puts a question to the person and waits for an
+   * answer.
+   *
+   * Read off the tool name, so it costs no lookup — which is what lets I31
+   * fire on a path that has no claim and no item, the common case for a
+   * session that has stopped to ask something.
+   *
+   * **It says a question is being asked, never that it was unjustified.**
+   * No field here can carry the second, and the entry that reads this is
+   * written around that limit rather than pretending past it.
+   */
+  readonly isAskingUser?: boolean;
   /**
    * Where the item's committed work has got to on its way to being merged —
    * I26 and I27.

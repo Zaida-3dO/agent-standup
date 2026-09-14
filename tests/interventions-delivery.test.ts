@@ -30,6 +30,7 @@ import {
   hasAnything,
   partitionFindings,
   renderPayload,
+  scoringPrompt,
   type InterventionEnvelope,
 } from "@/lib/interventions/delivery";
 import { createServiceDeliverer } from "@/lib/interventions/service-delivery";
@@ -251,7 +252,75 @@ describe("rendering a payload for a surface that wants one string", () => {
       },
       render,
     );
-    expect(text).toBe("act now\ndigest:1");
+    // The order is the assertion — the finding the reader can act on now,
+    // then the background batch. The rating ask comes after both, so this
+    // checks the prefix rather than the whole string.
+    expect(text?.startsWith("act now\ndigest:1")).toBe(true);
+  });
+
+  // ── The rating ask ───────────────────────────────────────────────────
+  //
+  // `score_intervention` had recorded zero ratings against hundreds of
+  // firings, so nothing could be retired. These pin that the ask rides the
+  // delivery itself — the one moment a session knows whether the guard was
+  // right — and that it stays off the paths where it would be noise.
+  describe("the scoring prompt", () => {
+    it("rides a delivered finding", () => {
+      const text = renderPayload(
+        { findings: [finding({ level: "nudge", messages: { plain: "act now", prominent: "!" } })] },
+        render,
+      );
+      expect(text).toContain("score_intervention");
+    });
+
+    it("names the entries that fired, so the reader can address them", () => {
+      const text = renderPayload(
+        {
+          findings: [
+            finding({ id: "broad-process-kill", level: "nudge" }),
+            finding({ id: "merge-with-stale-approval", level: "nudge" }),
+          ],
+        },
+        render,
+      );
+      expect(text).toContain("broad-process-kill");
+      expect(text).toContain("merge-with-stale-approval");
+    });
+
+    it("asks once per entry, not once per firing", () => {
+      // A reader asked to rate the same id twice learns the ask is
+      // careless. Dropping the dedupe in `scoringPrompt` fails here.
+      const prompt = scoringPrompt([
+        finding({ id: "broad-process-kill", level: "nudge" }),
+        finding({ id: "broad-process-kill", level: "nudge" }),
+      ]);
+      expect(prompt?.match(/broad-process-kill/g)).toHaveLength(1);
+    });
+
+    it("says nothing when nothing was delivered", () => {
+      // The ask must not appear on a silent call — and `renderPayload`
+      // already returns null there, so this pins the underlying function
+      // too rather than relying on the caller's guard.
+      expect(scoringPrompt([])).toBeNull();
+      expect(renderPayload({}, render)).toBeNull();
+    });
+
+    it("does not ask about a finding the session was never shown", () => {
+      // A `nothing`-level firing is recorded but silent. Asking a session
+      // to rate something it did not experience produces an answer that is
+      // noise indistinguishable from data.
+      expect(renderPayload({ findings: [finding({ level: "nothing" })] }, render)).toBeNull();
+    });
+
+    it("carries the scale's ends, because a bare 1-5 means nothing", () => {
+      const prompt = scoringPrompt([finding({ id: "e", level: "nudge" })]);
+      // 5 and 1 are the two points that carry a demand — 1 is an explicit
+      // request to remove the entry — so a prompt that omitted their
+      // meaning would collect numbers nobody calibrated.
+      expect(prompt).toMatch(/5/);
+      expect(prompt).toMatch(/1/);
+      expect(prompt).toMatch(/note/i);
+    });
   });
 });
 

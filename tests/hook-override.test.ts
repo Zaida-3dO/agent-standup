@@ -137,40 +137,95 @@ describe("readOverrideClaim", () => {
 });
 
 describe("overrideRemedy", () => {
-  // These assertions ARE the spec for the removal, so they are written to
-  // fail if the override offer comes back — not merely to tolerate its
-  // absence. `toBeNull()` is the strong form here: a reintroduced sentence
-  // fails every one of them. Deliberately NOT written as
-  // `not.toContain("override")`, which would pass for a remedy that had
-  // been reworded rather than removed.
+  // **This block was rewritten when the offer came back, narrowed.** It
+  // used to assert the removal was TOTAL, which was the right spec while
+  // the function returned `null` unconditionally. The offer is now made to
+  // exactly one audience — a caller that composes its own hook payload —
+  // and withheld from the one that provably cannot act on it. So the
+  // assertions below pin the *boundary* rather than the absence: the
+  // silence for an agent is asserted just as strongly as it was before,
+  // because that silence is the regression that mattered.
 
-  it("offers nothing for an overridable block, because the audience cannot take it", () => {
-    // The regression this guards: every `block-overridable` entry is
-    // `audience: "agent"`, and an agent reaches only `tool_input`, where
-    // an override claim is refused by design. A generic offer here is a
-    // remedy the reader provably cannot execute.
+  it("offers nothing to an agent, because the audience cannot take it", () => {
+    // The original regression, and still the important one: every
+    // `block-overridable` entry in the catalogue is `audience: "agent"`,
+    // and an agent reaches only `tool_input`, where an override claim is
+    // refused by design. Deleting the audience check in `overrideRemedy`
+    // fails here.
+    expect(overrideRemedy("broad-process-kill", "block-overridable", "agent")).toBeNull();
+  });
+
+  it("offers nothing when the audience is unknown", () => {
+    // `undefined` is treated as unreachable rather than reachable. An
+    // unknown reader is far likelier to be an agent than a bespoke client,
+    // and guessing wrong in that direction reintroduces the broken
+    // promise. Changing the check to `audience !== "agent"` fails here.
     expect(overrideRemedy("broad-process-kill", "block-overridable")).toBeNull();
   });
 
-  it("offers nothing for a hard block", () => {
+  it("offers nothing for a hard block, whatever the audience", () => {
     // Offering an exit that cannot be taken is the exact broken promise
-    // this module exists to end.
-    expect(overrideRemedy("e", "hard-block")).toBeNull();
+    // this module exists to end — and a hard block is not overridable by
+    // anyone, so no audience earns the sentence.
+    expect(overrideRemedy("e", "hard-block", "orchestrator")).toBeNull();
+    expect(overrideRemedy("e", "hard-block", "agent")).toBeNull();
   });
 
   it("offers nothing for a level that is not blocking at all", () => {
-    expect(overrideRemedy("e", "nudge")).toBeNull();
+    for (const level of ["nothing", "nudge"] as const) {
+      expect(overrideRemedy("e", level, "orchestrator")).toBeNull();
+      expect(overrideRemedy("e", level, "agent")).toBeNull();
+    }
   });
 
-  it("offers nothing at any level, for any entry", () => {
-    // The removal is TOTAL, not conditional on audience or entry. If
-    // someone reintroduces a per-level or per-audience branch, this is the
-    // assertion that catches the arm they forgot.
-    for (const level of ["nothing", "nudge", "block-overridable", "hard-block"] as const) {
-      for (const entryId of ["broad-process-kill", "merge-without-approval-at-tip", "e"]) {
-        expect(overrideRemedy(entryId, level)).toBeNull();
-      }
-    }
+  it("gives an orchestrator the literal syntax, not an allusion to it", () => {
+    // The point of restoring it: four sessions bounced off a message that
+    // advertised an override without saying how to supply one, and one
+    // spent seven attempts inventing syntaxes that could not work. So the
+    // remedy must name the real field, the real keys, and the top-level
+    // placement that is the part everyone got wrong.
+    const remedy = overrideRemedy("broad-process-kill", "block-overridable", "orchestrator");
+    expect(remedy).not.toBeNull();
+    expect(remedy).toContain("standup_override");
+    expect(remedy).toContain("entryId");
+    expect(remedy).toContain("reason");
+    // The entry it is scoped to, because an override names its finding.
+    expect(remedy).toContain("broad-process-kill");
+    // Top level, not `tool_input` — the distinction the probe established
+    // and the one a reader cannot guess.
+    expect(remedy).toMatch(/top level/i);
+    expect(remedy).toContain("tool_input");
+    // The reason floor, so a caller does not discover it by being refused.
+    expect(remedy).toContain(String(MIN_OVERRIDE_REASON_LENGTH));
+  });
+
+  it("names the entry it was asked about, rather than a fixed example", () => {
+    // A remedy that hardcoded one id would be wrong for every other entry
+    // and would send the caller to override the wrong finding.
+    const remedy = overrideRemedy(
+      "merge-without-approval-at-tip",
+      "block-overridable",
+      "orchestrator",
+    );
+    expect(remedy).toContain("merge-without-approval-at-tip");
+    expect(remedy).not.toContain("broad-process-kill");
+  });
+
+  it("offers a syntax that readOverrideClaim actually accepts", () => {
+    // **The property that makes this safe to print.** A remedy describing
+    // a shape the parser rejects is the original bug wearing new clothes,
+    // so the documented shape is round-tripped through the real reader
+    // rather than eyeballed. Renaming a key in `readOverrideClaim` without
+    // updating the sentence fails here.
+    const claim = readOverrideClaim({
+      entryId: "broad-process-kill",
+      reason: "the kill is scoped to one pid this guard misread as broad",
+    });
+    expect(claim).toEqual({
+      entryId: "broad-process-kill",
+      reason: "the kill is scoped to one pid this guard misread as broad",
+    });
+    expect(overrideApplies(claim, "broad-process-kill", "block-overridable").applies).toBe(true);
   });
 
   it("still validates a real override claim, so the mechanism is intact", () => {

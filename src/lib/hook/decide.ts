@@ -323,7 +323,7 @@ export async function decide({
     // that conceals an available exit is what teaches sessions to route
     // around guards rather than answer them.
     const remedies = blocking
-      .map((finding) => overrideRemedy(finding.id, finding.level))
+      .map((finding) => overrideRemedy(finding.id, finding.level, finding.audience))
       .filter((remedy): remedy is string => remedy !== null);
 
     const base = answer.reason ?? "blocked by the server";
