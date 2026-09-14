@@ -20,6 +20,7 @@ import { createHttpAsk } from "@/lib/hook/ask-http";
 import { HOOK_EXIT } from "@/lib/hook/response";
 import { spoolEvent } from "@/lib/cli/hook-command";
 import { fileSpool, fileAppendCounter, spoolPath } from "@/lib/cli/spool-file";
+import { readTranscriptDelta } from "@/lib/cli/transcript-file";
 import { flushSpool } from "@/lib/hook/flush";
 import { createHttpFlush } from "@/lib/hook/flush-http";
 import { createRecordInterventionHttp } from "@/lib/hook/record-intervention-http";
@@ -114,7 +115,14 @@ async function main(): Promise<number> {
   if (rendered.stderr !== "") process.stderr.write(rendered.stderr);
 
   const spool = fileSpool(spoolPath(env));
-  spoolEvent(stdin, spool, now, { appendCounter: fileAppendCounter(spoolPath(env)) });
+  const spoolFile = spoolPath(env);
+  spoolEvent(stdin, spool, now, {
+    appendCounter: fileAppendCounter(spoolFile),
+    // Where the token counts actually come from. The hook payload carries
+    // none — see `SpoolCeilingOptions.readTranscriptUsage` — so without this
+    // every record spools four zeroes and no run can ever be priced.
+    readTranscriptUsage: (transcriptPath) => readTranscriptDelta(transcriptPath, spoolFile),
+  });
 
   // ── The drain (MILESTONES.md #88's "batched flush") ───────────────────
   //
