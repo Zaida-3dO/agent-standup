@@ -5,6 +5,7 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { REPO_COLUMNS, toRepoRecord, type RawRepoRow, type RepoRecord } from "../admin/repo-row";
+import { noSuchRepoMessage } from "../items/no-such-repo";
 
 const inputSchema = z
   .object({
@@ -73,7 +74,7 @@ export const updateRepo = defineOperation({
       );
       const current = currentRows[0];
       if (!current) {
-        throw new NotFoundError(`No such repo: ${id}.`, { fields: ["id"] });
+        throw new NotFoundError(await noSuchRepoMessage(ctx.db, id), { fields: ["id"] });
       }
       return toRepoRecord(current);
     }
@@ -85,7 +86,7 @@ export const updateRepo = defineOperation({
     );
     const updated = rows[0];
     if (!updated) {
-      throw new NotFoundError(`No such repo: ${id}.`, { fields: ["id"] });
+      throw new NotFoundError(await noSuchRepoMessage(ctx.db, id), { fields: ["id"] });
     }
     return toRepoRecord(updated);
   },

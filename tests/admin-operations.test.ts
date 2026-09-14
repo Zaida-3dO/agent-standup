@@ -83,6 +83,9 @@ describeIfDb("admin service operations against Postgres", () => {
 
       const error = await runtime.call("get_repo", { id: "no-such-repo" }).catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("not_found");
+      // Ope, 2026-09-14 (closing `80c23a90-1070-4edf-b6c8-0a32209dca44`): the
+      // refusal names the valid repo it just missed, not only the bad id.
+      expect((error as { message: string }).message).toContain("repo-get");
     });
 
     it("list_repos excludes archived by default and includes them on request", async () => {
@@ -134,6 +137,20 @@ describeIfDb("admin service operations against Postgres", () => {
         .call("update_repo", { id: "no-such-repo", displayName: "x" })
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("not_found");
+      // Same enrichment as get_repo/create_work/update_item — this is the
+      // `setClauses.length > 0` throw site (after the UPDATE...RETURNING).
+      expect((error as { message: string }).message).toContain("repo-update");
+    });
+
+    it("update_repo's no-op branch (nothing to set) also names the valid repos", async () => {
+      // No fields supplied besides `id` — `setClauses` stays empty, so this
+      // hits the OTHER throw site in update-repo.ts: the plain SELECT before
+      // any UPDATE runs.
+      const error = await runtime
+        .call("update_repo", { id: "no-such-repo-at-all" })
+        .catch((e: unknown) => e);
+      expect((error as { code: string }).code).toBe("not_found");
+      expect((error as { message: string }).message).toContain("repo-update");
     });
 
     // MILESTONES.md #124: `defaultBranch` is nullable — unknown is a

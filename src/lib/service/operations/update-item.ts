@@ -18,6 +18,7 @@ import {
   type RawItemRow,
 } from "../items/row";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
+import { noSuchRepoMessage } from "../items/no-such-repo";
 import { recordFieldChanges } from "@/lib/events";
 import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
 import { normalizeEmDash } from "@/lib/text-normalize";
@@ -137,7 +138,9 @@ export const updateItem = defineOperation({
           "`repo` must name an existing, non-archived row in the Repo table, or be explicit `null` " +
           "to clear it. Repos are deliberate-create only and are never auto-created from this field; " +
           "an id naming an archived repo is refused the same as one that never existed. The schema " +
-          "cannot enumerate valid ids because the set is a database table, not a fixed list. From " +
+          "cannot enumerate valid ids because the set is a database table, not a fixed list, so a " +
+          "refusal for an unrecognised `repo` names the valid ids itself (closest matches to what you " +
+          "sent first, capped, with a count of the rest) — the refusal is the enumeration. From " +
           "MCP: `get_board` shows `repo` by default, and `list_items` shows it with `full: true`, so " +
           "the ids already in play are visible on the items you can already list — there is no " +
           "operation that enumerates the Repo table itself from MCP. The direct enumeration is " +
@@ -210,11 +213,7 @@ export const updateItem = defineOperation({
         edits.repo,
       );
       if (repoRows.length === 0) {
-        throw new NotFoundError(
-          `No such repo: ${edits.repo}. Repos are pre-registered — check \`get_board\`/\`list_items\` ` +
-            "with a repo filter for ids in use, or `list_repos` [http/cli] to enumerate the table directly.",
-          { fields: ["repo"] },
-        );
+        throw new NotFoundError(await noSuchRepoMessage(ctx.db, edits.repo), { fields: ["repo"] });
       }
     }
 

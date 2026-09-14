@@ -20,6 +20,7 @@ import { z } from "zod";
 import { GuardRejectedError, InvalidInputError, NotFoundError } from "../errors";
 import type { ServiceContext } from "../context";
 import { resolveAreasRaw, setItemAreas } from "./item-areas";
+import { noSuchRepoMessage } from "./no-such-repo";
 import { resolveSessionDefaults } from "./session-defaults";
 import { callerEventActor } from "./event-attribution";
 import { appendEvent } from "@/lib/events";
@@ -241,10 +242,12 @@ export const COMMON_CREATE_RULES = [
       "`repo` must name an existing, non-archived row in the Repo table — repos are deliberate-create " +
       "only and are never auto-created from this field. An id naming an archived repo is refused the " +
       "same as one that never existed. The schema cannot enumerate valid ids because the set is a " +
-      "database table, not a fixed list. From MCP: `get_board` shows `repo` by default, and `list_items` " +
-      "shows it with `full: true`, so the ids already in play are visible on the items you can already " +
-      "list — there is no operation that enumerates the Repo table itself from MCP. The direct " +
-      "enumeration is `list_repos` [http/cli], for HTTP/CLI callers only.",
+      "database table, not a fixed list, so a refusal for an unrecognised `repo` names the valid ids " +
+      "itself (closest matches to what you sent first, capped, with a count of the rest) — the refusal " +
+      "is the enumeration. From MCP: `get_board` shows `repo` by default, and `list_items` shows it " +
+      "with `full: true`, so the ids already in play are visible on the items you can already list — " +
+      "there is no operation that enumerates the Repo table itself from MCP. The direct enumeration is " +
+      "`list_repos` [http/cli], for HTTP/CLI callers only.",
   },
   {
     fields: ["headline"],
@@ -553,11 +556,7 @@ export async function insertItem(
     );
     const repoRow = repoRows[0];
     if (!repoRow) {
-      throw new NotFoundError(
-        `No such repo: ${input.repo}. Repos are pre-registered — check \`get_board\`/\`list_items\` ` +
-          "with a repo filter for ids in use, or `list_repos` [http/cli] to enumerate the table directly.",
-        { fields: ["repo"] },
-      );
+      throw new NotFoundError(await noSuchRepoMessage(ctx.db, input.repo), { fields: ["repo"] });
     }
     repoNeedsVisualReview = repoRow.needsVisualReview;
   }
