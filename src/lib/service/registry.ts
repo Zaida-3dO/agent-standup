@@ -192,6 +192,13 @@ import { getRunScores } from "./operations/get-run-scores";
 // review history into a score. Without a caller, a scoring table stays
 // empty forever however good its schema is.
 import { deriveRunScore } from "./operations/derive-run-score";
+// The front door for all of the above. Every scoring operation requires a
+// `runId`, and until this landed nothing an orchestrator could call ever
+// returned one — `record_tool_calls` is the hook's ingest path and
+// `get_run_scores` takes a runId as a filter without ever naming one. A
+// scoring table with no way to reach a row stays empty however good its
+// schema is, which is exactly what had happened.
+import { listRuns } from "./operations/list-runs";
 // The process registry and the ownership check it exists to feed
 // (MILESTONES.md #45). `kill_guard` is the consumer; the other three are
 // how the registry gets its contents and how a refusal is explained.
@@ -324,6 +331,7 @@ export const OPERATION_REGISTRY = {
   [acceptRunScore.name]: acceptRunScore,
   [getRunScores.name]: getRunScores,
   [deriveRunScore.name]: deriveRunScore,
+  [listRuns.name]: listRuns,
   [getInterventionScores.name]: getInterventionScores,
   [registerProcess.name]: registerProcess,
   [endProcess.name]: endProcess,

@@ -564,4 +564,193 @@ describeIfDb("run scoring operations — against Postgres", () => {
     ).rejects.toThrow(/nothing to copy/);
     expect(await storedScore(runId, "visual")).toBeUndefined();
   });
+
+  // ── The route an orchestrator actually has ───────────────────────────
+  //
+  // Every test above this point gets its `runId` from `createRun()`, which
+  // fabricates item, assignment and run straight through Prisma with a
+  // hardcoded `run-${counter}` id. That is fine for pinning the freeze —
+  // the id's provenance is irrelevant to whether a second write is refused
+  // — but it means NONE of them prove the id could ever have been obtained.
+  // For most of this file's life no operation returned one at all, and the
+  // live table was 19 runs with 0 scores: a contract nobody could satisfy.
+  //
+  // These cases close that gap, and the discipline is the entire point:
+  // **no id is passed in from outside.** The run is cut by the real
+  // boundary logic from a real `record_tool_calls` ingest, and the only
+  // `runId` used is the one `list_runs` handed back. A version of this test
+  // that reached for `createRun()` would be easier to write and would prove
+  // nothing.
+  describe("reaching a run the way an orchestrator has to", () => {
+    /**
+     * An item with a LIVE assignment, and nothing else.
+     *
+     * Deliberately creates no run: `record_tool_calls` must cut it, because
+     * a run this helper planted would be one the telemetry path never
+     * produced. `liveAssignment` matches on `sessionId` with
+     * `releasedAt IS NULL`, so a live row is the whole precondition.
+     */
+    async function itemWithLiveAssignment(): Promise<{ itemId: string; sessionId: string }> {
+      counter += 1;
+      const itemId = `reach-item-${counter}`;
+      const sessionId = `reach-session-${counter}`;
+
+      await prisma.item.create({
+        data: {
+          id: itemId,
+          parentId: null,
+          kind: "task",
+          title: `Reachable ${counter}`,
+          body: "body",
+          state: "executing" as never,
+          originType: "person",
+          area: "web",
+          repo: "infra",
+          mergeAuthority: "needs_approval",
+        },
+      });
+      await prisma.assignment.create({
+        data: {
+          id: `reach-assignment-${counter}`,
+          itemId,
+          role: "builder" as never,
+          holderType: "agent" as never,
+          holderId: `agent-reach-${counter}`,
+          sessionId,
+          rootSessionId: sessionId,
+          machine: "desktop",
+        },
+      });
+      return { itemId, sessionId };
+    }
+
+    it("ingest -> list_runs -> score_run -> get_run_scores, with the id obtained ONLY from list_runs", async () => {
+      const { itemId, sessionId } = await itemWithLiveAssignment();
+
+      // 1. The telemetry path cuts a real run. This is the ONLY writer of
+      //    the "Run" table in the codebase.
+      const ingest = (await runtime.call("record_tool_calls", {
+        sessionId,
+        calls: [
+          { tool: "Bash", ts: new Date().toISOString(), model: "tier-a", effort: "high" },
+          { tool: "Read", ts: new Date().toISOString(), model: "tier-a", effort: "high" },
+        ],
+      })) as { runs: readonly { id: string }[] };
+      expect(ingest.runs.length).toBeGreaterThan(0);
+
+      // 2. The orchestrator holds ONLY the item id, and asks.
+      const listed = (await runtime.call("list_runs", { itemId })) as {
+        runs: readonly { runId: string; scored: boolean; scoredFacets: readonly string[] }[];
+      };
+      expect(listed.runs).toHaveLength(1);
+
+      const runId = listed.runs[0]!.runId;
+      // Nothing was judged yet, and the list says so — this is what lets a
+      // caller pick a run to score without guessing.
+      expect(listed.runs[0]!.scored).toBe(false);
+      expect(listed.runs[0]!.scoredFacets).toEqual([]);
+
+      // The id is a real one the telemetry path minted, not a fabricated
+      // `run-N`. Asserting the agreement rather than trusting it: if
+      // `list_runs` ever returned an id from somewhere else, every later
+      // assertion here would still pass while the route was broken.
+      expect(ingest.runs.map((run) => run.id)).toContain(runId);
+      expect(runId).not.toMatch(/^run-\d+$/);
+
+      // 3. Score it with that id, and nothing else.
+      await runtime.call("score_run", {
+        runId,
+        raterType: "agent",
+        scores: [
+          { facet: "reasoning", score: 4 },
+          { facet: "precision", score: 3 },
+        ],
+      });
+
+      // 4. It persisted and reads back — acceptance criteria 1 and 2 met
+      //    end to end, entirely through operations an orchestrator can call.
+      const scores = (await runtime.call("get_run_scores", { runId })) as GetRunScoresOutput;
+      expect(scores.scoredRuns).toBe(1);
+      expect(scores.unscoredRuns).toBe(0);
+      expect(scores.facets.map((facet) => facet.facet).sort()).toEqual(["precision", "reasoning"]);
+
+      // Read outside the operation that wrote it, against Postgres.
+      expect((await storedScore(runId, "reasoning"))?.agentScore).toBe(4);
+    });
+
+    it("list_runs then reports the run as scored, and names the frozen facets", async () => {
+      const { itemId, sessionId } = await itemWithLiveAssignment();
+      await runtime.call("record_tool_calls", {
+        sessionId,
+        calls: [{ tool: "Bash", ts: new Date().toISOString(), model: "tier-a", effort: "high" }],
+      });
+
+      const before = (await runtime.call("list_runs", { itemId })) as {
+        runs: readonly { runId: string }[];
+      };
+      const runId = before.runs[0]!.runId;
+
+      await runtime.call("score_run", {
+        runId,
+        raterType: "agent",
+        scores: [{ facet: "reasoning", score: 5 }],
+      });
+
+      const after = (await runtime.call("list_runs", { itemId })) as {
+        runs: readonly { scored: boolean; scoredFacets: readonly string[] }[];
+      };
+      // This is what makes the freeze avoidable by READING rather than by
+      // catching a ConflictError: the caller can see `reasoning` is spent.
+      expect(after.runs[0]!.scored).toBe(true);
+      expect(after.runs[0]!.scoredFacets).toEqual(["reasoning"]);
+
+      // And the `scored: "no"` filter now excludes it, so a second pass
+      // over "what have I not judged" does not re-offer it.
+      const unscored = (await runtime.call("list_runs", { itemId, scored: "no" })) as {
+        runs: readonly unknown[];
+      };
+      expect(unscored.runs).toEqual([]);
+    });
+
+    it("the freeze still holds on a run reached through the new route", async () => {
+      // The freeze is pinned above against fabricated ids. Re-asserted here
+      // against a telemetry-minted one, because the route is new and the
+      // guarantee has to hold for the ids callers will actually use — the
+      // write path is the same, and this proves the new provenance did not
+      // somehow bypass it.
+      const { itemId, sessionId } = await itemWithLiveAssignment();
+      await runtime.call("record_tool_calls", {
+        sessionId,
+        calls: [{ tool: "Bash", ts: new Date().toISOString(), model: "tier-a", effort: "high" }],
+      });
+      const listed = (await runtime.call("list_runs", { itemId })) as {
+        runs: readonly { runId: string }[];
+      };
+      const runId = listed.runs[0]!.runId;
+
+      await runtime.call("score_run", {
+        runId,
+        raterType: "agent",
+        scores: [{ facet: "reasoning", score: 5 }],
+      });
+      await expect(
+        runtime.call("score_run", {
+          runId,
+          raterType: "agent",
+          scores: [{ facet: "reasoning", score: 5 }],
+        }),
+      ).rejects.toBeInstanceOf(ConflictError);
+
+      // The surviving delta: a person scores beside it, agent untouched.
+      await runtime.call("score_run", {
+        runId,
+        raterType: "person",
+        raterId: "reviewer-1",
+        scores: [{ facet: "reasoning", score: 2 }],
+      });
+      const stored = await storedScore(runId, "reasoning");
+      expect(stored?.agentScore).toBe(5);
+      expect(stored?.userScore).toBe(2);
+    });
+  });
 });
