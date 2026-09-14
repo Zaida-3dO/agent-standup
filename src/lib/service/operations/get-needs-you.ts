@@ -1,14 +1,15 @@
 // `get_needs_you` — "what needs this person", answered in one call.
 //
-// **The gap this closes.** The `/needs-you` inbox admits exactly three
+// **The gap this closes.** The `/needs-you` inbox admits exactly four
 // things: an item blocked on a person where that person is you · an item at
-// `in_review` whose merge needs a person's approval · anything at
-// `plan_review`. None of that was expressible as a `list_items` filter —
-// there is no `blockedOnType`/`blockedOnPersonId` filter and no
-// `mergeAuthority` one — so the screen issued **three** `full: true` reads
-// of up to 200 rows each and narrowed them in the browser, discarding most
-// of what it paid for. Three round trips, three separate snapshots, and the
-// admission rule living in the front end.
+// `in_review` whose merge needs a person's approval · an `in_review` item
+// still waiting for someone to *look* at it · anything at `plan_review`.
+// None of that was expressible as a `list_items` filter — there is no
+// `blockedOnType`/`blockedOnPersonId` filter and no `mergeAuthority` or
+// `needsVisualReview` one — so the screen issued **three** `full: true`
+// reads of up to 200 rows each and narrowed them in the browser, discarding
+// most of what it paid for. Three round trips, three separate snapshots,
+// and the admission rule living in the front end.
 //
 // **Why a purpose-built read rather than three new filters on `list_items`.**
 // The admission rule is a *product decision* ("what counts as needing a
@@ -16,9 +17,9 @@
 // have to be re-derived by every other consumer — a digest, a notification,
 // a second client — and each would be free to get it subtly wrong. As one
 // operation the rule has exactly one definition, and `NEEDS_YOU_REASONS`
-// below is it. The three-filters route also cannot express this set at all
-// in one call: it is a **union across three different states**, and
-// `list_items` filters one state at a time.
+// below is it. The filters route also cannot express this set at all in one
+// call: it is a **union across three different states**, and `list_items`
+// filters one state at a time.
 //
 // **One transaction, so the three sources agree.** The union is read in a
 // single statement inside the call's one transaction (`runtime.ts` opens
@@ -39,15 +40,16 @@
 // implementations rather than a decision: the badge counted only
 // `blocked_on_you` (`@/lib/board/view.ts`'s `needsYou`, over the Waiting
 // column), while the inbox admitted all three reasons. So the badge said 1
-// and the list showed 4, with nothing to explain the gap. `fetchNeedsYouCount`
+// and the list showed 4, with nothing to explain the gap. `fetchNeedsYouTotal`
 // now counts this operation's `total`, so the number beside the link is the
 // length of the list behind it by construction rather than by two rules
 // staying in step.
 //
 // **The slim shape is the default** (MILESTONES.md #107), with `full` for
-// the whole record. Note the inbox itself is a *slim* caller: the four
-// fields it draws beyond the summary — `blockedReason`, `updatedAt`,
-// `mergeAuthority`, `reason` — are returned in the slim shape precisely so
+// the whole record. Note the inbox itself is a *slim* caller: the fields it
+// draws beyond the summary — `blockedReason`, `updatedAt`,
+// `mergeAuthority`, `needsVisualReview`, `tipCommitSha`, `reason` — are
+// returned in the slim shape precisely so
 // the screen does not have to ask for `full` and pay for `body` and
 // `customFields` to render a one-line row. That is the fetching-and-
 // discarding this task is about, and defaulting it away is the fix.
@@ -63,11 +65,17 @@ import {
 } from "../items/row";
 
 /**
- * Why an item needs a person. Three reasons, never merged into one label —
- * they call for different actions and the screen decides its affordances
- * from them.
+ * Why an item needs a person. Four reasons, never merged into one label —
+ * they call for different actions, they are answered by different artifacts,
+ * and the screen decides its affordances from them. A generic "respond" box
+ * over all four would be the thing this list exists to stop.
  */
-export const NEEDS_YOU_REASONS = ["blocked_on_you", "needs_approval", "plan_review"] as const;
+export const NEEDS_YOU_REASONS = [
+  "blocked_on_you",
+  "needs_approval",
+  "needs_visual_review",
+  "plan_review",
+] as const;
 
 export type NeedsYouReason = (typeof NEEDS_YOU_REASONS)[number];
 
@@ -94,7 +102,7 @@ export type GetNeedsYouInput = z.infer<typeof inputSchema>;
 
 /**
  * One row of the inbox — the slim shape, which is `ItemSummaryRecord` plus
- * the four fields a row and its decide affordance actually draw.
+ * the fields a row and its decide affordance actually draw.
  *
  * Wider than `ItemSummaryRecord` rather than reusing it verbatim, for the
  * same reason `BoardItemSummaryRecord` is (see its header): a caller that
@@ -114,6 +122,29 @@ export interface NeedsYouSummaryRecord {
   /** ISO 8601 — what "how long it has waited" is computed from. */
   readonly updatedAt: string;
   readonly mergeAuthority: string;
+  /** Whether someone still has to look at this — what `merge.requires_visual_review` reads. */
+  readonly needsVisualReview: boolean;
+  /**
+   * The sha a decision on this item would apply to — the item's newest
+   * `commit` artifact, or `null` when it has none.
+   *
+   * Derived here rather than by the caller, for the reason `reason` is: a
+   * `merge_approval` **must** name the commit it approves (`record_artifact`
+   * refuses one without a `commitSha`, because an unpinned approval reads as
+   * standing permission to merge whatever the item later becomes). A screen
+   * offering a one-click approval therefore needs the sha *before* the
+   * click, both to send it and to know whether the control can be offered at
+   * all — and re-deriving "which commit is the tip" in the front end would
+   * be a fifth definition of a rule `artifact-tip.ts` already owns, in the
+   * one place where getting it wrong pins a human's authorisation to the
+   * wrong code.
+   *
+   * `null` is a meaningful answer, not a missing one: it means the item has
+   * recorded no commit, so there is nothing a decision could be scoped to
+   * and the caller must say so rather than fire a write the server will
+   * refuse.
+   */
+  readonly tipCommitSha: string | null;
 }
 
 /** A `full: true` row — the whole record, with the derived reason still attached. */
@@ -149,13 +180,39 @@ export interface GetNeedsYouOutput {
  *     `merge.requires_authorisation` checks for. `agent_judgement` and
  *     `pre_approved` are excluded because an agent may legitimately clear
  *     those alone, so they are not yet waiting on a person.
+ *   - **`needs_visual_review`** — `state = 'in_review'` narrowed to
+ *     `needsVisualReview` set, which is exactly what
+ *     `merge.requires_visual_review` checks for. Waiting on a person to
+ *     *look at something* is a different act from deciding a merge, and it
+ *     is answered by a different artifact (`visual_review`, which any
+ *     reviewer may record) than `needs_approval`'s (`merge_approval`, which
+ *     only a person may). Collapsing the two would offer one control for
+ *     two different questions.
  *   - **`plan_review`** — admitted outright. Every item at that state is
  *     waiting on a person's approval, so no further narrowing applies.
  *
- * The three arms are mutually exclusive by state, so no item can appear
- * twice and no `DISTINCT` is needed — a `UNION ALL` is correct and cheaper
- * than a `UNION`, and using the deduplicating form would hide it if that
- * ever stopped being true.
+ * ── Why `needs_visual_review` excludes what `needs_approval` admits ──────
+ *
+ * The other three arms are mutually exclusive **by state**, but these two
+ * are not: an `in_review` item may be both `mergeAuthority =
+ * 'needs_approval'` *and* `needsVisualReview`, and a plain fourth arm would
+ * return it twice — breaking the `UNION ALL`, double-counting it in `total`,
+ * and rendering two rows for one item with two different affordances.
+ *
+ * So the visual arm explicitly excludes `mergeAuthority = 'needs_approval'`,
+ * making the two disjoint again and keeping `UNION ALL` correct. The item is
+ * admitted under `needs_approval`, which is the right precedence: the merge
+ * decision is the *blocking* one and the guard that reads it refuses the
+ * merge regardless of the visual state, so surfacing the approval is
+ * surfacing the thing actually holding the item. Nothing is lost — the
+ * visual requirement is still enforced by `merge.requires_visual_review` at
+ * merge time, and the item reappears under `needs_visual_review` if the
+ * approval is given while the look is still outstanding.
+ *
+ * With that exclusion the four arms are again pairwise disjoint, so no item
+ * can appear twice and no `DISTINCT` is needed — a `UNION ALL` is correct
+ * and cheaper than a `UNION`, and using the deduplicating form would hide it
+ * if that ever stopped being true.
  *
  * Archived rows are excluded on every arm (MILESTONES.md #137) — an archive
  * is the installation saying a row should never have existed, and an inbox
@@ -171,6 +228,11 @@ function admissionSql(columns: string): string {
       WHERE ${NOT_ARCHIVED_CONDITION} AND "state" = 'in_review'::"ItemState"
         AND "mergeAuthority" = 'needs_approval'::"MergeAuthority"
     UNION ALL
+    SELECT ${columns}, 'needs_visual_review' AS "reason" FROM "Item"
+      WHERE ${NOT_ARCHIVED_CONDITION} AND "state" = 'in_review'::"ItemState"
+        AND "needsVisualReview" = true
+        AND "mergeAuthority" <> 'needs_approval'::"MergeAuthority"
+    UNION ALL
     SELECT ${columns}, 'plan_review' AS "reason" FROM "Item"
       WHERE ${NOT_ARCHIVED_CONDITION} AND "state" = 'plan_review'::"ItemState"
   `;
@@ -185,6 +247,22 @@ const NEEDS_YOU_SUMMARY_COLUMNS = [
   '"blockedReason"',
   '"updatedAt"',
   '"mergeAuthority"',
+  '"needsVisualReview"',
+  // The item's tip commit, as a correlated subquery so one statement still
+  // answers the whole inbox — N+1 per-row lookups for a list read is the
+  // exact cost this operation was written to remove.
+  //
+  // `ORDER BY "createdAt" DESC, "seq" DESC LIMIT 1` is `currentTipCommitSha`
+  // (`../guards/artifact-tip.ts`) verbatim, including the `seq` tiebreak.
+  // That is deliberate duplication of four tokens rather than of a *rule*:
+  // the tiebreak is what makes two commits recorded in the same millisecond
+  // resolve to the same sha here as at the merge gate, and a plain
+  // `ORDER BY "createdAt" DESC` would be a coin flip between them — pinning
+  // a person's approval to one commit while the guard checks another.
+  `(SELECT a."commitSha" FROM "Artifact" a
+      WHERE a."itemId" = "Item"."id" AND a."kind" = 'commit'
+      ORDER BY a."createdAt" DESC, a."seq" DESC
+      LIMIT 1) AS "tipCommitSha"`,
 ].join(", ");
 
 interface RawNeedsYouSummaryRow {
@@ -195,6 +273,8 @@ interface RawNeedsYouSummaryRow {
   blockedReason: string | null;
   updatedAt: Date;
   mergeAuthority: string;
+  needsVisualReview: boolean;
+  tipCommitSha: string | null;
   reason: string;
 }
 
@@ -207,7 +287,7 @@ export const getNeedsYou = defineOperation({
   name: "get_needs_you",
   kind: "read",
   summary:
-    "What needs a given person: items blocked on them, merges awaiting their approval, and plans awaiting review — in one call. Returns id, title, state, headline, why it needs them and how long it has waited; pass full for whole records.",
+    "What needs a given person: items blocked on them, merges awaiting their approval, work awaiting a visual look, and plans awaiting review — in one call. Returns id, title, state, headline, why it needs them, how long it has waited and the commit a decision would apply to; pass full for whole records.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetNeedsYouInput): Promise<GetNeedsYouOutput> {
@@ -288,6 +368,8 @@ export const getNeedsYou = defineOperation({
           blockedReason: row.blockedReason,
           updatedAt: row.updatedAt.toISOString(),
           mergeAuthority: row.mergeAuthority,
+          needsVisualReview: row.needsVisualReview,
+          tipCommitSha: row.tipCommitSha,
         }));
 
     return {

@@ -48,6 +48,8 @@ interface RawNeedsYouRow {
   readonly blockedReason: string | null;
   readonly updatedAt: string;
   readonly mergeAuthority: string;
+  readonly needsVisualReview?: boolean;
+  readonly tipCommitSha?: string | null;
 }
 
 interface NeedsYouResponse {
@@ -121,6 +123,13 @@ function toNeedsYouItem(row: RawNeedsYouRow): NeedsYouItem {
     blockedReason: row.blockedReason,
     updatedAt: row.updatedAt,
     mergeAuthority: row.mergeAuthority as NeedsYouItem["mergeAuthority"],
+    // Both default rather than being asserted present. A response from an
+    // older server that predates these fields renders a row with no
+    // decision control (`canDecide` reads `tipCommitSha === null`) instead
+    // of throwing — the row still says the item needs you, which is the
+    // part that must never be lost.
+    needsVisualReview: row.needsVisualReview ?? false,
+    tipCommitSha: row.tipCommitSha ?? null,
   };
 }
 

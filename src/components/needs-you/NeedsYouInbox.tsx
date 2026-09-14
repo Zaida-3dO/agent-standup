@@ -1,12 +1,22 @@
 "use client";
 
 // The thin container for `/needs-you`: fetches the inbox for the active
-// profile and wires the decide actions, handing everything else to
+// profile and wires the four response actions, handing everything else to
 // `NeedsYouInboxView` as plain props — the same split `SinceLastVisit.tsx`
 // follows and for the same reason (see that file's header).
+//
+// The reply text for each row lives here rather than in the row, so
+// `NeedsYouRow` stays hook-free and directly callable by this repo's
+// DOM-free test harness.
 import { useCallback, useEffect, useState } from "react";
 import { useProfile } from "@/lib/profile/ProfileProvider";
-import { approve, deny } from "@/lib/needs-you/decide";
+import {
+  answer,
+  approve,
+  grantStandingApproval,
+  reject,
+  type RespondResult,
+} from "@/lib/needs-you/respond";
 import {
   fetchNeedsYou,
   needsYouErrorMessageFrom,
@@ -27,8 +37,10 @@ export function NeedsYouInbox() {
     personId: string | null;
     state: NeedsYouLoadState;
   } | null>(null);
-  const [decidingId, setDecidingId] = useState<string | null>(null);
-  const [decideError, setDecideError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [respondError, setRespondError] = useState<string | null>(null);
+  const [respondNotice, setRespondNotice] = useState<string | null>(null);
+  const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
   // Sampled once per load rather than read at render time — see
   // `StandupHome.tsx`'s own note (and `Projects.tsx`, which this mirrors)
   // on why `Date.now()` cannot be called during render.
@@ -64,51 +76,124 @@ export function NeedsYouInbox() {
     [loaded],
   );
 
-  const runDecide = useCallback(
-    (itemId: string, action: typeof approve) => {
-      if (personId === null) return;
-      const item = findItem(itemId);
-      if (item === null) return;
-      setDecideError(null);
-      setDecidingId(itemId);
-      // `expectedFrom` is the row's own `state` as the last load reported it
-      // — the server's value, not one derived from `reason` here. That makes
-      // a decision taken against a list which has gone stale a 409 rather
-      // than a silent overwrite; see `decide.ts`'s header.
-      void action({ itemId, reason: item.reason, personId, expectedFrom: item.state })
+  /**
+   * Runs one response and settles the row afterwards.
+   *
+   * Always re-fetches on success rather than removing the row locally: a
+   * response may or may not remove the item from the inbox (an approved
+   * merge does; a recorded visual review may not, if the item is still held
+   * by another clause), and re-deriving that here would be a second copy of
+   * the admission rule. Since T24 the refetch is a single bounded read.
+   */
+  const run = useCallback(
+    (itemId: string, act: () => Promise<RespondResult>, notice: string) => {
+      setRespondError(null);
+      setRespondNotice(null);
+      setBusyId(itemId);
+      void act()
         .then((result) => {
-          setDecidingId(null);
+          setBusyId(null);
           if (!result.ok) {
-            setDecideError(result.message);
+            setRespondError(result.message);
             return;
           }
-          // Re-fetches rather than removing the row locally: an approval
-          // moves the item to a new state (`executing`/`merged`), which is
-          // exactly the condition that makes it stop qualifying for this
-          // list under all three admission rules at once — refetching is
-          // simpler than re-deriving that here, and since T24 it is a
-          // single bounded read (`get_needs_you`) rather than three.
+          setRespondNotice(notice);
           load();
         })
         .catch(() => {
-          setDecidingId(null);
-          setDecideError("Something went wrong recording that decision.");
+          setBusyId(null);
+          setRespondError("Something went wrong recording that.");
         });
     },
-    [personId, findItem, load],
+    [load],
   );
 
-  const handleApprove = useCallback((itemId: string) => runDecide(itemId, approve), [runDecide]);
-  const handleDeny = useCallback((itemId: string) => runDecide(itemId, deny), [runDecide]);
+  /** The shared input every decision action needs, or null when the row is unknown. */
+  const decisionInput = useCallback(
+    (itemId: string) => {
+      if (personId === null) return null;
+      const item = findItem(itemId);
+      if (item === null) return null;
+      return {
+        itemId,
+        reason: item.reason,
+        personId,
+        // The row's own `state` as the last load reported it — the server's
+        // value, not one derived from `reason` here. That makes a decision
+        // taken against a stale list a 409 rather than a silent overwrite.
+        expectedFrom: item.state,
+        tipCommitSha: item.tipCommitSha,
+      };
+    },
+    [personId, findItem],
+  );
+
+  const handleApprove = useCallback(
+    (itemId: string) => {
+      const input = decisionInput(itemId);
+      if (input === null) return;
+      run(
+        itemId,
+        () => approve(input),
+        input.reason === "needs_approval"
+          ? "Merge approved — recorded against the commit."
+          : "Recorded.",
+      );
+    },
+    [decisionInput, run],
+  );
+
+  const handleReject = useCallback(
+    (itemId: string) => {
+      const input = decisionInput(itemId);
+      if (input === null) return;
+      run(itemId, () => reject(input), "Changes requested.");
+    },
+    [decisionInput, run],
+  );
+
+  const handleAnswer = useCallback(
+    (itemId: string) => {
+      if (personId === null) return;
+      const body = replyTexts[itemId] ?? "";
+      run(itemId, () => answer({ itemId, personId, body }), "Answer sent.");
+      // Cleared optimistically alongside the send. On a failure the message
+      // above says so and the text is gone, which is the one rough edge
+      // here; keeping it would mean holding it against a refetch that may
+      // have removed the row.
+      setReplyTexts((prev) => ({ ...prev, [itemId]: "" }));
+    },
+    [personId, replyTexts, run],
+  );
+
+  const handleGrantStanding = useCallback(
+    (itemId: string) => {
+      run(
+        itemId,
+        () => grantStandingApproval({ itemId }),
+        "This item is now pre-approved — it will merge without asking you again.",
+      );
+    },
+    [run],
+  );
+
+  const handleReplyTextChange = useCallback((itemId: string, value: string) => {
+    setReplyTexts((prev) => ({ ...prev, [itemId]: value }));
+  }, []);
 
   return (
     <NeedsYouInboxView
       loadState={loadState}
       now={now}
-      decidingId={decidingId}
+      busyId={busyId}
       onApprove={handleApprove}
-      onDeny={handleDeny}
-      decideError={decideError}
+      onReject={handleReject}
+      onAnswer={handleAnswer}
+      onGrantStanding={handleGrantStanding}
+      replyTexts={replyTexts}
+      onReplyTextChange={handleReplyTextChange}
+      respondError={respondError}
+      respondNotice={respondNotice}
     />
   );
 }

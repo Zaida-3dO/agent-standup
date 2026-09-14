@@ -74,6 +74,10 @@
   border-left-color: var(--state-in_review-border);
 }
 
+.row[data-reason="needs_visual_review"] {
+  border-left-color: var(--state-in_review-border);
+}
+
 .rowMain {
   display: flex;
   flex-direction: column;
@@ -253,4 +257,107 @@
     align-items: center;
     min-height: 44px;
   }
+}
+
+/* The success counterpart to `.decideError`. An action whose only visible
+   result is the row quietly disappearing reads as a no-op — or worse, as a
+   failure — so a response that landed says so. */
+.decideNotice {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--state-merged-border);
+  border-radius: var(--radius-md);
+  background: var(--state-merged-bg);
+  color: var(--state-merged-fg);
+  font-size: var(--text-xs);
+}
+
+/* What this row is actually asking of the reader — see `REASON_PROMPTS`.
+   Muted rather than secondary: it sits under the title and must not
+   compete with it. */
+.prompt {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+/* The commit an approval will name. Monospace because it is a sha, and
+   shown because a person authorising a merge should see what they are
+   authorising. */
+.commit {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-3xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Stands where the buttons would be when a decision cannot be offered,
+   so the row explains itself instead of showing a dead control. */
+.notYet {
+  font-size: var(--text-3xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* The reply box for a question. Spans the full row under the meta, because
+   an answer is prose. */
+.reply {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  grid-column: 1 / -1;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.replyLabel {
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.replyInput {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-2xs);
+  resize: vertical;
+}
+
+.replyInput:disabled {
+  opacity: 0.5;
+}
+
+/* The standing grant — deliberately the quietest control on the row.
+   A link-weight button, not a filled one: "always approve this" is a far
+   broader act than the approve button beside it and must never be the
+   thing a reader clicks by reflex. */
+.standing {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: var(--space-2);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font-size: var(--text-3xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.standing:hover {
+  color: var(--text-secondary);
+}
+
+.standing:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

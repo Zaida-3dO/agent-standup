@@ -74,6 +74,7 @@ describeIfDb("get_needs_you against Postgres", () => {
       blockedOnType?: string | null;
       blockedOnPersonId?: string | null;
       mergeAuthority?: string;
+      needsVisualReview?: boolean;
       updatedAt?: string;
       archivedAt?: string | null;
     },
@@ -103,6 +104,13 @@ describeIfDb("get_needs_you against Postgres", () => {
       await prisma.$executeRawUnsafe(
         `UPDATE "Item" SET "mergeAuthority" = $1::"MergeAuthority" WHERE "id" = $2`,
         fields.mergeAuthority,
+        id,
+      );
+    }
+    if (fields.needsVisualReview !== undefined) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "needsVisualReview" = $1 WHERE "id" = $2`,
+        fields.needsVisualReview,
         id,
       );
     }
@@ -141,6 +149,21 @@ describeIfDb("get_needs_you against Postgres", () => {
   async function idsFor(personId: string): Promise<string[]> {
     const result = await needsYou({ personId, limit: 200 });
     return result.items.map((item) => item.id);
+  }
+
+  /**
+   * Records a `commit` artifact, which is what `tipCommitSha` reads. Raw
+   * SQL for the same reason `shape` is: `record_artifact` would apply its
+   * own guards, and this file is testing the read.
+   */
+  async function recordCommit(itemId: string, sha: string, createdAt?: string): Promise<void> {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Artifact" ("id", "itemId", "kind", "commitSha", "createdByType", "createdById", "createdAt")
+       VALUES (gen_random_uuid(), $1, 'commit'::"ArtifactKind", $2, 'agent'::"HolderType", 'tester', COALESCE($3::timestamptz, now()))`,
+      itemId,
+      sha,
+      createdAt ?? null,
+    );
   }
 
   describe("the admission rule", () => {
@@ -456,6 +479,123 @@ describeIfDb("get_needs_you against Postgres", () => {
     it("refuses a limit beyond the bound every paged read in the product shares", async () => {
       const me = await createPerson("nyu-me-15");
       await expect(needsYou({ personId: me, limit: 201 })).rejects.toThrow();
+    });
+  });
+  describe("the needs_visual_review arm", () => {
+    it("admits an in_review item that still needs a look", async () => {
+      const me = await createPerson("nyu-vis-1");
+      const item = await createItem({ area: "nyu-visual" });
+      await shape(item.id, {
+        state: "in_review",
+        needsVisualReview: true,
+        // Explicitly NOT needs_approval, which takes precedence.
+        mergeAuthority: "agent_judgement",
+      });
+
+      const result = await needsYou({ personId: me, limit: 200 });
+      const row = result.items.find((candidate) => candidate.id === item.id);
+      expect(row).toBeDefined();
+      expect((row as NeedsYouSummaryRecord).reason).toBe("needs_visual_review");
+    });
+
+    it("does not admit an in_review item whose visual review is not required", async () => {
+      const me = await createPerson("nyu-vis-2");
+      const item = await createItem({ area: "nyu-visual" });
+      await shape(item.id, {
+        state: "in_review",
+        needsVisualReview: false,
+        mergeAuthority: "agent_judgement",
+      });
+
+      expect(await idsFor(me)).not.toContain(item.id);
+    });
+
+    it("admits an item needing BOTH once only, under needs_approval", async () => {
+      // The disjointness the UNION ALL depends on. Without the
+      // `mergeAuthority <> needs_approval` exclusion on the visual arm this
+      // row matches two arms, appears twice, and is counted twice in
+      // `total` — so the badge and the list would both be wrong, and the
+      // screen would draw two different controls for one item.
+      const me = await createPerson("nyu-vis-3");
+      const item = await createItem({ area: "nyu-visual-both" });
+      await shape(item.id, {
+        state: "in_review",
+        needsVisualReview: true,
+        mergeAuthority: "needs_approval",
+      });
+
+      const result = await needsYou({ personId: me, limit: 200 });
+      const matching = result.items.filter((candidate) => candidate.id === item.id);
+      expect(matching).toHaveLength(1);
+      // The merge decision is the blocking one, so it is what surfaces.
+      expect((matching[0] as NeedsYouSummaryRecord).reason).toBe("needs_approval");
+    });
+
+    it("counts an item needing both exactly once in total", async () => {
+      const me = await createPerson("nyu-vis-4");
+      const item = await createItem({ area: "nyu-visual-count" });
+      await shape(item.id, {
+        state: "in_review",
+        needsVisualReview: true,
+        mergeAuthority: "needs_approval",
+      });
+
+      const before = await needsYou({ personId: me, limit: 200 });
+      const rows = before.items.filter((candidate) => candidate.id === item.id).length;
+      // `total` is counted over the same union the page is read from, so a
+      // double-matching row would inflate it past the number of rows.
+      expect(rows).toBe(1);
+      expect(before.total).toBe(before.items.length);
+    });
+  });
+
+  describe("tipCommitSha", () => {
+    it("is null for an item with no commit recorded", async () => {
+      const me = await createPerson("nyu-tip-1");
+      const item = await createItem({ area: "nyu-tip" });
+      await shape(item.id, { state: "in_review", mergeAuthority: "needs_approval" });
+
+      const result = await needsYou({ personId: me, limit: 200 });
+      const row = result.items.find((candidate) => candidate.id === item.id);
+      expect((row as NeedsYouSummaryRecord).tipCommitSha).toBeNull();
+    });
+
+    it("reports the newest commit, which is what an approval is pinned to", async () => {
+      const me = await createPerson("nyu-tip-2");
+      const item = await createItem({ area: "nyu-tip" });
+      await shape(item.id, { state: "in_review", mergeAuthority: "needs_approval" });
+      await recordCommit(
+        item.id,
+        "1111111111111111111111111111111111111111",
+        "2026-08-01T00:00:00Z",
+      );
+      await recordCommit(
+        item.id,
+        "2222222222222222222222222222222222222222",
+        "2026-08-02T00:00:00Z",
+      );
+
+      const result = await needsYou({ personId: me, limit: 200 });
+      const row = result.items.find((candidate) => candidate.id === item.id);
+      // The OLDER sha here would pin a person's authorisation to superseded
+      // code: accepted by the write, then refused by the merge gate as stale.
+      expect((row as NeedsYouSummaryRecord).tipCommitSha).toBe(
+        "2222222222222222222222222222222222222222",
+      );
+    });
+
+    it("reads only this item's commits", async () => {
+      const me = await createPerson("nyu-tip-3");
+      const mine = await createItem({ area: "nyu-tip" });
+      const other = await createItem({ area: "nyu-tip" });
+      await shape(mine.id, { state: "in_review", mergeAuthority: "needs_approval" });
+      await recordCommit(other.id, "3333333333333333333333333333333333333333");
+
+      const result = await needsYou({ personId: me, limit: 200 });
+      const row = result.items.find((candidate) => candidate.id === mine.id);
+      // A correlated subquery missing its WHERE on itemId would return a
+      // neighbour's sha here, pinning an approval to another item's code.
+      expect((row as NeedsYouSummaryRecord).tipCommitSha).toBeNull();
     });
   });
 });
