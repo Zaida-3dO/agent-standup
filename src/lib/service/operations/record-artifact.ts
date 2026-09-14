@@ -469,6 +469,17 @@ const RECORD_ARTIFACT_CONTRACT = {
       rule: "A `pull_request` artifact must carry the PR's http(s) URL in `ref`, and its `body`, when set, must be one of the pull-request statuses.",
     },
     {
+      fields: ["ref", "commitSha"],
+      rule:
+        "Both fields accept a sha, but only `commitSha` is ever read as evidence. Every gate " +
+        "that asks which commit an artifact covers — `artifact.evidence_at_tip`, " +
+        "`merge.requires_approving_code_review`, `merge.requires_authorisation` — reads " +
+        "`commitSha` and nothing else; `ref` is a free-text pointer no gate consults. So a " +
+        "review, override or approval that names its commit in `ref` while leaving `commitSha` " +
+        "unset is stored without complaint and then refused later as though it named no commit " +
+        "at all. Put the sha in `commitSha`; use `ref` for the URL or branch alongside it.",
+    },
+    {
       fields: ["body", "kind"],
       rule:
         "A `check_run` artifact records a build's outcome: `body` is REQUIRED and must be one of " +
