@@ -43,9 +43,15 @@
 // So the promise holds at the protocol layer and fails at the delivery
 // layer, which is worse than making no promise at all — a caller reading
 // the offer has no way to tell the difference, and burns attempts
-// discovering it. `overrideRemedy` therefore offers the override to nobody
-// and returns `null` for every level; see its own comment for why that is
-// the fix rather than a regression.
+// discovering it. `overrideRemedy` therefore offers the override only to an
+// audience that can actually compose a top-level payload field — an
+// `orchestrator`-audience finding — and returns `null` for every
+// `agent`-audience one, which is every `block-overridable` entry in the
+// catalogue. When it does speak it now prints the literal accepted
+// syntax rather than alluding to an override the reader must go and invent;
+// see its own comment for the history, which is that a vaguer version of
+// this sentence, shown to the wrong audience, is what emptied the function
+// in the first place.
 //
 // ── Why the module survives that ────────────────────────────────────────
 //
@@ -113,7 +119,11 @@
 // written: an escape hatch is only safe when its limits are structural
 // rather than advisory.
 
-import { isBlockingLevel, type InterventionLevel } from "../interventions/types";
+import {
+  isBlockingLevel,
+  type InterventionAudience,
+  type InterventionLevel,
+} from "../interventions/types";
 
 /**
  * The shortest reason that counts as having said something.
@@ -290,9 +300,61 @@ export function readOverrideClaim(value: unknown): OverrideClaim | undefined {
  * makes the refusal text fall back to the entry's own message, which is
  * the intended behaviour.
  *
- * @returns always `null`. The parameters are retained so the call site and
- * its contract are unchanged; no level earns a generic remedy.
+ * ── What changed, and the narrow thing that is now said ────────────────
+ *
+ * The request that reopened this was *"put the override's literal accepted
+ * syntax into the refusal text — four sessions have bounced off a message
+ * that advertises an override without saying how to supply it."* The
+ * complaint is real, and it is worth being precise about what the four
+ * sessions actually hit, because the obvious fix is the regression above.
+ *
+ * They bounced off an offer that named no syntax. Restoring that offer for
+ * an agent would cost a fifth session its merge phase, for exactly the
+ * reason this docstring already records. So the sentence below is **not**
+ * restored for everyone: it is returned only for an audience that can
+ * actually compose the payload it describes, and it states the syntax
+ * literally rather than alluding to it, so that a caller who *can* use it
+ * does not have to invent one.
+ *
+ * The syntax is pinned to the parser rather than paraphrased from memory:
+ * `../hook/payload.ts` reads `standup_override` (and `standupOverride`)
+ * from the **top level** of the stdin JSON, and `readOverrideClaim` above
+ * accepts `entryId` (or `entry_id`) plus `reason`. A test in
+ * `tests/hook-run.test.ts` sends precisely this shape.
+ *
+ * ── Why the audience test is the gate ──────────────────────────────────
+ *
+ * `audience` is the field that says who is being spoken to. An
+ * `orchestrator`-audience finding is delivered to a session that composes
+ * its own hook payload — a harness, a CLI, a non-Claude-Code client — and
+ * for that reader the override is genuinely reachable. An `agent`-audience
+ * finding is read by a subagent whose only contribution to the payload is
+ * `tool_input`, where an override is refused by design. Telling the second
+ * reader how to write one is the unkeepable promise; telling the first is
+ * the missing documentation the request asks for.
+ *
+ * @returns the override sentence for an overridable finding whose audience
+ * can supply one, and `null` otherwise — including for every `hard-block`,
+ * which no payload can override at any level.
  */
-export function overrideRemedy(_entryId: string, _level: InterventionLevel): string | null {
-  return null;
+export function overrideRemedy(
+  entryId: string,
+  level: InterventionLevel,
+  audience?: InterventionAudience,
+): string | null {
+  // A hard block is not overridable by anyone, so there is no syntax to
+  // offer. Checked first and unconditionally, mirroring `overrideApplies`.
+  if (level !== "block-overridable") return null;
+  // The audience that cannot supply one gets no offer. `undefined` is
+  // treated as unreachable rather than reachable: an unknown reader is far
+  // more likely to be an agent than a bespoke client, and the cost of
+  // guessing wrong in that direction is the regression this function was
+  // emptied to fix.
+  if (audience !== "orchestrator") return null;
+  return (
+    `If proceeding is right, re-send this call with a top-level "standup_override": ` +
+    `{"entryId": "${entryId}", "reason": "..."} field on the hook payload — top level, not ` +
+    `inside tool_input, where it is refused. The reason is recorded verbatim beside the call ` +
+    `and must be at least ${MIN_OVERRIDE_REASON_LENGTH} characters.`
+  );
 }

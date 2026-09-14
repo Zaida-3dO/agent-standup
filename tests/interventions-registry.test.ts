@@ -545,13 +545,15 @@ describe("the correctness entries that block", () => {
   // list. Each is asserted both ways round: it fires on the situation, and
   // it declines on the near-miss a command matcher could not tell apart.
 
-  it("I10 blocks a merge only when an approval is known to be absent", async () => {
+  it("I10 blocks a merge only when no approval has ever existed", async () => {
     const merging = { command: "git merge feature", itemId: "i1" };
 
+    // Never approved at all — the situation the block is for, and the one
+    // with a confirmed true positive behind it.
     const unapproved = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
       phase: "pre",
-      context: { ...merging, hasApprovalAtTip: false },
+      context: { ...merging, hasApprovalAtTip: false, hasAnyApproval: false },
     });
     expect(unapproved.map((finding) => finding.id)).toContain("merge-without-approval-at-tip");
     expect(strongestLevel(unapproved)).toBe("block-overridable");
@@ -571,6 +573,55 @@ describe("the correctness entries that block", () => {
       entries: BUILTIN_INTERVENTIONS,
       phase: "pre",
       context: merging,
+    });
+    expect(unknown).toEqual([]);
+
+    // **The narrowing, asserted as its own case.** `hasApprovalAtTip:
+    // false` alone must not be enough to block, because that is the
+    // reading that refuses a merge of work which has in fact been
+    // reviewed — fourteen of them, against one true catch. Deleting the
+    // `hasAnyApproval` clause in the predicate makes this line fail.
+    const staleOnly = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { ...merging, hasApprovalAtTip: false, hasAnyApproval: true },
+    });
+    expect(staleOnly.map((finding) => finding.id)).not.toContain("merge-without-approval-at-tip");
+  });
+
+  it("I10b nudges a stale approval, and never fires alongside I10", async () => {
+    const merging = { command: "git merge feature", itemId: "i1" };
+
+    // Approved before, not at the tip now. A nudge, not a refusal — the
+    // dominant cause is a round demotion with no code change behind it.
+    const stale = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { ...merging, hasApprovalAtTip: false, hasAnyApproval: true },
+    });
+    expect(stale.map((finding) => finding.id)).toContain("merge-with-stale-approval");
+    // The whole point of the split: this half must not block. Changing
+    // `defaultLevel` to `block-overridable` fails here.
+    expect(strongestLevel(stale)).toBe("nudge");
+
+    // **Mutual exclusivity**, which is what makes the split a split rather
+    // than a second voice. Neither context may produce both entries.
+    expect(stale.map((finding) => finding.id)).not.toContain("merge-without-approval-at-tip");
+
+    const never = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { ...merging, hasApprovalAtTip: false, hasAnyApproval: false },
+    });
+    expect(never.map((finding) => finding.id)).not.toContain("merge-with-stale-approval");
+
+    // Unasked is not "approved before". Flipping the predicate's `!== true`
+    // to a falsy check fires this on every merge the server could not
+    // answer for.
+    const unknown = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { ...merging, hasApprovalAtTip: false },
     });
     expect(unknown).toEqual([]);
   });
@@ -898,7 +949,13 @@ describe("the catalogue entries that are deliberately not built", () => {
     // was catalogued and is in neither the registry nor the record of what
     // is deliberately unbuilt.
     const doc = readFileSync(new URL("../docs/plans/INTERVENTIONS.md", import.meta.url), "utf8");
-    const catalogued = [...doc.matchAll(/^\| \*\*(I\d+)\*\* \|/gm)].flatMap((match) =>
+    // `I\d+[a-z]?` rather than `I\d+`: an entry that is split into two
+    // after the fact keeps its number and takes a letter, so that the
+    // halves stay visibly one lineage and no catalogue id ever has to be
+    // reused or renumbered. I10/I10b is the first such pair. Without the
+    // optional letter the split half parses as uncatalogued and the count
+    // assertion at the end of this test fails.
+    const catalogued = [...doc.matchAll(/^\| \*\*(I\d+[a-z]?)\*\* \|/gm)].flatMap((match) =>
       match[1] === undefined ? [] : [match[1]],
     );
     expect(catalogued.length, "no catalogue rows parsed").toBeGreaterThan(0);
@@ -911,6 +968,12 @@ describe("the catalogue entries that are deliberately not built", () => {
       I1: "finished-with-no-reviewer",
       I7: "review-without-approval-at-tip",
       I10: "merge-without-approval-at-tip",
+      // Split out of I10 rather than catalogued separately from the start.
+      // The two halves answer opposite questions about the same merge —
+      // never reviewed (block) against reviewed and demoted (nudge) — and
+      // lived in one entry until the firing record showed the second half
+      // was refusing fourteen merges for every one it caught.
+      I10b: "merge-with-stale-approval",
       I11: "broad-git-add-on-shared-checkout",
       I12: "broad-process-kill",
       I13: "work-recorded-against-no-item",
@@ -931,6 +994,9 @@ describe("the catalogue entries that are deliberately not built", () => {
       I26: "committed-with-no-pull-request",
       I27: "pull-request-with-no-review-requested",
       I28: "nits-merged-with-nothing-tracking-them",
+      I29: "dispatching-into-a-wide-crew",
+      I30: "visual-review-deferred-without-record",
+      I31: "asking-without-trying-first",
     };
     const shipped = new Set(BUILTIN_INTERVENTIONS.map((entry) => entry.id));
 

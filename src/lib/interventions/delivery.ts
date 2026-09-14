@@ -278,5 +278,73 @@ export function renderPayload(
   const digest = payload.digest;
   if (digest !== undefined && digest.findings.length > 0) parts.push(renderDigest(digest));
 
-  return parts.length === 0 ? null : parts.join("\n");
+  if (parts.length === 0) return null;
+
+  // The rating ask, at the moment the reader can actually answer it.
+  const prompt = scoringPrompt(findings);
+  if (prompt !== null) parts.push(prompt);
+
+  return parts.join("\n");
+}
+
+/**
+ * The rating ask that rides a delivered finding.
+ *
+ * ── Why it is asked here and not later ─────────────────────────────────
+ *
+ * `score_intervention` has never once run: the catalogue has recorded
+ * hundreds of firings and **zero ratings**, which means a useless guard
+ * cannot be told apart from a load-bearing one and nothing is ever retired.
+ * The diagnosis on the record is that asking afterwards asks somebody who
+ * has forgotten. The moment a session knows whether a guard was right
+ * is the moment it reads the guard — it has the call, the state and the
+ * intent all in hand, and five minutes later it has none of them.
+ *
+ * So this rides the delivery itself, which is the one place that moment is
+ * observable.
+ *
+ * ── What it deliberately does NOT claim ────────────────────────────────
+ *
+ * **It names entry ids, not `eventId`s, and that is a real limitation
+ * rather than an oversight.** `score_intervention` addresses a firing by
+ * its `intervention_events` row id, and no such id exists at this point in
+ * the sequence: the refusal text is composed in `../hook/decide.ts` before
+ * any capture is written, `buildCaptures` builds rows that do not yet have
+ * ids, and the id only comes back from `record_intervention`'s response —
+ * by which time `runHook`'s `onFindings` has returned `void` and the text
+ * has already been printed. Printing an `eventId` here would mean inventing
+ * one.
+ *
+ * Naming the entry is enough to be actionable, because the session's own
+ * firings are resolvable from it — the wind-down survey in `./survey.ts`
+ * addresses the same firings by id when it has them, and
+ * `get_intervention_scores` aggregates by entry. Plumbing the row id back
+ * to this point is the genuine follow-up, and it would let this prompt be
+ * answered in one call instead of two.
+ *
+ * ── Why `nothing`-level findings are already excluded ──────────────────
+ *
+ * The caller filters them out before this is reached, and `surveyable` in
+ * `./capture.ts` makes the same exclusion for the same reason: a session
+ * that was never told anything cannot rate what it did not experience, and
+ * an agent asked anyway would answer, producing noise that looks like data.
+ *
+ * @returns the prompt, or `null` when nothing worth rating was delivered.
+ */
+export function scoringPrompt(findings: readonly InterventionFinding[]): string | null {
+  if (findings.length === 0) return null;
+
+  // Deduplicated and stable: one entry firing twice on a call is one thing
+  // to rate, and a reader asked to rate the same id twice learns the ask is
+  // careless. `Set` preserves insertion order, so the ids arrive in the
+  // order the findings were delivered rather than sorted into an order that
+  // matches nothing the reader just saw.
+  const ids = [...new Set(findings.map((finding) => finding.id))];
+
+  return (
+    `Was this useful? Rate it with score_intervention (1-5, where 5 = it stopped a real ` +
+    `mistake and 1 = it was wrong and you had to work around it; a one-line note matters most ` +
+    `at 1 and 2, because a wrong detection and an unclear message need opposite fixes). ` +
+    `Fired here: ${ids.join(", ")}.`
+  );
 }

@@ -170,6 +170,7 @@ describe("the catch never blocks the stop — DECISIONS.md §6", () => {
       kind: "stop-catch",
       text: "crew still running",
       liveCrew: 2,
+      reason: "live-crew",
     });
     expect(rendered.exitCode).toBe(HOOK_EXIT.ALLOW);
     expect(rendered.exitCode).toBe(0);
@@ -180,6 +181,7 @@ describe("the catch never blocks the stop — DECISIONS.md §6", () => {
       kind: "stop-catch",
       text: "crew still running",
       liveCrew: 2,
+      reason: "live-crew",
     });
     expect(rendered.stdout).toBe("");
     expect(rendered.stderr).toBe("[standup:stop-catch] crew still running\n");
@@ -198,6 +200,7 @@ describe("the catch never blocks the stop — DECISIONS.md §6", () => {
       kind: "stop-catch",
       text: "crew still running",
       liveCrew: 1,
+      reason: "live-crew",
     });
     expect(rendered.exitCode).toBe(HOOK_EXIT.DENY);
     expect(JSON.parse(rendered.stdout).reason).toBe("displaced session");
@@ -337,5 +340,93 @@ describe("runHook — wiring", () => {
     expect(mergeStopContext(undefined, { liveCrew: 5 })).toEqual({ liveCrew: 5 });
     expect(mergeStopContext({ liveCrew: 3 }, undefined)).toEqual({ liveCrew: 3 });
     expect(mergeStopContext(undefined, undefined)).toBeUndefined();
+  });
+});
+
+// ── The unfinished-work catch ──────────────────────────────────────────
+//
+// The owner's ask: an agent should not just stop when there is still work
+// in front of it. The risk this carries is the same one the crew catch
+// carries — firing on a session that has correctly finished — so every
+// silence below is asserted as hard as the one firing case.
+describe("evaluateStopCatch — stopping with unblocked work left", () => {
+  it("asks whether the session is really done", () => {
+    const caught = evaluateStopCatch(stopEvent(), { unfinishedWork: 3 });
+    expect(caught?.reason).toBe("unfinished-work");
+    expect(caught?.unfinishedWork).toBe(3);
+    // It asks rather than asserting: this module cannot know the rows are
+    // the work the session was directed to do.
+    expect(caught?.text).toMatch(/\?/);
+    expect(caught?.text).toMatch(/done/i);
+  });
+
+  it("names the next action, not just the problem", () => {
+    // "You have work left" with no instruction is a complaint. The owner
+    // asked that the agent continue with the next unblocked task.
+    const caught = evaluateStopCatch(stopEvent(), { unfinishedWork: 2 });
+    expect(caught?.text).toMatch(/carry on|next unblocked/i);
+  });
+
+  it("is silent when nothing is left", () => {
+    expect(evaluateStopCatch(stopEvent(), { unfinishedWork: 0 })).toBeNull();
+  });
+
+  it("is silent when nobody counted", () => {
+    // Absent is not zero and is not "work remains". Reading `undefined` as
+    // a finding would fire this on every stop the server did not answer
+    // for, which is the nag the module forbids.
+    expect(evaluateStopCatch(stopEvent(), { alreadyCaught: false })).toBeNull();
+  });
+
+  it("is silent on a negative count", () => {
+    expect(evaluateStopCatch(stopEvent(), { unfinishedWork: -1 })).toBeNull();
+  });
+
+  it("is silent when the session has already been told on this stop", () => {
+    expect(evaluateStopCatch(stopEvent(), { unfinishedWork: 5, alreadyCaught: true })).toBeNull();
+  });
+
+  it("only fires on a Stop, never on a tool call", () => {
+    // A tool call is not an attempt to end a turn. Firing on PostToolUse
+    // would ask "are you done" after every call the session made.
+    expect(
+      evaluateStopCatch(stopEvent({ eventType: "PostToolUse" }), { unfinishedWork: 4 }),
+    ).toBeNull();
+  });
+
+  it("defers to the live-crew catch when both conditions hold", () => {
+    // A session whose crew is still running already has an answer to "are
+    // you done" — it is waiting — and telling a reader two things at one
+    // Stop is how both get skipped.
+    const caught = evaluateStopCatch(stopEvent(), { liveCrew: 2, unfinishedWork: 4 });
+    expect(caught?.reason).toBe("live-crew");
+  });
+
+  it("reports zero live crew rather than a placeholder", () => {
+    // Reaching the unfinished branch requires no crew running, so zero is
+    // the true count and a caller recording it is not being misled.
+    expect(evaluateStopCatch(stopEvent(), { unfinishedWork: 1 })?.liveCrew).toBe(0);
+  });
+
+  it("stays advisory — the shape cannot express a refusal", () => {
+    // Structural, not a policy: a blocked Stop traps the agent in a loop.
+    const caught = evaluateStopCatch(stopEvent(), { unfinishedWork: 2 });
+    expect(caught?.text).toMatch(/not a refusal/i);
+    expect(caught).not.toHaveProperty("decision");
+  });
+});
+
+describe("readStopContext — the unfinished-work field", () => {
+  it("reads a valid count off the wire", () => {
+    expect(readStopContext({ unfinishedWork: 4 })).toEqual({ unfinishedWork: 4 });
+  });
+
+  it("drops a malformed count rather than failing the whole read", () => {
+    // The direction matters: a dropped count makes the catch silent, never
+    // spurious, so a server that garbles this costs a missed reminder
+    // rather than a false alarm on every stop.
+    for (const bad of ["4", 1.5, -2, null, {}]) {
+      expect(readStopContext({ unfinishedWork: bad, liveCrew: 1 })).toEqual({ liveCrew: 1 });
+    }
   });
 });

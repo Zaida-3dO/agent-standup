@@ -87,6 +87,29 @@ export interface StopContext {
    * output uses: a message repeated on every Stop is one that gets ignored.
    */
   readonly alreadyCaught?: boolean;
+  /**
+   * How many items this session was directed to work on that are still
+   * unfinished and not blocked on anything.
+   *
+   * The second situation this module catches: **a session that stops with
+   * work still in front of it.** The owner's framing is *"the agent
+   * shouldn't just stop if there is still work remaining … is he really
+   * done with all the work he was directed to do? And if not he should
+   * continue with the next set of unblocked tasks and not just pause there
+   * for no reason."*
+   *
+   * **Unblocked is the load-bearing word, and it is why this is a count
+   * supplied by whoever knows, rather than something derived here.** A
+   * session that stops with three items open, all of them waiting on a
+   * person, has done exactly the right thing — telling it to carry on would
+   * be telling it to do work it cannot do. Only rows that are genuinely
+   * actionable belong in this number, so the party that can tell the
+   * difference is the one that supplies it.
+   *
+   * Zero, or absent, is silent. Absent means nobody counted, which is not
+   * the same as "nothing is left" and must never be read as a finding.
+   */
+  readonly unfinishedWork?: number;
 }
 
 /**
@@ -97,8 +120,25 @@ export interface StopCatch {
   readonly kind: "stop-catch";
   /** The sentence the orchestrator reads. */
   readonly text: string;
-  /** How many crew were still running, for a caller that wants to record it. */
+  /**
+   * How many crew were still running, for a caller that wants to record it.
+   *
+   * Zero on an unfinished-work catch, which is a real answer rather than a
+   * gap: that catch fires precisely when no crew is running.
+   */
   readonly liveCrew: number;
+  /**
+   * Which situation produced the advice.
+   *
+   * Two situations share this channel because they share a posture — both
+   * are advisory, both evaluate only on a `Stop`, and both return text or
+   * nothing. They are named apart so a caller recording the catch can tell
+   * "your crew is still running" from "you have work left", which are
+   * different findings with different remedies.
+   */
+  readonly reason: "live-crew" | "unfinished-work";
+  /** How many unblocked items were still open, on an unfinished-work catch. */
+  readonly unfinishedWork?: number;
 }
 
 /**
@@ -117,6 +157,26 @@ const stopText = (liveCrew: number): string =>
   `${liveCrew} crew member${liveCrew === 1 ? "" : "s"} ${liveCrew === 1 ? "is" : "are"} still ` +
   "running and nothing is scheduled to wake you when they finish, so their work would complete " +
   "into a session that has stopped listening. Start a backgrounded wait before ending the turn. " +
+  "This is advice, not a refusal — the turn is not being held open.";
+
+/**
+ * The unfinished-work sentence.
+ *
+ * **It asks rather than asserts**, and the difference is the whole of the
+ * message's design. This module cannot know whether the remaining rows are
+ * the work the session was actually directed to do, so a flat "you are not
+ * done" would be wrong whenever the count includes something the session
+ * was never asked for. A question puts the judgement where the knowledge
+ * is, and the honest answers — carry on, or say what it is waiting on —
+ * are both named so that "I am done" has a way to be expressed that is not
+ * silence.
+ */
+const unfinishedText = (unfinished: number): string =>
+  `${unfinished} unblocked item${unfinished === 1 ? "" : "s"} ` +
+  `${unfinished === 1 ? "is" : "are"} still open and nothing is blocking ` +
+  `${unfinished === 1 ? "it" : "them"}. Are you actually done with what you were directed to ` +
+  "do? If not, carry on with the next unblocked one rather than pausing here. If you are done, " +
+  "say so on the item — and if you are waiting on something, record what. " +
   "This is advice, not a refusal — the turn is not being held open.";
 
 /**
@@ -154,9 +214,31 @@ export function evaluateStopCatch(
   // fired whenever the server failed to report would be noise on exactly
   // the events nobody could act on.
   const liveCrew = context.liveCrew;
-  if (liveCrew === undefined || liveCrew <= 0) return null;
+  if (liveCrew !== undefined && liveCrew > 0) {
+    return { kind: "stop-catch", text: stopText(liveCrew), liveCrew, reason: "live-crew" };
+  }
 
-  return { kind: "stop-catch", text: stopText(liveCrew), liveCrew };
+  // **The unfinished-work catch, checked second and only when no crew is
+  // running.** The order is not arbitrary and it is not a preference: a
+  // session whose crew is still working has an answer to "are you done"
+  // already — it is waiting — so asking would be answering a question the
+  // first catch has just addressed better. Telling a reader two things at
+  // one Stop is also how both get skipped.
+  //
+  // Absent is silent, for the reason every other count here is: nobody
+  // counted is not the same as nothing is left.
+  const unfinished = context.unfinishedWork;
+  if (unfinished === undefined || unfinished <= 0) return null;
+
+  return {
+    kind: "stop-catch",
+    text: unfinishedText(unfinished),
+    // No crew is running on this branch — reaching here requires it — so
+    // zero is the true count rather than a placeholder.
+    liveCrew: 0,
+    reason: "unfinished-work",
+    unfinishedWork: unfinished,
+  };
 }
 
 /**
@@ -177,8 +259,21 @@ export function readStopContext(value: unknown): StopContext | undefined {
       ? record.liveCrew
       : undefined;
 
+  // Same validation as `liveCrew`, and deliberately a second expression
+  // rather than a shared helper inlined once: both are "a non-negative
+  // integer or nothing", and reading them the same way is what stops one
+  // of them silently accepting a float or a negative that the other
+  // rejects.
+  const unfinishedWork =
+    typeof record.unfinishedWork === "number" &&
+    Number.isInteger(record.unfinishedWork) &&
+    record.unfinishedWork >= 0
+      ? record.unfinishedWork
+      : undefined;
+
   const context: StopContext = {
     ...(liveCrew === undefined ? {} : { liveCrew }),
+    ...(unfinishedWork === undefined ? {} : { unfinishedWork }),
     ...(typeof record.wakeScheduled === "boolean" ? { wakeScheduled: record.wakeScheduled } : {}),
     ...(typeof record.waitBackgrounded === "boolean"
       ? { waitBackgrounded: record.waitBackgrounded }

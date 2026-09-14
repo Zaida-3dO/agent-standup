@@ -220,25 +220,25 @@ const mergeWithoutApprovalAtTip: Intervention = {
   // never find. Backticking `code_review` or `check_run` — which are
   // artifact kinds, not operations — trips that sweep, and it is right to:
   // the reader cannot tell the two apart from the formatting alone.
+  // **This message deliberately carries no analysis of review ROUNDS.**
+  // `hasAnyApproval === false` is required, so every firing of this entry
+  // is an item nothing has *ever* approved — and an explanation of how an
+  // existing approval gets demoted would be advice about a situation that
+  // by construction did not occur. That explanation belongs on
+  // `mergeWithStaleApproval`, which is the entry that finds it.
   messages: {
     plain:
-      "This merges work that has no approving review at its current tip commit. Call " +
-      "`record_artifact` with kind code_review and an approving verdict, naming the commit " +
-      "being merged, and land it instead of merging now. If a review was already approved and " +
-      "this still refuses, check the review ROUND before you check the sha: the item's review " +
-      "round is the highest round across every artifact kind, so recording a check_run or a " +
-      "commit artifact after an approval demotes that approval without anything about the code " +
-      "changing. Re-recording the approval at the current round is what clears it.",
+      "This merges work that nothing has ever approved — there is no approving code review on " +
+      "this item at any round. Call `record_artifact` with kind code_review and an approving " +
+      "verdict, naming the commit being merged, and land that instead of merging now. If you " +
+      "believe this merge is right anyway, the reason you give is what makes it reviewable.",
     prominent:
       "⚠️ Do not proceed until you have read this. This would merge a change that nothing has " +
-      "approved at the commit being merged — either it was never reviewed, or it was reviewed " +
-      "and then changed. Instead of merging now: call `record_artifact` with kind code_review, " +
-      "an approving verdict, and the commit being merged as its sha — then merge. If you " +
-      "believe an approving review already exists, check its ROUND before you check its sha. " +
-      "The item's review round is the highest round across EVERY artifact kind, so a check_run " +
-      "or a commit artifact recorded after the approval silently demotes it, and the sha you " +
-      "are looking at will match the tip perfectly while the merge still refuses. Re-record the " +
-      "approval at the current round and it applies again.",
+      "ever approved: no approving code review exists on this item at any round, so it is not " +
+      "that a review went stale — none was recorded. Call `record_artifact` with kind " +
+      "code_review, an approving verdict, and the commit being merged as its sha; then merge. " +
+      "Instead of merging now, land the approval first — and if you proceed regardless, the " +
+      "reason you record is what makes the decision reviewable afterwards.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
@@ -247,6 +247,93 @@ const mergeWithoutApprovalAtTip: Intervention = {
     // question — no claim, or no commit to be at the tip of — and blocking
     // a merge on an unanswered question is how a guard becomes an obstacle.
     if (context.hasApprovalAtTip !== false) return { triggered: false };
+    // **The narrowing that made this entry worth blocking again.** An item
+    // that has been approved before is the stale-approval case, which
+    // `mergeWithStaleApproval` below picks up as a nudge. Strictly `false`
+    // for the same reason as above: `undefined` is an unasked question, and
+    // an unasked question must not be read as "never reviewed".
+    if (context.hasAnyApproval !== false) return { triggered: false };
+    return {
+      triggered: true,
+      data: {
+        command: context.command,
+        ...(context.itemId === undefined ? {} : { itemId: context.itemId }),
+      },
+    };
+  },
+};
+
+/**
+ * **I10b** — merging work that *was* approved, where the approval does not
+ * stand at the tip.
+ *
+ * ── Why this is its own entry, with numbers ────────────────────────────
+ *
+ * This situation and I10's share a command and a first condition, and they
+ * deserve opposite answers — so they are two entries, because one entry's
+ * `level` cannot soften one without softening the other. The recorded
+ * evidence is lopsided: the **approval half has a confirmed true positive**
+ * (a genuinely unapproved merge, correctly stopped), while this half
+ * produced **fifteen firings and one true positive.** Fourteen sessions
+ * were stopped from merging work that had been reviewed.
+ *
+ * The reason the false-positive rate is that high is not a detection bug,
+ * and I10's own message says so in as many words: the item's
+ * review round is the highest round across **every** artifact kind, so
+ * recording a `check_run` or a commit artifact after an approval demotes
+ * that approval *without anything about the code changing*. The dominant
+ * cause of this entry firing is therefore bookkeeping, not risk — and
+ * blocking a merge on bookkeeping is how a guard teaches people to route
+ * around it.
+ *
+ * ── Why a nudge rather than a softer block ─────────────────────────────
+ *
+ * Because the remedy is cheap and the reader is the right person to judge
+ * it. A session told *"this was approved, the approval does not stand at
+ * the tip, here is why that usually happens"* can re-record it in seconds
+ * if the change is real, or proceed knowing the demotion was an artifact.
+ * Neither needs a refusal. What the fourteen needed was the explanation,
+ * which they now get without losing their merge phase.
+ *
+ * **It cannot double-fire with I10.** The two predicates are mutually
+ * exclusive by construction: both require `hasApprovalAtTip === false`, and
+ * they then split on `hasAnyApproval` being strictly `false` against
+ * strictly `true`. A context that answers neither triggers nothing at all.
+ */
+const mergeWithStaleApproval: Intervention = {
+  id: "merge-with-stale-approval",
+  source: "builtin",
+  summary:
+    "A merge where an approving review exists but does not stand at the current round and tip.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "nudge",
+  // Immediate for the same reason I23 is: this is a fact needed to read the
+  // call being made right now. Five minutes later the merge has happened or
+  // been abandoned, and the explanation is worthless either way.
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This item has been approved before, but the approval does not stand at the current round " +
+      "and tip. Most often nothing about the code changed: the review round is the highest " +
+      "round across every artifact kind, so recording a check_run or a commit artifact after an " +
+      "approval demotes it on its own. Check which of the two happened: if the code changed " +
+      "since the review, re-record the approval at the current round before merging.",
+    prominent:
+      "⚠️ The approving review on this item does not stand at the commit being merged. Check " +
+      "which of the two happened before you proceed: if the code changed after the review, it " +
+      "needs reviewing again — call `record_artifact` with kind code_review and the commit " +
+      "being merged. If nothing changed and a check_run or commit artifact was simply recorded " +
+      "after the approval, the round moved on its own and the approval is stale only on paper; " +
+      "re-record it at the current round to make the board agree with reality.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!isMergeAttempt(context.command)) return { triggered: false };
+    if (context.hasApprovalAtTip !== false) return { triggered: false };
+    // The mirror of I10's clause. Strictly `true`: an unasked question is
+    // not evidence that an approval exists.
+    if (context.hasAnyApproval !== true) return { triggered: false };
     return {
       triggered: true,
       data: {
@@ -1218,8 +1305,269 @@ const nitsMergedWithNothingTrackingThem: Intervention = {
   },
 };
 
+/**
+ * **I29** — dispatching another crew when several are already in flight.
+ *
+ * ── The trigger was recorded without an action; this is the action ─────
+ *
+ * The owner's note names the situation only — *"for large orchestration
+ * jobs, i.e. orchestrator is dispatching more than 2 crews at the same
+ * time"* — and stops there, so the remedy below is a proposal rather than a
+ * transcription, and it is worth saying what it is NOT. It does not tell
+ * the orchestrator to dispatch fewer crews. Parallelism is the point of the
+ * mechanism, the board exists to coordinate it, and an entry whose advice
+ * is "do less of the thing this system is for" would be correctly ignored.
+ *
+ * What goes wrong at width is not the count, it is what the count makes
+ * likely, and both failures are recorded here rather than hypothesised:
+ *
+ *   - **Overlapping territory.** `checkout-held-by-another-crew` exists
+ *     because two crews in one checkout commit over each other. That entry
+ *     fires when the collision is already happening; this one fires at the
+ *     moment the orchestrator is choosing the territories, which is the
+ *     only point where avoiding it is free.
+ *   - **Review capacity that was never planned.** Four builders finishing
+ *     together need four reviews, and `visual-reviews-in-flight-
+ *     concurrently` is the record of that bill arriving unplanned.
+ *
+ * So the remedy is: confirm the territories are disjoint, and decide the
+ * review plan now rather than when the pull requests land. Both are cheap
+ * at dispatch time and expensive afterwards, which is the test every entry
+ * in this catalogue has to pass.
+ *
+ * ── Why three, and why it counts items rather than agents ──────────────
+ *
+ * Three because the owner said "more than 2", and because two is the
+ * ordinary shape — a builder and a reviewer, or two independent tasks — so
+ * firing there would nudge the common case and teach the reader to skip it.
+ * `concurrentCrewItems` counts DISTINCT items under one root session, so
+ * the builder-plus-reviewer pair on one item reads as one front rather than
+ * two; the reasoning is on the field and in `crewWidthFor`.
+ *
+ * ── A nudge, and `immediate` rather than the digest ────────────────────
+ *
+ * A nudge because dispatching a fourth crew is frequently right and this
+ * entry cannot tell whether the territories overlap — only that it is now
+ * worth checking. `immediate` because, unlike its digest-riding siblings,
+ * the decision it speaks to is being made *by the call it rides on*: the
+ * dispatch is in flight, and advice to plan the territories arrives
+ * worthless five minutes after the agent was spawned.
+ */
+const wideCrewDispatch: Intervention = {
+  id: "dispatching-into-a-wide-crew",
+  source: "builtin",
+  summary: "Spawning another agent while this crew already holds several items at once.",
+  phase: "pre",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This crew already holds several items at once. Check that the new agent's territory does " +
+      "not overlap the ones in flight before you add it — two crews in one checkout commit over " +
+      "each other — and decide now who reviews all of this, rather than when the pull requests " +
+      "land together.",
+    prominent:
+      "⚠️ You are dispatching into a crew that is already several items wide. Two things go " +
+      "wrong at this width, and both are cheap to prevent right now and expensive afterwards. " +
+      "First, territory: if the new agent's files overlap a crew already working, they will " +
+      "commit over each other, and a shared checkout makes that near-certain. Second, review " +
+      "capacity: every one of these finishes needing a review, and deciding that plan when the " +
+      "pull requests arrive together is how a visual pass per pull request gets dispatched. " +
+      "Say what the new agent's territory is, check it is disjoint from the others, and record " +
+      "who reviews the batch.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    const width = context.concurrentCrewItems;
+    // Absent is "the server did not count", never zero. "More than 2" is
+    // the owner's threshold, so three is the first width that speaks.
+    if (width === undefined || width < 3) return { triggered: false };
+    return { triggered: true, data: { concurrentCrewItems: width } };
+  },
+};
+
+/**
+ * **I30** — a visual review deferred with nothing recording the deferral.
+ *
+ * ── The half of I25 that was advice rather than a mechanism ────────────
+ *
+ * I25 tells an orchestrator to let concurrent pull requests merge and do
+ * one visual pass afterwards, and its message asks that each deferral be
+ * *"recorded as a review linked to the item minted to carry it out"*. The
+ * owner's ask is specifically that this be **first class** — *"there should
+ * be a first class way to handle 'review deferred because of concurrency'"*
+ * — because advice to defer a review with no way to record the deferral is
+ * advice to forget it.
+ *
+ * The affordance itself already exists and needed no schema change:
+ * `Artifact.followUpItemId` carries exactly this relationship, and the
+ * merge gate's `merge.requires_linked_followup` already enforces it for
+ * `lgtm_with_followups`. What was missing is that **nothing noticed when it
+ * was skipped.** An item flagged `needsVisualReview` that reaches a merged
+ * state with neither a visual review nor a link to one is a deferral that
+ * was taken but never written down — and it is indistinguishable, a week
+ * later, from a visual review nobody ever thought about.
+ *
+ * ── Why this is not a duplicate of I25 ─────────────────────────────────
+ *
+ * Different moment, different remedy, and they cannot both fire on one
+ * situation. I25 fires *before*, on a queue of several pending reviews, and
+ * says "batch these". This fires *after*, on one item that closed without
+ * its review being either done or linked, and says "the deferral you took
+ * is not recorded". An orchestrator that follows I25's advice and records
+ * the link never sees this entry at all — which is the property that makes
+ * it a completion check rather than a second opinion.
+ *
+ * ── Why a nudge, and why `immediate` ───────────────────────────────────
+ *
+ * A nudge because deferring is legitimate and this cannot tell a deferral
+ * from a decision that the visual review was never needed — both are
+ * answers, and the message accepts either. `immediate` for I28's reason:
+ * this describes a row that is **closing**, and once the session moves on,
+ * the context that makes "why was this deferred" cheap to answer is gone.
+ */
+const visualReviewDeferredWithoutRecord: Intervention = {
+  id: "visual-review-deferred-without-record",
+  source: "builtin",
+  summary:
+    "An item needing a visual review closing with neither a review nor a link to one that will.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This item was flagged as needing a visual review and is closing without one, and nothing " +
+      "records where that review went. Record the item minted to carry it out, or say plainly " +
+      "that the visual review is not needed.",
+    prominent:
+      "⚠️ This item needed a visual review, is closing without one, and no link records what " +
+      "happened to it. Deferring a visual review is fine — batching several into one pass after " +
+      "they merge is cheaper and is the advice this system gives. What is not fine is deferring " +
+      "it to nowhere: once this row closes, a deferral nobody wrote down is indistinguishable " +
+      "from a review nobody thought of. Record the follow-up item that will carry the pass, or " +
+      "say that the visual review is not needed and why.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    // Strictly `true`. Absent means the server did not look, and an unasked
+    // question is not a deferral.
+    if (context.visualReviewDeferredUnrecorded !== true) return { triggered: false };
+    return {
+      triggered: true,
+      ...(context.itemId === undefined ? {} : { data: { itemId: context.itemId } }),
+    };
+  },
+};
+
+/**
+ * **I31** — putting a question to the person before trying to answer it.
+ *
+ * ── The objection this entry has to answer, stated first ───────────────
+ *
+ * This situation was argued against, at length and correctly, and the
+ * argument is worth keeping because it decides the entry's shape:
+ * **judging whether a question is justified requires reading intent**,
+ * which nothing here can do; and a false positive is uniquely invisible,
+ * because a question that is suppressed is never asked, so neither the
+ * agent nor the person ever learns it was wanted. That makes it the one
+ * entry whose harm cannot be measured after the fact.
+ *
+ * The owner's answer is what makes it buildable, and it is a measurement
+ * answer rather than a detection one: *"maybe have a way to log how often
+ * that intervention ran and how often the agents decided they could figure
+ * it out themselves vs how often the agent genuinely felt there was
+ * justification to ask. let's build it and add logging."* The unmeasurable
+ * harm becomes measurable the moment the split is recorded, so **the
+ * logging is not an accompaniment to this entry — it is the precondition
+ * that makes shipping it defensible.**
+ *
+ * ── How the split is recorded, without a parallel store ────────────────
+ *
+ * Every firing already becomes an `intervention_events` row, so the *how
+ * often it ran* half needs nothing new. The *what the agent did next* half
+ * rides the existing scoring path, which is the one Ope asked for over a
+ * new store: the session rates the firing through `score_intervention`, and
+ * the two outcomes land as opposite ends of a scale that already means
+ * exactly this —
+ *
+ *   - **The agent worked it out alone.** The nudge did its job, or the
+ *     question was never needed. A 4 or a 5.
+ *   - **The agent asked anyway, and was right to.** The question was
+ *     justified and the nudge was noise on it. A 2, or a 1 if it cost time.
+ *
+ * `get_intervention_scores` then aggregates per entry, so "how often did
+ * this suppress a question that should have been asked" is answerable as
+ * the low-score share against this id, with the notes saying why. That is
+ * the measurement the objection said was impossible, and it exists because
+ * the scale was already built to carry it.
+ *
+ * ── Why a nudge, and never anything stronger ───────────────────────────
+ *
+ * The asymmetry from the objection holds completely and is the reason this
+ * level is not a matter of taste. A false positive on a **block** suppresses
+ * a question invisibly to both parties — the failure this entry was
+ * originally refused for. A false positive on a **nudge** costs one line of
+ * advice the reader disagrees with and then asks anyway.
+ *
+ * It is also what makes the logging work at all: the split can only be
+ * observed if the agent remains free to ask. An entry that blocked would
+ * destroy the very measurement that justifies its existence, so `nudge` is
+ * load-bearing here rather than merely cautious.
+ *
+ * ── Why it fires on every question, and why that is honest ─────────────
+ *
+ * It cannot tell a justified question from an unjustified one, and it does
+ * not try. What it does is put the check *in front of* the question at the
+ * one moment it is cheap — before the person's attention is spent — and
+ * name the three things that are almost always worth trying first. A reader
+ * who has already done them loses a line; a reader who has not gets the
+ * prompt that saves the interruption.
+ *
+ * `immediate`, necessarily: advice about a question is worthless after the
+ * question has been asked.
+ */
+const askingWithoutTryingFirst: Intervention = {
+  id: "asking-without-trying-first",
+  source: "builtin",
+  summary: "A question put to the person, where the answer may be reachable without them.",
+  phase: "pre",
+  audience: "agent",
+  // **Never stronger than a nudge.** A block here suppresses a question
+  // invisibly to both parties and destroys the outcome split that justifies
+  // the entry existing. See the header.
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "Before asking: can you answer this yourself? Read the code or the item body, check the " +
+      "brief you were given, and take the more sensible reading of an ambiguity and say which " +
+      "you took. Ask anyway if it is genuinely unsafe, irreversible, or a decision only the " +
+      "person can make — then rate this with score_intervention so the split between questions " +
+      "that were needed and questions that were not is on the record.",
+    prominent:
+      "⚠️ You are about to spend the person's attention. Three things answer most questions " +
+      "without them: read the code or the item body, re-read the brief you were given, and — " +
+      "where a spec is ambiguous and one reading is clearly more sensible — take that reading, " +
+      "implement it, and say plainly which you took and why. If the question survives all " +
+      "three, it is worth asking: genuinely unsafe or irreversible work, or a judgement that is " +
+      "the person's to make, should always be asked about. Either way, rate this firing with " +
+      "score_intervention — a high score if you worked it out alone, a low one if the question " +
+      "was justified and this was noise. That split is the only way this entry can be judged.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    // Strictly `true`, like every other optional reading here.
+    if (context.isAskingUser !== true) return { triggered: false };
+    return {
+      triggered: true,
+      ...(context.tool === undefined ? {} : { data: { tool: context.tool } }),
+    };
+  },
+};
+
 export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   mergeWithoutApprovalAtTip,
+  mergeWithStaleApproval,
+  askingWithoutTryingFirst,
   broadGitAddOnSharedCheckout,
   broadProcessKill,
   checkoutHeldByAnotherCrew,
@@ -1231,9 +1579,11 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   rebaseRestraint,
   batchVisualReviews,
   dispatchOverUnresolvedToolBlock,
+  wideCrewDispatch,
   committedWithNoPullRequest,
   pullRequestWithNoReviewRequested,
   nitsMergedWithNothingTrackingThem,
+  visualReviewDeferredWithoutRecord,
 ];
 
 /**
