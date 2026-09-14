@@ -477,7 +477,7 @@ describe("overriding a block-overridable refusal", () => {
     expect(verdict.decision).toBe("deny");
   });
 
-  it("tells a blocked caller that an override exists and what it costs", async () => {
+  it("refuses with the entry's own remedy and appends no override offer", async () => {
     const verdict = await decide({
       event: event(),
       askServer: server({
@@ -488,10 +488,21 @@ describe("overriding a block-overridable refusal", () => {
     });
 
     expect(verdict.decision).toBe("deny");
-    // A refusal that hides an available exit is what teaches sessions to
-    // route around guards instead of answering them.
-    expect(verdict.reason).toContain("broad-process-kill");
-    expect(verdict.reason).toContain("recorded");
+    // This assertion used to require the refusal to advertise the override
+    // channel. It now requires the opposite, and the reason is the whole
+    // point of the change: every `block-overridable` entry is
+    // `audience: "agent"`, and an agent can only influence `tool_input`,
+    // where an override claim is refused by design. Advertising it to that
+    // audience named an exit the reader provably could not take — one
+    // session spent seven attempts on the syntax before concluding it did
+    // not exist.
+    //
+    // What the caller must be left with is the server's reason, carrying
+    // the entry's own narrow remedy, and nothing that looks like a second
+    // way out.
+    expect(verdict.reason).toBe("broad process kill");
+    expect(verdict.reason).not.toContain("can be overridden");
+    expect(verdict.reason).not.toContain("re-run the call with an override");
   });
 
   it("offers no override in the refusal text for a hard block", async () => {

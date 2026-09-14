@@ -23,7 +23,39 @@
 // A guard that names a remedy it then refuses is the worst thing in this
 // catalogue — it is the failure the scoring scale's 1 was written for, a
 // block someone had to route around — and the fix at the time was to stop
-// promising. This module is the other fix: make the promise keepable.
+// promising. This module was the other fix: make the promise keepable.
+//
+// ── What that fix did and did not reach ─────────────────────────────────
+//
+// The mechanism below works. It is not aspirational and it is not dead
+// code: `payload.ts` reads the claim, `decide` honours it, `capture`
+// records the outcome, and a raw-stdin test exercises the whole path.
+//
+// It is, however, **unreachable for the audience every `block-overridable`
+// entry addresses.** All four of them are `audience: "agent"`, and an
+// agent's only influence over a PreToolUse payload is the tool call it
+// makes — which arrives in `tool_input`. The read below is top-level ONLY,
+// deliberately, because an override is a statement the caller makes about
+// the guard rather than an argument to the tool. The harness composes the
+// surrounding payload itself. Probed directly: the same claim at top level
+// allows and nested in `tool_input` denies.
+//
+// So the promise holds at the protocol layer and fails at the delivery
+// layer, which is worse than making no promise at all — a caller reading
+// the offer has no way to tell the difference, and burns attempts
+// discovering it. `overrideRemedy` therefore offers the override to nobody
+// and returns `null` for every level; see its own comment for why that is
+// the fix rather than a regression.
+//
+// ── Why the module survives that ────────────────────────────────────────
+//
+// Because the channel is still correct for a caller that composes its own
+// stdin: the test harness, a non-Claude-Code hook client, a future CLI. A
+// capability with no current consumer in one deployment is not a broken
+// promise; a promise printed to an audience that cannot act on it is. Only
+// the second was removed. Do not "finish the cleanup" by deleting this
+// module — the raw-stdin test in `tests/hook-run.test.ts` is the guard
+// proving it still works, and it is meant to stay green.
 //
 // ── Block-and-record, not block-and-argue ───────────────────────────────
 //
@@ -217,23 +249,50 @@ export function readOverrideClaim(value: unknown): OverrideClaim | undefined {
 /**
  * What to tell a caller whose blocked call could have been overridden.
  *
- * The wording is load-bearing in one specific way: it says the reason is
- * **recorded**, because a caller who thinks an override is a free pass
- * writes a different sentence from one who knows it will be read. That is
- * the entire mechanism — there is no other enforcement — so concealing it
- * would not make the control stronger, it would make the recorded reasons
- * useless.
+ * **This now returns `null` for every level, and that is the point.**
  *
- * Returns `null` for a `hard-block`, because offering an override that
- * cannot be taken is exactly the broken promise this module exists to end.
- * A hard block says nothing about overrides at all.
+ * It used to return, for a `block-overridable` finding, a sentence telling
+ * the caller to re-run the call with an override naming the entry and a
+ * written reason. That sentence was true about the protocol and false about
+ * the audience, and the difference is the whole of this function's history.
+ *
+ * The override channel exists and works — `payload.ts` reads a top-level
+ * `standup_override`, `decide` honours it, `capture` records it. What does
+ * not exist is any way for the audience being spoken to to *supply* one.
+ * Every `block-overridable` entry in the catalogue is `audience: "agent"`,
+ * and an agent's only influence over the hook payload is the tool call it
+ * makes, which lands in `tool_input`. An override nested in `tool_input` is
+ * refused by design (see the comment at the top-level read in `payload.ts`:
+ * an override is a statement the *caller* makes about the guard, not an
+ * argument to the tool). The harness composes the rest of the payload
+ * itself. So the offer was demonstrably unkeepable by everyone it was ever
+ * shown to — verified by probe: the identical claim at top level allows,
+ * nested in `tool_input` it denies.
+ *
+ * That made this the very thing the module header calls the worst entry in
+ * the catalogue — a guard naming a remedy it then refuses. Two sessions
+ * lost a merge phase to it, one of them spending seven attempts inventing
+ * override syntaxes that could not have worked. Deleting the sentence costs
+ * those callers nothing they actually had, and it stops costing them the
+ * attempts.
+ *
+ * **Nothing takes its place, deliberately.** Each `block-overridable`
+ * entry's own message names its own narrow, executable remedy — stage by
+ * path, use a pid-scoped form, take your own worktree, record the approving
+ * review. A refusal that says only those is a refusal that names an exit
+ * the caller can take. Appending a generic offer on top made the specific
+ * remedy look like the lesser option, which is exactly backwards.
+ *
+ * The function itself is kept rather than deleted, and so is its single
+ * call site, because the shape of `decide`'s refusal path — collect a
+ * per-finding remedy, append what is non-null — is the right shape for
+ * whatever genuinely reachable remedy comes next. Returning `null` here
+ * makes the refusal text fall back to the entry's own message, which is
+ * the intended behaviour.
+ *
+ * @returns always `null`. The parameters are retained so the call site and
+ * its contract are unchanged; no level earns a generic remedy.
  */
-export function overrideRemedy(entryId: string, level: InterventionLevel): string | null {
-  if (level !== "block-overridable") return null;
-  return (
-    `This block can be overridden. To proceed, re-run the call with an override naming ` +
-    `"${entryId}" and a written reason of at least ${MIN_OVERRIDE_REASON_LENGTH} characters ` +
-    `saying why it is right to go ahead. The reason is recorded against this finding and can ` +
-    `be read later — it is kept as a record, not checked for correctness.`
-  );
+export function overrideRemedy(_entryId: string, _level: InterventionLevel): string | null {
+  return null;
 }

@@ -137,14 +137,19 @@ describe("readOverrideClaim", () => {
 });
 
 describe("overrideRemedy", () => {
-  it("names the entry and the reason floor for an overridable block", () => {
-    const remedy = overrideRemedy("broad-process-kill", "block-overridable");
-    expect(remedy).toContain("broad-process-kill");
-    expect(remedy).toContain(String(MIN_OVERRIDE_REASON_LENGTH));
-  });
+  // These assertions ARE the spec for the removal, so they are written to
+  // fail if the override offer comes back — not merely to tolerate its
+  // absence. `toBeNull()` is the strong form here: a reintroduced sentence
+  // fails every one of them. Deliberately NOT written as
+  // `not.toContain("override")`, which would pass for a remedy that had
+  // been reworded rather than removed.
 
-  it("says the reason is recorded, so nobody reads it as a free pass", () => {
-    expect(overrideRemedy("e", "block-overridable")).toContain("recorded");
+  it("offers nothing for an overridable block, because the audience cannot take it", () => {
+    // The regression this guards: every `block-overridable` entry is
+    // `audience: "agent"`, and an agent reaches only `tool_input`, where
+    // an override claim is refused by design. A generic offer here is a
+    // remedy the reader provably cannot execute.
+    expect(overrideRemedy("broad-process-kill", "block-overridable")).toBeNull();
   });
 
   it("offers nothing for a hard block", () => {
@@ -155,5 +160,32 @@ describe("overrideRemedy", () => {
 
   it("offers nothing for a level that is not blocking at all", () => {
     expect(overrideRemedy("e", "nudge")).toBeNull();
+  });
+
+  it("offers nothing at any level, for any entry", () => {
+    // The removal is TOTAL, not conditional on audience or entry. If
+    // someone reintroduces a per-level or per-audience branch, this is the
+    // assertion that catches the arm they forgot.
+    for (const level of ["nothing", "nudge", "block-overridable", "hard-block"] as const) {
+      for (const entryId of ["broad-process-kill", "merge-without-approval-at-tip", "e"]) {
+        expect(overrideRemedy(entryId, level)).toBeNull();
+      }
+    }
+  });
+
+  it("still validates a real override claim, so the mechanism is intact", () => {
+    // The promise was removed; the CHANNEL was not. A caller composing its
+    // own stdin (the test harness, a non-Claude-Code client) still gets a
+    // working override, and the reason floor still bites. If this fails,
+    // the cleanup went too far and deleted a capability.
+    const entryId = "broad-process-kill";
+    const good = "x".repeat(MIN_OVERRIDE_REASON_LENGTH);
+    const short = "x".repeat(MIN_OVERRIDE_REASON_LENGTH - 1);
+    expect(overrideApplies({ entryId, reason: good }, entryId, "block-overridable").applies).toBe(
+      true,
+    );
+    expect(overrideApplies({ entryId, reason: short }, entryId, "block-overridable").applies).toBe(
+      false,
+    );
   });
 });
