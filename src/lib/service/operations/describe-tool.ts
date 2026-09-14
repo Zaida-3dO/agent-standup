@@ -44,6 +44,14 @@ import type { ServiceContext } from "../context";
 import { describeFields, type FieldDescriptor } from "../describe/fields";
 import { spellingsFor, type SurfaceSpelling } from "@/lib/surfaces";
 import { currentBuildInfo, type BuildInfo } from "@/lib/build-info";
+import type { AdapterName } from "@/lib/adapters/registry";
+import { waiversFor, type AdapterWaiver } from "@/lib/adapters/waivers";
+import {
+  compareMigrationState,
+  defaultMigrationsDir,
+  readPackageMigrationHistory,
+  type MigrationDriftReport,
+} from "@/lib/migrations/state";
 
 /**
  * Set by the registry once it has built the index.
@@ -67,6 +75,32 @@ export interface ToolSource {
     readonly examples?: readonly unknown[];
   };
   readonly input: unknown;
+}
+
+/**
+ * The `AdapterName` a transport implies, for the two MCP transports only.
+ *
+ * `ctx.caller.transport` is one of SCHEMA.md §21's five wire values
+ * (`@/lib/sessions`'s `SESSION_TRANSPORTS`); `AdapterName` is `@/lib/adapters/registry`'s
+ * four-member set. They are different vocabularies for a reason —
+ * `surfaceForTransport` (`@/lib/surfaces`) collapses the same five down to
+ * three *surfaces* for wording a refusal, which is a coarser question than
+ * this one. This function answers neither of those; it answers "does this
+ * transport correspond to one specific MCP adapter", which is the only
+ * mapping `waiversFor` (an `AdapterName` lookup) can use. `undefined` for
+ * every transport that is not an MCP one — HTTP and the two CLI bindings
+ * carry no adapter waivers to report, and inventing one would say this
+ * session is bound by an MCP adapter's waiver list when it is not.
+ */
+function mcpAdapterForTransport(transport: string | undefined): AdapterName | undefined {
+  switch (transport) {
+    case "mcp-http":
+      return "mcp_http";
+    case "mcp-stdio":
+      return "mcp_stdio";
+    default:
+      return undefined;
+  }
 }
 
 let lookup: ToolLookup | null = null;
@@ -110,6 +144,35 @@ export function provideToolIndex(source: { lookup: ToolLookup; names: ToolNames 
  * disclosure, so the version work deliberately kept `build` off it. This
  * home is authenticated; that decision stands and is not undone here.
  */
+/**
+ * What this call arrived on, and what that means for it.
+ *
+ * ── Why this belongs beside `build`, not on a tool of its own ────────────
+ *
+ * Same reasoning as `build`/`limits`/`settingsRevision` above: a confused
+ * caller already comes here, and "what transport am I on and what does that
+ * change" is the same *kind* of question as "what build am I talking to" —
+ * a contract fact about this call, not about the data. The item that added
+ * this field exists because neither fact was discoverable any other way: a
+ * stdio session had no way to learn it was unobserved, or that a version
+ * skew against the database was possible, short of hitting the wall and
+ * reading a bare Prisma error.
+ */
+export interface TransportFacts {
+  /** SCHEMA.md §21's wire value, or `null` when the call carried none (an in-process test, a script). */
+  readonly transport: string | null;
+  /** The MCP adapter this call arrived through, or `null` off MCP — HTTP and the CLI carry no adapter waivers. */
+  readonly adapter: AdapterName | null;
+  /**
+   * Operations this adapter deliberately does not expose, with why.
+   *
+   * `null` off MCP, for the same reason `adapter` is: a waiver is a fact
+   * about one specific MCP adapter's tool list, and HTTP/the CLI have no
+   * such list to report gaps in.
+   */
+  readonly waived: readonly Pick<AdapterWaiver, "operation" | "reason">[] | null;
+}
+
 export interface ServiceFacts {
   /** What code is actually running — version, git revision and build time. */
   readonly build: BuildInfo;
@@ -120,6 +183,15 @@ export interface ServiceFacts {
   };
   /** The settings revision this answer was resolved at. */
   readonly settingsRevision: string;
+  /** What this call arrived on, and the MCP-specific facts that follow from it. */
+  readonly transport: TransportFacts;
+  /**
+   * Whether this package's own migration history is current with what the
+   * database has applied (DECISIONS.md §13f). See `@/lib/migrations/state`
+   * for the full comparison and why a no-server install is the case this
+   * matters for.
+   */
+  readonly migrations: MigrationDriftReport;
 }
 
 export interface ToolContract {
@@ -195,6 +267,66 @@ const inputSchema = z
 
 export type DescribeToolInput = z.infer<typeof inputSchema>;
 
+/**
+ * Every migration Prisma's own ledger records as finished and not rolled
+ * back, by name.
+ *
+ * The same table `readiness.ts`'s `MIGRATION_QUERY` reads, selecting the
+ * one column that operation has no use for: `readiness` counts rows to
+ * answer "is anything mid-flight", where this needs each migration's own
+ * name to compare against the package's history (`@/lib/migrations/state`).
+ * Two queries against one table rather than widening `readiness`'s, because
+ * the two operations ask genuinely different questions of the same ledger
+ * and `readiness` is reached unauthenticated (this operation's own header,
+ * "Why NOT on readiness") — it must not grow a reason to change for this
+ * row's sake.
+ */
+const APPLIED_MIGRATIONS_QUERY = `
+  SELECT "migration_name" AS name
+  FROM "_prisma_migrations"
+  WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL
+`;
+
+interface RawAppliedMigrationRow {
+  readonly name: string;
+}
+
+/**
+ * The migration-drift report for this call, read fresh each time.
+ *
+ * Two failure-tolerant reads, not one: the package's own history is a
+ * filesystem read that may find nothing (`readPackageMigrationHistory`'s own
+ * header), and the database read below can fail for the ordinary reasons a
+ * query can fail. Neither failure is this operation's to refuse over —
+ * `compareMigrationState` already treats an unreadable package history as
+ * `severity: "none"` rather than inventing drift, and a database read that
+ * throws is left to throw, the same as `readiness.ts`'s own probe: a caller
+ * told the database is unreachable learns more than one told a plausible
+ * lie about its migration state.
+ */
+async function migrationDriftReport(ctx: ServiceContext): Promise<MigrationDriftReport> {
+  const packageHistory = readPackageMigrationHistory(defaultMigrationsDir());
+  const rows = await ctx.db.$queryRawUnsafe<RawAppliedMigrationRow[]>(APPLIED_MIGRATIONS_QUERY);
+  return compareMigrationState(
+    packageHistory,
+    rows.map((row) => ({ name: row.name })),
+  );
+}
+
+/** The transport facts for this call — `TransportFacts` populated from `ctx.caller`. */
+function transportFacts(ctx: ServiceContext): TransportFacts {
+  const transport = ctx.caller.transport ?? null;
+  const adapter = mcpAdapterForTransport(ctx.caller.transport) ?? null;
+  return {
+    transport,
+    adapter,
+    waived:
+      adapter === null
+        ? null
+        : waiversFor(adapter).map(({ operation, reason }) => ({ operation, reason })),
+  };
+}
+
 // Stryker disable all : this metadata is a module-level literal, read into
 // the registry at import — before any test body runs and never re-evaluated
 // — so a mutation here is unkillable by construction, NOT untested.
@@ -238,6 +370,8 @@ export const describeTool = defineOperation({
         // A string, because a revision is a bigint and JSON has no bigint —
         // an adapter that serialises the answer would throw on it.
         settingsRevision: ctx.settings.revision.toString(),
+        transport: transportFacts(ctx),
+        migrations: await migrationDriftReport(ctx),
         // **Deliberately no tool list here.** `service_info` returned one
         // and it was the single reason waiving that operation was worth
         // doing: every MCP client is already sent the exposed tools on

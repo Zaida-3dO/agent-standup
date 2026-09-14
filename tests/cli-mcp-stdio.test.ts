@@ -118,6 +118,11 @@ describe("runMcpStdio — reaching the service", () => {
       loadService: async () => service,
       input,
       output,
+      // The startup drift check (this row's own addition, see mcp.ts) writes
+      // here rather than to the real stderr — nothing about the assertions
+      // below is about that check, so it is silenced the same way `input`
+      // and `output` stand in for the real streams.
+      stderr: { write: () => {} },
     });
 
     input.write(`${JSON.stringify(initializeMessage(1))}\n`);
@@ -132,10 +137,145 @@ describe("runMcpStdio — reaching the service", () => {
     );
     await reader.waitFor(2);
 
-    expect(calls).toEqual([{ name: "describe_tool", transport: "mcp-stdio" }]);
+    // The first call is `runMcpStdio`'s own pre-flight migration-drift check
+    // (unnamed `tool`, so `describe_tool`'s build/transport/migrations
+    // branch); the second is the client's real `tools/call`, named above.
+    // Both stamp `mcp-stdio` through the same core, which is what this test
+    // exists to prove.
+    expect(calls).toEqual([
+      { name: "describe_tool", transport: "mcp-stdio" },
+      { name: "describe_tool", transport: "mcp-stdio" },
+    ]);
 
     input.end();
     await outcomePromise;
+  });
+});
+
+describe("runMcpStdio — the migration-drift check", () => {
+  /** A service whose `describe_tool` reports one migration-drift severity. */
+  function serviceReporting(migrations: { severity: string; message: string }): CallableService {
+    return {
+      call: async (name) => {
+        if (name === "describe_tool") {
+          return {
+            migrations,
+            transport: { transport: "mcp-stdio", adapter: "mcp_stdio", waived: [] },
+          };
+        }
+        return { operations: [] };
+      },
+    };
+  }
+
+  it("warns to stderr and still serves when the database is merely ahead", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const written: string[] = [];
+
+    const outcomePromise = runMcpStdio({
+      env: { DATABASE_URL: "postgresql://u@h/d" },
+      loadService: async () =>
+        serviceReporting({ severity: "database_ahead", message: "the database is ahead" }),
+      input,
+      output,
+      stderr: { write: (chunk) => written.push(chunk) },
+    });
+
+    input.write(`${JSON.stringify(initializeMessage(1))}\n`);
+    const reader = responseReader(output);
+    const response = await reader.waitFor(1);
+    expect(
+      (response.result as { capabilities: Record<string, unknown> }).capabilities,
+    ).toHaveProperty("tools");
+    expect(written.join("")).toContain("the database is ahead");
+
+    input.end();
+    const outcome = await outcomePromise;
+    expect(outcome.exitCode).toBe(EXIT.OK);
+  });
+
+  it("says nothing to stderr when migration state matches", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const written: string[] = [];
+
+    const outcomePromise = runMcpStdio({
+      env: { DATABASE_URL: "postgresql://u@h/d" },
+      loadService: async () =>
+        serviceReporting({ severity: "none", message: "Migration state matches." }),
+      input,
+      output,
+      stderr: { write: (chunk) => written.push(chunk) },
+    });
+
+    input.write(`${JSON.stringify(initializeMessage(1))}\n`);
+    const reader = responseReader(output);
+    await reader.waitFor(1);
+    expect(written).toEqual([]);
+
+    input.end();
+    await outcomePromise;
+  });
+
+  it("refuses to start on genuine incompatibility, and never opens the stdio transport", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const written: string[] = [];
+    let outputWritten = false;
+    output.on("data", () => {
+      outputWritten = true;
+    });
+
+    const outcome = await runMcpStdio({
+      env: { DATABASE_URL: "postgresql://u@h/d" },
+      loadService: async () =>
+        serviceReporting({ severity: "incompatible", message: "no common base" }),
+      input,
+      output,
+      stderr: { write: (chunk) => written.push(chunk) },
+    });
+
+    expect(outcome.exitCode).toBe(EXIT.REJECTED);
+    expect(outcome.envelope.ok).toBe(false);
+    if (!outcome.envelope.ok) {
+      expect(outcome.envelope.error.message).toContain("no common base");
+    }
+    expect(written.join("")).toContain("no common base");
+    // Never reached the transport at all — nothing was written to stdout,
+    // which is where an MCP protocol frame would appear if it had.
+    expect(outputWritten).toBe(false);
+  });
+
+  it("continues rather than refusing when the drift check itself cannot be answered", async () => {
+    // A `describe_tool` call that throws (a database reachable for the
+    // preflight but not for this call, say) must not be read as
+    // incompatibility — see `driftReport`'s own comment in mcp.ts.
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const reader = responseReader(output);
+
+    const outcomePromise = runMcpStdio({
+      env: { DATABASE_URL: "postgresql://u@h/d" },
+      loadService: async () => ({
+        call: async () => {
+          throw new Error("connection reset");
+        },
+      }),
+      input,
+      output,
+      stderr: { write: () => {} },
+    });
+
+    input.write(`${JSON.stringify(initializeMessage(1))}\n`);
+    const response = await reader.waitFor(1);
+    expect(
+      (response.result as { capabilities: Record<string, unknown> }).capabilities,
+    ).toHaveProperty("tools");
+
+    input.end();
+    const outcome = await outcomePromise;
+    expect(outcome.exitCode).toBe(EXIT.OK);
   });
 });
 

@@ -170,7 +170,7 @@ export function createMcpServer({
   // observable, which is exactly what a redundant argument looks like.
   const server = new McpServer({ name: serverInfo.name, version: serverInfo.version });
 
-  for (const tool of toolsFromOperations(operations)) {
+  for (const tool of toolsFromOperations(operations, adapter)) {
     server.registerTool(
       tool.name,
       {
