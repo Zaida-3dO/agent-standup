@@ -28,16 +28,24 @@ host, no bind mounts.
 
 ## Local development
 
-Requires Node 24 and Docker (for local Postgres).
+Requires Node 24 and a reachable Postgres. **Docker is one way to get that Postgres, not a
+requirement of the app** — `npm run db:up` is a convenience wrapper around `docker compose up -d db`
+and is the only thing in the repo that shells out to Docker. Nothing under `src/` touches it. The app
+reads one connection string, so a natively installed Postgres (Postgres.app, Homebrew, a distribution
+package, or a userspace `initdb`) works identically: point `DATABASE_URL` at it and skip `db:up`.
 
 ```bash
 cp .env.example .env          # fill in DATABASE_URL etc.
 npm install
-npm run db:up                 # starts local Postgres on a non-default port
+npm run db:up                 # OPTIONAL — starts local Postgres in Docker on a non-default port.
+                              # Skip it if you already have a Postgres; just set DATABASE_URL.
 npx prisma migrate deploy     # apply the committed migrations
 npx prisma generate
 npm run dev                   # http://localhost:3000
 ```
+
+`PORT` and `HOSTNAME` control what the server listens on, so `http://localhost:3000` above is the
+default rather than a fixed address — see [Configuration](#configuration).
 
 ### Configuration
 
