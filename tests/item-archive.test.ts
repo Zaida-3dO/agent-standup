@@ -1254,6 +1254,30 @@ describeIfDb("delete_item", () => {
         // a page that hid the fact would misreport what the agent did —
         // which is the one question this read answers.
         "get_session_detail",
+        // Ranges over `Run` — telemetry about work that was DONE — keyed on
+        // an item or session id the caller already holds, and it is exempt
+        // for the same reason `get_session_detail` is, one step further on.
+        //
+        // Two distinct points, and both are needed:
+        //
+        // 1. **There is no id to leak.** The sweep's definition of a leak is
+        //    the archived id turning up in a response that did not already
+        //    presuppose it. `list_runs` REQUIRES `itemId` or `sessionId`, so
+        //    a caller asking about an archived item is echoing back an id it
+        //    supplied. There is no discovery path here: the operation refuses
+        //    an unfiltered read outright, so it can never volunteer an
+        //    archived item to somebody who did not already name it.
+        //
+        // 2. **Hiding the rows would be wrong, not merely unnecessary.** A
+        //    run is the record of an agent's turn actually happening, and
+        //    archiving the item does not un-happen it. `RunScore` rows hang
+        //    off these runs and carry a deliberately immutable agent score;
+        //    suppressing the runs would strand those scores behind a
+        //    `runId` nothing returns any more, which is precisely the
+        //    unreachable-id defect this operation was added to fix. The
+        //    fleet's calibration data would silently shrink every time an
+        //    item was archived.
+        "list_runs",
       ]);
 
       // Arguments per read. A read absent from this map fails the guard
