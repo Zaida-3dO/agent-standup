@@ -271,6 +271,33 @@ function isServiceErrorCode(value: unknown): value is ServiceErrorCode {
  * answered with something this build does not understand, which is not the
  * caller's doing and is not a rule refusing.
  */
+/**
+ * The diagnosis the server attached to a failure, as log fields.
+ *
+ * Every field is optional and independently checked, because an older server
+ * sends none of them and a body that is not the expected envelope reaches
+ * here too. A missing field is simply absent from the log line rather than
+ * logged as `undefined`.
+ *
+ * `internalKind` is **not** validated against `INTERNAL_KINDS` and does not
+ * need to be: it is going to a log line, not into a decision, and the server
+ * emits it from the frozen union. Copying the union here to re-check it
+ * would be a second copy to keep in step for no gain.
+ */
+function diagnosisFromBody(body: unknown): Record<string, unknown> {
+  const error = property(body, "error");
+  const serverRequestId = property(error, "requestId");
+  const retryable = property(error, "retryable");
+  const internalKind = property(error, "internalKind");
+  const committed = property(error, "committed");
+  return {
+    ...(typeof serverRequestId === "string" ? { serverRequestId } : {}),
+    ...(typeof retryable === "boolean" ? { retryable } : {}),
+    ...(typeof internalKind === "string" ? { internalKind } : {}),
+    ...(committed === undefined ? {} : { committed }),
+  };
+}
+
 function rejectionFromBody(
   body: unknown,
   status: number,
@@ -423,17 +450,26 @@ export function createHttpBinding({
 
       if (!response.ok) {
         const { rejection, message } = rejectionFromBody(parsed, response.status);
+        // What the server said about the failure beyond the rejection
+        // itself. Read back into the log line rather than into `rejection`:
+        // that type is the *comparable* part of a refusal, which §22 asserts
+        // is identical across adapters, so widening it here would make this
+        // binding's answer unequal to `direct`'s for the same failure.
+        const diagnosis = diagnosisFromBody(parsed);
         // `faultContext` on the *code*, not on an error object: this
         // binding never holds one. The body has already been reduced to a
         // `Rejection` rebuilt from JSON, which is exactly why `faultFor`
-        // exists as a free function alongside the getter. No
-        // `internalKind` here, and not by omission — the cause stayed in
-        // the server's process and was never on the wire to classify.
+        // exists as a free function alongside the getter.
         if (faultContext(rejection.code).fault === "server") {
           // Either the server itself failed, or it answered with a body
           // this build does not recognise — and the second is invisible
           // from the terminal, which sees only "the server refused". The
           // status is what tells those apart, so it is logged.
+          //
+          // The server's own request id is logged under `serverRequestId`,
+          // beside this process's `requestId`. They name the same call on
+          // two machines, and collapsing them into one key would make a
+          // grep for either ambiguous.
           log.error("The server failed or answered unrecognisably.", {
             requestId,
             transport: "cli",
@@ -441,6 +477,7 @@ export function createHttpBinding({
             operation,
             status: response.status,
             ...faultContext(rejection.code),
+            ...diagnosis,
           });
         } else {
           log.debug("The server refused the command.", {

@@ -132,7 +132,18 @@ class SettingsInvalidatingRuntime extends ServiceRuntime {
 export const interventionDeliverer = createServiceDeliverer();
 
 export const service: ServiceRuntime = new SettingsInvalidatingRuntime({
-  transaction: prismaTransactionRunner(prisma),
+  // The driver's own defaults, stated rather than inherited, for the reason
+  // `db-url.ts` states the pool size: a timeout that governs every write in
+  // the system should be visible at the place it is chosen, not found by
+  // reading the driver's documentation for the version in the lockfile.
+  //
+  // `maxWait` is the wait for a connection from the pool and `timeout` the
+  // budget for the transaction body once it has one. Both are the values
+  // that were already in force; **this states them, it does not change
+  // them.** Tuning either is a decision that wants an occurrence to justify
+  // it — a `timeout`-classified failure carrying a request id is exactly the
+  // evidence that would.
+  transaction: prismaTransactionRunner(prisma, { maxWait: 2000, timeout: 5000 }),
   resolveSnapshot: () => settingsCache.get(),
   deliverInterventions: interventionDeliverer,
 });

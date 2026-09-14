@@ -14,7 +14,7 @@
 // is emitted as JSON — the same `code` and `fields` the service produced,
 // unedited — alongside the human-readable message an agent actually reads.
 import { toServiceError } from "@/lib/service";
-import type { Rejection } from "@/lib/service";
+import type { Committed, InternalKind, Rejection } from "@/lib/service";
 
 /**
  * A tool result, in the shape MCP defines.
@@ -168,16 +168,75 @@ export function toolSuccess(value: unknown): ToolResult {
  * `code` and `fields` — neither of which whitespace changes. One format
  * for every result this module emits is the property worth holding.
  */
-export function toolRejection(error: unknown): ToolResult {
+export function toolRejection(error: unknown, diagnosis?: RejectionDiagnosis): ToolResult {
   const serviceError = toServiceError(error);
   const rejection: RenderedRejection = {
     ...serviceError.toRejection(),
-    message: serviceError.message,
+    message: diagnosis?.message ?? serviceError.message,
   };
+  const extras = diagnosisExtras(diagnosis);
   return {
-    content: [{ type: "text", text: JSON.stringify(rejection) }],
-    structuredContent: { ...rejection, fields: [...rejection.fields] },
+    content: [{ type: "text", text: JSON.stringify({ ...rejection, ...extras }) }],
+    structuredContent: { ...rejection, fields: [...rejection.fields], ...extras },
     isError: true,
+  };
+}
+
+/**
+ * What the adapter knows about a failure beyond the rejection itself.
+ *
+ * Optional in full: a caller that does not supply it gets byte-identical
+ * output to a call that never had the argument, which is what lets this sit
+ * alongside the adapter's other `toolRejection` call sites unchanged.
+ */
+export interface RejectionDiagnosis {
+  /** The id this call was logged under. Quotable in a report. */
+  readonly requestId?: string;
+  /** Whether repeating the identical call could work. */
+  readonly retryable?: boolean;
+  /** How the server broke — only ever a member of `INTERNAL_KINDS`. */
+  readonly internalKind?: InternalKind;
+  /** Whether the write landed. Omitted entirely on a caller fault. */
+  readonly committed?: Committed;
+  /**
+   * The prose to render, when the adapter can say something more useful
+   * than the service's fixed wording. Drawn from a fixed set; never
+   * caller-supplied and never built from the error.
+   */
+  readonly message?: string;
+}
+
+/**
+ * The diagnosis as spread-able keys.
+ *
+ * Spread *alongside* `Rejection` rather than added to it, exactly as
+ * `detailsOf` (`src/app/api/_shared/respond.ts`) already does for `details`,
+ * and for the same reason. `Rejection` is the *comparable* part of a refusal:
+ * §22's cross-adapter assertion reduces it through `renderRejection`
+ * (`src/lib/conformance/assertions.ts`), which reads only `code`, sorted
+ * `fields` and `guard`. Keys beside it are invisible to that comparison, so
+ * MCP can say more than the CLI does without the two becoming unequal.
+ *
+ * The other reason is the warning `errors.ts` puts on `toRejection()`: a key
+ * added *to* the rejection has to be added at all four sites that rebuild
+ * one — the MCP conformance driver and the CLI's `http` binding among them —
+ * and every one of those rebuilds by reading named keys, so a key they do
+ * not name is dropped in silence. Not adding one is how that whole class of
+ * drift is avoided rather than managed.
+ *
+ * Keys are omitted rather than sent as `undefined`: an explicit
+ * `committed: undefined` is a different value from an absent key to anything
+ * reading with `in` or `Object.keys`, and absence is what "we did not
+ * determine this" should look like.
+ */
+function diagnosisExtras(diagnosis?: RejectionDiagnosis): Record<string, unknown> {
+  if (diagnosis === undefined) return {};
+  const { requestId, retryable, internalKind, committed } = diagnosis;
+  return {
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(retryable === undefined ? {} : { retryable }),
+    ...(internalKind === undefined ? {} : { internalKind }),
+    ...(committed === undefined ? {} : { committed }),
   };
 }
 
