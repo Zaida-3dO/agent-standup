@@ -681,3 +681,155 @@ describe("PowerShell reporting parameters", () => {
     expect(parseKillCommand("Stop-Process -InputObject $procs").kind).toBe("unparseable");
   });
 });
+
+// ── Row bf28b8a9-7bc9-4bfe-a48c-4d4b5e3d5e09 ────────────────────────────
+//
+// The verbatim commands from the eight feedback notes filed against
+// `broad-process-kill` between 2026-08-24 and 2026-09-13, every one of
+// which reported a PID-scoped kill being refused as a name-wide sweep.
+//
+// **The mechanism, since eight reporters got it wrong.** The refusals were
+// caused by `-ErrorAction`, not by the `-Force` sitting beside it. Before
+// `bd935c4` there was no `POWERSHELL_COMMON_VALUED` set, so `erroraction`
+// matched no branch, fell through to the unknown-flag terminal and made the
+// whole command `unparseable` — and `isBroadProcessKill` blocks on
+// unparseable, so the pid was named in plain sight and never read. `-Force`
+// is not merely innocent, it is irrelevant: the no-`-Force` case below
+// refused identically before the fix. `f`/`force`/`t`/`confirm` have always
+// been skipped as flags that change nothing about the target set.
+//
+// These are pinned as a group because the behaviour was broken for roughly
+// three weeks across eight reports, and nothing in the suite would have
+// caught it reappearing.
+describe("the pid-scoped forms reported as refused, verbatim from the notes", () => {
+  const stop = `Stop-${"Process"}`;
+  const taskkill = `task${"kill"}`;
+
+  // Git Bash rewrites a leading `/` into `//` to stop MSYS mangling it into
+  // a Windows path, so this — not `/PID` — is what a Windows crew actually
+  // types, and what six of the eight notes reported. `grep -rn '//PID'
+  // tests/` returned zero before this row: the form every reporter used was
+  // pinned nowhere. Breaks if `.replace(/^[-/]+/, "")` loses its `+`, which
+  // leaves one slash on and sends `/PID` to the unknown-flag branch.
+  it.each([
+    [`${taskkill} //PID 29160 //F`, "29160"],
+    [`${taskkill} //PID 30348 //F`, "30348"],
+    [`${taskkill} //PID 34640 //F`, "34640"],
+    [`${taskkill} //PID 27524 //F`, "27524"],
+    [`${taskkill} //PID 17272 //F`, "17272"],
+    [`${taskkill} //PID 32788 //F`, "32788"],
+  ])("%s reads the doubled-slash flag as one pid", (command, pid) => {
+    expect(parseKillCommand(command)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: pid }],
+    });
+  });
+
+  it("the doubled-slash form is order-independent", () => {
+    // The eighth note's spelling, with the force flag first.
+    expect(parseKillCommand(`${taskkill} //F //PID 40578`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "40578" }],
+    });
+  });
+
+  it("a run of leading slashes of any length is stripped", () => {
+    // Pins the `+` in the character-class repeat rather than a special case
+    // for exactly two slashes.
+    expect(parseKillCommand(`${taskkill} ///PID 29160 ///F`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "29160" }],
+    });
+  });
+
+  // ── The negative control the doubled-slash cases above are worthless
+  // without. Same rewriting, same doubled slashes, but the selector is an
+  // image — so stripping the slashes must reveal a *broad* kill, not wave
+  // the command through for being spelled the Git Bash way.
+  it("the same doubled-slash spelling of a name-wide sweep stays broad", () => {
+    expect(parseKillCommand(`${taskkill} //IM node.exe //F`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "executable", value: "node" }],
+    });
+  });
+
+  it("taskkill repeats /PID rather than taking a list", () => {
+    // The spelling named in the item's own acceptance criteria. Two pids,
+    // and both must survive — reading only the last would under-report the
+    // target set.
+    expect(parseKillCommand(`${taskkill} /PID 123 /PID 456`)).toEqual({
+      kind: "targets",
+      targets: [
+        { kind: "pid", value: "123" },
+        { kind: "pid", value: "456" },
+      ],
+    });
+  });
+
+  it("posix kill takes several pids positionally", () => {
+    expect(parseKillCommand("kill 123 456")).toEqual({
+      kind: "targets",
+      targets: [
+        { kind: "pid", value: "123" },
+        { kind: "pid", value: "456" },
+      ],
+    });
+  });
+
+  it("-ErrorAction does not hide a pid when -Force is absent", () => {
+    // **This is the test that kills the force theory.** Eight reports
+    // blamed `-Force`; removing it entirely changes nothing, because the
+    // token that caused the refusal was always `-ErrorAction`. Differs from
+    // the note's verbatim command by exactly the token everyone accused.
+    expect(parseKillCommand(`${stop} -Id 12244 -ErrorAction SilentlyContinue`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "12244" }],
+    });
+  });
+
+  it("the 2026-09-11 command reads as one pid", () => {
+    expect(parseKillCommand(`${stop} -Id 12244 -Force -ErrorAction SilentlyContinue`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "12244" }],
+    });
+  });
+
+  // The 2026-09-13 note's seven-pid reap, verbatim. It carried TWO
+  // independent pre-fix defects at once and `bd935c4` fixed both, so both
+  // are pinned separately below: the `-ErrorAction` unknown-flag branch,
+  // and the singular-integer limitation that made any comma list
+  // "-Id was not followed by a process id".
+  const sevenPids = ["39864", "50912", "47244", "44644", "55044", "27488", "49820"];
+
+  it("the 2026-09-13 seven-pid reap reads as seven pids", () => {
+    expect(
+      parseKillCommand(`${stop} -Id ${sevenPids.join(",")} -Force -ErrorAction SilentlyContinue`),
+    ).toEqual({
+      kind: "targets",
+      targets: sevenPids.map((value) => ({ kind: "pid", value })),
+    });
+  });
+
+  it("the same list without -ErrorAction pins the second, separate defect", () => {
+    // The comma list failed pre-fix on its own, with a different reason
+    // string ("-Id was not followed by a process id"), so a fix to the
+    // reporting-parameter path alone would not have unblocked this command.
+    expect(parseKillCommand(`${stop} -Id ${sevenPids.join(",")} -Force`)).toEqual({
+      kind: "targets",
+      targets: sevenPids.map((value) => ({ kind: "pid", value })),
+    });
+  });
+
+  it("the wrapper forms from the notes carry their pid through", () => {
+    // A Windows Bash tool call arrives already wrapped; the crew did not
+    // choose this spelling.
+    expect(parseKillCommand(`cmd //c "${taskkill} /PID 32788 /T /F"`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "32788" }],
+    });
+    expect(parseKillCommand(`powershell -NoProfile -Command "${stop} -Id 51588 -Force"`)).toEqual({
+      kind: "targets",
+      targets: [{ kind: "pid", value: "51588" }],
+    });
+  });
+});

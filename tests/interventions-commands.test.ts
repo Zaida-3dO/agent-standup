@@ -240,6 +240,104 @@ describe("isBroadProcessKill", () => {
     }
   });
 
+  // ── Row bf28b8a9-7bc9-4bfe-a48c-4d4b5e3d5e09 ──────────────────────────
+  //
+  // Eight feedback notes between 2026-08-24 and 2026-09-13 reported this
+  // entry refusing a PID-scoped kill as a name-wide sweep. The cause was
+  // `-ErrorAction` reaching the parser's unknown-flag branch and making the
+  // command `unparseable`, which this function blocks on — so the pid was
+  // named in plain sight and never read. Fixed by `bd935c4` (2026-09-01).
+  //
+  // Reports continued after the fix because the sessions filing them were
+  // talking to an older build: the 2026-09-13 note's seven-pid list parses
+  // to seven pid targets and is allowed from `bd935c4` onward, so a build
+  // that refused it necessarily predated 2026-09-01. That is a behavioural
+  // dating, not an inference from the refusal wording — the wording those
+  // notes quote ran from `70b8536` (08-18) until `bea4478` (09-13) and is
+  // still present at `bd935c4` itself, so it cannot date a build any more
+  // precisely than "before 09-13".
+  //
+  // Pinned at this level as well as in the parser because this is the
+  // function the block actually hangs on.
+  const stop = `Stop-${"Process"}`;
+  const taskkill = `task${"kill"}`;
+
+  it("does not recognise the doubled-slash pid form Git Bash produces", () => {
+    // Six of the eight notes used this spelling, and it was pinned nowhere.
+    // Git Bash rewrites a leading `/` to `//` to stop MSYS path mangling,
+    // so this is what a Windows crew types — not a choice it made.
+    for (const command of [
+      `${taskkill} //PID 29160 //F`,
+      `${taskkill} //PID 30348 //F`,
+      `${taskkill} //PID 34640 //F`,
+      `${taskkill} //PID 27524 //F`,
+      `${taskkill} //PID 17272 //F`,
+      `${taskkill} //PID 32788 //F`,
+      `${taskkill} //F //PID 40578`,
+      `${taskkill} /PID 51588 /F`,
+      `${taskkill} /PID 123 /PID 456`,
+      "kill -9 40578",
+      "kill 123 456",
+      `cmd //c "${taskkill} /PID 32788 /T /F"`,
+      `powershell -Command "${stop} -Id 40578 -Force"`,
+      `powershell -NoProfile -Command "${stop} -Id 51588 -Force"`,
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(false);
+    }
+  });
+
+  it("does not recognise the reported commands that carry -ErrorAction", () => {
+    // The middle entry is the one that settles the argument: eight reports
+    // blamed `-Force`, and removing it entirely changes nothing. The token
+    // that caused every refusal was `-ErrorAction`.
+    for (const command of [
+      `${stop} -Id 12244 -Force -ErrorAction SilentlyContinue`,
+      `${stop} -Id 12244 -ErrorAction SilentlyContinue`,
+      `${stop} -Id 39864,50912,47244,44644,55044,27488,49820 -Force -ErrorAction SilentlyContinue`,
+      // Same list without the reporting parameter. It failed pre-fix for a
+      // second, independent reason (the singular-integer limitation), so
+      // this is not a duplicate of the line above it.
+      `${stop} -Id 39864,50912,47244,44644,55044,27488,49820 -Force`,
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(false);
+    }
+  });
+
+  // ── The half of this row that matters more.
+  //
+  // A suite proving only that things are ALLOWED would pass against a
+  // function that returned false unconditionally — i.e. against a guard
+  // deleted entirely. These are the sweeps that must keep refusing, and
+  // several differ from an allowed case above by a single token.
+  it("still recognises the sweeps, including the ones spelled the same way", () => {
+    for (const command of [
+      // Paired with the doubled-slash allows above: identical rewriting,
+      // image selector. If stripping the slashes ever waves a command
+      // through on spelling rather than on target, this is what catches it.
+      `${taskkill} //IM node.exe //F`,
+      `${taskkill} /IM node.exe`,
+      `${taskkill} /F /IM node.exe /T`,
+      "pkill -f node",
+      // The author of the 2026-09-07 note agreed this refusal was fair.
+      'pkill -f "haven-wt-widget-gap"',
+      `${stop} -Name node -Force`,
+      // Adversarial probes against the enumerated-skip design: a selector
+      // this build cannot read must stay blocked rather than decompose to
+      // an empty, allowable target set. `/FI` and `-InputObject` are the
+      // two the parser's own comment warns a blanket unknown-flag skip
+      // would swallow.
+      `${taskkill} /FI "IMAGENAME eq node.exe" /F`,
+      `${stop} -InputObject $p -Force`,
+      `${stop} -ErrorAction SilentlyContinue -Name node`,
+      `${stop} -Id`,
+      `${stop} -Id 123,,456`,
+      `${stop} -Id abc`,
+      `${taskkill} /IM node.exe /ErrorAction x`,
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(true);
+    }
+  });
+
   it("does not recognise commands that end no process", () => {
     for (const command of [
       "ls -la",
