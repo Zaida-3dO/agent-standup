@@ -110,12 +110,40 @@ export function readReportedUsage(raw: unknown): ReportedUsage {
     return typeof value === "string" ? value : undefined;
   };
 
+  /**
+   * A field the harness reports either as a bare string or as a small
+   * wrapper object around one.
+   *
+   * Claude Code reports effort as `{"level":"high"}`, not as `"high"` —
+   * measured from a live PostToolUse payload, 2026-09-14. Read with `text`
+   * alone that object fails the `typeof value === "string"` test and is
+   * discarded, which is why every spooled record carried no effort at all
+   * while the harness was reporting one on every call. The value was
+   * present the whole time and this function was looking at the wrong
+   * shape.
+   *
+   * Only the named wrapper keys are unwrapped, and only one level deep.
+   * The alternative — "if it is an object, take its first string" — would
+   * eventually unwrap something that was never an effort, and a wrong
+   * label is worse here than a missing one: a missing effort is visibly
+   * unreported, while a wrong one silently cuts a run boundary and
+   * re-attributes cost.
+   */
+  const WRAPPER_KEYS = ["level", "value", "name"] as const;
+  const labelled = (keys: readonly string[]): string | undefined => {
+    const direct = text(keys);
+    if (direct !== undefined) return direct;
+    const value = pick(keys);
+    const unwrapped = first(value, WRAPPER_KEYS);
+    return typeof unwrapped === "string" ? unwrapped : undefined;
+  };
+
   const inputTokens = numeric(INPUT_KEYS);
   const outputTokens = numeric(OUTPUT_KEYS);
   const cacheWriteTokens = numeric(CACHE_WRITE_KEYS);
   const cacheReadTokens = numeric(CACHE_READ_KEYS);
-  const model = text(MODEL_KEYS);
-  const effort = text(EFFORT_KEYS);
+  const model = labelled(MODEL_KEYS);
+  const effort = labelled(EFFORT_KEYS);
   const usage5h = numeric(USAGE_5H_KEYS);
   const usageWeekly = numeric(USAGE_WEEKLY_KEYS);
 

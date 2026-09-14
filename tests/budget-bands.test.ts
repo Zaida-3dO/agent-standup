@@ -221,7 +221,7 @@ describe("decideBand — strictest window wins", () => {
     const decision = decideBand(
       {
         windows: windows({ aTight: tight, bLoose: loose }),
-        reading: fresh(60),
+        readings: { usage5h: fresh(60) },
         elapsedHours: { aTight: 0, bLoose: 0 },
       },
       true,
@@ -240,7 +240,7 @@ describe("decideBand — strictest window wins", () => {
     const decision = decideBand(
       {
         windows: windows({ aLoose: loose, bTight: tight }),
-        reading: fresh(60),
+        readings: { usage5h: fresh(60) },
         elapsedHours: { aLoose: 0, bTight: 0 },
       },
       true,
@@ -255,7 +255,7 @@ describe("decideBand — strictest window wins", () => {
     const decision = decideBand(
       {
         windows: windows({ aLoose: loose, bTight: tight }),
-        reading: fresh(60),
+        readings: { usage5h: fresh(60) },
         elapsedHours: { aLoose: 0, bTight: 0 },
       },
       true,
@@ -274,7 +274,7 @@ describe("decideBand — strictest window wins", () => {
     const decision = decideBand(
       {
         windows: windows({ zebra: loose, alpha: loose }),
-        reading: fresh(60),
+        readings: { usage5h: fresh(60) },
         elapsedHours: { zebra: 0, alpha: 0 },
       },
       true,
@@ -298,7 +298,10 @@ describe("decideBand — strictest window wins", () => {
         stop: { kind: "linear", slope: 15, offset: 15, per: "day" },
       },
     };
-    const shape = { windows: windows({ fiveHour: loose, weekly: paced }), reading: fresh(40) };
+    const shape = {
+      windows: windows({ fiveHour: loose, weekly: paced }),
+      readings: { usage5h: fresh(40) },
+    };
 
     const early = decideBand({ ...shape, elapsedHours: { fiveHour: 0, weekly: 24 } }, true);
     const later = decideBand({ ...shape, elapsedHours: { fiveHour: 0, weekly: 96 } }, true);
@@ -321,7 +324,7 @@ describe("decideBand — when there is no band, and why", () => {
 
   it("is unbanded when budgets are switched off, whatever the usage", () => {
     const decision = decideBand(
-      { windows: enabledWindows, reading: fresh(99), elapsedHours: { fiveHour: 0 } },
+      { windows: enabledWindows, readings: { usage5h: fresh(99) }, elapsedHours: { fiveHour: 0 } },
       false,
     );
 
@@ -332,7 +335,7 @@ describe("decideBand — when there is no band, and why", () => {
 
   it("is unbanded when no window is configured at all", () => {
     const decision = decideBand(
-      { windows: {} as BudgetWindows, reading: fresh(99), elapsedHours: {} },
+      { windows: {} as BudgetWindows, readings: { usage5h: fresh(99) }, elapsedHours: {} },
       true,
     );
 
@@ -345,7 +348,7 @@ describe("decideBand — when there is no band, and why", () => {
     const decision = decideBand(
       {
         windows: { fiveHour: { ...window, enabled: false } } as BudgetWindows,
-        reading: fresh(99),
+        readings: { usage5h: fresh(99) },
         elapsedHours: { fiveHour: 0 },
       },
       true,
@@ -369,7 +372,7 @@ describe("decideBand — when there is no band, and why", () => {
     };
 
     const decision = decideBand(
-      { windows: enabledWindows, reading: stale, elapsedHours: { fiveHour: 0 } },
+      { windows: enabledWindows, readings: { usage5h: stale }, elapsedHours: { fiveHour: 0 } },
       true,
     );
 
@@ -383,7 +386,7 @@ describe("decideBand — when there is no band, and why", () => {
     const decision = decideBand(
       {
         windows: enabledWindows,
-        reading: { status: "absent", reason: "never-reported" },
+        readings: { usage5h: { status: "absent", reason: "never-reported" } },
         elapsedHours: { fiveHour: 0 },
       },
       true,
@@ -397,7 +400,7 @@ describe("decideBand — when there is no band, and why", () => {
     // billing window this build cannot compute. Skipped rather than
     // evaluated at an invented zero.
     const decision = decideBand(
-      { windows: enabledWindows, reading: fresh(99), elapsedHours: {} },
+      { windows: enabledWindows, readings: { usage5h: fresh(99) }, elapsedHours: {} },
       true,
     );
 
@@ -408,7 +411,7 @@ describe("decideBand — when there is no band, and why", () => {
     const decision = decideBand(
       {
         windows: { fiveHour: window, weekly: window } as BudgetWindows,
-        reading: fresh(96),
+        readings: { usage5h: fresh(96) },
         elapsedHours: { fiveHour: 0 },
       },
       true,
@@ -434,7 +437,7 @@ describe("decideBand — an account that overrides the global windows", () => {
     const decision = decideBand(
       {
         windows: { fiveHour: globalWindow } as BudgetWindows,
-        reading: fresh(40),
+        readings: { usage5h: fresh(40) },
         elapsedHours: { fiveHour: 0 },
       },
       true,
@@ -450,7 +453,7 @@ describe("decideBand — an account that overrides the global windows", () => {
     const decision = decideBand(
       {
         windows: { fiveHour: strictOverride } as BudgetWindows,
-        reading: fresh(40),
+        readings: { usage5h: fresh(40) },
         elapsedHours: { fiveHour: 0 },
       },
       true,
@@ -466,7 +469,7 @@ describe("decideBand — an account that overrides the global windows", () => {
     const decision = decideBand(
       {
         windows: { bespoke: strictOverride } as BudgetWindows,
-        reading: fresh(25),
+        readings: { usage5h: fresh(25) },
         elapsedHours: { bespoke: 0 },
       },
       true,
@@ -475,5 +478,189 @@ describe("decideBand — an account that overrides the global windows", () => {
     if (decision.status !== "banded") throw new Error("expected a band");
     expect(decision.governing.window).toBe("bespoke");
     expect(decision.band).toBe("wind_down");
+  });
+});
+
+/**
+ * Which stored figure a window is measured against — SCHEMA.md §17.4.
+ *
+ * An account carries a short rolling reading and a longer weekly one. They
+ * are different numbers about different periods, so a window banded against
+ * the wrong one is not approximately right, it is meaningless: a weekly
+ * allowance compared against a five-hour percentage would report a session
+ * that had barely started as having consumed most of its week.
+ *
+ * The defect these cases pin down is the one where the weekly figure was
+ * stored, promoted and carried all the way to the evaluator, and then never
+ * selected — leaving a configured, enabled weekly window structurally
+ * incapable of enforcing anything.
+ */
+describe("decideBand — a window bands against the reading it declares", () => {
+  /** A window reading a named figure. Boundaries are constants for clarity. */
+  function readingWindow(
+    reads: "usage5h" | "usageWeekly",
+    selective: number,
+    windDown: number,
+    stop: number,
+  ): BudgetWindow {
+    return {
+      enabled: true,
+      lengthHours: reads === "usageWeekly" ? 168 : 5,
+      reads,
+      boundaries: {
+        selective: { kind: "constant", value: selective },
+        windDown: { kind: "constant", value: windDown },
+        stop: { kind: "constant", value: stop },
+      },
+    };
+  }
+
+  const weekly = readingWindow("usageWeekly", 15, 30, 45);
+
+  it("bands a weekly window against the WEEKLY reading, not the short one", () => {
+    // The whole defect in one case. The short reading is nearly untouched
+    // and the weekly one is past its stop line; banding against the short
+    // figure would answer `free` and let the week overrun.
+    //
+    // Fails if `decideBand` stops consulting `window.reads`, or if poll.ts
+    // stops resolving `usageWeekly`.
+    const decision = decideBand(
+      {
+        windows: { weekly } as BudgetWindows,
+        readings: { usage5h: fresh(2), usageWeekly: fresh(50) },
+        elapsedHours: { weekly: 0 },
+      },
+      true,
+    );
+
+    if (decision.status !== "banded") throw new Error("expected a band");
+    expect(decision.band).toBe("stop");
+    expect(decision.governing.usage).toBe(50);
+  });
+
+  it("leaves a window that declares nothing reading the SHORT figure", () => {
+    // The compatibility guarantee. Every window configured before `reads`
+    // existed must keep banding against exactly the figure it always did —
+    // a default of anything else would silently re-point live configuration
+    // without changing it.
+    //
+    // Fails if DEFAULT_USAGE_READING becomes "usageWeekly": the answer
+    // would flip to `stop` on the 90 below.
+    const legacy = constantWindow(50, 80, 95);
+    const decision = decideBand(
+      {
+        windows: { legacy } as BudgetWindows,
+        readings: { usage5h: fresh(10), usageWeekly: fresh(90) },
+        elapsedHours: { legacy: 0 },
+      },
+      true,
+    );
+
+    if (decision.status !== "banded") throw new Error("expected a band");
+    expect(decision.band).toBe("free");
+    expect(decision.governing.usage).toBe(10);
+  });
+
+  it("bands each window against its own figure when both are present", () => {
+    // The two must not contaminate each other. The short window is in
+    // `stop` on 96 and the weekly one is `free` on 5, so the account is
+    // `stop` — and the governing window has to be the short one.
+    const short = readingWindow("usage5h", 50, 80, 95);
+    const decision = decideBand(
+      {
+        windows: { aShort: short, bWeekly: weekly } as BudgetWindows,
+        readings: { usage5h: fresh(96), usageWeekly: fresh(5) },
+        elapsedHours: { aShort: 0, bWeekly: 0 },
+      },
+      true,
+    );
+
+    if (decision.status !== "banded") throw new Error("expected a band");
+    expect(decision.band).toBe("stop");
+    expect(decision.governing.window).toBe("aShort");
+    expect(decision.verdicts).toHaveLength(2);
+  });
+});
+
+describe("decideBand — a missing reading is never permissive", () => {
+  const weekly: BudgetWindow = {
+    enabled: true,
+    lengthHours: 168,
+    reads: "usageWeekly",
+    boundaries: {
+      selective: { kind: "constant", value: 15 },
+      windDown: { kind: "constant", value: 30 },
+      stop: { kind: "constant", value: 45 },
+    },
+  };
+
+  it("reports a REASON rather than `free` when the weekly reading is absent", () => {
+    // The contract this module exists to hold: an account that cannot be
+    // banded says so. Defaulting to the permissive end would make a broken
+    // usage pipeline indistinguishable from an account with room to spare,
+    // which is exactly how a budget gets spent without anyone noticing.
+    //
+    // Fails if the absent branch falls through to banding, or if the
+    // per-window reason is dropped in favour of a bare boundary-undefined.
+    const decision = decideBand(
+      {
+        windows: { weekly } as BudgetWindows,
+        readings: { usage5h: fresh(1) },
+        elapsedHours: { weekly: 0 },
+      },
+      true,
+    );
+
+    expect(decision.status).toBe("unbanded");
+    if (decision.status !== "unbanded") throw new Error("expected no band");
+    expect(decision.reason).toBe("reading-absent");
+    expect(decision.verdicts).toHaveLength(0);
+  });
+
+  it("reports a reason when the weekly reading is present but stale", () => {
+    const stale: UsageReading = {
+      status: "stale",
+      value: 5,
+      takenAt: new Date("2026-08-30T12:00:00Z"),
+      ageSeconds: 86_400,
+    };
+
+    const decision = decideBand(
+      {
+        windows: { weekly } as BudgetWindows,
+        readings: { usage5h: fresh(1), usageWeekly: stale },
+        elapsedHours: { weekly: 0 },
+      },
+      true,
+    );
+
+    // 5% would be `free`, the most permissive answer available. Being
+    // unbanded instead is the point.
+    if (decision.status !== "unbanded") throw new Error("expected no band");
+    expect(decision.reason).toBe("reading-stale");
+  });
+
+  it("still bands the windows whose readings DID arrive", () => {
+    // A missing weekly figure must not hold back a short window that can be
+    // banded perfectly well. The account is not asked to have a reading no
+    // enabled window needs.
+    //
+    // Fails if a single absent reading short-circuits the whole account,
+    // which is what the pre-existing account-wide check did.
+    const short = constantWindow(50, 80, 95);
+    const decision = decideBand(
+      {
+        windows: { aShort: short, bWeekly: weekly } as BudgetWindows,
+        readings: { usage5h: fresh(96) },
+        elapsedHours: { aShort: 0, bWeekly: 0 },
+      },
+      true,
+    );
+
+    if (decision.status !== "banded") throw new Error("expected a band");
+    expect(decision.band).toBe("stop");
+    expect(decision.governing.window).toBe("aShort");
+    // Only the window that had a reading produced a verdict.
+    expect(decision.verdicts).toHaveLength(1);
   });
 });

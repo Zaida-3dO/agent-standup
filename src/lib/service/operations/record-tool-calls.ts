@@ -305,6 +305,18 @@ interface LiveAssignmentRow {
   readonly id: string;
   readonly itemId: string;
   readonly state: string;
+  /**
+   * The model and effort the DISPATCHER chose, as `claim` recorded them.
+   *
+   * Null when the claim named none — plenty of claims do not, and a claim
+   * that said nothing must stay indistinguishable from one that was never
+   * asked, never be defaulted into a model name nobody selected.
+   *
+   * These are a FALLBACK for what telemetry reports, never a replacement;
+   * see `reportedFacets` for which wins and why.
+   */
+  readonly model: string | null;
+  readonly effort: string | null;
 }
 
 /**
@@ -379,7 +391,8 @@ async function liveAssignment(
                LIMIT 1
             )
         AND i."id" = a."itemId"
-     RETURNING a."id", a."itemId", i."state"::text AS "state"`,
+     RETURNING a."id", a."itemId", i."state"::text AS "state",
+               a."model", a."effort"`,
     sessionId,
   );
   return rows[0] ?? null;
@@ -443,6 +456,49 @@ const RECORD_TOOL_CALLS_CONTRACT = {
     calls: [{ tool: "Bash", ts: "2026-09-14T09:00:00Z", inputTokens: 1200, outputTokens: 340 }],
   },
 } as const;
+
+/**
+ * The `(model, effort)` pair one call is attributed by.
+ *
+ * **Telemetry wins; the assignment fills the gap.** Both are real evidence
+ * and they answer subtly different questions — the call reports which model
+ * actually SERVED it, the claim records which model the dispatcher CHOSE —
+ * so where they disagree the served one is the truth for costing, and it
+ * takes precedence unconditionally.
+ *
+ * The fallback exists because for Claude Code the reported half is
+ * structurally empty. Its hook payload carries no model under any key
+ * (measured 2026-09-14 against a live session, and confirmed against the
+ * vendor's hooks reference), so every run cut from its telemetry stored the
+ * `"(unreported)"` sentinel — all 60 runs on Clyde did — and the Cost view
+ * could only answer "No rate configured for: (unreported)". The dispatcher
+ * knew the model the whole time and recorded it on `Assignment`; nothing
+ * carried it the one step across to the run. This is that step.
+ *
+ * `undefined` rather than `null` for an absent value, because that is what
+ * `decideRun` treats as "nothing was reported" — the reading that adopts
+ * into an open run rather than cutting a new one. Handing it a null would
+ * be asserting an absence the claim never made.
+ *
+ * Note this is a per-call decision even though the assignment half is
+ * constant across the batch: a mid-batch model switch must still cut a run
+ * at the exact call it happened on, and folding the fallback in per call
+ * keeps that decision where `attribute` can see it.
+ */
+function reportedFacets(
+  call: { readonly model?: string | null; readonly effort?: string | null },
+  live: LiveAssignmentRow | null,
+): { readonly model?: string; readonly effort?: string } {
+  // `?? undefined` on each side, not one at the end: the call's own `null`
+  // means "this call reported nothing", which must fall THROUGH to the
+  // assignment rather than short-circuiting as a reported absence.
+  const model = call.model ?? live?.model ?? undefined;
+  const effort = call.effort ?? live?.effort ?? undefined;
+  return {
+    ...(model === undefined ? {} : { model }),
+    ...(effort === undefined ? {} : { effort }),
+  };
+}
 
 export const recordToolCalls = defineOperation({
   name: "record_tool_calls",
@@ -534,7 +590,7 @@ export const recordToolCalls = defineOperation({
           ctx.db,
           owner,
           run,
-          { model: call.model, effort: call.effort },
+          reportedFacets(call, live),
           {
             inputTokens: call.inputTokens ?? 0,
             outputTokens: call.outputTokens ?? 0,

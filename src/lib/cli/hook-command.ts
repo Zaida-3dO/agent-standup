@@ -42,7 +42,7 @@
 
 import { runHook, type RunHookOptions } from "@/lib/hook/run";
 import { parseHookPayload } from "@/lib/hook/payload";
-import { buildRecord, type SpooledToolCall } from "@/lib/hook/spool-record";
+import { buildRecord, type ReportedUsage, type SpooledToolCall } from "@/lib/hook/spool-record";
 import { readReportedPaths, readReportedUsage } from "@/lib/hook/usage";
 import {
   serialiseRecord,
@@ -133,6 +133,42 @@ export interface SpoolCeilingOptions {
   readonly appendCounter?: () => number;
   readonly maxRecords?: number;
   readonly trimInterval?: number;
+  /**
+   * Reads the usage attributable to this call from the session transcript.
+   *
+   * Injected rather than imported, for the same reason the spool is: this
+   * module is asserted not to touch the filesystem, and the reader does.
+   * `@/lib/cli/transcript-file`'s `readTranscriptDelta` is the production
+   * implementation; a test supplies a value and never a file.
+   *
+   * It exists because **the hook payload carries no token usage at all** —
+   * measured against a live Claude Code session on 2026-09-14 and confirmed
+   * against the vendor's hooks reference. `readReportedUsage` is correct and
+   * finds nothing, which is why every spooled record read zero. The counts
+   * do exist in the file `transcript_path` points at, so this is the hop
+   * across to them.
+   *
+   * Returning `undefined` means "nothing measured" and leaves whatever the
+   * payload reported untouched.
+   */
+  readonly readTranscriptUsage?: (transcriptPath: string | undefined) => ReportedUsage | undefined;
+}
+
+/**
+ * The transcript path the payload names, when it names a readable one.
+ *
+ * Every Claude Code hook event carries `transcript_path`; the camelCase
+ * spelling is accepted beside it on the same principle as everywhere else
+ * in this directory — spellings are listed, never scanned for.
+ */
+function transcriptPathOf(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const source = payload as Record<string, unknown>;
+  for (const key of ["transcript_path", "transcriptPath"]) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return undefined;
 }
 
 /**
@@ -171,10 +207,21 @@ export function spoolEvent(
     return undefined;
   }
 
+  // The payload's own report first, then the transcript fills what it did
+  // not carry. The ORDER is the whole point: a field the payload reported
+  // is a first-hand statement about THIS call, while the transcript's is a
+  // reading of a session-wide total, so the payload wins wherever both
+  // speak. Which source supplies which field varies by agent tool and is
+  // never assumed here: this merge is written so that either side may
+  // report any field, or none.
+  const reported = readReportedUsage(payload);
+  const transcript = options?.readTranscriptUsage?.(transcriptPathOf(payload));
+  const usage: ReportedUsage = transcript === undefined ? reported : { ...transcript, ...reported };
+
   const record = buildRecord({
     event: parsed.event,
     now,
-    usage: readReportedUsage(payload),
+    usage,
     paths: readReportedPaths(payload),
   });
   if (record === undefined) return undefined;

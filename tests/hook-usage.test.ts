@@ -136,3 +136,45 @@ describe("reading the paths a call touched", () => {
     expect(readReportedPaths({ file_path: "src/a.ts" })).toEqual(["src/a.ts"]);
   });
 });
+
+describe("a field the harness wraps in an object is still read", () => {
+  // Measured against a live Claude Code PostToolUse payload on 2026-09-14:
+  // `effort` arrives as `{"level":"high"}`, NOT as `"high"`. Read with a
+  // bare string test that object fails `typeof value === "string"` and is
+  // discarded, which is why every spooled record carried no effort at all
+  // while the harness was reporting one on every single call. The value was
+  // there the whole time; the reader was looking at the wrong shape.
+  it("reads effort from the {level} wrapper the harness actually sends", () => {
+    // Fails the moment `labelled` is reduced back to `text`.
+    expect(readReportedUsage({ effort: { level: "high" } })).toEqual({ effort: "high" });
+  });
+
+  it("still reads a bare string, so the wrapper is additive", () => {
+    // The unwrapping must not cost the plain spelling: another agent tool
+    // reporting `effort: "low"` has to keep working.
+    expect(readReportedUsage({ effort: "low" })).toEqual({ effort: "low" });
+  });
+
+  it("reads a wrapped model too", () => {
+    expect(readReportedUsage({ model: { level: "claude-opus-4-8" } })).toEqual({
+      model: "claude-opus-4-8",
+    });
+  });
+
+  it("ignores a wrapper whose inner value is not a string", () => {
+    // A number under `level` is not a label. Carrying it would push a
+    // non-string into a field the record's normaliser then drops anyway —
+    // same outcome, but the wrongness becomes invisible one layer later.
+    expect(readReportedUsage({ effort: { level: 7 } })).toEqual({});
+  });
+
+  it("does not unwrap an arbitrary key, only the named ones", () => {
+    // Deliberately NOT "take the first string in the object". A wrong
+    // label is worse than a missing one here: a missing effort is visibly
+    // unreported, while a wrong one silently cuts a run boundary and
+    // re-attributes that run's cost.
+    //
+    // Fails if WRAPPER_KEYS is replaced by a scan over Object.values.
+    expect(readReportedUsage({ effort: { tier: "high" } })).toEqual({});
+  });
+});

@@ -755,4 +755,92 @@ describeIfDb("record_tool_calls — telemetry ingest against Postgres", () => {
       expect(out.itemId).toBeNull();
     });
   });
+  /**
+   * The run's `(model, effort)` — SCHEMA.md §11, and the defect that made
+   * the Cost view unable to price anything at all.
+   *
+   * The shape of the bug, measured on Clyde 2026-09-14: all 60 runs carried
+   * the `"(unreported)"` sentinel, so the Cost view could only answer "No
+   * rate configured for: (unreported)". The cause was not that the model
+   * was unknown — the dispatcher had chosen one and `claim` had recorded it
+   * on `Assignment` — but that nothing carried it the one step across to
+   * the run. Claude Code's hook payload reports no model under any key
+   * (measured against a live session; confirmed against the vendor's hooks
+   * reference), so the telemetry half is structurally empty for it and the
+   * sentinel was the only value a run could ever get.
+   *
+   * DB-backed because the property under test IS the join: that the same
+   * statement which resolves the session's assignment also returns the
+   * facets it recorded. A double would decide that by whatever it
+   * implemented.
+   */
+  describe("falls back to the assignment's model when telemetry reports none", () => {
+    /** Claims with an explicitly chosen model/effort, as a dispatcher does. */
+    async function claimWithChoice(itemId: string, sessionId: string) {
+      await registerSessions(prisma, [sessionId]);
+      return runtime.call("claim", {
+        itemId,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-member",
+        sessionId,
+        machine: "laptop",
+        model: "claude-opus-4-8",
+        effort: "high",
+      });
+    }
+
+    /** The newest run for a session. */
+    async function newestRun(sessionId: string) {
+      const rows = await prisma.$queryRawUnsafe<{ model: string; effort: string }[]>(
+        `SELECT "model", "effort" FROM "Run"
+          WHERE "sessionId" = $1 ORDER BY "startedAt" DESC LIMIT 1`,
+        sessionId,
+      );
+      return rows[0]!;
+    }
+
+    it("stores the CHOSEN model on the run when the call reported none", async () => {
+      // The whole defect in one assertion. Fails — back to "(unreported)" —
+      // if `reportedFacets` stops consulting `live`, or if the RETURNING
+      // clause drops a."model".
+      const itemId = await seedItem();
+      await claimWithChoice(itemId, "s-facet-1");
+      await record("s-facet-1", [call()]);
+
+      const run = await newestRun("s-facet-1");
+      expect(run.model).toBe("claude-opus-4-8");
+      expect(run.effort).toBe("high");
+    });
+
+    it("lets the call's OWN report win over the assignment's", async () => {
+      // Precedence, not merely presence. The call reports which model
+      // actually SERVED it; the claim records which was CHOSEN. Where they
+      // disagree the served one is the truth for costing.
+      //
+      // Fails if the `??` order in `reportedFacets` is reversed.
+      const itemId = await seedItem();
+      await claimWithChoice(itemId, "s-facet-2");
+      await record("s-facet-2", [call({ model: "claude-sonnet-4-5", effort: "low" })]);
+
+      const run = await newestRun("s-facet-2");
+      expect(run.model).toBe("claude-sonnet-4-5");
+      expect(run.effort).toBe("low");
+    });
+
+    it("still records the sentinel when NEITHER side named a model", async () => {
+      // The fallback must not invent a model. A claim that named none is
+      // not evidence of one, and defaulting here would make an unattributed
+      // run indistinguishable from a deliberately-chosen one — which is
+      // exactly what the sentinel exists to keep visible.
+      //
+      // Fails if the fallback substitutes any literal when both are absent.
+      const itemId = await seedItem();
+      await claim(itemId, "s-facet-3");
+      await record("s-facet-3", [call()]);
+
+      const run = await newestRun("s-facet-3");
+      expect(run.model).toBe("(unreported)");
+    });
+  });
 });
