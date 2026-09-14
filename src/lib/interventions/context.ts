@@ -48,7 +48,12 @@ import { currentTipCommitSha } from "@/lib/service/guards/artifact-tip";
 import { hasApprovingArtifactAtCurrentRoundAndTip } from "@/lib/service/guards/merge-review-round";
 import { isWriteTool } from "@/lib/telemetry/shape";
 import { TERMINAL_STATES } from "@/lib/service/board/columns";
-import { isMergeAttempt, isPullRequestOpen, isWorkRecordingCommand } from "./commands";
+import {
+  isMergeAttempt,
+  isMergeLanding,
+  isPullRequestOpen,
+  isWorkRecordingCommand,
+} from "./commands";
 import { isBroadGitAdd } from "./builtins";
 import type { InterventionContext, InterventionPhase } from "./types";
 import { normaliseWorktree, sameWorktree } from "./worktree";
@@ -262,10 +267,35 @@ export function needs(
   // `--amend` and `--dry-run`, which is the same "work has just moved"
   // question asked for I13. `isPullRequestOpen` adds the one shape it has
   // no reason to know about.
+  //
+  // **`isMergeLanding` adds the closing moment, which is what I28 is
+  // actually about.** Without it the gate covered the commit/push boundary
+  // and stopped short of the merge: I28
+  // (`nits-merged-with-nothing-tracking-them`) fired while a row was still
+  // being worked and went silent at `gh pr merge`, the exact event where
+  // outstanding findings stop being visible. Its own docstring picks
+  // `immediate` timing because it "describes a row that is CLOSING", so a
+  // gate that excluded the close was one clause short of its own entry.
+  //
+  // **It is deliberately NOT `isMergeAttempt`, and the difference is
+  // `git pull`.** `isMergeAttempt` also matches a bare `git pull`, which
+  // is correct for the `approval` limb below — a pull can write a merge
+  // commit out of divergent history, and that is unreviewed work. But a
+  // pull is the opposite of a close: it catches a branch *up*, at the start
+  // or the middle of work, so no finding can become invisible because of
+  // one and it can never be the subject of any of these entries. Reusing
+  // `isMergeAttempt` here would therefore buy zero extra findings while
+  // putting the assignment and artifact lookups behind the single
+  // highest-frequency git command a session runs — the precise cost this
+  // gate exists to avoid, and the reason `git pull` is named in the
+  // zero-query cases rather than left to be inferred.
   const delivery =
     phase === "post" &&
     (isHandsOnTool(tool) ||
-      (command !== undefined && (isWorkRecordingCommand(command) || isPullRequestOpen(command))));
+      (command !== undefined &&
+        (isWorkRecordingCommand(command) ||
+          isPullRequestOpen(command) ||
+          isMergeLanding(command))));
 
   if (command === undefined || command.trim() === "") {
     return occupancy || handsOn || toolBlocks || delivery

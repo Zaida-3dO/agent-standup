@@ -176,6 +176,70 @@ export function isMergeAttempt(command: string): boolean {
 }
 
 /**
+ * Whether a command is *landing* work — the closing moment of a row, as
+ * opposed to merely writing a merge commit. I28's recognition half.
+ *
+ * ── Why this is not just `isMergeAttempt` ───────────────────────────────
+ *
+ * The two ask different questions, and reusing one for the other would be
+ * wrong in a way that costs load rather than correctness.
+ *
+ * `isMergeAttempt` answers *"could this introduce history that no review
+ * has seen?"*, for the approval limb. A bare `git pull` genuinely can —
+ * git will build a merge commit out of divergent history — so catching it
+ * there is right, and this function deliberately does not disturb that.
+ *
+ * This one answers *"is a row closing right now?"*, for the delivery limb.
+ * I28 (`nits-merged-with-nothing-tracking-them`) picks `immediate` timing
+ * precisely because it "describes a row that is CLOSING", and the same
+ * reasoning decides what counts: `git merge` and `gh pr merge` land the
+ * work, and are the moment outstanding findings stop being visible.
+ *
+ * ── `git pull` is excluded, and that is the whole point ─────────────────
+ *
+ * `git pull` is the opposite event. It catches a branch *up* at the start
+ * or the middle of work; nothing closes, and no finding can become
+ * invisible because of it. So including it would buy exactly zero
+ * additional findings — while putting the assignment and artifact lookups
+ * behind the single highest-frequency git command a session runs.
+ *
+ * That is the cost the `delivery` gate exists to avoid: its own comment in
+ * `context.ts` says what it excludes is the "ordinary read traffic that can
+ * never be the subject of any of them", and the zero-query suite in
+ * `hook-decision-operation.test.ts` pins it. A pull is that traffic.
+ *
+ * Row f296b059 is the standing warning here. `git pull --ff-only` was once
+ * read as a merge, and because it is what every session runs before it
+ * starts work, the false positive was met constantly and sent six attempts
+ * chasing the wrong explanation. Widening a gate onto `pull` is a mistake
+ * this module has already paid for once.
+ *
+ * `--ff-only` is excluded for `merge` for the same reason `isMergeAttempt`
+ * excludes it: git refuses unless the update is a fast-forward, so it moves
+ * a pointer and lands nothing that was not already on the remote. The
+ * `--abort`/`--continue`/`--quit` forms end a merge rather than landing
+ * one, and are excluded by name.
+ */
+export function isMergeLanding(command: string): boolean {
+  return splitStatements(command).some((statement) => {
+    const trimmed = statement.trim();
+
+    if (invokesGitSubcommand(trimmed, "merge")) {
+      if (/\s--(abort|continue|quit)\b/.test(trimmed)) return false;
+      if (allowsOnlyFastForward(trimmed)) return false;
+      return true;
+    }
+
+    // Matched on the subcommand pair rather than on `gh` alone, so the
+    // `gh pr view` / `gh pr checks` a session runs while watching its own
+    // PR stay off the query path.
+    if (/^gh\s+(?:[^\s;&|]+\s+)*?pr\s+merge\b/.test(trimmed)) return true;
+
+    return false;
+  });
+}
+
+/**
  * Whether a command would end processes without naming which ones — I12's
  * recognition half.
  *
