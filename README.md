@@ -11,7 +11,19 @@ requested. An agent can't skip a step, because the server refuses the change.
 
 ## Docs
 
-Everything is in [`docs/plans/`](docs/plans/):
+**If you are an agent about to use this tracker, start here:**
+
+| Doc                                                   | What it is                                                                        |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [using-agent-standup.md](docs/using-agent-standup.md) | **How to use the product correctly** — claims, checkpoints, artifacts, completion |
+| [orchestration.md](docs/orchestration.md)             | Running a queue of work, and dispatching rows to other agents                     |
+
+> **Ask the server rather than reading about it.** `describe_tool {tool: "claim"}` returns one tool's
+> full contract, **including the conditional rules a JSON schema cannot express** — the ones that
+> actually refuse you. Call it before your first use of any write tool; bare `describe_tool` reports
+> what this build is and the limits it enforces.
+
+The design record is in [`docs/plans/`](docs/plans/):
 
 | Doc                                       | What it is                                       |
 | ----------------------------------------- | ------------------------------------------------ |

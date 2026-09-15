@@ -36,6 +36,38 @@ import { HOOK_PROTOCOL_VERSION } from "@/lib/hook/protocol";
 // cannot live on this file, whose body runs on import.
 import { HOOK_BUILD_COMMIT, formatBuildStamp } from "@/lib/hook/build-stamp";
 
+/**
+ * Says, once per affected call, that the guard is not running.
+ *
+ * This is the one failure in the hook that is worth interrupting someone
+ * about, and the reason is the asymmetry: every *other* failure here is
+ * transient or self-evident, whereas a permanent `4xx` on the decision path
+ * is a misconfiguration that persists silently for as long as nobody looks.
+ * The hook still allows — that is DECISIONS.md §16 and is not being
+ * relitigated — but "I could not ask" and "I asked and it said yes" stop
+ * being the same observable event.
+ *
+ * `401` and `403` are named specifically because they have a specific
+ * remedy a reader can act on immediately, and because a missing
+ * `STANDUP_TOKEN` is by far the most likely way to arrive here: the token is
+ * supplied by whatever installs this script, and nothing about installing it
+ * forces that to happen.
+ *
+ * stderr, not stdout: stdout is the decision channel, where silence *is* the
+ * allow. Writing anything there would have to name a decision this branch
+ * has precisely failed to obtain.
+ */
+function reportAskFailure({ status }: { readonly status: number }): void {
+  const remedy =
+    status === 401 || status === 403
+      ? " — set STANDUP_TOKEN to a token this deployment accepts"
+      : "";
+  process.stderr.write(
+    `standup hook: the server refused the request (HTTP ${status})${remedy}. ` +
+      `The tool call was ALLOWED without being checked.\n`,
+  );
+}
+
 /** Reads stdin to the end. Empty string if there is nothing on it. */
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -82,7 +114,20 @@ async function main(): Promise<number> {
   const askServer =
     baseUrl === undefined || baseUrl === ""
       ? async () => undefined
-      : createHttpAsk({ baseUrl, fetch: globalThis.fetch as never });
+      : createHttpAsk({
+          baseUrl,
+          fetch: globalThis.fetch as never,
+          // `POST /api/hook` authenticates before it reads the body, so on a
+          // token-protected deployment a tokenless ask is a permanent `401`
+          // — and because a refused decision allows, that is a hook which
+          // enforces nothing while looking perfectly healthy. Read from the
+          // environment for the same reason the URL is: this script is
+          // configured by whatever installs it.
+          ...(env.STANDUP_TOKEN === undefined || env.STANDUP_TOKEN.trim() === ""
+            ? {}
+            : { token: env.STANDUP_TOKEN.trim() }),
+          onFailure: reportAskFailure,
+        });
 
   const stdin = await readStdin();
   const now = Date.now();

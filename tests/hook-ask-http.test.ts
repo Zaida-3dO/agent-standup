@@ -299,3 +299,150 @@ describe("every failure is no answer, which the caller allows on", () => {
     expect(await ask(responding([{ decision: "block" }]))(EVENT)).toBeUndefined();
   });
 });
+
+// The guard path's own authentication, and its one report.
+//
+// `POST /api/hook` runs `authenticatedCaller` before it reads the body, so
+// on a token-protected deployment a tokenless ask is a `401` forever. The
+// two sibling transports (`flush-http.ts`, `record-intervention-http.ts`)
+// already send a bearer token; this one did not, which made the guard the
+// only part of the hook that could not authenticate — and the failure was
+// invisible, because a refused decision allows.
+/** The headers of the first call, read without an unchecked index. */
+function headersOf(fetch: FetchLike): Record<string, string> {
+  const mock = (
+    fetch as unknown as { mock: { calls: [string, { headers: Record<string, string> }][] } }
+  ).mock;
+  const first = mock.calls[0];
+  if (first === undefined) throw new Error("fetch was never called");
+  return first[1].headers;
+}
+
+describe("authenticating the ask", () => {
+  it("sends the token as a bearer header when one is configured", async () => {
+    const fetch = responding({ decision: "allow" });
+    await createHttpAsk({
+      baseUrl: "http://server.invalid",
+      fetch,
+      token: "t-secret",
+      timeoutSignal: NO_TIMEOUT,
+    })(EVENT);
+
+    const headers = headersOf(fetch);
+    expect(headers.authorization).toBe("Bearer t-secret");
+    expect(headers["content-type"]).toBe("application/json");
+  });
+
+  it("sends no authorization header at all when no token is configured", async () => {
+    // A deployment with no tokens configured is supported, and an empty
+    // `Bearer ` is a header a strict server may reject outright — so the
+    // key must be absent rather than present-and-blank.
+    const fetch = responding({ decision: "allow" });
+    await ask(fetch)(EVENT);
+
+    const headers = headersOf(fetch);
+    expect(headers).not.toHaveProperty("authorization");
+  });
+
+  it("treats an empty token the same as no token", async () => {
+    const fetch = responding({ decision: "allow" });
+    await createHttpAsk({
+      baseUrl: "http://server.invalid",
+      fetch,
+      token: "",
+      timeoutSignal: NO_TIMEOUT,
+    })(EVENT);
+
+    const headers = headersOf(fetch);
+    expect(headers).not.toHaveProperty("authorization");
+  });
+});
+
+// Failing open is correct; failing open *silently* is the defect. A `401`
+// is otherwise byte-identical to a clean allow, so a hook enforcing nothing
+// looks exactly like a hook enforcing everything.
+describe("a permanent failure is reported, without changing the decision", () => {
+  it("reports a 401 and still allows", async () => {
+    const onFailure = vi.fn();
+    const verdict = await createHttpAsk({
+      baseUrl: "http://server.invalid",
+      fetch: responding({ error: "unauthorized" }, { ok: false, status: 401 }),
+      timeoutSignal: NO_TIMEOUT,
+      onFailure,
+    })(EVENT);
+
+    // Both halves matter: the caller must still allow (DECISIONS.md §16)
+    // AND somebody must have been told.
+    expect(verdict).toBeUndefined();
+    expect(onFailure).toHaveBeenCalledWith({ status: 401 });
+  });
+
+  it("reports a 403 as permanent too", async () => {
+    const onFailure = vi.fn();
+    await createHttpAsk({
+      baseUrl: "http://server.invalid",
+      fetch: responding({}, { ok: false, status: 403 }),
+      timeoutSignal: NO_TIMEOUT,
+      onFailure,
+    })(EVENT);
+    expect(onFailure).toHaveBeenCalledWith({ status: 403 });
+  });
+
+  it("stays quiet about a 500 — a server having a bad time is not a misconfiguration", async () => {
+    const onFailure = vi.fn();
+    await createHttpAsk({
+      baseUrl: "http://server.invalid",
+      fetch: responding({}, { ok: false, status: 500 }),
+      timeoutSignal: NO_TIMEOUT,
+      onFailure,
+    })(EVENT);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet about 408 and 429 — 4xx by number, transient by meaning", async () => {
+    // Crying wolf about a timeout or a rate limit on every tool call would
+    // train a reader to ignore the line that matters.
+    const onFailure = vi.fn();
+    for (const status of [408, 429]) {
+      await createHttpAsk({
+        baseUrl: "http://server.invalid",
+        fetch: responding({}, { ok: false, status }),
+        timeoutSignal: NO_TIMEOUT,
+        onFailure,
+      })(EVENT);
+    }
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when the server is simply unreachable", async () => {
+    // A laptop between networks is the ordinary condition, not a
+    // misconfiguration, and there is no status to report anyway.
+    const onFailure = vi.fn();
+    const fetch = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as FetchLike;
+
+    await createHttpAsk({
+      baseUrl: "http://server.invalid",
+      fetch,
+      timeoutSignal: NO_TIMEOUT,
+      onFailure,
+    })(EVENT);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("does not report a success, and does not require a callback to work", async () => {
+    const onFailure = vi.fn();
+    const verdict = await createHttpAsk({
+      baseUrl: "http://server.invalid",
+      fetch: responding({ decision: "block", reason: "nope" }),
+      timeoutSignal: NO_TIMEOUT,
+      onFailure,
+    })(EVENT);
+
+    expect(verdict?.decision).toBe("block");
+    expect(onFailure).not.toHaveBeenCalled();
+    // The callback is optional: a 401 with no `onFailure` must not throw.
+    await expect(ask(responding({}, { ok: false, status: 401 }))(EVENT)).resolves.toBeUndefined();
+  });
+});

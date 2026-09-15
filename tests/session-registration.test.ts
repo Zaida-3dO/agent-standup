@@ -577,6 +577,41 @@ describeIfDb("session registration and the claim refusal", () => {
     });
   });
 
+  describe("pointing a new session at the contracts it is about to be refused by", () => {
+    // `describe_tool` carries the conditional rules no schema can state,
+    // and was reachable only by a caller who already knew to ask for it.
+    // Registration is the first call a session makes, so it is the only
+    // reliable place to say so.
+    it("names describe_tool on a first registration", async () => {
+      const reply = await register("http", { sessionId: "first-timer", machine: "m" });
+      expect(reply.contracts).toContain("describe_tool");
+    });
+
+    it("says it UNCONDITIONALLY — unlike fetch, which a hooked session does not get", async () => {
+      // The distinction that makes this field worth having. A returning
+      // session is exactly the one whose build may have grown rules since
+      // it last asked, so suppressing the pointer once a hook is installed
+      // — the way `fetch` is rightly suppressed — would hide it from
+      // everybody who sticks around.
+      const reply = await register("http", {
+        sessionId: "already-hooked-contracts",
+        machine: "m",
+        hookVersion: HOOK_PROTOCOL.http.current,
+      });
+      expect(reply.fetch).toBeUndefined();
+      expect(reply.contracts).toContain("describe_tool");
+    });
+
+    it("names the two rules that actually refuse callers", async () => {
+      // Not decoration: these are the two most-hit refusals in the
+      // product, and a pointer that did not name them would be a link
+      // nobody follows.
+      const reply = await register("http", { sessionId: "named-rules", machine: "m" });
+      expect(reply.contracts).toContain("checkpoint");
+      expect(reply.contracts).toContain("rootSessionId");
+    });
+  });
+
   describe("the bootstrap loop — MILESTONES.md #125(b)", () => {
     // "A session must be able to say 'I have no hook, I have not set one
     // up' and get a route out rather than a dead end." This is that route:

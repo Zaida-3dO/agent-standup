@@ -12,6 +12,17 @@
 // caller allows (`./decide.ts`, DECISIONS.md §16) — and enumerating them at
 // the call site would eventually mean forgetting one.
 //
+// ── …but failing open must not also mean failing SILENTLY ──────────────
+//
+// Returning one value is right. Reporting nothing is not. A `401` here is
+// byte-identical to a clean allow from the outside — empty stdout, exit 0,
+// no stderr — so a hook installed against a token-protected deployment with
+// no token enforces nothing while looking perfectly healthy, indefinitely.
+// That is why this adapter takes a `token` (the two sibling transports,
+// `flush-http.ts` and `record-intervention-http.ts`, already did) and why it
+// reports a *permanent* failure through `onFailure`. The decision still
+// allows; the difference is that somebody is told.
+//
 // ── Only `block` blocks ────────────────────────────────────────────────
 //
 // A body whose `decision` this build has never seen reads as an allow, not
@@ -51,9 +62,59 @@ export const DEFAULT_TIMEOUT_MS = 5000;
 export interface AskHttpOptions {
   readonly baseUrl: string;
   readonly fetch: FetchLike;
+  /**
+   * The bearer token the deployment requires, when it requires one.
+   *
+   * `POST /api/hook` runs `authenticatedCaller` before it reads the body
+   * (`src/app/api/hook/route.ts`), so on a token-protected deployment a call
+   * with no token is a `401` every single time. Without this the guard path
+   * is the *only* one of the hook's three transports that cannot
+   * authenticate — the flush and capture senders both take a token already —
+   * and the failure is invisible, because a refused decision allows.
+   *
+   * Optional because a deployment with no tokens configured is still a
+   * supported one.
+   */
+  readonly token?: string;
   readonly timeoutMs?: number;
   /** Creates the abort signal for the timeout. Injected so the timeout is testable. */
   readonly timeoutSignal?: (ms: number) => AbortSignal | undefined;
+  /**
+   * Reports a failure that will recur identically until someone acts.
+   *
+   * A callback rather than a return value because the return type is
+   * `ServerVerdict | undefined` by design — the caller must not have to
+   * interpret a status to decide whether to allow. This is how the *reason*
+   * escapes without widening that contract, and it mirrors
+   * `flush-http.ts`'s `onFailure` deliberately.
+   *
+   * Only permanent failures are reported. An unreachable server is the
+   * ordinary condition of a laptop between networks and is not worth a line
+   * on every tool call; a `401` is a misconfiguration that will never fix
+   * itself.
+   */
+  readonly onFailure?: (failure: AskFailure) => void;
+}
+
+/** Why one ask did not produce a decision. */
+export interface AskFailure {
+  /** The HTTP status the server answered with. */
+  readonly status: number;
+}
+
+/**
+ * `4xx` other than the two that are genuinely transient.
+ *
+ * Identical in meaning to `flush-http.ts`'s classifier, and deliberately
+ * spelled the same way: `408` and `429` are `4xx` by number and transient by
+ * meaning, so reporting them as misconfiguration would cry wolf about a
+ * timeout or a rate limit that the next call succeeds through. A `5xx` is
+ * the server having a bad time, which is also not something the operator of
+ * this hook can fix by editing their configuration.
+ */
+function isPermanent(status: number): boolean {
+  if (status === 408 || status === 429) return false;
+  return status >= 400 && status < 500;
 }
 
 function property(value: unknown, key: string): unknown {
@@ -137,8 +198,10 @@ function readFindings(value: unknown): readonly InterventionFinding[] | undefine
 export function createHttpAsk({
   baseUrl,
   fetch,
+  token,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   timeoutSignal = defaultTimeoutSignal,
+  onFailure,
 }: AskHttpOptions) {
   const url = `${baseUrl.replace(/\/+$/, "")}/api/hook`;
 
@@ -148,7 +211,10 @@ export function createHttpAsk({
     try {
       response = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(token === undefined || token === "" ? {} : { authorization: `Bearer ${token}` }),
+        },
         body: JSON.stringify({
           eventType: event.eventType,
           sessionId: event.sessionId,
@@ -162,7 +228,13 @@ export function createHttpAsk({
       return undefined;
     }
 
-    if (!response.ok) return undefined;
+    // Still `undefined`, so the caller still allows — the decision is
+    // unchanged and deliberately so. What changes is that a failure which
+    // will recur forever stops being indistinguishable from a clean pass.
+    if (!response.ok) {
+      if (isPermanent(response.status)) onFailure?.({ status: response.status });
+      return undefined;
+    }
 
     let body: unknown;
     try {
