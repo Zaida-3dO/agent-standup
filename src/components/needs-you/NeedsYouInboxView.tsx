@@ -20,6 +20,9 @@ export interface NeedsYouInboxViewProps {
   /** Per-row reply text, keyed by item id — held here so the row stays hook-free. */
   readonly replyTexts: Readonly<Record<string, string>>;
   readonly onReplyTextChange: (itemId: string, value: string) => void;
+  /** Which rows have armed the standing grant's confirm step. */
+  readonly standingPending: Readonly<Record<string, boolean>>;
+  readonly onStandingPendingChange: (itemId: string, pending: boolean) => void;
   /** A response's own failure, surfaced above the list without discarding what already loaded. */
   readonly respondError: string | null;
   /** Confirmation that the last response landed — an action with no visible result reads as a no-op. */
@@ -36,6 +39,8 @@ export function NeedsYouInboxView({
   onGrantStanding,
   replyTexts,
   onReplyTextChange,
+  standingPending,
+  onStandingPendingChange,
   respondError,
   respondNotice,
 }: NeedsYouInboxViewProps) {
@@ -97,6 +102,8 @@ export function NeedsYouInboxView({
               onGrantStanding={onGrantStanding}
               replyText={replyTexts[item.id] ?? ""}
               onReplyTextChange={onReplyTextChange}
+              standingPending={standingPending[item.id] ?? false}
+              onStandingPendingChange={onStandingPendingChange}
             />
           ))}
         </ul>

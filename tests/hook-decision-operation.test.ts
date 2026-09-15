@@ -83,10 +83,67 @@ type Answer = {
   canBlock: boolean;
   findings: readonly { id: string; level: string; timing: string; messages: { plain: string } }[];
   enforcement?: { status: string; detail: string };
+  stop?: { liveCrew: number; wakeScheduled: boolean };
 };
 
 async function call(input: Record<string, unknown>): Promise<Answer> {
   return (await runtime().call("hook_decision", input)) as unknown as Answer;
+}
+
+/** The crew-count query the `Stop` branch makes — see `callStop`. */
+function isStopCrewLookup(query: string): boolean {
+  return query.includes(`AS "liveCrew"`);
+}
+
+/** The shell-call read the `Stop` branch makes to spot a backgrounded wait. */
+function isStopShellLookup(query: string): boolean {
+  return query.includes(`FROM "ToolCall"`) && query.includes(`"command"`);
+}
+
+/**
+ * Calls the operation with a handle that answers **only** the two reads the
+ * `Stop` branch makes, and still throws on anything else.
+ *
+ * ── Why `Stop` sits outside the zero-query set ─────────────────────────
+ *
+ * `../src/lib/hook/stop-catch.ts` reads a `stop` block off this operation's
+ * response, and assembling that block is the whole of what makes the catch
+ * able to speak. It cannot be gated on a command, because a `Stop` carries
+ * none.
+ *
+ * The volume argument that protects the other phases does not apply here: a
+ * `Stop` fires once per turn, not once per tool call, so these two reads are
+ * some five orders of magnitude rarer than the path the gate exists to keep
+ * free. The zero-query property is still asserted for every other phase
+ * below, which is where it was always load-bearing.
+ *
+ * Answered narrowly, for the same reason `untouchableHandle` is narrow: a
+ * permissive stub would let a genuine regression in context assembly pass
+ * silently on the `Stop` path too.
+ */
+function stopHandle(crew: number, commands: readonly string[]): TransactionHandle {
+  return {
+    $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+      if (isDisplacementLookup(query)) return [] as T;
+      if (isStopCrewLookup(query)) return [{ liveCrew: crew }] as T;
+      if (isStopShellLookup(query)) return commands.map((command) => ({ command })) as T;
+      throw new Error(`hook_decision must not touch the database: ${query}`);
+    },
+    $executeRawUnsafe: async () => {
+      throw new Error("hook_decision must not touch the database");
+    },
+  };
+}
+
+async function callStop(crew: number, commands: readonly string[] = []): Promise<Answer> {
+  const rt = new ServiceRuntime({
+    transaction: (body) => body(stopHandle(crew, commands)),
+    resolveSnapshot: async () => defaultSnapshot(),
+  });
+  return (await rt.call("hook_decision", {
+    eventType: "Stop",
+    sessionId: "s1",
+  })) as unknown as Answer;
 }
 
 /**
@@ -243,8 +300,18 @@ describe("what the operation answers", () => {
   });
 
   it("allows a Stop, which carries no tool or command at all", async () => {
-    const answer = await call({ eventType: "Stop", sessionId: "s1" });
+    const answer = await callStop(0);
     expect(answer.decision).toBe("allow");
+  });
+
+  it("allows a Stop even with crew running and no wake — the catch cannot refuse", async () => {
+    // DECISIONS.md §6's structural property, asserted rather than assumed:
+    // a refused stop can trap an agent in a loop, so no value the `stop`
+    // block can take may change the decision. This is the case that would
+    // block if anything ever wired the catch to the verdict.
+    const answer = await callStop(3);
+    expect(answer.decision).toBe("allow");
+    expect(answer.stop).toEqual({ liveCrew: 3, wakeScheduled: false });
   });
 });
 
@@ -261,7 +328,7 @@ describe("canBlock tracks the phase", () => {
   });
 
   it("is false for Stop", async () => {
-    expect((await call({ eventType: "Stop", sessionId: "s1" })).canBlock).toBe(false);
+    expect((await callStop(0)).canBlock).toBe(false);
   });
 
   it("does not depend on the tool or the command", async () => {
@@ -345,7 +412,12 @@ describe("the operation touches no table on the ordinary path", () => {
   // so every case below passing is the assertion.
 
   it("completes for an event carrying no command", async () => {
-    for (const eventType of ["PreToolUse", "PostToolUse", "Stop"]) {
+    // `Stop` is deliberately absent from this list — it assembles the stop
+    // catch's context, which is two reads it cannot gate on a command it
+    // does not carry. See `callStop` for why that is affordable and why the
+    // property still holds where it matters. The two phases that make up
+    // the traffic are unchanged.
+    for (const eventType of ["PreToolUse", "PostToolUse"]) {
       await expect(call({ eventType, sessionId: "s1" })).resolves.toMatchObject({
         decision: "allow",
       });
@@ -472,8 +544,12 @@ describe("the operation touches no table on the ordinary path", () => {
     expect(answer.findings).toEqual([]);
   });
 
-  it("completes for a Stop, which is advisory and asks the registry nothing", async () => {
-    const answer = await call({ eventType: "Stop", sessionId: "s1" });
+  it("asks the registry nothing on a Stop, which is advisory", async () => {
+    // The registry is not consulted on a `Stop`: the two reads it makes are
+    // the stop catch's own context, not a catalogue walk. `stopHandle` throws
+    // on the settings read the registry would need, so a change that
+    // consulted it here fails this case rather than passing quietly.
+    const answer = await callStop(0);
     expect(answer.decision).toBe("allow");
     expect(answer.findings).toEqual([]);
   });

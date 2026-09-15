@@ -91,6 +91,36 @@ export interface InterventionMessages {
   readonly prominent: string;
 }
 
+/** One working tree that more than one of a crew's items is claimed in. */
+export interface SharedTree {
+  /**
+   * The path as the claim recorded it — **raw, never normalised.**
+   *
+   * Its only consumer is a message a person or an agent reads, and the point
+   * of showing it is that they can compare it against what they believe
+   * their checkout to be. See `claimedWorktree` for the full reasoning: a
+   * normalised form is the right thing to compare and the wrong thing to
+   * display.
+   */
+  readonly worktree: string;
+  /** The items claimed in it, sorted. More than one is what makes it shared. */
+  readonly itemIds: readonly string[];
+}
+
+/** Where a crew's live claims sit on disk — see `crewTerritory`. */
+export interface CrewTerritory {
+  /** Every tree holding more than one item. Empty means none were found. */
+  readonly sharedTrees: readonly SharedTree[];
+  /**
+   * How many live claims recorded no worktree at all.
+   *
+   * Non-zero means the overlap check is **incomplete**, not that it passed.
+   * A predicate must not read an empty `sharedTrees` as "disjoint" while
+   * this is above zero.
+   */
+  readonly unrecordedWorktrees: number;
+}
+
 /**
  * What a predicate is handed.
  *
@@ -274,6 +304,67 @@ export interface InterventionContext {
    */
   readonly concurrentCrewItems?: number;
   /**
+   * Where this crew's live claims actually sit on disk.
+   *
+   * The owner's correction to the wide-crew nudge: *"I think this should
+   * only be if those 3 are on the same worktree… there's no need to be
+   * cautious if they are on separate worktrees."* Width alone says nothing
+   * about whether two crews can commit over each other, and a nudge that
+   * fires on three crews in three separate trees is telling a careful
+   * orchestrator to go and check something it already got right.
+   *
+   * ── Why both halves are needed ─────────────────────────────────────────
+   *
+   * `worktree` is **optional** on `claim`, so "no shared tree was found" has
+   * two very different causes: every claim recorded a path and they differ,
+   * or some claim recorded nothing and the comparison could not be made.
+   * Reporting only the overlaps would collapse those into one answer and
+   * silence the entry exactly where it knows least. So the unrecorded count
+   * travels alongside, and the entry says plainly that it could not rule a
+   * conflict out.
+   */
+  readonly crewTerritory?: CrewTerritory;
+  /**
+   * How many crew under this session's root are **genuinely running right
+   * now**, excluding the session itself.
+   *
+   * ── Why this is not `concurrentCrewItems`, which it sits beside ────────
+   *
+   * The two look alike and answer different questions. `concurrentCrewItems`
+   * counts *items* a crew holds, to judge how wide a wave is; this counts
+   * *holders still working*, to judge whether anyone is still out there. An
+   * orchestrator whose six crew have all finished still holds six items and
+   * has nobody running — the first number says "wide", the second says
+   * "nothing to wait for", and an entry that asked the first while meaning
+   * the second would nudge a crew that had already come home.
+   *
+   * **Excludes the asking session**, which is what makes zero meaningful. A
+   * session assembling this context is by definition running, so counting
+   * itself would make the number never zero and the signal never false.
+   *
+   * ── "Genuinely live" means the Fleet page's notion, not the column ─────
+   *
+   * `Assignment.liveness` is a **stored** column advanced only by the sweep
+   * (`../liveness.ts`), so between passes it reports the previous pass's
+   * verdict. Reading it alone is exactly the bug #400 fixed: the Fleet page
+   * showed "Running (27)" for claims that had been gone for days. So the
+   * same two-part test `bandOf`/`isOverdueForSweep` (`../fleet/view.ts`) now
+   * uses applies here — the row must still say `running` **and** its
+   * `lastActive` must be newer than `liveness.dead_after_seconds`. A third
+   * competing definition of liveness is how the four tip-comparison call
+   * sites drifted apart, and this deliberately declines to open a fourth.
+   *
+   * ── Absent is "not known", and stays distinguishable from zero ─────────
+   *
+   * Absent means the server never counted — a call the gate declined to
+   * look up, or a session with no claim to find crew under. `0` is a real
+   * answer meaning it counted and nobody is running. A predicate must read
+   * `undefined` as no-finding rather than as "no crew", because the two
+   * lead to opposite advice: one is "I cannot tell", the other is "you are
+   * free to stop".
+   */
+  readonly crewInFlight?: number;
+  /**
    * Whether this item needs a visual review, is closing or closed without
    * one, and nothing links the review that will carry it out.
    *
@@ -319,6 +410,24 @@ export interface InterventionContext {
    * pull request; it has not started.
    */
   readonly deliveryStage?: DeliveryStage;
+  /**
+   * How long ago this item's newest `pull_request` artifact was recorded.
+   *
+   * The owner's refinement to `pull-request-with-no-review-requested`: *"I
+   * think it should be shortly after a PR was created and no reviewer has
+   * been dispatched… I bias towards shortly after, giving the agent a chance
+   * to go through its flow naturally."* Without an age the entry fires on
+   * the first digest after the pull request exists — including when the
+   * agent was about to call `request_review` on its very next call, which is
+   * nudging somebody for not yet having done what they are in the middle of
+   * doing.
+   *
+   * Present only at the `pull_request_open` stage, since it is the only
+   * stage where the question is asked. Absent means the age could not be
+   * established, which a predicate must read as **cannot tell** rather than
+   * as old enough to speak — the same discipline every field here takes.
+   */
+  readonly pullRequestAgeSeconds?: number;
   /**
    * A merged review whose nits nothing is tracking — I28.
    *

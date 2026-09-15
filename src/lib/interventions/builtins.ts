@@ -31,6 +31,7 @@
 
 import {
   isBroadProcessKill,
+  isUnscopedRecursiveSearch,
   isMergeAttempt,
   isMergedByRefComparison,
   isRebaseOrDivergenceCheck,
@@ -1180,6 +1181,45 @@ const committedWithNoPullRequest: Intervention = {
  * it as an answer rather than an error: recording the request is the point,
  * because a review nobody recorded is one the board cannot see either.
  */
+/**
+ * How long a pull request is left alone before this entry speaks.
+ *
+ * ── Chosen from reasoning, NOT from measurement — stated plainly ───────
+ *
+ * The honest position first: **this number is not derived from data.** The
+ * right way to set it is to measure real items from `pull_request` artifact
+ * to `review_requested` event and put the window past the normal case. That
+ * query needs the production database, which is not reachable from the
+ * machine this was built on, so no sample was taken and none is claimed. If
+ * this is later measured and the normal gap turns out longer, this constant
+ * is the one thing to change.
+ *
+ * ── Why fifteen minutes is nonetheless defensible ──────────────────────
+ *
+ * The entry rides the **digest**, which batches at roughly five-minute
+ * intervals. So the smallest window that changes any behaviour at all is one
+ * digest cycle, and a window of one cycle would fire on the second digest —
+ * barely different from the first. Three cycles is the first value that
+ * gives an agent a genuinely uninterrupted stretch to finish its own flow:
+ * open the pull request, write the handoff, call `request_review`. That
+ * sequence is minutes of work, not seconds, and it is the sequence the owner
+ * means by *"a chance to go through its flow naturally"*.
+ *
+ * ── Which way it errs, which is the reason it is not shorter ───────────
+ *
+ * Too short and the entry nudges agents who were already doing the thing,
+ * which is the false positive this window exists to delete and the kind that
+ * teaches a reader to skip the channel. Too long and a genuinely forgotten
+ * pull request waits an extra few minutes to be mentioned — on an item that
+ * is, by construction, not going anywhere. The costs are plainly asymmetric,
+ * so this rounds generous.
+ *
+ * Deliberately a constant rather than a setting: it is a property of how an
+ * agent's flow is paced, not something an operator has evidence to tune, and
+ * exposing it would invite raising it until the entry never fires.
+ */
+const PULL_REQUEST_GRACE_SECONDS = 15 * 60;
+
 const pullRequestWithNoReviewRequested: Intervention = {
   id: "pull-request-with-no-review-requested",
   source: "builtin",
@@ -1200,6 +1240,11 @@ const pullRequestWithNoReviewRequested: Intervention = {
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.deliveryStage !== "pull_request_open") return { triggered: false };
+    // The grace window. Absent is "cannot tell" and stays silent — firing on
+    // an unknown age would put the entry back exactly where it was before
+    // the window existed, on every item whose artifact carried no timestamp.
+    const age = context.pullRequestAgeSeconds;
+    if (age === undefined || age < PULL_REQUEST_GRACE_SECONDS) return { triggered: false };
     return {
       triggered: true,
       ...(context.itemId === undefined ? {} : { data: { itemId: context.itemId } }),
@@ -1346,9 +1391,39 @@ const nitsMergedWithNothingTrackingThem: Intervention = {
  *
  * ── A nudge, and `immediate` rather than the digest ────────────────────
  *
+ * ── The worktree test, added after the entry shipped ───────────────────
+ *
+ * The owner's correction: *"I think this should only be if those 3 are on
+ * the same worktree… There's no need to be cautious if they are on separate
+ * worktrees."* He is right, and the signal was already in the rows the width
+ * query read — `Assignment.worktree` sat in them and was never looked at.
+ * Three crews in three separate trees cannot commit over each other, so the
+ * territory half of this advice has nothing to say to them, and an entry
+ * that speaks anyway is teaching its reader to skip it.
+ *
+ * **What keeps this honest is that `worktree` is optional on `claim`.** So
+ * there are three outcomes rather than two, and they are not collapsed:
+ * every path recorded and all distinct (silent); two or more sharing a tree
+ * (fires, naming the tree and the items); or some claim recording no path
+ * at all (fires, saying the check could not be completed). The third is the
+ * one a careless implementation loses — reading "no overlap found" as "no
+ * overlap" would silence the entry precisely where it knows least.
+ *
+ * The comparison runs over the normal form (`./worktree.ts`) and the message
+ * shows the raw path, for the reason `claimedWorktree` records: a normalised
+ * form is the right thing to compare and the wrong thing to display.
+ *
+ * ── Why review capacity does not speak on its own ──────────────────────
+ *
+ * Worth naming, because the entry's reasoning above gives two failures at
+ * width and only one of them reaches the disjoint case. Review capacity is
+ * real at width — four builders finishing together need four reviews — but
+ * the owner has judged it not worth a nudge by itself, and that judgement is
+ * respected rather than worked around by keeping a second reason to fire.
+ *
  * A nudge because dispatching a fourth crew is frequently right and this
- * entry cannot tell whether the territories overlap — only that it is now
- * worth checking. `immediate` because, unlike its digest-riding siblings,
+ * entry cannot tell whether the territories are *logically* disjoint — only
+ * whether they share a checkout. `immediate` because, unlike its digest-riding siblings,
  * the decision it speaks to is being made *by the call it rides on*: the
  * dispatch is in flight, and advice to plan the territories arrives
  * worthless five minutes after the agent was spawned.
@@ -1363,26 +1438,222 @@ const wideCrewDispatch: Intervention = {
   defaultTiming: "immediate",
   messages: {
     plain:
-      "This crew already holds several items at once. Check that the new agent's territory does " +
-      "not overlap the ones in flight before you add it — two crews in one checkout commit over " +
-      "each other — and decide now who reviews all of this, rather than when the pull requests " +
-      "land together.",
+      "This crew already holds several items at once, and they are not all in separate " +
+      "worktrees. Check that the new agent's territory does not overlap the ones in flight " +
+      "before you add it — two crews in one checkout commit over each other — and decide now " +
+      "who reviews all of this, rather than when the pull requests land together. If every " +
+      "crew is in its own worktree, this one is safe to disregard.",
     prominent:
-      "⚠️ You are dispatching into a crew that is already several items wide. Two things go " +
-      "wrong at this width, and both are cheap to prevent right now and expensive afterwards. " +
-      "First, territory: if the new agent's files overlap a crew already working, they will " +
-      "commit over each other, and a shared checkout makes that near-certain. Second, review " +
-      "capacity: every one of these finishes needing a review, and deciding that plan when the " +
-      "pull requests arrive together is how a visual pass per pull request gets dispatched. " +
-      "Say what the new agent's territory is, check it is disjoint from the others, and record " +
-      "who reviews the batch.",
+      "⚠️ You are dispatching into a crew that is already several items wide, and the claims " +
+      "do not show them all in separate worktrees. Two things go wrong at this width, and both " +
+      "are cheap to prevent right now and expensive afterwards. First, territory: if the new " +
+      "agent's files overlap a crew already working, they will commit over each other, and a " +
+      "shared checkout makes that near-certain — the finding data names the tree and the items " +
+      "sharing it. Second, review capacity: every one of these finishes needing a review, and " +
+      "deciding that plan when the pull requests arrive together is how a visual pass per pull " +
+      "request gets dispatched. Say what the new agent's territory is, check it is disjoint " +
+      "from the others, and record who reviews the batch. If some claims recorded no worktree, " +
+      "this could not be checked rather than having failed — recording a worktree on `claim` " +
+      "is what makes the check possible next time.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     const width = context.concurrentCrewItems;
     // Absent is "the server did not count", never zero. "More than 2" is
     // the owner's threshold, so three is the first width that speaks.
     if (width === undefined || width < 3) return { triggered: false };
+
+    // ── The territory test, per the owner's correction ──────────────────
+    //
+    // Absent means the territory was never examined, which is not the same
+    // as "disjoint" — so it falls through to firing, carrying no claim
+    // either way. Width alone remains a reason to speak when nothing is
+    // known about where the crews are.
+    const territory = context.crewTerritory;
+    if (territory !== undefined) {
+      // **Silent when the check ran and found no overlap.** Three crews in
+      // three separate trees cannot commit over each other, and telling
+      // them to go and check is the noise that trains a reader to skip hook
+      // output. Requires `unrecordedWorktrees === 0`: with any claim
+      // missing a path the comparison was incomplete, and an empty
+      // `sharedTrees` then means "found nothing" rather than "there is
+      // nothing".
+      if (territory.sharedTrees.length === 0 && territory.unrecordedWorktrees === 0) {
+        return { triggered: false };
+      }
+      return {
+        triggered: true,
+        data: {
+          concurrentCrewItems: width,
+          sharedTrees: territory.sharedTrees,
+          unrecordedWorktrees: territory.unrecordedWorktrees,
+        },
+      };
+    }
+
     return { triggered: true, data: { concurrentCrewItems: width } };
+  },
+};
+
+/**
+ * **I32** — crew are still running and the orchestrator has not looked.
+ *
+ * The entry the `wait_for_crew` crew declined to write, and was right to:
+ * the signal it needed did not exist. `InterventionContext` carried
+ * `isOrchestrator` and nothing saying whether crew were actually *in
+ * flight*, so the only predicate writable at the time was "you are an
+ * orchestrator" — which fires on every orchestrator on every qualifying call
+ * forever, catches nothing, and is precisely the pattern two notes in
+ * `feedback/` already record as a guard that gets switched off. That row is
+ * now built (`crewInFlight`), so this is.
+ *
+ * ── Why the count is the whole entry ───────────────────────────────────
+ *
+ * `crewInFlight` counts *holders still running* under this session's root,
+ * excluding the session itself. It deliberately does not reuse
+ * `concurrentCrewItems`, which counts items held: an orchestrator whose six
+ * crew have all finished still holds six items, so keyed on that number this
+ * would nudge somebody whose crew had already come home — advice to go and
+ * check on nobody.
+ *
+ * ── Why absent is silence, and why that is not merely caution ──────────
+ *
+ * Absent means the assembler never counted — a call that did not qualify, a
+ * session with no claim, or a builder rather than an orchestrator. `0` is a
+ * real answer meaning it counted and nobody is running. The two must not
+ * collapse, because they lead to opposite advice: "I cannot tell" and "you
+ * are free to stop" are different sentences, and only one of them is safe to
+ * say to someone whose crew may be mid-flight.
+ *
+ * ── Why a nudge, on the digest ─────────────────────────────────────────
+ *
+ * A nudge because having crew running is the ordinary healthy state of an
+ * orchestrator — this is not a defect being reported, it is a reminder that
+ * the work needs collecting. The digest because the advice keeps: crew that
+ * are running now will still be running in five minutes, and `standup crew
+ * wait` is just as useful then. That is the same test
+ * `nits-merged-with-nothing-tracking-them` states for the split — `immediate`
+ * is for a row that is *closing*, where the context evaporates once the
+ * session moves on, and nothing evaporates here.
+ *
+ * ── Its relationship to the stop catch, which it does not duplicate ────
+ *
+ * `../hook/stop-catch.ts` asks the same question at the moment a session
+ * tries to *end its turn*, and that is a different moment with a different
+ * remedy: there, the turn is about to close and the crew's work would land
+ * in a session that has stopped listening. This one rides an ordinary
+ * `post` call, where the orchestrator is still working and the reminder is
+ * simply that there is a cheaper way to find out than polling. The two are
+ * kept apart deliberately rather than merged, because a single entry firing
+ * on both would have to choose one timing, and the right timing genuinely
+ * differs.
+ */
+const crewInFlightWithoutCheckIn: Intervention = {
+  id: "crew-in-flight-without-check-in",
+  source: "builtin",
+  summary: "Crew are still running under this orchestrator, which has not waited on them.",
+  phase: "post",
+  audience: "orchestrator",
+  defaultLevel: "nudge",
+  defaultTiming: "digest",
+  messages: {
+    plain:
+      "Your crew are still running. Call `standup crew wait --since <cursor> &` to background a " +
+      "wait — it returns the moment one of them does something, rather than you polling the board.",
+    prominent:
+      "⚠️ You have crew still running and nothing waiting on them. Work that finishes into a " +
+      "session which has stopped listening is indistinguishable from work that failed — nobody " +
+      "reads the result and nothing merges. Call `standup crew wait --since <cursor> &` now to " +
+      "background a wait: it returns the moment a crew member reports, so you collect the work " +
+      "instead of rediscovering it later.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    const crew = context.crewInFlight;
+    // Absent is "not counted", never zero — see the field's own note. A
+    // session whose crew state could not be determined must not be nudged.
+    if (crew === undefined || crew < 1) return { triggered: false };
+    return { triggered: true, data: { crewInFlight: crew } };
+  },
+};
+
+/**
+ * **I16 (nudge-level)** — a recursive content search nothing has narrowed.
+ *
+ * ── Why this ships while the catalogued entry stays unbuilt ────────────
+ *
+ * I16 is specced `block-overridable` and its `missing` names the reason it
+ * cannot be: *the size of the directory a search is rooted at*, which the
+ * server cannot see. A block would be refusing work on a guess, and a search
+ * of a leaf directory is fine.
+ *
+ * The owner asked for the weaker thing explicitly — *"can you at least nudge
+ * on any search to bias to try ls or quicker ways to navigate instead"* —
+ * and that needs no size signal at all. So the shape-only half ships as a
+ * nudge and the block-level half stays on the record with the size signal
+ * named as what it waits for.
+ *
+ * ── The finding, stated precisely ──────────────────────────────────────
+ *
+ * Not "searching is wrong" — that would be advice to stop using a tool the
+ * job requires. It is: *reaching for a recursive content search where
+ * listing the directory first would have answered the question, on a tree
+ * where the search is slow enough to burn the turn it was meant to save.*
+ * The remedy is named rather than implied, because a nudge that says "this
+ * may be slow" without saying what to do instead is a complaint.
+ *
+ * What is exempt is as much the design as what matches, and
+ * `isUnscopedRecursiveSearch` carries that reasoning: a path, a glob or a
+ * type filter all mean the caller has already done the narrowing this entry
+ * is asking for, and firing on them would put a message on correctly-scoped
+ * work.
+ *
+ * ── `immediate`, like every other command-shape entry ──────────────────
+ *
+ * The advice is worthless once the command has run — the turn it would have
+ * saved is already spent — so it cannot ride the digest, which is where
+ * advice about work that *keeps* belongs. This is weighed against the entry
+ * firing more often than anything else in the catalogue and it still comes
+ * out this way: a nudge arriving five minutes after the slow search
+ * finished is noise with none of the benefit.
+ *
+ * ── It is built to be judged, and that is deliberate ───────────────────
+ *
+ * **This will fire more often than any other entry here, and it is the one
+ * most likely to be judged noise.** That is now a measurable question
+ * rather than an argument: firings carry a scoring prompt, so the
+ * keep-or-retire decision can be made on data. The message asks the reader
+ * to rate it, so the data exists to make that call with.
+ */
+const unscopedRecursiveSearch: Intervention = {
+  id: "unscoped-recursive-search",
+  source: "builtin",
+  summary: "A recursive content search with no path, glob or type narrowing it.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "Check whether a directory listing would answer this faster. A recursive content search " +
+      "with no path or glob walks the whole tree, and on a large one it burns the turn it was " +
+      "meant to save — try `ls <dir>` first, or scope the search to a subdirectory or a file " +
+      "type. Rate this nudge so it can be tuned or switched off.",
+    prominent:
+      "⚠️ This search is not scoped to anything. Consider listing the directory first: a " +
+      "recursive content search with no path, glob or type filter walks every file under the " +
+      "root, and on a large tree that costs more time than reading the structure directly. " +
+      "Running `ls <dir>` " +
+      "on a couple of directories usually makes the structure obvious, and a search aimed at " +
+      "one subdirectory " +
+      "then answers in a fraction of the time. If the broad search really is what you want, run " +
+      "it — this refuses nothing. Rate this nudge either way: it fires often by design, and the " +
+      "score is what decides whether it stays.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    // Absent command is "not known", which is silent rather than a guess —
+    // the same reading every other shape-only entry takes.
+    if (context.command === undefined) return { triggered: false };
+    if (!isUnscopedRecursiveSearch(context.command)) return { triggered: false };
+    return { triggered: true };
   },
 };
 
@@ -1584,6 +1855,8 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   pullRequestWithNoReviewRequested,
   nitsMergedWithNothingTrackingThem,
   visualReviewDeferredWithoutRecord,
+  crewInFlightWithoutCheckIn,
+  unscopedRecursiveSearch,
 ];
 
 /**
@@ -1629,11 +1902,23 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
   {
     id: "I4",
     missing:
-      "whether a subagent reported complete. A session's own completion is reported by its " +
-      "release or its summary, but neither is attributable to a *parent* awaiting a handoff — " +
-      "`Assignment.parentSessionId` names the parent, and nothing records that the parent was " +
-      "told, so 'the orchestrator has not picked this up' cannot be told apart from 'the " +
-      "orchestrator picked it up half a second ago'.",
+      "an acknowledgement — nothing records that a parent was *told* its subagent finished. " +
+      "Stated carefully, because the previous wording led with attribution and was read as " +
+      "claiming a subagent cannot be linked to its parent at all, which is false and was " +
+      "challenged as such: `Assignment.parentSessionId` and `Assignment.rootSessionId` are both " +
+      "stored, the latter is indexed, and `crewWidthFor` and `crewInFlightFor` both already " +
+      "query on it. So the finishing half is fully observable — a released assignment under a " +
+      "root whose orchestrator still holds a live claim is one query, and it is the same query " +
+      "the crew-in-flight count makes with `releasedAt IS NOT NULL`. What no column carries is " +
+      "the other side: 'the orchestrator has not picked this up' is indistinguishable from 'the " +
+      "orchestrator picked it up half a second ago', because collection is not an event anybody " +
+      "writes. Recording one is a real design question — whether acknowledgement means reading " +
+      "a notification, moving the item, or simply the next tool call — and is its own row rather " +
+      "than a detail to settle inside another change. Note also that even a perfect " +
+      "acknowledgement signal needs a grace window, for the reason " +
+      "`pull-request-with-no-review-requested` needs one: the gap between a subagent finishing " +
+      "and its parent noticing is frequently seconds, and an entry without a window would fire " +
+      "almost entirely on orchestrators who were already collecting the work.",
   },
   {
     id: "I5",
@@ -1656,9 +1941,14 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
   {
     id: "I16",
     missing:
-      "the size of the directory a search is rooted at. The server cannot see the caller's " +
-      "filesystem, so the hook would have to carry a scope and a size signal with the call, and " +
-      "the hook reports no such field.",
+      "the size of the directory a search is rooted at, which is what the BLOCK-level entry " +
+      "specced here still waits on. The server cannot see the caller's filesystem, so the hook " +
+      "would have to carry a scope and a size signal with the call, and the hook reports no such " +
+      "field — without it a refusal could only be a guess, and a search of a leaf directory is " +
+      "perfectly fine. A nudge-level variant that needs none of that DOES ship, as " +
+      "`unscoped-recursive-search`: it reads the command's shape alone and suggests listing the " +
+      "directory first, which is the whole of what the owner asked for here. So what remains " +
+      "missing is only the evidence that would justify refusing rather than suggesting.",
   },
   {
     id: "I17",

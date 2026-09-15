@@ -424,6 +424,19 @@ const HOLDER_STALE_AFTER_SECONDS = 12 * 60 * 60;
 const CANDIDATE_LIMIT = 50;
 
 /**
+ * How many of a crew's live assignments the width query reads.
+ *
+ * A bound rather than an unbounded read, like every other query here. The
+ * previous form was a `COUNT`, which needed none; reading rows to answer the
+ * worktree question needs one. Set well above any crew width this system
+ * encourages — the entry that consumes it already calls three "wide" — so it
+ * can only be reached by a root session holding far more than anyone would
+ * dispatch deliberately, and at that width the finding is the same whether
+ * the tail is read or not.
+ */
+const CREW_ROW_LIMIT = 200;
+
+/**
  * Builds the context for one hook event.
  *
  * Every field it cannot honestly answer is left **absent**, never
@@ -447,8 +460,18 @@ export async function assembleContext(options: {
   readonly phase?: InterventionPhase;
   /** I14's thresholds. Handed in, like every other threshold in this system. */
   readonly handsOn?: HandsOnThresholds;
+  /**
+   * `liveness.dead_after_seconds`, for the crew-in-flight count.
+   *
+   * Handed in rather than defaulted, like every other threshold here. A
+   * default would be a second copy of a configured value, and the point of
+   * reusing the Fleet page's notion of liveness is that there is exactly one
+   * threshold — a caller that does not supply it gets the field left absent,
+   * which every predicate already reads as "not known".
+   */
+  readonly crewInFlightDeadAfterSeconds?: number;
 }): Promise<InterventionContext> {
-  const { db, sessionId, tool, command, phase, handsOn } = options;
+  const { db, sessionId, tool, command, phase, handsOn, crewInFlightDeadAfterSeconds } = options;
 
   const base: InterventionContext = {
     sessionId,
@@ -581,7 +604,30 @@ export async function assembleContext(options: {
       }
     : withToolBlocks;
 
-  if (!wanted.approval) return withDelivery;
+  // Crew still running under this session's root.
+  //
+  // **Gated exactly as I14's window is: the delivery gate, then the
+  // orchestrator role.** The second gate is what makes it affordable, and
+  // it is also what makes it meaningful — `rootSessionId` on a builder's
+  // claim points at the orchestrator above it, so asking this for a builder
+  // would count its *siblings* and report them as the builder's own crew.
+  // Only the session that is the root of its crew gets a true answer, and a
+  // number that is true for one caller and misleading for another is worse
+  // than one that is simply absent for the second.
+  //
+  // `crewInFlightDeadAfterSeconds` absent means the caller did not supply
+  // the threshold, and there is no default here on purpose: a defaulted
+  // threshold would be a fourth definition of liveness invented at the call
+  // site, which is the exact drift this reuses the Fleet notion to avoid.
+  const withCrew =
+    wanted.delivery && claim.role === "orchestrator" && crewInFlightDeadAfterSeconds !== undefined
+      ? {
+          ...withDelivery,
+          ...(await crewInFlightFor(db, claim, sessionId, crewInFlightDeadAfterSeconds)),
+        }
+      : withDelivery;
+
+  if (!wanted.approval) return withCrew;
 
   // The merge gate's own primitives, reused rather than reimplemented. If
   // this asked the question differently from the guard that enforces it at
@@ -911,6 +957,66 @@ async function occupancyFor(
 }
 
 /**
+ * How many crew under one root are genuinely running right now.
+ *
+ * ── The liveness test is the Fleet page's, deliberately ────────────────
+ *
+ * `Assignment.liveness` is a **stored** column that only the sweep advances
+ * (`../liveness.ts`), so on its own it reports the last pass's verdict
+ * rather than the current state. Grouping on it directly is precisely the
+ * defect #400 fixed on the Fleet page, where "Running (27)" counted claims
+ * whose holders had been gone for days.
+ *
+ * So this asks the same two-part question `bandOf` now asks
+ * (`../fleet/view.ts`): the row must still say `running` **and** its
+ * `lastActive` must be newer than the dead threshold. Expressed in SQL here
+ * rather than by importing `isOverdueForSweep`, because that function reads
+ * a `FleetAssignment` view-model this path never builds — but it is the same
+ * predicate, and the deliberate choice is to have one notion of liveness in
+ * two dialects rather than two notions. `deadAfterSeconds` is handed in from
+ * the same `liveness.dead_after_seconds` setting the Fleet page reads, so
+ * they cannot drift on the threshold either.
+ *
+ * ── Why the session excludes itself ────────────────────────────────────
+ *
+ * The asking session is running by definition — it is making this very call.
+ * Counting it would put a floor of one under the number, which would make
+ * zero unreachable and "nobody is running" inexpressible. That is the whole
+ * signal, so the exclusion is load-bearing rather than tidiness.
+ *
+ * ── Why `{}` rather than `0` when the query answers nothing ────────────
+ *
+ * `COUNT` always returns a row, so an empty result set means the query did
+ * not answer rather than that the count was zero — the same reading every
+ * other optional field here takes. Writing `0` there would convert "I could
+ * not tell" into "you are free to stop", which is the inversion the type's
+ * header warns about and the one this row exists to avoid.
+ */
+async function crewInFlightFor(
+  db: TransactionHandle,
+  claim: AssignmentRow,
+  sessionId: string,
+  deadAfterSeconds: number,
+): Promise<Pick<InterventionContext, "crewInFlight">> {
+  const rows = await db.$queryRawUnsafe<{ crew: number }[]>(
+    `SELECT COUNT(DISTINCT a."sessionId")::int AS "crew"
+       FROM "Assignment" a
+      WHERE a."rootSessionId" = $1
+        AND a."sessionId" <> $2
+        AND a."releasedAt" IS NULL
+        AND a."liveness" = 'running'
+        AND a."lastActive" > NOW() - MAKE_INTERVAL(secs => $3)`,
+    claim.rootSessionId,
+    sessionId,
+    deadAfterSeconds,
+  );
+
+  const row = rows[0];
+  if (row === undefined) return {};
+  return { crewInFlight: row.crew };
+}
+
+/**
  * How far this item's committed work has got toward being merged — I26/I27.
  *
  * **One query over `Artifact` and `Event` rather than three.** The stages
@@ -941,16 +1047,25 @@ async function occupancyFor(
 async function deliveryFor(
   db: TransactionHandle,
   itemId: string,
-): Promise<Pick<InterventionContext, "deliveryStage">> {
+): Promise<Pick<InterventionContext, "deliveryStage" | "pullRequestAgeSeconds">> {
   const rows = await db.$queryRawUnsafe<
-    { hasCommit: boolean; hasPullRequest: boolean; hasReviewRequest: boolean }[]
+    {
+      hasCommit: boolean;
+      hasPullRequest: boolean;
+      hasReviewRequest: boolean;
+      pullRequestAgeSeconds: number | null;
+    }[]
   >(
     `SELECT EXISTS (SELECT 1 FROM "Artifact" WHERE "itemId" = $1 AND "kind" = 'commit')
               AS "hasCommit",
             EXISTS (SELECT 1 FROM "Artifact" WHERE "itemId" = $1 AND "kind" = 'pull_request')
               AS "hasPullRequest",
             EXISTS (SELECT 1 FROM "Event" WHERE "itemId" = $1 AND "type" = 'review_requested')
-              AS "hasReviewRequest"`,
+              AS "hasReviewRequest",
+            (SELECT FLOOR(EXTRACT(EPOCH FROM (NOW() - MAX(a."createdAt"))))::int
+               FROM "Artifact" a
+              WHERE a."itemId" = $1 AND a."kind" = 'pull_request')
+              AS "pullRequestAgeSeconds"`,
     itemId,
   );
 
@@ -960,7 +1075,24 @@ async function deliveryFor(
   // the existing flow entries take over, and neither I26 nor I27 has
   // anything left to say.
   if (row.hasReviewRequest) return { deliveryStage: "review_requested" };
-  if (row.hasPullRequest) return { deliveryStage: "pull_request_open" };
+  if (row.hasPullRequest)
+    return {
+      deliveryStage: "pull_request_open",
+      // ── The grace window's input, per the owner's "shortly after" ──────
+      //
+      // **The NEWEST pull-request artifact, not the oldest.** An item that
+      // reopened or replaced its pull request has started its flow again,
+      // and measuring from the first one would treat a minute-old pull
+      // request as hours stale because an earlier one existed. `MAX` is what
+      // makes the age describe the artifact that is actually waiting.
+      //
+      // Absent stays absent: a null age means no artifact carried a
+      // timestamp, which the predicate must read as "cannot tell" rather
+      // than as old enough to speak.
+      ...(row.pullRequestAgeSeconds === null
+        ? {}
+        : { pullRequestAgeSeconds: row.pullRequestAgeSeconds }),
+    };
   if (row.hasCommit) return { deliveryStage: "committed" };
   return {};
 }
@@ -1153,28 +1285,83 @@ async function pendingVisualReviewsFor(
 async function crewWidthFor(
   db: TransactionHandle,
   claim: AssignmentRow,
-): Promise<Pick<InterventionContext, "concurrentCrewItems">> {
+): Promise<Pick<InterventionContext, "concurrentCrewItems" | "crewTerritory">> {
   // No null guard on `rootSessionId`: `Assignment.rootSessionId` is
   // non-nullable in the schema, and `occupancyFor` above already relies on
   // that by comparing it directly. A defensive check here would be dead
   // code asserting the opposite of what the column guarantees.
-  const rows = await db.$queryRawUnsafe<{ items: number }[]>(
-    `SELECT COUNT(DISTINCT a."itemId")::int AS "items"
+  //
+  // **Rows rather than a count**, since the owner's ask added the worktree
+  // question. The width is derived from the same rows by counting distinct
+  // items here instead of in SQL — one read answering both questions, which
+  // is what keeps a dispatch at the one query it already cost.
+  const rows = await db.$queryRawUnsafe<{ itemId: string; worktree: string | null }[]>(
+    `SELECT a."itemId" AS "itemId", a."worktree" AS "worktree"
        FROM "Assignment" a
        JOIN "Item" i ON i."id" = a."itemId"
       WHERE a."rootSessionId" = $1
         AND a."releasedAt" IS NULL
         AND i."archivedAt" IS NULL
-        AND NOT (i."state"::text = ANY($2::text[]))`,
+        AND NOT (i."state"::text = ANY($2::text[]))
+      LIMIT $3`,
     claim.rootSessionId,
     TERMINAL_STATES,
+    CREW_ROW_LIMIT,
   );
 
-  const row = rows[0];
-  // No row is the query not having answered, which is "cannot tell" rather
-  // than zero — the same reading every other optional field here takes.
-  if (row === undefined) return {};
-  return { concurrentCrewItems: row.items };
+  // No rows is ambiguous in a way the count form was not: a crew always
+  // includes the asking session, so an empty result means the query did not
+  // answer rather than that the crew is empty. Treated as "cannot tell",
+  // the same reading every other optional field here takes.
+  if (rows.length === 0) return {};
+
+  const items = new Set(rows.map((row) => row.itemId));
+
+  // ── The worktree question, answered per ITEM rather than per row ──────
+  //
+  // Two agents on one item — a builder and its reviewer — legitimately
+  // share a worktree, and that is the normal shape rather than a
+  // collision. Grouping by item first is what stops the healthy handoff
+  // being reported as an overlap; what the entry is about is two *fronts*
+  // landing in one tree.
+  const treesByItem = new Map<string, Set<string>>();
+  let unrecorded = 0;
+  for (const row of rows) {
+    const normalised = normaliseWorktree(row.worktree);
+    if (normalised === undefined) {
+      unrecorded += 1;
+      continue;
+    }
+    const seen = treesByItem.get(normalised) ?? new Set<string>();
+    seen.add(row.itemId);
+    treesByItem.set(normalised, seen);
+  }
+
+  // A tree holding more than one item is a genuine overlap. The raw path is
+  // carried for the message rather than the normalised one — `claimedWorktree`'s
+  // own note explains why: a normalised form is the right thing to compare
+  // and the wrong thing to display, because lowercased and slash-flipped it
+  // stops resembling the string the caller sent.
+  const sharedTrees = [...treesByItem.entries()]
+    .filter(([, itemIds]) => itemIds.size > 1)
+    .map(([normalised, itemIds]) => ({
+      worktree:
+        rows.find((row) => normaliseWorktree(row.worktree) === normalised)?.worktree ?? normalised,
+      itemIds: [...itemIds].sort(),
+    }))
+    .sort((left, right) => left.worktree.localeCompare(right.worktree));
+
+  return {
+    concurrentCrewItems: items.size,
+    crewTerritory: {
+      sharedTrees,
+      // The count of claims that recorded no worktree at all. `worktree` is
+      // optional on `claim`, so this is common rather than exceptional —
+      // and it is the difference between "the territories are disjoint" and
+      // "I could not check", which the entry must not conflate.
+      unrecordedWorktrees: unrecorded,
+    },
+  };
 }
 
 /**

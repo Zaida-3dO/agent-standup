@@ -38,6 +38,16 @@ export interface NeedsYouRowProps {
   /** The reply text for this row, held by the container so this stays hook-free. */
   readonly replyText: string;
   readonly onReplyTextChange: (itemId: string, value: string) => void;
+  /**
+   * Whether the standing grant is awaiting confirmation on this row.
+   *
+   * Held by the container for the same reason `replyText` is — this
+   * component stays hook-free so a test can call it as a function and read
+   * the element tree back. See the module header.
+   */
+  readonly standingPending: boolean;
+  /** Arms the confirm step, or stands it back down. */
+  readonly onStandingPendingChange: (itemId: string, pending: boolean) => void;
 }
 
 export function NeedsYouRow({
@@ -50,6 +60,8 @@ export function NeedsYouRow({
   onGrantStanding,
   replyText,
   onReplyTextChange,
+  standingPending,
+  onStandingPendingChange,
 }: NeedsYouRowProps) {
   const responseKind = RESPONSE_KIND_BY_REASON[item.reason];
   const itemHref = `/items/${encodeURIComponent(item.id)}`;
@@ -118,10 +130,21 @@ export function NeedsYouRow({
                 )}
               </>
             ) : (
-              // Disabled with the reason stated, rather than offered and
-              // failing server-side: these kinds pin a commit, and the item
-              // has none to pin to.
-              <span className={styles.notYet}>No commit recorded yet — nothing to approve</span>
+              // Stands exactly where the approve button would be, rather
+              // than leaving a gap the reader has to interpret. An approval
+              // here names a commit and the item has none, so the control is
+              // withheld and the reason given in its place.
+              //
+              // The icon is not decoration: the explanation was carried by
+              // dim colour alone, which put it below AA for body text and
+              // made the one thing explaining a missing control the
+              // faintest thing on the row.
+              <span className={styles.notYet}>
+                <span className={styles.notYetIcon} aria-hidden="true">
+                  ○
+                </span>
+                No commit recorded yet — nothing to approve yet
+              </span>
             )}
           </div>
         ) : (
@@ -161,22 +184,60 @@ export function NeedsYouRow({
         </div>
       )}
 
-      {/* The standing grant — deliberately the quietest control on the row.
+      {/* The standing grant — a separate act, in its own region.
           "Approve this once" and "always approve this kind" are different
           acts, and this one removes the hold for whatever the item later
           becomes, so it must never be mistakable for the button beside it.
+
+          **Quiet is not the same as invisible, and the difference matters
+          most when the one-time approval is absent.** With no commit to
+          approve, this is the only control on the row — so styling it as
+          underlined text made the broadest, least reversible decision the
+          faintest thing on the card, and made it look like the links it
+          sits among. It now reads as a button, sits in its own region away
+          from the links and the status text, and asks once before it acts.
+
           Offered only where it applies: an item that does not need a
           person's merge authority has no hold for it to lift. */}
       {item.reason === "needs_approval" && (
-        <button
-          type="button"
-          className={styles.standing}
-          disabled={busy}
-          onClick={() => onGrantStanding(item.id)}
-          title="Sets this item's merge authority to pre-approved, so future work on it merges without asking you again."
-        >
-          Always approve this item — don&apos;t ask again
-        </button>
+        <div className={styles.standingRegion}>
+          {standingPending ? (
+            <>
+              <span className={styles.standingPrompt}>
+                Always approve <strong>{item.title}</strong>? Future work on it merges without
+                asking you again. You can change this on the item at any time.
+              </span>
+              <span className={styles.standingConfirmRow}>
+                <button
+                  type="button"
+                  className={styles.standingConfirm}
+                  disabled={busy}
+                  onClick={() => onGrantStanding(item.id)}
+                >
+                  Yes, always approve it
+                </button>
+                <button
+                  type="button"
+                  className={styles.standingCancel}
+                  disabled={busy}
+                  onClick={() => onStandingPendingChange(item.id, false)}
+                >
+                  Cancel
+                </button>
+              </span>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={styles.standing}
+              disabled={busy}
+              onClick={() => onStandingPendingChange(item.id, true)}
+              title="Sets this item's merge authority to pre-approved, so future work on it merges without asking you again."
+            >
+              Always approve this item — don&apos;t ask again
+            </button>
+          )}
+        </div>
       )}
     </li>
   );

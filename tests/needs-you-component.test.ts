@@ -41,6 +41,8 @@ function rowProps(overrides: Partial<Parameters<typeof NeedsYouRow>[0]> = {}) {
     onAnswer: vi.fn(),
     onGrantStanding: vi.fn(),
     replyText: "",
+    standingPending: false,
+    onStandingPendingChange: () => {},
     onReplyTextChange: vi.fn(),
     ...overrides,
   };
@@ -57,6 +59,8 @@ function viewProps(overrides: Partial<Parameters<typeof NeedsYouInboxView>[0]> =
     onAnswer: vi.fn(),
     onGrantStanding: vi.fn(),
     replyTexts: {},
+    standingPending: {},
+    onStandingPendingChange: () => {},
     onReplyTextChange: vi.fn(),
     respondError: null,
     respondNotice: null,
@@ -149,6 +153,21 @@ describe("NeedsYouRow — the control matches the reason", () => {
     expect(buttonLabels(tree)).not.toContain("Approve merge");
   });
 
+  it("explains the missing approval where the button would have been", () => {
+    // A withheld control leaves a gap, and a gap is something the reader has
+    // to interpret. The explanation stands in the action cluster rather than
+    // elsewhere on the row, so the answer is where the question is.
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_approval", state: "in_review", tipCommitSha: null }),
+      }),
+    );
+    const texts = findAllByType(tree, "span").map((el) =>
+      JSON.stringify((el.props as { children: unknown }).children),
+    );
+    expect(texts.some((text) => /no commit recorded yet/i.test(text))).toBe(true);
+  });
+
   it("shows the short sha a decision will be recorded against", () => {
     const tree = NeedsYouRow(
       rowProps({
@@ -186,11 +205,13 @@ describe("NeedsYouRow — the standing grant is a separate, quieter act", () => 
   it("is a different control from approve, and says so", () => {
     const onApprove = vi.fn();
     const onGrantStanding = vi.fn();
+    const onStandingPendingChange = vi.fn();
     const tree = NeedsYouRow(
       rowProps({
         item: item({ id: "item-z", reason: "needs_approval", tipCommitSha: "abc1234" }),
         onApprove,
         onGrantStanding,
+        onStandingPendingChange,
       }),
     );
 
@@ -199,11 +220,109 @@ describe("NeedsYouRow — the standing grant is a separate, quieter act", () => 
     );
     (standing!.props as { onClick: () => void }).onClick();
 
-    // Clicking the standing grant must never also record a one-off approval:
-    // they are different acts and conflating them would grant far more than
-    // the reader intended.
-    expect(onGrantStanding).toHaveBeenCalledWith("item-z");
+    // The first click ARMS the confirm step rather than granting. Clicking
+    // the standing grant must never also record a one-off approval: they are
+    // different acts and conflating them would grant far more than the
+    // reader intended.
+    expect(onStandingPendingChange).toHaveBeenCalledWith("item-z", true);
+    expect(onGrantStanding).not.toHaveBeenCalled();
     expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  // The HIGH finding from the visual review (artifact `5a1fd673`): with no
+  // commit to approve, the standing grant is the ONLY control on the row —
+  // so the broadest, least reversible decision was also the quietest thing
+  // on the card, and looked like the links beside it.
+  it("does not grant on a single click — it asks first", () => {
+    const onGrantStanding = vi.fn();
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ id: "item-z", reason: "needs_approval", tipCommitSha: null }),
+        onGrantStanding,
+      }),
+    );
+
+    for (const button of findAllByType(tree, "button")) {
+      (button.props as { onClick: () => void }).onClick();
+    }
+
+    // Nothing on the unconfirmed row can reach the grant. Removing the
+    // confirm step passes every other case in this file and fails this one.
+    expect(onGrantStanding).not.toHaveBeenCalled();
+  });
+
+  it("grants only from the confirm step, and names what is being granted", () => {
+    const onGrantStanding = vi.fn();
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({
+          id: "item-z",
+          title: "Ship the thing",
+          reason: "needs_approval",
+          tipCommitSha: "abc1234",
+        }),
+        standingPending: true,
+        onGrantStanding,
+      }),
+    );
+
+    const confirm = findAllByType(tree, "button").find((button) =>
+      /yes, always approve/i.test(String((button.props as { children: unknown }).children)),
+    );
+    expect(confirm).toBeDefined();
+    (confirm!.props as { onClick: () => void }).onClick();
+    expect(onGrantStanding).toHaveBeenCalledWith("item-z");
+  });
+
+  it("offers a way back out of the confirm step", () => {
+    // A confirm step with no cancel is a trap rather than a guard.
+    const onStandingPendingChange = vi.fn();
+    const onGrantStanding = vi.fn();
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ id: "item-z", reason: "needs_approval", tipCommitSha: "abc1234" }),
+        standingPending: true,
+        onStandingPendingChange,
+        onGrantStanding,
+      }),
+    );
+
+    const cancel = findAllByType(tree, "button").find((button) =>
+      /cancel/i.test(String((button.props as { children: unknown }).children)),
+    );
+    (cancel!.props as { onClick: () => void }).onClick();
+
+    expect(onStandingPendingChange).toHaveBeenCalledWith("item-z", false);
+    expect(onGrantStanding).not.toHaveBeenCalled();
+  });
+
+  it("keeps the unconfirmed prompt off the row until it is armed", () => {
+    // The confirm prompt must not be present-but-hidden: this harness reads
+    // the element tree, and a row that always rendered the confirm buttons
+    // would let the cases above pass while showing both states at once.
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ id: "item-z", reason: "needs_approval", tipCommitSha: "abc1234" }),
+        standingPending: false,
+      }),
+    );
+    const labels = buttonLabels(tree);
+    expect(labels.some((label) => /yes, always approve/i.test(label))).toBe(false);
+    expect(labels.some((label) => /cancel/i.test(label))).toBe(false);
+  });
+
+  it("still disables every control while a response is in flight", () => {
+    // Including the confirm step, which is the most consequential one here.
+    const tree = NeedsYouRow(
+      rowProps({
+        item: item({ reason: "needs_approval", tipCommitSha: "abc1234" }),
+        standingPending: true,
+        busy: true,
+      }),
+    );
+    for (const button of findAllByType(tree, "button")) {
+      expect((button.props as { disabled?: boolean }).disabled).toBe(true);
+    }
   });
 });
 
