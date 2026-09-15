@@ -23,7 +23,12 @@
 // nothing about `merged`, which is row #18's to gate.
 import type { Guard, GuardInput } from "../state-machine/guard";
 import { guardOk, guardRejected } from "../state-machine/guard";
-import { currentTipCommitSha, hasApproval, latestApprovalAtTip } from "./artifact-tip";
+import {
+  approvalsExistButNameNoCommit,
+  currentTipCommitSha,
+  hasApproval,
+  latestApprovalAtTip,
+} from "./artifact-tip";
 import {
   reviewEvidenceOverrideRemedy,
   reviewEvidenceOverrideSatisfies,
@@ -68,15 +73,28 @@ export const evidenceAtTipGuard: Guard = {
       }
 
       const tip = await currentTipCommitSha(input.db, input.item.id);
+      // Which of the two refusals with a real tip this is — read from the
+      // data, not from a new branch in the control flow. `merge.ts` uses
+      // this same helper to draw this same distinction on `code_review`,
+      // where a real tip likewise makes both sides reachable.
+      //
+      // With a tip present, both ARE reachable here: an approval naming an
+      // earlier sha is genuine staleness, and an approval naming no sha at
+      // all is the ordering trap. Nothing else can reach this line, because
+      // an approval naming the tip would have satisfied `latestApprovalAtTip`.
+      const approvalsNameNoCommit = await approvalsExistButNameNoCommit(
+        input.db,
+        input.item.id,
+        "plan_review",
+      );
       // latestApprovalAtTip already treats an approval whose sha is a git
       // abbreviation of the tip (or of anything the tip's lineage stands in
       // for) as current — see artifact-tip.ts's `shaMatches`. So a rejection
       // reaching here is never "the same commit, spelled at two lengths"; it
       // is either a real move (the plan changed after approval, and
       // re-review is the correct remedy) or an approval that never recorded
-      // a commit at all (unverifiable, and re-review is also the only way
-      // out, but for a different reason worth naming honestly rather than
-      // implying the plan moved when it may not have).
+      // a commit at all — which with a tip present is the ordering trap, and
+      // is named as such rather than reported as staleness.
       //
       // ── Why the no-tip sentence blames the ITEM, not the approval ───────
       //
@@ -93,10 +111,10 @@ export const evidenceAtTipGuard: Guard = {
       // Enumerated against real Postgres across all five no-commit shapes —
       // all-null, all-named, and both mixed orderings — and in every shape
       // that refused, the approvals named a commit. There is therefore no
-      // second case to branch on: a conditional here would be dead code,
-      // and `approvalsExistButNameNoCommit` (the helper `merge.ts` uses to
-      // draw this distinction on `code_review`, where a real tip makes both
-      // sides genuinely reachable) has nothing to distinguish on this path.
+      // second case to branch on in the NO-TIP arm: a conditional there
+      // would be dead code. `approvalsExistButNameNoCommit` is consulted
+      // only for the tip-present arm above, where both sides genuinely are
+      // reachable — the same use `merge.ts` makes of it on `code_review`.
       //
       // The remedy named is therefore a `commit` artifact rather than a
       // re-review. Nothing moved, so asking for re-review would send the
@@ -108,7 +126,37 @@ export const evidenceAtTipGuard: Guard = {
       return guardRejected(
         (tip
           ? `The most recent plan_review approval is not for the current tip commit (${tip}). ` +
-            "The plan has moved since it was approved — get it re-reviewed."
+            (approvalsNameNoCommit
+              ? // ── The ordering trap ──────────────────────────────────
+                //
+                // Reached when every approval names NO sha and a commit
+                // artifact exists. That is not staleness: a plan reviewed
+                // before any commit existed records no sha because there
+                // was none to record, and it stayed current right up until
+                // a `commit` artifact made the tip non-null.
+                //
+                // So the cause is the ORDER the two writes happened in, and
+                // saying "the plan has moved" here is false — nothing moved.
+                // Three builders in one wave read that sentence, believed
+                // it, and each spent a `review_evidence_override` on a plan
+                // that had been approved perfectly well. Overrides are
+                // counted permanently, so a wrong diagnosis here does not
+                // just cost the session, it corrupts the measure of how
+                // often this guard's default is genuinely wrong.
+                //
+                // The sequence is named outright because it is the actual
+                // remedy and it is cheap: take the transition first, then
+                // record the commit. `appliesTo` is `(plan_review,
+                // executing)` only, so a commit recorded after the
+                // transition is never examined by this guard.
+                "This approval records no commit of its own, so it is not being judged stale — " +
+                "it was current until a `commit` artifact gave this item a tip. The usual " +
+                "cause is order: recording a commit BEFORE taking the plan_review -> executing " +
+                "transition. Take the transition first and record the commit after it, and " +
+                "this does not arise. If the commit is already recorded, the plan was approved " +
+                "before it and still stands, use the override below rather than re-reviewing a " +
+                "plan nothing has changed about."
+              : "The plan has moved since it was approved — get it re-reviewed.")
           : "The most recent plan_review approval names a commit, but this item records no " +
             "`commit` artifact for it to be checked against. This is not staleness — nothing " +
             "has moved, and the approval is not the vague one here. Record a `commit` " +

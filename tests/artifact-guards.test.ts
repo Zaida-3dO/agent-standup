@@ -564,6 +564,150 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
       expect(await readState(id)).toBe("executing");
     });
 
+    // ── The ordering trap: a commit recorded BEFORE the transition ──────
+    //
+    // Three builders in one wave were refused here and each spent a
+    // `review_evidence_override` to get past it, which is three permanent
+    // rows recording that this guard's default was judged wrong when it was
+    // actually being asked the wrong question.
+    //
+    // The cause is ordering, not the commit. `evidence_at_tip` compares an
+    // approval against `currentTipCommitSha`, the newest `commit` ARTIFACT
+    // on the item — and `tipCommitLineage` extends only through explicitly
+    // recorded `supersedesSha` links, never git ancestry. So a plan approved
+    // at the branch base is never recognised as an ancestor of a commit
+    // recorded afterwards, and the guard cannot tell "the plan changed after
+    // approval" from "the approved plan was implemented". Those are opposite
+    // situations.
+    //
+    // The pair below is the demonstration: identical item, identical
+    // artifacts, identical shas — only the ORDER differs, and only one is
+    // refused. That is what makes this a sequence to document rather than a
+    // guard to redesign.
+    it("REFUSES when a commit artifact is recorded BEFORE the plan_review -> executing transition", async () => {
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      // The plan is approved at the branch base, naming no commit — the
+      // ordinary shape, since no commit exists when a plan is reviewed.
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: null,
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      // The builder starts work and records the commit BEFORE transitioning.
+      // This is the whole trap: a non-null tip is matched only by an approval
+      // naming that sha, and this approval names none.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "a".repeat(40),
+        createdAt: new Date(),
+      });
+
+      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
+      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      expect(await readState(id)).toBe("plan_review");
+
+      // ── The half that actually cost three sessions ──────────────────
+      //
+      // The refusal must NOT say the plan moved. Nothing moved: the plan was
+      // approved before any commit existed and is unchanged. Three builders
+      // read "get it re-reviewed", believed it, and spent a permanent
+      // override each. The negative assertion is the load-bearing one — a
+      // guard-id-only test passes against that wrong sentence forever.
+      const message = (error as { message: string }).message;
+      expect(message).not.toContain("has moved since it was approved");
+      expect(message).not.toContain("get it re-reviewed");
+      // And it must name the sequence that avoids it, since that is the
+      // actual remedy and it is free.
+      expect(message).toContain("order");
+      expect(message).toContain("plan_review -> executing");
+    });
+
+    it("ALLOWS the identical artifacts when the transition happens BEFORE the commit is recorded", async () => {
+      // Same item shape, same approval, same sha, same guard — the only
+      // difference is that the transition is taken first. It succeeds, which
+      // is what proves the refusal above is about sequence and not about the
+      // commit, the plan, or any property of the work.
+      //
+      // This is the assertion that would fail if someone "fixed" the trap by
+      // weakening the guard into passing both orders unconditionally, and
+      // equally the one that documents the workaround as real: transition,
+      // then record.
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: null,
+        createdAt: new Date(Date.now() - 60_000),
+      });
+
+      // Transition first — the approval is still current, because a
+      // commitless item has a null tip and a null approval matches it.
+      await callTransition(id, "executing", reg);
+      expect(await readState(id)).toBe("executing");
+
+      // The commit is recorded after, and nothing refuses it. The guard does
+      // not apply to any transition out of `executing`, so the work proceeds.
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "a".repeat(40),
+        createdAt: new Date(),
+      });
+      expect(await readState(id)).toBe("executing");
+    });
+
+    it("still REFUSES a plan that genuinely changed after approval, whatever the ordering", async () => {
+      // The criterion that keeps the fix honest: the guard exists to catch a
+      // plan approved at one commit and then moved. Documenting the ordering
+      // must not quiet that case too.
+      //
+      // Distinguishable from the ordering trap by the approval naming a
+      // DIFFERENT sha rather than none: the plan was reviewed at `a`, the
+      // item is now at `b`, and no supersession link says `b` carries `a`'s
+      // reviewed work. That is real staleness and stays refused.
+      const reg = new GuardRegistry();
+      reg.register(evidenceAtTipGuard);
+      const id = await createTask("plan_review");
+
+      await createArtifact({
+        itemId: id,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: "a".repeat(40),
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "commit",
+        commitSha: "b".repeat(40),
+        createdAt: new Date(),
+      });
+
+      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
+      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      // And it says the plan MOVED, which is the true diagnosis here and the
+      // one that distinguishes this from the ordering trap above.
+      const message = (error as { message: string }).message;
+      expect(message).toContain("has moved since it was approved");
+      // It must NOT offer the ordering advice, which would be wrong here and
+      // would send a reader to reorder two writes that are already in the
+      // right order. Together with the ordering test's inverse assertions,
+      // this is what pins the two diagnoses as genuinely distinct rather
+      // than one message widened to cover both.
+      expect(message).not.toContain("plan_review -> executing");
+      expect(await readState(id)).toBe("plan_review");
+    });
+
     it("does not reject when there is no approval at all — that is plan_approval.ts's rejection, not this guard's", async () => {
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
