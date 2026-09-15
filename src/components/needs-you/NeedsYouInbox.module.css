@@ -257,6 +257,17 @@
     align-items: center;
     min-height: 44px;
   }
+
+  /* The standing grant and its confirm step are tap targets on the same
+     terms as the decision buttons above — and this one is the least
+     reversible control on the screen, so a mis-tap costs the most. */
+  .standing,
+  .standingConfirm,
+  .standingCancel {
+    min-height: 44px;
+    padding: 0 var(--space-4);
+    font-size: var(--text-xs);
+  }
 }
 
 /* The success counterpart to `.decideError`. An action whose only visible
@@ -291,11 +302,29 @@
 }
 
 /* Stands where the buttons would be when a decision cannot be offered,
-   so the row explains itself instead of showing a dead control. */
+   so the row explains itself instead of showing a dead control.
+
+   `--text-secondary`, NOT `--text-faint`. Measured against `--surface-card`
+   the faint token is 3.85:1, which is below the 4.5:1 WCAG 1.4.3 asks for
+   body text — and this is the one string explaining why an expected control
+   is missing, so it was the most important text on the row set as the least
+   readable. Secondary measures 9.92:1 and matches "See findings" beside it.
+
+   The icon carries the same meaning as the colour did, so the state is not
+   conveyed by colour alone (WCAG 1.4.1). */
 .notYet {
-  font-size: var(--text-3xs);
-  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-2xs);
+  color: var(--text-secondary);
   white-space: nowrap;
+}
+
+.notYetIcon {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1;
 }
 
 /* The reply box for a question. Spans the full row under the meta, because
@@ -335,29 +364,112 @@
   opacity: 0.5;
 }
 
-/* The standing grant — deliberately the quietest control on the row.
-   A link-weight button, not a filled one: "always approve this" is a far
-   broader act than the approve button beside it and must never be the
-   thing a reader clicks by reflex. */
-.standing {
+/* The standing grant's own region.
+
+   Separated from the action cluster by a rule and its own row, because that
+   cluster mixes three kinds of thing — a link ("See findings"), a status
+   ("No commit recorded yet") and a decision — and the Law of Common Region
+   says a reader takes things sharing a region to be things of the same kind.
+   A standing grant read as another link is one clicked by reflex. */
+.standingRegion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  /* `.row` is a wrapping flex container, so a full-width child is one whose
+     basis fills the line — `grid-column` alone does nothing here. The
+     `grid-column` is kept because `.reply` carries it too and the row has
+     been a grid before; the flex basis is what actually forces the break. */
+  flex: 1 0 100%;
   grid-column: 1 / -1;
-  justify-self: start;
-  margin-top: var(--space-2);
-  padding: 0;
-  border: none;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* The standing grant — quieter than approve, but still plainly a button.
+
+   "Always approve this" is a far broader act than the approve button, so it
+   must never be the thing a reader clicks by reflex — a secondary treatment,
+   never a filled one. What it must NOT be is underlined text: underline
+   means link everywhere else on this row, so the row's heaviest decision was
+   wearing the costume of its lightest control (WCAG 1.4.1 / NN-g #4). It is
+   also frequently the ONLY control on the row, since the approve button is
+   withheld when no commit exists — which made the least reversible action
+   the least prominent thing on the card.
+
+   A visible border is the affordance, so it uses `--border-control` — the
+   token defined for "the boundary of an INPUT or a button", held to 3:1
+   against its surface per WCAG 1.4.11 and verified in
+   `tests/design-tokens-contrast.test.ts`. `--border-strong` is explicitly
+   NOT the right token here, as its own comment in `globals.css` says: it
+   divides and bounds regions, where being quiet is correct, and measures
+   1.63:1 against the card — which would have drawn a border a reader cannot
+   reliably see, leaving the affordance as absent as the underline did. */
+.standing {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
   background: none;
-  color: var(--text-faint);
-  font-size: var(--text-3xs);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
   cursor: pointer;
 }
 
 .standing:hover {
-  color: var(--text-secondary);
+  border-color: var(--text-muted);
+  background: var(--surface-raised);
+  color: var(--text-primary);
 }
 
-.standing:disabled {
+/* The confirm step. A standing grant is the least reversible thing on this
+   screen and took one click on an underline; asking once is the cheapest
+   possible guard against a mis-click (NN-g #5, Error Prevention). */
+.standingPrompt {
+  max-width: 52ch;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal, 1.5);
+}
+
+.standingConfirmRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The affirmative carries the weight, because at this point the reader has
+   already said what they want and this is the step that enacts it. */
+.standingConfirm {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.standingCancel {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+
+.standingCancel:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.standing:disabled,
+.standingConfirm:disabled,
+.standingCancel:disabled {
   opacity: 0.5;
   cursor: default;
 }

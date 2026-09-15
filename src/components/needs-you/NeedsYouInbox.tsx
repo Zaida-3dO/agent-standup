@@ -41,6 +41,15 @@ export function NeedsYouInbox() {
   const [respondError, setRespondError] = useState<string | null>(null);
   const [respondNotice, setRespondNotice] = useState<string | null>(null);
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
+  /**
+   * Which rows have armed the standing grant's confirm step.
+   *
+   * Held here rather than in the row for the same reason `replyTexts` is:
+   * `NeedsYouRow` stays hook-free so a test can call it as a function and
+   * read back the element tree, which this repo's node-environment harness
+   * requires.
+   */
+  const [standingPending, setStandingPending] = useState<Record<string, boolean>>({});
   // Sampled once per load rather than read at render time — see
   // `StandupHome.tsx`'s own note (and `Projects.tsx`, which this mirrors)
   // on why `Date.now()` cannot be called during render.
@@ -173,9 +182,16 @@ export function NeedsYouInbox() {
         () => grantStandingApproval({ itemId }),
         "This item is now pre-approved — it will merge without asking you again.",
       );
+      // Stood back down as the grant is sent. Leaving it armed would show
+      // the confirm step again on a row that has already been granted.
+      setStandingPending((prev) => ({ ...prev, [itemId]: false }));
     },
     [run],
   );
+
+  const handleStandingPendingChange = useCallback((itemId: string, pending: boolean) => {
+    setStandingPending((prev) => ({ ...prev, [itemId]: pending }));
+  }, []);
 
   const handleReplyTextChange = useCallback((itemId: string, value: string) => {
     setReplyTexts((prev) => ({ ...prev, [itemId]: value }));
@@ -192,6 +208,8 @@ export function NeedsYouInbox() {
       onGrantStanding={handleGrantStanding}
       replyTexts={replyTexts}
       onReplyTextChange={handleReplyTextChange}
+      standingPending={standingPending}
+      onStandingPendingChange={handleStandingPendingChange}
       respondError={respondError}
       respondNotice={respondNotice}
     />
