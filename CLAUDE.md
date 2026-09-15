@@ -400,6 +400,21 @@ Two things this authorisation does **not** cover, because they aren't merges:
 
 If review finds something genuinely blocking, fix it and re-review — don't merge and file a follow-up.
 
+### If your merge touched the hook, re-vendor it
+
+**Merging a change to the hook script does not deploy it.** `src/bin/standup-hook.ts` and everything
+it bundles are *vendored* — copied into each consuming workspace, by hand. Nothing re-runs that copy
+for you, so merging alone leaves every installed copy executing the bundle it already has.
+
+So: **if your diff touched the hook source, re-vendoring is part of that merge, not a follow-up.**
+The procedure lives in the consuming workspace alongside its vendored copy, together with the
+local-build recipe and the commands that verify what landed.
+
+Why this is a written step rather than something to remember: a vendored artifact drifts silently.
+The copy keeps working and says nothing, so the only symptom is callers being told something the
+source disagrees with — which reads as a puzzling answer, not as a stale build. Freshness checks can
+*detect* that gap once it exists; re-vendoring as part of the merge is what stops it opening.
+
 ### Never leave a PR unwatched
 
 **When you open a PR, immediately start something that waits on its CI** — a backgrounded
