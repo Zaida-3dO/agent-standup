@@ -189,9 +189,9 @@ describeIfDb("get_item_artifacts against Postgres", () => {
   it("reports an astral body as truncated, counting characters on both sides", async () => {
     const { id } = await createItem({ title: "astral" });
     // U+1F600, one character, two UTF-16 code units. 250 of them sit in the
-    // 201-400 band where the old comparison inverted.
+    // 201-400 band where a code-unit comparison inverts.
     const body = "\u{1F600}".repeat(250);
-    expect(body.length).toBe(500); // JS code units — the number that misled the old check.
+    expect(body.length).toBe(500); // JS code units — NOT the character count.
     await addArtifact(id, { body });
 
     const slimRow = (await artifactsOf({ id })).artifacts[0]!;

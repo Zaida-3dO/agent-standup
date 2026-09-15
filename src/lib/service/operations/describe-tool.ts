@@ -217,32 +217,62 @@ export interface ToolContract {
   /**
    * The rules the schema cannot express, **as the operation declares them**.
    *
-   * ── An empty list does not mean "no preconditions" ──────────────────────
+   * ── Absent and empty are different answers ──────────────────────────────
    *
-   * This is derived from the operation's `contract`, so it is empty in two
-   * situations that a caller cannot tell apart from the value alone: an
-   * operation that genuinely has nothing to add to its schema, and one that
-   * enforces something and has not declared it. **A caller must not infer
-   * the absence of a precondition from an empty list.** What an empty list
-   * warrants is that nothing further was declared here — not that nothing
-   * further is checked.
+   * **This key is omitted entirely when the operation declares no contract**,
+   * and present — possibly as `[]` — when it declares one. The two states
+   * are distinguished by the presence of the key alone, because rendering
+   * both as `rules: []` makes them indistinguishable — which is the whole
+   * reason this shape is what it is:
    *
-   * That distinction was learned rather than anticipated. `checkpoint`,
-   * `release`, `heartbeat` and `claim` all enforced database-backed
-   * preconditions while declaring no contract, so every one of them reported
-   * `rules: []` — and the sentence that used to stand here read that as a
-   * positive answer ("nothing else to know"). Three documents were corrected
-   * on the strength of it to say `checkpoint` needs no claim, and three
-   * sessions were refused acting on them. The rules those four operations
-   * were missing are now declared; this comment is corrected so the next
-   * undeclared rule is not read as an absent one.
+   *   - **`rules` absent** — the operation declares no contract at all.
+   *     Nothing has been said about its preconditions, which is NOT the same
+   *     as saying it has none. It may enforce something undeclared.
+   *   - **`rules: []`** — the operation declares a contract that happens to
+   *     carry no rules. Somebody looked and recorded that there was nothing
+   *     to add.
    *
-   * The remedy is on the operation, not here: an operation that refuses for
-   * a reason its schema cannot carry declares that reason beside the check,
-   * and `tests/describe-tool.test.ts` holds the assertions that keep the
-   * known ones present.
+   * Even so, neither form is a warrant that no precondition exists, because
+   * this operation can only report what is DECLARED. An absent key is the
+   * weaker answer of the two and is the one that should prompt a reader to
+   * check the source or make the call.
+   *
+   * ── Why the distinction is drawn at all ─────────────────────────────────
+   *
+   * It has produced wrong documentation twice, and both times the wrong doc
+   * was followed. `checkpoint`, `release`, `heartbeat` and `claim` all
+   * enforced database-backed preconditions while declaring no contract, so
+   * every one reported `rules: []` — and an earlier version of this comment
+   * read that as a positive answer ("nothing else to know"). Three documents
+   * were corrected on the strength of it to say `checkpoint` needs no claim,
+   * and three sessions were refused acting on them. `077e029` declared the
+   * four missing rules and corrected this comment, but left the RENDERING
+   * ambiguous, so the trap stayed live for every other undeclared operation.
+   *
+   * The Patrick operating manual records the same trap from the other side:
+   * its `checkpoint` entry flipped twice and now carries a standing warning
+   * that `rules` is "evidence of presence, never of absence". **A field that
+   * needs a permanent warning not to believe it is a design defect**, and
+   * the fix is to stop the two states rendering identically rather than to
+   * keep writing the warning down.
+   *
+   * ── Why omission rather than a marker ───────────────────────────────────
+   *
+   * It costs zero bytes on the common path, which matters for a call this
+   * operation's own header says is made constantly and whose waiver
+   * reasoning complains that "twenty of these spend context on every
+   * session". An added `rulesDeclared: false` would spend bytes on every
+   * response to say what an absent key already says. It also matches the
+   * precedent set one field below: `examples` is omitted rather than empty
+   * for exactly this reason — "so a caller can tell 'no further shapes' from
+   * 'this field exists and is empty'".
+   *
+   * The remedy for an undeclared rule is still on the operation, not here:
+   * an operation that refuses for a reason its schema cannot carry declares
+   * that reason beside the check, and `tests/describe-tool.test.ts` holds
+   * the assertions that keep the known ones present.
    */
-  readonly rules: readonly OperationRule[];
+  readonly rules?: readonly OperationRule[];
   /** A minimal call satisfying every rule, when the operation declares one. */
   readonly example?: unknown;
   /**
@@ -365,6 +395,22 @@ export const describeTool = defineOperation({
         // where a caller reads it, so it is attributed to the call it rides
         // on rather than left with nothing to attribute to.
         fields: ["tool"],
+        // Stated in the contract rather than only in a doc comment because
+        // the caller who needs it is reading this response, not this file —
+        // the same standard the `list_repos` decision set. Without it a
+        // reader has to infer what an absent key means, which is the
+        // inference that produced two wrong documents.
+        rule:
+          "`rules` is ABSENT when the described operation declares no contract, and PRESENT " +
+          "(possibly as an empty array) when it declares one. Absent means nothing was said " +
+          "about its preconditions; empty means a contract exists and adds no rule. NEITHER " +
+          "is a warrant that the operation has no preconditions — this call reports only what " +
+          "is declared, and an operation can enforce a database-backed check it never " +
+          "declared. Read `rules` as evidence of presence, never of absence: to establish " +
+          "that something is not required, read the operation's source or make the call.",
+      },
+      {
+        fields: ["tool"],
         rule:
           'A transport-level failure ("Unable to connect") is raised by your MCP client ' +
           "before the request reaches this server, so no response carries `retryable`. " +
@@ -442,7 +488,13 @@ export const describeTool = defineOperation({
       summary: found.summary,
       invocation: spellingsFor(found.name),
       fields: describeFields(found.input),
-      rules: found.contract?.rules ?? [],
+      // Spread-or-nothing, not `?? []`. An operation that declares no
+      // contract omits the key; one that declares a contract carries its
+      // rules even when the list is empty. Those are different answers —
+      // "nothing was said" versus "somebody looked and there was nothing to
+      // add" — and collapsing them to `[]` is what let an undeclared rule
+      // read as an absent one. See `ToolContract.rules`.
+      ...(found.contract === undefined ? {} : { rules: found.contract.rules }),
       ...(found.contract?.example === undefined ? {} : { example: found.contract.example }),
       ...(found.contract?.examples === undefined ? {} : { examples: found.contract.examples }),
     };
