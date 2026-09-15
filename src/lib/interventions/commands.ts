@@ -590,3 +590,76 @@ export function isPullRequestOpen(command: string): boolean {
     /^gh\s+pr\s+create(\s|$)/.test(statement.trim()),
   );
 }
+
+/**
+ * Whether a command goes out of its way to suppress commit signing — I17's
+ * recognition half.
+ *
+ * **The default is deliberately not the finding, and that is the whole
+ * shape of this check.** A plain `git commit` signs when signing is
+ * configured and does not when it is not, and either way that is the
+ * operator's standing choice rather than a decision made by this call. What
+ * is worth noticing is a command that *overrides* that choice inline — the
+ * same shape as `isBroadGitAdd`, which is also "a flag that opts out of a
+ * safe default" rather than a command that is wrong in itself.
+ *
+ * This is why the entry reading it is a nudge and not a block. The
+ * suppression is frequently legitimate — a fixup on a machine with no key,
+ * a scripted commit, a rebase of someone else's commits — so the honest
+ * response is to say the signature will be missing and let the caller
+ * proceed, not to refuse a command that may be exactly right.
+ *
+ * Two spellings count, and they are not the same mechanism:
+ *
+ *   - `--no-gpg-sign` — the flag on `commit`, `merge`, `rebase`, `cherry-pick`
+ *     and `revert`, each of which can create a commit.
+ *   - `-c commit.gpgsign=false` (or `-c tag.gpgsign=false`) — a one-call
+ *     config override, which `invokesGitSubcommand` deliberately skips past
+ *     when finding the subcommand. So the tokens are scanned here directly
+ *     rather than through that helper, which would never see them.
+ *
+ * ── What is deliberately NOT recognised ─────────────────────────────────
+ *
+ * `--gpg-sign` / `-S` and `-c commit.gpgsign=true` are the opposite
+ * intent and must never fire. Nor does a bare `git commit`: reading the
+ * absence of a flag as suppression would nudge on every commit in the
+ * system, which is the nudge-fatigue failure the catalogue scores a 1.
+ *
+ * `git config --global commit.gpgsign false` is also not matched. It
+ * changes the machine's standing configuration rather than suppressing
+ * signing on a commit being made now — a different act, addressed to a
+ * different decision, and one this entry has nothing useful to say about.
+ *
+ * Under-matches like everything else in this module: an unrecognised
+ * spelling produces `false` and costs one un-nudged call.
+ */
+export function suppressesCommitSigning(command: string): boolean {
+  return splitStatements(command).some((statement) => {
+    const trimmed = statement.trim();
+
+    // Only the verbs that can actually create a commit. `git log
+    // --no-gpg-sign` is not a thing, but scoping by verb means a future
+    // flag of the same spelling on a read command cannot fire this.
+    const createsCommit = ["commit", "merge", "rebase", "cherry-pick", "revert", "am"].some(
+      (verb) => invokesGitSubcommand(trimmed, verb),
+    );
+    if (!createsCommit) return false;
+
+    const tokens = trimmed.split(/\s+/);
+
+    // The explicit flag.
+    if (tokens.includes("--no-gpg-sign")) return true;
+
+    // The inline config override. Matched as a `-c` and its value together,
+    // so that a literal `commit.gpgsign=false` appearing as an argument to
+    // something else — in a commit message, say — is not read as one.
+    for (let index = 0; index < tokens.length; index += 1) {
+      if (tokens[index] !== "-c") continue;
+      const setting = tokens[index + 1];
+      if (setting === undefined) continue;
+      if (/^(commit|tag)\.gpgsign=(false|no|off|0)$/i.test(setting)) return true;
+    }
+
+    return false;
+  });
+}

@@ -36,6 +36,7 @@ import {
   isMergedByRefComparison,
   isRebaseOrDivergenceCheck,
   isWorkRecordingCommand,
+  suppressesCommitSigning,
 } from "./commands";
 import type { Intervention, InterventionContext, InterventionVerdict } from "./types";
 
@@ -878,6 +879,78 @@ const rebaseRestraint: Intervention = {
     if (context.command === undefined) return { triggered: false };
     if (!isRebaseOrDivergenceCheck(context.command)) return { triggered: false };
     return { triggered: true };
+  },
+};
+
+/**
+ * **I17** — a command that explicitly turns commit signing off.
+ *
+ * **This is a narrower entry than the catalogue row specifies, and the
+ * narrowing is the point.** I17 is catalogued as a merge-time block on
+ * *"a merge to the default branch carrying unsigned commits"*, which would
+ * need to verify a signature against a trusted-key set. That version is
+ * genuinely unbuildable here and the reason has not changed: a signature is
+ * a property of a commit object, no row in this schema holds one, and the
+ * row itself flags the trusted-key question as unsettled. The catalogue
+ * also asks it to ship *disabled by default*, which the registry has no
+ * mechanism for — an entry is on unless an installation overrides it
+ * (`registry.ts`), so shipping the specced block would switch on a signing
+ * policy for every installation that never adopted one.
+ *
+ * None of that blocks the useful half. The recorded reason had answered a
+ * question nobody asked — *can we verify a signature* — when the situation
+ * worth catching is **a command that goes out of its way to suppress one**:
+ * `git commit --no-gpg-sign`, `git -c commit.gpgsign=false commit`. That is
+ * command text, which `InterventionContext.command` already carries and
+ * which four shipped entries already match on, so it needs no new signal at
+ * all and adds no query to the assembly gate.
+ *
+ * **The default is deliberately not the finding.** A plain `git commit`
+ * signs when signing is configured and does not when it is not, and either
+ * way that is the operator's standing choice rather than a decision made by
+ * this call. Reading the absence of a flag as suppression would fire on
+ * every commit in the system. This is the same shape as
+ * `broad-git-add-on-shared-checkout`: a flag that opts out of a safe
+ * default, not a command that is wrong in itself.
+ *
+ * **A nudge, not a block**, and for a reason the specced version could
+ * afford to ignore. Suppressing a signature is frequently legitimate — no
+ * key on this machine, a scripted commit, replaying someone else's commits
+ * — and an installation with no signing convention would be refused on
+ * arrival by a rule it never adopted. A nudge says the signature will be
+ * missing and leaves the call to the caller, which is the weakest level
+ * that still works and is what this catalogue asks for.
+ */
+const commitSigningExplicitlySuppressed: Intervention = {
+  id: "commit-signing-explicitly-suppressed",
+  source: "builtin",
+  summary:
+    "A commit-creating command that explicitly disables signing rather than using the default.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "nudge",
+  // Immediate, for the reason `merged-check-by-ref-comparison` is: the
+  // commit this speaks to is being made by the call it rides on, and the
+  // observation is worth nothing five minutes after it landed unsigned.
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This command explicitly disables commit signing. Without the flag, git would have signed " +
+      "the commit if this repository is configured to sign — and left it unsigned if not, which " +
+      "is usually what you want. Consider running it without the flag, unless you specifically " +
+      "need an unsigned commit here.",
+    prominent:
+      "⚠️ This command goes out of its way to turn commit signing off. The default needs no " +
+      "flag: a plain `git commit` signs when signing is configured and does not when it is not, " +
+      "so suppressing it here overrides whatever this repository asked for. Consider running it " +
+      "without the flag and letting the configured behaviour stand. If you do genuinely need an " +
+      "unsigned commit — no key on this machine, a scripted commit, replaying someone else's " +
+      "work — proceed; this is a nudge and it does not stop you.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!suppressesCommitSigning(context.command)) return { triggered: false };
+    return { triggered: true, data: { command: context.command } };
   },
 };
 
@@ -1848,6 +1921,7 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   orchestratorDoingTheWork,
   squashMergeRefComparison,
   rebaseRestraint,
+  commitSigningExplicitlySuppressed,
   batchVisualReviews,
   dispatchOverUnresolvedToolBlock,
   wideCrewDispatch,
@@ -1889,7 +1963,11 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "commissioned on the weakest evidence, and if the graph is worth having it is worth " +
       "having for the board's own ordering, as its own row. The cheap substitute — treating an " +
       "item with no open children as unblocked — was rejected too, because it would fire on " +
-      "every leaf in the backlog, which is most of the board.",
+      "every leaf in the backlog, which is most of the board. Unblocked by: an `item` member on " +
+      "`BlockedOnType` plus a column naming the row blocked on — as its own row, commissioned " +
+      "for the board's ordering rather than for this nudge. Re-verified against the schema: the " +
+      "enum is still `{person, external_process, time}` and `Item` still has no item-to-item " +
+      "relation but `parentId`.",
   },
   {
     id: "I3",
@@ -1897,7 +1975,19 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "whether a claim-holding session is working elsewhere. `lastActive` distinguishes a live " +
       "session from a dead one, which is the liveness sweep's question; this entry needs the " +
       "different fact that a live session is spending its calls on something other than the item " +
-      "it holds, and nothing attributes a tool call to an item.",
+      "it holds. **The previous wording — 'nothing attributes a tool call to an item' — is " +
+      "wrong in the letter and right in the substance, and the distinction is worth keeping.** " +
+      "`ToolCall.itemId` exists and is indexed `[itemId, ts]`, so calls plainly are attributed. " +
+      "But `record_tool_calls` resolves it as `live?.itemId ?? null` — off the session's **live " +
+      "assignment**, not off anything about the call. A claim-holder's every call is therefore " +
+      "stamped with the held item whatever it was actually about, so the column records *who " +
+      "was holding what*, never *what the call was for*, and no query over it can separate the " +
+      "two. That is why the substance stands: the row exists, and it cannot answer this " +
+      "question. Unblocked by: a second attribution derived from the call itself — " +
+      "`ToolCall.paths` and `command` are both already stored, so 'the paths this session " +
+      "touches lie outside the repo its item names' is computable without a migration. Not " +
+      "built here because deciding that a path is outside an item's territory needs a notion of " +
+      "territory the schema has no field for.",
   },
   {
     id: "I4",
@@ -1926,17 +2016,42 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "nothing — the signal exists (`Artifact.followUpItemId` is null on an `lgtm_with_followups` " +
       "review), and the merge gate already refuses that combination outright " +
       "(`merge.requires_linked_followup`). An intervention would fire only where the guard " +
-      "already blocks, so it would be a second voice on a decision that is already made.",
+      "already blocks, so it would be a second voice on a decision that is already made. " +
+      "Re-verified: that guard is real and enforcing, defined in `service/guards/merge.ts` and " +
+      "applying on entry to `merged`. Nothing to unblock — this entry is declined rather than " +
+      "deferred, which is a different status from the rest of this list and is why it says " +
+      "`nothing` rather than naming a signal.",
   },
   {
     id: "I6",
     missing:
       "whether a worktree still exists on disk after a merge. The claim records a worktree path, " +
-      "but only the machine can say whether that path is still there, and no call reports it.",
+      "but only the machine can say whether that path is still there, and no call reports it. " +
+      "Re-verified and still true — `Assignment.worktree` is free text a caller supplies, and " +
+      "`worktree.ts` normalises it for comparison without ever consulting disk. Worth stating " +
+      "because the context's `isLinkedWorktree` looks like the missing signal and is not: " +
+      "`context.ts` derives it from whether the *claim* recorded a non-empty worktree string, " +
+      "so it says a worktree was declared, never that one exists now. Unblocked by: the hook " +
+      "reporting the cwd's actual worktree status with the call — a new field on a payload that " +
+      "already exists, so the cost is a decision to send it rather than a mechanism.",
   },
   {
     id: "I8",
-    missing: "a spend signal. It waits on what M7's telemetry exposes, which is not built yet.",
+    missing:
+      "a spend field on the context, and a decision about the poller. **Not telemetry, which " +
+      "the previous wording named and which has since shipped** — costs price, and the reason " +
+      "was left stale long enough to be quoted back as a live blocker. Two things are actually " +
+      "missing. First, `InterventionContext` carries no spend or budget field and nothing " +
+      "assembles one; `types.ts` lists `budget` among what the context will need to grow, so it " +
+      "was foreseen and never built. Second, the band reads `Account.usage5h`, which the " +
+      "**poller** populates (`service/operations/poll.ts`) — a different source from the " +
+      "per-call token counts telemetry repaired — and activating the poller is a decision the " +
+      "owner has deliberately deferred. So this is blocked on that decision rather than on " +
+      "engineering. Unblocked by: a spend field on the context, following whatever general " +
+      "shape the crew-in-flight work establishes, plus the poller running. Until the reading is " +
+      "real the entry must not be built: the contract is that an absent reading yields " +
+      "unbanded-with-a-reason rather than `free`, and an entry firing on 'cannot tell' would " +
+      "nag on every spawn.",
   },
   {
     id: "I16",
@@ -1951,20 +2066,22 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "missing is only the evidence that would justify refusing rather than suggesting.",
   },
   {
-    id: "I17",
-    missing:
-      "whether a commit is signed, and whose signature counts. A signature is a property of the " +
-      "commit object rather than of any row here, and the trusted-key question the entry itself " +
-      "flags as unsettled has to be answered before a rule could mean anything.",
-  },
-  {
     id: "I18",
     missing:
       "the tier the selector would have recommended for this job. The tier a subagent was spawned " +
-      "at is knowable; what it should have been is a judgement made by a service this schema does " +
-      "not hold, and comparing against nothing is how a nudge becomes noise. Wanted alongside it: " +
-      "the recommendation recorded at dispatch, so the comparison is against what was advised " +
-      "rather than against a guess made afterwards.",
+      "at is knowable; what it *should* have been is a judgement made by a service this schema " +
+      "does not hold, and comparing against nothing is how a nudge becomes noise. **The second " +
+      "half of the previous wording was wrong and is corrected here**: it asked for 'the " +
+      "recommendation recorded at dispatch' as though nothing recorded one, but `Run` carries " +
+      "both `selectionReason` — an enum whose members include `override`, meaning a tier chosen " +
+      "against advice — and `recommendationStrength`. So a weaker entry is available without any " +
+      "new signal: not 'this tier was wrong', which needs the selector, but 'this dispatch " +
+      "overrode the recommendation', which is a stored column. It is deliberately not built " +
+      "here, because both fields are nullable and null means *no decision was recorded* rather " +
+      "than agreement — an entry keyed on them must exclude nulls rather than read them as " +
+      "`recommended`, and how often a real dispatch records one is a question about live data " +
+      "rather than about the schema. Unblocked by: confirming `selectionReason` is populated on " +
+      "ordinary dispatches; the predicate itself is a one-field comparison after that.",
   },
   {
     id: "I20",
@@ -1973,7 +2090,13 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "its parent's state, but the thing that makes a subtask the wrong shape is an intent held " +
       "by the session and stated nowhere — the same call is correct when the follow-up really is " +
       "a prerequisite. Readable from a completion attempt that follows shortly after, which makes " +
-      "this a `post` check on the parent rather than a `pre` check on the create.",
+      "this a `post` check on the parent rather than a `pre` check on the create. Unblocked by: " +
+      "nothing new — the weaker version is already expressible, since a completion attempt on a " +
+      "parent with a child minted minutes earlier is two facts the schema holds " +
+      "(`Item.parentId`, `Item.createdAt`). What stops it being built is calibration rather " +
+      "than signal: the window that separates 'filed in the wrong place' from 'a real " +
+      "prerequisite, done properly' has to come from live data, and guessing it is how this " +
+      "nudge would become noise.",
   },
   {
     id: "I21",
@@ -1982,7 +2105,12 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "tool-call stream shows which files a session opened, and a changeset names its migrations " +
       "— but the claim itself is prose in a note or a report, and deciding that a sentence " +
       "characterises a migration as safe is the part nothing here can do. A keyword match on " +
-      "`additive` would miss every paraphrase and fire on every accurate use of the word.",
+      "`additive` would miss every paraphrase and fire on every accurate use of the word. " +
+      "Unblocked by: a structured claim rather than a prose one — a field on the artifact " +
+      "recording *reviewed the migration bodies* as a boolean the caller sets, which makes it a " +
+      "statement that can be checked against `ToolCall.paths` instead of a sentence that has to " +
+      "be interpreted. That is a product decision about what a changeset asserts, not a missing " +
+      "column.",
   },
   {
     id: "I22",
@@ -1992,12 +2120,22 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
       "ones, which lives in an installation's own operating documents rather than in this schema. " +
       "The tractable half is the second signal — an item parked as blocked whose stated blocker " +
       "names paths rather than a dependency — and it is worth building alone. The other half of " +
-      "this pair is not an intervention at all: a hold that actually holds at merge time.",
+      "this pair is not an intervention at all: a hold that actually holds at merge time. " +
+      "Unblocked by: nothing, for the tractable half — `Item.blockedReason` is a free-text " +
+      "column already stored beside `blockedOnType`, so 'parked as blocked, with a reason naming " +
+      "paths rather than a dependency' is a predicate over data the schema already holds, and it " +
+      "is the half worth building. Only the invented-protocol half needs the installation's own " +
+      "operating documents, which is a knowledge source this server does not have and should " +
+      "not guess at.",
   },
   {
     id: "I9",
     missing:
       "whether an unblocked row is sitting idle — the same absent dependency graph I2 needs. The " +
-      "`sleep` half is readable from the command; the half that makes it worth saying is not.",
+      "`sleep` half is readable from the command; the half that makes it worth saying is not. " +
+      "Re-verified with I2 and unchanged. Unblocked by: whatever unblocks I2, and by nothing " +
+      "else — deliberately not by the cheap substitute of firing on any `sleep` at all, which " +
+      "would nudge a session that is correctly waiting on a build, a deploy or a rate limit, and " +
+      "those are most of the sleeps in the system.",
   },
 ];

@@ -979,6 +979,17 @@ describe("the catalogue entries that are deliberately not built", () => {
       I13: "work-recorded-against-no-item",
       I14: "orchestrator-doing-the-work",
       I15: "checkout-held-by-another-crew",
+      // Built as a **narrower entry than the catalogue row specifies**, and
+      // the narrowing is recorded in the predicate's own header rather than
+      // here. The specced merge-time signature check is still unbuildable —
+      // no row holds a signature, and the trusted-key question is unsettled
+      // — but the situation the owner asked to catch is a command that
+      // explicitly suppresses signing, which is command text and needs no
+      // new signal. Listed here rather than under the unbuilt entries for
+      // the reason I19 is: a shipped predicate with a narrowed signal is
+      // built, and saying otherwise would leave the registry entry
+      // undocumented.
+      I17: "commit-signing-explicitly-suppressed",
       // Built as half of itself, and the half is named in both the
       // catalogue row and the predicate's own header. The spawn-time
       // detection the entry asks for is still unbuildable — this server
