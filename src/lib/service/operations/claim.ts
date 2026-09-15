@@ -94,6 +94,31 @@ export interface ClaimResult extends Assignment {
    * reclaim would put that discovery arbitrarily far from the act.
    */
   readonly evicted: readonly EvictedClaim[];
+  /**
+   * Said when `rootSessionId` names a session this server has never seen —
+   * and `null` on every other path, including the ordinary one.
+   *
+   * ── Why this is a warning and not a refusal ─────────────────────────────
+   *
+   * `rootSessionId` is the whole of crew-conflict protection: `assertSameCrew`
+   * compares it against the item's live assignments, and a value matching
+   * nothing matches nothing *safely* — the claim succeeds and the guard has
+   * no other crew to find. One mistyped character therefore buys a run with
+   * the protection silently absent, which is the failure this field exists
+   * to make audible: **not a refusal, a silent wrong result.**
+   *
+   * Refusing would be the wrong fix. A root session that has legitimately
+   * ended is still the correct crew id for its subagents to carry — the tree
+   * outlives the root — and there is no way to tell that case from a typo
+   * from here. So the call succeeds, exactly as before, and says what it
+   * could not confirm. Nothing downstream branches on this string; removing
+   * it changes no behaviour, only what the caller is told.
+   *
+   * Put in the response rather than a document about the response, for the
+   * same reason `describe_tool`'s rules are: the caller is already looking
+   * here.
+   */
+  readonly rootSessionWarning: string | null;
 }
 
 /**
@@ -143,6 +168,50 @@ async function resolveClaimMachine(
   return machine;
 }
 
+/**
+ * The warning for a `rootSessionId` naming no session this server knows, or
+ * `null` when there is nothing to say.
+ *
+ * Three cases, and only one of them warns:
+ *
+ * - **Field absent** — not a typo, a declaration. An omitted `rootSessionId`
+ *   means "this session is the root of its own crew" (SCHEMA.md §2), which is
+ *   the single most common claim there is. Warning here would fire on the
+ *   majority of calls and train every caller to stop reading the field, which
+ *   costs exactly the attention it exists to buy on the calls that matter —
+ *   the same reasoning `buildSliceNotice` uses to return null rather than
+ *   announce that it withheld nothing.
+ * - **Names a known session** — the ordinary crew case. Silent.
+ * - **Names a session with no row** — warned, and the call proceeds.
+ *
+ * A value equal to the caller's own `sessionId` is deliberately NOT special-
+ * cased: a session that names itself as its own root but never registered is
+ * in exactly the position this warning describes, and it is checked by the
+ * same read as every other value.
+ */
+async function rootSessionWarningFor(
+  ctx: ServiceContext,
+  input: ClaimOperationInput,
+): Promise<string | null> {
+  const rootSessionId = input.rootSessionId;
+  if (rootSessionId === undefined || rootSessionId === null) return null;
+
+  const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
+    `SELECT "id" FROM "Session" WHERE "id" = $1`,
+    rootSessionId,
+  );
+  if (rows.length > 0) return null;
+
+  return (
+    `Claimed, but \`rootSessionId\` ${rootSessionId} names no session this server has seen, ` +
+    `so crew-conflict protection will not apply to this claim: the one-crew-per-item guard ` +
+    `compares root sessions, and a root nothing else shares can never collide with another ` +
+    `crew. If that id is a typo, release this claim and re-claim with the right one — ` +
+    `most often the orchestrator's own \`sessionId\`, which a dispatched agent must pass ` +
+    `explicitly. If the root session genuinely ended, this is expected and nothing is wrong.`
+  );
+}
+
 // Stryker disable all : this metadata is a module-level literal, read into
 // the registry at import — before any test body runs and never re-evaluated
 // — so a mutation here is unkillable by construction, NOT untested.
@@ -158,6 +227,10 @@ export const claim = defineOperation({
       {
         fields: ["rootSessionId", "sessionId"],
         rule: "ONE CREW PER ITEM. A claim is refused when the item's live assignments carry a different `rootSessionId` than this one. **`rootSessionId` defaults to your own `sessionId` when omitted**, which means a DISPATCHED agent claiming alongside its orchestrator must pass the orchestrator's session id explicitly — omit it and you declare yourself a second crew and are refused as one, even though you were sent to help. Pass the root of your own session tree, not your own id, whenever somebody else already holds the item.",
+      },
+      {
+        fields: ["rootSessionId"],
+        rule: "A `rootSessionId` NAMING NO KNOWN SESSION IS NOT REFUSED — it warns. The claim succeeds and the response carries `rootSessionWarning` saying the id matched no session, because a root that has legitimately ended is still the right id for its subagents to carry and refusing it would break that workflow to catch a typo. Read the field: a mistyped id silently costs you crew-conflict protection for the whole run, since a root nothing else shares can never collide with another crew.",
       },
       {
         fields: ["itemId", "sessionId"],
@@ -331,7 +404,13 @@ export const claim = defineOperation({
         ? await ensureNameForSession(ctx.db, input.sessionId)
         : undefined;
 
-    return { ...assignment, crewName: crewNameRow?.name ?? null, evicted };
+    // Read only once the claim has actually won, so a call that was going to
+    // be refused is told why it was refused rather than being handed an
+    // advisory about a field that never mattered. It is also the reason this
+    // costs nothing on the refusal paths above, which return earlier.
+    const rootSessionWarning = await rootSessionWarningFor(ctx, input);
+
+    return { ...assignment, crewName: crewNameRow?.name ?? null, evicted, rootSessionWarning };
   },
 });
 

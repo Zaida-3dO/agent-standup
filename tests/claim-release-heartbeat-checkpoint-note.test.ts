@@ -197,6 +197,89 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
       expect(assignment.model).toBe("claude-sonnet-5");
       expect(assignment.effort).toBe("medium");
     });
+
+    // ---------------------------------------------------------------------
+    // `rootSessionId` naming a session that does not exist.
+    //
+    // The failure being closed is not a refusal — it is a SILENT WRONG
+    // RESULT. `rootSessionId` is the whole of crew-conflict protection, and
+    // a value matching no session matches nothing safely: the claim
+    // succeeds and `assertSameCrew` finds no other crew to collide with. So
+    // one mistyped character buys a whole run with the protection absent and
+    // nothing said about it. These three cases pin the warning that makes it
+    // audible, and — just as importantly — pin that it stays a WARNING.
+    // ---------------------------------------------------------------------
+
+    it("warns, and still claims, when rootSessionId names no known session", async () => {
+      const itemId = await seedItem();
+      const result = (await runtime.call(
+        "claim",
+        claimInput(itemId, { rootSessionId: "s1-typo-not-a-session" }),
+      )) as { id: string; rootSessionId: string; rootSessionWarning: string | null };
+
+      // The claim SUCCEEDED. This is the half of the behaviour that is most
+      // easily lost: the item body is explicit that a root session may have
+      // legitimately ended, so turning this into a refusal would break a
+      // real workflow to catch a typo. A mutant that throws here fails this.
+      expect(result.id).toBeTruthy();
+      expect(result.rootSessionId).toBe("s1-typo-not-a-session");
+
+      // And it said so. Asserting on the id being named, not just on the
+      // string being non-empty: a warning that does not quote the value the
+      // caller got wrong leaves them hunting for which field it meant.
+      expect(result.rootSessionWarning).toContain("s1-typo-not-a-session");
+      expect(result.rootSessionWarning).toMatch(/crew-conflict protection will not apply/i);
+    });
+
+    it("says nothing when rootSessionId names a session that exists", async () => {
+      const itemId = await seedItem();
+      // `s2` is registered in beforeAll, so this is the ordinary crew case:
+      // a dispatched agent correctly carrying its orchestrator's id.
+      const result = (await runtime.call(
+        "claim",
+        claimInput(itemId, { sessionId: "s1", rootSessionId: "s2" }),
+      )) as { rootSessionWarning: string | null };
+      expect(result.rootSessionWarning).toBeNull();
+    });
+
+    it("says nothing when rootSessionId is absent — omitting it is a declaration, not a typo", async () => {
+      // An omitted root means "I am the root of my own crew" (SCHEMA.md §2),
+      // which is the single most common claim there is. A mutant that drops
+      // the `undefined` guard in `rootSessionWarningFor` — warning on every
+      // rootless claim — passes both cases above and fails only this one.
+      // That matters because such a mutant is not merely noisy: it would
+      // fire on the majority of all claims and train every caller to ignore
+      // the field, costing exactly the attention it exists to buy.
+      const itemId = await seedItem();
+      const result = (await runtime.call("claim", claimInput(itemId))) as {
+        rootSessionId: string;
+        rootSessionWarning: string | null;
+      };
+      expect(result.rootSessionId).toBe("s1");
+      expect(result.rootSessionWarning).toBeNull();
+    });
+
+    it("warns for an unregistered session naming ITSELF as root", async () => {
+      // Not special-cased, deliberately. A session that names itself but has
+      // no row is in exactly the position the warning describes — it has no
+      // crew protection either — so it is checked by the same read as any
+      // other value. A mutant that short-circuits on
+      // `rootSessionId === sessionId` passes every case above and fails here.
+      //
+      // `machine` is passed explicitly because an unregistered session has no
+      // `Session.machine` to inherit (#111), and that refusal would otherwise
+      // mask the behaviour under test.
+      const itemId = await seedItem();
+      const result = (await runtime.call(
+        "claim",
+        claimInput(itemId, {
+          sessionId: "never-registered-session",
+          rootSessionId: "never-registered-session",
+          machine: "laptop",
+        }),
+      )) as { rootSessionWarning: string | null };
+      expect(result.rootSessionWarning).toContain("never-registered-session");
+    });
   });
 
   // -------------------------------------------------------------------------
