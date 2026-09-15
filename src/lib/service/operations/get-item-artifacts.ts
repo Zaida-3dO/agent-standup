@@ -125,7 +125,12 @@ export interface ItemArtifactSlim {
    * that exists.
    */
   readonly bodyPreview: string | null;
-  /** Whether `bodyPreview` was cut. Reported rather than inferred from its length. */
+  /**
+   * Whether `bodyPreview` was cut. Reported rather than inferred from its
+   * length — which a caller cannot do correctly anyway, since the preview is
+   * cut to a number of CHARACTERS and a JS `.length` counts UTF-16 code
+   * units. True exactly when `bodyChars` exceeds `ARTIFACT_BODY_PREVIEW_CHARS`.
+   */
   readonly bodyTruncated: boolean;
   /**
    * How long the full body is. The number a caller needs to decide whether
@@ -334,14 +339,39 @@ export const getItemArtifacts = defineOperation({
  * The preview column the SELECT aliases, plus whether it was cut.
  *
  * `bodyTruncated` is decided by comparing the full length Postgres reported
- * against the length of the fragment it sent — not by measuring the
- * fragment alone, which cannot tell a body of exactly 200 characters from
- * one of 40,000 cut down to 200.
+ * against the budget that length was cut to — not by measuring the fragment
+ * alone, which cannot tell a body of exactly 200 characters from one of
+ * 40,000 cut down to 200.
+ *
+ * ── Why the budget and not `raw.length` ─────────────────────────────────
+ *
+ * This compared `bodyChars` against `raw.length`, which is two different
+ * units on the two sides. `bodyChars` is Postgres `length("body")` and
+ * counts CHARACTERS; `raw.length` is a JS string length and counts UTF-16
+ * CODE UNITS. They agree for ASCII — which every fixture in this module's
+ * suite happened to use — and disagree for anything astral, where one
+ * character is two code units.
+ *
+ * The disagreement is not cosmetic: for an astral body in the 201-400
+ * character band, `left("body", 200)` returns a 200-character fragment
+ * whose `.length` is 400, the comparison `250 > 400` is false, and a body
+ * that lost 50 characters was reported as `bodyTruncated: false` — handed
+ * to the caller alongside a truthful `bodyChars: 250` and a preview holding
+ * only 200 of them, an object contradicting itself. Above 400 it went true
+ * again for the wrong reason and looked correct.
+ *
+ * `ARTIFACT_BODY_PREVIEW_CHARS` is the exact number handed to `left()`,
+ * which cuts on characters, so this compares characters to characters and
+ * is correct in every encoding. It is also the *question being asked* —
+ * "was the body longer than what we kept" — rather than a proxy for it.
  */
 function previewOf(row: RawArtifactRow): { bodyPreview: string | null; bodyTruncated: boolean } {
   const raw = (row as unknown as { bodyPreviewRaw: string | null }).bodyPreviewRaw;
   if (raw === null || raw === undefined) return { bodyPreview: null, bodyTruncated: false };
-  return { bodyPreview: raw, bodyTruncated: Number(row.bodyChars ?? 0) > raw.length };
+  return {
+    bodyPreview: raw,
+    bodyTruncated: Number(row.bodyChars ?? 0) > ARTIFACT_BODY_PREVIEW_CHARS,
+  };
 }
 
 function toSlim(row: RawArtifactRow): ItemArtifactSlim {

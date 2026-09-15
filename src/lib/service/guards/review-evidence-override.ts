@@ -95,6 +95,7 @@
 // per-occasion act.
 import type { TransactionHandle } from "../context";
 import { currentTipCommitSha, shaMatchesTipOrLineage, tipCommitLineage } from "./artifact-tip";
+import { overrideRemedySentence } from "./override-syntax";
 
 /**
  * The artifact kind recording a reasoned decision that existing review
@@ -251,14 +252,18 @@ export async function reviewEvidenceOverrideSatisfies(
  * overriding happened without saying what should change.
  */
 export function reviewEvidenceOverrideRemedy(guardId: string, hasTip: boolean): string {
-  return (
-    `If the existing review genuinely still applies and you are judging that nothing material ` +
-    `changed, record a ${REVIEW_EVIDENCE_OVERRIDE_KIND} artifact ` +
-    (hasTip
+  return overrideRemedySentence({
+    kind: REVIEW_EVIDENCE_OVERRIDE_KIND,
+    guardId,
+    minReasonLength: MIN_EVIDENCE_REASON_LENGTH,
+    // The `commitSha` field is shown only when there is a commit to name.
+    // On a no-tip item an override carrying one is refused (see the walk in
+    // `reviewEvidenceOverrideSatisfies`), so offering that shape here would
+    // print the single form that cannot work — the unreachable-remedy
+    // failure this whole sentence exists to avoid.
+    withCommitSha: hasTip,
+    anchor: hasTip
       ? "naming this commit"
-      : "with no commitSha (this item records no commit for one to name)") +
-    `, with a body of at least ${MIN_EVIDENCE_REASON_LENGTH} characters saying why. It is ` +
-    `recorded permanently against "${guardId}" as an override rather than as a review, and ` +
-    `overrides are counted — the reason is kept as a record, not checked for correctness.`
-  );
+      : "with no commitSha (this item records no commit for one to name)",
+  });
 }

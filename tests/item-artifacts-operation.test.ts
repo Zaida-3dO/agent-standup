@@ -170,6 +170,73 @@ describeIfDb("get_item_artifacts against Postgres", () => {
     expect(fullRow.findings).toEqual([{ text: "a finding", severity: "low" }]);
   });
 
+  // ── Astral bodies: characters on one side, code units on the other ──────
+  //
+  // Every other body in this file is ASCII, where a character and a UTF-16
+  // code unit are the same thing, so the two units in `previewOf`'s
+  // comparison were indistinguishable and the defect was invisible. An
+  // astral character (emoji, and the CJK extension and mathematical
+  // alphanumeric blocks) is one Postgres character and TWO JS code units,
+  // which is the only condition under which the sides disagree.
+  //
+  // 250 characters is inside the band where the disagreement changes the
+  // ANSWER rather than merely the numbers. `left("body", 200)` returns 200
+  // characters whose JS `.length` is 400; comparing `bodyChars` (250)
+  // against that 400 is false, so a body that really did lose 50 characters
+  // was reported as not truncated. Above 400 characters the comparison goes
+  // true again for the wrong reason and the flag is accidentally right —
+  // which is exactly why a casually chosen large fixture misses this.
+  it("reports an astral body as truncated, counting characters on both sides", async () => {
+    const { id } = await createItem({ title: "astral" });
+    // U+1F600, one character, two UTF-16 code units. 250 of them sit in the
+    // 201-400 band where a code-unit comparison inverts.
+    const body = "\u{1F600}".repeat(250);
+    expect(body.length).toBe(500); // JS code units — NOT the character count.
+    await addArtifact(id, { body });
+
+    const slimRow = (await artifactsOf({ id })).artifacts[0]!;
+
+    // Postgres counted characters, so this is 250 and not 500. Asserted
+    // first because the rest of the case is only meaningful if the column
+    // really is a character count.
+    expect(slimRow.bodyChars).toBe(250);
+    // 200 characters were kept and 50 were dropped, so the flag must say so.
+    // This is the assertion that fails on the pre-fix implementation.
+    expect(slimRow.bodyTruncated).toBe(true);
+    // The preview is 200 CHARACTERS — 400 code units — which is the very
+    // fact that made `raw.length` the wrong right-hand side.
+    expect([...slimRow.bodyPreview!]).toHaveLength(ARTIFACT_BODY_PREVIEW_CHARS);
+    expect(slimRow.bodyPreview).toBe("\u{1F600}".repeat(ARTIFACT_BODY_PREVIEW_CHARS));
+
+    // No surrogate pair was split down the middle: a half pair renders as
+    // U+FFFD and would make the preview unusable to the caller it exists
+    // for. `left()` cuts on characters, so this holds for free — pinned
+    // because a "fix" that sliced in JS instead would break it.
+    expect(slimRow.bodyPreview).not.toContain("�");
+
+    // `full` was never affected and must stay that way: the whole body
+    // comes back, all 250 characters of it.
+    const fullRow = (await artifactsOf({ id, full: true })).artifacts[0] as ItemArtifactFull;
+    expect([...(fullRow.body ?? "")]).toHaveLength(250);
+  });
+
+  // The other half of the band, and the reason the fix is a comparison
+  // against the budget rather than against the preview: an astral body of
+  // exactly the preview length lost nothing, so the flag must stay false.
+  // A fix that simply flipped the comparison, or compared `bodyChars`
+  // against anything larger than the budget, would report this one
+  // truncated and be just as wrong in the opposite direction.
+  it("reports an astral body of exactly the preview length as not truncated", async () => {
+    const { id } = await createItem({ title: "astral-exact" });
+    const body = "\u{1F600}".repeat(ARTIFACT_BODY_PREVIEW_CHARS);
+    await addArtifact(id, { body });
+
+    const slimRow = (await artifactsOf({ id })).artifacts[0]!;
+    expect(slimRow.bodyChars).toBe(ARTIFACT_BODY_PREVIEW_CHARS);
+    expect(slimRow.bodyTruncated).toBe(false);
+    expect(slimRow.bodyPreview).toBe(body);
+  });
+
   // Asserted against the query text rather than the response, because the
   // response cannot distinguish "did not select the heavy columns" from
   // "selected them and dropped them on the way out" — and only the first

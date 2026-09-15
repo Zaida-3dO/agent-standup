@@ -805,7 +805,11 @@ describeIfDb("progress_report against Postgres", () => {
         tool: "progress_report",
       })) as ToolContract;
 
-      const flagRule = contract.rules.find((r) => r.rule.includes("Sub-bullets"));
+      // `rules` is optional on the response — omitted for an operation that
+      // declares no contract. `progress_report` declares one, so asserting
+      // it is present states that expectation rather than assuming it.
+      expect(contract.rules).toBeDefined();
+      const flagRule = contract.rules!.find((r) => r.rule.includes("Sub-bullets"));
       expect(flagRule).toBeDefined();
       expect(flagRule!.rule).toContain(String(MAX_FLAGS_PER_ROW));
       expect(flagRule!.rule).toContain(String(MAX_FLAGS_PER_REPORT));
@@ -823,7 +827,8 @@ describeIfDb("progress_report against Postgres", () => {
         tool: "progress_report",
       })) as ToolContract;
 
-      const refRule = contract.rules.find((r) => r.rule.includes("pull request"));
+      expect(contract.rules).toBeDefined();
+      const refRule = contract.rules!.find((r) => r.rule.includes("pull request"));
       expect(refRule).toBeDefined();
       expect(refRule!.rule).toContain("pull_request");
       expect(refRule!.rule).toContain("record_artifact");

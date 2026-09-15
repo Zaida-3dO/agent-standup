@@ -15,6 +15,15 @@ An item minted through the product walks the full state machine on service calls
 `plan_review → executing → in_review → merged` — because the artifacts each transition guard reads
 are writable through the service.
 
+**Take the transition, then record the commit — not the other way round.** `artifact.evidence_at_tip`
+asks whether the plan approval is current against the item's tip, and the tip is the newest `commit`
+artifact. A plan reviewed before any commit existed records no sha, which matches a null tip and is
+correctly current; recording a commit first makes the tip non-null and that same approval stops
+matching. Nothing has changed about the plan — only the order of two writes — but the transition is
+refused. Three builders in one wave hit this and each spent a `review_evidence_override`, which is
+counted permanently. `appliesTo` is `(plan_review, executing)` only, so a commit recorded *after* the
+transition is never examined by this guard.
+
 Two decisions in `record_artifact` are load-bearing and worth knowing before changing it.
 `reviewRound` defaults to the item's current round, which is what lets the merge gate — it takes
 `max(reviewRound)` across every kind — read a commit at the round its own review is on.

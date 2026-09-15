@@ -31,6 +31,7 @@ import {
   describeFields,
   isServiceError,
   type ServiceContext,
+  type OperationRule,
   type ToolContract,
   type TransactionHandle,
 } from "@/lib/service";
@@ -91,9 +92,28 @@ async function contractFor(tool: string): Promise<ToolContract> {
   return (await runtime().call("describe_tool", { tool })) as ToolContract;
 }
 
+/**
+ * The declared rules of an operation that is supposed to declare some.
+ *
+ * `ToolContract.rules` is optional: it is omitted entirely for an operation
+ * declaring no contract, which is the distinction the "declares no contract
+ * vs declares an empty one" tests below exercise directly. Every OTHER test
+ * here is about an operation that does declare rules, and asserting the key
+ * is present before reading it keeps those tests honest — if a contract were
+ * dropped, this fails loudly at the operation under test rather than
+ * silently reading an empty list and passing a `.find(...)` that was never
+ * going to match.
+ */
+function declaredRules(contract: ToolContract): readonly OperationRule[] {
+  expect(contract.rules, `${contract.name} should declare a contract`).toBeDefined();
+  return contract.rules!;
+}
+
 /** Every rule of a contract, flattened, so a test can search the prose once. */
 function ruleText(contract: ToolContract): string {
-  return contract.rules.map((rule) => rule.rule).join("\n");
+  return declaredRules(contract)
+    .map((rule) => rule.rule)
+    .join("\n");
 }
 
 describe("describe_tool returns one tool's full contract", () => {
@@ -112,7 +132,7 @@ describe("describe_tool returns one tool's full contract", () => {
     // Asserting the *pairing* — the field and the condition that triggers it
     // — rather than the presence of the word `originPersonId`, which a rule
     // about something else entirely could satisfy.
-    const rule = contract.rules.find((entry) => entry.fields.includes("originPersonId"));
+    const rule = declaredRules(contract).find((entry) => entry.fields.includes("originPersonId"));
     expect(rule).toBeDefined();
     expect(rule!.rule).toContain("originType");
     expect(rule!.rule).toContain("person");
@@ -142,13 +162,13 @@ describe("describe_tool returns one tool's full contract", () => {
     // `what_to_test` when it is true. Getting these the wrong way round is
     // the single most likely documentation error, so both directions are
     // asserted rather than just "both fields are mentioned".
-    const howVerified = contract.rules.find((entry) =>
+    const howVerified = declaredRules(contract).find((entry) =>
       entry.fields.includes("summary.how_verified"),
     );
     expect(howVerified).toBeDefined();
     expect(howVerified!.rule).toMatch(/user_facing[\s\S]*false/);
 
-    const whatToTest = contract.rules.find((entry) =>
+    const whatToTest = declaredRules(contract).find((entry) =>
       entry.fields.includes("summary.what_to_test"),
     );
     expect(whatToTest).toBeDefined();
@@ -168,7 +188,7 @@ describe("describe_tool returns one tool's full contract", () => {
     // about which words are legal.
     const contract = await contractFor("record_artifact");
 
-    const rule = contract.rules.find(
+    const rule = declaredRules(contract).find(
       (entry) => entry.fields.includes("kind") && /check_run/.test(entry.rule),
     );
     expect(rule).toBeDefined();
@@ -197,7 +217,7 @@ describe("describe_tool returns one tool's full contract", () => {
     // vanishes from the source file.
     const contract = await contractFor("record_artifact");
 
-    const rule = contract.rules.find(
+    const rule = declaredRules(contract).find(
       (entry) => entry.fields.includes("ref") && entry.fields.includes("commitSha"),
     );
     expect(rule).toBeDefined();
@@ -240,7 +260,7 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(field!.required).toBe(false);
 
     // The element shape has to be reachable, not just the container's type.
-    const rule = contract.rules.find((entry) => entry.fields.includes("findings"));
+    const rule = declaredRules(contract).find((entry) => entry.fields.includes("findings"));
     expect(rule).toBeDefined();
     expect(rule!.rule).toContain("text");
     expect(rule!.rule).toContain("severity");
@@ -290,7 +310,7 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(byName.get("originType")?.required).toBe(false);
     expect(byName.get("originType")?.enumValues).toEqual(["person", "source", "auto"]);
 
-    const originRule = contract.rules.find((entry) => entry.fields.includes("originType"));
+    const originRule = declaredRules(contract).find((entry) => entry.fields.includes("originType"));
     expect(originRule).toBeDefined();
     expect(originRule!.rule).toMatch(/session/i);
 
@@ -306,21 +326,69 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(contract.invocation.cli).toBe("standup create item");
   });
 
-  it("returns an empty rules list, not an error, for a tool fully described by its schema", async () => {
-    // `get_item` declares no contract. Returning an empty list rather than
-    // failing is the behaviour under test, and a caller must be able to tell
-    // it apart from a failure — so this asserts it succeeds AND that the
-    // list is empty, not merely that it did not throw.
+  it("omits rules entirely, not an error, for a tool that declares no contract", async () => {
+    // `get_item` declares no contract. Answering rather than failing is the
+    // behaviour under test, and a caller must be able to tell that apart
+    // from a failure — so this asserts it succeeds AND that the rest of the
+    // answer is intact, not merely that it did not throw.
     //
-    // Note what this does NOT assert, because the earlier comment here did
-    // and it was wrong: an empty list is not a statement that the operation
-    // has no preconditions. It says only that none were declared. `get_item`
-    // is a read whose schema genuinely says everything; the four operations
-    // that reported the same empty list while enforcing an assignment check
-    // are covered below.
+    // **The key is ABSENT, not `[]`.** An empty array is what an operation
+    // that declares a contract carrying no rules returns, and the two must
+    // not render alike — see the distinction test below.
+    //
+    // Note what this still does NOT assert: an absent key is not a statement
+    // that the operation has no preconditions. It says only that none were
+    // declared. `get_item` is a read whose schema genuinely says everything;
+    // the four operations that reported an empty list while enforcing an
+    // assignment check are covered below.
     const contract = await contractFor("get_item");
-    expect(contract.rules).toEqual([]);
+    expect(contract).not.toHaveProperty("rules");
+    expect(contract.rules).toBeUndefined();
     expect(contract.fields.length).toBeGreaterThan(0);
+  });
+
+  // ── The distinction itself ────────────────────────────────────────────
+  //
+  // This is the test the row asked for: it FAILS if the two states collapse
+  // back into one. Both halves are needed — asserting only that a
+  // no-contract operation omits the key would still pass if EVERY operation
+  // omitted it, and asserting only that a contract-declaring one carries it
+  // would still pass if every operation carried `[]`.
+  //
+  // The ambiguity this removes produced wrong documentation twice, and both
+  // times the wrong doc got followed: `checkpoint`, `release`, `heartbeat`
+  // and `claim` enforced database-backed preconditions while declaring no
+  // contract, all four answered `rules: []` to the one question a refused
+  // caller asks, three documents were changed to say `checkpoint` needs no
+  // claim, and three sessions were refused after following them.
+  it("distinguishes declaring no contract from declaring one with no rules", async () => {
+    // Half one: no contract at all → the key is absent.
+    const noContract = await contractFor("get_item");
+    expect(noContract.rules).toBeUndefined();
+
+    // Half two: a declared contract → the key is present. `describe_tool`
+    // declares its own, so this needs no fixture operation.
+    const declared = await contractFor("describe_tool");
+    expect(declared.rules).toBeDefined();
+    expect(Array.isArray(declared.rules)).toBe(true);
+
+    // And the two are genuinely different values, which is the property
+    // that was missing. A `?? []` in the handler makes this line fail.
+    expect(noContract.rules).not.toEqual(declared.rules);
+    expect(typeof noContract.rules).not.toBe(typeof declared.rules);
+  });
+
+  it("states in its own contract what an absent rules key means", async () => {
+    // Criterion: whichever shape is chosen, `describe_tool` says what it
+    // means, so the next reader does not have to infer it — the inference
+    // that produced the two wrong documents. The caller who needs this is
+    // reading the response, not the source file.
+    const text = ruleText(await contractFor("describe_tool"));
+    expect(text).toContain("ABSENT");
+    expect(text).toContain("declares no contract");
+    // The standing warning, stated where it fires rather than left to a
+    // doc: an empty or absent list is not proof that nothing is enforced.
+    expect(text).toMatch(/presence, never of absence/i);
   });
 });
 
@@ -351,7 +419,7 @@ describe("describe_tool declares create_work's repo and headline rules", () => {
     "%s's repo rule names the MCP-reachable route and the archived caveat",
     async (name) => {
       const contract = await contractFor(name);
-      const rule = contract.rules.find((entry) => entry.fields.includes("repo"));
+      const rule = declaredRules(contract).find((entry) => entry.fields.includes("repo"));
       expect(rule).toBeDefined();
       // The reachable route for an MCP caller — list_repos is waived off MCP,
       // so pointing only at it would strand the entire reported population.
@@ -372,7 +440,7 @@ describe("describe_tool declares create_work's repo and headline rules", () => {
     "%s's headline rule states the real cap and that it is optional",
     async (name) => {
       const contract = await contractFor(name);
-      const rule = contract.rules.find((entry) => entry.fields.includes("headline"));
+      const rule = declaredRules(contract).find((entry) => entry.fields.includes("headline"));
       expect(rule).toBeDefined();
       // Interpolated from the constant, per the complete_item precedent above
       // — a cap change and a stale doc are both caught.
@@ -386,9 +454,9 @@ describe("describe_tool declares create_work's repo and headline rules", () => {
     // indistinguishable from one with none to declare — exactly #372's
     // regression shape, now closed for this operation too.
     const contract = await contractFor("update_item");
-    expect(contract.rules.length).toBeGreaterThan(0);
+    expect(declaredRules(contract).length).toBeGreaterThan(0);
 
-    const repoRule = contract.rules.find((entry) => entry.fields.includes("repo"));
+    const repoRule = declaredRules(contract).find((entry) => entry.fields.includes("repo"));
     expect(repoRule).toBeDefined();
     expect(repoRule!.rule).toContain("get_board");
     expect(repoRule!.rule).toContain("list_items");
@@ -399,7 +467,7 @@ describe("describe_tool declares create_work's repo and headline rules", () => {
     // explicit null clears the field.
     expect(repoRule!.rule).toContain("null");
 
-    const headlineRule = contract.rules.find((entry) => entry.fields.includes("headline"));
+    const headlineRule = declaredRules(contract).find((entry) => entry.fields.includes("headline"));
     expect(headlineRule).toBeDefined();
     expect(headlineRule!.rule).toContain(String(HEADLINE_MAX_CHARS));
     expect(headlineRule!.rule).toContain("null");
@@ -600,7 +668,7 @@ describe("describe_tool declares the assignment rules its callers were refused b
       // `fields: ["itemId", "sessionId"]` — which is what `OperationRule.fields`
       // is for: a caller holding a refusal can find the rule that refused it
       // without matching on prose.
-      const rule = contract.rules.find(
+      const rule = declaredRules(contract).find(
         (entry) => entry.fields.includes("sessionId") && entry.fields.includes("itemId"),
       );
       expect(rule, `${name} declares no rule about itemId + sessionId`).toBeDefined();
@@ -654,7 +722,7 @@ describe("describe_tool declares claim's crew and uniqueness rules", () => {
     // and the schema's `.optional()` reads as the opposite. A dispatched
     // agent must pass the ORCHESTRATOR's session id.
     const contract = await contractFor("claim");
-    const rule = contract.rules.find((entry) => entry.fields.includes("rootSessionId"));
+    const rule = declaredRules(contract).find((entry) => entry.fields.includes("rootSessionId"));
     expect(rule, "claim declares no rule about rootSessionId").toBeDefined();
     expect(rule!.rule).toContain("defaults");
     expect(rule!.rule).toContain("sessionId");
@@ -673,14 +741,14 @@ describe("describe_tool declares claim's crew and uniqueness rules", () => {
 
   it("declares that an unregistered session cannot omit machine", async () => {
     const contract = await contractFor("claim");
-    const rule = contract.rules.find((entry) => entry.fields.includes("machine"));
+    const rule = declaredRules(contract).find((entry) => entry.fields.includes("machine"));
     expect(rule, "claim declares no rule about machine").toBeDefined();
     expect(rule!.rule).toContain("register_session");
   });
 
   it("declares the role/roleCustom pairing in both directions", async () => {
     const contract = await contractFor("claim");
-    const rule = contract.rules.find((entry) => entry.fields.includes("roleCustom"));
+    const rule = declaredRules(contract).find((entry) => entry.fields.includes("roleCustom"));
     expect(rule).toBeDefined();
     expect(rule!.rule).toContain("required");
     // The quieter half: a name beside a real role is refused, not ignored.
@@ -1095,7 +1163,12 @@ describe("the contract cannot drift from what is enforced", () => {
     for (const name of OPERATION_NAMES) {
       const contract = await contractFor(name);
       const known = new Set(contract.fields.map((field) => field.name));
-      for (const rule of contract.rules) {
+      // `?? []` and not `declaredRules` here: this sweep walks EVERY
+      // operation, and most legitimately declare no contract at all, which
+      // now omits the key. Absence is the expected answer for them, so this
+      // loop skips them rather than failing them — what it exists to catch
+      // is a DECLARED rule naming a field the schema does not have.
+      for (const rule of contract.rules ?? []) {
         for (const field of rule.fields) {
           expect(known, `${name}: rule names unknown field \`${field}\``).toContain(
             field.split(".")[0],
@@ -1110,7 +1183,9 @@ describe("the contract cannot drift from what is enforced", () => {
     // which is the one thing `fields` is for.
     for (const name of OPERATION_NAMES) {
       const contract = await contractFor(name);
-      for (const rule of contract.rules) {
+      // Same reason as the sweep above: an operation declaring no contract
+      // omits `rules`, and that is correct rather than a defect.
+      for (const rule of contract.rules ?? []) {
         expect(rule.fields.length).toBeGreaterThan(0);
         expect(rule.rule.trim().length).toBeGreaterThan(0);
       }
@@ -1203,7 +1278,9 @@ describe("the summary contract states its two element types", () => {
 
   it("shows what_to_test's entry as an object literal, not just its text cap", async () => {
     const contract = await contractFor("complete_item");
-    const rule = contract.rules.find((entry) => entry.fields.includes("summary.what_to_test"));
+    const rule = declaredRules(contract).find((entry) =>
+      entry.fields.includes("summary.what_to_test"),
+    );
     expect(rule).toBeDefined();
     // The literal a caller can copy. Fails if the rule goes back to
     // describing the entry only as "each `text` at most N characters",
@@ -1216,7 +1293,9 @@ describe("the summary contract states its two element types", () => {
 
   it("warns that watch_for takes the opposite element type", async () => {
     const contract = await contractFor("complete_item");
-    const rule = contract.rules.find((entry) => entry.fields.includes("summary.watch_for"));
+    const rule = declaredRules(contract).find((entry) =>
+      entry.fields.includes("summary.watch_for"),
+    );
     expect(rule).toBeDefined();
     // Fails if the asymmetry warning is removed from watch_for's own rule.
     // This is the half that catches the *second* mistake — the one that
@@ -1229,8 +1308,10 @@ describe("the summary contract states its two element types", () => {
 
   it("keeps the two rules disagreeing about element type, which is the real contract", async () => {
     const contract = await contractFor("complete_item");
-    const whatToTest = contract.rules.find((e) => e.fields.includes("summary.what_to_test"))!;
-    const watchFor = contract.rules.find((e) => e.fields.includes("summary.watch_for"))!;
+    const whatToTest = declaredRules(contract).find((e) =>
+      e.fields.includes("summary.what_to_test"),
+    )!;
+    const watchFor = declaredRules(contract).find((e) => e.fields.includes("summary.watch_for"))!;
     // The asymmetry is a fact about the schema, so the prose describing it
     // must not be copy-pasted into agreement. Fails if someone "fixes" the
     // inconsistency by making both rules claim the same element type —
@@ -1539,7 +1620,7 @@ describe("a required array<object> is constructable from its own contract", () =
     expect(field!.type).toBe("array<object>");
     expect(field!.required).toBe(true);
 
-    const rule = contract.rules.find((entry) => entry.fields.includes("scores"));
+    const rule = declaredRules(contract).find((entry) => entry.fields.includes("scores"));
     expect(rule).toBeDefined();
 
     const text = ruleText(contract);
@@ -1570,7 +1651,7 @@ describe("a required array<object> is constructable from its own contract", () =
     const field = contract.fields.find((entry) => entry.name === "captures");
     expect(field!.type).toBe("array<object>");
     expect(field!.required).toBe(true);
-    expect(contract.rules.some((entry) => entry.fields.includes("captures"))).toBe(true);
+    expect(declaredRules(contract).some((entry) => entry.fields.includes("captures"))).toBe(true);
 
     const text = ruleText(contract);
     expect(text).toContain("entryId");
@@ -1590,7 +1671,7 @@ describe("a required array<object> is constructable from its own contract", () =
     const field = contract.fields.find((entry) => entry.name === "calls");
     expect(field!.type).toBe("array<object>");
     expect(field!.required).toBe(true);
-    expect(contract.rules.some((entry) => entry.fields.includes("calls"))).toBe(true);
+    expect(declaredRules(contract).some((entry) => entry.fields.includes("calls"))).toBe(true);
 
     // `tool` and `ts` are the only two required keys, and `ts` carries the
     // rule a caller gets wrong silently: the time of the CALL, not of the

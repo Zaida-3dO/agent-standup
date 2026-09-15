@@ -55,7 +55,12 @@ import {
   historicalVerificationSatisfies,
 } from "./historical-verification";
 import { MERGE_APPROVAL_KIND, personHasApprovedMerge } from "./merge-approval";
-import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH, mergeOverrideSatisfies } from "./merge-override";
+// The reason floor is quoted by `./override-syntax.ts`, which builds the
+// sentence that states it, so `MIN_REASON_LENGTH` is read there rather than
+// here. One module reads the constant, so the number in the refusal cannot
+// drift from the number enforced.
+import { MERGE_OVERRIDE_KIND, mergeOverrideSatisfies } from "./merge-override";
+import { MERGE_OVERRIDE_REMEDY } from "./override-syntax";
 import { reviewEvidenceOverrideSatisfies } from "./review-evidence-override";
 import {
   BLOCKING_SEVERITY_FLOOR,
@@ -85,12 +90,15 @@ const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judg
  *
  * One constant rather than the same prose in two places, so the two refusals
  * cannot drift into describing the escape hatch differently.
+ *
+ * **Built by `./override-syntax.ts`**, which builds the same sentence for
+ * both service-level overrides so all of them describe the escape hatch
+ * identically. The text it produces carries the literal `record_artifact`
+ * call, because naming the artifact kind alone leaves the reader to work out
+ * which tool records one and what its fields are called; see that module's
+ * header for what that gap costs.
  */
-const OVERRIDE_REMEDY =
-  `If the review genuinely still applies and you are judging that nothing material changed, ` +
-  `record a ${MERGE_OVERRIDE_KIND} artifact naming this commit, with a body of at least ` +
-  `${MIN_REASON_LENGTH} characters saying why — it is kept permanently as an override rather ` +
-  `than as a review, and overrides are counted.`;
+const OVERRIDE_REMEDY = MERGE_OVERRIDE_REMEDY;
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -173,6 +181,15 @@ export const mergeRequiresCommitGuard: Guard = {
  * derivable at all.
  */
 export const mergeRequiresApprovingCodeReviewGuard: Guard = {
+  // A string literal, deliberately, even though `./override-syntax.ts` holds
+  // the same value as `MERGE_OVERRIDE_GUARD_ID` for the sentence that prints
+  // it. `guards-registration.test.ts` finds every guard by scanning this
+  // directory for an id assigned a string literal, and cannot resolve a
+  // constant, so a reference here would make this guard invisible to the
+  // check that proves the registry is complete. (Spelling the scanned
+  // pattern out literally here would itself be matched by it.)
+  // The two spellings are held in agreement by an assertion in
+  // `review-evidence-override.test.ts`, which compares them directly.
   id: "merge.requires_approving_code_review",
   description:
     "Entering merged requires an approving code_review artifact at the item's current review round and tip commit.",
