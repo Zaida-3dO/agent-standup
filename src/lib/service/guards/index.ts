@@ -86,6 +86,12 @@ export {
   type ReviewEvidenceOverrideOutcome,
 } from "./review-evidence-override";
 export {
+  MERGE_OVERRIDE_GUARD_ID,
+  MERGE_OVERRIDE_REMEDY,
+  overrideCallSyntax,
+  overrideRemedySentence,
+} from "./override-syntax";
+export {
   MERGE_APPROVAL_KIND,
   personHasApprovedMerge,
   type MergeApprovalResult,

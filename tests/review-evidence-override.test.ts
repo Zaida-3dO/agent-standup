@@ -20,6 +20,8 @@ import { randomUUID } from "node:crypto";
 import { GuardRegistry, applyTransition } from "@/lib/service/state-machine";
 import {
   ALL_GUARDS,
+  MERGE_OVERRIDE_GUARD_ID,
+  MERGE_OVERRIDE_REMEDY,
   MIN_EVIDENCE_REASON_LENGTH,
   REVIEW_EVIDENCE_OVERRIDE_KIND,
   evidenceAtTipGuard,
@@ -621,6 +623,72 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
       expect(without).toContain("no commitSha");
       expect(without).not.toContain("naming this commit");
     });
+
+    // ── The syntax, not just the offer ──────────────────────────────────
+    //
+    // Naming the artifact kind was never the gap. A refused caller knows
+    // WHAT to file and still has to work out which tool files it and what
+    // its fields are called — and the catalogue note of 2026-09-10 records
+    // what that costs: four attempts, four byte-identical refusals, and a
+    // justified merge abandoned. These pin the literal call.
+    it("names the operation that files the override, not only the artifact kind", () => {
+      const text = reviewEvidenceOverrideRemedy("artifact.evidence_at_tip", true);
+      // The tool name. Without it the caller is told what to record and not
+      // how to record it, which is the whole defect.
+      expect(text).toContain("record_artifact");
+      // Every field that call needs. `createdByType`/`createdById` are
+      // optional on `record_artifact` ONLY for a caller holding a live
+      // assignment; a refused caller may hold none, so the example shows
+      // them rather than working for the luckier half of its readers.
+      expect(text).toContain("itemId");
+      expect(text).toContain("body");
+      expect(text).toContain("createdByType");
+      expect(text).toContain("createdById");
+    });
+
+    it("shows commitSha exactly when there is a commit to name", () => {
+      // The field must appear in the with-tip form and be ABSENT from the
+      // no-tip one — on a commitless item only a sha-less override is
+      // honoured, so printing the field there would offer the single shape
+      // guaranteed to be refused.
+      expect(reviewEvidenceOverrideRemedy("g", true)).toContain('"commitSha"');
+      expect(reviewEvidenceOverrideRemedy("g", false)).not.toContain('"commitSha"');
+    });
+
+    // The strongest of these: it does not check for a string, it checks
+    // that the printed call is one `record_artifact` actually accepts.
+    // Fails if a field is renamed, misspelled, or dropped from the schema
+    // while the remedy keeps advertising it — the drift that turns a
+    // documented bypass back into an undiscoverable one.
+    it("prints a call that record_artifact's own schema accepts", () => {
+      for (const hasTip of [true, false]) {
+        const text = reviewEvidenceOverrideRemedy("artifact.evidence_at_tip", hasTip);
+        const json = text.slice(text.indexOf("record_artifact {") + "record_artifact ".length);
+        const call = JSON.parse(json.slice(0, json.indexOf("}") + 1)) as Record<string, unknown>;
+
+        // Placeholders stand in for values only the caller knows; the real
+        // assertion is that the SHAPE parses.
+        const parsed = (OPERATION_REGISTRY.record_artifact.input as z.ZodType<unknown>).safeParse({
+          ...call,
+          itemId: randomUUID(),
+          createdById: "tester",
+          ...(hasTip ? { commitSha: "a".repeat(40) } : {}),
+        });
+        expect(parsed.success).toBe(true);
+        expect(call.kind).toBe(REVIEW_EVIDENCE_OVERRIDE_KIND);
+        // The field the caller must replace is present and is a
+        // placeholder, not a fabricated reason — a canned justification in
+        // an example is what a hurried caller copies verbatim, and it would
+        // land in a permanent, counted record whose only value is that a
+        // person can read it afterwards.
+        expect(typeof call.body).toBe("string");
+        expect(call.body).toMatch(/^<.*>$/);
+        // The example must not silently satisfy the reason floor the same
+        // sentence quotes: if it did, a caller could paste it unedited and
+        // file a meaningless override that passed.
+        expect(String(call.body).length).toBeLessThan(MIN_EVIDENCE_REASON_LENGTH * 2);
+      }
+    });
   });
 
   describe("registration — no parallel mechanism", () => {
@@ -628,6 +696,21 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
       expect(guardRegistry.has("artifact.evidence_at_tip")).toBe(true);
       expect(guardRegistry.has("merge.requires_approving_code_review")).toBe(true);
       expect(ALL_GUARDS.some((g) => g.id === "artifact.evidence_at_tip")).toBe(true);
+    });
+
+    // An override is filed AGAINST a named guard, and the merge remedy
+    // prints that name. If the guard's own `id` drifted from the constant
+    // the sentence quotes, the refusal would tell a caller to attribute an
+    // override to a clause that did not refuse them — and the count that
+    // makes overrides reviewable would be attributed to the wrong guard.
+    it("prints the merge guard's own id in the sentence offering its override", () => {
+      expect(mergeRequiresApprovingCodeReviewGuard.id).toBe(MERGE_OVERRIDE_GUARD_ID);
+      expect(MERGE_OVERRIDE_REMEDY).toContain(mergeRequiresApprovingCodeReviewGuard.id);
+      // And the merge form always names a commit: `merge.requires_commit`
+      // guarantees a tip before this clause is reached, so there is no
+      // sha-less shape of it to offer.
+      expect(MERGE_OVERRIDE_REMEDY).toContain('"commitSha"');
+      expect(MERGE_OVERRIDE_REMEDY).toContain("record_artifact");
     });
   });
 });
