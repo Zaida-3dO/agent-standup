@@ -201,6 +201,7 @@ import {
   defaultLimitFor,
   OPEN_COLUMNS,
   WITHHELD_COLUMNS,
+  COLUMN_ROUTE,
   buildSliceNotice,
 } from "../board/slice";
 import { isItemState } from "../state-machine/states";
@@ -550,6 +551,19 @@ export interface BoardSection {
    * fetched, not because there is nothing there.
    */
   readonly withheld: boolean;
+  /**
+   * The call that returns this column's rows, on a withheld section — and
+   * `null` on one that was actually read, where there is nothing left to
+   * reach for.
+   *
+   * `withheld: true` correctly said rows exist and were not returned, then
+   * stopped, leaving a caller who wants them to guess. The route was already
+   * known: it is the same `COLUMN_ROUTE` entry the prose notice is built
+   * from, so this puts the fact where a caller reading the section is
+   * already looking instead of requiring them to parse a sentence meant for
+   * a human.
+   */
+  readonly revealedBy: string | null;
 }
 
 export interface BoardOutput {
@@ -575,6 +589,24 @@ interface RawCountRow {
  */
 function toCount(value: bigint | number | string): number {
   return typeof value === "number" ? value : Number(value);
+}
+
+/**
+ * A column that was not read: no entries, its true total, and the call that
+ * would return it.
+ *
+ * One constructor rather than four literals, so a withheld section cannot be
+ * built somewhere that forgets the route — which is exactly how `withheld`
+ * came to signal that rows existed without ever saying how to reach them.
+ */
+function withheldSection(column: BoardColumn, total: number): BoardSection {
+  return {
+    entries: [],
+    total,
+    nextCursor: null,
+    withheld: true,
+    revealedBy: COLUMN_ROUTE[column],
+  };
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -896,10 +928,10 @@ export const getBoard = defineOperation({
     }
 
     const board: Record<BoardColumn, BoardSection> = {
-      backlog: { entries: [], total: 0, nextCursor: null, withheld: true },
-      in_progress: { entries: [], total: 0, nextCursor: null, withheld: true },
-      waiting: { entries: [], total: 0, nextCursor: null, withheld: true },
-      completed: { entries: [], total: 0, nextCursor: null, withheld: true },
+      backlog: withheldSection("backlog", 0),
+      in_progress: withheldSection("in_progress", 0),
+      waiting: withheldSection("waiting", 0),
+      completed: withheldSection("completed", 0),
     };
 
     // Every column reports a truthful `total` — including the ones this
@@ -931,7 +963,7 @@ export const getBoard = defineOperation({
         total += toCount(countRows[0]?.count ?? 0);
       }
 
-      board[column] = { entries: [], total, nextCursor: null, withheld: true };
+      board[column] = withheldSection(column, total);
     }
 
     // Now the pages, for the requested columns only.
@@ -1022,6 +1054,10 @@ export const getBoard = defineOperation({
         total: board[column].total,
         nextCursor,
         withheld: false,
+        // Read, so there is no further call to name. `revealedBy` answers
+        // "how do I see these rows", and a caller holding them has already
+        // had it answered.
+        revealedBy: null,
       };
     }
 

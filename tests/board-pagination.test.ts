@@ -143,6 +143,50 @@ describeIfDb("the board pages one column at a time", () => {
       const result = await board({ column: "backlog" });
       expect(result.notice).toBeNull();
     });
+
+    // -----------------------------------------------------------------------
+    // `withheld: true` names the call that reveals the rows.
+    //
+    // The gap: the flag correctly said "there are rows here and you did not
+    // get them", then stopped — a caller who wanted them had to guess. The
+    // route was already known (the prose notice is built from it), so this
+    // puts it on the section itself, where a programmatic caller is already
+    // looking, rather than requiring them to parse a sentence meant for a
+    // human.
+    // -----------------------------------------------------------------------
+
+    it("names the call that reveals each withheld column, on the section itself", async () => {
+      const result = await board();
+      expect(result.columns.backlog.revealedBy).toBe('get_board with column: "backlog"');
+      expect(result.columns.completed.revealedBy).toBe('get_board with column: "completed"');
+    });
+
+    it("names no route on a column that was actually read", async () => {
+      // A caller holding the rows has already had "how do I see these"
+      // answered. A mutant that sets `revealedBy` unconditionally — the
+      // obvious way to write this — passes the case above and fails here.
+      const result = await board();
+      expect(result.columns.in_progress.withheld).toBe(false);
+      expect(result.columns.in_progress.revealedBy).toBeNull();
+      expect(result.columns.waiting.revealedBy).toBeNull();
+
+      const asked = await board({ column: "backlog" });
+      expect(asked.columns.backlog.withheld).toBe(false);
+      expect(asked.columns.backlog.revealedBy).toBeNull();
+    });
+
+    it("gives the section route and the prose notice the same call, from one table", async () => {
+      // The two must not drift: a caller reading the section and a caller
+      // reading the notice have to be told the same thing. Both come from
+      // `COLUMN_ROUTE`, and this is what would fail if a second table were
+      // ever introduced beside it.
+      const result = await board();
+      for (const column of ["backlog", "completed"] as const) {
+        const route = result.columns[column].revealedBy;
+        expect(route).not.toBeNull();
+        expect(result.notice).toContain(route!);
+      }
+    });
   });
 
   describe("counts are counted, not measured off the page (#123)", () => {

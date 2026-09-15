@@ -90,8 +90,17 @@ export function defaultLimitFor(full: boolean): number {
   return full ? DEFAULT_FULL_PAGE_LIMIT : DEFAULT_PAGE_LIMIT;
 }
 
-/** How a caller reaches one withheld column — the call a notice names. */
-const COLUMN_ROUTE: Readonly<Record<BoardColumn, string>> = {
+/**
+ * How a caller reaches one withheld column — the call a notice names, and
+ * the same string a withheld section carries as `revealedBy`.
+ *
+ * Exported so `get_board` can put the route on the section itself rather
+ * than only in the prose notice. That is deliberately the SAME table and not
+ * a second one: a caller reading `withheld: true` on a section and a caller
+ * reading the notice must be told the same call, and two tables drift the
+ * day somebody renames a parameter in one of them.
+ */
+export const COLUMN_ROUTE: Readonly<Record<BoardColumn, string>> = {
   backlog: 'get_board with column: "backlog"',
   in_progress: 'get_board with column: "in_progress"',
   waiting: 'get_board with column: "waiting"',
