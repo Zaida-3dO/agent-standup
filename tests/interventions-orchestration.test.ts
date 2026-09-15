@@ -224,6 +224,165 @@ describe("I29 — dispatching into a wide crew", () => {
     // width alone would refuse the thing the system is for.
     expect(entry("dispatching-into-a-wide-crew").defaultLevel).toBe("nudge");
   });
+
+  // The worktree half, per the owner's correction: "I think this should
+  // only be if those 3 are on the same worktree... there's no need to be
+  // cautious if they are on separate worktrees." Three outcomes rather than
+  // two, and the third - the check could not be completed - is the one a
+  // careless implementation silently loses.
+  describe("territory", () => {
+    const WIDE = 4;
+
+    it("is silent at width when every crew is in its own worktree", async () => {
+      // The owner's case. Three crews in three trees cannot commit over
+      // each other, so the territory advice has nothing to say to them.
+      expect(
+        await fires("dispatching-into-a-wide-crew", {
+          concurrentCrewItems: WIDE,
+          crewTerritory: { sharedTrees: [], unrecordedWorktrees: 0 },
+        }),
+      ).toBe(false);
+    });
+
+    it("fires when two items share one tree", async () => {
+      expect(
+        await fires("dispatching-into-a-wide-crew", {
+          concurrentCrewItems: WIDE,
+          crewTerritory: {
+            sharedTrees: [{ worktree: "C:/repo/wt", itemIds: ["i1", "i2"] }],
+            unrecordedWorktrees: 0,
+          },
+        }),
+      ).toBe(true);
+    });
+
+    it("still fires when a claim recorded no worktree, which is not disjoint", async () => {
+      // The load-bearing case. `worktree` is optional on `claim`, so an
+      // empty `sharedTrees` has two causes: nothing overlaps, or the
+      // comparison could not be made. Reading the second as the first
+      // silences the entry exactly where it knows least - and a predicate
+      // keyed on `sharedTrees.length === 0` alone passes every other case
+      // in this block and fails this one.
+      expect(
+        await fires("dispatching-into-a-wide-crew", {
+          concurrentCrewItems: WIDE,
+          crewTerritory: { sharedTrees: [], unrecordedWorktrees: 2 },
+        }),
+      ).toBe(true);
+    });
+
+    it("stays silent below the threshold however the trees overlap", async () => {
+      // Territory does not override the width gate. A builder and its
+      // reviewer sharing one tree is the correct shape, not a collision.
+      expect(
+        await fires("dispatching-into-a-wide-crew", {
+          concurrentCrewItems: 2,
+          crewTerritory: {
+            sharedTrees: [{ worktree: "C:/repo/wt", itemIds: ["i1", "i2"] }],
+            unrecordedWorktrees: 0,
+          },
+        }),
+      ).toBe(false);
+    });
+
+    it("names the tree and the items sharing it", async () => {
+      // A nudge that says "something overlaps" without saying what is the
+      // reminder in the abstract the catalogue warns against.
+      const verdict = await entry("dispatching-into-a-wide-crew").predicate({
+        concurrentCrewItems: WIDE,
+        crewTerritory: {
+          sharedTrees: [{ worktree: "C:/repo/wt", itemIds: ["i1", "i2"] }],
+          unrecordedWorktrees: 0,
+        },
+      });
+      expect(verdict.data).toEqual({
+        concurrentCrewItems: WIDE,
+        sharedTrees: [{ worktree: "C:/repo/wt", itemIds: ["i1", "i2"] }],
+        unrecordedWorktrees: 0,
+      });
+    });
+
+    it("fires on width alone when territory was never examined", async () => {
+      // Absent `crewTerritory` is "not looked at", which must not be read
+      // as "separate trees" - that would silence the entry wholesale on
+      // every path that does not assemble it.
+      expect(await fires("dispatching-into-a-wide-crew", { concurrentCrewItems: WIDE })).toBe(true);
+    });
+
+    it("tells the reader when it is safe to disregard", async () => {
+      // The owner's fallback ask, which the message must carry even now
+      // that the predicate implements the real check - the entry still
+      // fires when worktrees went unrecorded, and that reader needs to know
+      // the finding may not apply to them.
+      const messages = entry("dispatching-into-a-wide-crew").messages;
+      expect(messages.plain).toMatch(/worktree/i);
+      expect(messages.prominent).toMatch(/worktree/i);
+    });
+  });
+});
+
+// I32 - crew in flight with nobody checking in.
+//
+// The entry the `wait_for_crew` crew declined to write because the signal
+// did not exist. What makes it honest is the distinction between a counted
+// zero and an uncounted absence, so that is what most of these cases pin.
+describe("I32 - crew in flight without a check-in", () => {
+  const ID = "crew-in-flight-without-check-in";
+
+  it("fires when crew are running", async () => {
+    expect(await fires(ID, { crewInFlight: 2 })).toBe(true);
+  });
+
+  it("fires for a single crew member", async () => {
+    // The boundary. A predicate written `> 1` passes the case above and
+    // fails this one, and one crewmate working alone is the commonest
+    // shape there is.
+    expect(await fires(ID, { crewInFlight: 1 })).toBe(true);
+  });
+
+  it("is silent at a counted zero, because the crew has come home", async () => {
+    expect(await fires(ID, { crewInFlight: 0 })).toBe(false);
+  });
+
+  it("is silent when the count was never taken", async () => {
+    // The acceptance criterion this entry was blocked on: absent means
+    // "not known", which a well-written predicate answers with
+    // `triggered: false` rather than by guessing. A session whose crew
+    // state could not be determined must not be nudged.
+    expect(await fires(ID, {})).toBe(false);
+  });
+
+  it("does not fire on being an orchestrator alone", async () => {
+    // The failure this row exists to avoid, stated as a test: gating on
+    // `isOrchestrator` would fire on every orchestrator on every call
+    // regardless of whether anything was running.
+    expect(await fires(ID, { isOrchestrator: true })).toBe(false);
+    expect(await fires(ID, { isOrchestrator: true, crewInFlight: 0 })).toBe(false);
+  });
+
+  it("points at the command that actually exists", async () => {
+    // `standup crew wait` was merged as c8d4cc5, which is what makes this
+    // advice actionable rather than aspirational. A message naming no
+    // remedy is a complaint.
+    for (const message of Object.values(entry(ID).messages)) {
+      expect(message).toMatch(/standup crew wait/);
+    }
+  });
+
+  it("carries the count so the message can be checked against it", async () => {
+    const verdict = await entry(ID).predicate({ crewInFlight: 3 });
+    expect(verdict.data).toEqual({ crewInFlight: 3 });
+  });
+
+  it("is a nudge addressed to the orchestrator, on the digest", async () => {
+    // Only the orchestrator can start a wait, so addressing the builder
+    // would be asking it to act outside its remit. The digest because crew
+    // running now will still be running in five minutes.
+    expect(entry(ID).defaultLevel).toBe("nudge");
+    expect(entry(ID).audience).toBe("orchestrator");
+    expect(entry(ID).defaultTiming).toBe("digest");
+    expect(entry(ID).phase).toBe("post");
+  });
 });
 
 // ── I30 — a visual review deferred to nowhere ──────────────────────────

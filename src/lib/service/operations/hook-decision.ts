@@ -73,15 +73,25 @@
 // for the claim read. See `../session-displacement.ts` for the full
 // accounting.
 //
-// So a `PreToolUse` costs at most one index lookup, while a `PostToolUse`
-// and a `Stop` pay nothing for it at all. The operation is declared
-// `kind: "read"`, and honestly so.
+// So a `PreToolUse` costs at most one index lookup, and a `PostToolUse` pays
+// nothing for it at all. The operation is declared `kind: "read"`, and
+// honestly so.
+//
+// **A `Stop` is the one event that now costs two reads unconditionally**,
+// and the exception is affordable for a reason that does not generalise: a
+// stop happens once per turn, not once per call. The volume argument above
+// is about the thousands of tool calls inside a turn; the two queries here
+// ride an event that occurs at the end of one, so they are some five orders
+// of magnitude rarer than the path the gating discipline exists to protect.
+// Gating them on anything would mean gating on a command a `Stop` does not
+// carry. See the `Stop` branch in the handler.
 import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { BUILTIN_INTERVENTIONS } from "@/lib/interventions/builtins";
 import { isBroadProcessKill } from "@/lib/interventions/commands";
 import { assembleContext, needs } from "@/lib/interventions/context";
+import { assembleStopContext, type StopContextPayload } from "@/lib/interventions/stop-context";
 import { evaluate, strongestLevel } from "@/lib/interventions/registry";
 import {
   readInterventionSettingRows,
@@ -166,6 +176,21 @@ export interface HookDecisionOperationOutput {
    * displaced session could run would be the reason to stop it.
    */
   readonly enforcement?: SessionEnforcementPayload;
+  /**
+   * What the stop catch needs to know, on a `Stop` event.
+   *
+   * **A wire contract with `../../hook/stop-catch.ts`'s `readStopContext`**,
+   * which parses this block field by field and drops anything it does not
+   * recognise. A renamed field here is therefore not a type error anywhere —
+   * it is a catch that silently never fires again, so the names are fixed by
+   * the reader rather than chosen here.
+   *
+   * Absent on every other event type, and absent on a `Stop` whose facts
+   * could not be established. It carries counts and flags only: nothing in
+   * it can refuse the stop, and `decision` is `allow` on this branch
+   * whatever it says.
+   */
+  readonly stop?: StopContextPayload;
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -193,7 +218,41 @@ export const hookDecision = defineOperation({
     // walked the catalogue would be spending the highest-volume path's
     // budget to reach a conclusion the phase already determines.
     if (input.eventType === "Stop") {
-      return { decision: "allow", reason: null, canBlock, findings: [] };
+      // **The registry is still not consulted, and that is unchanged.** A
+      // `Stop` carries no tool and no command, so every predicate keyed on
+      // one would decline in turn — walking the catalogue to reach a
+      // conclusion the phase already determines is the cost this early
+      // return exists to avoid.
+      //
+      // What a `Stop` does now carry is the stop catch's own context, which
+      // is a different question from any the catalogue asks: not "should
+      // this call be refused" but "is anyone still working for you". It is
+      // assembled here because this is the only server-side moment that
+      // sees a stop at all — `../../hook/stop-catch.ts` has been able to
+      // read this block since it was written, and nothing has ever sent
+      // one.
+      //
+      // **`decision` stays `allow` unconditionally**, and no value this
+      // block can take is consulted before returning it. DECISIONS.md §6:
+      // a refused stop can trap an agent in a loop, so the advisory
+      // property is structural here rather than a rule to remember.
+      const stop = await assembleStopContext({
+        db: ctx.db,
+        sessionId: input.sessionId,
+        deadAfterSeconds: ctx.settings.values["liveness.dead_after_seconds"],
+        waitTimeoutMaxSeconds: ctx.settings.values["crew.wait_timeout_seconds"],
+      });
+      return {
+        decision: "allow",
+        reason: null,
+        canBlock,
+        findings: [],
+        // Absent rather than a zeroed block when nothing could be
+        // established — the client reads an absent block as "not known" and
+        // stays silent, which is the correct answer to a question that was
+        // not successfully asked.
+        ...(stop === undefined ? {} : { stop }),
+      };
     }
 
     // Whether this session still owns the work it is doing — see
@@ -225,6 +284,11 @@ export const hookDecision = defineOperation({
         editThreshold: ctx.settings.values["interventions.hands_on_edit_threshold"],
         window: ctx.settings.values["interventions.hands_on_window"],
       },
+      // The crew-in-flight count's liveness bound — the same
+      // `liveness.dead_after_seconds` the Fleet page reads, passed through
+      // rather than defaulted so that one configured threshold governs both
+      // screens. See `crewInFlightFor`.
+      crewInFlightDeadAfterSeconds: ctx.settings.values["liveness.dead_after_seconds"],
     });
 
     // The installation's own configuration, read only when a finding is

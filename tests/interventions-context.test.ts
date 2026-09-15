@@ -619,3 +619,257 @@ describe("occupancy — who else holds this checkout (I15)", () => {
     expect(context.occupyingCrew).toBeUndefined();
   });
 });
+
+// Crew in flight, and where that crew is sitting on disk.
+//
+// Both ride the assignment lookup that already happened, and both turn on
+// the same discipline the rest of this file protects: a field the assembler
+// could not honestly answer is left absent, never defaulted, because the
+// predicates read absence as "no finding" and a `0` written where the truth
+// is unknown converts a cautious entry into a confidently wrong one.
+describe("crew in flight, and crew territory", () => {
+  /**
+   * A handle that answers by query SHAPE rather than by position.
+   *
+   * Deliberately not the sequenced handle the occupancy block uses. These
+   * paths make four or five reads whose order is an implementation detail,
+   * and a positional fixture would silently answer the wrong query the
+   * first time a branch is reordered - passing or failing for reasons
+   * unrelated to what each case is about. Routing on the shape keeps every
+   * assertion below about the field it names.
+   */
+  function routed(answers: {
+    readonly claim?: unknown[];
+    readonly crew?: unknown[];
+    readonly width?: unknown[];
+  }): TransactionHandle & { queries: string[] } {
+    const queries: string[] = [];
+    return {
+      queries,
+      $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+        queries.push(query);
+        if (query.includes('AS "crew"')) return (answers.crew ?? []) as T;
+        if (query.includes('a."worktree" AS "worktree"')) return (answers.width ?? []) as T;
+        if (query.includes('r."defaultBranch"')) return (answers.claim ?? []) as T;
+        // Every other read on these paths (delivery, nits, visual reviews)
+        // is answered empty: none of them is what these cases are about,
+        // and each has its own coverage elsewhere.
+        return [] as T;
+      },
+      $executeRawUnsafe: async () => {
+        throw new Error("context assembly must never write");
+      },
+    } as TransactionHandle & { queries: string[] };
+  }
+
+  const orchestratorClaim = {
+    itemId: "item-a",
+    worktree: "/checkouts/wt-mine",
+    state: "executing",
+    defaultBranch: "main",
+    rootSessionId: "root-mine",
+    repo: "web",
+    machine: "desktop",
+    role: "orchestrator",
+  };
+
+  /**
+   * A `post` delivery-gated call. The crew count rides the same gate the
+   * flow nudges do, so this is the shape that reaches it.
+   */
+  function deliveryCall(db: TransactionHandle, extra: Record<string, unknown> = {}) {
+    return assembleContext({
+      db,
+      sessionId: "s1",
+      tool: "Edit",
+      phase: "post",
+      crewInFlightDeadAfterSeconds: 900,
+      ...extra,
+    });
+  }
+
+  describe("crewInFlight", () => {
+    it("is absent when no threshold was supplied", async () => {
+      // No default here on purpose: a defaulted threshold would be a fourth
+      // definition of liveness invented at the call site, which is the
+      // drift reusing the Fleet notion exists to avoid. A caller that does
+      // not supply it gets the field left absent.
+      const db = routed({ claim: [orchestratorClaim], crew: [{ crew: 4 }] });
+      const context = await assembleContext({
+        db,
+        sessionId: "s1",
+        tool: "Edit",
+        phase: "post",
+      });
+      expect(context.crewInFlight).toBeUndefined();
+    });
+
+    it("is absent for a builder, whose root points at somebody else", async () => {
+      // Not merely a cost gate — a correctness one. `rootSessionId` on a
+      // builder's claim names the orchestrator ABOVE it, so counting for a
+      // builder would count its siblings and report them as its own crew. A
+      // number that is true for one caller and misleading for another is
+      // worse than one that is simply absent for the second.
+      const db = routed({
+        claim: [{ ...orchestratorClaim, role: "builder" }],
+        crew: [{ crew: 4 }],
+      });
+      const context = await deliveryCall(db);
+      expect(context.crewInFlight).toBeUndefined();
+    });
+
+    it("is absent on a pre-phase call, which cannot act on it", async () => {
+      const db = routed({ claim: [orchestratorClaim], crew: [{ crew: 4 }] });
+      const context = await assembleContext({
+        db,
+        sessionId: "s1",
+        tool: "Edit",
+        phase: "pre",
+        crewInFlightDeadAfterSeconds: 900,
+      });
+      expect(context.crewInFlight).toBeUndefined();
+    });
+
+    it("carries a counted zero, which is different from not counting", async () => {
+      // The distinction the entry rests on. `0` means the query ran and
+      // nobody is running; absent means nobody asked. A predicate reads the
+      // first as "you are free to stop" and the second as "I cannot tell".
+      const db = routed({ claim: [orchestratorClaim], crew: [{ crew: 0 }] });
+      const context = await deliveryCall(db);
+      expect(context.crewInFlight).toBe(0);
+    });
+
+    it("carries the count when crew are running", async () => {
+      const db = routed({ claim: [orchestratorClaim], crew: [{ crew: 4 }] });
+      const context = await deliveryCall(db);
+      expect(context.crewInFlight).toBe(4);
+    });
+
+    it("stays absent when the count query answered nothing", async () => {
+      // A `COUNT` always returns a row, so an empty result is the query not
+      // having answered rather than a zero. Writing `0` there would tell a
+      // predicate the crew has come home on the strength of nothing.
+      const db = routed({ claim: [orchestratorClaim], crew: [] });
+      const context = await deliveryCall(db);
+      expect(context.crewInFlight).toBeUndefined();
+    });
+
+    it("requires both halves of the Fleet page's liveness notion", async () => {
+      // #400: `Assignment.liveness` is advanced only by the sweep, so alone
+      // it reports the last pass's verdict — which is how the Fleet page
+      // counted 27 claims as Running that had been gone for days. The count
+      // must require `running` AND a recent `lastActive`. Dropping either
+      // half fails here.
+      const db = routed({ claim: [orchestratorClaim], crew: [{ crew: 1 }] });
+      await deliveryCall(db);
+      const crewQuery = db.queries.find((query) => query.includes('AS "crew"')) ?? "";
+      expect(crewQuery).toMatch(/liveness"?\s*=\s*'running'/);
+      expect(crewQuery).toMatch(/lastActive/);
+      expect(crewQuery).toContain('a."releasedAt" IS NULL');
+    });
+
+    it("excludes the asking session, so a zero is reachable at all", async () => {
+      const db = routed({ claim: [orchestratorClaim], crew: [{ crew: 1 }] });
+      await deliveryCall(db);
+      const crewQuery = db.queries.find((query) => query.includes('AS "crew"')) ?? "";
+      expect(crewQuery).toMatch(/sessionId"?\s*<>/);
+    });
+  });
+
+  describe("crewTerritory", () => {
+    /** The width query runs on a spawn, so this is the shape that reaches it. */
+    function spawnCall(db: TransactionHandle) {
+      return assembleContext({ db, sessionId: "s1", tool: "Task" });
+    }
+
+    function row(itemId: string, worktree: string | null) {
+      return { itemId, worktree };
+    }
+
+    it("reports no shared trees when every item is in its own", async () => {
+      const db = routed({
+        claim: [orchestratorClaim],
+        width: [row("i1", "/wt/one"), row("i2", "/wt/two"), row("i3", "/wt/three")],
+      });
+      const context = await spawnCall(db);
+      expect(context.concurrentCrewItems).toBe(3);
+      expect(context.crewTerritory).toEqual({ sharedTrees: [], unrecordedWorktrees: 0 });
+    });
+
+    it("finds two items sharing one tree", async () => {
+      const db = routed({
+        claim: [orchestratorClaim],
+        width: [row("i1", "/wt/one"), row("i2", "/wt/one"), row("i3", "/wt/three")],
+      });
+      const context = await spawnCall(db);
+      expect(context.crewTerritory?.sharedTrees).toEqual([
+        { worktree: "/wt/one", itemIds: ["i1", "i2"] },
+      ]);
+    });
+
+    it("compares normalised paths but reports the raw one", async () => {
+      // `claimedWorktree`'s own rule: a normalised form is the right thing
+      // to compare and the wrong thing to display. Two spellings of one
+      // directory must collide, and the message must still show a string
+      // the caller recognises as theirs.
+      const db = routed({
+        claim: [orchestratorClaim],
+        width: [row("i1", "C:\\Checkouts\\WT"), row("i2", "c:/checkouts/wt/")],
+      });
+      const context = await spawnCall(db);
+      const shared = context.crewTerritory?.sharedTrees ?? [];
+      expect(shared).toHaveLength(1);
+      expect(shared[0]?.itemIds).toEqual(["i1", "i2"]);
+      // Raw, not lowercased or slash-flipped.
+      expect(shared[0]?.worktree).toBe("C:\\Checkouts\\WT");
+    });
+
+    it("does not report a builder and a reviewer on ONE item as an overlap", async () => {
+      // The healthy shape. Two agents on one item share a tree correctly,
+      // and grouping per row rather than per item would report the ordinary
+      // review handoff as a collision — firing on exactly the pattern the
+      // system is trying to encourage.
+      const db = routed({
+        claim: [orchestratorClaim],
+        width: [row("i1", "/wt/one"), row("i1", "/wt/one"), row("i2", "/wt/two")],
+      });
+      const context = await spawnCall(db);
+      expect(context.concurrentCrewItems).toBe(2);
+      expect(context.crewTerritory?.sharedTrees).toEqual([]);
+    });
+
+    it("counts claims that recorded no worktree instead of treating them as distinct", async () => {
+      // `worktree` is optional on `claim`, so this is common. An
+      // implementation that let these fall through as "not overlapping"
+      // would report disjoint territory on the strength of missing data.
+      const db = routed({
+        claim: [orchestratorClaim],
+        width: [row("i1", "/wt/one"), row("i2", null), row("i3", "   ")],
+      });
+      const context = await spawnCall(db);
+      expect(context.crewTerritory).toEqual({ sharedTrees: [], unrecordedWorktrees: 2 });
+    });
+
+    it("stays absent when the query answered nothing", async () => {
+      // A crew always includes the asking session, so an empty result is
+      // the query not having answered rather than an empty crew.
+      const db = routed({ claim: [orchestratorClaim], width: [] });
+      const context = await spawnCall(db);
+      expect(context.concurrentCrewItems).toBeUndefined();
+      expect(context.crewTerritory).toBeUndefined();
+    });
+
+    it("answers both questions from one read", async () => {
+      // The width and the territory are facts about the same rows. Asking
+      // separately would let them describe two different moments, and would
+      // double the cost of a dispatch.
+      const db = routed({ claim: [orchestratorClaim], width: [row("i1", "/wt/one")] });
+      await spawnCall(db);
+      const widthQueries = db.queries.filter((query) =>
+        query.includes('a."worktree" AS "worktree"'),
+      );
+      expect(widthQueries).toHaveLength(1);
+      expect(widthQueries[0]).toContain("LIMIT");
+    });
+  });
+});

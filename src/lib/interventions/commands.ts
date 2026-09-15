@@ -285,6 +285,54 @@ export function isBroadProcessKill(command: string): boolean {
 }
 
 /**
+ * Whether a command starts a wait on this session's crew — the stop catch's
+ * "a wake is already scheduled" half.
+ *
+ * ── Why a command shape and not a stored flag ──────────────────────────
+ *
+ * Nothing records "a wait is running". `wait_for_crew` is a read operation
+ * that blocks and returns; it writes no in-progress row, and giving it one
+ * would mean a write on a read path plus a way to clear it when the shell
+ * process dies — durability machinery for a fact that is minutes old. What
+ * a backgrounded wait does leave is the `Bash` call that launched it, and
+ * recognising that call is the honest form of the inference.
+ *
+ * ── Why the `tool` column cannot answer this ───────────────────────────
+ *
+ * Worth stating because it is the obvious first guess and it is wrong.
+ * `ToolCall.tool` holds the *harness's* tool name — `Bash`, `Read`, `Edit`
+ * (`../telemetry/shape.ts`) — never an operation name, because the rows are
+ * written from hook telemetry about the agent's own calls. `standup crew
+ * wait` is a shell invocation, so it arrives as `Bash` with the text in
+ * `command`, and a query keyed on `tool = 'wait_for_crew'` would match
+ * nothing at all while looking entirely reasonable.
+ *
+ * ── What it matches, and which way it errs ─────────────────────────────
+ *
+ * The `crew wait` verb pair on a `standup` invocation, however the binary is
+ * spelled — a bare `standup`, a path to it, `npx standup`. The trailing
+ * flags are not inspected: `--since` is required by the command itself, and
+ * a wait is a wait whatever cursor it starts from.
+ *
+ * Under-matching is the safe direction and is chosen deliberately. A missed
+ * match means the catch speaks to an orchestrator that had in fact
+ * backgrounded a wait — one unnecessary line. A false match means the catch
+ * stays silent for a session with crew running and nothing coming back for
+ * them, which is the whole situation it exists to catch. So this recognises
+ * the documented invocation rather than trying to guess at every wrapper.
+ */
+export function isCrewWaitCommand(command: string): boolean {
+  return splitStatements(command).some((statement) =>
+    // `standup` as a whole word, then `crew` then `wait` as the next two
+    // words. Anchored on a word boundary rather than the start of the
+    // statement so a backgrounded invocation with an env prefix or a path
+    // still matches, and separated by `\s+` so the verb pair cannot be
+    // matched across an unrelated argument.
+    /\bstandup\b[^\n;]*?\bcrew\s+wait\b/.test(statement.trim()),
+  );
+}
+
+/**
  * Whether a command records work permanently — I13's recognition half.
  *
  * Two shapes, and both are deliberate:

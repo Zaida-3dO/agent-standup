@@ -73,19 +73,66 @@ describe("I26 — committed work with no pull request", () => {
 describe("I27 — a pull request nobody requested a review of", () => {
   const ID = "pull-request-with-no-review-requested";
 
-  it("fires once a pull request exists and nothing has asked for a review", async () => {
-    expect(await fires(ID, { deliveryStage: "pull_request_open" })).toBe(true);
+  // Comfortably past the grace window, so these cases are about the stage
+  // rather than about the clock. The window's own boundary is pinned below.
+  const OLD_ENOUGH = 60 * 60;
+
+  it("fires once a pull request has sat unreviewed past the grace window", async () => {
+    expect(
+      await fires(ID, { deliveryStage: "pull_request_open", pullRequestAgeSeconds: OLD_ENOUGH }),
+    ).toBe(true);
   });
 
   it("goes quiet once a review has been requested", async () => {
-    expect(await fires(ID, { deliveryStage: "review_requested" })).toBe(false);
+    expect(
+      await fires(ID, { deliveryStage: "review_requested", pullRequestAgeSeconds: OLD_ENOUGH }),
+    ).toBe(false);
+  });
+
+  it("stays silent inside the grace window, whatever the stage says", async () => {
+    // The owner's refinement: *"I bias towards shortly after, giving the
+    // agent a chance to go through its flow naturally."* A pull request
+    // opened seconds ago is one whose author may be about to call
+    // `request_review` on its very next call, and nudging there is nudging
+    // somebody for not having finished something they are in the middle of.
+    expect(await fires(ID, { deliveryStage: "pull_request_open", pullRequestAgeSeconds: 0 })).toBe(
+      false,
+    );
+    expect(await fires(ID, { deliveryStage: "pull_request_open", pullRequestAgeSeconds: 60 })).toBe(
+      false,
+    );
+  });
+
+  it("pins the window's boundary from both sides", async () => {
+    // A single-sided assertion would pass against a window of any length,
+    // including one so long the entry never fires. Both sides of one
+    // threshold is what makes the number itself the thing under test:
+    // moving it in either direction fails one of these.
+    const window = 15 * 60;
+    expect(
+      await fires(ID, { deliveryStage: "pull_request_open", pullRequestAgeSeconds: window - 1 }),
+    ).toBe(false);
+    expect(
+      await fires(ID, { deliveryStage: "pull_request_open", pullRequestAgeSeconds: window }),
+    ).toBe(true);
+  });
+
+  it("stays silent when the age is unknown, rather than assuming it is old", async () => {
+    // Absent means the age could not be established — an artifact carrying
+    // no usable timestamp — and reading that as "old enough" would put the
+    // entry back exactly where it was before the window existed. This is
+    // the case that distinguishes a real window from a cosmetic one.
+    expect(await fires(ID, { deliveryStage: "pull_request_open" })).toBe(false);
   });
 
   it("does not fire before the pull request exists", async () => {
     // I26's territory, not this one's. The two entries must not both fire
     // on one situation, or a single stalled item produces two nudges
-    // saying different things.
-    expect(await fires(ID, { deliveryStage: "committed" })).toBe(false);
+    // saying different things. The age is supplied so that a pass here
+    // cannot be the grace window doing the work.
+    expect(await fires(ID, { deliveryStage: "committed", pullRequestAgeSeconds: OLD_ENOUGH })).toBe(
+      false,
+    );
     expect(await fires(ID, {})).toBe(false);
   });
 
