@@ -31,6 +31,7 @@
 
 import {
   isBroadProcessKill,
+  isUnscopedRecursiveSearch,
   isMergeAttempt,
   isMergedByRefComparison,
   isRebaseOrDivergenceCheck,
@@ -1575,6 +1576,88 @@ const crewInFlightWithoutCheckIn: Intervention = {
 };
 
 /**
+ * **I16 (nudge-level)** — a recursive content search nothing has narrowed.
+ *
+ * ── Why this ships while the catalogued entry stays unbuilt ────────────
+ *
+ * I16 is specced `block-overridable` and its `missing` names the reason it
+ * cannot be: *the size of the directory a search is rooted at*, which the
+ * server cannot see. A block would be refusing work on a guess, and a search
+ * of a leaf directory is fine.
+ *
+ * The owner asked for the weaker thing explicitly — *"can you at least nudge
+ * on any search to bias to try ls or quicker ways to navigate instead"* —
+ * and that needs no size signal at all. So the shape-only half ships as a
+ * nudge and the block-level half stays on the record with the size signal
+ * named as what it waits for.
+ *
+ * ── The finding, stated precisely ──────────────────────────────────────
+ *
+ * Not "searching is wrong" — that would be advice to stop using a tool the
+ * job requires. It is: *reaching for a recursive content search where
+ * listing the directory first would have answered the question, on a tree
+ * where the search is slow enough to burn the turn it was meant to save.*
+ * The remedy is named rather than implied, because a nudge that says "this
+ * may be slow" without saying what to do instead is a complaint.
+ *
+ * What is exempt is as much the design as what matches, and
+ * `isUnscopedRecursiveSearch` carries that reasoning: a path, a glob or a
+ * type filter all mean the caller has already done the narrowing this entry
+ * is asking for, and firing on them would put a message on correctly-scoped
+ * work.
+ *
+ * ── `immediate`, like every other command-shape entry ──────────────────
+ *
+ * The advice is worthless once the command has run — the turn it would have
+ * saved is already spent — so it cannot ride the digest, which is where
+ * advice about work that *keeps* belongs. This is weighed against the entry
+ * firing more often than anything else in the catalogue and it still comes
+ * out this way: a nudge arriving five minutes after the slow search
+ * finished is noise with none of the benefit.
+ *
+ * ── It is built to be judged, and that is deliberate ───────────────────
+ *
+ * **This will fire more often than any other entry here, and it is the one
+ * most likely to be judged noise.** That is now a measurable question
+ * rather than an argument: firings carry a scoring prompt, so the
+ * keep-or-retire decision can be made on data. The message asks the reader
+ * to rate it, so the data exists to make that call with.
+ */
+const unscopedRecursiveSearch: Intervention = {
+  id: "unscoped-recursive-search",
+  source: "builtin",
+  summary: "A recursive content search with no path, glob or type narrowing it.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "nudge",
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "Check whether a directory listing would answer this faster. A recursive content search " +
+      "with no path or glob walks the whole tree, and on a large one it burns the turn it was " +
+      "meant to save — try `ls <dir>` first, or scope the search to a subdirectory or a file " +
+      "type. Rate this nudge so it can be tuned or switched off.",
+    prominent:
+      "⚠️ This search is not scoped to anything. Consider listing the directory first: a " +
+      "recursive content search with no path, glob or type filter walks every file under the " +
+      "root, and on a large tree that costs more time than reading the structure directly. " +
+      "Running `ls <dir>` " +
+      "on a couple of directories usually makes the structure obvious, and a search aimed at " +
+      "one subdirectory " +
+      "then answers in a fraction of the time. If the broad search really is what you want, run " +
+      "it — this refuses nothing. Rate this nudge either way: it fires often by design, and the " +
+      "score is what decides whether it stays.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    // Absent command is "not known", which is silent rather than a guess —
+    // the same reading every other shape-only entry takes.
+    if (context.command === undefined) return { triggered: false };
+    if (!isUnscopedRecursiveSearch(context.command)) return { triggered: false };
+    return { triggered: true };
+  },
+};
+
+/**
  * **I30** — a visual review deferred with nothing recording the deferral.
  *
  * ── The half of I25 that was advice rather than a mechanism ────────────
@@ -1773,6 +1856,7 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   nitsMergedWithNothingTrackingThem,
   visualReviewDeferredWithoutRecord,
   crewInFlightWithoutCheckIn,
+  unscopedRecursiveSearch,
 ];
 
 /**
@@ -1857,9 +1941,14 @@ export const UNIMPLEMENTED_CATALOGUE_ENTRIES: readonly {
   {
     id: "I16",
     missing:
-      "the size of the directory a search is rooted at. The server cannot see the caller's " +
-      "filesystem, so the hook would have to carry a scope and a size signal with the call, and " +
-      "the hook reports no such field.",
+      "the size of the directory a search is rooted at, which is what the BLOCK-level entry " +
+      "specced here still waits on. The server cannot see the caller's filesystem, so the hook " +
+      "would have to carry a scope and a size signal with the call, and the hook reports no such " +
+      "field — without it a refusal could only be a guess, and a search of a leaf directory is " +
+      "perfectly fine. A nudge-level variant that needs none of that DOES ship, as " +
+      "`unscoped-recursive-search`: it reads the command's shape alone and suggests listing the " +
+      "directory first, which is the whole of what the owner asked for here. So what remains " +
+      "missing is only the evidence that would justify refusing rather than suggesting.",
   },
   {
     id: "I17",

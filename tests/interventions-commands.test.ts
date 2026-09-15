@@ -13,6 +13,7 @@ import {
   isBroadProcessKill,
   isMergeAttempt,
   isMergeLanding,
+  isUnscopedRecursiveSearch,
 } from "@/lib/interventions/commands";
 
 describe("isMergeAttempt", () => {
@@ -435,6 +436,90 @@ describe("isBroadProcessKill", () => {
       "grep -rn kill src/",
     ]) {
       expect(isBroadProcessKill(command), command).toBe(false);
+    }
+  });
+});
+
+// The search-scope recogniser — I16's nudge-level half.
+//
+// This one fires on some of the most common traffic there is, so the
+// EXEMPTIONS carry more weight than the matches: a false positive puts a
+// message on correctly-scoped work, and an entry that does that is one its
+// readers learn to skip. Each case below names what it protects.
+describe("isUnscopedRecursiveSearch", () => {
+  it("matches a recursive search with nothing narrowing it", () => {
+    for (const command of [
+      "rg TODO",
+      "rg TODO .",
+      "grep -r TODO",
+      "grep -rn TODO .",
+      "grep -R TODO /",
+      "ag TODO",
+      "ack TODO",
+    ]) {
+      expect(isUnscopedRecursiveSearch(command), command).toBe(true);
+    }
+  });
+
+  it("exempts a search the caller has already pointed at a path", () => {
+    // The behaviour the entry is steering TOWARD. Firing here would nudge
+    // somebody for doing the thing the message asks for.
+    for (const command of [
+      "rg TODO src/lib",
+      "rg TODO src/lib/interventions/context.ts",
+      "grep -r TODO ./src",
+      "grep -rn TODO docs/",
+    ]) {
+      expect(isUnscopedRecursiveSearch(command), command).toBe(false);
+    }
+  });
+
+  it("exempts a search bounded by a glob or a type filter", () => {
+    // These bound the WALK, which is the expensive part and the whole
+    // subject of the finding.
+    for (const command of [
+      "rg TODO -g '*.ts'",
+      "rg TODO --glob '*.ts'",
+      "rg TODO -t ts",
+      "rg TODO --type ts",
+      "grep -r TODO --include=*.ts",
+      "grep -r TODO --exclude=*.lock",
+    ]) {
+      expect(isUnscopedRecursiveSearch(command), command).toBe(false);
+    }
+  });
+
+  it("exempts a non-recursive grep, which walks nothing", () => {
+    // `grep` reads the files it is given unless told to recurse. Matching
+    // here would fire on reading a single file.
+    for (const command of [
+      "grep TODO file.ts",
+      "grep -n TODO src/a.ts b.ts",
+      "grep -i todo x.md",
+    ]) {
+      expect(isUnscopedRecursiveSearch(command), command).toBe(false);
+    }
+  });
+
+  it("exempts anything reading from a pipe", () => {
+    // A pipeline's input is the previous stage, so there is no directory
+    // walk to object to.
+    for (const command of ["cat file.ts | grep -r TODO", "rg TODO | head -20", "ls | grep foo"]) {
+      expect(isUnscopedRecursiveSearch(command), command).toBe(false);
+    }
+  });
+
+  it("does NOT exempt an output-limiting flag, which bounds the wrong thing", () => {
+    // `-l` and `--files-with-matches` shorten what is PRINTED; the walk is
+    // unchanged and the walk is what costs the turn. Exempting these would
+    // silence the entry on a search that is just as slow.
+    expect(isUnscopedRecursiveSearch("rg -l TODO")).toBe(true);
+    expect(isUnscopedRecursiveSearch("rg --files-with-matches TODO")).toBe(true);
+  });
+
+  it("ignores commands that are not searches at all", () => {
+    for (const command of ["ls -la", "git status", "npm test", "rgb-convert foo"]) {
+      expect(isUnscopedRecursiveSearch(command), command).toBe(false);
     }
   });
 });

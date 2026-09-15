@@ -495,3 +495,71 @@ describe("I31 — asking without trying first", () => {
     expect(messages.prominent).toMatch(/ambigu/i);
   });
 });
+
+// I16, nudge-level. The catalogued entry is block-overridable and stays
+// unbuilt for want of a directory-size signal the server cannot see; this is
+// the shape-only half the owner asked for explicitly.
+//
+// **This fires on more traffic than anything else in the catalogue**, so the
+// cases that matter most are the ones asserting it stays quiet.
+describe("I16 (nudge) - an unscoped recursive search", () => {
+  const ID = "unscoped-recursive-search";
+
+  it("fires on a recursive search with nothing narrowing it", () => {
+    return expect(fires(ID, { command: "rg TODO" })).resolves.toBe(true);
+  });
+
+  it("is silent when the search names a path", async () => {
+    expect(await fires(ID, { command: "rg TODO src/lib" })).toBe(false);
+  });
+
+  it("is silent when the search is bounded by a glob or type", async () => {
+    expect(await fires(ID, { command: "rg TODO -g '*.ts'" })).toBe(false);
+    expect(await fires(ID, { command: "rg TODO --type ts" })).toBe(false);
+  });
+
+  it("is silent when no command was reported", async () => {
+    // Absent is "not known", never a match. A predicate reading undefined as
+    // a searchable string would fire on every call carrying no command.
+    expect(await fires(ID, {})).toBe(false);
+  });
+
+  it("is silent on ordinary non-search traffic", async () => {
+    for (const command of ["ls -la", "git status", "npm test"]) {
+      expect(await fires(ID, { command }), command).toBe(false);
+    }
+  });
+
+  it("never refuses the search", async () => {
+    // The catalogued entry is block-overridable because it would have a size
+    // signal to justify refusing. Without one a block would refuse correct
+    // work routinely, and the owner asked for a nudge. Raising this level is
+    // the change this case exists to catch.
+    expect(entry(ID).defaultLevel).toBe("nudge");
+    expect(entry(ID).audience).toBe("agent");
+    expect(entry(ID).phase).toBe("pre");
+  });
+
+  it("fires immediately, because the advice expires with the command", async () => {
+    // A nudge arriving on the next digest is advice about a search that has
+    // already finished - the turn it would have saved is spent.
+    expect(entry(ID).defaultTiming).toBe("immediate");
+  });
+
+  it("names the cheaper move rather than only objecting", async () => {
+    // A nudge that says "this may be slow" without saying what to do
+    // instead is a complaint.
+    for (const message of Object.values(entry(ID).messages)) {
+      expect(message).toMatch(/ls /);
+      expect(message).toMatch(/scope|subdirector/i);
+    }
+  });
+
+  it("asks the reader to rate it, so its own keep-or-retire call has data", async () => {
+    // This is the entry most likely to be judged noise, and that is now a
+    // measurable question rather than an argument.
+    for (const message of Object.values(entry(ID).messages)) {
+      expect(message).toMatch(/rate this nudge/i);
+    }
+  });
+});

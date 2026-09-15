@@ -285,6 +285,85 @@ export function isBroadProcessKill(command: string): boolean {
 }
 
 /**
+ * Whether a command is a recursive content search with nothing narrowing it
+ * — I16's nudge-level half.
+ *
+ * ── What this can and cannot know ──────────────────────────────────────
+ *
+ * The catalogued I16 is `block-overridable` and needs *"the size of the
+ * directory a search is rooted at"*, which the server cannot see: the hook
+ * carries no scope or size field, so a block would be refusing work on a
+ * guess. That half stays unbuilt and its entry stays on the record.
+ *
+ * The owner's narrower ask needs none of it — *"can you at least nudge on
+ * any search to bias to try ls or quicker ways to navigate instead"* — so
+ * this is a pure command-shape test, the cheapest kind in the catalogue and
+ * the same kind `isBroadGitAdd` and `isBroadProcessKill` already are.
+ *
+ * ── What counts as unscoped, which is the whole design ─────────────────
+ *
+ * The finding is not "searching is wrong". It is reaching for a recursive
+ * content search where listing the directory first would have answered the
+ * question. So a search the caller has already narrowed must NOT fire, or
+ * the entry becomes noise on one of the most common commands there is.
+ *
+ * **Matched:** a bare recursive content search — `grep -r pattern`,
+ * `rg pattern`, `ag pattern` — with no path argument, or rooted at `.` or
+ * `/`, and no filter narrowing it.
+ *
+ * **Deliberately exempt, each because the caller is already being specific:**
+ *
+ *   - **A path argument** beyond `.` or `/` — `rg pattern src/lib` is a
+ *     scoped search and is the behaviour this entry is steering toward.
+ *   - **A glob or a type filter** — `--include`, `-g`, `--glob`, `-t`,
+ *     `--type`. These bound the walk, which is the expensive part.
+ *   - **A file list or a pipe** — `grep pattern file.ts`, or anything
+ *     reading stdin, where there is no directory walk at all.
+ *   - **`-l`/`--files-with-matches` is NOT exempt**, because it bounds the
+ *     output rather than the walk, and the walk is what costs the turn.
+ *
+ * Under-matching is the safe direction and is chosen deliberately: a missed
+ * match costs one un-nudged search, while a false match puts a message on a
+ * correctly-scoped command — and this entry fires on common traffic, so it
+ * is the one most likely to be judged noise if it gets that wrong.
+ */
+export function isUnscopedRecursiveSearch(command: string): boolean {
+  // **Pipelines are rejected before splitting, not after.** `splitStatements`
+  // treats `|` as a separator, so by the time a statement is in hand the pipe
+  // is gone and every stage looks like a standalone command — which reports
+  // `cat x | grep -r TODO` as an unscoped search of the whole tree. A test
+  // pins exactly that case.
+  if (/\|/.test(command)) return false;
+
+  return splitStatements(command).some((statement) => {
+    const trimmed = statement.trim();
+
+    // `grep` walks a tree only when told to; `rg` and `ag` do by default.
+    // The recursion flag is matched anywhere inside a short-flag cluster, so
+    // `-rn` and `-nr` both count — `\b` after `[rR]` fails on `-rn`, because
+    // there is no word boundary between two letters.
+    const isRecursiveGrep =
+      /(^|[;&]\s*)grep\b/.test(trimmed) && /\s-[a-zA-Z]*[rR][a-zA-Z]*(\s|$)/.test(trimmed);
+    const isRipgrepLike = /(^|[;&]\s*)(rg|ag|ack)\b/.test(trimmed);
+    if (!isRecursiveGrep && !isRipgrepLike) return false;
+
+    // Any filter that bounds the walk means the caller has already narrowed
+    // it, which is the behaviour this entry exists to encourage.
+    if (/\s(--include|--exclude|-g|--glob|--type|--type-not|-t)(\s|=)/.test(trimmed)) return false;
+
+    // A path argument beyond the root. Flags and their values are dropped,
+    // then the pattern, and whatever is left is a path the caller supplied.
+    const words = trimmed.split(/\s+/).slice(1);
+    const operands = words.filter((word) => !word.startsWith("-"));
+    // The first operand is the pattern; anything after it is a path.
+    const paths = operands.slice(1);
+    if (paths.some((path) => path !== "." && path !== "./" && path !== "/")) return false;
+
+    return true;
+  });
+}
+
+/**
  * Whether a command starts a wait on this session's crew — the stop catch's
  * "a wake is already scheduled" half.
  *
