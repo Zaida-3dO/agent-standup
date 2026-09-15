@@ -183,6 +183,21 @@ export interface RegisterSessionOutput {
    */
   readonly crewName: string | null;
   /**
+   * How to ask this build what its tools actually require.
+   *
+   * Registration is the first call a session makes, which makes it the only
+   * reliable place to say this: `describe_tool` carries the conditional
+   * rules no JSON schema can state — the assignment `checkpoint` needs, the
+   * `rootSessionId` a dispatched claim needs — and it was reachable only by
+   * a caller who already knew to look for it. Naming it once, here, is the
+   * difference between a rule that is written down and a rule that is read.
+   *
+   * Unconditional, unlike `fetch` above: every session benefits, including
+   * one that has registered many times before, and a returning session is
+   * precisely the one whose build may have gained rules since it last asked.
+   */
+  readonly contracts: string;
+  /**
    * Where to get the hook, present only when this registration reported no
    * version at all — MILESTONES.md #125(b).
    *
@@ -372,6 +387,13 @@ export const registerSession = defineOperation({
       version,
       mayClaim,
       crewName: crewNameRow?.name ?? null,
+      contracts:
+        "Before your first write call, ask `describe_tool` for that tool's contract — it states " +
+        "the conditional rules a schema cannot, which are the ones that refuse you. Notably: " +
+        "`checkpoint` requires your own live assignment (`note` does not), and a claim made by a " +
+        "dispatched agent must pass its orchestrator's session id as `rootSessionId`, which " +
+        "otherwise defaults to your own and reads as a second crew. Call `describe_tool` with no " +
+        "argument for this build's limits.",
       ...(hookVersion === null ? { fetch: fetchInstructionsFor(variant) } : {}),
     };
   },

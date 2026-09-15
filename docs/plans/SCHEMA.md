@@ -1920,6 +1920,15 @@ registering again. `crewName` is `null` only when the pool is exhausted; that ne
 registration itself, because naming is a courtesy riding on a call the session had to make anyway,
 not a precondition for it.
 
+**And the reply points at the contracts.** `contracts` names `describe_tool` and the two rules that
+account for most refusals in practice — `checkpoint` needing the caller's own live assignment, and a
+dispatched agent's claim needing its orchestrator's `rootSessionId`. It is sent on **every**
+registration, unlike `fetch` below: the rules a build enforces can grow between one registration and
+the next, so a returning session is precisely the one that benefits from being reminded where they
+are written down. This exists because `describe_tool` was otherwise reachable only by a caller who
+already knew to look for it — the strongest teaching surface in the product, invisible to the people
+it was written for.
+
 ### The bootstrap loop — obtaining a hook, not just being told which one
 
 Naming a variant and a protocol version is only useful to a session that can already reach the
