@@ -12,7 +12,12 @@
 // nothing at all — fails regardless of the status the child returned.
 import { describe, expect, it } from "vitest";
 
-import { assertReporterIsLoadable, summaryOf, verdictFor } from "../scripts/run-tests.mjs";
+import {
+  assertReporterIsLoadable,
+  skipClause,
+  summaryOf,
+  verdictFor,
+} from "../scripts/run-tests.mjs";
 
 /** A summary block in vitest 4's real format, as printed to the console. */
 function summaryText(counts: {
@@ -136,9 +141,12 @@ describe("verdictFor never lets a failing run report success", () => {
   it("passes a run whose files all skipped, since a skip is not a failure", () => {
     // Deliberate: the database-gated majority of this suite skips without
     // TEST_DATABASE_URL, and failing that here would make a no-database run
-    // impossible. Which suites were skipped is `check:db-gated`'s question,
-    // not this one's — see CLAUDE.md.
-    expect(verdictFor(0, summaryText({ filesSkipped: 40, testsSkipped: 400 })).code).toBe(0);
+    // impossible. WHICH suites were skipped is `check:db-gated`'s question,
+    // not this one's — but the fact that some were is now said out loud, in
+    // the reason string. See the "says what did not run" block below.
+    const verdict = verdictFor(0, summaryText({ filesSkipped: 40, testsSkipped: 400 }));
+    expect(verdict.code).toBe(0);
+    expect(verdict.reason).toMatch(/SKIPPED/);
   });
 
   it("has no path that turns a non-zero status into a zero", () => {
@@ -155,6 +163,95 @@ describe("verdictFor never lets a failing run report success", () => {
         expect(verdictFor(status, output).code).not.toBe(0);
       }
     }
+  });
+});
+
+describe("the verdict says what did NOT run, not only what passed", () => {
+  // The defect: 133 of 495 test files gate on TEST_DATABASE_URL, so a run
+  // without a database skipped most of the suite — and the verdict line, the
+  // one line guaranteed to survive `| tail`, said only "N passed" either way.
+  // A complete run and a mostly-skipped one closed with the same sentence.
+
+  it("distinguishes a complete run from a mostly-skipped one", () => {
+    // THE load-bearing assertion: the defect stated directly as a property.
+    // Reporting only what passed makes these two reasons the same string —
+    // which is the whole failure. Mutation that breaks it: make `skipClause`
+    // return "" (verified — it fails this and four more).
+    const everythingRan = verdictFor(
+      0,
+      summaryText({ filesPassed: 495, testsPassed: 7292 }),
+    ).reason;
+    const mostSkipped = verdictFor(
+      0,
+      summaryText({ filesPassed: 362, filesSkipped: 133, testsPassed: 5486, testsSkipped: 1806 }),
+    ).reason;
+
+    expect(mostSkipped).not.toBe(everythingRan);
+    expect(everythingRan).not.toMatch(/SKIPPED/);
+    expect(mostSkipped).toMatch(/SKIPPED/);
+  });
+
+  it("names the counts, so the reader sees the size of the hole", () => {
+    // "Some tests skipped" would pass the test above while telling a reader
+    // nothing about whether it was 3 files or 300. Mutation: drop the
+    // interpolated numbers from skipClause's template.
+    const { reason } = verdictFor(
+      0,
+      summaryText({ filesPassed: 362, filesSkipped: 133, testsPassed: 5486, testsSkipped: 1806 }),
+    );
+    expect(reason).toContain("133");
+    expect(reason).toContain("1806");
+  });
+
+  it("points at the command that says WHICH suites skipped", () => {
+    // The count alone raises the question; the verdict has to answer it, or
+    // it has moved the manual step rather than removed it. Mutation: delete
+    // the `check:db-gated` hint from the clause.
+    expect(skipClause(133, 1806)).toContain("check:db-gated");
+  });
+
+  it("stays silent when nothing skipped, so the clause means something", () => {
+    // A notice printed unconditionally is one a reader learns to skip past.
+    // Mutation: make skipClause return the clause regardless of the counts.
+    expect(skipClause(0, 0)).toBe("");
+    expect(verdictFor(0, summaryText({ filesPassed: 495, testsPassed: 7292 })).reason).not.toMatch(
+      /SKIPPED/,
+    );
+  });
+
+  it("reports skipped tests even when every file ran at least one", () => {
+    // A file counts as "passed" when only some of its tests skipped, so
+    // file-level counting alone would miss a partially-gated file. Mutation:
+    // check only `files > 0` in skipClause's guard.
+    expect(skipClause(0, 400)).toMatch(/SKIPPED/);
+  });
+
+  // ── Criterion 2: the skip must NOT become a hard failure ──────────────
+
+  it("never changes the exit code, whatever skipped", () => {
+    // The explicit guard on the acceptance criterion that says a contributor
+    // without Postgres must still be able to run the non-database suites.
+    // The defect is the indistinguishability, not the skipping — so this
+    // change is allowed to alter the WORDING and nothing else.
+    // Mutation: any `return { code: 1 }` added to a skip path.
+    const skipShapes = [
+      summaryText({ filesSkipped: 133, testsSkipped: 1806 }),
+      summaryText({ filesPassed: 362, filesSkipped: 133, testsPassed: 5486, testsSkipped: 1806 }),
+      summaryText({ filesPassed: 1, filesSkipped: 494, testsPassed: 1, testsSkipped: 7291 }),
+    ];
+    for (const output of skipShapes) {
+      expect(verdictFor(0, output).code).toBe(0);
+    }
+  });
+
+  it("still fails a skipped run that also had a failure", () => {
+    // The clause must not soften a real failure into a note about skipping.
+    // Mutation: move the skip handling above the failure branch.
+    const verdict = verdictFor(
+      0,
+      summaryText({ filesFailed: 1, filesSkipped: 133, testsFailed: 2, testsSkipped: 1806 }),
+    );
+    expect(verdict.code).not.toBe(0);
   });
 });
 
