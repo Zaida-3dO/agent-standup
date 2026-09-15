@@ -69,9 +69,15 @@
  *
  * **A green run here means the summary reported no failures and a non-zero
  * number of test files ran.** It does not mean those tests assert anything
- * useful, and it explicitly does not mean the database-gated majority of
- * them executed — a skip is not a failure. That remains
- * `check:db-gated`'s claim to make, not this script's.
+ * useful, and it does not mean the database-gated majority of them executed
+ * — a skip is not a failure.
+ *
+ * A green run does not stay *quiet* about that, though: whenever anything
+ * skipped, the verdict line says so and gives the count (see `skipClause`),
+ * so a run that proved everything and a run that skipped most of the suite
+ * end in visibly different sentences. The count is the whole of the claim —
+ * naming the suites, and asserting that a database was present where one was
+ * meant to be, is `check:db-gated`'s job, not this script's.
  *
  * Usage: `npm test [-- <vitest args>]`
  */
@@ -166,6 +172,55 @@ export function summaryOf(output) {
 }
 
 /**
+ * The part of the verdict that says what did NOT run.
+ *
+ * ── Why this exists ─────────────────────────────────────────────────────
+ *
+ * Most of this tree's test files (133 of 495 at the time of writing) gate
+ * themselves on `TEST_DATABASE_URL`. Without one they skip, and a skip is not
+ * a failure. So a verdict line that reported only what passed —
+ *
+ *     [run-tests] PASS — 362 file(s) passed, 5481 test(s) passed
+ *
+ * — would read identically whether or not the database-backed majority had
+ * executed. Two runs proving very different amounts would close with the same
+ * sentence, and that sentence is the one thing guaranteed to survive `| tail`,
+ * which is how these runs are usually read.
+ *
+ * Without the count here, the check falls to the reader: verifying by hand
+ * that a green run executed the database suites rather than skipping past
+ * them is a tax every careful reviewer pays, and a green that has to be
+ * audited by hand has stopped being a signal. The runner pays it instead.
+ *
+ * ── What it deliberately does NOT do ────────────────────────────────────
+ *
+ * **It never changes the exit code.** It appends words to an
+ * already-decided verdict; every caller of this returns the same `code` it
+ * would have returned before. That is the whole design constraint: a
+ * contributor with no Postgres must still be able to run the non-database
+ * suites, so the defect being fixed is the *indistinguishability* of the two
+ * outcomes, not the skipping itself. Turning a skip into a failure would
+ * trade a silent problem for a loud barrier.
+ *
+ * It also does not say *which* suites skipped or *why* — it reads vitest's
+ * counts and has no idea a database exists. Naming the files, and asserting a
+ * database was present when one was meant to be, is `check:db-gated`'s claim
+ * to make (`scripts/check-db-gated-suites.mjs`, wired into both CI jobs).
+ * This is the number; that is the diagnosis.
+ *
+ * @param {number} files How many test files skipped.
+ * @param {number} tests How many individual tests skipped.
+ * @returns {string} A clause to append, or `""` when nothing skipped.
+ */
+export function skipClause(files, tests) {
+  if (!(files > 0) && !(tests > 0)) return "";
+  return (
+    `, and ${files} file(s) / ${tests} test(s) SKIPPED and therefore proved nothing` +
+    " — run `npm run check:db-gated` to see which, and why"
+  );
+}
+
+/**
  * Decides pass/fail from the child's status AND the summary it printed.
  *
  * The two are checked independently and the *stricter* wins, because each
@@ -221,9 +276,14 @@ export function verdictFor(status, output) {
     };
   }
 
+  // A clean run. The skipped counts are carried into the verdict rather than
+  // dropped, because "passed" alone is the sentence that made a skipped run
+  // and a complete one read identically — see `skipClause`.
   return {
     code: 0,
-    reason: `${files.passed} file(s) passed, ${tests.passed} test(s) passed`,
+    reason:
+      `${files.passed} file(s) passed, ${tests.passed} test(s) passed` +
+      skipClause(files.skipped, tests.skipped),
   };
 }
 
