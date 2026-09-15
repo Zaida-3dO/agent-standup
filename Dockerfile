@@ -45,7 +45,57 @@ RUN npx prisma generate && npm run build
 # build:cli` also makes, and which this image never needs). `esbuild` is a
 # devDependency, so this has to run in a stage that still has `deps`'
 # `node_modules`, not the production-only `prod-deps` one below.
-RUN node scripts/build-hook-scripts.mjs
+#
+# ── Why the commit has to be handed in here ──────────────────────────────
+#
+# That script stamps the commit it was built from into the bundle, via an
+# esbuild `define` — a *textual* substitution, so whatever it resolves is
+# compiled into the artifact as a literal. It used to resolve that by
+# shelling out to `git rev-parse HEAD`, which throws in this stage every
+# single time: the build context deliberately carries `package.json`,
+# `prisma` and `scripts` rather than the repository, so there is no `.git`
+# to ask. The script fell back to `"unstamped"` and baked *that* in, which
+# is why `/api/hook/script` served an unstamped bundle across every release
+# and two redeploys failed to change it — no deploy can fix a constant
+# compiled into the thing being deployed.
+#
+# So it is given the commit instead of asked to find one. `APP_REVISION` is
+# already the release workflow's own `git rev-parse HEAD`
+# (.github/workflows/release.yml), the same value that becomes the OCI
+# `revision` label — the commit was always present in the build, it just had
+# no path into this stage, because the `ARG` was declared only in `runner`
+# below.
+#
+# `REQUIRE_BUILD_STAMP` makes the missing-commit case *fail* here rather
+# than silently producing an unidentifiable artifact. A bundle stamped
+# "unstamped" disables every freshness check downstream of it while looking
+# like a perfectly successful build, and that silent success is the whole
+# defect.
+#
+# ── Why the strictness is an ARG and not hardcoded to 1 ─────────────────
+#
+# Because not every build of this Dockerfile is a release. CI builds the
+# same file as a dry run (`.github/workflows/ci.yml`, "Docker build (dry
+# run)") purely to prove it still builds, and passes no build arguments at
+# all — so a hardcoded `1` here fails that job, on a build that is not
+# releasing anything and has no commit to be missing. Someone building the
+# image by hand to reproduce something is in the same position.
+#
+# The release workflow is the one caller that genuinely knows it is cutting
+# a release, so it is the one that turns this on — the same place, and from
+# the same values, as `APP_REVISION` itself. Defaulting to empty keeps every
+# other build stamping "unstamped" without failing, which stays correct for
+# a build that genuinely cannot name a commit.
+#
+# Both ARGs are declared immediately before the RUN that consumes them, so a
+# new sha invalidates only this layer — `npm ci` and `next build` above stay
+# cached across commits, which is the same reasoning the runner stage's ARG
+# block documents for putting its own ARGs last.
+ARG APP_REVISION=""
+ARG REQUIRE_BUILD_STAMP=""
+RUN STANDUP_HOOK_BUILD_COMMIT="$APP_REVISION" \
+    STANDUP_HOOK_REQUIRE_BUILD_STAMP="$REQUIRE_BUILD_STAMP" \
+    node scripts/build-hook-scripts.mjs
 
 FROM node:24-alpine AS runner
 WORKDIR /app
