@@ -279,10 +279,21 @@ jobs:
           # `APP_REVISION` is resolved by `git rev-parse HEAD` in the step
           # above rather than from `github.sha` — see that step's comment
           # for why the two differ on a manual dispatch.
+          #
+          # `REQUIRE_BUILD_STAMP` is set here and nowhere else, because this
+          # is the only build that is actually cutting a release. It makes
+          # the image build FAIL if the hook-script bundler cannot stamp the
+          # commit it was built from, rather than quietly stamping
+          # "unstamped" — which produces an artifact that disables every
+          # freshness check downstream of it while the build reports success.
+          # CI builds this same Dockerfile as a dry run with no build args,
+          # and must keep passing: that build is not releasing anything, so
+          # it has no commit to be missing.
           build-args: |
             APP_VERSION=${{ env.APP_VERSION }}
             APP_REVISION=${{ env.APP_REVISION }}
             APP_BUILD_TIME=${{ env.APP_BUILD_TIME }}
+            REQUIRE_BUILD_STAMP=1
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

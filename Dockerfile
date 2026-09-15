@@ -66,23 +66,35 @@ RUN npx prisma generate && npm run build
 # no path into this stage, because the `ARG` was declared only in `runner`
 # below.
 #
-# `STANDUP_HOOK_REQUIRE_BUILD_STAMP` makes the missing-commit case *fail*
-# here rather than silently producing an unidentifiable artifact. An image
-# is always a release artifact and always has a commit, so being unable to
-# name it means the plumbing above broke — and a bundle stamped "unstamped"
-# disables every freshness check downstream while looking like a successful
-# build. That silent success is the whole defect. A tarball or local build
-# runs this script with neither variable set and still stamps "unstamped"
-# without failing, which remains correct for a build that genuinely has no
-# commit to name.
+# `REQUIRE_BUILD_STAMP` makes the missing-commit case *fail* here rather
+# than silently producing an unidentifiable artifact. A bundle stamped
+# "unstamped" disables every freshness check downstream of it while looking
+# like a perfectly successful build, and that silent success is the whole
+# defect.
 #
-# Declared immediately before the RUN that consumes it, so a new sha
-# invalidates only this layer — `npm ci` and `next build` above stay cached
-# across commits, which is the same reasoning the runner stage's ARG block
-# documents for putting its own ARGs last.
+# ── Why the strictness is an ARG and not hardcoded to 1 ─────────────────
+#
+# Because not every build of this Dockerfile is a release. CI builds the
+# same file as a dry run (`.github/workflows/ci.yml`, "Docker build (dry
+# run)") purely to prove it still builds, and passes no build arguments at
+# all — so a hardcoded `1` here fails that job, on a build that is not
+# releasing anything and has no commit to be missing. Someone building the
+# image by hand to reproduce something is in the same position.
+#
+# The release workflow is the one caller that genuinely knows it is cutting
+# a release, so it is the one that turns this on — the same place, and from
+# the same values, as `APP_REVISION` itself. Defaulting to empty keeps every
+# other build stamping "unstamped" without failing, which stays correct for
+# a build that genuinely cannot name a commit.
+#
+# Both ARGs are declared immediately before the RUN that consumes them, so a
+# new sha invalidates only this layer — `npm ci` and `next build` above stay
+# cached across commits, which is the same reasoning the runner stage's ARG
+# block documents for putting its own ARGs last.
 ARG APP_REVISION=""
+ARG REQUIRE_BUILD_STAMP=""
 RUN STANDUP_HOOK_BUILD_COMMIT="$APP_REVISION" \
-    STANDUP_HOOK_REQUIRE_BUILD_STAMP=1 \
+    STANDUP_HOOK_REQUIRE_BUILD_STAMP="$REQUIRE_BUILD_STAMP" \
     node scripts/build-hook-scripts.mjs
 
 FROM node:24-alpine AS runner

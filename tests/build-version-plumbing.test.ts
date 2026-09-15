@@ -116,6 +116,21 @@ describe("the release workflow passes the build's identity to the image", () => 
     }
   });
 
+  it("tells the release build to fail rather than ship an unstamped bundle", () => {
+    // The half that cannot be asserted from the Dockerfile. The strictness
+    // is an ARG defaulting to off, so that CI's dry-run build of the same
+    // file — which passes no build args and is releasing nothing — keeps
+    // passing. That makes this workflow the only thing that ever turns it
+    // on, and a build-arg silently dropped here would restore the exact
+    // failure the flag exists to prevent: a release whose hook bundle is
+    // stamped "unstamped", which disables every freshness check downstream
+    // while the build reports success.
+    //
+    // Mutation that breaks it: deleting the `REQUIRE_BUILD_STAMP=1` line
+    // from the `build-args` block. Nothing else in the suite notices.
+    expect(workflow).toContain("REQUIRE_BUILD_STAMP=1");
+  });
+
   it("derives the version from the release tag rather than from package.json", () => {
     // The whole point of AC #2: the tag is the source of truth, and
     // `version-from-tag.mjs` is the one parser that owns turning it into a

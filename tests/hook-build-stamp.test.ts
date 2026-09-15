@@ -477,16 +477,22 @@ describe("the Dockerfile's half of the plumbing", () => {
     expect(hookBuildCommand).toContain('STANDUP_HOOK_BUILD_COMMIT="$APP_REVISION"');
   });
 
-  it("makes the image build fail rather than ship an unstamped bundle", () => {
-    // Criterion 3 as it applies to the artifact that actually matters. An
-    // image is always a release build, so the strict mode belongs here and
-    // nowhere else.
+  it("can be told to fail rather than ship an unstamped bundle", () => {
+    // Criterion 3 as it applies to the artifact that actually matters.
+    //
+    // Wired from an ARG rather than hardcoded to `1`, because not every
+    // build of this Dockerfile is a release: CI builds it as a dry run with
+    // no build arguments, and that build has no commit to be missing. The
+    // release workflow is the one caller that knows it is cutting a release,
+    // so it is the one that turns this on — asserted in
+    // `tests/build-version-plumbing.test.ts`.
     //
     // Mutation that breaks it: deleting the
-    // `STANDUP_HOOK_REQUIRE_BUILD_STAMP=1` line from the RUN. That mutation
-    // survived the first version of this test, which is why it is now
-    // asserted against the command rather than the stage.
-    expect(hookBuildCommand).toContain("STANDUP_HOOK_REQUIRE_BUILD_STAMP=1");
+    // `STANDUP_HOOK_REQUIRE_BUILD_STAMP` assignment from the RUN. That
+    // mutation survived the first version of this test, which is why it is
+    // asserted against the command rather than the whole stage.
+    expect(hookBuildCommand).toContain('STANDUP_HOOK_REQUIRE_BUILD_STAMP="$REQUIRE_BUILD_STAMP"');
+    expect(buildStage).toMatch(/^ARG REQUIRE_BUILD_STAMP=/m);
   });
 
   it("does not copy the git repository in to make git work", () => {
