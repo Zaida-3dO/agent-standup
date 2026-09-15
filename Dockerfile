@@ -45,7 +45,45 @@ RUN npx prisma generate && npm run build
 # build:cli` also makes, and which this image never needs). `esbuild` is a
 # devDependency, so this has to run in a stage that still has `deps`'
 # `node_modules`, not the production-only `prod-deps` one below.
-RUN node scripts/build-hook-scripts.mjs
+#
+# ── Why the commit has to be handed in here ──────────────────────────────
+#
+# That script stamps the commit it was built from into the bundle, via an
+# esbuild `define` — a *textual* substitution, so whatever it resolves is
+# compiled into the artifact as a literal. It used to resolve that by
+# shelling out to `git rev-parse HEAD`, which throws in this stage every
+# single time: the build context deliberately carries `package.json`,
+# `prisma` and `scripts` rather than the repository, so there is no `.git`
+# to ask. The script fell back to `"unstamped"` and baked *that* in, which
+# is why `/api/hook/script` served an unstamped bundle across every release
+# and two redeploys failed to change it — no deploy can fix a constant
+# compiled into the thing being deployed.
+#
+# So it is given the commit instead of asked to find one. `APP_REVISION` is
+# already the release workflow's own `git rev-parse HEAD`
+# (.github/workflows/release.yml), the same value that becomes the OCI
+# `revision` label — the commit was always present in the build, it just had
+# no path into this stage, because the `ARG` was declared only in `runner`
+# below.
+#
+# `STANDUP_HOOK_REQUIRE_BUILD_STAMP` makes the missing-commit case *fail*
+# here rather than silently producing an unidentifiable artifact. An image
+# is always a release artifact and always has a commit, so being unable to
+# name it means the plumbing above broke — and a bundle stamped "unstamped"
+# disables every freshness check downstream while looking like a successful
+# build. That silent success is the whole defect. A tarball or local build
+# runs this script with neither variable set and still stamps "unstamped"
+# without failing, which remains correct for a build that genuinely has no
+# commit to name.
+#
+# Declared immediately before the RUN that consumes it, so a new sha
+# invalidates only this layer — `npm ci` and `next build` above stay cached
+# across commits, which is the same reasoning the runner stage's ARG block
+# documents for putting its own ARGs last.
+ARG APP_REVISION=""
+RUN STANDUP_HOOK_BUILD_COMMIT="$APP_REVISION" \
+    STANDUP_HOOK_REQUIRE_BUILD_STAMP=1 \
+    node scripts/build-hook-scripts.mjs
 
 FROM node:24-alpine AS runner
 WORKDIR /app

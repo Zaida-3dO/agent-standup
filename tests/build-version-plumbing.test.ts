@@ -57,16 +57,49 @@ ENV ${name}=$${name}
     // above `npm ci` or `next build`, every release would rebuild from
     // scratch — slow, but silent, which is why it needs a test rather than
     // a comment.
+    //
+    // Scoped to the `runner` stage, and matching its *last* declaration of
+    // each name rather than the first. `ARG` is per-stage, so a name can be
+    // declared in more than one stage — and one of them is: the stage that
+    // builds the hook scripts declares `APP_REVISION` too, because the
+    // bundler needs the commit at build time and an ARG from another stage
+    // is not in scope there. A search for the first match anywhere in the
+    // file would find that one and assert the wrong stage's placement, which
+    // says nothing about the runtime layers this test is about. The build
+    // stage's own placement is covered separately below.
+    const runnerAt = dockerfile.search(/^FROM node:24-alpine AS runner$/m);
+    expect(runnerAt).toBeGreaterThan(-1);
+
     const lastCopy = dockerfile.lastIndexOf("\nCOPY ");
     const lastRun = dockerfile.lastIndexOf("\nRUN ");
     expect(lastCopy).toBeGreaterThan(-1);
     expect(lastRun).toBeGreaterThan(-1);
 
     for (const name of BAKED_VARIABLES) {
-      const argAt = dockerfile.search(new RegExp(`^ARG ${name}=`, "m"));
+      const argAt = dockerfile.lastIndexOf(`\nARG ${name}=`);
+      expect(argAt).toBeGreaterThan(runnerAt);
       expect(argAt).toBeGreaterThan(lastCopy);
       expect(argAt).toBeGreaterThan(lastRun);
     }
+  });
+
+  it("keeps the build stage's own APP_REVISION below its expensive steps", () => {
+    // The same caching argument, for the second place the sha now enters the
+    // build. The stage that bundles the hook scripts needs the commit at
+    // build time — the bundler compiles it into the artifact — so it declares
+    // its own `APP_REVISION`. Declared too early it would sit above
+    // `npm ci` and `next build` and make every commit rebuild both, which
+    // builds correctly and is therefore silent.
+    const stage = dockerfile
+      .split(/^FROM /m)
+      .find((s) => s.startsWith("node:24-alpine AS build\n"));
+    expect(stage).toBeDefined();
+    if (stage === undefined) return;
+
+    const argAt = stage.search(/^ARG APP_REVISION=/m);
+    expect(argAt).toBeGreaterThan(-1);
+    // Below the `next build` line, which is the expensive one in this stage.
+    expect(argAt).toBeGreaterThan(stage.indexOf("npm run build"));
   });
 });
 
