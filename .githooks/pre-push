@@ -52,22 +52,63 @@ if [ "$has_content" -eq 0 ]; then
   exit 0
 fi
 
-echo "pre-push: running format:check and lint (see CLAUDE.md for what this checks and how to skip it)"
-
 # ── "Could not run" is not "failed" ─────────────────────────────────────
 #
-# If the checks cannot run at all — no `node_modules`, so no prettier and no
-# eslint — then reporting "fix the above" points at a code defect that does
-# not exist and sends the reader looking for it. A gate that cannot run must
-# say so rather than fail as though it had a verdict.
+# Three outcomes, not two: ran-and-passed, ran-and-failed, and could-not-run.
+# Collapsing the third into either of the others is the defect. If the checks
+# cannot run at all — no `node_modules`, so no prettier and no eslint — then
+# reporting "fix the above" points at a code defect that does not exist and
+# sends the reader looking for it. A gate that cannot run must say so rather
+# than fail as though it had a verdict.
 #
-# npm exits 127 when the command it is asked to run is not found, which is
-# the signal this distinguishes on. It is treated as a warning and does NOT
-# block: a checkout with no dependencies installed is a housekeeping
-# checkout, not a broken one, and CI still runs the full list on every PR
-# regardless — so the cost of letting it through is a slower feedback loop,
-# never a missed check.
-TOOL_MISSING=127
+# WHY THIS IS CHECKED UP FRONT RATHER THAN READ OFF AN EXIT CODE.
+#
+# Keying this on npm exiting 127 alone is not enough, because that is not
+# the code the common case produces. There are two distinct absences, and
+# only one of them produces 127:
+#
+#   * `npm` itself missing — the *shell* cannot find the command, so it
+#     returns 127. Real, but rare: anyone with a checkout has npm.
+#   * `npm` present, `node_modules` absent — npm runs fine, the script runs,
+#     and `prettier` is what is not found. npm reports that child's failure
+#     as its own exit status, which is **1** on Windows. Indistinguishable
+#     from a genuine lint failure by exit code alone.
+#
+# The second is the fresh-worktree case, and every crew works in a fresh
+# worktree, so it fires on the normal case rather than an edge one. It was
+# blocked with exactly the message the comment above forbids, which teaches
+# `--no-verify` as a reflex — and a bypass already in muscle memory is what
+# makes the next real block useless.
+#
+# So the primary signal is the presence of the tools themselves, tested
+# before anything runs. That is platform-independent (no exit code is
+# consulted to decide it), and it cannot be confused with a check that ran
+# and had a verdict, because nothing has run yet at the point it is decided.
+#
+# A missing `npm` is the other absence, and it cannot be decided this way —
+# answering it means trying to run the thing. It is handled after the checks
+# run, on the shell's own 127. Both signals are kept: neither subsumes the
+# other, and dropping either puts an absence back on the "failed" path.
+BIN_DIR="$(dirname "$0")/../node_modules/.bin"
+
+missing_tools=""
+for tool in prettier eslint; do
+  # `.cmd` is the Windows shim npm installs alongside the POSIX launcher.
+  # Both are checked so this one unbranched script keeps covering both
+  # platforms.
+  if [ ! -e "$BIN_DIR/$tool" ] && [ ! -e "$BIN_DIR/$tool.cmd" ]; then
+    missing_tools="$missing_tools $tool"
+  fi
+done
+
+if [ -n "$missing_tools" ]; then
+  echo "pre-push: checks DID NOT RUN — not installed in this checkout:$missing_tools"
+  echo "pre-push: this is not a pass and not a failure — nothing was checked."
+  echo "pre-push: run 'npm ci' if you want these checks locally. Not blocking; CI runs them on every PR."
+  exit 0
+fi
+
+echo "pre-push: running format:check and lint (see CLAUDE.md for what this checks and how to skip it)"
 
 npm run format:check
 format_status=$?
@@ -75,10 +116,25 @@ format_status=$?
 npm run lint
 lint_status=$?
 
+# The second could-not-run signal, kept alongside the probe above because the
+# two catch different absences and neither subsumes the other.
+#
+# The probe catches a missing `node_modules` — the common case — and cannot
+# catch a missing `npm`, because deciding that requires trying to run it.
+# This catches a missing `npm`: the shell returns 127 for a command it cannot
+# find, and that 127 is the *shell's*, which makes it reliable on every
+# platform in a way npm's own exit status is not.
+#
+# Keeping only the probe would let a checkout with dependencies installed but
+# no npm on PATH report "blocked" for an absence, which is the same
+# could-not-run-as-failed defect in a different guise.
+TOOL_MISSING=127
+
 if [ "$format_status" -eq "$TOOL_MISSING" ] || [ "$lint_status" -eq "$TOOL_MISSING" ]; then
   echo ""
-  echo "pre-push: could not run — prettier and/or eslint are not installed in this checkout."
-  echo "pre-push: run 'npm ci' if you want these checks locally. Not blocking; CI runs them on every PR."
+  echo "pre-push: checks DID NOT RUN — npm could not be found, so nothing was checked."
+  echo "pre-push: this is not a pass and not a failure — nothing was checked."
+  echo "pre-push: Not blocking; CI runs these on every PR."
   exit 0
 fi
 

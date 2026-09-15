@@ -17,6 +17,16 @@
 //      message "fix the above" points at a code defect that does not exist.
 //      A gate that cannot run must say so, not fail as though it had a
 //      verdict.
+//   3. The fix for (2) was keyed on npm exiting 127 and missed the case
+//      that actually happens. **There are two different absences and only
+//      one of them produces 127**: if `npm` itself is missing the *shell*
+//      returns 127, but if npm is present and `node_modules` is not, npm
+//      runs, `prettier` is what is missing, and npm reports that child's
+//      failure as its own status — `1` on Windows, indistinguishable from a
+//      real lint failure. Every crew works in a fresh worktree, so the
+//      second is the common case, and it was blocked with exactly the
+//      message the comment forbids. The suite was green throughout because
+//      it only ever simulated the first.
 //
 // **How the tool-missing and failure cases are told apart without touching
 // the real checks.** Each case runs the hook with a throwaway directory
@@ -26,11 +36,19 @@
 // pass all reproducible in a second, with no dependency on whether this
 // checkout actually happens to be formatted.
 //
+// **Why some cases run a copy of the hook instead of the hook in place.**
+// The hook decides could-not-run by looking for `node_modules/.bin`
+// relative to its own location, and this checkout has its dependencies
+// installed — so the absence cannot be staged here without deleting them.
+// Those cases copy `.githooks/pre-push` into a temporary tree and run it
+// there, where whether `node_modules` exists is the test's to decide. It is
+// the same bytes either way: the file is copied, never rewritten.
+//
 // Skipped on a machine with no POSIX shell, which in practice means it runs
 // everywhere this repository is developed — git ships one on Windows, which
 // is what lets the hook itself be a single unbranched script.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -115,6 +133,56 @@ function runHook(stdinLines: string[], behaviour: "pass" | "fail" | "missing") {
   };
 }
 
+/**
+ * A temporary checkout holding a copy of the real hook, where whether the
+ * dependencies are installed is this test's to decide.
+ *
+ * `installed` writes the two launchers into `node_modules/.bin` exactly as
+ * npm would. Their contents do not matter and are never executed — the hook
+ * asks whether they are *there*, and the fake `npm` on `PATH` is what
+ * actually answers for the checks. On Windows npm also writes a `.cmd`
+ * shim beside each launcher; the hook accepts either, and these cases stage
+ * the extensionless form so the same tree exercises both platforms' lookup.
+ */
+function hookTreeWithDeps(installed: boolean): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "prepush-tree-"));
+  tempDirs.push(dir);
+
+  mkdirSync(path.join(dir, ".githooks"), { recursive: true });
+  copyFileSync(hookPath, path.join(dir, ".githooks", "pre-push"));
+
+  if (installed) {
+    const binDir = path.join(dir, "node_modules", ".bin");
+    mkdirSync(binDir, { recursive: true });
+    for (const tool of ["prettier", "eslint"]) writeFileSync(path.join(binDir, tool), "");
+  }
+
+  return dir;
+}
+
+/** Runs the copied hook inside `tree`, with a controlled `npm` first on PATH. */
+function runHookIn(tree: string, stdinLines: string[], behaviour: "pass" | "fail" | "missing") {
+  const dir = fakeNpmDir(behaviour);
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+
+  const result = spawnSync("sh", [path.join(tree, ".githooks", "pre-push")], {
+    cwd: tree,
+    input: stdinLines.map((line) => `${line}\n`).join(""),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      [pathKey]: `${dir}${path.delimiter}${process.env[pathKey] ?? ""}`,
+    },
+  });
+
+  return {
+    status: result.status,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  };
+}
+
+const CONTENT_PUSH = [`refs/heads/work ${REAL_SHA} refs/heads/work ${ZERO_SHA}`];
+
 describeIfShell("the pre-push hook", () => {
   describe("a push that carries no content", () => {
     it("skips the checks entirely for a branch deletion", () => {
@@ -183,13 +251,66 @@ describeIfShell("the pre-push hook", () => {
         "missing",
       );
 
-      expect(output).toContain("could not run");
+      expect(output).toContain("DID NOT RUN");
       expect(output).not.toContain("blocked");
       // Deliberately not blocking: a checkout with no dependencies installed
       // is a housekeeping checkout, and CI runs the full list on every PR
       // regardless — so this costs a slower feedback loop, never a missed
       // check.
       expect(status).toBe(0);
+    });
+  });
+
+  // The third defect: the case that actually happens to every crew, and the
+  // one the suite above could not see. `npm` here is a working npm that
+  // exits 0 — the deliberate opposite of the 127 stub — so nothing about
+  // these cases can be satisfied by an exit code. What decides them is
+  // whether `node_modules/.bin` holds the tools.
+  describe("a checkout whose dependencies are not installed", () => {
+    it("says the checks did not run — rather than blocking — when node_modules is absent", () => {
+      // npm exits 0 here, never 127, so an exit-code test for absence
+      // cannot fire and the checks would run against tools that are not
+      // there. This is the fresh-worktree case, where a correct 15-line
+      // docs push was reported as a lint failure.
+      const { status, output } = runHookIn(hookTreeWithDeps(false), CONTENT_PUSH, "pass");
+
+      expect(status).toBe(0);
+      expect(output).toContain("DID NOT RUN");
+      expect(output).toContain("prettier");
+      expect(output).toContain("eslint");
+      // It must not have got as far as running anything.
+      expect(output).not.toContain("running format:check");
+      expect(output).not.toContain("blocked");
+    });
+
+    it("distinguishes did-not-run from passed — it must not claim the checks were fine", () => {
+      // The three-outcome discipline, pinned from the other side. A skip
+      // that reads as a pass is the same defect as a skip that reads as a
+      // failure: both collapse three states into two.
+      const { output } = runHookIn(hookTreeWithDeps(false), CONTENT_PUSH, "pass");
+
+      expect(output).toContain("not a pass and not a failure");
+    });
+
+    it("still blocks a genuine failure once the dependencies are installed", () => {
+      // The boundary that stops "skip whenever anything looks off" passing.
+      // Same fresh temp tree, same fake npm mechanism — the only difference
+      // is that node_modules/.bin now holds the tools, so the checks are
+      // allowed to run and their verdict is honoured.
+      const { status, output } = runHookIn(hookTreeWithDeps(true), CONTENT_PUSH, "fail");
+
+      expect(status).toBe(1);
+      expect(output).toContain("running format:check");
+      expect(output).toContain("blocked");
+      expect(output).not.toContain("DID NOT RUN");
+    });
+
+    it("runs the checks normally when the dependencies are installed and clean", () => {
+      const { status, output } = runHookIn(hookTreeWithDeps(true), CONTENT_PUSH, "pass");
+
+      expect(status).toBe(0);
+      expect(output).toContain("running format:check");
+      expect(output).not.toContain("DID NOT RUN");
     });
   });
 });
