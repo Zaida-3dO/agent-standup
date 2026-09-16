@@ -133,7 +133,7 @@ README, and every agent integration, goes over HTTP and is fully set up by the
 `STANDUP_URL` above.
 
 Direct mode needs a generated Prisma client, and npm generates one for an
-installed *dependency* only when the package asks it to at install time. This
+installed _dependency_ only when the package asks it to at install time. This
 package deliberately does not ask — see
 [`DECISIONS.md`](docs/plans/DECISIONS.md) — so on an npm or npx install the
 client is a placeholder until you generate it once, pointing Prisma at the

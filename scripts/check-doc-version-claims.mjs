@@ -95,11 +95,7 @@ const PATTERNS = [
  * breath and must not be read as an assertion. A fenced command that
  * publishes or tags a release legitimately carries an example number.
  */
-const EXEMPT = [
-  /npm\s+view\s+agent-standup\s+version/i,
-  /<!--\s*version-claim-ok\b/i,
-  /^\s*#/,
-];
+const EXEMPT = [/npm\s+view\s+agent-standup\s+version/i, /<!--\s*version-claim-ok\b/i, /^\s*#/];
 
 function offenders(text) {
   const found = [];
