@@ -754,6 +754,22 @@ npm publish                                          # prepack runs build:cli, s
 tagging — **do not commit that change.** `package.json`'s checked-in `version` is not the source of
 truth for what ships; the tag is, which is why no release depends on anyone remembering to bump it.
 
+**After publishing, confirm the docs still describe a path that works.** This step is manual and
+interactive, so nothing in CI observes it — a publish changes what `npm install agent-standup` gets
+you, and no job anywhere notices that the docs describing it may now be wrong.
+
+```bash
+npm view agent-standup version                 # what the registry now serves
+npm run check:doc-version-claims               # no document asserts a version that can rot
+npx -y -p agent-standup standup --help         # the published artifact actually runs
+```
+
+`check:doc-version-claims` runs in CI too and is the part that cannot be forgotten, but it answers
+only the narrow question — *do the docs state a number?* It cannot tell you whether the install
+instructions still work, which is why the third command is here: run it against a clean cache, and
+prefer an empty directory for anything involving `--direct`, because a generated Prisma client lying
+around elsewhere makes a broken install look healthy.
+
 Both artefacts still take their version from one reading of one tag (MILESTONES.md #89) —
 `scripts/version-from-tag.mjs` on this side, `docker/metadata-action`'s `type=semver` on the image
 side. Only the triggering event differs.
