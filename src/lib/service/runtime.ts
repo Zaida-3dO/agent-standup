@@ -15,6 +15,9 @@ import { faultContext } from "./fault-context";
 // A read whose response will not fit refuses rather than overflowing the
 // caller it was read in (MILESTONES.md #115).
 import { enforceResponseSize } from "./response-size";
+// The one throw-to-rollback sentinel in the codebase, unwrapped at this
+// seam so no adapter ever sees it (see step 4 in `#dispatch`).
+import { isRehearsalRollback } from "./operations/rehearsal-rollback";
 import { getOperation } from "./registry";
 import type { OperationName, OperationOutput } from "./registry";
 import type { Caller, ServiceContext, TransactionHandle } from "./context";
@@ -253,16 +256,51 @@ export class ServiceRuntime {
 
     // Step 4 — the body throws to abandon the transaction. `call`'s own
     // `catch` is what normalises whatever comes out into the taxonomy and
-    // logs it; there is no second catch here, on purpose.
-    const result = await this.#transaction(async (db) => {
-      const ctx: ServiceContext = {
-        db,
-        settings,
-        caller,
-        operation: operation.name,
-      };
-      return await operation.handler(ctx, parsed.data as never);
-    });
+    // logs it; the one catch here is not that, and is deliberately narrow.
+    //
+    // `RehearsalRollback` is the codebase's only throw-to-rollback sentinel
+    // (`operations/rehearsal-rollback.ts`): `transition_item`'s `dryRun`
+    // branch throws it unconditionally — allowed and rejected alike — so
+    // that anything a guard wrote while merely being *asked* cannot outlive
+    // the call. The throw is the mechanism, not the answer; the answer is
+    // the outcome it carries.
+    //
+    // **Caught here, immediately outside `#transaction`, because by the
+    // time this rejects the rollback has already happened.** The sentinel
+    // has done its entire job at that point, so converting it into an
+    // ordinary return value costs nothing and preserves the structural
+    // guarantee in full — `dryRun` still abandons its transaction by
+    // throwing, exactly as before.
+    //
+    // It lives in the runtime rather than in each adapter because this is
+    // the one seam every adapter crosses. It used to be unwrapped at the
+    // mount points instead, which required every adapter to independently
+    // know an internal detail of the rehearsal mechanism — and `mcp_stdio`
+    // did not, so `dry_run` over the no-server install reported every
+    // rehearsal as a retryable `internal` fault for as long as that mount
+    // had existed. The safeguard in `rehearsal-rollback.ts` worked as
+    // designed and the bug shipped anyway, because "fails loudly" was loud
+    // only to the agent receiving the false `internal`. An adapter that
+    // cannot see the sentinel cannot forget to handle it.
+    //
+    // Narrow on purpose: every other throw still reaches `call`'s catch
+    // untouched, and the sentinel is matched by class, not by inspecting a
+    // code or a shape.
+    let result: unknown;
+    try {
+      result = await this.#transaction(async (db) => {
+        const ctx: ServiceContext = {
+          db,
+          settings,
+          caller,
+          operation: operation.name,
+        };
+        return await operation.handler(ctx, parsed.data as never);
+      });
+    } catch (error) {
+      if (!isRehearsalRollback(error)) throw error;
+      result = { outcome: error.outcome };
+    }
 
     // Step 5 — a read that will not fit is refused rather than returned
     // (MILESTONES.md #115). Here rather than inside an operation because

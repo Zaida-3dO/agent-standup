@@ -33,16 +33,38 @@
 // `RehearsalRollback` is the vehicle: a `ServiceError` (so
 // `toServiceError` in `runtime.ts` passes it through unchanged instead of
 // wrapping it as `InternalError` and losing the payload) carrying the
-// computed `TransitionOutcome` in `details`. `transitionItem`'s caller
-// (the HTTP route) catches exactly this class and returns its payload as a
-// normal 200 — every other thrown value still becomes whatever error
-// response it always did. The `code` is `internal` deliberately: if this
-// class ever escaped uncaught past the route (a bug in the route's catch,
-// or a future adapter that forgets to special-case it), the caller sees a
-// 500 and an opaque failure, not a 200 with the wrong body and not a
-// rehearsal that silently reports success — a mis-wired adapter fails
-// loudly instead of leaking rehearsal machinery into whatever it makes of
-// an ordinary rejection code.
+// computed `TransitionOutcome` in `details`.
+//
+// ── Who catches it: the runtime, and nobody else ─────────────────────────
+//
+// `ServiceRuntime.#dispatch` catches this class immediately outside the
+// transaction and resolves it as `{ outcome }` (see step 4 there). That is
+// the only catch in the codebase, and the sentinel does not leave the
+// service layer: an adapter — HTTP, MCP over either transport, the command
+// line on either binding — receives an ordinary resolved result and has no
+// rehearsal concern at all.
+//
+// **It was not always so, and the history is the reason for the rule.**
+// Each adapter used to apply its own unwrap, which made an internal detail
+// of this mechanism something every mount had to independently know. The
+// `internal` code below was justified at the time as a safeguard: an
+// adapter that forgot would surface an opaque failure rather than a
+// silently wrong success, so a mis-wiring would "fail loudly". `mcp_stdio`
+// was added, did not unwrap, and shipped broken — every `dry_run` over the
+// no-server install reported `internal` with `retryable: true` on a
+// permanently failing condition, for as long as that mount existed. The
+// safeguard worked exactly as designed and the bug still shipped, because
+// loud to the agent receiving the false `internal` is not loud to CI, and
+// because the conformance harness applied the unwrap itself and so could
+// never have caught it. Catching at the one seam every adapter crosses is
+// what makes "an adapter forgets" unrepresentable rather than merely
+// discouraged.
+//
+// The `code` remains `internal`. Its job is now the narrower one it can
+// actually do: if this class ever escapes the runtime's catch — the only
+// way being a bug in the runtime itself — the caller sees an opaque
+// failure rather than a success with the wrong body. It is not, and never
+// was, a substitute for the escape being impossible.
 //
 // ── What this does, and does not, prove ─────────────────────────────────
 //

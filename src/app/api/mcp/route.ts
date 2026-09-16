@@ -13,7 +13,6 @@
 // than a list maintained for a test."
 import { ADAPTER_REGISTRY } from "@/lib/adapters";
 import { handleMcpRequest } from "@/lib/mcp/http";
-import { withRehearsalUnwrapping } from "@/lib/mcp";
 import { service } from "@/lib/service/live";
 import { authenticate } from "@/lib/auth";
 import { unauthenticatedResponse } from "../_shared/respond";
@@ -32,11 +31,12 @@ export const MCP_HTTP_ADAPTER = ADAPTER_REGISTRY.mcp_http;
  * implement them, because a client can tell "this server is stateless"
  * apart from "this endpoint does not exist".
  *
- * The call handed to the core is wrapped with `withRehearsalUnwrapping`
- * (MILESTONES.md #32) — the MCP equivalent of the transition route's own
- * `RehearsalRollback` catch, applied here because this is this transport's
- * mount point, the same way the web API does its own unwrapping in its own
- * route rather than in a shared renderer.
+ * The service call is handed to the core bare. `transition_item`'s `dryRun`
+ * rehearsal used to need unwrapping here (MILESTONES.md #32), because the
+ * sentinel that rolls its transaction back escaped the service layer and
+ * every mount had to recognise it; the runtime now unwraps it at the one
+ * seam every adapter crosses (`service/runtime.ts`, step 4 in `#dispatch`),
+ * so this mount sees an ordinary resolved result like any other.
  */
 async function serve(request: Request): Promise<Response> {
   // Authenticated here, not inside the MCP core, for the same reason the
@@ -60,7 +60,7 @@ async function serve(request: Request): Promise<Response> {
 
   return handleMcpRequest(
     request,
-    withRehearsalUnwrapping((name, input, options) => service.call(name, input, options)),
+    (name, input, options) => service.call(name, input, options),
     auth.machine.machine,
   );
 }

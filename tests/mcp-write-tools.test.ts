@@ -5,10 +5,14 @@
 //
 //   1. The four write operations are actually the ones registered, with the
 //      annotations and schemas §18 promises for them.
-//   2. `withRehearsalUnwrapping` (`@/lib/mcp/rehearsal.ts`) — the new
-//      mechanism this row adds — correctly turns `transition_item`'s
-//      dry-run rollback into a normal MCP success, both as a bare function
-//      and driven through a real MCP client over an in-memory transport.
+//   2. `transition_item`'s dry-run rollback reaches an MCP client as a
+//      normal success rather than an `internal` error, driven through a
+//      real MCP client over an in-memory transport on top of a real
+//      `ServiceRuntime`. The unwrap lives in the runtime
+//      (`@/lib/service/runtime.ts`); the per-adapter
+//      `withRehearsalUnwrapping` wrapper this file used to test is gone,
+//      because requiring every mount to know the sentinel is what let
+//      `mcp_stdio` ship without it.
 //
 // No database here — every call below is a stub or a canned error, the
 // same posture `mcp-server.test.ts` takes for its own protocol-level
@@ -21,10 +25,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   GuardRejectedError,
   RehearsalRollback,
+  ServiceRuntime,
   getOperation,
   type TransitionOutcome,
 } from "@/lib/service";
-import { createMcpServer, withRehearsalUnwrapping, type ServiceCall } from "@/lib/mcp";
+import { defaultSnapshot } from "@/lib/settings";
+import { createMcpServer, type ServiceCall } from "@/lib/mcp";
 
 const WRITE_TOOL_NAMES = ["create_item", "update_item", "transition_item", "complete_item"];
 
@@ -118,60 +124,45 @@ describe("the four write operations are registered as MCP tools", () => {
   });
 });
 
-describe("withRehearsalUnwrapping, as a bare function", () => {
-  it("resolves a RehearsalRollback into { outcome }, the same shape the web API answers with", async () => {
-    const outcome = allowedOutcome();
-    const call: ServiceCall = async () => {
-      throw new RehearsalRollback(outcome);
-    };
-    const wrapped = withRehearsalUnwrapping(call);
-    await expect(
-      wrapped("transition_item", { id: "item-1", to: "someday", dryRun: true }),
-    ).resolves.toEqual({
-      outcome,
+// The rehearsal sentinel is unwrapped by `ServiceRuntime` itself
+// (`src/lib/service/runtime.ts`), not by any adapter. These cases therefore
+// drive a real runtime with a stubbed transaction body, rather than the
+// per-adapter `withRehearsalUnwrapping` wrapper they used to drive — that
+// wrapper is gone, and with it the requirement that each mount know about
+// the sentinel. `tests/service-runtime.test.ts` owns the runtime-level
+// assertions; what these prove is the end of the same wire: what an MCP
+// client actually receives.
+
+/**
+ * A `ServiceCall` backed by a real `ServiceRuntime` whose transaction body
+ * is `body` instead of a database.
+ *
+ * `body` throwing is precisely what `transition_item`'s `dryRun` branch does
+ * from inside the real transaction, so the unwrap these cases exercise is
+ * the production one in `ServiceRuntime.#dispatch` — not a wrapper the test
+ * supplied. The operation's own handler is bypassed, which is the point:
+ * what is under test is the runtime's treatment of a throw crossing the
+ * transaction boundary, for any operation.
+ */
+function callThrough(body: (name: string, input: unknown) => Promise<unknown>): ServiceCall {
+  return (name, input, options) => {
+    const runtime = new ServiceRuntime({
+      // The runtime hands the body a transaction handle and treats whatever
+      // it settles to as the call's result — so standing in for the whole
+      // body here puts this stub in exactly the position
+      // `transition_item`'s handler occupies, without a database.
+      transaction: () => body(name, input),
+      resolveSnapshot: async () => defaultSnapshot(),
     });
-  });
+    return runtime.call(name, input, options);
+  };
+}
 
-  it("unwraps a rejected rehearsal outcome the same way — it is a reported answer, not an error", async () => {
-    const outcome = rejectedOutcome();
-    const call: ServiceCall = async () => {
-      throw new RehearsalRollback(outcome);
-    };
-    const wrapped = withRehearsalUnwrapping(call);
-    const result = await wrapped("transition_item", {});
-    expect(result).toEqual({ outcome });
-  });
-
-  it("passes a normal successful result through unchanged", async () => {
-    const value = { item: { id: "item-1", state: "someday" } };
-    const call: ServiceCall = async () => value;
-    const wrapped = withRehearsalUnwrapping(call);
-    await expect(wrapped("transition_item", {})).resolves.toBe(value);
-  });
-
-  it("rethrows any other error unchanged — instance identity preserved", async () => {
-    const error = new GuardRejectedError("hierarchy", "Too deep.", { fields: ["parentId"] });
-    const call: ServiceCall = async () => {
-      throw error;
-    };
-    const wrapped = withRehearsalUnwrapping(call);
-    await expect(wrapped("complete_item", {})).rejects.toBe(error);
-  });
-
-  it("passes name, input and options through to the wrapped call unchanged", async () => {
-    const spy = vi.fn(async () => ({ ok: true }));
-    const wrapped = withRehearsalUnwrapping(spy);
-    const options = { caller: { transport: "mcp-http", sessionId: "s-1" } };
-    await wrapped("create_item", { title: "x" }, options);
-    expect(spy).toHaveBeenCalledExactlyOnceWith("create_item", { title: "x" }, options);
-  });
-});
-
-describe("withRehearsalUnwrapping, driven through a real MCP client", () => {
-  async function connect(call: ServiceCall) {
+describe("the rehearsal sentinel, driven through a real MCP client over a real runtime", () => {
+  async function connect(body: (name: string, input: unknown) => Promise<unknown>) {
     const server = createMcpServer({
       adapter: "mcp_http",
-      call: withRehearsalUnwrapping(call),
+      call: callThrough(body),
       transport: "mcp-test",
       operations: [getOperation("transition_item")!],
     });
@@ -215,7 +206,7 @@ describe("withRehearsalUnwrapping, driven through a real MCP client", () => {
     expect(structured.outcome.allowed).toBe(false);
   });
 
-  it("a real (non-rehearsed) transition is unaffected by the wrapper", async () => {
+  it("a real (non-rehearsed) transition is unaffected by the unwrap", async () => {
     const applied = { item: { id: "item-1", state: "someday" }, outcome: { rehearsed: false } };
     const client = await connect(async (_name, input) => {
       const parsed = input as { dryRun?: boolean };
@@ -233,11 +224,10 @@ describe("withRehearsalUnwrapping, driven through a real MCP client", () => {
   });
 
   it("an ordinary guard rejection during a real move still renders as an MCP error", async () => {
-    // Proves the wrapper is scoped to `RehearsalRollback` alone — an
-    // unrelated rejection on the very same operation must still come
-    // through exactly as `mcp-server.test.ts` already proves for the
-    // unwrapped core, or this wrapper would be swallowing more than it was
-    // built to.
+    // Proves the runtime's unwrap is scoped to `RehearsalRollback` alone —
+    // an unrelated rejection on the very same operation must still come
+    // through exactly as `mcp-server.test.ts` already proves for the core,
+    // or the unwrap would be swallowing more than it was built to.
     const client = await connect(async () => {
       throw new GuardRejectedError("hierarchy", "Too deep.", { fields: ["parentId"] });
     });
