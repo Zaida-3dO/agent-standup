@@ -108,4 +108,98 @@ describeIfDb("people HTTP route against Postgres", () => {
     const payload = (await response.json()) as { people: { id: string }[] };
     expect(payload.people.some((p) => p.id === "people-route-archived")).toBe(false);
   });
+
+  // `list_people` is paged (MILESTONES.md #109) and this route used to read
+  // only `includeArchived`, so `limit` and `cursor` arrived and were silently
+  // dropped: a caller asking for one page got the default hundred with no
+  // `nextCursor` it could act on. PR #420 fixed that and nothing tested it —
+  // deleting either `input.limit` or `input.cursor` from the route left the
+  // whole suite green, so the exact bug could return unnoticed.
+  //
+  // These drive the real route handler against real Postgres, so what is
+  // asserted is the query string actually reaching `list_people`, not a
+  // restatement of the route's own arithmetic.
+  describe("paging query parameters", () => {
+    // Distinct, ordered `createdAt` values, because the read orders by
+    // `("createdAt", "id")` — fixed timestamps rather than `now()` so the
+    // page boundaries below are deterministic rather than insertion-race
+    // dependent. Archived from the earlier cases is excluded by default,
+    // and these four sort after everything already inserted.
+    const ids = ["page-a", "page-b", "page-c", "page-d"];
+
+    beforeAll(async () => {
+      for (const [index, id] of ids.entries()) {
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO "Person" ("id", "displayName", "createdAt")
+           VALUES ($1, $2, timestamptz '2030-01-01 00:00:00Z' + ($3 || ' minutes')::interval)`,
+          id,
+          `Paged ${id}`,
+          String(index),
+        );
+      }
+    });
+
+    it("GET /people?limit=N returns exactly N rows and a usable nextCursor", async () => {
+      const response = await peopleRoute.GET(
+        authenticatedRequest("http://localhost/api/people?limit=2"),
+      );
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        people: { id: string }[];
+        nextCursor: string | null;
+      };
+      // Dropping `input.limit` yields the default hundred — every person in
+      // the database — so both the count and the cursor fail here.
+      expect(payload.people).toHaveLength(2);
+      expect(payload.nextCursor).not.toBeNull();
+      expect(payload.nextCursor).toBe(payload.people[1]?.id);
+    });
+
+    it("passing nextCursor back returns the following page, not the one already seen", async () => {
+      const first = (await (
+        await peopleRoute.GET(authenticatedRequest("http://localhost/api/people?limit=2"))
+      ).json()) as { people: { id: string }[]; nextCursor: string | null };
+
+      const second = (await (
+        await peopleRoute.GET(
+          authenticatedRequest(
+            `http://localhost/api/people?limit=2&cursor=${encodeURIComponent(first.nextCursor!)}`,
+          ),
+        )
+      ).json()) as { people: { id: string }[]; nextCursor: string | null };
+
+      // The property that fails when `input.cursor` is dropped: without it
+      // the second request is just the first one again.
+      const firstIds = first.people.map((p) => p.id);
+      const secondIds = second.people.map((p) => p.id);
+      expect(secondIds).not.toEqual(firstIds);
+      expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
+      expect(second.people).toHaveLength(2);
+    });
+
+    it("walks the whole set in pages without repeating or skipping a row", async () => {
+      // The end-to-end property the two parameters exist to provide, and the
+      // one a caller actually depends on. Asserted against the set inserted
+      // above rather than against a second call to the same route.
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < 10; page += 1) {
+        const url = new URL("http://localhost/api/people");
+        url.searchParams.set("limit", "2");
+        if (cursor !== null) url.searchParams.set("cursor", cursor);
+        const payload = (await (
+          await peopleRoute.GET(authenticatedRequest(url.toString()))
+        ).json()) as { people: { id: string }[]; nextCursor: string | null };
+        seen.push(...payload.people.map((p) => p.id));
+        cursor = payload.nextCursor;
+        if (cursor === null) break;
+      }
+
+      expect(cursor).toBeNull();
+      // No duplicates anywhere in the walk.
+      expect(new Set(seen).size).toBe(seen.length);
+      // Every row inserted here was visited, in `createdAt` order.
+      expect(seen.filter((id) => ids.includes(id))).toEqual(ids);
+    });
+  });
 });
