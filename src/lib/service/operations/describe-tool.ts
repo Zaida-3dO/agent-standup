@@ -43,6 +43,7 @@ import { defineOperation, type OperationRule } from "../operation";
 import type { ServiceContext } from "../context";
 import { describeFields, type FieldDescriptor } from "../describe/fields";
 import { spellingsFor, type SurfaceSpelling } from "@/lib/surfaces";
+import { bindingsFor } from "../describe/bindings";
 import { currentBuildInfo, type BuildInfo } from "@/lib/build-info";
 import type { AdapterName } from "@/lib/adapters/registry";
 import { waiversFor, type AdapterWaiver } from "@/lib/adapters/waivers";
@@ -198,7 +199,17 @@ export interface ToolContract {
   readonly name: string;
   readonly kind: "read" | "write";
   readonly summary: string;
-  /** How to call it on each surface, so a caller is not left translating. */
+  /**
+   * How to call it on each surface it is actually bound to, so a caller is
+   * not left translating.
+   *
+   * **A surface this operation is not reachable on is absent, not blank.**
+   * Most operations are not bound everywhere — a majority are waived off
+   * MCP, and roughly half have no command-line verb — so the key is omitted
+   * rather than filled with a plausible guess. Read a missing `cli` as "not
+   * on the command line", which is the true answer and is what an earlier
+   * always-present shape had no way to say.
+   */
   readonly invocation: SurfaceSpelling;
   /**
    * Every field of the input, read off the schema it is rejected by.
@@ -486,7 +497,7 @@ export const describeTool = defineOperation({
       name: found.name,
       kind: found.kind,
       summary: found.summary,
-      invocation: spellingsFor(found.name),
+      invocation: spellingsFor(found.name, bindingsFor(found.name)),
       fields: describeFields(found.input),
       // Spread-or-nothing, not `?? []`. An operation that declares no
       // contract omits the key; one that declares a contract carries its

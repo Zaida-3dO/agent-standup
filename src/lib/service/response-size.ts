@@ -34,6 +34,7 @@
 // the shape of gap this codebase's registry-driven checks exist to close.
 import { GuardRejectedError } from "./errors";
 import { invocationFor, surfaceForTransport, type CallSurface } from "@/lib/surfaces";
+import { bindingsFor } from "./describe/bindings";
 
 /**
  * The largest response a read may return, in characters of serialised JSON.
@@ -284,12 +285,18 @@ export function responseTooLargeMessage(
   surface: CallSurface | undefined,
 ): string {
   const narrower = narrowerCallFor(operation);
+  // The operation here is whichever one was refused, so its bindings are
+  // looked up rather than assumed: `get_board` and `get_item_detail` — two
+  // of the reads most likely to overflow — have no command-line verb, and
+  // naming an invented one inside a refusal is the failure this wording
+  // already exists to avoid.
+  const named = invocationFor(operation, surface, bindingsFor(operation));
   const remedy =
     narrower === undefined
-      ? `Ask for less, or use ${invocationFor("search", surface)} to find one specific item.`
-      : `Call ${invocationFor(operation, surface)} with ${narrower}.`;
+      ? `Ask for less, or use ${invocationFor("search", surface, bindingsFor("search"))} to find one specific item.`
+      : `Call ${named} with ${narrower}.`;
   return (
-    `This ${invocationFor(operation, surface)} response is ${size.toLocaleString("en-GB")} characters, ` +
+    `This ${named} response is ${size.toLocaleString("en-GB")} characters, ` +
     `over the ${MAX_RESPONSE_CHARS.toLocaleString("en-GB")}-character limit, so it was not returned — ` +
     `it will not be truncated for you, because a partial result you cannot identify as partial is worse ` +
     `than none. ${remedy}`

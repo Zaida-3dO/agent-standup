@@ -38,6 +38,7 @@
 import type { z } from "zod";
 import { InvalidInputError } from "./errors";
 import { invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
+import { bindingsFor } from "./describe/bindings";
 
 /** One thing wrong with an input, on its own. */
 export interface ShapeFinding {
@@ -104,10 +105,15 @@ export function shapeRefusalMessage(
   transport: string | undefined,
 ): string {
   const findings = findingsFrom(issues);
+  // The bindings matter here specifically: `describe_tool` has **no
+  // command-line verb**, so a CLI reader used to be pointed at `standup
+  // describe tool`, which does not exist. With the real bindings the
+  // pointer falls back to the MCP spelling, which is a call that works.
   const pointer = invocationWithArgumentFor(
     "describe_tool",
     operation,
     surfaceForTransport(transport),
+    bindingsFor("describe_tool"),
   );
   const head = `Invalid input for ${operation}`;
   const routing = `Call ${pointer} for the full contract, including the rules the schema cannot state.`;
