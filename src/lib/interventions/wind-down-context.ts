@@ -2,23 +2,22 @@
 // owner's scoring loop (`./survey.ts`), and the second half of the gap
 // `./stop-context.ts` closed for the stop catch.
 //
-// ── The gap this closes, which is the same gap twice ───────────────────
+// ── Where this sits in the loop ────────────────────────────────────────
 //
-// `./survey.ts` decides when to ask and what the question looks like, and
-// it did both correctly from the day it was written. `../hook/stop-catch.ts`
-// can evaluate it (`evaluateStopSurvey`) and read its context off a server
-// response (`readWindDownContext`). `../hook/response.ts` can render it
-// (`renderWithStopSurvey`). `../hook/run.ts` accepts a `survey` option and
-// passes it through. `score_intervention` can record an answer, and is
-// bound on the MCP surface so a session can actually call it.
+// The scoring loop is a chain of single-purpose pieces, and this is the one
+// that supplies it with something to ask about:
 //
-// **Every one of those was built. None of them had anything to talk to.**
-// `hook_decision`'s `Stop` branch returned a `stop` block and nothing else,
-// so `readWindDownContext` was never called, `evaluateStopSurvey` received
-// `undefined` on every stop, and the scale the owner specified has recorded
-// zero scores against hundreds of firings. This is the missing producer,
-// written to the same shape as `assembleStopContext` because it is the same
-// omission one feature over.
+//   `./survey.ts`            decides when to ask and what the question says
+//   `../hook/stop-catch.ts`  evaluates it, and parses this block off the wire
+//   `../hook/response.ts`    renders it onto stderr
+//   `../hook/run.ts`         composes it beside the verdict
+//   `score_intervention`     records the answer
+//
+// Each of those is inert without an input, and the input is a list of this
+// session's unrated firings — which only the database can produce. That is
+// what this module assembles, and it is deliberately the same shape as
+// `assembleStopContext`: the two answer the same kind of question about the
+// same event, and one shape is easier to keep honest than two.
 //
 // ── What this module assembles, and what it deliberately does not ──────
 //

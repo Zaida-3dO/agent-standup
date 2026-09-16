@@ -255,10 +255,8 @@ export function createHttpAsk({
     // Both advisory, and read after the decision: a malformed block in
     // either is dropped by its own reader and can never affect the verdict.
     const stop = readStopContext(property(body, "stop"));
-    // The survey's context, read by the parser that has existed since the
-    // survey was written and until now had no caller. Dropped wholesale if
-    // malformed, exactly like `stop` — a garbled block costs a missed
-    // survey, never a spurious one.
+    // The survey's context. Dropped wholesale if malformed, exactly like
+    // `stop` — a garbled block costs a missed survey, never a spurious one.
     const windDown = readWindDownContext(property(body, "windDown"));
     const nudge = readNudgeContext(property(body, "nudge"));
     // Advisory in the same sense: `hook_decision` always returns `findings`

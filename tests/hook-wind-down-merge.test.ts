@@ -15,23 +15,23 @@
 // The merge itself is a plain spread, and that is correct — but only
 // because of a property of the OTHER side that nothing local enforces.
 //
-// ── The real hazard, found by mutating the implementation ──────────────
+// ── Where the protection actually lives ────────────────────────────────
 //
-// The first version of this merge carried an explicit guard reinstating the
-// client's `idleMs`. Replacing that guard with a bare spread did not break a
-// single test, because the server's block does not carry an `idleMs` key at
-// all — and a spread only overwrites keys that are PRESENT. The guard was
-// defending a case the real path cannot produce, and the test asserting it
-// was hollow: a plain spread already satisfied it.
+// A spread overwrites only the keys that are PRESENT on the right-hand
+// side. So the client's `idleMs` survives precisely because the server's
+// block has no such key: `WindDownContextPayload` declares no `idleMs`
+// field, and `readWindDownContext` builds its result conditionally, so no
+// block arriving over the wire can carry `idleMs: undefined` — the one
+// value that would delete the client's number.
 //
-// So what actually protects the measurement is not this function. It is
-// that `WindDownContextPayload` declares no `idleMs` field and that
-// `readWindDownContext` builds its result conditionally, so no block
-// arriving over the wire can carry `idleMs: undefined` — the one value that
-// would delete the client's number. **That contract is pinned here, against
-// the real parser**, because the merge cannot pin it and the type system
-// cannot either: `{idleMs: undefined}` is a perfectly good
-// `WindDownContext`.
+// **That contract is what these cases pin, against the real parser.** The
+// merge cannot pin it, and neither can the type system: `{idleMs:
+// undefined}` is a perfectly good `WindDownContext`. A guard inside the
+// merge cannot pin it either — an explicit reinstatement of the local value
+// is unkillable by any mutation, because the case it defends against is
+// unreachable through the real path, so a test written against such a guard
+// passes just as well without it. The reachable property is the producer's,
+// and it is asserted where a break would be felt.
 
 import { describe, expect, it } from "vitest";
 import { mergeWindDownContext } from "@/lib/hook/run";

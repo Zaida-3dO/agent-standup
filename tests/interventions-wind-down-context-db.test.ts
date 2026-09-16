@@ -5,12 +5,11 @@
 //
 // The unit tests for this producer assert on the *text* of the query,
 // against a handle that answers with canned rows. That proves the string was
-// written; it cannot prove the string means anything. Mutation testing
-// demonstrated the gap concretely rather than theoretically: neutralising
-// the whole `NOT EXISTS` clause — so that already-rated firings are handed
-// back to the survey forever — left every text assertion passing, because
-// the substring `NOT EXISTS` was still present in a clause that no longer
-// did anything.
+// written; it cannot prove the string means anything. Mutation testing shows
+// the gap concretely: disjoining a tautology into the `NOT EXISTS` clause —
+// so that already-rated firings are handed back to the survey forever —
+// leaves every text assertion passing, because the substring `NOT EXISTS`
+// is still there in a clause that matches everything.
 //
 // That mutant is the reason for this file. The semantics are pinned here
 // instead, by executing the real query against real rows, and each case is
@@ -125,8 +124,10 @@ describeIfDb("the wind-down producer — against Postgres", () => {
   });
 
   it("stops asking once this session has rated it", async () => {
-    // **The mutant this file was written for.** Neutralising the NOT EXISTS
-    // clause leaves every text assertion passing and fails right here.
+    // **The case a text assertion cannot make.** A `NOT EXISTS` clause that
+    // matches everything still contains the words `NOT EXISTS`; only running
+    // it against real rows can tell the difference, and this is where it
+    // shows.
     const id = await recordFiring({});
     await prisma.interventionScore.create({
       data: { eventId: id, raterType: "agent" as never, raterId: "s1", score: 4 },
@@ -142,11 +143,12 @@ describeIfDb("the wind-down producer — against Postgres", () => {
     //
     // ── Why `raterId` is the session id here, which looks wrong ────────
     //
-    // It is deliberate, and mutation testing is why. The suppression has
-    // two predicates — `rater_type = 'agent'` and `rater_id = <session>` —
-    // and a person row with a person-shaped `raterId` is excluded by the
-    // second one all on its own. So this case passed with the `rater_type`
-    // predicate deleted: it was proving the wrong half.
+    // It is deliberate, and it is what makes this case test the predicate
+    // it names. The suppression has two predicates — `rater_type = 'agent'`
+    // and `rater_id = <session>` — and a person row carrying a
+    // person-shaped `raterId` is excluded by the second one all on its own,
+    // so it would prove nothing about the first: delete `rater_type =
+    // 'agent'` and such a case still passes.
     //
     // Giving the person row the *same* `raterId` as the session isolates
     // the type predicate, which is the only thing standing between the

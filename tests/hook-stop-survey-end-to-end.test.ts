@@ -3,12 +3,13 @@
 //
 // ── What only this file can prove ──────────────────────────────────────
 //
-// Every piece of this feature was already built and individually tested
-// before this row: `survey.ts` builds the question, `evaluateStopSurvey`
-// decides whether to ask, `renderWithStopSurvey` renders it, and
-// `hook-stop-survey.test.ts` covers all three. And the feature was inert,
-// because nothing connected them: the server never sent a block and
-// `ask-http.ts` never read one.
+// The survey is assembled from five pieces that are each covered on their
+// own: `survey.ts` builds the question, `evaluateStopSurvey` decides whether
+// to ask, `renderWithStopSurvey` renders it, `ask-http.ts` parses the
+// server's block, and `run.ts` composes them. Every one of those can be
+// green while the survey reaches nobody, because what joins them is not a
+// function — it is a field name agreed between a producer and a parser that
+// never import each other, and a spread in a third module.
 //
 // **A feature can be green in every unit test and dead in the product.**
 // That is the failure this file exists to catch, so the assertions here are
