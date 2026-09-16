@@ -382,10 +382,23 @@ export class ServiceRuntime {
     } catch (error) {
       if (!isRehearsalRollback(error)) throw error;
       result = { outcome: error.outcome };
-      // A rehearsal rolled back, so anything the producer found inside it
-      // describes a state the transaction abandoned. Cleared rather than
-      // delivered: a `dryRun` must not be able to emit a nudge about work
+      // A rehearsal abandoned its transaction, so nothing observed inside it
+      // may ride the response: a `dryRun` must not emit a nudge about work
       // it deliberately declined to keep.
+      //
+      // **Belt and braces, and the braces are what actually hold.** The only
+      // thrower of this sentinel raises it from *inside* the handler
+      // (`operations/transition-item.ts`), and the producer runs on the line
+      // after the handler returns — so on that path `produced` is still its
+      // initial empty value when this runs, and this assignment changes
+      // nothing. It is kept because the guarantee must not
+      // depend on that ordering holding: a future rehearsal that threw after
+      // a handler returned would otherwise deliver findings about a state the
+      // database rolled back, and the failure would be silent.
+      //
+      // Stated rather than implied because a reader is entitled to know which
+      // line is load-bearing. A test asserting this branch cannot distinguish
+      // it from the ordering above, so no test claims to.
       produced = [];
     }
 

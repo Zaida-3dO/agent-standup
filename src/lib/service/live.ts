@@ -149,16 +149,17 @@ export const service: ServiceRuntime = new SettingsInvalidatingRuntime({
   deliverInterventions: interventionDeliverer,
   // The producer for the same channel (MILESTONES.md #128).
   //
-  // **Both halves are wired here, and the pairing is the point.** The
-  // deliverer above was live in this file for weeks and delivered nothing,
-  // because the only thing that ever filled its accumulator was the hook
-  // route — so the channel built to work "not only through the hook" did
-  // not work without it. This is the other half: it evaluates the entries a
-  // service call can actually answer and hands them to the deliverer, which
-  // is what makes the decoupling real rather than merely intended.
+  // **The deliverer above can only deliver what something produced**, and
+  // until this was wired the only producer reaching it was the hook route,
+  // which fills the digest via `hold()`. That left the payload's other
+  // member — `findings`, "what this very call triggered, delivered now" —
+  // with no source at all, on a path built so the feature would survive the
+  // hook not being wired.
   //
-  // A deliverer without a producer is the state this file was in. A
-  // producer without a deliverer would find things and drop them. Neither
-  // is a useful configuration, which is why they are not configured apart.
+  // This supplies it: it evaluates the entries a service call can actually
+  // answer and hands them to the deliverer. A producer without a deliverer
+  // would find things and drop them, and a deliverer with no producer of
+  // its own can only pass on what somebody else noticed earlier — so the
+  // two are wired together rather than separately.
   produceInterventions: produceServiceFindings,
 });

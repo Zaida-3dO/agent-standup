@@ -6,11 +6,13 @@
 // This repository has built the same defect three times and named it twice.
 // `src/lib/interventions/stop-context.ts`'s own header records that the stop
 // catch **"was built, is correct, and has never once spoken"**. The service
-// delivery seam was the second instance: `delivery.ts`, `service-delivery.ts`
-// and the runtime wiring were all present, individually correct and fully
-// tested, and the channel delivered nothing for weeks because **nothing
-// produced findings on it** — `decideDelivery` was called with no `findings`
-// key and the accumulator's only filler anywhere was the hook route.
+// delivery seam was the second instance, in the precise half-wired form that
+// makes this class hard to spot: `decideDelivery` was called with no
+// `findings` key, so the payload's **immediate** member had no producer at
+// all, while its **digest** member kept working because `take()` is called
+// unconditionally and the hook route fills the accumulator via `hold()`. A
+// session could be handed things noticed five minutes ago and never be told
+// anything about the call in its hand.
 // `builtins.ts` names the third: `visual-reviews-in-flight-concurrently`
 // shipped with **no assembler at all**, its predicate reading a field nothing
 // in the codebase ever wrote.
@@ -286,12 +288,14 @@ describe("the service-delivery channel has a producer", () => {
   // Each of these reverting alone silently restores the original defect, and
   // none of them would fail any other test in the suite.
 
-  it("passes `findings` to decideDelivery, which is the key whose absence broke it", () => {
+  it("passes `findings` to decideDelivery, the key the immediate half needs", () => {
     const source = withoutComments(read("src/lib/interventions/service-delivery.ts"));
     // `decideDelivery` reads `options.findings ?? []`. Called without the
-    // key it partitions an empty list, holds nothing, and can only ever
-    // deliver a digest something else filled — which, with the hook
-    // unwired, is nothing at all. That was the whole defect.
+    // key it partitions an empty list, so nothing can ever appear under
+    // `findings` — the payload member defined as "what this very call
+    // triggered, delivered now". The digest member is unaffected either
+    // way, which is exactly why the gap survived: the channel looked live
+    // because half of it was.
     expect(source).toMatch(/decideDelivery\s*\(\s*accumulator\s*,\s*\{[^}]*\bfindings\b/s);
   });
 

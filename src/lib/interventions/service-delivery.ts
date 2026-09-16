@@ -152,12 +152,20 @@ export function createServiceDeliverer(options: ServiceDelivererOptions = {}): S
     if (sessionId === undefined) return result;
 
     // The findings the producer noticed on this call, passed through rather
-    // than omitted. **This key being absent was the whole of the defect
-    // this module had**: `decideDelivery` reads `options.findings ?? []`, so
-    // a call without it partitioned an empty list, held nothing, and could
-    // only ever deliver a digest the hook route had filled. With the hook
-    // unwired — which is the case this channel exists to survive — that was
-    // unconditionally nothing.
+    // than omitted.
+    //
+    // **This key being absent disabled the immediate half of the payload,
+    // and only that half.** `decideDelivery` reads `options.findings ?? []`,
+    // so a call without it partitioned an empty list and nothing could ever
+    // appear under `findings` — "what this very call triggered, delivered
+    // now". The `digest` half was unaffected throughout: `decideDelivery`
+    // calls `accumulator.take()` unconditionally, so a batch the hook route
+    // had placed via `hold()` still came due and still rode back.
+    //
+    // The asymmetry is what made it hard to see. A session could be handed
+    // things noticed five minutes earlier while never being told anything
+    // about the call in its hand, which reads as a quiet channel rather
+    // than a half-connected one.
     const payload = decideDelivery(accumulator, { sessionId, findings, now: clock() });
     return attachInterventions(result, payload);
   };

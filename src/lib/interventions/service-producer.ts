@@ -4,24 +4,39 @@
 //
 // `./delivery.ts` exists so findings ride the ordinary service response
 // "not only through the hook, which decouples the whole feature from the
-// hook being wired". `./service-delivery.ts` puts a concrete accumulator
-// behind it and `../service/live.ts` hands it to the runtime, so every
-// operation carries the field. All of that was built, is correct, and
-// delivered nothing — because **nothing produced findings on this path**.
+// hook being wired". Its payload has **two members answering two different
+// questions**, and the distinction is the whole of what this module is for:
 //
-// The shape of the emptiness was precise: `createServiceDeliverer`'s
+//   - **`digest`** — findings held from earlier calls, delivered when a
+//     batch comes due. This half has a producer: `hold()`, called from
+//     `src/app/api/hook/route.ts`. `decideDelivery` calls
+//     `accumulator.take()` unconditionally, so it drains whatever the hook
+//     put there whether or not this call found anything itself.
+//   - **`findings`** — "what this very call triggered, delivered now", in
+//     the header's own words. Only `immediate`-timed findings ride here.
+//
+// **The immediate half had no producer at all.** `createServiceDeliverer`'s
 // `deliver` called `decideDelivery(accumulator, { sessionId, now })` with no
-// `findings` key, and the accumulator's only filler anywhere in the
-// codebase was `hold()`, whose only caller was `src/app/api/hook/route.ts`.
-// Stronger still: `evaluate()` — the one function that turns context into
-// findings — had exactly one non-test caller, `hook_decision`. So the
-// service channel could only ever *drain* a tank that the hook alone
-// filled, which is the opposite of the decoupling it was built for. With
-// the hook unwired, `take()` ran on every service call forever and returned
-// null every time.
+// `findings` key, and `decideDelivery` reads `options.findings ?? []` — so
+// it partitioned an empty list on every call in the system. Nothing
+// anywhere evaluated the registry on a service call: `evaluate()` had
+// exactly one non-test caller, `hook_decision`.
 //
-// This module is the producer. It is the answer to "the accumulator wants
-// populating at a different seam", and the seam is named below.
+// So the asymmetry was total. A session could receive a batch of things the
+// *hook* noticed five minutes ago, and could never be told anything the
+// call it just made had triggered — on a path built precisely so the
+// feature would survive the hook not being wired.
+//
+// **This is oversight rather than intent, which is worth establishing
+// before building.** The immediate lane is fully constructed and entirely
+// uncalled: `partitionFindings` splits on it, `decideDelivery` promotes a
+// finding the accumulator refused into it rather than dropping it, and
+// `renderPayload` deliberately orders it ahead of the digest because
+// otherwise it "would bury the thing they can act on right now under five
+// things they cannot". A design that wanted a digest only would not have
+// built, documented and tested the lane beside it.
+//
+// This module is that missing producer.
 //
 // ── Why the producer CANNOT live in the deliverer ──────────────────────
 //
