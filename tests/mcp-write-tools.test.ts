@@ -21,7 +21,7 @@
 // write.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   GuardRejectedError,
   RehearsalRollback,
@@ -151,7 +151,7 @@ function callThrough(body: (name: string, input: unknown) => Promise<unknown>): 
       // it settles to as the call's result — so standing in for the whole
       // body here puts this stub in exactly the position
       // `transition_item`'s handler occupies, without a database.
-      transaction: () => body(name, input),
+      transaction: <T>() => body(name, input) as Promise<T>,
       resolveSnapshot: async () => defaultSnapshot(),
     });
     return runtime.call(name, input, options);

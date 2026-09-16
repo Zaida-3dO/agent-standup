@@ -267,20 +267,40 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
 
   describe("transition_item — AC3/AC4: rehearsal mode", () => {
     /**
-     * `transition_item`'s dryRun branch always throws `RehearsalRollback`
-     * (see `rehearsal-rollback.ts`) — the HTTP route is the intended
-     * catcher, but calling the operation directly (as this file does, to
-     * test it in isolation from the transport) means every rehearsal in
-     * this file goes through this helper rather than a plain `await`.
+     * `transition_item`'s dryRun branch still throws `RehearsalRollback`
+     * (see `rehearsal-rollback.ts`) — that throw is how the rehearsal
+     * abandons its own transaction, and it is unchanged. What changed is
+     * who catches it: `ServiceRuntime.#dispatch` does, immediately outside
+     * the transaction, so **a rehearsal resolves rather than rejects** and
+     * the sentinel never leaves the service layer.
+     *
+     * This helper asserts exactly that, which is the structural claim the
+     * whole fix rests on. It previously asserted the opposite
+     * (`expect(error).toBeInstanceOf(RehearsalRollback)`), which encoded
+     * the old contract: every adapter catching the sentinel for itself, and
+     * `mcp_stdio` not doing so.
      */
     async function callDryRun(
       input: Record<string, unknown>,
     ): Promise<{ allowed: boolean; rehearsed: boolean; rejection?: { guard: string } }> {
-      const error = await runtime
+      const settled = await runtime
         .call("transition_item", { ...input, dryRun: true })
-        .catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(RehearsalRollback);
-      return (error as RehearsalRollback).outcome as {
+        .then((value) => ({ resolved: true as const, value }))
+        .catch((error: unknown) => ({ resolved: false as const, error }));
+
+      // Named rather than asserted bare, so a regression reports *what*
+      // escaped instead of only that something did. A reintroduced escape
+      // fails here, on every rehearsal in this file at once.
+      if (!settled.resolved) {
+        expect(settled.error).not.toBeInstanceOf(RehearsalRollback);
+        throw settled.error;
+      }
+
+      const result = settled.value as { outcome?: unknown };
+      // The runtime's unwrap produces `{ outcome }` — the same shape every
+      // adapter used to reconstruct by hand.
+      expect(result.outcome).toBeDefined();
+      return result.outcome as {
         allowed: boolean;
         rehearsed: boolean;
         rejection?: { guard: string };
