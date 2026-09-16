@@ -8,6 +8,8 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { EXIT, runCli, runMcpStdio, type CallableService } from "@/lib/cli";
+import { RehearsalRollback, ServiceRuntime, type TransitionOutcome } from "@/lib/service";
+import { defaultSnapshot } from "@/lib/settings";
 
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -146,6 +148,93 @@ describe("runMcpStdio — reaching the service", () => {
       { name: "describe_tool", transport: "mcp-stdio" },
       { name: "describe_tool", transport: "mcp-stdio" },
     ]);
+
+    input.end();
+    await outcomePromise;
+  });
+
+  // `standup mcp` is the no-server install (DECISIONS.md §13f) — the
+  // transport a new local user is most likely to reach first — so a defect
+  // here is a first-run defect. A mount that let `transition_item`'s
+  // rehearsal sentinel escape would answer every `dry_run` with
+  // `{"code":"internal","retryable":true}` instead of the verdict asked
+  // for: retryable on a permanently failing condition, which burns an
+  // autonomous caller's retry budget. The *rejected* dry run is the case
+  // worth pinning, because it carries the answer to "why can't I move
+  // this?" — the allowed case degrades far more gracefully.
+  //
+  // **The service here is a real `ServiceRuntime`, deliberately.** The
+  // unwrap under test belongs to the runtime, so the runtime has to be in
+  // the wire: a stub returning `{ outcome }` directly would satisfy every
+  // assertion below while proving nothing about the mount. What stands in
+  // for the database is the transaction body, which throws exactly what
+  // `transition_item`'s `dryRun` branch throws, from the same place.
+  it("answers a REJECTED dry run over stdio with the rehearsal verdict, not an internal error", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const reader = responseReader(output);
+
+    const outcome: TransitionOutcome = {
+      itemId: "item-1",
+      from: "on_deck",
+      to: "executing",
+      allowed: false,
+      rehearsed: true,
+      rejection: {
+        code: "guard_rejected",
+        guard: "plan.requires_approved_artifact",
+        message: "No approved plan artifact.",
+        fields: [],
+      },
+    };
+
+    const runtime = new ServiceRuntime({
+      // Stands in for the whole transaction body. `transition_item`'s
+      // rehearsal throws this from inside the transaction after computing
+      // the outcome; the rollback is the throw, and by the time the runtime
+      // sees it the rollback has happened.
+      transaction: async () => {
+        throw new RehearsalRollback(outcome);
+      },
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+
+    const outcomePromise = runMcpStdio({
+      env: { DATABASE_URL: "postgresql://u@h/d" },
+      loadService: async () => runtime,
+      input,
+      output,
+      stderr: { write: () => {} },
+    });
+
+    input.write(`${JSON.stringify(initializeMessage(1))}\n`);
+    await reader.waitFor(1);
+    input.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "transition_item",
+          arguments: { id: "item-1", to: "executing", dryRun: true },
+        },
+      })}\n`,
+    );
+    const response = await reader.waitFor(2);
+
+    const result = response.result as {
+      isError?: boolean;
+      structuredContent?: { outcome?: TransitionOutcome; code?: string };
+    };
+
+    // The three assertions the bug violated, in the order it violated them.
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent?.code).toBeUndefined();
+    expect(result.structuredContent?.outcome).toEqual(outcome);
+    expect(result.structuredContent?.outcome?.allowed).toBe(false);
+    expect(result.structuredContent?.outcome?.rejection?.guard).toBe(
+      "plan.requires_approved_artifact",
+    );
 
     input.end();
     await outcomePromise;

@@ -469,6 +469,29 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       input: () => ({ id: seededTaskId, to: "executing", dryRun: true }),
       expect: "accepted",
     },
+    {
+      // A *rejected* rehearsal — the combination the rest of this table
+      // cannot reach, and the one most worth pinning. The two guarded cases
+      // above avoid `dry_run` on purpose (so the `guard` column is not left
+      // empty), and the case directly above is the *allowed* rehearsal. So
+      // "a dry run of a move the guards refuse" is covered by this case
+      // alone, on every adapter, and it is precisely the combination an
+      // adapter can get wrong while every other case stays green.
+      //
+      // `expect: "accepted"` is the claim, and it is the whole point. §16:
+      // a rehearsal *reports* rather than raises, so a rehearsal of a
+      // refused move is a **successful call carrying a rejection in its
+      // payload** — not a rejected call. An adapter that lets the rehearsal
+      // sentinel escape fails right here, on that distinction.
+      //
+      // It is safe to run once per driver against the shared row for the
+      // same reason the refusing cases are: a rehearsal writes nothing, so
+      // each driver sees the same starting state.
+      name: "transition_item reports a refused move as a successful rehearsal",
+      operation: "transition_item",
+      input: () => ({ id: seededTaskId, to: "blocked", dryRun: true }),
+      expect: "accepted",
+    },
   ];
 
   it("runs every case against every driver that exposes its operation", async () => {

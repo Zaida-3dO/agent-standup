@@ -267,20 +267,42 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
 
   describe("transition_item — AC3/AC4: rehearsal mode", () => {
     /**
-     * `transition_item`'s dryRun branch always throws `RehearsalRollback`
-     * (see `rehearsal-rollback.ts`) — the HTTP route is the intended
-     * catcher, but calling the operation directly (as this file does, to
-     * test it in isolation from the transport) means every rehearsal in
-     * this file goes through this helper rather than a plain `await`.
+     * `transition_item`'s dryRun branch still throws `RehearsalRollback`
+     * (see `rehearsal-rollback.ts`) — that throw is how the rehearsal
+     * abandons its own transaction, and it is unchanged. What changed is
+     * who catches it: `ServiceRuntime.#dispatch` does, immediately outside
+     * the transaction, so **a rehearsal resolves rather than rejects** and
+     * the sentinel never leaves the service layer.
+     *
+     * This helper asserts exactly that, and it is the structural claim the
+     * rest of the rehearsal contract rests on: if the sentinel can escape
+     * the service layer, then every adapter has to catch it for itself, and
+     * an adapter that does not turns a rehearsal into a retryable
+     * `internal` fault. Asserting it here, in the helper every rehearsal in
+     * this file goes through, is what makes that regression fail loudly and
+     * in one place.
      */
     async function callDryRun(
       input: Record<string, unknown>,
     ): Promise<{ allowed: boolean; rehearsed: boolean; rejection?: { guard: string } }> {
-      const error = await runtime
+      const settled = await runtime
         .call("transition_item", { ...input, dryRun: true })
-        .catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(RehearsalRollback);
-      return (error as RehearsalRollback).outcome as {
+        .then((value) => ({ resolved: true as const, value }))
+        .catch((error: unknown) => ({ resolved: false as const, error }));
+
+      // Named rather than asserted bare, so a regression reports *what*
+      // escaped instead of only that something did. A reintroduced escape
+      // fails here, on every rehearsal in this file at once.
+      if (!settled.resolved) {
+        expect(settled.error).not.toBeInstanceOf(RehearsalRollback);
+        throw settled.error;
+      }
+
+      const result = settled.value as { outcome?: unknown };
+      // The runtime's unwrap produces `{ outcome }` — the same shape every
+      // adapter used to reconstruct by hand.
+      expect(result.outcome).toBeDefined();
+      return result.outcome as {
         allowed: boolean;
         rehearsed: boolean;
         rejection?: { guard: string };
@@ -348,20 +370,49 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       }
     });
 
-    it("dryRun's internal rollback throw is RehearsalRollback specifically, carrying the outcome — proving the route's unwrap path is exercised at the right seam", async () => {
-      // transitionItem's handler always throws on the dryRun branch — this
-      // asserts what it throws is recoverable machinery, not an accident:
-      // calling the OPERATION directly (bypassing the route) still surfaces
-      // RehearsalRollback with the outcome attached, which is exactly what
-      // the HTTP route's catch block (transition/route.ts) is written
-      // against.
+    it("dryRun's rollback throw is RehearsalRollback carrying the outcome, and the runtime converts it rather than letting it escape", async () => {
+      // Two halves of one claim, and both matter.
+      //
+      // The *operation* reports a rehearsal by throwing: that throw is what
+      // abandons the transaction, so anything a guard wrote while merely
+      // being asked cannot outlive the call. Observed at the transaction
+      // boundary — the runtime hands `#transaction` a body and that body is
+      // the operation's handler, so intercepting what the body settles to
+      // catches the sentinel one frame before the runtime converts it, and
+      // pins that the thrown value is recoverable machinery carrying the
+      // outcome rather than an accident.
       const id = await createTask({ state: "executing" });
-      const error = await runtime
-        .call("transition_item", { id, to: "someday", dryRun: true })
-        .catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(RehearsalRollback);
-      expect((error as RehearsalRollback).outcome.allowed).toBe(true);
-      expect((error as RehearsalRollback).outcome.rehearsed).toBe(true);
+      let thrown: unknown;
+      const observingRuntime = new ServiceRuntime({
+        transaction: async (body) => {
+          try {
+            return await prismaTransactionRunner(prisma)(body);
+          } catch (error) {
+            thrown = error;
+            throw error;
+          }
+        },
+        resolveSnapshot: async () => defaultSnapshot(),
+      });
+
+      await observingRuntime.call("transition_item", { id, to: "someday", dryRun: true });
+
+      expect(thrown).toBeInstanceOf(RehearsalRollback);
+      expect((thrown as RehearsalRollback).outcome.allowed).toBe(true);
+      expect((thrown as RehearsalRollback).outcome.rehearsed).toBe(true);
+
+      // And the *runtime* is where that throw stops. The same call through
+      // `runtime.call` resolves with the outcome the sentinel carried, so
+      // the sentinel is not part of any adapter's contract — which is what
+      // makes it impossible for a mount to mishandle it.
+      const resolved = (await runtime.call("transition_item", {
+        id,
+        to: "someday",
+        dryRun: true,
+      })) as { outcome: { allowed: boolean; rehearsed: boolean } };
+
+      expect(resolved.outcome.allowed).toBe(true);
+      expect(resolved.outcome.rehearsed).toBe(true);
     });
   });
 

@@ -22,7 +22,7 @@ import {
   type AnyOperation,
 } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
-import { createMcpServer, withRehearsalUnwrapping } from "@/lib/mcp";
+import { createMcpServer } from "@/lib/mcp";
 import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
@@ -83,7 +83,12 @@ describeIfDb("MCP write tools against Postgres", () => {
 
     const server = createMcpServer({
       adapter: "mcp_http",
-      call: withRehearsalUnwrapping((name, input, options) => runtime.call(name, input, options)),
+      // Bare, deliberately. The runtime unwraps the rehearsal sentinel
+      // itself, so passing `runtime.call` straight through is what makes
+      // the dry-run assertions below test the product's real wiring. A
+      // wrapper supplied here would satisfy those assertions on the
+      // harness's own behalf and prove nothing about the mount.
+      call: (name, input, options) => runtime.call(name, input, options),
       transport: "mcp-test",
       operations,
     });

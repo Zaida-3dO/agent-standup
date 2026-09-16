@@ -35,10 +35,9 @@ import type { CallableService } from "../cli/bindings/direct";
 import { HTTP_ROUTES } from "../cli/bindings/http";
 import { COMMANDS } from "../cli/commands";
 import { runCommand } from "../cli/run";
-import { callTool, createMcpServer } from "../mcp/server";
+import { callTool, createMcpServer, type ServiceCall } from "../mcp/server";
 import { MCP_HTTP_TRANSPORT } from "../mcp/http";
 import { MCP_STDIO_TRANSPORT } from "../mcp/stdio";
-import { withRehearsalUnwrapping } from "../mcp/rehearsal";
 import { listOperations } from "../service/registry";
 import { toServiceError, type Rejection } from "../service/errors";
 
@@ -74,17 +73,20 @@ function rejectionFrom(error: unknown): DriverOutcome {
  * is why they are two registry entries over one implementation here rather
  * than two implementations that would drift.
  *
- * `withRehearsalUnwrapping` is applied because both real mount points apply
- * it. Without it a `transition_item` dry run — which rolls its transaction
- * back by throwing — reads as `internal` on MCP and as a success everywhere
- * else, and the harness would report a disagreement the product does not
- * have.
+ * **The service call is passed through bare, and that is load-bearing.**
+ * A harness that applies a mount's own wiring on the mount's behalf stops
+ * testing that mount: every case passes because the harness supplied the
+ * behaviour, so a mount that omits it is indistinguishable from one that
+ * does not. Whatever this driver wraps around `service.call` is a claim
+ * this suite forfeits about the real adapter. The rehearsal
+ * sentinel is unwrapped in the runtime (`service/runtime.ts`), beneath
+ * every adapter, so there is nothing for a driver to add here — and
+ * anything added would be compensating for the product rather than
+ * exercising it.
  */
 function mcpDriver(adapter: "mcp_http" | "mcp_stdio", service: CallableService): ConformanceDriver {
   const transport = adapter === "mcp_http" ? MCP_HTTP_TRANSPORT : MCP_STDIO_TRANSPORT;
-  const call = withRehearsalUnwrapping((name, input, options) =>
-    service.call(name, input, options),
-  );
+  const call: ServiceCall = (name, input, options) => service.call(name, input, options);
   const exposed = new Set(
     exposedOperations(adapter, listOperations()).map((operation) => operation.name),
   );
