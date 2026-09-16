@@ -17,7 +17,7 @@ import type { ProjectRollup, StateCounts } from "./types";
  * Three cases, not two, and the third is the reason this is a function
  * rather than a percentage inline in JSX:
  *
- *   - `ratio` — real work, some fraction of it merged.
+ *   - `ratio` — real work, some fraction of it finished.
  *   - `empty` — **no children at all.** Not zero percent: there is nothing
  *     to be a fraction of. A bar drawn at 0% here states that work exists
  *     and none is done, which is false, and it is indistinguishable from a
@@ -41,11 +41,12 @@ export type ProgressReading =
  */
 export function progressOf(project: ProjectRollup): ProgressReading {
   if (project.childless || project.total <= 0) return { kind: "empty" };
-  if (!Number.isFinite(project.total) || !Number.isFinite(project.merged)) return { kind: "none" };
-  const value = project.progress ?? project.merged / project.total;
+  if (!Number.isFinite(project.total) || !Number.isFinite(project.finished))
+    return { kind: "none" };
+  const value = project.progress ?? project.finished / project.total;
   if (!Number.isFinite(value)) return { kind: "none" };
-  // Clamped, so a server that ever reported more merged children than total
-  // cannot paint a bar wider than its track.
+  // Clamped, so a server that ever reported more finished children than
+  // total cannot paint a bar wider than its track.
   const clamped = Math.min(1, Math.max(0, value));
   return { kind: "ratio", value: clamped, percent: Math.round(clamped * 100) };
 }
@@ -81,6 +82,83 @@ export function distributionOf(counts: StateCounts, total: number): Distribution
     segments.push({ state, count, share: count / total });
   }
   return segments;
+}
+
+/**
+ * The three bands of the progress bar, as shares of `0`–`1`.
+ *
+ * **One bar, three bands.** A card draws the subtree once, at one
+ * denominator: two bars over the same children invite a reader to compare
+ * them, and a fill that counts only what shipped reads as "20% left to do"
+ * on a project with nothing left to do.
+ *
+ *   - `finished` — every terminal state. Work that is over, however it ended:
+ *     a scope cut is a way of finishing, not a debt.
+ *   - `active` — claimed or queued: `on_deck` plus everything in progress or
+ *     waiting. Work that is going to happen.
+ *   - the remainder — `someday`, drawn as empty track. Genuinely unscheduled.
+ *
+ * `on_deck` sits in `active` rather than with the backlog even though
+ * `board/columns.ts` files it under `backlog`, because the two are answering
+ * different questions: the board asks which column to draw a card in, and
+ * this asks whether a reader should count the work as spoken for. Something
+ * on deck is spoken for; something in `someday` is not.
+ *
+ * Shares are computed from the same `total` so the three always sum to ≤ 1.
+ */
+export interface ProgressBands {
+  readonly finished: number;
+  readonly active: number;
+}
+
+/** States drawn in the `active` band — see `ProgressBands`. */
+const ACTIVE_STATES: readonly ItemState[] = [
+  "on_deck",
+  "planning",
+  "plan_review",
+  "executing",
+  "in_review",
+  "paused",
+  "blocked",
+];
+
+/** States drawn in the `finished` band — the terminal four. */
+const FINISHED_STATES: readonly ItemState[] = ["merged", "research_done", "wont_do", "cancelled"];
+
+export function bandsOf(counts: StateCounts, total: number): ProgressBands {
+  if (total <= 0) return { finished: 0, active: 0 };
+  const sum = (states: readonly ItemState[]) =>
+    states.reduce((acc, state) => acc + (counts[state] ?? 0), 0);
+  return { finished: sum(FINISHED_STATES) / total, active: sum(ACTIVE_STATES) / total };
+}
+
+/**
+ * The card's legend: the same three bands as counts.
+ *
+ * **Three numbers, not twelve.** Spelling out every state a project has
+ * children in (`On deck 1 · Merged 36 · Research done 3 · Won't do 5`) asks a
+ * reader to redo the arithmetic the bar has already done, and to know that
+ * "Won't do" is a way of being finished. These are the bands the bar draws,
+ * named as a reader thinks of them.
+ *
+ * `done` is also the "X of Y closed" numerator, read from the same place as
+ * `progressOf`'s so the count and the percentage cannot disagree.
+ */
+export interface ProgressCounts {
+  readonly onDeck: number;
+  readonly done: number;
+  readonly notStarted: number;
+}
+
+export function countsOf(counts: StateCounts, total: number): ProgressCounts {
+  const sum = (states: readonly ItemState[]) =>
+    states.reduce((acc, state) => acc + (counts[state] ?? 0), 0);
+  const onDeck = sum(ACTIVE_STATES);
+  const done = sum(FINISHED_STATES);
+  // The remainder rather than `someday` alone, so a state added to the
+  // vocabulary and forgotten here still lands somewhere and the three
+  // numbers always account for every child.
+  return { onDeck, done, notStarted: Math.max(0, total - onDeck - done) };
 }
 
 /**

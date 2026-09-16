@@ -38,13 +38,13 @@ export interface ProjectRollup {
   readonly priority: string;
   /** Every descendant, however deep. */
   readonly total: number;
-  /** Descendants in `merged` — the numerator the progress bar shows. */
+  /** Descendants in `merged` — what shipped. See `finished` for the progress numerator. */
   readonly merged: number;
   /** Descendants in any terminal state — work that is over, however it ended. */
   readonly finished: number;
   readonly counts: StateCounts;
   /**
-   * Merged over total, `0`–`1`, or **null when the project has no children
+   * Finished over total, `0`–`1`, or **null when the project has no children
    * at all**.
    *
    * The null is the whole honesty requirement: zero of zero children merged

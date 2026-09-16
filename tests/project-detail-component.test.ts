@@ -29,6 +29,11 @@ function noCounts(): StateCounts {
   return Object.fromEntries(ITEM_STATES.map((state) => [state, 0])) as StateCounts;
 }
 
+/** Every terminal state summed — the server's `finished`, mirrored here. */
+function finishedOf(counts: StateCounts): number {
+  return counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+}
+
 function counts(overrides: Partial<StateCounts>): StateCounts {
   return { ...noCounts(), ...overrides };
 }
@@ -71,8 +76,11 @@ function makeDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
     derived: { column: "in_progress", counts: resolved, causingChild: null },
     total,
     merged,
-    finished: merged,
-    progress: total === 0 ? null : merged / total,
+    // Mirrors the server: `finished` is every terminal state and `progress`
+    // divides by it, not by `merged`. Defaulting it to `merged` reproduced
+    // the bug the bar was fixed for inside the fixture itself.
+    finished: finishedOf(resolved),
+    progress: total === 0 ? null : finishedOf(resolved) / total,
     childless: total === 0,
     lastActivity: "2026-08-18T10:00:00.000Z",
     children: [],
@@ -142,17 +150,25 @@ describe("DerivedStatePanel — the reading never arrives alone", () => {
         },
       },
       total: 9,
-      merged: 5,
       progress: { kind: "ratio", value: 5 / 9, percent: 56 },
     });
     const text = textOf(tree);
     expect(text).toContain("Waiting");
-    // The distribution, as TEXT — not only as coloured bands. Deleting the
-    // `stripLegend` paragraph leaves the strip rendering and this failing,
-    // which is the point: a reader who cannot see colour must still get the
-    // spread.
-    expect(text).toContain("Blocked 1");
-    expect(text).toContain("Merged 5");
+    // The bands, as TEXT — not only as colour. Deleting the `stripLegend`
+    // paragraph leaves the bar rendering and this failing, which is the
+    // point: a reader who cannot see colour must still get the split.
+    //
+    // 9 children: 5 merged (done), 1 blocked + 3 executing (on deck), none
+    // left over. "Merged 5" is deliberately NOT asserted any more — the
+    // legend names the three bands, not twelve states.
+    // Collapsed, because `textOf` joins each JSX child with a space and the
+    // legend interpolates its numbers.
+    const flat = text.replace(/\s+/g, " ");
+    expect(flat).toContain("On deck 4");
+    expect(flat).toContain("Done 5");
+    expect(flat).toContain("Not started 0");
+    // And the count reads "closed", not "merged".
+    expect(flat).toContain("5 of 9 closed");
     // The causing child, by name and with its reason inline — so "why is
     // this project blocked" is answered without opening the child.
     expect(text).toContain("Wire the webhook");
@@ -168,7 +184,6 @@ describe("DerivedStatePanel — the reading never arrives alone", () => {
         causingChild: { id: "c-1", title: "t", state: "executing", blockedReason: null },
       },
       total: 2,
-      merged: 0,
       progress: { kind: "ratio", value: 0, percent: 0 },
     });
     const panel = withAttr(tree, "data-has-distribution")[0]!;
@@ -180,7 +195,6 @@ describe("DerivedStatePanel — the reading never arrives alone", () => {
     const tree = DerivedStatePanel({
       derived: { column: "backlog", counts: noCounts(), causingChild: null },
       total: 0,
-      merged: 0,
       progress: { kind: "empty" },
     });
     // Changing `total > 0` to `total >= 0` renders a bar at 0% over no
@@ -197,7 +211,6 @@ describe("DerivedStatePanel — the reading never arrives alone", () => {
     const tree = DerivedStatePanel({
       derived: { column: "backlog", counts: noCounts(), causingChild: null },
       total: 0,
-      merged: 0,
       progress: { kind: "empty" },
     });
     const panel = withAttr(tree, "data-has-cause")[0]!;

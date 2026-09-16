@@ -14,8 +14,7 @@
 // never a progress bar at zero.
 import Link from "next/link";
 import type { ProjectRollup } from "@/lib/projects/types";
-import { distributionOf, liveCrewCount, progressOf, relativeTime } from "@/lib/projects/view";
-import { STATE_LABELS, stateTokens } from "@/lib/design/tokens";
+import { bandsOf, countsOf, liveCrewCount, progressOf, relativeTime } from "@/lib/projects/view";
 import { projectBoardHref } from "@/lib/board/filters";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
@@ -36,7 +35,8 @@ export interface ProjectCardProps {
 
 export function ProjectCard({ project, now }: ProjectCardProps) {
   const progress = progressOf(project);
-  const segments = distributionOf(project.counts, project.total);
+  const bands = bandsOf(project.counts, project.total);
+  const tally = countsOf(project.counts, project.total);
   const crew = liveCrewCount(project);
 
   return (
@@ -106,51 +106,44 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
       ) : (
         <div className={styles.progressBlock}>
           <div className={styles.progressLabels}>
+            {/* "Closed", not "merged" — the number counts every terminal
+                state, and calling it merged invited exactly the reading
+                this card is being fixed for. */}
             <span className={styles.progressCount}>
-              {project.merged} of {project.total} merged
+              {tally.done} of {project.total} closed
             </span>
             {progress.kind === "ratio" && (
               <span className={styles.progressPercent}>{progress.percent}%</span>
             )}
           </div>
+          {/* **One bar, three bands** — see `bandsOf`. Finished and active
+              are drawn as widths off the same total, and whatever is left
+              of the track is the not-started remainder. */}
           <div
             className={styles.progressTrack}
             role="progressbar"
             aria-valuemin={0}
             aria-valuemax={project.total}
-            aria-valuenow={project.merged}
-            aria-label={`${project.merged} of ${project.total} children merged`}
+            aria-valuenow={tally.done}
+            aria-label={`${tally.done} of ${project.total} children closed, ${tally.onDeck} on deck`}
           >
             <div
               className={styles.progressFill}
+              data-band="finished"
               data-percent={progress.kind === "ratio" ? progress.percent : 0}
-              style={{ width: `${progress.kind === "ratio" ? progress.percent : 0}%` }}
+              style={{ width: `${bands.finished * 100}%` }}
+            />
+            <div
+              className={styles.progressActive}
+              data-band="active"
+              style={{ width: `${bands.active * 100}%` }}
             />
           </div>
 
-          {/* The spread beneath the rollup — the thing a single summary
-              state throws away. Each band is coloured from the state's own
-              token, so a state that is amber here is amber on the board. */}
-          <div className={styles.strip} aria-hidden="true" data-segments={segments.length}>
-            {segments.map((segment) => (
-              <span
-                key={segment.state}
-                className={styles.stripSegment}
-                data-state={segment.state}
-                style={{
-                  width: `${segment.share * 100}%`,
-                  background: stateTokens(segment.state).border,
-                }}
-                title={`${STATE_LABELS[segment.state]}: ${segment.count}`}
-              />
-            ))}
-          </div>
-          {/* The strip is decorative; this is the same information as text,
-              so it is not lost to a reader who cannot see the bands. */}
+          {/* The bands as text, so nothing here is lost to a reader who
+              cannot see colour. Three numbers that sum to the total. */}
           <p className={styles.stripLegend}>
-            {segments
-              .map((segment) => `${STATE_LABELS[segment.state]} ${segment.count}`)
-              .join(" · ")}
+            On deck {tally.onDeck} · Done {tally.done} · Not started {tally.notStarted}
           </p>
         </div>
       )}

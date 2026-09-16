@@ -17,12 +17,15 @@
 // Each test names the single-character change that would break it.
 import { describe, expect, it } from "vitest";
 import {
+  bandsOf,
+  countsOf,
   distributionOf,
   liveCrewCount,
   progressOf,
   relativeTime,
   sortProjects,
 } from "@/lib/projects/view";
+import { bandsOf as detailBandsOf, countsOf as detailCountsOf } from "@/lib/project-detail/view";
 import type { BoardAssignment, ProjectRollup, StateCounts } from "@/lib/projects/types";
 import { ITEM_STATES } from "@/lib/design/tokens";
 
@@ -35,10 +38,15 @@ function makeProject(overrides: Partial<ProjectRollup> = {}): ProjectRollup {
   const counts = { ...noCounts(), ...(overrides.counts ?? {}) };
   const total = overrides.total ?? Object.values(counts).reduce((sum, n) => sum + n, 0);
   const merged = overrides.merged ?? counts.merged;
-  // The three derived values are applied AFTER the spread, so a fixture
-  // that sets only `counts` gets a `total` and `merged` consistent with it
-  // rather than the defaults — while a fixture that sets them explicitly
-  // still wins, because they were read out of `overrides` above.
+  // Mirrors the server: `finished` is every terminal state, and `progress`
+  // divides by it rather than by `merged`. Defaulting `finished` to `merged`
+  // reproduced the bug the bar was fixed for inside the fixture itself.
+  const finished =
+    overrides.finished ?? counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+  // The derived values are applied AFTER the spread, so a fixture that sets
+  // only `counts` gets a `total` and `merged` consistent with it rather than
+  // the defaults — while a fixture that sets them explicitly still wins,
+  // because they were read out of `overrides` above.
   return {
     id: "p-1",
     title: "A project",
@@ -46,8 +54,8 @@ function makeProject(overrides: Partial<ProjectRollup> = {}): ProjectRollup {
     area: "web",
     repo: null,
     priority: "P2",
-    finished: overrides.finished ?? merged,
-    progress: total === 0 ? null : merged / total,
+    finished,
+    progress: total === 0 ? null : finished / total,
     childless: total === 0,
     lastActivity: "2026-08-18T10:00:00.000Z",
     assignments: [],
@@ -293,5 +301,60 @@ describe("sortProjects", () => {
     sortProjects(input);
 
     expect(input.map((p) => p.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("the progress bands", () => {
+  it("partitions EVERY state — nothing falls through the three bands", () => {
+    // The guarantee the bar rests on. A state in neither `ACTIVE_STATES` nor
+    // `FINISHED_STATES` silently reads as "not started", so a state added to
+    // the vocabulary and forgotten would quietly understate progress.
+    //
+    // Breaks if: a state is dropped from either list, or a thirteenth is
+    // added to `ITEM_STATES` without being classified.
+    for (const state of ITEM_STATES) {
+      const counts = { ...noCounts(), [state]: 1 };
+      const tally = countsOf(counts, 1);
+      expect(tally.onDeck + tally.done + tally.notStarted).toBe(1);
+    }
+  });
+
+  it("never paints a bar wider than its track", () => {
+    // Breaks if: a state is counted into both bands — the two widths then
+    // sum past 100% and the fill overflows.
+    const counts = { ...noCounts() };
+    for (const state of ITEM_STATES) counts[state] = 1;
+    const bands = bandsOf(counts, ITEM_STATES.length);
+
+    expect(bands.finished + bands.active).toBeLessThanOrEqual(1);
+  });
+
+  it("reads an all-terminal project as wholly done, however it ended", () => {
+    // The bug this bar was fixed for, at the unit level: work closed as
+    // `wont_do` or `cancelled` is finished, not outstanding.
+    const counts = { ...noCounts(), merged: 1, wont_do: 2, cancelled: 3, research_done: 4 };
+
+    expect(bandsOf(counts, 10)).toEqual({ finished: 1, active: 0 });
+    expect(countsOf(counts, 10)).toEqual({ onDeck: 0, done: 10, notStarted: 0 });
+  });
+
+  it("agrees, state for state, with the project page's copy", () => {
+    // `@/lib/project-detail/view.ts` carries its own copy of these by the
+    // no-coupling convention that module documents. Two copies that may
+    // drift need something that notices when they do — and nothing else in
+    // the suite compares them.
+    //
+    // Breaks if: either copy reclassifies a state without the other.
+    for (const state of ITEM_STATES) {
+      const counts = { ...noCounts(), [state]: 3 };
+
+      expect(bandsOf(counts, 3)).toEqual(detailBandsOf(counts, 3));
+      expect(countsOf(counts, 3)).toEqual(detailCountsOf(counts, 3));
+    }
+  });
+
+  it("reports no bands at all for a project with no children", () => {
+    // Not a divide by zero, and not a bar at zero — see `progressOf`.
+    expect(bandsOf(noCounts(), 0)).toEqual({ finished: 0, active: 0 });
   });
 });

@@ -98,7 +98,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { NotFoundError } from "../errors";
 import { ITEM_STATES, type ItemStateValue } from "../state-machine/states";
-import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
+import { columnForProject, columnForState, finishedFrom, type BoardColumn } from "../board/columns";
 import { isHistoricalVerificationEnabled } from "../guards/historical-verification-enabled";
 import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import {
@@ -427,7 +427,7 @@ export const getProjectDetail = defineOperation({
     const counts = rollup === undefined ? countsFrom({}) : countsFrom(rollup);
     const total = rollup === undefined ? 0 : toNumber(rollup.total);
     const childless = total === 0;
-    const finished = counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+    const finished = finishedFrom(counts);
 
     const ownUpdatedAt = isoOrString(project.updatedAt);
     const lastChildActivity =
@@ -622,9 +622,11 @@ export const getProjectDetail = defineOperation({
       total,
       merged: counts.merged,
       finished,
-      // Null, not zero, when there is nothing to be a ratio of — the same
-      // honesty requirement `get_projects` documents at length.
-      progress: childless ? null : counts.merged / total,
+      // Finished over total, not merged over total: work closed as cancelled
+      // or wont_do is over, and charging a project for it reads as work still
+      // outstanding. Null, not zero, when there is nothing to be a ratio of —
+      // the same honesty requirement `get_projects` documents at length.
+      progress: childless ? null : finished / total,
       childless,
       lastActivity,
       children,

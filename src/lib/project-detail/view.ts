@@ -57,6 +57,63 @@ export function distributionOf(counts: StateCounts, total: number): Distribution
 }
 
 /**
+ * The bands and counts of the page's progress bar.
+ *
+ * The same three-way split the grid's cards draw (`@/lib/projects/view.ts`) —
+ * finished, active, and the not-started remainder — restated here rather than
+ * imported, for the reason `distributionOf` above gives: same shape, different
+ * consumer, and coupling them means a change for one silently changing the
+ * other.
+ *
+ * `on_deck` counts as active rather than backlog: the board files it under
+ * `backlog` to decide which column to draw a card in, but a reader of this bar
+ * is asking whether the work is spoken for, and something on deck is.
+ */
+export interface ProgressBands {
+  readonly finished: number;
+  readonly active: number;
+}
+
+export interface ProgressCounts {
+  readonly onDeck: number;
+  readonly done: number;
+  readonly notStarted: number;
+}
+
+const ACTIVE_STATES: readonly ItemState[] = [
+  "on_deck",
+  "planning",
+  "plan_review",
+  "executing",
+  "in_review",
+  "paused",
+  "blocked",
+];
+
+const FINISHED_STATES: readonly ItemState[] = ["merged", "research_done", "wont_do", "cancelled"];
+
+function sumOf(counts: StateCounts, states: readonly ItemState[]): number {
+  return states.reduce((acc, state) => acc + (counts[state] ?? 0), 0);
+}
+
+export function bandsOf(counts: StateCounts, total: number): ProgressBands {
+  if (total <= 0) return { finished: 0, active: 0 };
+  return {
+    finished: sumOf(counts, FINISHED_STATES) / total,
+    active: sumOf(counts, ACTIVE_STATES) / total,
+  };
+}
+
+export function countsOf(counts: StateCounts, total: number): ProgressCounts {
+  const onDeck = sumOf(counts, ACTIVE_STATES);
+  const done = sumOf(counts, FINISHED_STATES);
+  // The remainder rather than `someday` alone, so a state added to the
+  // vocabulary and forgotten here still lands somewhere and the three numbers
+  // always account for every child.
+  return { onDeck, done, notStarted: Math.max(0, total - onDeck - done) };
+}
+
+/**
  * The one sentence that makes a derived state legible.
  *
  * A project card reading only `in_progress` throws away the thing that
@@ -110,11 +167,11 @@ export type ProgressReading =
 
 export function progressOf(detail: ProjectDetail): ProgressReading {
   if (detail.childless || detail.total <= 0) return { kind: "empty" };
-  if (!Number.isFinite(detail.total) || !Number.isFinite(detail.merged)) return { kind: "none" };
-  const value = detail.progress ?? detail.merged / detail.total;
+  if (!Number.isFinite(detail.total) || !Number.isFinite(detail.finished)) return { kind: "none" };
+  const value = detail.progress ?? detail.finished / detail.total;
   if (!Number.isFinite(value)) return { kind: "none" };
-  // Clamped, so a server that ever reported more merged children than total
-  // cannot paint a bar wider than its track.
+  // Clamped, so a server that ever reported more finished children than
+  // total cannot paint a bar wider than its track.
   const clamped = Math.min(1, Math.max(0, value));
   return { kind: "ratio", value: clamped, percent: Math.round(clamped * 100) };
 }

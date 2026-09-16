@@ -84,6 +84,27 @@ export function isTerminalState(state: ItemStateValue): boolean {
 }
 
 /**
+ * How many of a subtree's descendants are finished, given its distribution.
+ *
+ * **This is the numerator a progress bar wants**, and it is `TERMINAL_STATES`
+ * summed rather than `merged` alone. Work closed as `wont_do`, `cancelled` or
+ * `research_done` is work that is over: deciding not to build something is a
+ * way of completing it, and a bar that only counts `merged` charges a project
+ * for every scope cut it makes. A project whose every remaining child was
+ * cancelled is done, and must read as done.
+ *
+ * Derived from the column table for the same reason `TERMINAL_STATES` is —
+ * callers summing the four states by hand is exactly the silent-drift failure
+ * this module exists to prevent, and there were two such hand-rolled copies
+ * (`get_projects` and `get_project_detail`) before this helper.
+ */
+export function finishedFrom(counts: Readonly<Record<ItemStateValue, number>>): number {
+  let finished = 0;
+  for (const state of TERMINAL_STATES) finished += counts[state] ?? 0;
+  return finished;
+}
+
+/**
  * A ranking over columns used only to pick the single "most active" column
  * when a project has children spread across several — `in_progress` beats
  * `waiting` beats `blocked-ish` etc. See `columnForProject`'s header for why

@@ -29,10 +29,16 @@ function makeProject(overrides: Partial<ProjectRollup> = {}): ProjectRollup {
   const counts = { ...noCounts(), ...(overrides.counts ?? {}) };
   const total = overrides.total ?? Object.values(counts).reduce((sum, n) => sum + n, 0);
   const merged = overrides.merged ?? counts.merged;
-  // The three derived values are applied AFTER the spread, so a fixture
-  // that sets only `counts` gets a `total` and `merged` consistent with it
-  // rather than the defaults — while a fixture that sets them explicitly
-  // still wins, because they were read out of `overrides` above.
+  // Mirrors the server: `finished` is every terminal state, and `progress`
+  // divides by it rather than by `merged`. Defaulting `finished` to `merged`
+  // — as this did — reproduced the very bug the card was fixed for inside
+  // the fixture, so a card rendering correctly still failed.
+  const finished =
+    overrides.finished ?? counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+  // The derived values are applied AFTER the spread, so a fixture that sets
+  // only `counts` gets a `total` and `merged` consistent with it rather than
+  // the defaults — while a fixture that sets them explicitly still wins,
+  // because they were read out of `overrides` above.
   return {
     id: "p-1",
     title: "A project",
@@ -40,8 +46,8 @@ function makeProject(overrides: Partial<ProjectRollup> = {}): ProjectRollup {
     area: "web",
     repo: null,
     priority: "P2",
-    finished: overrides.finished ?? merged,
-    progress: total === 0 ? null : merged / total,
+    finished,
+    progress: total === 0 ? null : finished / total,
     childless: total === 0,
     lastActivity: "2026-08-18T10:00:00.000Z",
     assignments: [],
@@ -82,37 +88,78 @@ function progressBars(node: unknown) {
 
 describe("ProjectCard", () => {
   describe("a project with work under it", () => {
-    it("renders a progress bar reporting merged over total", () => {
-      // Breaks if: `aria-valuenow` is fed anything but `merged` — e.g.
-      // `finished`, which is a different number the moment anything is
-      // cancelled.
+    it("reports CLOSED over total — every terminal state, not merged alone", () => {
+      // The bug this card was fixed for. A project with nothing left to do
+      // must not read as partly done because the work was closed as
+      // `wont_do` or `cancelled` rather than merged: deciding not to build
+      // something is a way of finishing it.
+      //
+      // Breaks if: `aria-valuenow` or the count is fed `merged` — both read
+      // 3 instead of 9, and the bar claims two thirds of a finished project
+      // is outstanding.
       const tree = ProjectCard({
-        project: makeProject({ counts: { ...noCounts(), merged: 3, executing: 6 } }),
+        project: makeProject({
+          counts: { ...noCounts(), merged: 3, wont_do: 4, cancelled: 1, research_done: 1 },
+        }),
         now: NOW,
       });
 
       const bars = progressBars(tree);
       expect(bars).toHaveLength(1);
-      expect((bars[0]!.props as { "aria-valuenow": number })["aria-valuenow"]).toBe(3);
+      expect((bars[0]!.props as { "aria-valuenow": number })["aria-valuenow"]).toBe(9);
       expect((bars[0]!.props as { "aria-valuemax": number })["aria-valuemax"]).toBe(9);
-      expect(textOf(tree)).toContain("3 of 9 merged");
+      expect(textOf(tree)).toContain("9 of 9 closed");
+      expect(textOf(tree)).toContain("100 %");
     });
 
-    it("renders one distribution band per state that has children", () => {
-      // The spread beneath the rollup — the thing a summary state throws
-      // away.
-      //
-      // Breaks if: the strip maps over `ITEM_STATES` instead of over the
-      // computed segments — twelve bands render and this fails.
+    it("draws ONE bar with a finished and an active band, not two bars", () => {
+      // Breaks if: the distribution strip comes back — the card then shows
+      // the same subtree twice at two denominators, which is what made the
+      // top bar readable as "20% left" on a project with nothing left.
       const tree = ProjectCard({
-        project: makeProject({ counts: { ...noCounts(), merged: 2, executing: 1, blocked: 1 } }),
+        project: makeProject({ counts: { ...noCounts(), merged: 2, executing: 1, someday: 6 } }),
         now: NOW,
       });
 
-      const strip = [...walk(tree)].find(
-        (element) => (element.props as { "data-segments"?: number })["data-segments"] !== undefined,
+      expect(progressBars(tree)).toHaveLength(1);
+      // No strip: the twelve-state band row is gone.
+      expect(
+        [...walk(tree)].filter(
+          (element) =>
+            (element.props as { "data-segments"?: number })["data-segments"] !== undefined,
+        ),
+      ).toHaveLength(0);
+
+      const band = (name: string) =>
+        [...walk(tree)].find(
+          (element) => (element.props as { "data-band"?: string })["data-band"] === name,
+        );
+      // 2 of 9 finished, 1 of 9 active, and the remaining 6 someday left as
+      // bare track.
+      expect((band("finished")!.props as { style: { width: string } }).style.width).toBe(
+        `${(2 / 9) * 100}%`,
       );
-      expect((strip!.props as { "data-segments": number })["data-segments"]).toBe(3);
+      expect((band("active")!.props as { style: { width: string } }).style.width).toBe(
+        `${(1 / 9) * 100}%`,
+      );
+    });
+
+    it("legends the three bands, not twelve states", () => {
+      // Breaks if: the legend goes back to mapping over the distribution —
+      // "Won't do 4" reappears and a reader is asked to know that it counts
+      // as finished.
+      const tree = ProjectCard({
+        project: makeProject({
+          counts: { ...noCounts(), merged: 2, wont_do: 1, executing: 3, someday: 3 },
+        }),
+        now: NOW,
+      });
+
+      const text = textOf(tree).replace(/\s+/g, " ");
+      expect(text).toContain("On deck 3");
+      expect(text).toContain("Done 3");
+      expect(text).toContain("Not started 3");
+      expect(text).not.toContain("Won't do");
     });
 
     it("shows a live crew count when someone holds it", () => {
