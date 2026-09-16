@@ -167,7 +167,7 @@ export const listRuns = defineOperation({
   name: "list_runs",
   kind: "read",
   summary:
-    "Lists the runs recorded for an item or session, newest first, with whether each is already scored. The route from an item id to the runId that score_run requires.",
+    "Lists the runs recorded for an item or session, newest first, with whether each is already scored. The route from an item id to the runId that `score` with action run requires.",
   contract: {
     rules: [
       {
@@ -176,7 +176,7 @@ export const listRuns = defineOperation({
       },
       {
         fields: ["scored"],
-        rule: "Filtering on `scored` matches ANY score row, by either rater. Each returned run also carries `scoredFacets`, which is NARROWER: it names only the facets already carrying an AGENT score, because that is the set the write-once freeze applies to. `score_run` refuses to overwrite an agent score even with an identical value, so read `scoredFacets` to skip a spent facet rather than catching the resulting conflict. A facet holding only a person's score is still open to an agent score, and is deliberately not listed there.",
+        rule: "Filtering on `scored` matches ANY score row, by either rater. Each returned run also carries `scoredFacets`, which is NARROWER: it names only the facets already carrying an AGENT score, because that is the set the write-once freeze applies to. `score` with action run refuses to overwrite an agent score even with an identical value, so read `scoredFacets` to skip a spent facet rather than catching the resulting conflict. A facet holding only a person's score is still open to an agent score, and is deliberately not listed there.",
       },
       {
         fields: ["itemId", "sessionId", "since"],

@@ -137,6 +137,11 @@ import { loopDelete, loopEdit } from "./operations/loop-lifecycle";
 // waived off the MCP adapters only, where a tool list costs context on every
 // session (`@/lib/adapters/waivers`).
 import { loop } from "./operations/loop";
+// The seven scoring verbs behind one tool, chosen with `action`. All eight
+// are registered: the seven stay reachable over HTTP and `standup score …`,
+// and are waived off the MCP adapters only, where a tool list costs context
+// on every session (`@/lib/adapters/waivers`).
+import { score } from "./operations/score";
 import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 // The progress report (MILESTONES.md #136) — session-scoped, and shaped by
@@ -307,6 +312,7 @@ export const OPERATION_REGISTRY = {
   [loopList.name]: loopList,
   [loopGet.name]: loopGet,
   [loop.name]: loop,
+  [score.name]: score,
   [orientation.name]: orientation,
   [myWork.name]: myWork,
   [progressReport.name]: progressReport,
