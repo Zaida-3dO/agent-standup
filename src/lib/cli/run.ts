@@ -219,13 +219,14 @@ export async function runCli(
 
   // `--help` on one of the single-word commands describes *that* command.
   //
-  // **This check has to come before the global-help return below, and the
-  // global one has to stay below the dispatch it used to sit above.** It
-  // previously did not: `--help` returned `helpText()` for any argv at all,
-  // so `standup init --help` printed the global help and exited 0. That is
-  // the worst shape a help bug takes — not an error a person retries, but a
-  // plausible, specific answer that is about a different subject, which
-  // reads as "there is no `init`" when `init` exists and works.
+  // **Order is the whole correctness argument here.** A global-help return
+  // placed above this lookup answers `standup init --help` with the global
+  // help and exit 0 — the worst shape a help bug takes, because it is not an
+  // error a person retries but a plausible, specific answer about a
+  // different subject. A reader takes it to mean there is no `init`, when
+  // `init` exists, works, and reports a useful refusal one keystroke away.
+  // So the specific answer is resolved first, and the general one is the
+  // fallback rather than the gate.
   if (help.value) {
     const topLevel = lookupTopLevelCommand(words[0]);
     if (topLevel !== undefined) {
@@ -329,14 +330,16 @@ async function buildBinding(
 /**
  * The top-level help, built from the command tables rather than written out.
  *
- * `setup` is listed **first and separately** from the 46 noun/verb
- * operations. Those four are dispatched as special cases rather than
- * through `COMMANDS`, so they were previously in no table at all and could
- * not appear here however the list was read — which meant `standup --help`
- * named zero of the commands a new user needs before any of the others can
- * work. Ordering them ahead of the operations is the same judgement: a
- * person running `--help` on a fresh install needs `init` and `doctor`, not
- * the 46 things that require an installation to already exist.
+ * `setup` is listed **first and separately** from the noun/verb operations.
+ * Those four are dispatched as special cases rather than through `COMMANDS`,
+ * so a help text built from `COMMANDS` alone cannot name them however
+ * carefully it is read — there is no row for them to be read from. Drawing
+ * `setup` from its own table is what makes them reachable here at all.
+ *
+ * Ordering them ahead of the operations is a separate judgement, and the
+ * same one: a person running `--help` on a fresh install needs `init` and
+ * `doctor`, not the several dozen operations that require an installation to
+ * already exist.
  */
 export function helpText(): {
   usage: string;

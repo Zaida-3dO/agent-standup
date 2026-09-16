@@ -9,6 +9,122 @@ web front end.
 **The point:** the rules live in the backend and are _enforced_ rather than
 requested. An agent can't skip a step, because the server refuses the change.
 
+## What this needs
+
+Read this before anything else — each of these is otherwise met as a failure
+rather than a decision.
+
+- **Postgres, and it is not swappable.** Not SQLite, not a file, not an
+  in-memory mode. There is no embedded fallback, so there is no way to try this
+  without a Postgres to point it at. The reasoning is in
+  [`DECISIONS.md`](docs/plans/DECISIONS.md); the practical consequence is that
+  standing up a database is the first real step and the main adoption cost.
+- **Node >= 24**, enforced by the package's own `engines` field.
+- **Something to run the liveness sweep on a timer.** The application has no
+  internal one, by design, so nothing releases the claims of sessions that died
+  until something invokes the sweep. Wire it to cron or a scheduler as part of
+  installing, not after — see
+  [The liveness sweep has to be run by something](#the-liveness-sweep-has-to-be-run-by-something).
+  Measured on an installation running without one: the first manual sweep
+  released **174** stale claims that had been sitting for three days.
+
+## Installing
+
+> **Not from npm, for now.** The `agent-standup` package on npm is **0.20.0**,
+> which is several releases behind what this repository builds — the publish
+> step has been failing, so `npm install agent-standup` gets a build that
+> predates fixes the docs here describe. Until that is resolved, use one of the
+> two paths below. This note is deliberately specific rather than an omission:
+> installing the stale artifact and reading these docs against it is the one
+> outcome worth steering away from.
+
+**Which path you want depends on what you are setting up**, and these are
+different jobs:
+
+| I want to…                                    | Use                                   |
+| --------------------------------------------- | ------------------------------------- |
+| Run the server (the database and the rules)   | [Run a server](#run-a-server)         |
+| Point a machine at a server someone else runs | [Install a client](#install-a-client) |
+
+### Run a server
+
+The published container image is the supported path, and needs no registry
+credential — the package is public. It is built by CI and pushed to
+`ghcr.io/<owner>/agent-standup`.
+
+```bash
+GHCR_IMAGE=ghcr.io/<owner>/agent-standup:latest
+DATABASE_URL=postgres://user:password@host:5432/agent_standup
+docker compose --env-file .env.production -f docker-compose.prod.yml pull
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+```
+
+Set `STANDUP_TOKENS` before the first start — one bearer token per machine, with
+no default. Unset, the server refuses every authenticated call, which is
+deliberate. The front end needs one of its own, named `browser`:
+
+```bash
+STANDUP_TOKENS=browser:TOKEN-A,laptop:TOKEN-B,sweeper:TOKEN-C
+SWEEP_TOKEN=TOKEN-C
+```
+
+`docker-compose.prod.yml` also ships the `sweep-scheduler` service that answers
+the third requirement above. Full detail, including the two health probes and
+what to do when Postgres is a sibling container, is under
+[Deployment](#deployment).
+
+### Install a client
+
+A client never opens a database connection — it talks to the server's API, which
+is where the rules live. It needs a checkout, because there is no current
+published package to install from:
+
+```bash
+git clone https://github.com/Zaida-3dO/agent-standup.git
+cd agent-standup
+npm install
+npm run build:cli          # builds dist/bin/standup.js — seconds, no database needed
+```
+
+Then point it at the server and check it before relying on it:
+
+```bash
+export STANDUP_URL=https://standup.example.internal
+export STANDUP_TOKEN=<this machine's token>
+
+node dist/bin/standup.js doctor --json
+```
+
+`doctor` is the command to run when anything else refuses: it reports what is
+configured, which layer supplied each value, and whether a binding could be
+resolved at all. It answers without needing a working configuration — that is
+its whole reason to exist — and it never prints a connection string or a token.
+A correctly configured client reports `"binding":"http"` and `"configured":true`
+with no `DATABASE_URL` set at all.
+
+`npm link` (or adding `dist/bin` to `PATH`) gets you `standup` rather than
+`node dist/bin/standup.js`; every example below is written the short way.
+
+### Start here once something is installed
+
+```bash
+standup --help              # what this build can do, setup commands first
+standup init --help         # set up a database and write local configuration
+standup doctor              # what is configured, and whether it works
+```
+
+`standup init` is the one command that runs _before_ the "not configured" gate —
+establishing configuration is its job, so it cannot require configuration to
+already exist. With no flags it looks for a database (`--database-url`, then
+`DATABASE_URL`, then a previous `init`'s configuration file) and tries a local
+container runtime if it finds none. Point it at a database you already have
+with `standup init --database-url <url>`, or have it provision one for you from
+an admin connection with `--provision-url`.
+
+To connect an agent rather than a person, see
+[using-agent-standup.md](docs/using-agent-standup.md); `standup mcp` serves MCP
+over stdio for an installation with no server.
+
 ## Docs
 
 **If you are an agent about to use this tracker, start here:**
@@ -39,6 +155,10 @@ in CI, pushed to GHCR, and **pulled** wherever it runs — never built on the de
 host, no bind mounts.
 
 ## Local development
+
+**This section is for working on Agent Standup itself.** To install and use it,
+see [Installing](#installing) above — the steps below set up the repository for
+development and are not the shortest path to a running installation.
 
 Requires Node 24 and a reachable Postgres. **Docker is one way to get that Postgres, not a
 requirement of the app** — `npm run db:up` is a convenience wrapper around `docker compose up -d db`

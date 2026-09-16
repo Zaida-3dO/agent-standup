@@ -66,9 +66,10 @@ describe("standup --help — the commands a new user needs first", () => {
     expect(requires).toMatch(/cron|scheduler/i);
   });
 
-  it("still lists the noun/verb operations it always did", () => {
-    // Guards the fix against having replaced the old help rather than added
-    // to it.
+  it("lists the noun/verb operations alongside the setup commands", () => {
+    // Help carries both halves at once: the operations are what the tool is
+    // for, and the setup commands are how a person gets to them. A help text
+    // holding only one of the two is incomplete whichever one is missing.
     const help = helpText();
     expect(help.commands.length).toBeGreaterThan(40);
     expect(help.nouns).toContain("item");
