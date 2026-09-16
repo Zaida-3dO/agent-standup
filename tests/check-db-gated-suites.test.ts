@@ -145,3 +145,93 @@ describe("the real tree", () => {
     expect(gated).toContain("tests/hook-route.test.ts");
   });
 });
+
+describe("the report reads as a verdict, not as an alarm", () => {
+  // ── The defect this block pins ─────────────────────────────────────────
+  //
+  // The skipping branch used to open with `TEST_DATABASE_URL is NOT set`.
+  // That branch is the EXPECTED, HEALTHY state — it is what CI's no-database
+  // job prints beside a green tick, and what every contributor without
+  // Postgres sees. Opening with a negative made it read as a fault report:
+  // on 2026-09-16 two reviewers each independently stopped to verify the
+  // line was benign, and a third filed it as the one visible signal being
+  // useless, because it looked alarming when fine and identical when broken.
+  //
+  // `main` writes to the console and returns a code, so these capture it.
+  const captured = (
+    argv: readonly string[],
+    env: Record<string, string | undefined>,
+    root: string,
+  ) => {
+    const lines: string[] = [];
+    const log = console.log;
+    const error = console.error;
+    console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+    console.error = (...a: unknown[]) => void lines.push(a.join(" "));
+    try {
+      return { code: main(argv, env, root), text: lines.join("\n") };
+    } finally {
+      console.log = log;
+      console.error = error;
+    }
+  };
+
+  const root = () => tree({ "tests/a.test.ts": GATED, "tests/b.test.ts": PLAIN });
+
+  it("opens the healthy-but-skipping report with a verdict, not with a negative", () => {
+    // Mutation: revert the first line to `${summary} ${DB_URL_ENV} is NOT set`.
+    // Every other assertion in this file still passes; only this one catches it.
+    const { code, text } = captured([], {}, root());
+    expect(code).toBe(0);
+    expect(text.split("\n")[0]).toMatch(/^OK/);
+  });
+
+  it("still says plainly that the suites will be skipped", () => {
+    // The framing changed; the information must not have been softened away.
+    // Reading as calm is worthless if it also reads as "everything ran".
+    // Mutation: drop the "will be skipped" sentence while keeping the OK.
+    const { text } = captured([], {}, root());
+    expect(text).toMatch(/SKIP/);
+    expect(text).toContain("tests/a.test.ts");
+  });
+
+  it("makes the report and the failure visibly different at a glance", () => {
+    // The property that makes a log scannable: a reader must be able to tell
+    // the expected state from the broken one by the first token alone, without
+    // reading far enough to reach the variable name they have in common.
+    // Mutation: give both branches the same opening word.
+    const skipping = captured([], {}, root());
+    const failing = captured(["--require-db"], {}, root());
+    expect(skipping.code).toBe(0);
+    expect(failing.code).toBe(1);
+    expect(skipping.text.split("\n")[0]).not.toBe(failing.text.split("\n")[0]);
+    expect(failing.text.split("\n")[0]).toMatch(/^FAIL/);
+  });
+
+  it("confirms out loud when the suites WILL run", () => {
+    // The healthy-and-enabled case needs its own unambiguous sentence, or a
+    // reader is left inferring success from the absence of a warning.
+    // Mutation: return 0 silently when the variable is set.
+    const { code, text } = captured([], { [DB_URL_ENV]: "postgres://x/y" }, root());
+    expect(code).toBe(0);
+    expect(text).toMatch(/^OK: the database suites will run/);
+  });
+
+  it("names DATABASE_URL when that was set instead, in both modes", () => {
+    // The reasonable guess, answered. In the reporting mode it saves a
+    // contributor a silently vacuous run; in `--require-db` it distinguishes
+    // "the CI service container died" from "somebody wired the wrong variable
+    // name", which are very different repairs.
+    // Mutation: delete either `status.state === "near-miss"` branch.
+    const env = { DATABASE_URL: "postgresql://me:pw@localhost:5432/my_real_db" };
+    expect(captured([], env, root()).text).toContain("DATABASE_URL is set, but");
+    expect(captured(["--require-db"], env, root()).text).toMatch(/DATABASE_URL IS set here/);
+  });
+
+  it("does not mention DATABASE_URL when it was not set", () => {
+    // Advice shown unconditionally is advice a reader learns to ignore, and a
+    // signal nobody reads has the same value as no signal at all.
+    // Mutation: append the near-miss note regardless of state.
+    expect(captured([], {}, root()).text).not.toMatch(/DATABASE_URL is set, but/);
+  });
+});

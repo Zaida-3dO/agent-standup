@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertReporterIsLoadable,
+  gateNotice,
   skipClause,
   summaryOf,
   verdictFor,
@@ -210,6 +211,16 @@ describe("the verdict says what did NOT run, not only what passed", () => {
     expect(skipClause(133, 1806)).toContain("check:db-gated");
   });
 
+  it("names the variable itself, not only the command that would name it", () => {
+    // Deferring the whole diagnosis to a second command is most of a fix,
+    // not all of one: the reader still has to run something before they know
+    // what to set, and the three crews who trusted a green run were not
+    // going to run it. The single word that resolves the situation belongs
+    // in the line that survives `| tail`.
+    // Mutation: revert the clause to the `check:db-gated`-only wording.
+    expect(skipClause(133, 1806)).toContain("TEST_DATABASE_URL");
+  });
+
   it("stays silent when nothing skipped, so the clause means something", () => {
     // A notice printed unconditionally is one a reader learns to skip past.
     // Mutation: make skipClause return the clause regardless of the counts.
@@ -281,5 +292,42 @@ describe("assertReporterIsLoadable refuses a reporter that would run nothing", (
 
   it("does not mistake a test file named after the reporter for the flag", () => {
     expect(assertReporterIsLoadable(["tests/basic.test.ts"]).ok).toBe(true);
+  });
+});
+
+describe("gateNotice — the banner `npm test` prints by default", () => {
+  // The gap the commissioning task actually names: the detection already
+  // existed as `check:db-gated`, but it was not what you got by typing
+  // `npm test`. These assertions are about the DEFAULT path — a check a
+  // developer has to remember to run is a check that does not run.
+
+  it("reads the real repository, so the counts are not invented", () => {
+    // `gateNotice` calls the existing `analyse()` rather than reimplementing
+    // the scan — the task forbade a second mechanism. If the wiring breaks,
+    // the defensive `try` returns a diagnostic string instead of a banner,
+    // and this catches that rather than letting `npm test` narrate nothing.
+    // Mutation: make `gateNotice` return a hardcoded string.
+    const notice = gateNotice({});
+    expect(notice).not.toMatch(/could not determine/);
+    expect(notice).toMatch(/\d+ of \d+ test files/);
+  });
+
+  it("says something different depending on whether the database suites ran", () => {
+    // The whole point, at the level of the thing a human sees on a terminal.
+    // Mutation: have `gateNotice` ignore its `env` argument — both calls then
+    // return identical text and a reader is back to guessing.
+    const off = gateNotice({});
+    const on = gateNotice({ TEST_DATABASE_URL: "postgresql://x@localhost:5432/scratch" });
+    expect(on).not.toBe(off);
+    expect(off).toMatch(/SKIP/);
+    expect(on).toMatch(/ENABLED/);
+  });
+
+  it("never throws, because a run must not fail over its own narration", () => {
+    // The banner is commentary on a result, not part of deciding it. A
+    // developer whose `tests/` directory is mid-rename should still get their
+    // test results. Mutation: remove the try/catch in `gateNotice`.
+    expect(() => gateNotice({})).not.toThrow();
+    expect(() => gateNotice({ DATABASE_URL: "" })).not.toThrow();
   });
 });

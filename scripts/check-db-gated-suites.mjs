@@ -164,9 +164,9 @@ export function main(argv = process.argv.slice(2), env = process.env, root = rep
   }
 
   if (haveDb) {
-    // Leads with the verdict, not with the variable. The old line —
-    // "TEST_DATABASE_URL is set, so they run" — was fine, but its sibling
-    // below was not, and the pair has to be scannable in the same way.
+    // Leads with the verdict, not with the variable, so that this line and
+    // its skipping sibling below are scannable in exactly the same way: a
+    // reader should classify either one from its first token.
     console.log(`OK: the database suites will run. ${summary} ${DB_URL_ENV} is set.`);
     return 0;
   }

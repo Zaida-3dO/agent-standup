@@ -300,6 +300,13 @@ export function verdictFor(status, output) {
  *
  * Defensive `try`: a run must never fail because its *narration* threw. If
  * the analysis cannot read the tree, the suite's own result still stands.
+ *
+ * `env` is typed as a loose record rather than as Node's `ProcessEnv`: this
+ * reads exactly two optional keys, and demanding the full shape would force
+ * every caller — the test above most of all — to supply a `NODE_ENV` that
+ * has nothing to do with the question being asked.
+ *
+ * @param {Record<string, string | undefined>} [env]
  */
 export function gateNotice(env = process.env) {
   try {
