@@ -221,7 +221,7 @@ export class ServiceRuntime {
    * line as the ones raised inside it, and a second `catch` down here would
    * be a second place for that decision to drift.
    */
-  async #dispatch(name: string, input: unknown, caller: Caller): Promise<unknown> {
+  async #dispatch(name: string, input: unknown, rawCaller: Caller): Promise<unknown> {
     const operation = getOperation(name);
     if (!operation) {
       // Routed like a shape refusal, and for a stronger reason: a caller
@@ -233,7 +233,7 @@ export class ServiceRuntime {
         `No such operation: ${name}. Call ${invocationWithArgumentFor(
           "describe_tool",
           name,
-          surfaceForTransport(caller.transport),
+          surfaceForTransport(rawCaller.transport),
           // `describe_tool` has no command-line verb, so without the real
           // bindings a CLI caller is pointed at `standup describe tool` —
           // a second name that does not exist, handed to the caller least
@@ -253,8 +253,42 @@ export class ServiceRuntime {
       // schema (`shape-refusal.ts`). Shared so a caller cannot tell whether
       // the rule that refused them sat on the tool they called or on the
       // operation it dispatches to.
-      throw invalidInputFromIssues(operation.name, parsed.error.issues, caller.transport);
+      throw invalidInputFromIssues(operation.name, parsed.error.issues, rawCaller.transport);
     }
+
+    // Step 3a — an envelope with no session id adopts the one the validated
+    // input already carries.
+    //
+    // **This collapses two channels for one concept; it does not add a
+    // third.** A session id reaches an operation two ways: on the
+    // envelope, where a transport puts it, and as an ordinary input field,
+    // which 34 operations already declare (`note`, `checkpoint`, `claim`,
+    // `release`, `heartbeat`, …). They are the same namespace — the field
+    // is what lands in `Assignment.sessionId` — but only the envelope is
+    // read at the delivery seam below, and only the field is populated by a
+    // stateless HTTP caller that cannot set a header.
+    //
+    // That is not a hypothetical caller. `mcp/http.ts` reads the id solely
+    // from `X-Standup-Session`, because a stateless transport has nowhere
+    // else to put it; and an MCP client configured by a static JSON file
+    // has no way to *set* that header, since a session id is per-session
+    // and a config file is written once. Such a caller therefore passed its
+    // id on every `sessionId` field it filled in, and was still invisible
+    // to the deliverer — findings addressed to it had nowhere to go, and
+    // nothing anywhere errored to say so.
+    //
+    // **The envelope wins when it has a value.** What a transport
+    // established outranks what a caller typed into a field: the header is
+    // set by the mount, and on the command line's binding it travels with a
+    // machine the request proved. The fallback fills a hole; it never
+    // overwrites.
+    //
+    // **Resolved before the handler, not just before delivery**, so the id
+    // an operation attributes its event to and the id its findings are
+    // delivered against cannot be two different answers — which is the
+    // disagreement this row exists to prevent, rather than a second place
+    // for it to reappear.
+    const caller = callerWithInputSession(rawCaller, parsed.data);
 
     // Step 3 — once, here, for the whole call. Not in the operation, not
     // per guard, and not inside the transaction.
@@ -378,6 +412,36 @@ export class ServiceRuntime {
       return result;
     }
   }
+}
+
+/**
+ * Fills an empty `sessionId` on the envelope from the validated input.
+ *
+ * Only ever fills. A caller that already has one keeps it, so a transport
+ * that established an identity is never overridden by a field a caller
+ * typed — and a call that supplies neither comes back unchanged, which is
+ * the case the deliverer already handles by returning the result untouched.
+ *
+ * **Reads the *validated* input, never the raw one.** By the time this runs
+ * the operation's own schema has accepted the value, so an operation that
+ * declares `sessionId: z.string().min(1)` has already refused an empty
+ * string on this call's behalf. The `typeof` check is what keeps that true
+ * for the operations that declare no such field at all: their schemas never
+ * looked at the key, so an arbitrary JSON value could sit there, and a
+ * non-string would otherwise reach a `Caller` field typed as a string.
+ *
+ * `null` is deliberately not adopted. Several schemas spell the field
+ * `.nullable()`, where null is a caller explicitly saying "no session" —
+ * the same statement as omitting it, and the opposite of a value to adopt.
+ */
+function callerWithInputSession(caller: Caller, input: unknown): Caller {
+  if (caller.sessionId !== undefined) return caller;
+  if (typeof input !== "object" || input === null) return caller;
+
+  const fromInput = (input as { sessionId?: unknown }).sessionId;
+  if (typeof fromInput !== "string" || fromInput.length === 0) return caller;
+
+  return { ...caller, sessionId: fromInput };
 }
 
 /**
