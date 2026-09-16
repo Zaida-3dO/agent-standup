@@ -143,11 +143,17 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
   const event = parsed.event;
 
   let volunteeredStop: StopContext | undefined;
+  let volunteeredWindDown: WindDownContext | undefined;
   const askServer: AskServer = async (asked) => {
     const answer = await options.askServer(asked);
     // Advisory. Whatever the server volunteers on a round trip this event
     // was making anyway is free; it never triggers a request of its own.
     if (answer?.stop !== undefined) volunteeredStop = answer.stop;
+    // The survey's half of the same free ride. Captured identically to the
+    // stop block, and for the identical reason: the round trip is already
+    // happening, so the only alternative would be a second request on the
+    // one event type where an extra request buys nothing.
+    if (answer?.windDown !== undefined) volunteeredWindDown = answer.windDown;
     return answer;
   };
 
@@ -209,7 +215,10 @@ export async function runHook(options: RunHookOptions): Promise<RenderedResponse
   // The session-end intervention survey. Evaluated and composed exactly as
   // the catch is — beside the verdict, never inside it — so that no branch
   // here can turn a questionnaire into a refusal of a stop.
-  const survey = evaluateStopSurvey(event, options.survey);
+  const survey = evaluateStopSurvey(
+    event,
+    mergeWindDownContext(options.survey, volunteeredWindDown),
+  );
 
   return renderWithStopSurvey(
     renderWithStopCatch(renderWithNudges(verdict, event.eventType, nudges), stopCatch),
@@ -234,6 +243,56 @@ export function mergeStopContext(
   local: StopContext | undefined,
   volunteered: StopContext | undefined,
 ): StopContext | undefined {
+  if (local === undefined) return volunteered;
+  if (volunteered === undefined) return local;
+  return { ...local, ...volunteered };
+}
+
+/**
+ * Combines the survey context's two halves, which are genuinely two halves
+ * rather than one fact known twice.
+ *
+ * ── Why this is not just `mergeStopContext` again ──────────────────────
+ *
+ * The stop block is one set of facts that either side might happen to know,
+ * so the newer side wins field by field and that is the whole rule. The
+ * survey block is **partitioned by who can measure what**, and neither side
+ * can answer the other's half:
+ *
+ *   - Only the server can list the unrated firings — they are rows in
+ *     `intervention_events` — and only it can count the crew.
+ *   - Only the client can measure `idleMs`. Nothing in the database
+ *     advances when a session makes a tool call, so the server's candidate
+ *     timestamps date the last batched flush or the session's registration.
+ *     `../interventions/wind-down-context.ts` carries the full reasoning.
+ *
+ * The server still wins field by field — it is strictly newer, for the same
+ * reason `mergeStopContext` prefers it — and the client's `idleMs` survives
+ * because the server's block does not carry that key at all.
+ *
+ * **That last clause is load-bearing and is a property of the producer, not
+ * of this spread.** `WindDownContextPayload` has no `idleMs` field and
+ * `readWindDownContext` builds its result conditionally, so no `windDown`
+ * block arriving over the wire can carry an explicit `idleMs: undefined` —
+ * which is the one value that would delete the measurement here. If either
+ * of those ever changes, this function silently starts discarding the quiet
+ * on every stop where the server answered, `shouldSurvey` reads an absent
+ * `idleMs`, and the feature goes quiet in exactly the case it was built
+ * for. `mergeWindDownContextPreservesIdle` in the test file pins the
+ * producer side of that contract, because this side cannot.
+ *
+ * **Both halves are required for the survey to fire**, and that is a
+ * feature rather than a compromise. The server must find unrated firings
+ * and no live crew; the client must independently observe genuine quiet.
+ * Either absent is silence.
+ *
+ * Exported for the tests that pin which side wins, and that neither half
+ * alone is sufficient.
+ */
+export function mergeWindDownContext(
+  local: WindDownContext | undefined,
+  volunteered: WindDownContext | undefined,
+): WindDownContext | undefined {
   if (local === undefined) return volunteered;
   if (volunteered === undefined) return local;
   return { ...local, ...volunteered };

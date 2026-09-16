@@ -92,6 +92,10 @@ import { BUILTIN_INTERVENTIONS } from "@/lib/interventions/builtins";
 import { isBroadProcessKill } from "@/lib/interventions/commands";
 import { assembleContext, needs } from "@/lib/interventions/context";
 import { assembleStopContext, type StopContextPayload } from "@/lib/interventions/stop-context";
+import {
+  assembleWindDownContext,
+  type WindDownContextPayload,
+} from "@/lib/interventions/wind-down-context";
 import { evaluate, strongestLevel } from "@/lib/interventions/registry";
 import {
   readInterventionSettingRows,
@@ -191,6 +195,28 @@ export interface HookDecisionOperationOutput {
    * whatever it says.
    */
   readonly stop?: StopContextPayload;
+  /**
+   * What the session-end survey needs to know, on a `Stop` event — the
+   * owner's scoring loop.
+   *
+   * **A wire contract with `../../hook/stop-catch.ts`'s
+   * `readWindDownContext`**, on exactly the terms `stop` above is one: the
+   * client parses this block field by field and drops anything it does not
+   * recognise, so a renamed field is not a type error anywhere — it is a
+   * survey that silently never fires again.
+   *
+   * Absent on every other event type, and absent on a `Stop` where the
+   * session has nothing unrated to be asked about, which is the
+   * overwhelmingly common case. It carries firings, counts and flags only:
+   * nothing in it can refuse the stop, and `decision` is `allow` on this
+   * branch whatever it says.
+   *
+   * **It deliberately does not carry `idleMs`.** The server cannot measure
+   * it — see `@/lib/interventions/wind-down-context` for why each candidate
+   * timestamp is wrong in the dangerous direction — so the client supplies
+   * that half from its own spool and the two are merged there.
+   */
+  readonly windDown?: WindDownContextPayload;
 }
 
 // Stryker disable all : this metadata is a module-level literal, read into
@@ -242,6 +268,35 @@ export const hookDecision = defineOperation({
         deadAfterSeconds: ctx.settings.values["liveness.dead_after_seconds"],
         waitTimeoutMaxSeconds: ctx.settings.values["crew.wait_timeout_seconds"],
       });
+
+      // The session-end survey's context — the owner's scoring loop, and
+      // the same omission as the catch's one feature over: everything on
+      // both sides of this block was built and nothing ever sent one.
+      //
+      // **Assembled only when the stop block was**, and it reuses that
+      // block's two counts rather than re-deriving them. Both halves ask
+      // the identical question — "is anyone still working for you, and is
+      // anything going to wake you" — so computing them twice would be two
+      // definitions of one fact, and the pair would disagree the first time
+      // either query was tuned. It would also double the cost of the `Stop`
+      // path to reach the same answer.
+      //
+      // When `stop` is `undefined` the crew facts are unknown rather than
+      // zero (see `assembleStopContext`), and passing an unknown along as
+      // `liveCrew: 0` would be manufacturing exactly the settled fact that
+      // producer refused to state. So the survey stays silent too, which is
+      // the honest reading of a question that was not successfully asked.
+      const windDown =
+        stop === undefined
+          ? undefined
+          : await assembleWindDownContext({
+              db: ctx.db,
+              sessionId: input.sessionId,
+              deadAfterSeconds: ctx.settings.values["liveness.dead_after_seconds"],
+              liveCrew: stop.liveCrew,
+              wakeScheduled: stop.wakeScheduled,
+            });
+
       return {
         decision: "allow",
         reason: null,
@@ -252,6 +307,10 @@ export const hookDecision = defineOperation({
         // stays silent, which is the correct answer to a question that was
         // not successfully asked.
         ...(stop === undefined ? {} : { stop }),
+        // Absent on the overwhelmingly common stop, where the session has
+        // nothing unrated. That absence is the whole of "a session with no
+        // firings produces no survey and no noise".
+        ...(windDown === undefined ? {} : { windDown }),
       };
     }
 

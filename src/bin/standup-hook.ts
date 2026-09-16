@@ -20,6 +20,7 @@ import { createHttpAsk } from "@/lib/hook/ask-http";
 import { HOOK_EXIT } from "@/lib/hook/response";
 import { spoolEvent } from "@/lib/cli/hook-command";
 import { fileSpool, fileAppendCounter, spoolPath } from "@/lib/cli/spool-file";
+import { idleMsFromSpool, shouldMeasureIdle } from "@/lib/hook/wind-down-local";
 import { readTranscriptDelta } from "@/lib/cli/transcript-file";
 import { flushSpool } from "@/lib/hook/flush";
 import { createHttpFlush } from "@/lib/hook/flush-http";
@@ -131,10 +132,20 @@ async function main(): Promise<number> {
 
   const stdin = await readStdin();
   const now = Date.now();
+  // The client half of the session-end survey's wind-down signal. Read
+  // before `runHook` because it describes the session *before* this event
+  // spooled a record of its own — measuring after the append below would
+  // report every stop as freshly active and the survey would never fire.
+  //
+  // Only on a `Stop`, and `measureIdle` enforces that rather than an `if`
+  // here: this is a whole-file parse on a path that runs for every tool
+  // call in the system.
+  const survey = measureIdle(stdin, spoolPath(env), now);
   const rendered = await runHook({
     stdin,
     askServer,
     now,
+    ...(survey === undefined ? {} : { survey }),
     // MILESTONES.md #128's capture loop. Fires only when `runHook` has
     // findings to report — see its own header for why this is a callback
     // rather than a return field. With no server configured there is
@@ -195,6 +206,52 @@ async function main(): Promise<number> {
 function isStop(stdin: string): boolean {
   const parsed = parseHookPayload(stdin);
   return parsed.ok && parsed.event.eventType === "Stop";
+}
+
+/**
+ * How quiet this session has been, as a `WindDownContext` carrying nothing
+ * but that — or `undefined` when there is no answer.
+ *
+ * ── Why the filesystem call is here and not in the hook library ────────
+ *
+ * `tests/hook-script-boundaries.test.ts` asserts that nothing under
+ * `src/lib/hook/**` imports `node:fs` or touches `process`, which is what
+ * makes every hook decision testable as a value in and a value out.
+ * `idleMsFromSpool` is therefore pure and takes the spool's text; reading
+ * that text is this file's job, as it already is for the flush.
+ *
+ * ── Why every failure is silence ───────────────────────────────────────
+ *
+ * An unreadable spool answers `undefined`, which `shouldSurvey` reads as
+ * "do not ask". A missing spool is not damage — it is the ordinary state of
+ * a session that has made no tool calls, and a session that has made no
+ * tool calls has tripped no interventions, so there was never going to be
+ * anything to survey.
+ */
+function measureIdle(
+  stdin: string,
+  file: string,
+  now: number,
+): { readonly idleMs: number } | undefined {
+  if (!isStop(stdin)) return undefined;
+
+  const parsed = parseHookPayload(stdin);
+  if (!parsed.ok) return undefined;
+
+  // `shouldMeasureIdle` restates the `Stop`-only rule that `isStop` has
+  // just applied. Both are here deliberately: `isStop` is this file's
+  // drain trigger and could be changed for the drain's reasons, and the
+  // survey must not silently start measuring on every tool call because
+  // an unrelated helper grew a second caller.
+  if (!shouldMeasureIdle(parsed.event.eventType)) return undefined;
+
+  const idleMs = idleMsFromSpool({
+    spoolText: fileSpool(file).read(),
+    sessionId: parsed.event.sessionId,
+    now,
+  });
+
+  return idleMs === undefined ? undefined : { idleMs };
 }
 
 /**

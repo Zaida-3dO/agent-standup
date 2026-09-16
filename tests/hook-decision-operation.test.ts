@@ -84,6 +84,7 @@ type Answer = {
   findings: readonly { id: string; level: string; timing: string; messages: { plain: string } }[];
   enforcement?: { status: string; detail: string };
   stop?: { liveCrew: number; wakeScheduled: boolean };
+  windDown?: { unrated: unknown[]; liveCrew: number; wakeScheduled: boolean };
 };
 
 async function call(input: Record<string, unknown>): Promise<Answer> {
@@ -101,6 +102,20 @@ function isStopShellLookup(query: string): boolean {
 }
 
 /**
+ * The unrated-firings read the `Stop` branch makes for the session-end
+ * survey.
+ *
+ * Third and last of the `Stop` branch's reads, and it carries its own
+ * weight under the same volume argument as the other two: it happens once
+ * per turn rather than once per tool call. It is also the only one that can
+ * answer nothing — a session that tripped no guard returns no rows, which is
+ * most sessions — so the common case is one index seek and an empty result.
+ */
+function isStopSurveyLookup(query: string): boolean {
+  return query.includes(`FROM "intervention_events"`) && query.includes(`NOT EXISTS`);
+}
+
+/**
  * Calls the operation with a handle that answers **only** the two reads the
  * `Stop` branch makes, and still throws on anything else.
  *
@@ -111,22 +126,34 @@ function isStopShellLookup(query: string): boolean {
  * able to speak. It cannot be gated on a command, because a `Stop` carries
  * none.
  *
+ * The same is true of the survey's read: `../src/lib/interventions/survey.ts`
+ * can only ask about firings something has listed, and listing them is a
+ * query on a table no other phase touches.
+ *
  * The volume argument that protects the other phases does not apply here: a
- * `Stop` fires once per turn, not once per tool call, so these two reads are
- * some five orders of magnitude rarer than the path the gate exists to keep
- * free. The zero-query property is still asserted for every other phase
- * below, which is where it was always load-bearing.
+ * `Stop` fires once per turn, not once per tool call, so these three reads
+ * are some five orders of magnitude rarer than the path the gate exists to
+ * keep free. The zero-query property is still asserted for every other phase
+ * below, which is where it is load-bearing.
  *
  * Answered narrowly, for the same reason `untouchableHandle` is narrow: a
  * permissive stub would let a genuine regression in context assembly pass
  * silently on the `Stop` path too.
  */
-function stopHandle(crew: number, commands: readonly string[]): TransactionHandle {
+function stopHandle(
+  crew: number,
+  commands: readonly string[],
+  firings: readonly Record<string, unknown>[] = [],
+): TransactionHandle {
   return {
     $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
       if (isDisplacementLookup(query)) return [] as T;
       if (isStopCrewLookup(query)) return [{ liveCrew: crew }] as T;
       if (isStopShellLookup(query)) return commands.map((command) => ({ command })) as T;
+      // No unrated firings, which is the ordinary session. The survey's own
+      // suites cover the populated case; what matters here is that this
+      // read is expected rather than a regression, and that nothing else is.
+      if (isStopSurveyLookup(query)) return firings as T;
       throw new Error(`hook_decision must not touch the database: ${query}`);
     },
     $executeRawUnsafe: async () => {
@@ -135,9 +162,13 @@ function stopHandle(crew: number, commands: readonly string[]): TransactionHandl
   };
 }
 
-async function callStop(crew: number, commands: readonly string[] = []): Promise<Answer> {
+async function callStop(
+  crew: number,
+  commands: readonly string[] = [],
+  firings: readonly Record<string, unknown>[] = [],
+): Promise<Answer> {
   const rt = new ServiceRuntime({
-    transaction: (body) => body(stopHandle(crew, commands)),
+    transaction: (body) => body(stopHandle(crew, commands, firings)),
     resolveSnapshot: async () => defaultSnapshot(),
   });
   return (await rt.call("hook_decision", {
@@ -312,6 +343,47 @@ describe("what the operation answers", () => {
     const answer = await callStop(3);
     expect(answer.decision).toBe("allow");
     expect(answer.stop).toEqual({ liveCrew: 3, wakeScheduled: false });
+  });
+
+  it("sends no survey block for a session that tripped nothing", async () => {
+    // The overwhelmingly common stop, and the criterion that a quiet
+    // session produces no noise. Absent rather than an empty block: the
+    // client reads an absent block as nothing to ask about, and an empty
+    // one would be a payload spent saying so on every turn in the system.
+    expect(await callStop(0)).not.toHaveProperty("windDown");
+  });
+
+  it("sends the survey block, carrying the stop block's own crew facts", async () => {
+    // The two blocks must agree, because they answer the identical question
+    // — "is anyone still working for you, and is anything going to wake
+    // you". Deriving them separately would be two definitions of one fact,
+    // and the pair would disagree the first time either query was tuned.
+    // A non-zero crew and a real wait, so neither field can pass by
+    // coinciding with a hardcoded default — `liveCrew: 0` is what a
+    // re-derivation that lost its input would produce, and it is
+    // indistinguishable from the true answer on a session with no crew.
+    const answer = await callStop(
+      2,
+      ["standup crew wait --timeout 600"],
+      [
+        {
+          id: 7n,
+          entry_id: "I10",
+          ts: new Date(1_700_000_000_000),
+          tool: "Bash",
+          message: "scope it to a PID",
+          outcome: "blocked",
+        },
+      ],
+    );
+
+    expect(answer.decision).toBe("allow");
+    expect(answer.windDown?.unrated).toHaveLength(1);
+    expect(answer.windDown?.liveCrew).toBe(answer.stop?.liveCrew);
+    expect(answer.windDown?.wakeScheduled).toBe(answer.stop?.wakeScheduled);
+    // And both shared values are the real ones, not coincidental defaults.
+    expect(answer.windDown?.liveCrew).toBe(2);
+    expect(answer.windDown?.wakeScheduled).toBe(true);
   });
 });
 

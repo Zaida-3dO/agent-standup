@@ -40,7 +40,7 @@
 import type { ServerVerdict } from "./decide";
 import type { HookEvent } from "./payload";
 import { readSessionStatus } from "./enforcement";
-import { readStopContext } from "./stop-catch";
+import { readStopContext, readWindDownContext } from "./stop-catch";
 import { readNudgeContext } from "./nudge";
 import type { InterventionFinding } from "../interventions/types";
 
@@ -255,6 +255,9 @@ export function createHttpAsk({
     // Both advisory, and read after the decision: a malformed block in
     // either is dropped by its own reader and can never affect the verdict.
     const stop = readStopContext(property(body, "stop"));
+    // The survey's context. Dropped wholesale if malformed, exactly like
+    // `stop` — a garbled block costs a missed survey, never a spurious one.
+    const windDown = readWindDownContext(property(body, "windDown"));
     const nudge = readNudgeContext(property(body, "nudge"));
     // Advisory in the same sense: `hook_decision` always returns `findings`
     // (present-but-empty when nothing triggered), and nothing about them
@@ -269,6 +272,7 @@ export function createHttpAsk({
       ...(typeof reason === "string" && reason.length > 0 ? { reason } : {}),
       ...(enforcement === undefined ? {} : { enforcement }),
       ...(stop === undefined ? {} : { stop }),
+      ...(windDown === undefined ? {} : { windDown }),
       ...(nudge === undefined ? {} : { nudge }),
       ...(findings === undefined ? {} : { findings }),
     };
