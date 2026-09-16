@@ -8,6 +8,9 @@
 // project reads as honest or as a lie, so they are the ones that need to be
 // directly assertable.
 import { ITEM_STATES, STATE_LABELS } from "@/lib/design/tokens";
+// The board's column table — see `bandsOf` for why the bands are derived
+// from it rather than listed. A leaf module; no server dependency rides in.
+import { finishedFrom, startedFrom } from "@/lib/service/board/columns";
 import type { BoardColumnId, ItemState } from "@/lib/board/types";
 import type {
   BlockedDescendant,
@@ -59,58 +62,43 @@ export function distributionOf(counts: StateCounts, total: number): Distribution
 /**
  * The bands and counts of the page's progress bar.
  *
- * The same three-way split the grid's cards draw (`@/lib/projects/view.ts`) —
- * finished, active, and the not-started remainder — restated here rather than
- * imported, for the reason `distributionOf` above gives: same shape, different
- * consumer, and coupling them means a change for one silently changing the
- * other.
+ * The same three-way split the grid's cards draw (`@/lib/projects/view.ts`),
+ * and like that one it is **derived from the board's own column table**
+ * rather than from a list of states written out here: `done` is the
+ * `completed` column, `started` is `in_progress` and `waiting` together, and
+ * the remainder is the `backlog` column. A page that showed a different split
+ * from the board it links to would be the product contradicting itself.
  *
- * `on_deck` counts as active rather than backlog: the board files it under
- * `backlog` to decide which column to draw a card in, but a reader of this bar
- * is asking whether the work is spoken for, and something on deck is.
+ * `paused` and `blocked` count as started — that work began and then stalled,
+ * and filing it with the backlog would say nobody has touched it. `on_deck`
+ * does not: it is the queue the heartbeat draws from, triaged but not begun.
  */
 export interface ProgressBands {
-  readonly finished: number;
-  readonly active: number;
+  readonly done: number;
+  readonly started: number;
 }
 
 export interface ProgressCounts {
-  readonly onDeck: number;
+  readonly started: number;
   readonly done: number;
-  readonly notStarted: number;
-}
-
-const ACTIVE_STATES: readonly ItemState[] = [
-  "on_deck",
-  "planning",
-  "plan_review",
-  "executing",
-  "in_review",
-  "paused",
-  "blocked",
-];
-
-const FINISHED_STATES: readonly ItemState[] = ["merged", "research_done", "wont_do", "cancelled"];
-
-function sumOf(counts: StateCounts, states: readonly ItemState[]): number {
-  return states.reduce((acc, state) => acc + (counts[state] ?? 0), 0);
+  readonly backlog: number;
 }
 
 export function bandsOf(counts: StateCounts, total: number): ProgressBands {
-  if (total <= 0) return { finished: 0, active: 0 };
+  if (total <= 0) return { done: 0, started: 0 };
   return {
-    finished: sumOf(counts, FINISHED_STATES) / total,
-    active: sumOf(counts, ACTIVE_STATES) / total,
+    done: finishedFrom(counts) / total,
+    started: startedFrom(counts) / total,
   };
 }
 
 export function countsOf(counts: StateCounts, total: number): ProgressCounts {
-  const onDeck = sumOf(counts, ACTIVE_STATES);
-  const done = sumOf(counts, FINISHED_STATES);
-  // The remainder rather than `someday` alone, so a state added to the
-  // vocabulary and forgotten here still lands somewhere and the three numbers
-  // always account for every child.
-  return { onDeck, done, notStarted: Math.max(0, total - onDeck - done) };
+  const started = startedFrom(counts);
+  const done = finishedFrom(counts);
+  // The remainder rather than the backlog column summed directly, so a state
+  // added to the vocabulary and filed in no column still lands somewhere and
+  // the three numbers always account for every child.
+  return { started, done, backlog: Math.max(0, total - started - done) };
 }
 
 /**

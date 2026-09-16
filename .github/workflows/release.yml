@@ -13,6 +13,10 @@ on:
         description: "Build and push the Docker image to ghcr.io"
         type: boolean
         default: true
+      publish_npm:
+        description: "Publish the standup binary to npm (manual only — never runs on a tag push)"
+        type: boolean
+        default: false
 
 # Deliberately no `concurrency` block here.
 #
@@ -359,31 +363,43 @@ jobs:
   # tag. `package.json`'s own checked-in "version" is not used for what gets
   # published; see the script's header for why that is the safer default.
   #
-  # ⚠️ DORMANT — gated off until npm publishing is configured.
+  # ⚠️ MANUAL ONLY — a tag push never publishes to npm.
   #
-  # This job is gated on `vars.ENABLE_NPM_PUBLISH == 'true'` rather than
-  # deleted. Publishing needs an `NPM_TOKEN` secret; without one,
-  # `NODE_AUTH_TOKEN` is an empty string and `npm publish` fails with
-  # ENEEDAUTH after doing all of its work. Everything else in the job — the
-  # tag-to-version derivation, the prepack build, the tarball — runs
-  # correctly, so the job is worth keeping intact behind a flag.
+  # Releasing the image and releasing the binary are different decisions with
+  # different blast radii: an image tag can be overwritten, and an npm version
+  # is permanent and cannot be republished. So the two are deliberately not
+  # bound to the same event. Tagging `v*` ships the image; publishing to npm
+  # takes a human running this workflow and ticking `publish_npm`.
+  #
+  # The gate is the dispatch input rather than a repository variable. A
+  # variable is a piece of state somebody sets once and nobody reads again —
+  # set to `true` without the matching `NPM_TOKEN` secret, it made every
+  # tagged release run this job and fail at the final step with ENEEDAUTH,
+  # reporting a red release for three consecutive versions whose image and
+  # GitHub Release had both published perfectly. An input cannot rot that
+  # way: it is chosen per run, by whoever is running it, and it defaults to
+  # off. `workflow_dispatch` is in the condition too, so no future input
+  # default can make a tag push reach this job.
   #
   # A skipped job stays visible in the checks UI, so it is apparent that the
   # publish did not happen. A deleted job cannot say that.
   #
-  # To turn it on (see the "Publish the standup binary to npm" issue):
+  # Publishing still needs an `NPM_TOKEN` secret — without one this fails
+  # with ENEEDAUTH after doing all of its work:
   #   1. Create an npm *Automation* token for the package — that token type
   #      bypasses 2FA, which CI cannot satisfy interactively.
   #   2. `gh secret set NPM_TOKEN --repo Zaida-3dO/agent-standup`
-  #   3. `gh variable set ENABLE_NPM_PUBLISH --body true --repo Zaida-3dO/agent-standup`
-  # Check who owns the `agent-standup` name on the registry before enabling:
-  # the first successful publish of an unclaimed name claims it permanently.
+  # Check who owns the `agent-standup` name on the registry before the first
+  # run: the first successful publish of an unclaimed name claims it
+  # permanently.
   publish-npm:
     name: Publish npm package (standup binary)
     needs: [tag, build-and-push]
-    # Same shape as github-release above, for the same reason: tolerate a
-    # deliberately skipped image build, never a failed one.
-    if: always() && vars.ENABLE_NPM_PUBLISH == 'true' && needs.tag.result == 'success' && needs.build-and-push.result != 'failure' && needs.build-and-push.result != 'cancelled'
+    # Manual dispatch with the box ticked, and nothing else. The
+    # `build-and-push` clause keeps the same shape as github-release above,
+    # for the same reason: tolerate a deliberately skipped image build,
+    # never a failed one.
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.publish_npm && needs.tag.result == 'success' && needs.build-and-push.result != 'failure' && needs.build-and-push.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:

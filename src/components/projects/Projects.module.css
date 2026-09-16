@@ -192,10 +192,10 @@
   font-weight: 600;
 }
 
-/* One bar, three bands: finished (green) and active (blue) sit side by side,
-   and the track showing through behind them is the not-started remainder.
-   `flex` rather than two stacked absolute fills, so the widths can never
-   overlap and mis-state the total. */
+/* One bar, three bands, matching the board's columns: done (green) and
+   started (blue) sit side by side, and the track showing through behind them
+   is the backlog remainder. `flex` rather than two stacked absolute fills, so
+   the widths can never overlap and mis-state the total. */
 .progressTrack {
   display: flex;
   height: 0.4rem;
@@ -204,15 +204,15 @@
   overflow: hidden;
 }
 
-/* Finished work — every terminal state, in the merged state's own colour, so
-   the bar and a merged chip elsewhere on the page cannot disagree about what
-   "done" looks like. */
+/* Done — the completed column, in the merged state's own colour, so the bar
+   and a merged chip elsewhere on the page cannot disagree about what "done"
+   looks like. */
 .progressFill {
   height: 100%;
   background: var(--state-merged-border);
 }
 
-/* Work in flight, in the on-deck state's blue for the same reason. */
+/* Started work — the in-progress and waiting columns — in blue. */
 .progressActive {
   height: 100%;
   background: var(--state-on_deck-border);

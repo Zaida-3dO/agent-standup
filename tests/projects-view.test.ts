@@ -28,6 +28,7 @@ import {
 import { bandsOf as detailBandsOf, countsOf as detailCountsOf } from "@/lib/project-detail/view";
 import type { BoardAssignment, ProjectRollup, StateCounts } from "@/lib/projects/types";
 import { ITEM_STATES } from "@/lib/design/tokens";
+import { columnForState } from "@/lib/service/board/columns";
 
 /** Every state at zero — the base a fixture overrides the few it cares about. */
 function noCounts(): StateCounts {
@@ -306,17 +307,54 @@ describe("sortProjects", () => {
 
 describe("the progress bands", () => {
   it("partitions EVERY state — nothing falls through the three bands", () => {
-    // The guarantee the bar rests on. A state in neither `ACTIVE_STATES` nor
-    // `FINISHED_STATES` silently reads as "not started", so a state added to
-    // the vocabulary and forgotten would quietly understate progress.
+    // The guarantee the bar rests on. A state in neither the started nor the
+    // done band silently reads as backlog, so a state added to the vocabulary
+    // and filed in no column would quietly understate progress.
     //
-    // Breaks if: a state is dropped from either list, or a thirteenth is
-    // added to `ITEM_STATES` without being classified.
+    // Breaks if: a column loses a state, or a thirteenth is added to
+    // `ITEM_STATES` without being filed in `STATE_TO_COLUMN`.
     for (const state of ITEM_STATES) {
       const counts = { ...noCounts(), [state]: 1 };
       const tally = countsOf(counts, 1);
-      expect(tally.onDeck + tally.done + tally.notStarted).toBe(1);
+      expect(tally.started + tally.done + tally.backlog).toBe(1);
     }
+  });
+
+  it("puts each state in the band its BOARD COLUMN implies", () => {
+    // The card sits beside a board that groups these same children into
+    // columns, so a bar that splits them differently is the product
+    // contradicting itself. This asserts the correspondence directly rather
+    // than trusting that two lists happen to agree.
+    //
+    // Breaks if: `on_deck` is counted as started — the reading that put a
+    // project at 50% started while its board showed `In progress 0`.
+    for (const state of ITEM_STATES) {
+      const counts = { ...noCounts(), [state]: 1 };
+      const tally = countsOf(counts, 1);
+      const column = columnForState(state);
+
+      if (column === "completed") expect(tally.done).toBe(1);
+      else if (column === "backlog") expect(tally.backlog).toBe(1);
+      else expect(tally.started).toBe(1); // in_progress and waiting
+    }
+  });
+
+  it("counts a QUEUED project as entirely backlog, with no blue at all", () => {
+    // `on_deck` is the pool the heartbeat draws from — triaged, but nobody is
+    // on it. A project whose every child is queued has not been started.
+    const counts = { ...noCounts(), someday: 3, on_deck: 5 };
+
+    expect(bandsOf(counts, 8)).toEqual({ done: 0, started: 0 });
+    expect(countsOf(counts, 8)).toEqual({ started: 0, done: 0, backlog: 8 });
+  });
+
+  it("counts STALLED work as started, not as backlog", () => {
+    // `paused` and `blocked` began and then stopped. Filing them with the
+    // backlog would say nobody has touched them, which is the one thing
+    // certainly untrue of a blocked item.
+    const counts = { ...noCounts(), paused: 1, blocked: 2, executing: 1 };
+
+    expect(countsOf(counts, 4)).toEqual({ started: 4, done: 0, backlog: 0 });
   });
 
   it("never paints a bar wider than its track", () => {
@@ -326,7 +364,7 @@ describe("the progress bands", () => {
     for (const state of ITEM_STATES) counts[state] = 1;
     const bands = bandsOf(counts, ITEM_STATES.length);
 
-    expect(bands.finished + bands.active).toBeLessThanOrEqual(1);
+    expect(bands.done + bands.started).toBeLessThanOrEqual(1);
   });
 
   it("reads an all-terminal project as wholly done, however it ended", () => {
@@ -334,8 +372,8 @@ describe("the progress bands", () => {
     // `wont_do` or `cancelled` is finished, not outstanding.
     const counts = { ...noCounts(), merged: 1, wont_do: 2, cancelled: 3, research_done: 4 };
 
-    expect(bandsOf(counts, 10)).toEqual({ finished: 1, active: 0 });
-    expect(countsOf(counts, 10)).toEqual({ onDeck: 0, done: 10, notStarted: 0 });
+    expect(bandsOf(counts, 10)).toEqual({ done: 1, started: 0 });
+    expect(countsOf(counts, 10)).toEqual({ started: 0, done: 10, backlog: 0 });
   });
 
   it("agrees, state for state, with the project page's copy", () => {
@@ -355,6 +393,6 @@ describe("the progress bands", () => {
 
   it("reports no bands at all for a project with no children", () => {
     // Not a divide by zero, and not a bar at zero — see `progressOf`.
-    expect(bandsOf(noCounts(), 0)).toEqual({ finished: 0, active: 0 });
+    expect(bandsOf(noCounts(), 0)).toEqual({ done: 0, started: 0 });
   });
 });
