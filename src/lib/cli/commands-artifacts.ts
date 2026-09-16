@@ -12,68 +12,9 @@
 // place every adapter shares. Coercing here as well would be a second,
 // adapter-local conversion — and the first thing to drift the day the schema
 // changes what it accepts.
-import { malformed, type ErrorEnvelope } from "./envelope";
-import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, numericFlag, type ParsedArgs } from "./args";
+import { itemIdPositional, passThroughFlags, withSessionId } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
-
-/** The flags the dispatcher handles itself — never part of an operation's input. */
-const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
-
-type FieldsResult =
-  | { readonly ok: true; readonly input: Record<string, unknown> }
-  | { readonly ok: false; readonly envelope: ErrorEnvelope };
-
-/**
- * Same behaviour as `commands.ts`'s `flagsToInput` — see
- * `commands-ownership.ts`'s header for why it is a second copy.
- *
- * ⚠️ **Pass-through by default.** Every flag that is not global and not
- * already consumed is forwarded untouched, and the operation's own
- * `.strict()` schema decides what is valid. This must never grow an
- * allow-list of accepted field names: a builder carrying one silently drops
- * a flag missing from the list, and because the dropped field is valid on
- * the shared schema nothing refuses it — the call is accepted, the value is
- * discarded, and the caller is told it worked.
- *
- * `consumed` names the bare switches a verb has already read with
- * `booleanFlag`. They are skipped rather than left to fall through, because
- * this function refuses a valueless flag outright and passing one through
- * would send it to the operation twice under two spellings.
- */
-function passThroughFlags(
-  flags: ParsedArgs["flags"],
-  consumed: readonly string[] = [],
-): FieldsResult {
-  const input: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(flags)) {
-    if (GLOBAL_FLAGS.has(name)) continue;
-    if (consumed.includes(name)) continue;
-    if (value === true) {
-      return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
-    }
-    input[name] = value;
-  }
-  return { ok: true, input };
-}
-
-function itemIdPositional(
-  rest: readonly string[],
-  usage: string,
-): { ok: true; itemId: string } | { ok: false; envelope: ErrorEnvelope } {
-  const itemId = rest[0];
-  if (itemId === undefined) {
-    return { ok: false, envelope: malformed(`\`standup ${usage}\` needs an item id.`, ["itemId"]) };
-  }
-  return { ok: true, itemId };
-}
-
-/** `--session` maps onto the operation's own optional `sessionId` field. */
-function withSessionId(input: Record<string, unknown>, flags: ParsedArgs["flags"]): FieldsResult {
-  const session = stringFlag(flags, "session");
-  if (!session.ok) return session;
-  if (session.value === undefined) return { ok: true, input };
-  return { ok: true, input: { ...input, sessionId: session.value } };
-}
 
 function buildRecordArtifactInput(
   rest: readonly string[],

@@ -31,65 +31,9 @@
 // to `commands.ts`, deliberately not exported so this file cannot be forced
 // to touch that file's internals) so `passThroughFlags` below is the same
 // behaviour, defined once for every command in this file.
-import { malformed, type ErrorEnvelope } from "./envelope";
-import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, numericFlag, type ParsedArgs } from "./args";
+import { itemIdPositional, passThroughFlags, withSessionId } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
-
-/** The flags every command in this build's dispatcher handles itself, never part of an operation's input. */
-const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
-
-/** An in-progress input object being built up, as opposed to `InputResult`'s final `unknown`. */
-type FieldsResult =
-  | { readonly ok: true; readonly input: Record<string, unknown> }
-  | { readonly ok: false; readonly envelope: ErrorEnvelope };
-
-/**
- * Same behaviour as `commands.ts`'s own `flagsToInput` — see this file's
- * header for why it is a second copy.
- *
- * `consumed` names the flags a caller has already read itself, which is what
- * lets a bare switch exist at all: this function refuses a valueless flag
- * outright, so a switch has to be read by `booleanFlag` first and then
- * declared here, or it arrives at the operation twice under two spellings.
- * `commands.ts` takes the same list for the same reason.
- */
-function passThroughFlags(
-  flags: ParsedArgs["flags"],
-  consumed: readonly string[] = [],
-): FieldsResult {
-  const input: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(flags)) {
-    if (GLOBAL_FLAGS.has(name)) continue;
-    if (consumed.includes(name)) continue;
-    if (value === true) {
-      return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
-    }
-    input[name] = value;
-  }
-  return { ok: true, input };
-}
-
-/** Reads the positional item id, or refuses with the field name every one of these operations' schemas use for it. */
-function itemIdPositional(
-  rest: readonly string[],
-  usage: string,
-): { ok: true; itemId: string } | { ok: false; envelope: ErrorEnvelope } {
-  const itemId = rest[0];
-  if (itemId === undefined) {
-    return { ok: false, envelope: malformed(`\`standup ${usage}\` needs an item id.`, ["itemId"]) };
-  }
-  return { ok: true, itemId };
-}
-
-/** `--session` maps onto the operation's own `sessionId` field — dropped by `passThroughFlags` (it's global) and re-added here where the operation's schema calls for it. */
-function withSessionId(input: Record<string, unknown>, flags: ParsedArgs["flags"]): FieldsResult {
-  const session = stringFlag(flags, "session");
-  if (!session.ok) return session;
-  return {
-    ok: true,
-    input: session.value === undefined ? input : { ...input, sessionId: session.value },
-  };
-}
 
 function buildClaimInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
   const idResult = itemIdPositional(rest, "session claim <item-id>");

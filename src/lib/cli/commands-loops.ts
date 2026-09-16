@@ -28,70 +28,10 @@
 // merge is where this file could reintroduce a defect it has already seen,
 // so the rule is stated on `passThroughFlags` and must be read before
 // changing it.
-import { malformed, type ErrorEnvelope } from "./envelope";
-import { booleanFlag, stringFlag, type ParsedArgs } from "./args";
+import { malformed } from "./envelope";
+import { booleanFlag, type ParsedArgs } from "./args";
+import { passThroughFlags, withSessionId } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
-
-/** The flags the dispatcher handles itself — never part of an operation's input. */
-const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
-
-type FieldsResult =
-  | { readonly ok: true; readonly input: Record<string, unknown> }
-  | { readonly ok: false; readonly envelope: ErrorEnvelope };
-
-/**
- * Same behaviour as `commands.ts`'s `flagsToInput` — see
- * `commands-ownership.ts` for why it is a second copy.
- *
- * ⚠️ **PASS-THROUGH BY DEFAULT. This is the invariant that keeps the merged
- * builder below safe, and it is NOT "one builder per verb".**
- *
- * This forwards EVERY flag that is not global and not already consumed,
- * untouched, and the operation's own `.strict()` schema does the refusing. A
- * merged `buildInput` may enumerate **positionals and bare switches only**.
- * It must **NEVER** carry an allow-list of value-flag names.
- *
- * Why an allow-list is the dangerous shape, specifically: a builder that
- * filtered to a list of fields it knew about would **silently drop** any flag
- * missing from that list. The dropped field is valid on the shared schema, so
- * nothing ever refuses it — the call is parsed, the value is discarded, and
- * the caller is answered with a success. That is exactly the defect this
- * codebase shipped once before (row `fa83f2b9`): `--reason` on a close was
- * accepted and thrown away.
- *
- * It also means a refusal-shaped test cannot catch it. The regression test
- * for this writes a value and reads it back through a separate call, because
- * that is the only assertion that can tell "kept" from "accepted and
- * discarded".
- *
- * `consumed` names the bare switches a verb has already read with
- * `booleanFlag`. They are skipped rather than left to fall through, because
- * this function refuses a valueless flag outright and passing one through
- * would send it to the operation twice under two spellings.
- */
-function passThroughFlags(
-  flags: ParsedArgs["flags"],
-  consumed: readonly string[] = [],
-): FieldsResult {
-  const input: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(flags)) {
-    if (GLOBAL_FLAGS.has(name)) continue;
-    if (consumed.includes(name)) continue;
-    if (value === true) {
-      return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
-    }
-    input[name] = value;
-  }
-  return { ok: true, input };
-}
-
-/** `--session` maps onto the operation's own optional `sessionId` field. */
-function withSessionId(input: Record<string, unknown>, flags: ParsedArgs["flags"]): FieldsResult {
-  const session = stringFlag(flags, "session");
-  if (!session.ok) return session;
-  if (session.value === undefined) return { ok: true, input };
-  return { ok: true, input: { ...input, sessionId: session.value } };
-}
 
 /**
  * What each verb reads from the words after it — POSITIONALS ONLY.

@@ -31,47 +31,8 @@
 // same PR's removal of six of them elsewhere.
 import { malformed, type ErrorEnvelope } from "./envelope";
 import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
+import { passThroughFlags } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
-
-/** The flags the dispatcher handles itself — never part of an operation's input. */
-const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
-
-/**
- * Collects the value-carrying flags into an operation input.
- *
- * ⚠️ **Pass-through by default, and it must stay that way.** This forwards
- * every flag it does not recognise as global or already-consumed, untouched,
- * and lets the operation's own `.strict()` schema decide what is valid. It
- * must **never** grow an allow-list of accepted field names.
- *
- * The reason is a real defect this codebase has already shipped once: a
- * builder carrying a list of the fields it knows about **silently drops**
- * any flag missing from that list. The dropped field is valid on the shared
- * schema, so nothing refuses it — the call is accepted, the value is
- * discarded, and the caller is told it succeeded. A refusal-shaped test
- * passes against that bug, which is why the regression test for this reads
- * the value back through a separate call instead.
- *
- * `consumed` names bare switches a verb has already read with `booleanFlag`.
- * They are skipped rather than left to fall through, because this function
- * refuses a valueless flag outright and passing one through would send it to
- * the operation twice under two spellings.
- */
-function passThroughFlags(
-  flags: ParsedArgs["flags"],
-  consumed: readonly string[] = [],
-): InputResult {
-  const input: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(flags)) {
-    if (GLOBAL_FLAGS.has(name)) continue;
-    if (consumed.includes(name)) continue;
-    if (value === true) {
-      return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
-    }
-    input[name] = value;
-  }
-  return { ok: true, input };
-}
 
 /** Reads the leading positional a verb requires, naming it when it is absent. */
 function requiredPositional(

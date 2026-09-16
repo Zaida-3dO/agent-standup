@@ -24,10 +24,8 @@
 // property of the call rather than a label on it.
 import { malformed } from "./envelope";
 import { numericFlag, stringFlag, type ParsedArgs } from "./args";
+import { GLOBAL_FLAGS } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
-
-/** The flags the dispatcher handles itself, never part of an operation's input. */
-const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
 
 /**
  * Builds `register_session`'s input.

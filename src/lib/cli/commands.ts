@@ -15,6 +15,7 @@
 // form produce the identical `CommandMatch` — not merely an equivalent one.
 import { malformed, type ErrorEnvelope } from "./envelope";
 import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
+import { GLOBAL_FLAGS } from "./flags";
 import { ADMIN_COMMANDS } from "./commands-admin";
 import { OWNERSHIP_ALIASES, OWNERSHIP_COMMANDS } from "./commands-ownership";
 import { CONFIG_COMMANDS } from "./config-command"; // row #83 — `standup config`
@@ -53,9 +54,6 @@ export interface CommandSpec {
 function noInput(): InputResult {
   return { ok: true, input: {} };
 }
-
-/** Collects `--key value` flags into an input object, dropping the global ones. */
-const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
 
 /**
  * Collects the value-carrying flags into an operation input.
