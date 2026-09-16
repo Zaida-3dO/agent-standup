@@ -194,8 +194,19 @@ describe("what the refusal tells a caller to do instead", () => {
   // Same principle the rest of the refusals here follow: a message naming an
   // MCP tool to someone in a terminal costs the round trip it exists to save.
   it("is spelled for the surface the caller is on", () => {
-    expect(responseTooLargeMessage("list_items", 999_999, "cli")).toContain("standup list items");
+    // The command line binds this as `standup item list` (`<noun> <verb>`,
+    // SCHEMA.md §20), which is what a caller can actually type.
+    expect(responseTooLargeMessage("list_items", 999_999, "cli")).toContain("standup item list");
     expect(responseTooLargeMessage("list_items", 999_999, "mcp")).toContain("`list_items`");
+  });
+
+  it("names no command for a read the command line does not bind", () => {
+    // `get_board` is among the likeliest reads to overflow and has no
+    // command-line verb, so a CLI caller is given the call that exists
+    // rather than one derived from the operation name.
+    const message = responseTooLargeMessage("get_board", 999_999, "cli");
+    expect(message).not.toContain("standup get board");
+    expect(message).toContain("`get_board`");
   });
 
   // The fallback path — an operation with no bespoke advice still has to say

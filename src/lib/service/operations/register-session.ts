@@ -43,6 +43,7 @@ import {
   type VersionAssessment,
 } from "@/lib/sessions";
 import { surfaceForTransport } from "@/lib/surfaces";
+import { bindingsFor } from "../describe/bindings";
 import { HOOK_VARIANTS, HOOK_PROTOCOL } from "@/lib/build-constants";
 import { ensureNameForSession } from "@/lib/agent-names";
 import { resolveMachine } from "../machine-identity";
@@ -353,6 +354,10 @@ export const registerSession = defineOperation({
       variant,
       reportedVersion: hookVersion,
       surface: surfaceForTransport(stamped),
+      // Read from the command table, not spelled out: the command line
+      // binds this as `standup session register`, which no derivation from
+      // the operation name would produce.
+      bindings: bindingsFor("register_session"),
     });
 
     // Named here, not requested separately (§9, §18): this is the call every

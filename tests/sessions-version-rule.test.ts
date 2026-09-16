@@ -216,13 +216,16 @@ describe("the version comparison", () => {
     expect(assessment.verdict).toBe("unregistered");
     expect(assessment.versionPermitsClaim).toBe(false);
     // It has to say what to do instead, or the refusal is a wall — and it
-    // has to say it in a spelling the reader can use. With no surface given
-    // that means both, because this refusal is reached from every adapter
-    // and naming only one is naming the wrong one to somebody
-    // (MILESTONES.md #111). The per-surface wording is asserted in
-    // `describe-tool.test.ts`.
+    // has to say it in a spelling the reader can use. The per-surface
+    // wording is asserted in `describe-tool.test.ts`.
     expect(assessment.message).toContain("register_session");
-    expect(assessment.message).toContain("standup register session");
+    // **No bindings passed here, so no command line is named.** This used
+    // to expect `standup register session` — a command that does not
+    // exist, since the command line binds `standup session register`. A
+    // pure call that was told nothing about the command table now says
+    // nothing about it, rather than deriving a guess from the operation
+    // name. Naming no command is a smaller error than naming a wrong one.
+    expect(assessment.message).not.toContain("standup ");
   });
 
   it("REFUSES A CLAIM when a registration named no version", () => {

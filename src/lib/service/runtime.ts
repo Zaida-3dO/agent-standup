@@ -24,6 +24,7 @@ import type { Caller, ServiceContext, TransactionHandle } from "./context";
 // A refusal names the call that would have prevented it, spelled for the
 // surface the caller is on (MILESTONES.md #111).
 import { invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
+import { bindingsFor } from "./describe/bindings";
 import { log, newRequestId } from "@/lib/log";
 import type { SettingsSnapshot } from "@/lib/settings";
 
@@ -233,6 +234,11 @@ export class ServiceRuntime {
           "describe_tool",
           name,
           surfaceForTransport(caller.transport),
+          // `describe_tool` has no command-line verb, so without the real
+          // bindings a CLI caller is pointed at `standup describe tool` —
+          // a second name that does not exist, handed to the caller least
+          // able to spot it.
+          bindingsFor("describe_tool"),
         )} to see the tools this build exposes.`,
         {
           fields: ["operation"],

@@ -42,6 +42,7 @@ import { CHECK_RUN_STATUSES } from "@/lib/check-runs";
 import { SHIPPED_CHAR_CAP, SHIPPED_MAX, SHIPPED_MIN } from "@/lib/service/summaries/validate";
 import { HEADLINE_MAX_CHARS } from "@/lib/service/items/row";
 import { invocationFor, invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
+import { bindingsFor } from "@/lib/service/describe/bindings";
 import { assessVersion } from "@/lib/sessions";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
 import { z } from "zod";
@@ -320,10 +321,22 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(byName.get("originPersonId")?.required).toBe(false);
   });
 
-  it("names how to call the described tool on each surface", async () => {
+  it("names how to call the described tool on each surface it is bound to", async () => {
+    // Both halves are checked against a binding rather than against a
+    // derivation. `create_item` is deprecated and waived off MCP, so there
+    // is no tool to name; and the command line binds it as `standup item
+    // create` (`<noun> <verb>`), never `standup create item`.
     const contract = await contractFor("create_item");
-    expect(contract.invocation.mcp).toBe("create_item");
-    expect(contract.invocation.cli).toBe("standup create item");
+    expect(contract.invocation.mcp).toBeUndefined();
+    expect(contract.invocation.cli).toBe("standup item create");
+  });
+
+  it("names the mcp tool, and no command, for a tool the command line does not bind", async () => {
+    // The mirror: `create_work` is the MCP-facing minting tool and has no
+    // command-line verb of its own.
+    const contract = await contractFor("create_work");
+    expect(contract.invocation.mcp).toBe("create_work");
+    expect(contract.invocation.cli).toBeUndefined();
   });
 
   it("omits rules entirely, not an error, for a tool that declares no contract", async () => {
@@ -928,16 +941,22 @@ describe("a shape refusal names the call that would have prevented it", () => {
     expect(error.message).not.toContain("standup ");
   });
 
-  it("spells the pointer for the command line when the caller is on the command line", async () => {
+  it("does not invent a command line for describe_tool, which has no verb", async () => {
+    // `describe_tool` is not in `COMMANDS`, so `standup describe tool
+    // create_item` is not a command that exists. A CLI caller gets the MCP
+    // spelling — a call that works — instead of a terminal command that
+    // does not.
     const error = await refusal("create_item", { title: "x" }, "cli-direct");
-    expect(error.message).toContain("standup describe tool create_item");
-    expect(error.message).not.toContain('describe_tool("create_item")');
+    expect(error.message).not.toContain("standup describe tool");
+    expect(error.message).toContain('describe_tool("create_item")');
   });
 
   it("names both spellings when the transport is unknown, rather than guessing one", async () => {
     const error = await refusal("create_item", { title: "x" });
     expect(error.message).toContain('describe_tool("create_item")');
-    expect(error.message).toContain("standup describe tool create_item");
+    // …and does not manufacture a second one. With only MCP bound, "both"
+    // is one.
+    expect(error.message).not.toContain("standup describe tool");
   });
 
   it("routes an unregistered operation name too", async () => {
@@ -1108,19 +1127,30 @@ describe("a refusal names the surface the caller is on", () => {
     expect(assessment.message).not.toContain("standup session register");
   });
 
-  it("still tells a command-line caller the command-line spelling", () => {
+  it("still tells a command-line caller the command-line spelling — the real one", () => {
+    // The command line binds this as `standup session register` (`<noun>
+    // <verb>`, SCHEMA.md §20). Asserted against `bindingsFor`, so this
+    // fails if the verb moves — an expectation derived from the operation
+    // name instead would agree with any derivation, including a wrong
+    // one.
     const assessment = assessVersion({
       variant: undefined,
       reportedVersion: null,
       surface: "cli",
+      bindings: bindingsFor("register_session"),
     });
-    expect(assessment.message).toContain("standup register session");
+    expect(assessment.message).toContain("standup session register");
+    expect(assessment.message).not.toContain("standup register session");
   });
 
   it("names both when the surface is unknown", () => {
-    const assessment = assessVersion({ variant: undefined, reportedVersion: null });
+    const assessment = assessVersion({
+      variant: undefined,
+      reportedVersion: null,
+      bindings: bindingsFor("register_session"),
+    });
     expect(assessment.message).toContain("register_session");
-    expect(assessment.message).toContain("standup register session");
+    expect(assessment.message).toContain("standup session register");
   });
 
   it("leaves the verdicts that name no command alone", () => {
@@ -1132,14 +1162,17 @@ describe("a refusal names the surface the caller is on", () => {
     expect(assessment.message).not.toContain("standup ");
   });
 
-  it("formats an invocation per surface", () => {
-    expect(invocationFor("register_session", "mcp")).toBe("`register_session`");
-    expect(invocationFor("register_session", "cli")).toBe("`standup register session`");
-    expect(invocationWithArgumentFor("describe_tool", "create_item", "mcp")).toBe(
+  it("formats an invocation per surface, from the real binding", () => {
+    const register = bindingsFor("register_session");
+    expect(invocationFor("register_session", "mcp", register)).toBe("`register_session`");
+    expect(invocationFor("register_session", "cli", register)).toBe("`standup session register`");
+    const describe = bindingsFor("describe_tool");
+    expect(invocationWithArgumentFor("describe_tool", "create_item", "mcp", describe)).toBe(
       '`describe_tool("create_item")`',
     );
-    expect(invocationWithArgumentFor("describe_tool", "create_item", "cli")).toBe(
-      "`standup describe tool create_item`",
+    // No CLI verb exists, so the CLI reader is given the call that does.
+    expect(invocationWithArgumentFor("describe_tool", "create_item", "cli", describe)).toBe(
+      '`describe_tool("create_item")`',
     );
   });
 });
