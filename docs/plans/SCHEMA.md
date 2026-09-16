@@ -1875,10 +1875,21 @@ configuration, and proves it with a live round trip. **Every other command prefl
 *"run `standup init` first"* — a half-configured installation that behaves like a working one is the
 worst available outcome.
 
-**Shape.** `standup <noun> <verb>`, nouns `item` · `session` · `crew` · `config` · `repo` · `area` ·
-`machine` · `account` · `person`, plus `init`, `doctor`, `hook` and `mcp`, which name one thing each.
-A short alias list covers the commands used constantly; aliases resolve to the same operation, so
-nothing downstream sees them.
+**Shape.** `standup <noun> <verb>`, nouns `account` · `area` · `backfill` · `config` · `crew` ·
+`item` · `loop` · `machine` · `person` · `project` · `repo` · `score` · `service` · `session` ·
+`subtask` · `task`, plus `init`, `doctor`, `hook` and `mcp`, which name one thing each. A short
+alias list covers the commands used constantly; aliases resolve to the same operation, so nothing
+downstream sees them.
+
+**This list is the whole list, and that matters more than its length.** Seven of these nouns carry a
+single verb — `backfill run`, `service info`, and the `project`/`task`/`subtask` creates among them —
+which is untidy, and tidying it would change what a person types for no structural gain. The list is
+recorded in full anyway, because a reader treating a shorter list as normative has a way to go wrong
+that the untidiness does not: they "fix" the code to match the document and delete working commands.
+A count that is honest and slightly unflattering is worth more here than one that reads well.
+
+Two of them name a capability that is one tool on MCP and a noun here, deliberately: `loop` and
+`score` are spelled the same on both surfaces, so one capability has one name wherever it is reached.
 
 **Output.** Human-readable by default, `--json` for anything parsing it — one document, one envelope,
 `{ ok, data }` or `{ ok, error: { code, message, fields } }`, with all human text on standard error so
