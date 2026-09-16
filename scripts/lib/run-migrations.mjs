@@ -4,6 +4,14 @@
 // stable API) migrate engine — `migrate deploy` is the CLI's own supported
 // entry point for "apply committed migrations, don't prompt, don't drift."
 import { spawn } from "node:child_process";
+import path from "node:path";
+import { findPrismaDir } from "./bundled-prisma.mjs";
+
+/** `schema.prisma` for this install, or `undefined` to let the CLI search as before. */
+function defaultSchemaPath(cwd) {
+  const dir = findPrismaDir(cwd);
+  return dir ? path.join(dir, "schema.prisma") : undefined;
+}
 
 // Windows resolves `npx` to `npx.cmd`, a batch file — spawning those needs
 // shell:true or Node throws EINVAL. Only opt into the shell on Windows so
@@ -39,8 +47,15 @@ export async function runMigrations({
   log.info('Applying database migrations ("prisma migrate deploy")...');
 
   const args = ["prisma", "migrate", "deploy"];
-  if (schemaPath) {
-    args.push("--schema", schemaPath);
+  // An explicit `schemaPath` still wins — that is the test seam described
+  // above. Otherwise resolve the schema rather than letting the Prisma CLI
+  // look for it relative to `cwd`: from an npm install the user's cwd is
+  // their own project, and the CLI's search finds nothing and reports
+  // "Could not find Prisma Schema", failing `standup init` at its first
+  // step. `findPrismaDir` prefers cwd anyway, so a checkout is unaffected.
+  const resolved = schemaPath ?? defaultSchemaPath(cwd);
+  if (resolved) {
+    args.push("--schema", resolved);
   }
 
   const exitCode = await new Promise((resolve, reject) => {

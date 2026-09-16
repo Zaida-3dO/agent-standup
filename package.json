@@ -9,7 +9,8 @@
     "standup-hook": "dist/bin/standup-hook.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "prisma"
   ],
   "engines": {
     "node": ">=24"

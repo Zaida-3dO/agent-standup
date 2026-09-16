@@ -60,7 +60,23 @@ describe("package.json publish contract", () => {
     // tarball — the built entry would `import` a file that does not exist
     // in the installed package. This is a real regression this suite
     // caught once already, not a hypothetical.
-    expect(pkg.files).toEqual(["dist"]);
+    expect(pkg.files).toContain("dist");
+  });
+
+  it("ships prisma/, because the client is generated at install time from it", () => {
+    // Easy to get wrong in a way no test in this repo can see, because
+    // every one of them runs from a git checkout where `prisma/` is on disk
+    // regardless of what the tarball actually contains. Only packing and
+    // installing shows the difference.
+    //
+    // `generator client { provider = "prisma-client-js" }` generates the
+    // client on the *installing* machine, by reading the schema. Ship no
+    // schema and no client is ever generated, so `@prisma/client` stays
+    // the placeholder that throws `did not initialize yet` — which is what
+    // every direct-mode command on a published install actually did.
+    // `prisma/migrations/` rides along, which is what `standup init` and
+    // the migration-drift check both read.
+    expect(pkg.files).toContain("prisma");
   });
 });
 
@@ -177,9 +193,22 @@ describe("npm pack — what actually ships", () => {
       expect(files).toContain(entryPath);
       expect(files.some((f) => f.startsWith("dist/") && f !== entryPath)).toBe(true);
 
+      // The schema, by exact path. Without it the installing machine
+      // generates no Prisma client and every direct-mode command dies with
+      // `@prisma/client did not initialize yet` — reproduced against a real
+      // tarball installed into an empty directory, which is the only place
+      // it is visible.
+      expect(files).toContain("prisma/schema.prisma");
+
+      // The seed `standup init` spawns, and the migration history both
+      // `init` and the drift check read. Asserted separately from the
+      // schema because shipping the schema alone would fix the client but
+      // still leave `standup init` failing partway through.
+      expect(files).toContain("prisma/seed.mjs");
+      expect(files.some((f) => f.startsWith("prisma/migrations/"))).toBe(true);
+
       for (const f of files) {
         expect(f.startsWith("src/")).toBe(false);
-        expect(f.startsWith("prisma/")).toBe(false);
         expect(f.startsWith("tests/")).toBe(false);
       }
     },
