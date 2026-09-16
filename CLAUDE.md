@@ -710,6 +710,44 @@ closed — its only signal is a merged PR's title or body containing the row's o
 delivers no board row has nothing to add here; this is an invitation for the PRs that do, not a
 requirement on every PR.
 
+## Releasing
+
+**Tagging is the whole CI release.** Push a `v*` tag (or run the Release workflow, which makes one)
+and CI builds the Docker image, pushes it to ghcr.io, and publishes the GitHub Release. That is
+everything CI does.
+
+```bash
+git tag -a v1.2.3 -m "v1.2.3 — what changed"
+git push origin v1.2.3
+```
+
+### The npm package is published by hand, and CI must never try
+
+`agent-standup` requires 2FA to publish. A CI runner cannot answer an OTP prompt, and the automation
+token that would bypass 2FA is deliberately not used — removing the second factor is the one thing
+that token is for, and this package is not giving it up so a job can run a few times a year.
+
+So publishing the binary is a local, interactive step:
+
+```bash
+git checkout v1.2.3                                  # publish the tag's source, not a branch tip
+npm ci
+npm login                                            # interactive; answers the 2FA prompt
+npm version "$(npm run -s version:from-tag v1.2.3)" --no-git-tag-version
+npm publish                                          # prepack runs build:cli, so dist/ is this tag's
+```
+
+`npm version --no-git-tag-version` edits `package.json` in the working tree without committing or
+tagging — **do not commit that change.** `package.json`'s checked-in `version` is not the source of
+truth for what ships; the tag is, which is why no release depends on anyone remembering to bump it.
+
+Both artefacts still take their version from one reading of one tag (MILESTONES.md #89) —
+`scripts/version-from-tag.mjs` on this side, `docker/metadata-action`'s `type=semver` on the image
+side. Only the triggering event differs.
+
+⚠️ **Check who owns the name on the registry before the first publish.** The first successful publish
+of an unclaimed name claims it permanently.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

@@ -13,17 +13,12 @@ on:
         description: "Build and push the Docker image to ghcr.io"
         type: boolean
         default: true
-      publish_npm:
-        description: "Publish the standup binary to npm (manual only — never runs on a tag push)"
-        type: boolean
-        default: false
 
 # Deliberately no `concurrency` block here.
 #
-# `cancel-in-progress` is out regardless — this workflow pushes an image and
-# publishes an npm package, and cancelling mid-publish risks a half-published
-# release (partial image layers pushed, or an npm publish interrupted after
-# the registry accepted it but before the job reports success).
+# `cancel-in-progress` is out regardless — this workflow pushes an image, and
+# cancelling mid-push risks a half-published release: partial image layers
+# pushed, or a GitHub Release created for a tag whose image never finished.
 #
 # A non-cancelling *queue* was considered instead, but GitHub's concurrency
 # groups don't queue arbitrarily deep: only one run is ever "in progress" per
@@ -64,10 +59,9 @@ jobs:
   # exists in the repository rather than a ref that only lived inside a run.
   #
   # A manual dispatch used to build an image and stop there — `github-release`
-  # and `publish-npm` were gated on `github.ref_type == 'tag'`, so a dispatch
-  # silently skipped both and produced no release at all. That gate is now
-  # unnecessary: every path through this workflow has a tag by the time those
-  # jobs run.
+  # was gated on `github.ref_type == 'tag'`, so a dispatch silently skipped it
+  # and produced no release at all. That gate is now unnecessary: every path
+  # through this workflow has a tag by the time that job runs.
   #
   # Pushing a tag from here does NOT start a second run of this workflow, even
   # though `push: tags` above matches it: GitHub does not trigger workflows from
@@ -348,88 +342,27 @@ jobs:
             --title "$RELEASE_TAG" \
             --generate-notes
 
-  # MILESTONES.md #89: the npm package ships the `standup` binary on the
-  # same version tag that publishes the image above, so the two artefacts of
-  # a release can never drift apart. `needs: build-and-push` is deliberate —
-  # this only runs once the image for this tag has actually been built and
-  # pushed, so a failed image build can never leave a published npm package
-  # naming a version whose image doesn't exist.
-  #
-  # The `tag` job's output is the one tag this whole workflow runs from. There
-  # is nothing else to keep in sync: `scripts/version-from-tag.mjs` turns it
-  # into the npm version to publish, mirroring the same `v<semver>` reading
-  # `docker/metadata-action`'s `type=semver,pattern={{version}}` (above)
-  # already takes of it — both artefacts are versioned from one parse of one
-  # tag. `package.json`'s own checked-in "version" is not used for what gets
-  # published; see the script's header for why that is the safer default.
-  #
-  # ⚠️ MANUAL ONLY — a tag push never publishes to npm.
-  #
-  # Releasing the image and releasing the binary are different decisions with
-  # different blast radii: an image tag can be overwritten, and an npm version
-  # is permanent and cannot be republished. So the two are deliberately not
-  # bound to the same event. Tagging `v*` ships the image; publishing to npm
-  # takes a human running this workflow and ticking `publish_npm`.
-  #
-  # The gate is the dispatch input rather than a repository variable. A
-  # variable is a piece of state somebody sets once and nobody reads again —
-  # set to `true` without the matching `NPM_TOKEN` secret, it made every
-  # tagged release run this job and fail at the final step with ENEEDAUTH,
-  # reporting a red release for three consecutive versions whose image and
-  # GitHub Release had both published perfectly. An input cannot rot that
-  # way: it is chosen per run, by whoever is running it, and it defaults to
-  # off. `workflow_dispatch` is in the condition too, so no future input
-  # default can make a tag push reach this job.
-  #
-  # A skipped job stays visible in the checks UI, so it is apparent that the
-  # publish did not happen. A deleted job cannot say that.
-  #
-  # Publishing still needs an `NPM_TOKEN` secret — without one this fails
-  # with ENEEDAUTH after doing all of its work:
-  #   1. Create an npm *Automation* token for the package — that token type
-  #      bypasses 2FA, which CI cannot satisfy interactively.
-  #   2. `gh secret set NPM_TOKEN --repo Zaida-3dO/agent-standup`
-  # Check who owns the `agent-standup` name on the registry before the first
-  # run: the first successful publish of an unclaimed name claims it
-  # permanently.
-  publish-npm:
-    name: Publish npm package (standup binary)
-    needs: [tag, build-and-push]
-    # Manual dispatch with the box ticked, and nothing else. The
-    # `build-and-push` clause keeps the same shape as github-release above,
-    # for the same reason: tolerate a deliberately skipped image build,
-    # never a failed one.
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.publish_npm && needs.tag.result == 'success' && needs.build-and-push.result != 'failure' && needs.build-and-push.result != 'cancelled'
-    runs-on: ubuntu-latest
-    permissions: { contents: read }
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          # Same reason as build-and-push: publish the tag's source, not the
-          # branch tip the dispatch happened to start from.
-          ref: ${{ needs.tag.outputs.tag }}
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          registry-url: "https://registry.npmjs.org"
-      - run: npm ci
-      - name: Derive the npm version from this release tag
-        # The tag comes in through an env var, not interpolated straight
-        # into the script below — the safe way to use a github.* value
-        # inside `run:` (the direct-interpolation form is a template
-        # injection risk actionlint flags for exactly this reason).
-        env:
-          RELEASE_TAG: ${{ needs.tag.outputs.tag }}
-        run: |
-          VERSION="$(node scripts/version-from-tag.mjs "$RELEASE_TAG")"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-      - name: Set the package version to match the tag (CI-local only, never committed)
-        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
-      - name: Build the standup binary and publish
-        # `npm publish` runs the "prepack" script first (npm run build:cli),
-        # so the package always ships whatever this exact tag's source
-        # produces — never a stale dist/ left over from a previous build.
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+# ── Why there is no npm-publish job here ───────────────────────────────────
+#
+# **The npm package is published by hand, from a developer's machine, and CI
+# must never try.** Publishing `agent-standup` requires 2FA, which is
+# satisfied interactively through `npm login`; a CI runner cannot answer an
+# OTP prompt. The automation token that would bypass 2FA is deliberately not
+# used here — its whole purpose is to remove the second factor from a publish,
+# and this package is not giving that up for the convenience of a job that
+# would run a few times a year.
+#
+# This is not a gap waiting to be filled. A job gated on a secret that will
+# never exist is worse than no job: it ran on every tagged release and failed
+# at the final step with ENEEDAUTH, reporting a red release for three
+# consecutive versions whose image and GitHub Release had both published
+# perfectly. A *skipped* job is only marginally better — it still advertises
+# a capability CI does not have, and invites someone to "fix" it by minting
+# the token this repository has chosen not to use.
+#
+# So: tagging `v*` publishes the image and the GitHub Release, and nothing
+# else. To publish the binary, see "Releasing" in CLAUDE.md — `npm login`,
+# then `npm publish` from the tag. `scripts/version-from-tag.mjs` is what
+# turns the tag into the version, and is still used above by the `tag` job,
+# so both artefacts are versioned from one reading of one tag exactly as
+# MILESTONES.md #89 requires. Only the *event* differs.

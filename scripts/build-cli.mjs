@@ -3,7 +3,8 @@
  * Builds the published `standup` binary from `src/bin/standup.ts`.
  *
  * Row #89 (MILESTONES.md) publishes the npm package with this binary on the
- * same version tag that publishes the image. Node cannot run the TypeScript
+ * same version tag that publishes the image — the image from CI, the package
+ * by hand (see "Releasing" in CLAUDE.md). Node cannot run the TypeScript
  * source directly — it uses the `@/` path alias (`tsconfig.json`), which is
  * a TypeScript-only resolution rule with no Node equivalent — so something
  * has to turn it into plain, alias-free JavaScript before it can ship as a

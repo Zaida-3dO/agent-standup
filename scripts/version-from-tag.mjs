@@ -4,16 +4,20 @@
  *
  * Row #89 (MILESTONES.md): the npm package publishes on the **same version
  * tag** that publishes the image, so the two artefacts of a release can
- * never drift apart. The two publish on different *events* — tagging `v*`
- * ships the image, while the npm publish is a manual dispatch, because an
- * npm version is permanent and an image tag is not — but both read their
- * version from the same tag, which is what keeps them in step. This script
- * is what the npm-publish job uses to turn that tag into the version it
- * publishes. `package.json`'s own checked-in `version` field is not the
- * source of truth for what gets published — the tag is — so a release
- * never depends on someone remembering to bump it in a separate commit.
- * `npm run version:from-tag <tag>` prints the version and is what the
- * workflow feeds into `npm version --no-git-tag-version` before publishing.
+ * never drift apart. They publish on different *events* — tagging `v*` ships
+ * the image from CI, while the npm publish is run by hand because the
+ * package requires 2FA and a runner cannot answer an OTP prompt — but both
+ * read their version from the same tag, which is what keeps them in step.
+ * `package.json`'s own checked-in `version` field is not the source of truth
+ * for what gets published — the tag is — so a release never depends on
+ * someone remembering to bump it in a separate commit.
+ *
+ * Two callers, and neither is an npm-publish job:
+ *   - the `tag` job in release.yml validates a dispatch's version input
+ *     through this script, so a typo is refused before a tag is pushed;
+ *   - a human releasing the binary runs `npm run version:from-tag <tag>` and
+ *     feeds the result to `npm version --no-git-tag-version` before
+ *     `npm publish`. See "Releasing" in CLAUDE.md.
  *
  * The image side of the same tag is `docker/metadata-action`'s
  * `type=semver,pattern={{version}}` (release.yml), which extracts the same
