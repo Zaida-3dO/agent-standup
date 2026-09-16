@@ -198,12 +198,11 @@ describeIfDb("the wind-down producer — against Postgres", () => {
   });
 
   it("caps an over-long message on the firing it emits", async () => {
-    // `truncateSurveyMessage` is tested directly as a unit, but nothing
-    // asserted that the ASSEMBLER calls it — so replacing the call with
-    // `row.message` left both wind-down suites 25/25 green. That is the
-    // "tested as a unit, unasserted at the call site" shape: the cap is
-    // proved to work and not proved to be applied, which is exactly where a
-    // refactor silently drops it.
+    // `truncateSurveyMessage` is tested directly as a unit. What this case
+    // adds is that the ASSEMBLER applies it: a cap proved to work but not
+    // proved to be called is the "tested as a unit, unasserted at the call
+    // site" shape, where dropping the call at this line keeps every other
+    // test in both wind-down suites green.
     //
     // It matters because `UNRATED_READ_LIMIT` is `MAX_SURVEY_ITEMS * 8`, so
     // the untruncated worst case is 40 rows of unbounded

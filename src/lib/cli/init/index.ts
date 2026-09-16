@@ -78,12 +78,13 @@ async function defaultRunInitSequence(
  * the single source `readInitFlags` iterates.
  *
  * **Exported so the help text can be checked against it rather than against
- * a copy.** `tests/cli-top-level-help.test.ts` previously restated these
- * five names as literals, which made the check one-directional: renaming a
- * flag in the *parser* was caught, renaming one in the *help table* was not
- * — and documenting a flag the command silently ignores is the more likely
- * direction and the worse failure. Deriving the expectation from here means
- * the two cannot drift apart without a test noticing.
+ * a copy.** A test that restates these five names as its own literals can
+ * only catch drift in one direction: it notices a flag renamed in the
+ * parser, and misses one renamed in the help table — which is the more
+ * likely direction and the worse failure, because a command that documents
+ * a flag it silently ignores answers a user's correct invocation with
+ * nothing at all. Deriving the expectation from here means the two cannot
+ * drift apart without a test noticing.
  */
 export const INIT_FLAG_NAMES = [
   "database-url",

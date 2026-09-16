@@ -106,8 +106,9 @@ function harness() {
 }
 
 describe("a session named only in an operation's input reaches the delivery seam", () => {
-  // The acceptance criterion of PR #423, as a test rather than a manual
-  // observation against a dev server that no longer exists.
+  // The headline behaviour, held as a repeatable check rather than as a
+  // manual observation against a running server — which is evidence that
+  // expires the moment the server is shut down.
   //
   // The digest is held for SESSION-X BEFORE the call, and the call names
   // SESSION-X only in its input — no envelope session anywhere. If the seam
