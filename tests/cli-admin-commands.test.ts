@@ -1,10 +1,10 @@
-// The `repo` · `area` · `machine` · `account` command-line nouns
+// The `repo` · `area` · `machine` · `account` · `person` command-line nouns
 // (MILESTONES.md #92, SCHEMA.md §20). Same shape as tests/cli-dispatch.ts's
 // "input building" section: drives `runCommand` against a recording binding
 // so the assertions are about dispatch + flag parsing, never about the
 // service layer or a live database.
 import { describe, expect, it } from "vitest";
-import { EXIT, runCommand } from "@/lib/cli";
+import { EXIT, nouns, runCommand, verbsFor } from "@/lib/cli";
 import type { Binding } from "@/lib/cli";
 
 /** A binding that records every call and always accepts. */
@@ -277,5 +277,206 @@ describe("account", () => {
     );
     expect(outcome.exitCode).toBe(EXIT.MALFORMED);
     expect(binding.calls).toEqual([]);
+  });
+});
+
+describe("person", () => {
+  // The noun SCHEMA.md §20 and §23.3 both name, and which this file's
+  // subject module quoted in its own header while binding nothing. Every
+  // assertion below reaches `runCommand` by the words a person types, so a
+  // `person` entry that is absent, misspelled, or wired to the wrong
+  // operation fails here rather than at a caller.
+  it("list defaults includeArchived to false", async () => {
+    const binding = recorder();
+    await runCommand(["person", "list"], binding);
+    expect(binding.calls).toEqual([
+      { operation: "list_people", input: { includeArchived: false } },
+    ]);
+  });
+
+  it("list --include-archived flips the flag", async () => {
+    const binding = recorder();
+    await runCommand(["person", "list", "--include-archived"], binding);
+    expect(binding.calls[0]?.input).toEqual({ includeArchived: true });
+  });
+
+  it("list --limit is sent as a number, not the string that was typed", async () => {
+    // `list_people` is the only paged read this file's nouns reach, and
+    // `limit` is a `z.number()`. Passed through raw it would be `"5"` and
+    // the schema would refuse it, so this pins the type as well as the
+    // value — `toEqual` distinguishes 5 from "5".
+    const binding = recorder();
+    await runCommand(["person", "list", "--limit", "5"], binding);
+    expect(binding.calls[0]?.input).toEqual({ includeArchived: false, limit: 5 });
+  });
+
+  it("list --limit refuses a non-number before reaching the binding", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(["person", "list", "--limit", "many"], binding);
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  it("list --cursor passes the page cursor through", async () => {
+    const binding = recorder();
+    await runCommand(["person", "list", "--cursor", "user-a"], binding);
+    expect(binding.calls[0]?.input).toEqual({ includeArchived: false, cursor: "user-a" });
+  });
+
+  it("update refuses with no id, before reaching the binding", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(["person", "update"], binding);
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  it("update creates: id plus every provided flag, kebab-case translated", async () => {
+    const binding = recorder();
+    await runCommand(
+      [
+        "person",
+        "update",
+        "ope",
+        "--display-name",
+        "Ope",
+        "--avatar",
+        "ope.png",
+        "--colour",
+        "#336699",
+      ],
+      binding,
+    );
+    expect(binding.calls).toEqual([
+      {
+        operation: "update_person",
+        input: { id: "ope", displayName: "Ope", avatar: "ope.png", colour: "#336699" },
+      },
+    ]);
+  });
+
+  it("update omits fields that were not given, rather than sending them as undefined keys", async () => {
+    // The distinction the operation is built on: omitted means "no change",
+    // and it reads that off the key being absent.
+    const binding = recorder();
+    await runCommand(["person", "update", "ope", "--display-name", "Ope"], binding);
+    const input = binding.calls[0]?.input as Record<string, unknown>;
+    expect(Object.keys(input).sort()).toEqual(["displayName", "id"]);
+  });
+
+  it("update --clear-avatar sends avatar: null, which an empty string cannot say", async () => {
+    const binding = recorder();
+    await runCommand(["person", "update", "ope", "--clear-avatar"], binding);
+    expect(binding.calls[0]?.input).toEqual({ id: "ope", avatar: null });
+  });
+
+  it("update refuses --avatar and --clear-avatar together", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(
+      ["person", "update", "ope", "--avatar", "ope.png", "--clear-avatar"],
+      binding,
+    );
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  it("update --clear-colour sends colour: null", async () => {
+    const binding = recorder();
+    await runCommand(["person", "update", "ope", "--clear-colour"], binding);
+    expect(binding.calls[0]?.input).toEqual({ id: "ope", colour: null });
+  });
+
+  it("update refuses --colour and --clear-colour together", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(
+      ["person", "update", "ope", "--colour", "#336699", "--clear-colour"],
+      binding,
+    );
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  it("update --notify-rules parses JSON and passes the stored snake_case spelling through untouched", async () => {
+    // The adapter does **not** translate `when_all` to `whenAll`, on
+    // purpose: `update_person` validates in the stored spelling precisely
+    // so a rule that would parse back to zero conditions — and then
+    // silently never fire — is refused on the way in. A helpful rewrite
+    // here would defeat that check from behind it.
+    const binding = recorder();
+    await runCommand(
+      [
+        "person",
+        "update",
+        "ope",
+        "--notify-rules",
+        '[{"notify":["ope"],"when_all":[{"field":"state","op":"eq","value":"merged"}]}]',
+      ],
+      binding,
+    );
+    expect(binding.calls[0]?.input).toEqual({
+      id: "ope",
+      notifyRules: [{ notify: ["ope"], when_all: [{ field: "state", op: "eq", value: "merged" }] }],
+    });
+  });
+
+  it("update --notify-rules refuses invalid JSON before reaching the binding", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(
+      ["person", "update", "ope", "--notify-rules", "{not json"],
+      binding,
+    );
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  it("update --clear-notify-rules sends notifyRules: null", async () => {
+    const binding = recorder();
+    await runCommand(["person", "update", "ope", "--clear-notify-rules"], binding);
+    expect(binding.calls[0]?.input).toEqual({ id: "ope", notifyRules: null });
+  });
+
+  it("update refuses --notify-rules and --clear-notify-rules together", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(
+      ["person", "update", "ope", "--notify-rules", "[]", "--clear-notify-rules"],
+      binding,
+    );
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  it("update --archive sets archived: true", async () => {
+    const binding = recorder();
+    await runCommand(["person", "update", "ope", "--archive"], binding);
+    expect(binding.calls[0]?.input).toEqual({ id: "ope", archived: true });
+  });
+
+  it("update --unarchive sets archived: false", async () => {
+    const binding = recorder();
+    await runCommand(["person", "update", "ope", "--unarchive"], binding);
+    expect(binding.calls[0]?.input).toEqual({ id: "ope", archived: false });
+  });
+
+  it("update refuses --archive and --unarchive together", async () => {
+    const binding = recorder();
+    const outcome = await runCommand(
+      ["person", "update", "ope", "--archive", "--unarchive"],
+      binding,
+    );
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(binding.calls).toEqual([]);
+  });
+
+  it("is a noun the help text lists, with exactly the verbs there are operations for", () => {
+    // The defect this row fixes was not a broken command — it was a noun
+    // that did not exist, so `standup --help` never mentioned `person` and
+    // nothing pointed a stuck caller at it. This pins the discovery
+    // surface, which is what a person encounters first.
+    //
+    // `verbsFor` is asserted exactly rather than with `toContain`: there is
+    // no `get_person` operation to bind a `get` to, and a `person get`
+    // appearing here would mean the command table had grown behaviour of
+    // its own instead of reaching the service layer.
+    expect(nouns()).toContain("person");
+    expect(verbsFor("person")).toEqual(["list", "update"]);
   });
 });

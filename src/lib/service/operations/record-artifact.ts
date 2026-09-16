@@ -377,9 +377,54 @@ async function resolveCreator(
       createdById,
     );
     if (personRows.length === 0) {
-      throw new NotFoundError(`No such person: ${createdById}.`, {
-        fields: ["createdById"],
-      });
+      // **Two different situations wear the same refusal, and only one of
+      // them is a typo.** On an installation with profiles, `No such
+      // person: <id>` is the whole answer — the caller named one that is
+      // not there, and the remedy is to name one that is. On an
+      // installation with *zero* `Person` rows it is actively misleading:
+      // it reads as "that id is wrong" when the truth is that no id could
+      // have worked, and the caller has no way to tell which they are
+      // looking at from the message alone.
+      //
+      // That second case is not hypothetical, and it is not recoverable by
+      // retrying. `merge_approval` is person-only, so on an item with
+      // `mergeAuthority: needs_approval` this refusal is the last thing
+      // between the work and being landed — and an empty `Person` table
+      // makes the gate unsatisfiable rather than merely unsatisfied. The
+      // person who hits it is, by construction, new: `standup init` seeds
+      // profiles, so an empty table means the install skipped or failed
+      // that step.
+      //
+      // So the count is read, and only in the branch that is already
+      // failing. One extra query on a path that throws costs nothing, and
+      // the alternative — naming the remedy unconditionally — would append
+      // "create one" to a refusal on an install with forty profiles, where
+      // it is wrong advice and reads as a non-sequitur.
+      //
+      // **The remedy is named as a command line, not as an operation.**
+      // `update_person` is waived off both MCP transports, and naming it
+      // here would be advice an MCP caller cannot follow (the class
+      // `../describe/advice.ts` exists to catch). `standup person update`
+      // is the surface that is actually reachable from a no-server
+      // install, which is the install this branch is for.
+      const anyPerson = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
+        `SELECT "id" FROM "Person" LIMIT 1`,
+      );
+      if (anyPerson.length === 0) {
+        throw new NotFoundError(
+          `No such person: ${createdById}. This installation has no profiles at all, so no ` +
+            `id would have worked here — an artifact recorded as a person needs one to exist ` +
+            `first. Create one with \`standup person update ${createdById} --display-name ` +
+            `"<name>"\`, or re-run \`standup init\`, which seeds profiles.`,
+          { fields: ["createdById"] },
+        );
+      }
+      throw new NotFoundError(
+        `No such person: ${createdById}. List the profiles this installation has with ` +
+          `\`standup person list\`, or create this one with \`standup person update ` +
+          `${createdById} --display-name "<name>"\`.`,
+        { fields: ["createdById"] },
+      );
     }
   }
 

@@ -32,6 +32,13 @@ interface ServiceError {
   code: string;
   fields?: string[];
   guard?: string;
+  /**
+   * The refusal text. Present on every thrown service error and simply not
+   * declared here until a test needed to read one — the `No such person`
+   * cases below assert the *remedy* the message names, not just its code,
+   * because naming a remedy is the whole behaviour they cover.
+   */
+  message: string;
 }
 
 describeIfDb("record_artifact (#98), against Postgres", () => {
@@ -888,6 +895,100 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(error.code).toBe("not_found");
       expect(error.fields).toContain("createdById");
     });
+
+    it("names a remedy the caller can actually run, not just the id that failed", async () => {
+      // `No such person: <id>.` was the whole message, and it is the right
+      // answer to only one of the two situations that reach it. The remedy
+      // has to be *nameable* before it can be named — `update_person` was
+      // bound to no CLI verb at all, so for a no-server installation this
+      // refusal pointed nowhere. It points at `standup person` now because
+      // that noun exists.
+      //
+      // The command line is named rather than the operation on purpose:
+      // `update_person` is waived off both MCP transports, so naming it
+      // here would be advice an MCP caller could not follow — the defect
+      // class `@/lib/service/describe/advice.ts` exists to catch.
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        kind: "code_review",
+        verdict: "lgtm",
+        createdByType: "person",
+        createdById: "nobody-at-all",
+      });
+
+      expect(error.message).toContain("No such person: nobody-at-all");
+      expect(error.message).toContain("standup person list");
+      expect(error.message).toContain("standup person update nobody-at-all");
+      // This installation HAS profiles, so the message must not claim
+      // otherwise — that is the other branch, and telling a caller with a
+      // populated table to go create their first profile is worse than
+      // saying nothing.
+      expect(error.message).not.toContain("no profiles at all");
+      expect(error.message).not.toContain("standup init");
+    });
+
+    it("says plainly that no id would have worked when the installation has no profiles", async () => {
+      // **The branch that is not a typo.** With zero `Person` rows,
+      // `No such person: <id>` reads as "you named the wrong one" when the
+      // truth is that every id is wrong, and the caller cannot tell which
+      // situation they are in from the message. That case is also the one
+      // that cannot be recovered by retrying: `merge_approval` is
+      // person-only, so on a `needs_approval` item an empty table makes the
+      // merge gate unsatisfiable rather than merely unsatisfied.
+      //
+      // Proved on a scratch database of its own rather than by deleting the
+      // suite's fixture person, which other tests in this file credit.
+      const emptyName = scratchDatabaseName("artifact_no_people");
+      const empty = await createMigratedScratchDatabase(testDatabaseUrl!, emptyName);
+      const emptyPrisma = createTestPrismaClient(empty.url);
+      try {
+        await emptyPrisma.area.create({ data: { id: "web", displayName: "web" } });
+        await emptyPrisma.item.create({
+          data: {
+            id: "no-people-task",
+            kind: "task",
+            title: "t",
+            body: "b",
+            state: "on_deck",
+            area: "web",
+            originType: "source",
+            mergeAuthority: "needs_approval",
+          },
+        });
+        const emptyRuntime = new ServiceRuntime({
+          transaction: prismaTransactionRunner(emptyPrisma),
+          resolveSnapshot: async () => defaultSnapshot(),
+        });
+
+        const error = (await emptyRuntime
+          .call("record_artifact", {
+            itemId: "no-people-task",
+            kind: "code_review",
+            verdict: "lgtm",
+            createdByType: "person",
+            createdById: "ope",
+          })
+          .then(() => {
+            throw new Error("expected record_artifact to reject, but it resolved");
+          })
+          .catch((e: unknown) => e)) as ServiceError;
+
+        expect(error.code).toBe("not_found");
+        expect(error.fields).toContain("createdById");
+        // The three things this branch has to say and the other must not:
+        // that the table is empty, that the id was not the problem, and
+        // that `init` seeds profiles — an empty table means init was
+        // skipped or failed, which is the likelier cause than a typo.
+        expect(error.message).toContain("no profiles at all");
+        expect(error.message).toContain("no id would have worked");
+        expect(error.message).toContain("standup init");
+        expect(error.message).toContain("standup person update ope");
+      } finally {
+        await emptyPrisma.$disconnect();
+        dropScratchDatabase(testDatabaseUrl!, emptyName);
+      }
+    }, 60_000);
 
     it("still accepts a person id that names a real person", async () => {
       // The negative control, and the assertion that would fail if the check

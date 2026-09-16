@@ -1,5 +1,5 @@
 // The `http` binding's route table for the `repo` · `area` · `machine` ·
-// `account` operations (SCHEMA.md §19, §20). MILESTONES.md #92.
+// `account` · `person` operations (SCHEMA.md §19, §20). MILESTONES.md #92.
 //
 // **Its own module, spread into `HTTP_ROUTES` (`./http.ts`) with one line —
 // never entries written inline there**, for the same reason
@@ -121,5 +121,32 @@ export const ADMIN_HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.fre
       body: without(input, "id"),
     }),
     unwrap: (body) => property(body, "account"),
+  },
+  // `people`. Two entries rather than the four the other nouns get: there
+  // is no `get_person` operation and no `person get` verb to route, and the
+  // deliberate-creation `POST` the `repos` routes have does not exist
+  // either — `/api/people` carries no `POST`, because `PATCH /people/{id}`
+  // *is* the create, the same way it is for `machines` and `accounts`.
+  list_people: {
+    method: "GET",
+    // `list_people` is paged, unlike `list_repos` and `list_areas`, so the
+    // query string carries `limit` and `cursor` as well as
+    // `includeArchived`. `queryString` already sends every defined key, so
+    // this needs no special casing here — but the *route* did: it read
+    // `includeArchived` alone and dropped the other two, which would have
+    // made `standup person list --limit 5` page on `direct` and silently
+    // return everything on `http`. Fixed in `app/api/people/route.ts`
+    // alongside this entry, since a route map is only as honest as the
+    // route it names.
+    request: (input) => ({ path: `/api/people${queryString(input)}` }),
+    unwrap: (body) => body,
+  },
+  update_person: {
+    method: "PATCH",
+    request: (input) => ({
+      path: `/api/people/${encodeURIComponent(String(input.id ?? ""))}`,
+      body: without(input, "id"),
+    }),
+    unwrap: (body) => property(body, "person"),
   },
 } as const satisfies Record<string, RouteSpec>);

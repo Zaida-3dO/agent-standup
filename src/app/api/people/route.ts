@@ -27,6 +27,18 @@ export async function GET(request: Request) {
   const includeArchived = url.searchParams.get("includeArchived");
   const input: Record<string, unknown> = {};
   if (includeArchived !== null) input.includeArchived = includeArchived === "true";
+  // `list_people` is paged (MILESTONES.md #109), and this route read only
+  // `includeArchived` — so `limit` and `cursor` arrived and were dropped,
+  // and a caller asking for one page silently got the default hundred with
+  // no `nextCursor` it could act on. Read here the same way
+  // `../items/route.ts` reads them, rather than coerced or defaulted:
+  // `Number` on a non-numeric string yields `NaN`, which `list_people`'s
+  // `z.number().int()` refuses by naming the field — which is the answer
+  // the caller wants, and the same one every other adapter gives.
+  const limit = url.searchParams.get("limit");
+  if (limit !== null) input.limit = Number(limit);
+  const cursor = url.searchParams.get("cursor");
+  if (cursor !== null) input.cursor = cursor;
 
   try {
     const result = await service.call("list_people", input, { caller });
