@@ -61,6 +61,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { APP_URL_ENV, classify } from "./lib/db-gate-status.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Where the suite lives. A constant so the self-test can point elsewhere. */
@@ -122,7 +124,8 @@ export function analyse(root = repoRoot) {
 export function main(argv = process.argv.slice(2), env = process.env, root = repoRoot) {
   const requireDb = argv.includes("--require-db");
   const { all, gated } = analyse(root);
-  const haveDb = typeof env[DB_URL_ENV] === "string" && env[DB_URL_ENV].trim() !== "";
+  const status = classify(env);
+  const haveDb = status.testUrlSet;
 
   // No test files at all means this is pointed at the wrong tree, and a
   // check that inspects nothing must not report success — the same posture
@@ -139,27 +142,58 @@ export function main(argv = process.argv.slice(2), env = process.env, root = rep
 
   if (requireDb && !haveDb) {
     console.error(
-      `${summary}\n\n` +
+      `FAIL: the database suites would not run.\n${summary}\n\n` +
         `${DB_URL_ENV} is not set, so every one of those ${gated.length} files would skip\n` +
         "its entire suite — and a skip is not a failure, so the run would go green\n" +
         "having checked none of their assertions.\n\n" +
         "This mode exists to be run where a database is meant to be present. Failing\n" +
         "here means the environment stopped providing one; a healthy run and a\n" +
-        "silently skipped one are otherwise identical from the outside.",
+        "silently skipped one are otherwise identical from the outside." +
+        // The reasonable guess, named rather than left to be rediscovered.
+        // In CI this is the difference between "the service container died"
+        // and "somebody wired the wrong variable name", which are very
+        // different repairs.
+        (status.state === "near-miss"
+          ? `\n\nNote: ${APP_URL_ENV} IS set here. The suite does not read it — ` +
+            `${DB_URL_ENV}\nis a separate variable on purpose, because these files create, clone and\n` +
+            "DROP databases. If that server is disposable, point " +
+            `${DB_URL_ENV} at it.`
+          : ""),
     );
     return 1;
   }
 
   if (haveDb) {
-    console.log(`${summary} ${DB_URL_ENV} is set, so they run.`);
+    // Leads with the verdict, not with the variable, so that this line and
+    // its skipping sibling below are scannable in exactly the same way: a
+    // reader should classify either one from its first token.
+    console.log(`OK: the database suites will run. ${summary} ${DB_URL_ENV} is set.`);
     return 0;
   }
 
+  // ── The "alarming when fine" fix ──────────────────────────────────────
+  //
+  // This branch is the EXPECTED, HEALTHY state for the no-database CI job
+  // and for any contributor without Postgres. It used to open with
+  // "TEST_DATABASE_URL is NOT set", which reads as a fault report: two
+  // reviewers on 2026-09-16 each independently stopped to verify that this
+  // line was benign, and a third filed it as the one visible signal being
+  // useless — it looked alarming when fine, and identical when broken.
+  //
+  // So the verdict leads, and it says which of the two situations this is.
+  // The count and the remedy still follow; nothing was removed, the order
+  // and the framing changed.
   console.log(
-    `${summary} ${DB_URL_ENV} is NOT set, so their assertions will be skipped\n` +
-      "and the run will be green without having checked them:\n" +
+    `OK (reporting mode): this run will SKIP the database suites, as expected\n` +
+      `without a database. ${summary}\n\n` +
+      `These ${gated.length} files will be skipped, so the run goes green without checking them:\n` +
       gated.map((file) => `  ${file}`).join("\n") +
-      `\n\nStand one up with \`npm run db:up\` and set ${DB_URL_ENV} to run them.`,
+      (status.state === "near-miss"
+        ? `\n\n${APP_URL_ENV} is set, but the suite does not read it. ${DB_URL_ENV} is a\n` +
+          "separate variable on purpose: these files create, clone and DROP databases,\n" +
+          "so pointing them at your application's database would destroy it.\n" +
+          `Set ${DB_URL_ENV} to a DISPOSABLE server to run them.`
+        : `\n\nStand one up with \`npm run db:up\` and set ${DB_URL_ENV} to run them.`),
   );
   return 0;
 }

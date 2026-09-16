@@ -86,6 +86,9 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 
+import { analyse } from "./check-db-gated-suites.mjs";
+import { DB_URL_ENV, banner, classify } from "./lib/db-gate-status.mjs";
+
 const isWindows = process.platform === "win32";
 
 /**
@@ -216,7 +219,7 @@ export function skipClause(files, tests) {
   if (!(files > 0) && !(tests > 0)) return "";
   return (
     `, and ${files} file(s) / ${tests} test(s) SKIPPED and therefore proved nothing` +
-    " — run `npm run check:db-gated` to see which, and why"
+    ` — set ${DB_URL_ENV} to run them; \`npm run check:db-gated\` lists which, and why`
   );
 }
 
@@ -287,6 +290,33 @@ export function verdictFor(status, output) {
   };
 }
 
+/**
+ * The database-gate banner for this environment, as text.
+ *
+ * Wraps the existing static analysis (`check-db-gated-suites.mjs`) rather
+ * than reimplementing it — the commissioning task was explicit that the
+ * mechanism already exists and the gap is that it is not what `npm test`
+ * gives you by default. This is the wire, not a second mechanism.
+ *
+ * Defensive `try`: a run must never fail because its *narration* threw. If
+ * the analysis cannot read the tree, the suite's own result still stands.
+ *
+ * `env` is typed as a loose record rather than as Node's `ProcessEnv`: this
+ * reads exactly two optional keys, and demanding the full shape would force
+ * every caller — the test above most of all — to supply a `NODE_ENV` that
+ * has nothing to do with the question being asked.
+ *
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function gateNotice(env = process.env) {
+  try {
+    const { all, gated } = analyse();
+    return banner(classify(env), gated.length, all.length).join("\n");
+  } catch (cause) {
+    return `[run-tests] could not determine the database-gate status: ${String(cause)}`;
+  }
+}
+
 function main() {
   const args = process.argv.slice(2);
 
@@ -295,6 +325,14 @@ function main() {
     console.error(`\n[run-tests] ${reporter.message}\n`);
     process.exit(1);
   }
+
+  // Printed BEFORE the run as well as after. Before, because a reader
+  // watching a 60s suite should know what it is about to prove while it is
+  // still proving it; after, because the tail is what most readers actually
+  // see. The same text twice is deliberate — this is the sentence that made
+  // a full run and a 20%-skipped run indistinguishable.
+  const notice = gateNotice();
+  console.log(`\n${notice}\n`);
 
   // `shell: false` on POSIX is what makes the status trustworthy: there is
   // no pipeline for it to be reassigned by. Windows needs `npx.cmd` through
@@ -316,6 +354,13 @@ function main() {
   if (result.stderr) process.stderr.write(result.stderr);
 
   const verdict = verdictFor(result.status, `${result.stdout ?? ""}${result.stderr ?? ""}`);
+
+  // Repeated here because the copy printed before the run is, by the end of a
+  // full suite, thousands of lines up — and this tree's suite legitimately
+  // prints a wall of JSON error logs (tests asserting on failure paths) that
+  // look far more alarming than the banner does. Without this repeat, the
+  // one thing a reader must not miss is the one thing scrolled off screen.
+  console.log(`\n${notice}`);
 
   // The last line on stdout, deliberately: it is what survives `| tail`,
   // which is how this run is most often read.

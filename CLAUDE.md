@@ -339,19 +339,38 @@ under test rather than a missing build step.
 that this bites after a **rebase onto a new migration** too, not only in a brand-new worktree: a
 client generated against an older schema is stale in exactly the same way.
 
-### A local run without a database is quieter than it looks
+### A local run without a database checks far less — and now says so
 
 Most test files self-gate on `TEST_DATABASE_URL` — `const describeIfDb = testDatabaseUrl ? describe
 : describe.skip` — so with no database set, every assertion in them is **skipped**. A skip is not a
-failure, so `npm test` goes green having checked none of them, and nothing in the summary says which
-claims went untested. That is a comfortable green with a hole in it, and the hole has cost real time:
-a change once deleted a body of behaviour and left tests still asserting the deleted version, and
-every local run skipped the file and reported nothing until somebody stood up Postgres by hand.
+failure, so `npm test` goes green having checked none of them. That is a comfortable green with a
+hole in it, and the hole has cost real time: a change once deleted a body of behaviour and left tests
+still asserting the deleted version, and every local run skipped the file and reported nothing until
+somebody stood up Postgres by hand.
+
+**`npm test` now states which situation you are in**, at the start of the run and again at the end,
+so the two cannot be confused:
+
+```
+DATABASE-GATED SUITES: SKIPPED — TEST_DATABASE_URL is not set.
+135 of 498 test files gate on it and will SKIP ENTIRELY.
+```
+
+versus `DATABASE-GATED SUITES: ENABLED` when it is set. **Read that banner before you believe a
+green run.** A full local run is ~498 files / ~10,600 tests; a run without a database is ~401 /
+~8,270. If you changed anything with a database-backed test and the banner says SKIPPED, your change
+was not exercised.
 
 ```bash
-npm run check:db-gated     # which files gate on a database, and whether this run will skip them
+npm run check:db-gated     # lists exactly which files gate on a database
 npm run db:up              # a local Postgres, then export TEST_DATABASE_URL to run them
 ```
+
+**`DATABASE_URL` is not a substitute and is deliberately not accepted as one.** It is the variable
+everything else here uses, which is why it is the common wrong guess — but these files do not read a
+database, they `CREATE` one, clone templates into it and `DROP ... WITH (FORCE)`. Pointing them at
+your application's database would destroy it. Set `TEST_DATABASE_URL` to a **disposable** server; if
+you set only `DATABASE_URL`, the banner tells you so by name rather than skipping in silence.
 
 CI runs both halves: `Static checks & build` has no database and *reports* what it is skipping, while
 `Database tests` runs `check:db-gated:require`, which **fails** if `TEST_DATABASE_URL` is missing —
