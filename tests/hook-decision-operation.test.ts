@@ -648,11 +648,12 @@ describe("the operation touches no table on the ordinary path", () => {
     { id: "unscoped-recursive-search", tool: "Bash", command: "grep -rn needle ." },
     { id: "rebase-before-checking-for-conflicts", tool: "Bash", command: "git rebase main" },
     // **Not `git commit --no-gpg-sign`.** That spelling is masked: it is a
-    // work-recording command, so `needs` already asks for the assignment
-    // and the old gate answered yes for the wrong reason. Only the verbs
-    // that create a commit without being a commit — rebase, cherry-pick,
-    // revert, am — were actually exposed, which is why a test written
-    // against the obvious spelling would have passed throughout.
+    // work-recording command, so `needs` asks for the assignment on its
+    // account and a gate keyed on `needs` answers yes for a reason that has
+    // nothing to do with this entry. Only the verbs that create a commit
+    // without being a commit — rebase, cherry-pick, revert, am — actually
+    // exercise the path, which is why a case written against the obvious
+    // spelling asserts nothing about it.
     {
       id: "commit-signing-explicitly-suppressed",
       tool: "Bash",
@@ -693,8 +694,9 @@ describe("the operation touches no table on the ordinary path", () => {
 
   it("honours an override for every pre entry that can fire without state", async () => {
     // The structural half, and the reason the four cases above are not the
-    // whole test. They pin the entries that exist today; this one covers
-    // the entry somebody adds next, which is how all four got here.
+    // whole test. Those name four entries; this one covers the entry
+    // somebody adds next, which is the case a hand-written list always
+    // misses.
     //
     // It walks the catalogue, asks each `pre` entry's predicate whether it
     // fires on a context carrying nothing but what the hook already has in

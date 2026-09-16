@@ -31,6 +31,7 @@ import {
   type SurveyableFiring,
 } from "@/lib/interventions/survey";
 import { INTERVENTION_SCORE_MEANINGS } from "@/lib/interventions/scoring";
+import { scoringPrompt } from "@/lib/interventions/delivery";
 
 function firing(overrides: Partial<SurveyableFiring> = {}): SurveyableFiring {
   return { eventId: "1", entryId: "I10", at: 1_000, ...overrides };
@@ -178,13 +179,53 @@ describe("buildSurvey", () => {
     expect(survey?.prompt).toContain("blocked");
   });
 
-  // Kills: removing the JSON contract from the prompt. A prose answer needs
-  // a model call to interpret, which is the cost this design avoids.
-  it("demands a structured reply", () => {
+  // Kills: dropping the tool name from the prompt, which is what made the
+  // survey unanswerable in practice. The reply must be a structured call
+  // rather than prose — a prose answer needs a model call to interpret,
+  // which is the cost this design avoids — and the only structured reply
+  // reachable from a Stop is a tool the agent can call there and then.
+  it("names the tool that records the answer", () => {
     const survey = buildSurvey([firing()]);
 
-    expect(survey?.prompt).toContain('"scores"');
-    expect(survey?.prompt).toMatch(/JSON only/i);
+    expect(survey?.prompt).toContain("score_intervention");
+  });
+
+  // Kills: reinstating the JSON reply instruction. It asked for a shape
+  // nothing ingests — `parseSurveyResponse` has no production caller and
+  // cannot have one, since a reply arrives in the next turn, after the hook
+  // process has exited. An agent that followed it exactly produced no row
+  // and was asked again at the next wind-down.
+  it("does not ask for a reply shape that nothing reads", () => {
+    const survey = buildSurvey([firing()]);
+
+    expect(survey?.prompt).not.toContain('"scores"');
+    expect(survey?.prompt).not.toMatch(/JSON/i);
+  });
+
+  // Kills: letting the two scoring surfaces drift apart again. This is the
+  // defect the row was actually about — not that either prompt was wrong in
+  // isolation, but that they instructed differently for the same table, and
+  // inconsistent prompting is how scores stop being comparable. Asserted
+  // against the sibling rather than against a literal, so a future rename
+  // of the tool has to break both or neither.
+  it("instructs the same way as the delivery-time prompt", () => {
+    const survey = buildSurvey([firing()]);
+    const sibling = scoringPrompt([
+      {
+        id: "unscoped-recursive-search",
+        source: "builtin",
+        phase: "pre",
+        audience: "agent",
+        level: "nudge",
+        timing: "immediate",
+        messages: { plain: "p", prominent: "P" },
+      },
+    ]);
+
+    expect(sibling).not.toBeNull();
+    const tool = "score_intervention";
+    expect(sibling).toContain(tool);
+    expect(survey?.prompt).toContain(tool);
   });
 
   it("is null when there is nothing to ask", () => {

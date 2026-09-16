@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import { runHook } from "@/lib/hook/run";
 import { HOOK_EXIT } from "@/lib/hook/response";
 import { WIND_DOWN_QUIET_MS } from "@/lib/interventions/survey";
+import { readWindDownContext } from "@/lib/hook/stop-catch";
 
 const NOW = 1_700_000_000_000;
 
@@ -93,7 +94,13 @@ describe("a real session ending", () => {
     });
 
     expect(rendered.stderr).toContain("eventId 11");
-    expect(rendered.stderr).toContain('{"scores":[{"eventId"');
+    // And the tool to pass it to. This assertion used to require the JSON
+    // reply shape instead, which contradicted this test's own name: the
+    // shape had no ingestion path, so quoting the id back in it produced no
+    // row. The id and the tool together are what make the loop answerable,
+    // and they have to arrive in the same prompt.
+    expect(rendered.stderr).toContain("score_intervention");
+    expect(rendered.stderr).not.toContain('{"scores":[{"eventId"');
   });
 
   it("carries enough context to tell a genuine 1 from a sulk", async () => {
@@ -247,5 +254,139 @@ describe("the survey can never hold a turn open", () => {
 
     expect(rendered.exitCode).toBe(HOOK_EXIT.ALLOW);
     expect(rendered.stderr).not.toContain("intervention-survey");
+  });
+
+  // ── Re-verified adversarially after changing the prompt ───────────────
+  //
+  // The cases above were written against the JSON prompt. Changing what the
+  // survey *says* cannot in principle change what it can *do* — the return
+  // type carries no verdict — but "in principle" is exactly the reasoning
+  // DECISIONS.md §6 refuses to rest on, so the invariant is re-established
+  // against the new text rather than assumed to have survived it.
+
+  it("exits zero when the server throws outright", async () => {
+    // Not the same as answering nothing: a rejected promise unwinds through
+    // a different path than an `undefined` return, and a stop that died on
+    // an exception is a stop the agent cannot complete.
+    const rendered = await runHook({
+      stdin: stopStdin(),
+      askServer: async () => {
+        throw new Error("server exploded");
+      },
+      now: NOW,
+      survey: quiet,
+    });
+
+    expect(rendered.exitCode).toBe(HOOK_EXIT.ALLOW);
+    expect(rendered.stdout).toBe("");
+  });
+
+  it("ignores a deny that arrives inside the windDown block", async () => {
+    // The adversarial case: a server trying to refuse the stop through the
+    // one field the survey reads. `WindDownContext` has no field that could
+    // carry a verdict, so these are dropped as unrecognised — but a future
+    // spread that widened the parse would make them live, and this is what
+    // fails if it does.
+    // Through the parser, like the wire would — which is itself half the
+    // assertion: the verdict-shaped fields must not survive the read.
+    const windDown = readWindDownContext({
+      unrated: [{ eventId: "11", entryId: "I10", at: NOW - 600_000 }],
+      liveCrew: 0,
+      wakeScheduled: false,
+      decision: "deny",
+      exitCode: 2,
+      block: true,
+      reason: "you may not stop",
+    });
+
+    expect(windDown).toBeDefined();
+    expect(windDown).not.toHaveProperty("decision");
+    expect(windDown).not.toHaveProperty("exitCode");
+
+    const rendered = await runHook({
+      stdin: stopStdin(),
+      askServer: async () => ({ decision: "allow" as const, windDown }),
+      now: NOW,
+      survey: quiet,
+    });
+
+    expect(rendered.exitCode).toBe(HOOK_EXIT.ALLOW);
+    expect(rendered.stdout).toBe("");
+    expect(rendered.stderr).not.toContain("you may not stop");
+  });
+
+  it("exits zero on every malformed windDown shape the wire can deliver", async () => {
+    // Each of these is a different way for the block to be wrong, and every
+    // one must cost a missed survey rather than a failed stop. A dropped
+    // field makes the survey silent, never spurious — the direction the
+    // parser is built to fail in.
+    //
+    // **Routed through `readWindDownContext` deliberately, rather than
+    // handed to `runHook` raw.** That parser is the real boundary: the HTTP
+    // transport (`ask-http.ts`) runs every response's `windDown` through it
+    // before `runHook` ever sees one, so a shape it rejects cannot arrive
+    // over the wire. Feeding `runHook` directly would assert a guarantee
+    // the system does not make and does not need to — and it is not a
+    // theoretical distinction: `{ unrated: [null] }` passed straight to
+    // `runHook` throws in `dedupeForSurvey`, because nothing downstream of
+    // the parser re-checks what the parser already guarantees. The parser
+    // drops the null, so the wire is safe; see the note on this suite.
+    const malformed: unknown[] = [
+      null,
+      "not an object",
+      42,
+      [],
+      {},
+      { unrated: "not an array" },
+      { unrated: [null] },
+      { unrated: [{ eventId: 11, entryId: "I10", at: NOW }] },
+      { unrated: [{ entryId: "I10", at: NOW }] },
+      { unrated: [{ eventId: "11", entryId: "I10", at: "not a number" }] },
+      { unrated: [{ eventId: "11", entryId: "I10", at: NOW }], liveCrew: -1 },
+      { unrated: [{ eventId: "11", entryId: "I10", at: NOW }], liveCrew: 1.5 },
+      { unrated: [{ eventId: "11", entryId: "I10", at: NOW }], wakeScheduled: "yes" },
+    ];
+
+    for (const raw of malformed) {
+      const label = JSON.stringify(raw) ?? String(raw);
+      const windDown = readWindDownContext(raw);
+
+      const rendered = await runHook({
+        stdin: stopStdin(),
+        askServer: async () => ({
+          decision: "allow" as const,
+          ...(windDown === undefined ? {} : { windDown }),
+        }),
+        now: NOW,
+        survey: quiet,
+      });
+
+      expect(rendered.exitCode, `windDown = ${label}`).toBe(HOOK_EXIT.ALLOW);
+      expect(rendered.stdout, `windDown = ${label}`).toBe("");
+    }
+  });
+
+  it("exits zero on a message far past any sane bound", async () => {
+    // A 200k-character message is the shape that turns a render into a hang
+    // or an out-of-memory at exactly the moment a session is trying to end.
+    const huge = "x".repeat(200_000);
+    const rendered = await runHook({
+      stdin: stopStdin(),
+      askServer: async () => ({
+        decision: "allow" as const,
+        windDown: {
+          unrated: [
+            { eventId: "11", entryId: "I10", at: NOW - 600_000, tool: "Bash", message: huge },
+          ],
+          liveCrew: 0,
+          wakeScheduled: false,
+        },
+      }),
+      now: NOW,
+      survey: quiet,
+    });
+
+    expect(rendered.exitCode).toBe(HOOK_EXIT.ALLOW);
+    expect(rendered.stdout).toBe("");
   });
 });

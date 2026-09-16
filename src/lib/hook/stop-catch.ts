@@ -288,9 +288,17 @@ export function readStopContext(value: unknown): StopContext | undefined {
 //
 // `../interventions/survey.ts` decides *when* to ask and *what the question
 // looks like*, and it did both correctly from the day it was written. What
-// it never had was a caller: nothing in `src/` referenced `buildSurvey`,
-// `shouldSurvey` or `parseSurveyResponse`, so the scale the owner specified
-// existed as a library and was never once put to a session.
+// it never had was a caller: nothing in `src/` referenced `buildSurvey` or
+// `shouldSurvey`, so the scale the owner specified existed as a library and
+// was never once put to a session.
+//
+// **The answer arrives as a `score_intervention` call, not as a reply to
+// this text.** That is what the prompt now asks for, and it is the only
+// shape reachable from here: a reply would arrive in the session's next
+// turn, after this process has exited, so reading one would mean holding
+// the turn open — which §6 forbids. `parseSurveyResponse` is still exported
+// for the JSON shape and still has no caller here, deliberately; its
+// docstring carries the reasoning.
 //
 // This is the delivery half. It lives here rather than in its own module
 // because it is the same shape as the stop catch in every respect that
