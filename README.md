@@ -30,13 +30,12 @@ rather than a decision.
 
 ## Installing
 
-> **Not from npm, for now.** The `agent-standup` package on npm is **0.20.0**,
-> which is several releases behind what this repository builds — the publish
-> step has been failing, so `npm install agent-standup` gets a build that
-> predates fixes the docs here describe. Until that is resolved, use one of the
-> two paths below. This note is deliberately specific rather than an omission:
-> installing the stale artifact and reading these docs against it is the one
-> outcome worth steering away from.
+> **Install `latest`, and let the registry say what that is.** The docs here
+> deliberately name no version number for the npm package, so there is nothing
+> in this file that can disagree with what `npm install agent-standup` actually
+> gets you. `npm view agent-standup version` answers that question, and it is
+> the only answer worth trusting. The same reasoning applies to the container
+> image: pull a tag, not a number copied out of prose.
 
 **Which path you want depends on what you are setting up**, and these are
 different jobs:
@@ -93,14 +92,18 @@ what to do when Postgres is a sibling container, is under
 ### Install a client
 
 A client never opens a database connection — it talks to the server's API, which
-is where the rules live. It needs a checkout, because there is no current
-published package to install from:
+is where the rules live. That is the whole of what a client needs, and it is why
+the npm package is enough: **no database, no schema, no generate step.**
 
 ```bash
-git clone https://github.com/Zaida-3dO/agent-standup.git
-cd agent-standup
-npm install
-npm run build:cli          # builds dist/bin/standup.js — seconds, no database needed
+npm install -g agent-standup      # or: npm install agent-standup, for a local install
+```
+
+To run it without installing anything at all — which is what an MCP entry or a
+hook wants, because it picks up new releases on its own:
+
+```bash
+npx -y -p agent-standup standup --help
 ```
 
 Then point it at the server and check it before relying on it:
@@ -109,7 +112,7 @@ Then point it at the server and check it before relying on it:
 export STANDUP_URL=https://standup.example.internal
 export STANDUP_TOKEN=<this machine's token>
 
-node dist/bin/standup.js doctor --json
+standup doctor --json
 ```
 
 `doctor` is the command to run when anything else refuses: it reports what is
@@ -119,8 +122,31 @@ its whole reason to exist — and it never prints a connection string or a token
 A correctly configured client reports `"binding":"http"` and `"configured":true`
 with no `DATABASE_URL` set at all.
 
-`npm link` (or adding `dist/bin` to `PATH`) gets you `standup` rather than
-`node dist/bin/standup.js`; every example below is written the short way.
+A global install puts `standup` on `PATH`; every example below is written that
+short way. From a local install the binary is at `./node_modules/.bin/standup`.
+
+#### Direct mode needs one extra command. HTTP mode does not.
+
+**Skip this unless you are running `--direct` or `standup mcp`** — those two are
+the only commands that open the database themselves. Everything else in this
+README, and every agent integration, goes over HTTP and is fully set up by the
+`STANDUP_URL` above.
+
+Direct mode needs a generated Prisma client, and npm generates one for an
+installed _dependency_ only when the package asks it to at install time. This
+package deliberately does not ask — see
+[`DECISIONS.md`](docs/plans/DECISIONS.md) — so on an npm or npx install the
+client is a placeholder until you generate it once, pointing Prisma at the
+schema the package ships:
+
+```bash
+npx prisma generate --schema ./node_modules/agent-standup/prisma/schema.prisma
+```
+
+Run `--direct` without it and the CLI says so and names that command, rather
+than failing somewhere inside Prisma. A bare `prisma generate` is **not** the
+same thing and will not work: it looks for a schema in your own project, and
+the one that matters belongs to the installed package.
 
 ### Start here once something is installed
 
@@ -140,7 +166,9 @@ an admin connection with `--provision-url`.
 
 To connect an agent rather than a person, see
 [using-agent-standup.md](docs/using-agent-standup.md); `standup mcp` serves MCP
-over stdio for an installation with no server.
+over stdio for an installation with no server, which makes it one of the two
+commands that needs
+[the generate step above](#direct-mode-needs-one-extra-command-http-mode-does-not).
 
 ## Docs
 

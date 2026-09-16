@@ -209,6 +209,14 @@ jobs:
       # here, impossible to unpublish.
       - name: Check nothing refers to anything outside this repository
         run: npm run check:external-refs
+      # Beside its neighbour above, and for the same two reasons: Node
+      # builtins only, and the failure it catches is one a reader meets
+      # before anything else. Deliberately offline — it asserts the docs
+      # name *no* package version rather than comparing one against the
+      # registry, so publishing (a manual, interactive step) cannot turn
+      # every open pull request red for something its author did not do.
+      - name: Check no document states an npm version that can go stale
+        run: npm run check:doc-version-claims
       - run: npm ci
       - name: Generate Prisma client
         run: npx prisma generate
