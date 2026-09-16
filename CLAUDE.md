@@ -282,6 +282,19 @@ nothing. It works identically on Windows and Linux — git runs a
 `core.hooksPath` script with `sh`, and Git for Windows ships one for that purpose, so there is
 nothing to install or branch on per platform.
 
+**Lint warnings do not block a push — lint errors do.** `eslint` exits non-zero on **errors** only;
+no `--max-warnings` is passed by the hook or by CI. So a run ending
+`✖ 13 problems (0 errors, 13 warnings)` is a **pass**, and the hook says so on its last line
+(`pre-push: passed — pushing`). The rules this repo genuinely enforces are declared severity
+`error` in `eslint.config.mjs` — the database-client import allowlist and the events-backfill
+boundary — and those block exactly as intended.
+
+This matters most on a **first** push. eslint prints the repo's outstanding warnings on every run,
+including a successful one, so a newcomer sees findings in files they never touched and reasonably
+reads them as a refusal. They are not being asked to fix those. Read the verdict line, not the
+volume of output: if it says `passed`, the push went through. Warnings in files you did not modify
+are never yours to clear as a condition of pushing.
+
 **Bypass in an emergency:** `git push --no-verify`. CI still runs the full check list regardless,
 so a bypass costs a slower feedback loop, not correctness.
 

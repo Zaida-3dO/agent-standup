@@ -144,4 +144,30 @@ if [ "$format_status" -ne 0 ] || [ "$lint_status" -ne 0 ]; then
   exit 1
 fi
 
+# ── Say "passed", out loud, even when output was printed ────────────────
+#
+# Every other outcome above announces itself; without this line the PASSING
+# path is the one that says nothing. That silence is the problem, because
+# eslint prints its warnings whether or not they affect the verdict: a repo
+# with warnings outstanding ends a successful run with a wall of yellow and
+# `✖ N problems (0 errors, N warnings)`, and then the hook exits 0 without
+# comment. The push proceeds, but the reader has no way to know that from
+# the output, and reasonably concludes they were refused for findings in
+# files they never touched.
+#
+# That is not hypothetical — it was filed as a P2 against this hook, with
+# the warning count quoted as evidence, by a crew that had genuinely walked
+# the new-contributor path. The gate was correct; only its silence was not.
+#
+# Warnings are advisory BY DESIGN here: `eslint` exits non-zero on errors
+# alone (no `--max-warnings` is passed, here or in CI), and the rules this
+# repo actually enforces — the database-client import allowlist and the
+# events-backfill boundary in eslint.config.mjs — are severity `error`, so
+# they block exactly as intended. Naming that distinction is the whole job
+# of this line: it tells a first-time contributor which of the two things
+# they are looking at, at the only moment they need to know.
+echo ""
+echo "pre-push: passed — pushing."
+echo "pre-push: any warnings above are advisory and did not block this push; only errors do."
+
 exit 0

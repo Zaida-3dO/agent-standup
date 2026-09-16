@@ -13,9 +13,17 @@ dist/
 coverage/
 
 # env files — never commit a real one
+#
+# `.env.*` is what keeps `.env.production` out, and it is broad on purpose:
+# an env file this project has not thought of yet should be ignored by
+# default rather than committed by default. The negations below are the
+# committed templates, and each one needs its own — without an entry here a
+# new `*.example` is silently ignored, `git add` reports nothing, and the
+# template ships empty. Add a line when you add a template.
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # typescript
 *.tsbuildinfo

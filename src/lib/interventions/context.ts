@@ -739,9 +739,11 @@ export async function assembleServiceContext(options: {
   );
 
   const claim = rows[0];
-  // No live claim: none of the six entries this path can fire has anything
-  // to be about. `null` rather than a bare context, so the caller skips the
-  // settings read too.
+  // No live claim: none of the eight entries this path can fire has
+  // anything to be about — each is a fact about the item a session holds.
+  // `null` rather than a bare context, so the caller skips the settings
+  // read too. This is also the cheap exit: one query, and the other eleven
+  // never run.
   if (claim === undefined) return null;
 
   const base: InterventionContext = {

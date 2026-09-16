@@ -52,21 +52,38 @@ The published container image is the supported path, and needs no registry
 credential — the package is public. It is built by CI and pushed to
 `ghcr.io/<owner>/agent-standup`.
 
+Settings come from a **file**, `.env.production`, which compose reads because of
+`--env-file`. Copy the template and fill it in — variables exported in your
+shell do not reach compose by this path:
+
 ```bash
-GHCR_IMAGE=ghcr.io/<owner>/agent-standup:latest
-DATABASE_URL=postgres://user:password@host:5432/agent_standup
+cp .env.production.example .env.production
+```
+
+`.env.production.example` documents all four required settings inline. In
+short:
+
+| Setting          | What it is                                                                                   |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| `GHCR_IMAGE`     | The image to run, e.g. `ghcr.io/OWNER/agent-standup:latest`                                  |
+| `DATABASE_URL`   | The Postgres this server owns, e.g. `postgres://user:password@host:5432/agent_standup`       |
+| `STANDUP_TOKENS` | One bearer token per machine, `machine:token` comma-separated. The front end needs `browser` |
+| `SWEEP_TOKEN`    | The token half of the sweeper's entry in `STANDUP_TOKENS`                                    |
+
+`STANDUP_TOKENS` has no default: unset, the server refuses every authenticated
+call, which is deliberate. `.env.production` is gitignored, so the tokens you
+put in it stay out of the repository.
+
+Then start it:
+
+```bash
 docker compose --env-file .env.production -f docker-compose.prod.yml pull
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
-Set `STANDUP_TOKENS` before the first start — one bearer token per machine, with
-no default. Unset, the server refuses every authenticated call, which is
-deliberate. The front end needs one of its own, named `browser`:
-
-```bash
-STANDUP_TOKENS=browser:TOKEN-A,laptop:TOKEN-B,sweeper:TOKEN-C
-SWEEP_TOKEN=TOKEN-C
-```
+Leave a required setting out and compose refuses to start and names the one
+that is missing — `docker-compose.prod.yml` declares each as `${VAR:?...}`, so
+an incomplete file fails at `up` rather than booting a half-configured server.
 
 `docker-compose.prod.yml` also ships the `sweep-scheduler` service that answers
 the third requirement above. Full detail, including the two health probes and
@@ -251,11 +268,15 @@ registry credential. Wherever it runs, pull and run it with
 [`docker-compose.prod.yml`](docker-compose.prod.yml):
 
 ```bash
-GHCR_IMAGE=ghcr.io/<owner>/agent-standup:latest
-DATABASE_URL=postgres://user:password@host:5432/agent_standup
+cp .env.production.example .env.production   # then fill in the four settings
 docker compose --env-file .env.production -f docker-compose.prod.yml pull
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
+
+The settings themselves are described in
+[`.env.production.example`](.env.production.example) and summarised under
+[Run a server](#run-a-server). They are read from the file named by
+`--env-file`, not from the surrounding shell.
 
 `docker-compose.prod.yml` has no `build:` block and no bind mounts by design — it
 only ever pulls. It ships a health check on `GET /api/health` (liveness only —
