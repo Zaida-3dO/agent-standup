@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { SettingsCache, type SettingsSource, type StoredOverride } from "@/lib/settings";
 import { ServiceRuntime, prismaTransactionRunner, type CallOptions } from "./runtime";
 import { createServiceDeliverer } from "@/lib/interventions/service-delivery";
+import { produceServiceFindings } from "@/lib/interventions/service-producer";
 // Side-effect import: every hand-written guard under `src/lib/service/guards/`
 // registers into the shared `guardRegistry` as a side effect of importing
 // this module — see that module's own header. Imported here, not in
@@ -146,4 +147,18 @@ export const service: ServiceRuntime = new SettingsInvalidatingRuntime({
   transaction: prismaTransactionRunner(prisma, { maxWait: 2000, timeout: 5000 }),
   resolveSnapshot: () => settingsCache.get(),
   deliverInterventions: interventionDeliverer,
+  // The producer for the same channel (MILESTONES.md #128).
+  //
+  // **Both halves are wired here, and the pairing is the point.** The
+  // deliverer above was live in this file for weeks and delivered nothing,
+  // because the only thing that ever filled its accumulator was the hook
+  // route — so the channel built to work "not only through the hook" did
+  // not work without it. This is the other half: it evaluates the entries a
+  // service call can actually answer and hands them to the deliverer, which
+  // is what makes the decoupling real rather than merely intended.
+  //
+  // A deliverer without a producer is the state this file was in. A
+  // producer without a deliverer would find things and drop them. Neither
+  // is a useful configuration, which is why they are not configured apart.
+  produceInterventions: produceServiceFindings,
 });

@@ -20,7 +20,9 @@ import { enforceResponseSize } from "./response-size";
 import { isRehearsalRollback } from "./operations/rehearsal-rollback";
 import { getOperation } from "./registry";
 import type { OperationName, OperationOutput } from "./registry";
+import type { OperationKind } from "./operation";
 import type { Caller, ServiceContext, TransactionHandle } from "./context";
+import type { InterventionFinding } from "@/lib/interventions/types";
 // A refusal names the call that would have prevented it, spelled for the
 // surface the caller is on (MILESTONES.md #111).
 import { invocationWithArgumentFor, surfaceForTransport } from "@/lib/surfaces";
@@ -64,8 +66,44 @@ export interface ServiceRuntimeOptions {
    * Synchronous on purpose. An async deliverer would put an await on every
    * response in the system to compute an advisory field, and everything it
    * needs is already in memory by the time it is called.
+   *
+   * `findings` is what `produceInterventions` noticed on this very call,
+   * already evaluated. It is a parameter rather than something the deliverer
+   * fetches precisely because the deliverer cannot fetch: production needs a
+   * database handle and an await, neither of which this signature has, which
+   * is why the two are separate functions running on opposite sides of the
+   * transaction. Empty for a read, for a caller with no session, and for a
+   * build with no producer — all of which the deliverer handles as it always
+   * did.
    */
-  deliverInterventions?: (result: unknown, caller: Caller) => unknown;
+  deliverInterventions?: (
+    result: unknown,
+    caller: Caller,
+    findings: readonly InterventionFinding[],
+  ) => unknown;
+  /**
+   * Produces the findings the delivery step then decides what to do with
+   * (MILESTONES.md #128).
+   *
+   * **Optional, and absent means no findings are produced on this path** —
+   * the same default `deliverInterventions` takes, and for the same reason:
+   * a runtime constructed without one behaves identically to one built
+   * before this parameter existed.
+   *
+   * Unlike the deliverer this **is** async and **is** handed a database
+   * handle, because the questions it asks are about item state and only a
+   * handle can answer them. It runs inside the transaction, immediately
+   * after the operation's own handler — see step 4b in `#dispatch` for why
+   * after rather than before.
+   *
+   * The runtime gates it to writes with a session; everything narrower than
+   * that is the producer's own business.
+   */
+  produceInterventions?: (options: {
+    db: TransactionHandle;
+    sessionId: string;
+    crewInFlightDeadAfterSeconds?: number;
+  }) => Promise<readonly InterventionFinding[]>;
 }
 
 export interface CallOptions {
@@ -105,11 +143,18 @@ export class ServiceRuntime {
   readonly #transaction: ServiceRuntimeOptions["transaction"];
   readonly #resolveSnapshot: ServiceRuntimeOptions["resolveSnapshot"];
   readonly #deliverer: ServiceRuntimeOptions["deliverInterventions"];
+  readonly #producer: ServiceRuntimeOptions["produceInterventions"];
 
-  constructor({ transaction, resolveSnapshot, deliverInterventions }: ServiceRuntimeOptions) {
+  constructor({
+    transaction,
+    resolveSnapshot,
+    deliverInterventions,
+    produceInterventions,
+  }: ServiceRuntimeOptions) {
     this.#transaction = transaction;
     this.#resolveSnapshot = resolveSnapshot;
     this.#deliverer = deliverInterventions;
+    this.#producer = produceInterventions;
   }
 
   /**
@@ -298,6 +343,12 @@ export class ServiceRuntime {
     // untouched, and the sentinel is matched by class, not by inspecting a
     // code or a shape.
     let result: unknown;
+    // What the producer noticed, carried out of the transaction to the
+    // delivery step below. Declared here rather than returned alongside the
+    // result because the rehearsal-rollback path assigns `result` without
+    // running the producer at all, and a tuple would have to invent a value
+    // for it there.
+    let produced: readonly InterventionFinding[] = [];
     try {
       result = await this.#transaction(async (db) => {
         const ctx: ServiceContext = {
@@ -306,11 +357,36 @@ export class ServiceRuntime {
           caller,
           operation: operation.name,
         };
-        return await operation.handler(ctx, parsed.data as never);
+        const output = await operation.handler(ctx, parsed.data as never);
+        // Step 4b — the producer for the service-delivery channel
+        // (MILESTONES.md #128).
+        //
+        // **Inside the transaction, because this is the only place with a
+        // database handle.** The deliverer that runs after it is
+        // synchronous and holds no handle, deliberately — see
+        // `deliverInterventions` above — so the findings it delivers have
+        // to be produced here and handed forward. Before this existed the
+        // delivery step called `decideDelivery` with no findings at all,
+        // and the accumulator's only filler anywhere was the hook route:
+        // the channel drained a tank nothing on this path ever filled.
+        //
+        // **After the handler, deliberately.** Every entry it can fire
+        // reads a fact the handler may have just changed — a commit
+        // artifact recorded, a review requested, a state moved — so asking
+        // first would report the world as it was one moment before the
+        // caller changed it, and a session that had just opened its pull
+        // request would be told to open one.
+        produced = await this.#produceInterventions(db, caller, settings, operation.kind);
+        return output;
       });
     } catch (error) {
       if (!isRehearsalRollback(error)) throw error;
       result = { outcome: error.outcome };
+      // A rehearsal rolled back, so anything the producer found inside it
+      // described a world that no longer exists. Cleared rather than
+      // delivered: a `dryRun` must not be able to emit a nudge about a
+      // state it deliberately abandoned.
+      produced = [];
     }
 
     // Step 5 — a read that will not fit is refused rather than returned
@@ -340,7 +416,61 @@ export class ServiceRuntime {
     // nudge into a failed read. The payload is small and bounded, but
     // "small" is not an argument for measuring it, and the ordering makes
     // the question moot rather than merely unlikely.
-    return this.#deliverInterventions(result, caller);
+    return this.#deliverInterventions(result, caller, produced);
+  }
+
+  /**
+   * Runs the producer, or answers with nothing.
+   *
+   * ── Three gates, each doing different work ─────────────────────────────
+   *
+   *   1. **A producer must be configured.** A runtime built without one
+   *      behaves exactly as it did before this existed — the same default
+   *      `deliverInterventions` already takes, and the reason roughly forty
+   *      construction sites needed no change.
+   *   2. **The caller must name a session.** Every entry on this path is
+   *      about the item a *session* holds, and there is no such thing for a
+   *      call that names none. This is also what keeps the cost off the
+   *      anonymous read traffic.
+   *   3. **The operation must be a write.** The gate that matters for cost:
+   *      these are real queries and this is the seam every call crosses, so
+   *      running them on every `get_item` would put three lookups on the
+   *      read path. It costs no findings — every entry here describes a fact
+   *      that only a write can change, so a read would re-derive the answer
+   *      the previous write already produced.
+   *
+   * **A producer that throws is swallowed**, for the same reason the
+   * deliverer's is and with more at stake: this one runs *inside* the
+   * caller's transaction, so an exception escaping it would roll back a
+   * write the caller asked for in order to protect an advisory message. The
+   * producer swallows its own failures too; this is the second net, for a
+   * failure in the gating itself.
+   */
+  async #produceInterventions(
+    db: TransactionHandle,
+    caller: Caller,
+    settings: SettingsSnapshot,
+    kind: OperationKind,
+  ): Promise<readonly InterventionFinding[]> {
+    const produce = this.#producer;
+    if (produce === undefined) return [];
+    if (kind !== "write") return [];
+    const sessionId = caller.sessionId;
+    if (sessionId === undefined) return [];
+
+    try {
+      return await produce({
+        db,
+        sessionId,
+        crewInFlightDeadAfterSeconds: settings.values["liveness.dead_after_seconds"],
+      });
+    } catch (error) {
+      log.debug("Intervention production failed; the response carries no findings.", {
+        requestId: caller.requestId,
+        err: error,
+      });
+      return [];
+    }
   }
 
   /**
@@ -364,12 +494,16 @@ export class ServiceRuntime {
    * it. This is the same fail-open reasoning DECISIONS.md sec.16 records for
    * the hook, applied at the only other place a finding can be produced.
    */
-  #deliverInterventions(result: unknown, caller: Caller): unknown {
+  #deliverInterventions(
+    result: unknown,
+    caller: Caller,
+    findings: readonly InterventionFinding[],
+  ): unknown {
     const deliver = this.#deliverer;
     if (deliver === undefined) return result;
 
     try {
-      return deliver(result, caller);
+      return deliver(result, caller, findings);
     } catch (error) {
       log.debug("Intervention delivery failed; returning the result unchanged.", {
         requestId: caller.requestId,

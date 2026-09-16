@@ -670,6 +670,132 @@ export async function assembleContext(options: {
 }
 
 /**
+ * Builds the context for one **service call**, which has no command and no
+ * tool — MILESTONES.md #128's producer.
+ *
+ * ── Why this is a separate entry point rather than a flag on the one above
+ * ───────────────────────────────────────────────────────────────────────
+ *
+ * `assembleContext` gates every query on `needs()`, and `needs()` decides
+ * from the command text and the tool name. A service call carries neither,
+ * so it reports nothing needed and the assembler returns the base context
+ * immediately. That is the correct answer for the question `needs` asks —
+ * *could a command-shaped entry be relevant here* — and it is the wrong
+ * gate for this path, because the entries a service call can fire are not
+ * command-shaped at all. They read item state.
+ *
+ * Threading a `isServiceCall` flag through `needs` would put a parameter
+ * into the hook's hot path that is always false there, and would make one
+ * function answer two different questions depending on who asked. A second
+ * named entry point states the difference instead of hiding it.
+ *
+ * ── What it reads, and the one thing it deliberately does not ──────────
+ *
+ * The same four item-state lookups the `post` path already makes, through
+ * the same private helpers, so there is exactly one definition of each
+ * question rather than a second copy free to drift. What it does **not**
+ * read is the occupancy, hands-on, tool-block and approval lookups: those
+ * serve entries keyed on a command or a tool, none of which can fire here,
+ * so paying for them would be buying a verdict nothing is going to ask for.
+ *
+ * `hasApprovalAtTip` is the one exception and it is read, because I1
+ * (`finished-with-no-reviewer`) needs it and is a pure item-state entry.
+ * `hasAnyApproval` is not: its only consumers are the merge entries, which
+ * are `pre` and command-shaped.
+ *
+ * ── `null` means "nothing here could produce a finding" ────────────────
+ *
+ * Returned rather than an empty context, so the caller can skip the
+ * settings read as well. A session with no live claim has no item for any
+ * of these entries to speak about, and that is the overwhelmingly common
+ * case for a call on this path.
+ */
+export async function assembleServiceContext(options: {
+  readonly db: TransactionHandle;
+  readonly sessionId: string;
+  readonly crewInFlightDeadAfterSeconds?: number;
+}): Promise<InterventionContext | null> {
+  const { db, sessionId, crewInFlightDeadAfterSeconds } = options;
+
+  // The same single query the hook path makes, for the same reason: an
+  // item's state and its repository are facts about one claim, and asking
+  // separately would let two of them describe different claims.
+  const rows = await db.$queryRawUnsafe<AssignmentRow[]>(
+    `SELECT a."itemId"          AS "itemId",
+            a."worktree"        AS "worktree",
+            a."rootSessionId"   AS "rootSessionId",
+            i."state"::text     AS "state",
+            i."repo"            AS "repo",
+            a."role"::text      AS "role",
+            r."defaultBranch"   AS "defaultBranch",
+            a."machine"         AS "machine"
+       FROM "Assignment" a
+       JOIN "Item" i ON i."id" = a."itemId"
+       LEFT JOIN "Repo" r ON r."id" = i."repo"
+      WHERE a."sessionId" = $1 AND a."releasedAt" IS NULL
+      ORDER BY a."claimedAt" DESC
+      LIMIT 1`,
+    sessionId,
+  );
+
+  const claim = rows[0];
+  // No live claim: none of the six entries this path can fire has anything
+  // to be about. `null` rather than a bare context, so the caller skips the
+  // settings read too.
+  if (claim === undefined) return null;
+
+  const base: InterventionContext = {
+    sessionId,
+    holdsClaim: true,
+    claimedRole: claim.role,
+    itemId: claim.itemId,
+    itemState: claim.state,
+    ...(claim.worktree === null ? {} : { isLinkedWorktree: claim.worktree.trim() !== "" }),
+    ...(claim.defaultBranch === null ? {} : { defaultBranch: claim.defaultBranch }),
+  };
+
+  const withDelivery: InterventionContext = {
+    ...base,
+    ...(await deliveryFor(db, claim.itemId)),
+    ...(await untrackedNitsFor(db, claim.itemId)),
+    ...(await pendingVisualReviewsFor(db)),
+    ...(await deferredVisualReviewFor(db, claim.itemId)),
+  };
+
+  // I1 needs to know whether an approval stands at the tip. Read through
+  // the merge gate's own primitive, exactly as the hook path does — if this
+  // asked the question differently from the guard that enforces it, the two
+  // would eventually disagree.
+  const tip = await currentTipCommitSha(db, claim.itemId);
+  const approved =
+    tip === null
+      ? undefined
+      : await hasApprovingArtifactAtCurrentRoundAndTip(db, claim.itemId, "code_review");
+
+  const withApproval: InterventionContext = {
+    ...withDelivery,
+    // Absent when there is no commit artifact at all: with no tip there is
+    // nothing for an approval to stand at, so the question has no true
+    // answer and I1 correctly declines rather than firing on every item
+    // that reached `in_review` before its first commit was recorded.
+    ...(approved === undefined ? {} : { hasApprovalAtTip: approved }),
+  };
+
+  // Crew still running under this root — gated on the orchestrator role for
+  // the reason `crewInFlightFor` records: `rootSessionId` on a builder's
+  // claim points at the orchestrator above it, so asking for a builder
+  // would count its siblings and report them as its own crew.
+  if (claim.role !== "orchestrator" || crewInFlightDeadAfterSeconds === undefined) {
+    return withApproval;
+  }
+
+  return {
+    ...withApproval,
+    ...(await crewInFlightFor(db, claim, sessionId, crewInFlightDeadAfterSeconds)),
+  };
+}
+
+/**
  * How many reported tool blocks are read on one dispatch.
  *
  * A bound rather than an unbounded read, like every other query here. An
