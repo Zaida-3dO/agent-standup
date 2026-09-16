@@ -26,6 +26,7 @@ import { ServiceRuntime } from "@/lib/service/runtime";
 import type { TransactionHandle } from "@/lib/service/context";
 import { InvalidInputError } from "@/lib/service/errors";
 import { defaultSnapshot } from "@/lib/settings";
+import { BUILTIN_INTERVENTIONS } from "@/lib/interventions/builtins";
 
 /**
  * Recognises the displacement lookup — the one read a `PreToolUse` makes
@@ -614,6 +615,121 @@ describe("the operation touches no table on the ordinary path", () => {
 
     expect(answer.decision).toBe("allow");
     expect(answer.findings).toEqual([]);
+  });
+
+  // ── Every entry that reaches no table, not just the one that was named ──
+  //
+  // The gate deciding whether the settings rows are read at all used to
+  // test `needs` — which answers *which tables to read* — plus one
+  // hand-named exception for the broad process kill. Those are different
+  // questions: an entry deciding on facts already in memory needs no table,
+  // so `needs` reports nothing for it, and it had to be remembered here by
+  // hand. Exactly one ever was, and three more accumulated behind it, each
+  // silently discarding whatever the installation had configured. A
+  // `timing=digest` written for `unscoped-recursive-search` was observed
+  // still firing `immediate`.
+  //
+  // These cases use **`timing`** rather than `enabled` deliberately. An
+  // `enabled: false` override that is ignored leaves the entry firing, which
+  // looks like a plain "the guard is on" and is easy to misread; a `timing`
+  // override that is ignored still produces a finding, so the *only*
+  // observable difference is the field itself. That is the exact shape of
+  // the reported defect, and it is the one an assertion on `decision` alone
+  // could never catch.
+  //
+  // Each case names the command that reaches it and nothing else, so a
+  // failure says which entry regressed rather than that something did.
+  const shapeOnlyEntries: readonly {
+    readonly id: string;
+    readonly tool: string;
+    readonly command?: string;
+  }[] = [
+    // The entry the defect was reported against.
+    { id: "unscoped-recursive-search", tool: "Bash", command: "grep -rn needle ." },
+    { id: "rebase-before-checking-for-conflicts", tool: "Bash", command: "git rebase main" },
+    // **Not `git commit --no-gpg-sign`.** That spelling is masked: it is a
+    // work-recording command, so `needs` already asks for the assignment
+    // and the old gate answered yes for the wrong reason. Only the verbs
+    // that create a commit without being a commit — rebase, cherry-pick,
+    // revert, am — were actually exposed, which is why a test written
+    // against the obvious spelling would have passed throughout.
+    {
+      id: "commit-signing-explicitly-suppressed",
+      tool: "Bash",
+      command: "git rebase main --no-gpg-sign",
+    },
+    // Carries **no command at all** — it reads a context flag derived from
+    // the tool name. Nothing testing command shapes could have found it,
+    // and it is the case that shows the class is "reaches no table" rather
+    // than "is command-shaped".
+    { id: "asking-without-trying-first", tool: "AskUserQuestion" },
+  ];
+
+  for (const entry of shapeOnlyEntries) {
+    it(`honours a stored timing override for ${entry.id}, which reaches no table`, async () => {
+      const input = {
+        eventType: "PreToolUse",
+        sessionId: "s1",
+        tool: entry.tool,
+        ...(entry.command === undefined ? {} : { command: entry.command }),
+      };
+
+      // Baseline first, so the assertion below is a *change* rather than a
+      // coincidence: if the entry shipped as `digest` already, the override
+      // case would pass without the override doing anything.
+      const shipped = await callWithSettings(input, []);
+      const shippedFinding = shipped.findings.find((finding) => finding.id === entry.id);
+      expect(shippedFinding, `${entry.id} did not fire on its own command`).toBeDefined();
+      expect(shippedFinding?.timing).toBe("immediate");
+
+      const configured = await callWithSettings(input, [
+        { key: `interventions.${entry.id}.timing`, value: "digest" },
+      ]);
+      const finding = configured.findings.find((f) => f.id === entry.id);
+      expect(finding, `${entry.id} stopped firing under an override`).toBeDefined();
+      expect(finding?.timing).toBe("digest");
+    });
+  }
+
+  it("honours an override for every pre entry that can fire without state", async () => {
+    // The structural half, and the reason the four cases above are not the
+    // whole test. They pin the entries that exist today; this one covers
+    // the entry somebody adds next, which is how all four got here.
+    //
+    // It walks the catalogue, asks each `pre` entry's predicate whether it
+    // fires on a context carrying nothing but what the hook already has in
+    // memory, and requires that a stored override reaches any that does.
+    // A new shape-only entry is covered on the day it is added, with
+    // nothing to remember — which is precisely what the hand-maintained
+    // list could not do.
+    const stateless: string[] = [];
+    for (const entry of BUILTIN_INTERVENTIONS) {
+      if (entry.phase !== "pre") continue;
+      for (const probe of shapeOnlyEntries) {
+        const context = {
+          sessionId: "s1",
+          tool: probe.tool,
+          ...(probe.command === undefined ? {} : { command: probe.command }),
+          ...(probe.tool === "AskUserQuestion" ? { isAskingUser: true } : {}),
+        };
+        let verdict;
+        try {
+          verdict = await entry.predicate(context);
+        } catch {
+          continue;
+        }
+        if (verdict?.triggered === true) {
+          stateless.push(entry.id);
+          break;
+        }
+      }
+    }
+
+    // The list is not hard-coded, but it must not be empty — an empty walk
+    // would make every assertion below vacuous and the case would pass
+    // while asserting nothing.
+    expect(stateless.length).toBeGreaterThanOrEqual(shapeOnlyEntries.length);
+    expect(new Set(stateless)).toEqual(new Set(shapeOnlyEntries.map((e) => e.id)));
   });
 
   it("asks the registry nothing on a Stop, which is advisory", async () => {
