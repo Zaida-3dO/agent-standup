@@ -10,15 +10,13 @@ import {
   readJsonBody,
   serviceErrorResponse,
 } from "../admin-respond";
+import { listInput } from "../_shared/reference-row";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-  const includeArchived = url.searchParams.get("includeArchived");
-  const input: Record<string, unknown> = {};
-  if (includeArchived !== null) input.includeArchived = includeArchived === "true";
+  const input = listInput(request);
 
   try {
     const result = await service.call("list_areas", input, { caller });

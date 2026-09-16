@@ -9,7 +9,7 @@ import {
   readJsonBody,
   serviceErrorResponse,
 } from "../../admin-respond";
-import { parseBooleanParam } from "../../_shared/query";
+import { readDeleteInput } from "../../_shared/reference-row";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
@@ -53,25 +53,12 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const { requestId, caller } = auth;
   const { id } = await params;
 
-  // The body is optional here — `hardDelete` may also arrive as a query
-  // parameter, because a `DELETE` with a body is awkward from a browser and
-  // from `curl` alike. An absent flag is not defaulted to `true`: the
-  // service refuses it, which is the point of requiring it.
-  let body: Record<string, unknown> = {};
-  const raw = await request.text();
-  if (raw.trim() !== "") {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      body =
-        typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
-    } catch {
-      return invalidJsonResponse(requestId);
-    }
-  }
-  if (body.hardDelete === undefined) {
-    const flag = new URL(request.url).searchParams.get("hardDelete");
-    if (flag !== null) body.hardDelete = parseBooleanParam(flag);
-  }
+  // Body or query string, and an absent flag is never defaulted — see
+  // `readDeleteInput`, which is shared with the sibling reference-row
+  // deletes because all three read the flag identically.
+  const deleteInput = await readDeleteInput(request, requestId);
+  if (!deleteInput.ok) return deleteInput.response;
+  const body = deleteInput.body;
 
   try {
     const result = await service.call("delete_area", { ...body, id }, { caller });
