@@ -438,10 +438,17 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
  * never drift from the command it abbreviates: there is only one
  * implementation, and the alias is a rewrite of the words before lookup.
  */
+// There is deliberately no `new` alias. It pointed at `item create`, which
+// calls `create_item` — the operation that infers what kind of thing to make
+// from whether a parent was supplied, and which is deprecated for exactly
+// that reason. An alias is the shortest possible spelling, so it was the
+// easiest route to the one verb a caller should not reach for: the three
+// explicit creates (`project create`, `task create`, `subtask create`) each
+// say what they make, and a caller that states its intent gets a refusal
+// naming the missing field rather than a silent guess.
 export const ALIASES: Readonly<Record<string, readonly [string, string]>> = Object.freeze({
   ls: ["item", "list"],
   show: ["item", "get"],
-  new: ["item", "create"],
   ...OWNERSHIP_ALIASES,
 });
 
