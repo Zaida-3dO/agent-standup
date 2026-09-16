@@ -44,27 +44,27 @@
 // line on either binding — receives an ordinary resolved result and has no
 // rehearsal concern at all.
 //
-// **It was not always so, and the history is the reason for the rule.**
-// Each adapter used to apply its own unwrap, which made an internal detail
-// of this mechanism something every mount had to independently know. The
-// `internal` code below was justified at the time as a safeguard: an
-// adapter that forgot would surface an opaque failure rather than a
-// silently wrong success, so a mis-wiring would "fail loudly". `mcp_stdio`
-// was added, did not unwrap, and shipped broken — every `dry_run` over the
-// no-server install reported `internal` with `retryable: true` on a
-// permanently failing condition, for as long as that mount existed. The
-// safeguard worked exactly as designed and the bug still shipped, because
-// loud to the agent receiving the false `internal` is not loud to CI, and
-// because the conformance harness applied the unwrap itself and so could
-// never have caught it. Catching at the one seam every adapter crosses is
-// what makes "an adapter forgets" unrepresentable rather than merely
-// discouraged.
+// **One catch, at the seam, rather than one per adapter — and the
+// difference is a correctness property, not a tidiness one.** Unwrapping at
+// each mount requires every adapter to independently know that this
+// operation reports its answer by throwing, which is an internal detail of
+// the rehearsal mechanism and something an adapter author has no reason to
+// suspect. A mount that misses it reports every rehearsal as a retryable
+// `internal` fault — the most damaging available shape, because `retryable`
+// on a permanently failing condition burns an autonomous caller's retry
+// budget, and because a rehearsal of a *rejected* move is exactly the
+// high-value question ("why can't I move this?") that is then destroyed. An
+// adapter that cannot see the sentinel cannot forget to handle it; that is
+// a structural guarantee, where a convention every mount must remember is
+// only a hope.
 //
-// The `code` remains `internal`. Its job is now the narrower one it can
-// actually do: if this class ever escapes the runtime's catch — the only
-// way being a bug in the runtime itself — the caller sees an opaque
-// failure rather than a success with the wrong body. It is not, and never
-// was, a substitute for the escape being impossible.
+// The `code` is `internal` for the narrow job it can genuinely do: if this
+// class ever escapes the runtime's catch — which requires a bug in the
+// runtime itself — the caller sees an opaque failure rather than a success
+// carrying the wrong body. That is a backstop against one bug in one place,
+// not a substitute for the escape being impossible. A loud failure is loud
+// only to the caller receiving it, which is not the same as loud to CI, so
+// it cannot be relied on to surface a mis-wiring before a user meets it.
 //
 // ── What this does, and does not, prove ─────────────────────────────────
 //

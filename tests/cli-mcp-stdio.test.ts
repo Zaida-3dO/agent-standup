@@ -153,20 +153,22 @@ describe("runMcpStdio — reaching the service", () => {
     await outcomePromise;
   });
 
-  // The regression this whole change exists for. `standup mcp` is the
-  // no-server install (DECISIONS.md §13f), and it was the one mount that
-  // never unwrapped `transition_item`'s rehearsal sentinel — so every
-  // `dry_run` over stdio came back as `{"code":"internal","retryable":true}`
-  // instead of the verdict it was asked for. The *rejected* dry run is the
-  // case that matters most: it answers "why can't I move this?", and it was
-  // the one destroyed.
+  // `standup mcp` is the no-server install (DECISIONS.md §13f) — the
+  // transport a new local user is most likely to reach first — so a defect
+  // here is a first-run defect. A mount that let `transition_item`'s
+  // rehearsal sentinel escape would answer every `dry_run` with
+  // `{"code":"internal","retryable":true}` instead of the verdict asked
+  // for: retryable on a permanently failing condition, which burns an
+  // autonomous caller's retry budget. The *rejected* dry run is the case
+  // worth pinning, because it carries the answer to "why can't I move
+  // this?" — the allowed case degrades far more gracefully.
   //
-  // **The service here is a real `ServiceRuntime`, deliberately.** A stub
-  // returning `{ outcome }` would pass with the bug fully present — the
-  // unwrap under test is the runtime's, so the runtime has to be in the
-  // wire. What stands in for the database is the transaction body, which
-  // throws exactly what `transition_item`'s `dryRun` branch throws from
-  // exactly where it throws it.
+  // **The service here is a real `ServiceRuntime`, deliberately.** The
+  // unwrap under test belongs to the runtime, so the runtime has to be in
+  // the wire: a stub returning `{ outcome }` directly would satisfy every
+  // assertion below while proving nothing about the mount. What stands in
+  // for the database is the transaction body, which throws exactly what
+  // `transition_item`'s `dryRun` branch throws, from the same place.
   it("answers a REJECTED dry run over stdio with the rehearsal verdict, not an internal error", async () => {
     const input = new PassThrough();
     const output = new PassThrough();

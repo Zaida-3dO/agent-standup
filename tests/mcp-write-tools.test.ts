@@ -9,10 +9,10 @@
 //      normal success rather than an `internal` error, driven through a
 //      real MCP client over an in-memory transport on top of a real
 //      `ServiceRuntime`. The unwrap lives in the runtime
-//      (`@/lib/service/runtime.ts`); the per-adapter
-//      `withRehearsalUnwrapping` wrapper this file used to test is gone,
-//      because requiring every mount to know the sentinel is what let
-//      `mcp_stdio` ship without it.
+//      (`@/lib/service/runtime.ts`), beneath every adapter, so these cases
+//      put a real runtime in the wire rather than a wrapper of their own —
+//      a wrapper supplied here would satisfy the assertions on the test's
+//      behalf and prove nothing about what a mount actually does.
 //
 // No database here — every call below is a stub or a canned error, the
 // same posture `mcp-server.test.ts` takes for its own protocol-level
@@ -125,13 +125,10 @@ describe("the four write operations are registered as MCP tools", () => {
 });
 
 // The rehearsal sentinel is unwrapped by `ServiceRuntime` itself
-// (`src/lib/service/runtime.ts`), not by any adapter. These cases therefore
-// drive a real runtime with a stubbed transaction body, rather than the
-// per-adapter `withRehearsalUnwrapping` wrapper they used to drive — that
-// wrapper is gone, and with it the requirement that each mount know about
-// the sentinel. `tests/service-runtime.test.ts` owns the runtime-level
-// assertions; what these prove is the end of the same wire: what an MCP
-// client actually receives.
+// (`src/lib/service/runtime.ts`), not by any adapter, so these cases drive a
+// real runtime with a stubbed transaction body. `tests/service-runtime.test
+// .ts` owns the runtime-level assertions; what these prove is the far end of
+// the same wire — what an MCP client actually receives.
 
 /**
  * A `ServiceCall` backed by a real `ServiceRuntime` whose transaction body

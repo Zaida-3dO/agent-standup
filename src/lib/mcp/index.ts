@@ -18,12 +18,13 @@ export { advertisedSchema, toolsFromOperations, type McpToolDescriptor } from ".
 
 export { toolRejection, toolSuccess, type RenderedRejection, type ToolResult } from "./result";
 
-// Not exported here any more: `withRehearsalUnwrapping` (MILESTONES.md #32).
-// Unwrapping `transition_item`'s dry-run rollback was a per-mount wrapper
-// every adapter had to remember to apply, and `mcp_stdio` did not. The
-// runtime now unwraps the sentinel at the one seam every adapter crosses
-// (`../service/runtime.ts`), so no MCP mount has a rehearsal concern at all
-// and there is nothing here for one to forget.
+// Deliberately absent: any helper for unwrapping `transition_item`'s
+// dry-run rollback (MILESTONES.md #32). That sentinel is caught in the
+// service runtime, at the one seam every adapter crosses
+// (`../service/runtime.ts`), so an MCP mount has no rehearsal concern and
+// there is nothing here for one to remember to apply. A per-mount wrapper
+// exported from this module would reintroduce exactly the obligation the
+// runtime exists to remove.
 
 // Not re-exported here: `./http.ts` or `./stdio.ts`. Each is one transport's
 // wiring, and a module importing the core should not acquire a dependency on

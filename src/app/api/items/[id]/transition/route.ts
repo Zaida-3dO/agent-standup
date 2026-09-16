@@ -33,12 +33,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const result = await service.call("transition_item", { ...body, id, dryRun }, { caller });
     return withRequestId(NextResponse.json(result), requestId);
   } catch (error) {
-    // No rehearsal special case here any more. A `dry_run` still rolls its
-    // transaction back by throwing (`service/operations/rehearsal-rollback
-    // .ts`), but the runtime catches that sentinel immediately outside the
-    // transaction and resolves it as `{ outcome }` — so the `try` above
-    // returns the same 200 body this branch used to construct by hand, and
-    // an ordinary rejection is the only thing that still reaches here.
+    // No rehearsal special case here. A `dry_run` rolls its transaction
+    // back by throwing (`service/operations/rehearsal-rollback.ts`), but
+    // the runtime catches that sentinel immediately outside the transaction
+    // and resolves it as `{ outcome }` — so the `try` above answers 200
+    // with the rehearsal's verdict on its ordinary path, and a genuine
+    // rejection is the only thing reaching this catch.
     return serviceErrorResponse(error, requestId);
   }
 }

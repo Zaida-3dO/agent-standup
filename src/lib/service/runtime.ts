@@ -269,19 +269,24 @@ export class ServiceRuntime {
     // time this rejects the rollback has already happened.** The sentinel
     // has done its entire job at that point, so converting it into an
     // ordinary return value costs nothing and preserves the structural
-    // guarantee in full — `dryRun` still abandons its transaction by
-    // throwing, exactly as before.
+    // guarantee in full — `dryRun` abandons its transaction by throwing,
+    // and that is untouched by catching the throw one frame further out.
     //
-    // It lives in the runtime rather than in each adapter because this is
-    // the one seam every adapter crosses. It used to be unwrapped at the
-    // mount points instead, which required every adapter to independently
-    // know an internal detail of the rehearsal mechanism — and `mcp_stdio`
-    // did not, so `dry_run` over the no-server install reported every
-    // rehearsal as a retryable `internal` fault for as long as that mount
-    // had existed. The safeguard in `rehearsal-rollback.ts` worked as
-    // designed and the bug shipped anyway, because "fails loudly" was loud
-    // only to the agent receiving the false `internal`. An adapter that
-    // cannot see the sentinel cannot forget to handle it.
+    // **It belongs to the runtime because this is the one seam every
+    // adapter crosses.** The alternative — each mount catching the sentinel
+    // for itself — makes an internal detail of the rehearsal mechanism
+    // something every adapter has to independently know, and an adapter
+    // author has no reason to suspect that a `dryRun` reports its answer by
+    // throwing. A mount that misses it turns every rehearsal into a
+    // retryable `internal` fault: the most damaging possible shape, since
+    // `retryable` on a permanently failing condition burns an autonomous
+    // caller's retry budget, and `dry_run` on a *rejected* move is exactly
+    // the high-value question ("why can't I move this?") that is destroyed.
+    // `internal` as a loud failure mode is no protection either — it is
+    // loud only to the caller receiving it, which is not the same as loud
+    // to CI. An adapter that cannot see the sentinel cannot forget to
+    // handle it, and that is a stronger property than any adapter-side
+    // convention.
     //
     // Narrow on purpose: every other throw still reaches `call`'s catch
     // untouched, and the sentinel is matched by class, not by inspecting a

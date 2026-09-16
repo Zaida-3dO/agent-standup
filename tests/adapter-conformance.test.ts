@@ -470,13 +470,13 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       expect: "accepted",
     },
     {
-      // A *rejected* rehearsal, which until now this table had no case for
-      // at all — and the gap was exactly where a bug lived. The two guarded
-      // cases above avoid `dry_run` on purpose (so the `guard` column is not
-      // left empty), and the case above this one is the *allowed* rehearsal.
-      // That left "a dry run of a move the guards refuse" untested on every
-      // adapter, which is the shape `mcp_stdio` shipped broken: it reported
-      // `internal` rather than the verdict, for as long as the mount existed.
+      // A *rejected* rehearsal — the combination the rest of this table
+      // cannot reach, and the one most worth pinning. The two guarded cases
+      // above avoid `dry_run` on purpose (so the `guard` column is not left
+      // empty), and the case directly above is the *allowed* rehearsal. So
+      // "a dry run of a move the guards refuse" is covered by this case
+      // alone, on every adapter, and it is precisely the combination an
+      // adapter can get wrong while every other case stays green.
       //
       // `expect: "accepted"` is the claim, and it is the whole point. §16:
       // a rehearsal *reports* rather than raises, so a rehearsal of a

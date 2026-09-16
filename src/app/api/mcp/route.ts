@@ -32,11 +32,11 @@ export const MCP_HTTP_ADAPTER = ADAPTER_REGISTRY.mcp_http;
  * apart from "this endpoint does not exist".
  *
  * The service call is handed to the core bare. `transition_item`'s `dryRun`
- * rehearsal used to need unwrapping here (MILESTONES.md #32), because the
- * sentinel that rolls its transaction back escaped the service layer and
- * every mount had to recognise it; the runtime now unwraps it at the one
- * seam every adapter crosses (`service/runtime.ts`, step 4 in `#dispatch`),
- * so this mount sees an ordinary resolved result like any other.
+ * rehearsal rolls its transaction back by throwing (MILESTONES.md #32), but
+ * that sentinel is caught in the service runtime at the one seam every
+ * adapter crosses (`service/runtime.ts`, step 4 in `#dispatch`), so this
+ * mount sees an ordinary resolved result like any other and carries no
+ * rehearsal-specific wiring.
  */
 async function serve(request: Request): Promise<Response> {
   // Authenticated here, not inside the MCP core, for the same reason the

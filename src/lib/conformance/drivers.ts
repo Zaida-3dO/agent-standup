@@ -73,14 +73,16 @@ function rejectionFrom(error: unknown): DriverOutcome {
  * is why they are two registry entries over one implementation here rather
  * than two implementations that would drift.
  *
- * The service call is passed through bare, deliberately. This harness used
- * to apply `withRehearsalUnwrapping` itself, "because both real mount points
- * apply it" — an assumption that was wrong (there were three mounts, and
- * `mcp_stdio` did not) and, worse, a harness reimplementing the wiring it
- * exists to test: no conformance case of any kind could have caught the
- * missing unwrap, because the harness supplied it. The runtime now owns the
- * unwrap (`service/runtime.ts`), so driving the service bare here is driving
- * the product's real wiring.
+ * **The service call is passed through bare, and that is load-bearing.**
+ * A harness that applies a mount's own wiring on the mount's behalf stops
+ * testing that mount: every case passes because the harness supplied the
+ * behaviour, so a mount that omits it is indistinguishable from one that
+ * does not. Whatever this driver wraps around `service.call` is a claim
+ * this suite forfeits about the real adapter. The rehearsal
+ * sentinel is unwrapped in the runtime (`service/runtime.ts`), beneath
+ * every adapter, so there is nothing for a driver to add here — and
+ * anything added would be compensating for the product rather than
+ * exercising it.
  */
 function mcpDriver(adapter: "mcp_http" | "mcp_stdio", service: CallableService): ConformanceDriver {
   const transport = adapter === "mcp_http" ? MCP_HTTP_TRANSPORT : MCP_STDIO_TRANSPORT;

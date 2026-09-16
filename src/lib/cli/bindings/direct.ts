@@ -78,14 +78,13 @@ export function createDirectBinding({ service, sessionId, actor }: DirectBinding
           await service.call(operation, input, { caller: { ...caller, requestId } }),
         );
       } catch (error) {
-        // A `--dry-run` no longer arrives here. `transition_item`'s `dryRun`
-        // branch still throws `RehearsalRollback` to abandon its own
-        // transaction — that is how the rehearsal guarantee is enforced —
-        // but the runtime unwraps the sentinel immediately outside the
-        // transaction (`service/runtime.ts`, step 4 in `#dispatch`), so the
-        // `service.call` above resolves with the `{ outcome }` this binding
-        // used to reconstruct in its own catch. Only real refusals reach
-        // this point now.
+        // A `--dry-run` does not arrive here. `transition_item`'s `dryRun`
+        // branch throws `RehearsalRollback` to abandon its own transaction
+        // — that is how the rehearsal guarantee is enforced — and the
+        // runtime unwraps that sentinel immediately outside the transaction
+        // (`service/runtime.ts`, step 4 in `#dispatch`), so the
+        // `service.call` above resolves with the outcome the rehearsal
+        // computed. Only genuine refusals reach this catch.
         //
         // `toServiceError` is what keeps the promise that everything
         // leaving here is in the taxonomy: a driver error or a TypeError

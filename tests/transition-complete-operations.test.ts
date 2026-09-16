@@ -274,11 +274,13 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
      * the transaction, so **a rehearsal resolves rather than rejects** and
      * the sentinel never leaves the service layer.
      *
-     * This helper asserts exactly that, which is the structural claim the
-     * whole fix rests on. It previously asserted the opposite
-     * (`expect(error).toBeInstanceOf(RehearsalRollback)`), which encoded
-     * the old contract: every adapter catching the sentinel for itself, and
-     * `mcp_stdio` not doing so.
+     * This helper asserts exactly that, and it is the structural claim the
+     * rest of the rehearsal contract rests on: if the sentinel can escape
+     * the service layer, then every adapter has to catch it for itself, and
+     * an adapter that does not turns a rehearsal into a retryable
+     * `internal` fault. Asserting it here, in the helper every rehearsal in
+     * this file goes through, is what makes that regression fail loudly and
+     * in one place.
      */
     async function callDryRun(
       input: Record<string, unknown>,
@@ -368,20 +370,49 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       }
     });
 
-    it("dryRun's internal rollback throw is RehearsalRollback specifically, carrying the outcome — proving the route's unwrap path is exercised at the right seam", async () => {
-      // transitionItem's handler always throws on the dryRun branch — this
-      // asserts what it throws is recoverable machinery, not an accident:
-      // calling the OPERATION directly (bypassing the route) still surfaces
-      // RehearsalRollback with the outcome attached, which is exactly what
-      // the HTTP route's catch block (transition/route.ts) is written
-      // against.
+    it("dryRun's rollback throw is RehearsalRollback carrying the outcome, and the runtime converts it rather than letting it escape", async () => {
+      // Two halves of one claim, and both matter.
+      //
+      // The *operation* reports a rehearsal by throwing: that throw is what
+      // abandons the transaction, so anything a guard wrote while merely
+      // being asked cannot outlive the call. Observed at the transaction
+      // boundary — the runtime hands `#transaction` a body and that body is
+      // the operation's handler, so intercepting what the body settles to
+      // catches the sentinel one frame before the runtime converts it, and
+      // pins that the thrown value is recoverable machinery carrying the
+      // outcome rather than an accident.
       const id = await createTask({ state: "executing" });
-      const error = await runtime
-        .call("transition_item", { id, to: "someday", dryRun: true })
-        .catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(RehearsalRollback);
-      expect((error as RehearsalRollback).outcome.allowed).toBe(true);
-      expect((error as RehearsalRollback).outcome.rehearsed).toBe(true);
+      let thrown: unknown;
+      const observingRuntime = new ServiceRuntime({
+        transaction: async (body) => {
+          try {
+            return await prismaTransactionRunner(prisma)(body);
+          } catch (error) {
+            thrown = error;
+            throw error;
+          }
+        },
+        resolveSnapshot: async () => defaultSnapshot(),
+      });
+
+      await observingRuntime.call("transition_item", { id, to: "someday", dryRun: true });
+
+      expect(thrown).toBeInstanceOf(RehearsalRollback);
+      expect((thrown as RehearsalRollback).outcome.allowed).toBe(true);
+      expect((thrown as RehearsalRollback).outcome.rehearsed).toBe(true);
+
+      // And the *runtime* is where that throw stops. The same call through
+      // `runtime.call` resolves with the outcome the sentinel carried, so
+      // the sentinel is not part of any adapter's contract — which is what
+      // makes it impossible for a mount to mishandle it.
+      const resolved = (await runtime.call("transition_item", {
+        id,
+        to: "someday",
+        dryRun: true,
+      })) as { outcome: { allowed: boolean; rehearsed: boolean } };
+
+      expect(resolved.outcome.allowed).toBe(true);
+      expect(resolved.outcome.rehearsed).toBe(true);
     });
   });
 

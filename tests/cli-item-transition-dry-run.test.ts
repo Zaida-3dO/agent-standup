@@ -7,10 +7,10 @@
 // test.ts`, `RehearsalRollback`). This row does not re-prove that mechanism
 // — it proves the CLI **reaches** it: that `--dry-run` on the command line
 // actually becomes `dryRun: true` on the operation input, that the `direct`
-// binding's own `RehearsalRollback` handling (`bindings/direct.ts`) neither
-// swallows the outcome as an `internal` failure nor lets anything commit,
-// and that the `http` binding's `?dry_run=` query wiring (`bindings/http.
-// ts`) does the same over a real route call.
+// binding (`bindings/direct.ts`) reports the rehearsal's verdict rather than
+// swallowing it as an `internal` failure or letting anything commit, and
+// that the `http` binding's `?dry_run=` query wiring (`bindings/http.ts`)
+// does the same over a real route call.
 //
 // **What would make this hollow, stated first.** A test that only asserts
 // "the call succeeded" would pass even if `--dry-run` silently mutated state
@@ -18,9 +18,9 @@
 // dry-run assertion re-reads that map in a *separate* step after the call
 // returned, the same posture `transition-complete-operations.test.ts` takes
 // against a real database. A mutant that inverted the `dryRun` check, or
-// dropped the `isRehearsalRollback` branch in `bindings/direct.ts`, or built
-// `dryRun: false` regardless of the flag, changes what lands in that map or
-// what exit code comes back — this file is built to feel every one of those.
+// built `dryRun: false` regardless of the flag, or reported the rehearsal
+// verdict as an error envelope, changes what lands in that map or what exit
+// code comes back — this file is built to feel every one of those.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GuardRejectedError, NotFoundError, RehearsalRollback } from "@/lib/service";
 import type { TransitionOutcome } from "@/lib/service";
@@ -77,14 +77,27 @@ const fakeService = {
       : { itemId: id, from, to, allowed: true as const, rehearsed: true as const };
 
     if (dryRun) {
-      // The real operation always throws here, allowed or not — see
-      // `rehearsal-rollback.ts`. Reproduced exactly, because the CLI's own
-      // handling of this throw (not the throw itself) is what this file
-      // tests. Cast rather than typing `from`/`to` as the real
-      // `ItemStateValue` union above: this fixture only ever needs two
-      // states, and widening the whole fake to the real vocabulary would
-      // buy nothing this file checks.
-      throw new RehearsalRollback(outcome as TransitionOutcome);
+      // **This fake stands in for the whole service layer, so it owes the
+      // callers below that layer's contract, not the operation's.** The
+      // `transition_item` *operation* reports a rehearsal by throwing
+      // `RehearsalRollback` (`rehearsal-rollback.ts`), but that sentinel is
+      // caught by `ServiceRuntime` immediately outside the transaction and
+      // never leaves the service layer — a binding calling `service.call`
+      // receives a resolved `{ outcome }`. `vi.mock` above stands in for
+      // the live service wholesale, so no runtime sits in this wire to
+      // perform that unwrap; throwing the raw sentinel here would hand the
+      // bindings something the real service cannot hand them, and the file
+      // would be pinning adapter-level handling that production has no
+      // reason to contain.
+      //
+      // The throw is still exercised, one line up from where it matters:
+      // `RehearsalRollback` is constructed, so the payload shape this
+      // resolves with is the sentinel's own rather than a hand-written
+      // literal that could drift from it. Cast rather than typing
+      // `from`/`to` as the real `ItemStateValue` union above: this fixture
+      // only ever needs two states, and widening the whole fake to the real
+      // vocabulary would buy nothing this file checks.
+      return { outcome: new RehearsalRollback(outcome as TransitionOutcome).outcome };
     }
 
     if (rejected) {
@@ -187,10 +200,11 @@ describe("--dry-run genuinely does not mutate state (direct binding)", () => {
       directBinding(),
     );
 
-    // The one assertion a missing `isRehearsalRollback` branch in
-    // `bindings/direct.ts` would break: falling through to the generic
-    // handler reports this as `internal` (exit 1), not the accepted preview
-    // it actually is.
+    // The assertion that separates a preview from a failure. A rehearsal of
+    // a move the guards refuse is a *successful* call carrying a rejection
+    // in its payload (§16), so anything that routed it through the generic
+    // error handling would report `internal` and exit 1 rather than the
+    // accepted preview this is.
     expect(outcome.exitCode).toBe(EXIT.OK);
     if (!outcome.envelope.ok) throw new Error("unreachable");
     expect(outcome.envelope.data).toMatchObject({
