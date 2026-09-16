@@ -4,11 +4,12 @@
  *
  * Row #89 (MILESTONES.md): the npm package publishes on the **same version
  * tag** that publishes the image, so the two artefacts of a release can
- * never drift apart. `.github/workflows/release.yml` triggers both the
- * image build and the npm publish from one `push: tags: ["v*"]` event —
- * this script is what the npm-publish job uses to turn that one tag into
- * the version it publishes, so there is nothing else for a release to keep
- * in sync. `package.json`'s own checked-in `version` field is not the
+ * never drift apart. The two publish on different *events* — tagging `v*`
+ * ships the image, while the npm publish is a manual dispatch, because an
+ * npm version is permanent and an image tag is not — but both read their
+ * version from the same tag, which is what keeps them in step. This script
+ * is what the npm-publish job uses to turn that tag into the version it
+ * publishes. `package.json`'s own checked-in `version` field is not the
  * source of truth for what gets published — the tag is — so a release
  * never depends on someone remembering to bump it in a separate commit.
  * `npm run version:from-tag <tag>` prints the version and is what the
