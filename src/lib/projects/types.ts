@@ -38,7 +38,7 @@ export interface ProjectRollup {
   readonly priority: string;
   /** Every descendant, however deep. */
   readonly total: number;
-  /** Descendants in `merged` — the numerator the progress bar shows. */
+  /** Descendants in `merged` — what shipped. See `finished` for the progress numerator. */
   readonly merged: number;
   /** Descendants in any terminal state — work that is over, however it ended. */
   readonly finished: number;

@@ -112,12 +112,7 @@ export function ProjectDetailView({
         </div>
       </header>
 
-      <DerivedStatePanel
-        derived={detail.derived}
-        total={detail.total}
-        merged={detail.merged}
-        progress={progress}
-      />
+      <DerivedStatePanel derived={detail.derived} total={detail.total} progress={progress} />
 
       <RepairPanel
         repair={detail.repair}

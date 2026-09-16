@@ -41,13 +41,14 @@
 //
 // ── Why the counts are by state and not by column ───────────────────────
 //
-// The card renders a distribution strip, which is the spread *beneath* the
-// rollup rather than a summary of it — the thing a single derived column
-// throws away. Returning the twelve-value state vocabulary intact and
-// letting the client group it into columns keeps that possible; returning
-// four column counts would not, and the collapse would be irreversible on
-// the client. `columnForState` is exported for a caller that wants the
-// coarser view, so nothing is lost by sending the finer one.
+// A client groups the states into whatever bands it draws — a card's bar
+// splits them three ways, finished against in-flight against not-started —
+// and which grouping serves a given surface is the client's decision to
+// make. Returning the twelve-value state vocabulary intact keeps every
+// grouping reachable; returning four column counts would not, and the
+// collapse would be irreversible on the client. `columnForState` is exported
+// for a caller that wants the coarser view, so nothing is lost by sending
+// the finer one.
 //
 // ── A childless project is reported as such, never as zero percent ──────
 //
@@ -88,6 +89,7 @@ import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { ITEM_STATES, type ItemStateValue } from "../state-machine/states";
+import { finishedFrom } from "../board/columns";
 import { areaFilterCondition } from "../items/area-filter";
 import { NOT_ARCHIVED_CONDITION } from "../items/row";
 import {
@@ -122,23 +124,25 @@ export interface ProjectRollup {
   readonly priority: string;
   /** Every descendant, however deep — not just direct children. */
   readonly total: number;
-  /** Descendants in `merged` specifically — the numerator a progress bar shows. */
+  /** Descendants in `merged` specifically — what shipped. See `finished` for the progress numerator. */
   readonly merged: number;
   /**
    * Descendants in any terminal state (`merged`, `research_done`, `wont_do`,
    * `cancelled`) — work that is over, however it ended.
    *
-   * Returned beside `merged` rather than instead of it because they answer
-   * different questions: a progress bar measures work that *shipped*, while
-   * "is anything still live under here" is what decides whether a project is
-   * finished. A project whose remaining children were all cancelled is done,
-   * and is not 100% merged.
+   * **This is the numerator `progress` divides**, and `merged` is returned
+   * beside it as the narrower "what actually shipped" count. Dividing by
+   * `merged` instead measures shipped work, which is not how a bar is read:
+   * a project whose remaining children were all cancelled is *done*, and a
+   * bar reading 59% over 32 terminal children with nothing on deck is a
+   * false claim that something is left to do. Scope cuts are a way of
+   * finishing work, not a debt against it.
    */
   readonly finished: number;
   /** The full distribution — see `StateCounts`. */
   readonly counts: StateCounts;
   /**
-   * Merged over total, `0`–`1`, or **null when there are no children at
+   * Finished over total, `0`–`1`, or **null when there are no children at
    * all**. Null rather than zero on purpose: see the module header.
    */
   readonly progress: number | null;
@@ -294,7 +298,7 @@ export const getProjects = defineOperation({
   name: "get_projects",
   kind: "read",
   summary:
-    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. A childless project reports progress null and childless true, never zero percent, and is never hidden. Archived projects and descendants are excluded from every rollup number — pass includeArchived to audit them. Paged: pass limit and cursor, read nextCursor.",
+    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Progress is finished over total — every terminal state, so work closed as cancelled or wont_do counts as done, not as outstanding; merged is reported separately as what shipped. A childless project reports progress null and childless true, never zero percent, and is never hidden. Archived projects and descendants are excluded from every rollup number — pass includeArchived to audit them. Paged: pass limit and cursor, read nextCursor.",
   // Stryker restore all
   input: inputSchema,
   contract: {
@@ -441,7 +445,7 @@ export const getProjects = defineOperation({
       // Terminal states are exactly those mapping to the completed column
       // (`board/columns.ts`), summed from the distribution rather than
       // counted again in SQL — one source for both numbers.
-      const finished = counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+      const finished = finishedFrom(counts);
 
       // Finished means every descendant is over AND there is at least one.
       // The `!childless` half is what keeps a childless project out of this
@@ -464,7 +468,7 @@ export const getProjects = defineOperation({
         counts,
         // Null, not zero, when there is nothing to be a ratio of — see the
         // module header.
-        progress: childless ? null : counts.merged / total,
+        progress: childless ? null : finished / total,
         childless,
         // ISO 8601 sorts lexicographically in the same order it sorts
         // chronologically, so the later of the two is a string comparison

@@ -27,11 +27,11 @@
 // Hook-free and prop-driven, so a test calls it as a function and inspects
 // the element tree it returns (`tests/helpers/react-element.ts`).
 import Link from "next/link";
-import { STATE_LABELS, stateTokens } from "@/lib/design/tokens";
-import type { ItemState } from "@/lib/board/types";
 import type { DerivedStateReading } from "@/lib/project-detail/types";
 import {
   COLUMN_LABELS,
+  bandsOf,
+  countsOf,
   distributionOf,
   explainDerivedState,
   humanState,
@@ -40,9 +40,8 @@ import styles from "./ProjectDetail.module.css";
 
 export interface DerivedStatePanelProps {
   readonly derived: DerivedStateReading;
-  /** Total descendants — what the distribution's shares are taken over. */
+  /** Total descendants — what the bar's bands are taken over. */
   readonly total: number;
-  readonly merged: number;
   /** The progress reading, already decided by `progressOf` — see its three cases. */
   readonly progress:
     | { readonly kind: "ratio"; readonly value: number; readonly percent: number }
@@ -50,8 +49,10 @@ export interface DerivedStatePanelProps {
     | { readonly kind: "none" };
 }
 
-export function DerivedStatePanel({ derived, total, merged, progress }: DerivedStatePanelProps) {
+export function DerivedStatePanel({ derived, total, progress }: DerivedStatePanelProps) {
   const segments = distributionOf(derived.counts, total);
+  const bands = bandsOf(derived.counts, total);
+  const tally = countsOf(derived.counts, total);
   const cause = derived.causingChild;
 
   return (
@@ -86,51 +87,44 @@ export function DerivedStatePanel({ derived, total, merged, progress }: DerivedS
       {total > 0 && (
         <div className={styles.progressBlock}>
           <div className={styles.progressLabels}>
+            {/* "Closed", not "merged" — the number counts every terminal
+                state, and calling it merged invited exactly the misreading
+                this panel is being fixed for. */}
             <span>
-              {merged} of {total} merged
+              {tally.done} of {total} closed
             </span>
             {progress.kind === "ratio" && (
               <span className={styles.progressPercent}>{progress.percent}%</span>
             )}
           </div>
+          {/* One bar, three bands — see `bandsOf`. Finished and active are
+              drawn as widths off the same total; whatever is left of the
+              track is the not-started remainder. */}
           <div
             className={styles.progressTrack}
             role="progressbar"
             aria-valuemin={0}
             aria-valuemax={total}
-            aria-valuenow={merged}
-            aria-label={`${merged} of ${total} children merged`}
+            aria-valuenow={tally.done}
+            aria-label={`${tally.done} of ${total} children closed, ${tally.onDeck} on deck`}
           >
             <div
               className={styles.progressFill}
+              data-band="finished"
               data-percent={progress.kind === "ratio" ? progress.percent : 0}
-              style={{ width: `${progress.kind === "ratio" ? progress.percent : 0}%` }}
+              style={{ width: `${bands.finished * 100}%` }}
+            />
+            <div
+              className={styles.progressActive}
+              data-band="active"
+              style={{ width: `${bands.active * 100}%` }}
             />
           </div>
 
-          {/* Each band is coloured from the state's own token, so a state
-              that is amber here is amber on the board. */}
-          <div className={styles.strip} aria-hidden="true" data-segments={segments.length}>
-            {segments.map((segment) => (
-              <span
-                key={segment.state}
-                className={styles.stripSegment}
-                data-state={segment.state}
-                style={{
-                  width: `${segment.share * 100}%`,
-                  background: stateTokens(segment.state as ItemState).border,
-                }}
-                title={`${STATE_LABELS[segment.state]}: ${segment.count}`}
-              />
-            ))}
-          </div>
-          {/* The strip is decorative; this is the same information as text,
-              so the distribution is not lost to a reader who cannot see the
-              bands. */}
+          {/* The bands as text, so nothing is lost to a reader who cannot
+              see colour. Three numbers that sum to the total. */}
           <p className={styles.stripLegend} data-distribution-text="true">
-            {segments
-              .map((segment) => `${STATE_LABELS[segment.state]} ${segment.count}`)
-              .join(" · ")}
+            On deck {tally.onDeck} · Done {tally.done} · Not started {tally.notStarted}
           </p>
         </div>
       )}

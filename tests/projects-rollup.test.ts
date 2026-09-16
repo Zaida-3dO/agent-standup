@@ -145,6 +145,8 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
       // distribution strip walks every state and a gap would read as a
       // rendering fault.
       expect(result.counts.blocked).toBe(0);
+      // Two merged of three, and the third is `executing` — not terminal —
+      // so finished and merged coincide here.
       expect(result.progress).toBeCloseTo(2 / 3);
     });
 
@@ -201,10 +203,11 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
     });
 
     it("counts terminal states as finished without calling them merged", async () => {
-      // `finished` and `merged` answer different questions: a progress bar
-      // measures what shipped, while "is anything still live" decides
-      // whether a project is over. A project whose remaining children were
-      // cancelled is done and is not 100% merged.
+      // `finished` and `merged` answer different questions: `finished`
+      // decides whether anything is still live — and so is what the
+      // progress bar divides — while `merged` is the narrower record of
+      // what actually shipped. A project whose remaining children were
+      // cancelled is done, and is not 100% merged.
       //
       // Breaks if: `finished` is computed as `counts.merged`, or the sum
       // drops any of the four terminal states.
@@ -227,7 +230,12 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
 
       expect(result.finished).toBe(4);
       expect(result.merged).toBe(1);
-      expect(result.progress).toBeCloseTo(0.25);
+      // **Finished over total, not merged over total.** Every child here is
+      // terminal — one merged, the rest cancelled/wont_do/research_done —
+      // so there is nothing left to do and the bar must say so. This read
+      // 0.25 before the fix, which is the false claim that three quarters
+      // of a finished project is outstanding.
+      expect(result.progress).toBe(1);
     });
   });
 

@@ -35,10 +35,15 @@ function makeProject(overrides: Partial<ProjectRollup> = {}): ProjectRollup {
   const counts = { ...noCounts(), ...(overrides.counts ?? {}) };
   const total = overrides.total ?? Object.values(counts).reduce((sum, n) => sum + n, 0);
   const merged = overrides.merged ?? counts.merged;
-  // The three derived values are applied AFTER the spread, so a fixture
-  // that sets only `counts` gets a `total` and `merged` consistent with it
-  // rather than the defaults — while a fixture that sets them explicitly
-  // still wins, because they were read out of `overrides` above.
+  // Mirrors the server: `finished` is every terminal state, and `progress`
+  // divides by it rather than by `merged`. Defaulting `finished` to `merged`
+  // reproduced the bug the bar was fixed for inside the fixture itself.
+  const finished =
+    overrides.finished ?? counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+  // The derived values are applied AFTER the spread, so a fixture that sets
+  // only `counts` gets a `total` and `merged` consistent with it rather than
+  // the defaults — while a fixture that sets them explicitly still wins,
+  // because they were read out of `overrides` above.
   return {
     id: "p-1",
     title: "A project",
@@ -46,8 +51,8 @@ function makeProject(overrides: Partial<ProjectRollup> = {}): ProjectRollup {
     area: "web",
     repo: null,
     priority: "P2",
-    finished: overrides.finished ?? merged,
-    progress: total === 0 ? null : merged / total,
+    finished,
+    progress: total === 0 ? null : finished / total,
     childless: total === 0,
     lastActivity: "2026-08-18T10:00:00.000Z",
     assignments: [],

@@ -41,6 +41,11 @@ function noCounts(): StateCounts {
   return Object.fromEntries(ITEM_STATES.map((state) => [state, 0])) as StateCounts;
 }
 
+/** Every terminal state summed — the server's `finished`, mirrored here. */
+function finishedOf(counts: StateCounts): number {
+  return counts.merged + counts.research_done + counts.wont_do + counts.cancelled;
+}
+
 function counts(overrides: Partial<StateCounts>): StateCounts {
   return { ...noCounts(), ...overrides };
 }
@@ -83,8 +88,11 @@ function makeDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
     derived: { column: "in_progress", counts: resolved, causingChild: null },
     total,
     merged,
-    finished: merged,
-    progress: total === 0 ? null : merged / total,
+    // Mirrors the server: `finished` is every terminal state and `progress`
+    // divides by it, not by `merged`. Defaulting it to `merged` reproduced
+    // the bug the bar was fixed for inside the fixture itself.
+    finished: finishedOf(resolved),
+    progress: total === 0 ? null : finishedOf(resolved) / total,
     childless: total === 0,
     lastActivity: "2026-08-18T10:00:00.000Z",
     children: [],
