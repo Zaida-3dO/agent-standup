@@ -260,7 +260,7 @@ export class ServiceRuntime {
     // input already carries.
     //
     // **This collapses two channels for one concept; it does not add a
-    // third.** A session id reaches an operation two ways today: on the
+    // third.** A session id reaches an operation two ways: on the
     // envelope, where a transport puts it, and as an ordinary input field,
     // which 34 operations already declare (`note`, `checkpoint`, `claim`,
     // `release`, `heartbeat`, …). They are the same namespace — the field
