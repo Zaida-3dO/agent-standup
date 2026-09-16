@@ -52,6 +52,7 @@
 import type { HookEvent } from "./payload";
 import { enforcementRefusal, type SessionEnforcement } from "./enforcement";
 import type { StopContext } from "./stop-catch";
+import type { WindDownContext } from "../interventions/survey";
 import { evaluateNudges, isWriteShaped, type Nudge, type NudgeContext } from "./nudge";
 import { overrideApplies, overrideRemedy } from "./override";
 import { isBlockingLevel, type InterventionFinding } from "../interventions/types";
@@ -139,6 +140,19 @@ export interface ServerVerdict {
    * catch (MILESTONES.md #47). Advisory only — `decide` never reads it.
    */
   readonly stop?: StopContext;
+  /**
+   * What the server knows about this session's unrated intervention
+   * firings, for the session-end survey (`../interventions/survey.ts`).
+   *
+   * Advisory in the strongest sense available — `decide` never reads it,
+   * and a survey asks about calls that already happened, so nothing it can
+   * contain could bear on a verdict even if something did read it.
+   *
+   * Carries no `idleMs`: the server cannot measure the quiet (see
+   * `../interventions/wind-down-context.ts`), so the client merges its own
+   * measurement in before anything evaluates the result.
+   */
+  readonly windDown?: WindDownContext;
   /**
    * Nudge context the server volunteered. Advisory only: nothing here can
    * change `decision`, and `decide` never reads it while choosing one.
