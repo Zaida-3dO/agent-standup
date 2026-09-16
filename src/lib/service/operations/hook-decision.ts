@@ -89,8 +89,7 @@ import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { BUILTIN_INTERVENTIONS } from "@/lib/interventions/builtins";
-import { isBroadProcessKill } from "@/lib/interventions/commands";
-import { assembleContext, needs } from "@/lib/interventions/context";
+import { assembleContext } from "@/lib/interventions/context";
 import { assembleStopContext, type StopContextPayload } from "@/lib/interventions/stop-context";
 import {
   assembleWindDownContext,
@@ -106,6 +105,7 @@ import {
   type InterventionContext,
   type InterventionFinding,
   type InterventionOverride,
+  type InterventionPhase,
 } from "@/lib/interventions/types";
 import { displacementFor, type SessionEnforcementPayload } from "../session-displacement";
 
@@ -356,7 +356,7 @@ export const hookDecision = defineOperation({
     // call cannot produce a finding for an override to apply to — so
     // reading the rows for it would put a query on the highest-volume path
     // to configure a verdict that is not going to be reached.
-    const overrides = await readOverridesIfUseful(ctx, context);
+    const overrides = await readOverridesIfUseful(ctx, context, canBlock ? "pre" : "post");
 
     const findings = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
@@ -424,7 +424,7 @@ function reasonFor(findings: readonly InterventionFinding[]): string | null {
 }
 
 /**
- * Reads the installation's intervention overrides, when they could matter.
+ * Whether any entry for this phase can fire on the context as assembled.
  *
  * ── Why this is gated at all ───────────────────────────────────────────
  *
@@ -434,30 +434,72 @@ function reasonFor(findings: readonly InterventionFinding[]): string | null {
  * nothing — and reading them would be a query on the path that is
  * deliberately query-free for the overwhelming majority of calls.
  *
- * The gate reuses `needs` — the same function `assembleContext` gates its
- * own queries on — rather than re-deriving the question. That matters more
- * than it looks: a second, independently written test for "could this call
- * matter" would drift from the first, and the drift would show up as a
- * settings read on the very calls the first one exists to keep free. The
- * one entry needing no state at all is a broad process kill, which is why
- * it is named here explicitly rather than inferred.
+ * ── Why the gate asks the registry rather than restating it ────────────
+ *
+ * This used to test `needs` — the function `assembleContext` gates its own
+ * *queries* on — plus one hand-named exception for the broad process kill.
+ * The reasoning was that reusing `needs` avoids drift. It does the
+ * opposite, because **`needs` answers a different question**: it reports
+ * which tables to read, not which entries could fire. An entry that decides
+ * on facts already in memory needs no table, so `needs` reports nothing for
+ * it, and it had to be named here by hand. Exactly one ever was.
+ *
+ * Three more had accumulated by the time anyone checked, and every one of
+ * them silently ignored its stored overrides — a `timing=digest` written
+ * for `unscoped-recursive-search` was observed still firing `immediate`:
+ *
+ *   - `unscoped-recursive-search` — a recursive search's shape;
+ *   - `rebase-before-checking-for-conflicts` — a rebase's shape;
+ *   - `commit-signing-explicitly-suppressed` — on the verbs other than
+ *     `commit`, since `git commit --no-gpg-sign` is masked by
+ *     `isWorkRecordingCommand` already asking for the assignment;
+ *   - `asking-without-trying-first` — which reads a context flag off the
+ *     tool name and involves no command at all, and so could never have
+ *     been caught by anything testing command shapes.
+ *
+ * A hand-maintained list of "entries that need no state" is a list that is
+ * updated by remembering, and its failure mode is silent: the entry works,
+ * fires, and quietly discards the installation's configuration. So the gate
+ * now **asks the entries themselves** — it runs the same predicates
+ * `evaluate` is about to run, against the same context, and reads
+ * overrides when any of them triggers. That cannot drift from the registry
+ * because it *is* the registry, and a new entry of any shape is covered on
+ * the day it is added with nothing to remember.
+ *
+ * ── Why this is affordable on the highest-volume path ──────────────────
+ *
+ * A predicate is pure and reaches no database: `types.ts` states the rule
+ * as *"a predicate declares the context it needs; it does not go and get
+ * it"*, and it is structural rather than aspirational — the type a
+ * predicate is handed carries data, not a handle. So this pass is arithmetic
+ * over strings already in memory, on a context that has already been
+ * assembled, and it makes no query by construction. The query it gates
+ * remains gated: a `Read`, an `ls` or an `Edit` triggers nothing, so it
+ * still reaches no table through this path.
+ *
+ * The phase is passed through so that only the entries that could run at
+ * all are consulted — on a `PostToolUse` the `pre` entries are not asked,
+ * matching what `evaluate` will do a few lines later.
  *
  * A wrong "yes" costs one indexed range scan on a call that was already
- * paying for a lookup. A wrong "no" would silently ignore an installation's
- * configuration, so the gate errs towards reading.
+ * paying for a lookup. A wrong "no" silently ignores an installation's
+ * configuration, which is the defect this shape exists to make
+ * unrepresentable.
  */
-function couldTrigger(context: InterventionContext): boolean {
-  const wanted = needs(context.command, context.tool);
-  if (wanted.assignment || wanted.approval || wanted.occupancy) return true;
-  // I12 turns purely on the command's shape and reaches no state, so it is
-  // the one entry that can fire on a call `needs` reports nothing for.
-  return context.command !== undefined && isBroadProcessKill(context.command);
+async function couldTrigger(
+  context: InterventionContext,
+  phase: InterventionPhase,
+): Promise<boolean> {
+  const findings = await evaluate({ entries: BUILTIN_INTERVENTIONS, phase, context });
+  return findings.length > 0;
 }
+
 async function readOverridesIfUseful(
   ctx: ServiceContext,
   context: InterventionContext,
+  phase: InterventionPhase,
 ): Promise<Readonly<Record<string, InterventionOverride>>> {
-  if (!couldTrigger(context)) return {};
+  if (!(await couldTrigger(context, phase))) return {};
 
   const stored = await readInterventionSettingRows(ctx.db);
   // Nothing stored is the common case and must not cost anything further:

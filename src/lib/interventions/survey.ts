@@ -32,9 +32,10 @@
 //      first. A session that tripped one entry thirty times gets asked
 //      about it once — `dedupeForSurvey` keeps the most recent firing per
 //      entry, because an entry is being judged, not an individual call.
-//   2. **The reply is a fixed JSON shape**, parsed by `parseSurveyResponse`.
+//   2. **The reply is a tool call**, one `score_intervention` per firing.
 //      A prose answer would need a model call to interpret, which is the
-//      cost this is avoiding.
+//      cost this is avoiding; a tool call needs none, because it arrives
+//      already structured and already validated by the tool's own schema.
 //   3. **The note is optional and one line.** It exists because two firings
 //      can deserve a low score for opposite reasons — the detection was
 //      wrong, or it was right and the message was undiscoverable — and only
@@ -214,8 +215,8 @@ export function buildSurvey(firings: readonly SurveyableFiring[]): SurveyRequest
     "",
     items,
     "",
-    "Reply with JSON only — no prose, no explanation outside the notes:",
-    '{"scores":[{"eventId":"<id>","score":<1-5>,"note":"<optional, one line>"}]}',
+    "Rate each one with score_intervention, passing the eventId above and a score of 1-5. " +
+      "One call per firing; no prose is needed.",
     "",
     "A note is worth adding when the score is low, because a 1 or a 2 can mean two very " +
       "different things: the detection was wrong, or the detection was right and the message " +
@@ -249,7 +250,36 @@ export interface ParsedSurvey {
 }
 
 /**
- * Reads a survey reply.
+ * Reads a survey reply in the JSON shape.
+ *
+ * ── It has no production caller, and that is deliberate ────────────────
+ *
+ * **`buildSurvey` does not ask for this shape**, and the reason is worth
+ * stating here rather than leaving as an absence somebody tries to fix.
+ *
+ * A survey prompt goes out on a `Stop`. A textual reply to it would arrive
+ * in the session's *next* turn — after the stop has completed and the hook
+ * process has exited — so there is no point at which this module could read
+ * one. Ingesting it would mean holding the turn open, which DECISIONS.md §6
+ * forbids outright, or building a spool-and-replay channel. Asking for a
+ * reply shape that nothing can receive is worse than asking for nothing: a
+ * rater who answers exactly as instructed produces no row, stays unrated,
+ * and is asked the same question again at the next wind-down.
+ *
+ * So the survey asks for a `score_intervention` call instead — a tool the
+ * agent can invoke in the turn it is already in, whose ids line up with the
+ * ones the prompt prints, and which is what the delivery-time prompt
+ * (`scoringPrompt` in `./delivery.ts`) asks for too. One instruction for
+ * one table, because two surfaces phrasing the same ask differently is how
+ * scores stop being comparable.
+ *
+ * **Kept rather than deleted**, because it is the correct parser for this
+ * shape and the shape may still arrive — a rater that replies in JSON out
+ * of habit, or a spool channel built later, would both want exactly this.
+ * Deleting it would mean rewriting it, and the tests that pin its rejection
+ * behaviour are the part that would be expensive to reproduce.
+ *
+ * ── What it does ───────────────────────────────────────────────────────
  *
  * Tolerant of the wrapping a model puts around JSON — a fenced block, or
  * text either side — because the alternative is discarding an otherwise
