@@ -15,7 +15,8 @@
 // So three things are rendered together, never one:
 //
 //   1. the rollup column,
-//   2. the distribution — children by state, as a strip AND as text,
+//   2. the spread — finished against in-flight against not-started, as
+//      one bar AND as text,
 //   3. the one child causing the current reading, as a link.
 //
 // The test of whether this panel works is that *"why is this project

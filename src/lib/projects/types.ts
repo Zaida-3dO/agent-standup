@@ -44,7 +44,7 @@ export interface ProjectRollup {
   readonly finished: number;
   readonly counts: StateCounts;
   /**
-   * Merged over total, `0`–`1`, or **null when the project has no children
+   * Finished over total, `0`–`1`, or **null when the project has no children
    * at all**.
    *
    * The null is the whole honesty requirement: zero of zero children merged

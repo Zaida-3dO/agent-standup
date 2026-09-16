@@ -196,23 +196,6 @@
   transition: width 200ms ease;
 }
 
-/* The distribution strip. Each band is coloured from the state's own token
-   (set inline from `stateTokens`), so a state that is amber here is amber
-   on the board. */
-.strip {
-  display: flex;
-  height: 8px;
-  margin-top: 0.5rem;
-  border-radius: 999px;
-  overflow: hidden;
-  background: var(--surface-sunken);
-}
-
-.stripSegment {
-  display: block;
-  height: 100%;
-}
-
 /* The strip is decorative; this is the same information as text, so it is
    not lost to a reader who cannot see the bands. */
 .stripLegend {

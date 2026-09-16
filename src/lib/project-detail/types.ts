@@ -132,7 +132,7 @@ export interface ProjectDetail {
   readonly total: number;
   readonly merged: number;
   readonly finished: number;
-  /** Merged over total, or **null when there are no children** — never zero. */
+  /** Finished over total, or **null when there are no children** — never zero. */
   readonly progress: number | null;
   readonly childless: boolean;
   readonly lastActivity: string;
