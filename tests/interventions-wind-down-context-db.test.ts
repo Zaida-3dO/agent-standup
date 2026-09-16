@@ -47,7 +47,11 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { assembleWindDownContext } from "@/lib/interventions/wind-down-context";
+import {
+  assembleWindDownContext,
+  truncateSurveyMessage,
+  MAX_SURVEY_MESSAGE_CHARS,
+} from "@/lib/interventions/wind-down-context";
 import { readWindDownContext, evaluateStopSurvey } from "@/lib/hook/stop-catch";
 import { parseSurveyResponse, WIND_DOWN_QUIET_MS } from "@/lib/interventions/survey";
 import { scoreIntervention } from "@/lib/service/operations/score-intervention";
@@ -191,6 +195,48 @@ describeIfDb("the wind-down producer — against Postgres", () => {
   it("does not offer one session another session's firings", async () => {
     await recordFiring({ sessionId: "other" });
     expect(await assemble("s1")).toBeUndefined();
+  });
+
+  it("caps an over-long message on the firing it emits", async () => {
+    // `truncateSurveyMessage` is tested directly as a unit, but nothing
+    // asserted that the ASSEMBLER calls it — so replacing the call with
+    // `row.message` left both wind-down suites 25/25 green. That is the
+    // "tested as a unit, unasserted at the call site" shape: the cap is
+    // proved to work and not proved to be applied, which is exactly where a
+    // refactor silently drops it.
+    //
+    // It matters because `UNRATED_READ_LIMIT` is `MAX_SURVEY_ITEMS * 8`, so
+    // the untruncated worst case is 40 rows of unbounded
+    // `intervention_events.message` text riding a hook response on a `Stop`.
+    //
+    // Asserted against the exported `MAX_SURVEY_MESSAGE_CHARS` and the real
+    // marker rather than a hardcoded 600, so the two cannot drift; and the
+    // stored message is read back from the database to confirm the source
+    // row really was longer than the cap — otherwise a test that truncated
+    // nothing would look identical to this one.
+    const long = "x".repeat(MAX_SURVEY_MESSAGE_CHARS + 250);
+    const id = await recordFiring({ message: long });
+
+    const stored = await prisma.interventionEvent.findUniqueOrThrow({ where: { id } });
+    expect(stored.message).toHaveLength(MAX_SURVEY_MESSAGE_CHARS + 250);
+
+    const context = await assemble();
+    const emitted = context?.unrated[0]?.message;
+
+    expect(emitted).toBeDefined();
+    expect(emitted!.length).toBeLessThan(stored.message!.length);
+    expect(emitted).toBe(truncateSurveyMessage(long));
+    expect(emitted!.endsWith("… [truncated]")).toBe(true);
+  });
+
+  it("leaves a message that fits under the cap exactly as it was stored", async () => {
+    // The other half, so the case above cannot be satisfied by something
+    // that truncates unconditionally.
+    const short = "scope it to a PID";
+    await recordFiring({ message: short });
+
+    const context = await assemble();
+    expect(context?.unrated[0]?.message).toBe(short);
   });
 
   it("keeps one firing per entry, newest first, once the survey dedupes", async () => {
