@@ -105,6 +105,28 @@ export function finishedFrom(counts: Readonly<Record<ItemStateValue, number>>): 
 }
 
 /**
+ * How many of a subtree's descendants have been *started* — every state in
+ * the `in_progress` and `waiting` columns.
+ *
+ * Both columns together, because the question a progress bar answers is
+ * whether work has begun, and `paused`/`blocked` items have: they started and
+ * then stalled. Filing them with the backlog would say nobody has touched
+ * them, which is the one thing that is certainly untrue of a blocked item.
+ *
+ * `on_deck` is deliberately **not** here. It is the ready pool the heartbeat
+ * draws from — triaged and queued, but nobody is on it — and `columns.ts`
+ * files it under `backlog` for that reason. Counting it as started puts a
+ * project at half-started while its board reads `In progress 0`, which is the
+ * bar disagreeing with the columns beside it.
+ */
+export function startedFrom(counts: Readonly<Record<ItemStateValue, number>>): number {
+  let started = 0;
+  for (const state of STATES_BY_COLUMN.in_progress) started += counts[state] ?? 0;
+  for (const state of STATES_BY_COLUMN.waiting) started += counts[state] ?? 0;
+  return started;
+}
+
+/**
  * A ranking over columns used only to pick the single "most active" column
  * when a project has children spread across several — `in_progress` beats
  * `waiting` beats `blocked-ish` etc. See `columnForProject`'s header for why

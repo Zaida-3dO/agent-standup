@@ -116,34 +116,35 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
               <span className={styles.progressPercent}>{progress.percent}%</span>
             )}
           </div>
-          {/* **One bar, three bands** — see `bandsOf`. Finished and active
-              are drawn as widths off the same total, and whatever is left
-              of the track is the not-started remainder. */}
+          {/* **One bar, three bands** — see `bandsOf`. Done and started are
+              drawn as widths off the same total, and whatever is left of the
+              track is the backlog remainder. */}
           <div
             className={styles.progressTrack}
             role="progressbar"
             aria-valuemin={0}
             aria-valuemax={project.total}
             aria-valuenow={tally.done}
-            aria-label={`${tally.done} of ${project.total} children closed, ${tally.onDeck} on deck`}
+            aria-label={`${tally.done} of ${project.total} children closed, ${tally.started} started, ${tally.backlog} in backlog`}
           >
             <div
               className={styles.progressFill}
-              data-band="finished"
+              data-band="done"
               data-percent={progress.kind === "ratio" ? progress.percent : 0}
-              style={{ width: `${bands.finished * 100}%` }}
+              style={{ width: `${bands.done * 100}%` }}
             />
             <div
               className={styles.progressActive}
-              data-band="active"
-              style={{ width: `${bands.active * 100}%` }}
+              data-band="started"
+              style={{ width: `${bands.started * 100}%` }}
             />
           </div>
 
           {/* The bands as text, so nothing here is lost to a reader who
-              cannot see colour. Three numbers that sum to the total. */}
+              cannot see colour. Three numbers that sum to the total, under
+              the board's own column names. */}
           <p className={styles.stripLegend}>
-            On deck {tally.onDeck} · Done {tally.done} · Not started {tally.notStarted}
+            Backlog {tally.backlog} · Started {tally.started} · Done {tally.done}
           </p>
         </div>
       )}

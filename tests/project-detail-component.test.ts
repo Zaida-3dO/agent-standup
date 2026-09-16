@@ -158,15 +158,15 @@ describe("DerivedStatePanel — the reading never arrives alone", () => {
     // paragraph leaves the bar rendering and this failing, which is the
     // point: a reader who cannot see colour must still get the split.
     //
-    // 9 children: 5 merged (done), 1 blocked + 3 executing (on deck), none
-    // left over. "Merged 5" is deliberately NOT asserted any more — the
+    // 9 children: 5 merged (done), 1 blocked + 3 executing (started), none
+    // in the backlog. "Merged 5" is deliberately NOT asserted any more — the
     // legend names the three bands, not twelve states.
     // Collapsed, because `textOf` joins each JSX child with a space and the
     // legend interpolates its numbers.
     const flat = text.replace(/\s+/g, " ");
-    expect(flat).toContain("On deck 4");
+    expect(flat).toContain("Backlog 0");
+    expect(flat).toContain("Started 4");
     expect(flat).toContain("Done 5");
-    expect(flat).toContain("Not started 0");
     // And the count reads "closed", not "merged".
     expect(flat).toContain("5 of 9 closed");
     // The causing child, by name and with its reason inline — so "why is

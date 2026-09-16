@@ -112,12 +112,16 @@ describe("ProjectCard", () => {
       expect(textOf(tree)).toContain("100 %");
     });
 
-    it("draws ONE bar with a finished and an active band, not two bars", () => {
+    it("draws ONE bar with a done and a started band, not two bars", () => {
       // Breaks if: the distribution strip comes back — the card then shows
       // the same subtree twice at two denominators, which is what made the
       // top bar readable as "20% left" on a project with nothing left.
       const tree = ProjectCard({
-        project: makeProject({ counts: { ...noCounts(), merged: 2, executing: 1, someday: 6 } }),
+        project: makeProject({
+          // 2 done, 1 started, and 6 in the backlog — `on_deck` among them,
+          // so this also pins that queued work draws as bare track.
+          counts: { ...noCounts(), merged: 2, executing: 1, someday: 3, on_deck: 3 },
+        }),
         now: NOW,
       });
 
@@ -134,12 +138,12 @@ describe("ProjectCard", () => {
         [...walk(tree)].find(
           (element) => (element.props as { "data-band"?: string })["data-band"] === name,
         );
-      // 2 of 9 finished, 1 of 9 active, and the remaining 6 someday left as
-      // bare track.
-      expect((band("finished")!.props as { style: { width: string } }).style.width).toBe(
+      // 2 of 9 done, 1 of 9 started, and the remaining 6 backlog left as
+      // bare track — no band is drawn for it.
+      expect((band("done")!.props as { style: { width: string } }).style.width).toBe(
         `${(2 / 9) * 100}%`,
       );
-      expect((band("active")!.props as { style: { width: string } }).style.width).toBe(
+      expect((band("started")!.props as { style: { width: string } }).style.width).toBe(
         `${(1 / 9) * 100}%`,
       );
     });
@@ -148,17 +152,20 @@ describe("ProjectCard", () => {
       // Breaks if: the legend goes back to mapping over the distribution —
       // "Won't do 4" reappears and a reader is asked to know that it counts
       // as finished.
+      //
+      // The names are the board's column names on purpose: a reader moving
+      // between the card and the board should not have to translate.
       const tree = ProjectCard({
         project: makeProject({
-          counts: { ...noCounts(), merged: 2, wont_do: 1, executing: 3, someday: 3 },
+          counts: { ...noCounts(), merged: 2, wont_do: 1, executing: 3, someday: 2, on_deck: 1 },
         }),
         now: NOW,
       });
 
       const text = textOf(tree).replace(/\s+/g, " ");
-      expect(text).toContain("On deck 3");
+      expect(text).toContain("Backlog 3");
+      expect(text).toContain("Started 3");
       expect(text).toContain("Done 3");
-      expect(text).toContain("Not started 3");
       expect(text).not.toContain("Won't do");
     });
 
