@@ -1,15 +1,39 @@
-// The `repo` · `area` · `machine` · `account` command-line nouns — SCHEMA.md
-// §20 ("`standup <noun> <verb>`, nouns … `repo` · `area` · `machine` ·
-// `account` · `person`"), §23.3 ("the same operations on the command line
-// so an installation with no server is not locked out of the one class of
-// data it cannot start without"). MILESTONES.md #92.
+// The `repo` · `area` · `machine` · `account` · `person` command-line nouns
+// — SCHEMA.md §20 ("`standup <noun> <verb>`, nouns … `repo` · `area` ·
+// `machine` · `account` · `person`"), §23.3 ("the same operations on the
+// command line so an installation with no server is not locked out of the
+// one class of data it cannot start without"). MILESTONES.md #92.
+//
+// **`person` arrived late, and its absence was the expensive one.** The
+// four nouns above landed with #92; `person` was named in the same two
+// spec sections and in this file's own header, and bound to nothing — for
+// as long as that was true, this module quoted a list it did not implement.
+// The cost was not cosmetic. `update_person` is waived from both MCP
+// transports (`../adapters/waivers.ts`) on the stated grounds that a person
+// curates reference entities "through the web interface or the command
+// line", and the second half of that sentence was false, which left a
+// no-server installation with **no** way to create a `Person` row: the web
+// interface needs the server it does not have, and MCP is waived. That
+// matters because `merge_approval` is person-only
+// (`../service/operations/record-artifact.ts`), so an item with
+// `mergeAuthority: needs_approval` could not be landed at all. `init` does
+// seed profiles, so a properly initialised install was never stuck — but
+// §23.3's "must not be locked out" is about the install that is not.
+//
+// **The waiver is right and stays.** It is not lifted here, and lifting it
+// would be a soundness hole rather than a convenience: an agent that could
+// call `update_person` could mint the very person whose approval authorises
+// that agent's own merge, which is exactly what `../guards/merge.ts` closes
+// for `code_review`. Only the waiver's *factual claim about the command
+// line* was wrong, and binding the verb below is what makes it true —
+// so the fix is here, not in the waiver text.
 //
 // **Its own module, appended into `COMMANDS` (`./commands.ts`) with one
 // spread — never entries written inline there.** Several rows land CLI verbs
 // on that same table concurrently (MILESTONES.md #80-83, #89); a command
 // object per entry in one shared array literal is a merge conflict waiting
 // to happen the moment two of those land in the same window, so this row
-// keeps its five nouns' worth of verbs entirely in a file nothing else
+// keeps all five nouns' worth of verbs entirely in a file nothing else
 // touches and only *appends* to the shared table.
 //
 // **Flags are kebab-case and spelled out explicitly per command**, not
@@ -21,7 +45,7 @@
 // command-line flag reads. Each `buildInput` below does the one translation
 // a generic collector cannot: kebab-case flag to camelCase field.
 import { malformed, type ErrorEnvelope } from "./envelope";
-import { stringFlag, booleanFlag, type ParsedArgs } from "./args";
+import { stringFlag, booleanFlag, numericFlag, type ParsedArgs } from "./args";
 import type { CommandSpec, InputResult } from "./commands";
 
 function idArg(rest: readonly string[], label: string): { ok: true; id: string } | InputResult {
@@ -83,6 +107,51 @@ function budgetWindowsFlag(
     return {
       ok: false,
       envelope: malformed("--budget-windows must be valid JSON.", ["budgetWindows"]),
+    };
+  }
+}
+
+/**
+ * Reads `--notify-rules <json>` parsed as JSON, or `--clear-notify-rules` as `null`. Omitted = no change.
+ *
+ * Deliberately a *sibling* of `budgetWindowsFlag` rather than a shared
+ * generic, matching how every other flag in this file is spelled out per
+ * command: the two differ in the field they name and in the message a bad
+ * value produces, and both of those are what a person reads when they get
+ * it wrong.
+ *
+ * **No casing translation here, unlike every other flag in this module.**
+ * `update_person` validates `notify_rules` in the *stored* snake_case
+ * spelling on purpose — its header explains that accepting the evaluator's
+ * `whenAll`/`whenAny` camelCase would store a rule that parses back to zero
+ * conditions and then silently never fires. Helpfully rewriting the keys
+ * here would defeat that check from behind the adapter it is meant to
+ * protect, so the JSON is passed through exactly as typed and the
+ * operation's schema is what accepts or refuses it.
+ */
+function notifyRulesFlag(
+  flags: ParsedArgs["flags"],
+): { ok: true; value?: unknown } | { ok: false; envelope: ErrorEnvelope } {
+  const clear = booleanFlag(flags, "clear-notify-rules");
+  if (!clear.ok) return clear;
+  const raw = stringFlag(flags, "notify-rules");
+  if (!raw.ok) return raw;
+  if (clear.value && raw.value !== undefined) {
+    return {
+      ok: false,
+      envelope: malformed("--notify-rules and --clear-notify-rules are mutually exclusive.", [
+        "notifyRules",
+      ]),
+    };
+  }
+  if (clear.value) return { ok: true, value: null };
+  if (raw.value === undefined) return { ok: true };
+  try {
+    return { ok: true, value: JSON.parse(raw.value) as unknown };
+  } catch {
+    return {
+      ok: false,
+      envelope: malformed("--notify-rules must be valid JSON.", ["notifyRules"]),
     };
   }
 }
@@ -353,6 +422,127 @@ export const ADMIN_COMMANDS: readonly CommandSpec[] = Object.freeze([
           ...(displayName.value === undefined ? {} : { displayName: displayName.value }),
           ...(planType.value === undefined ? {} : { planType: planType.value }),
           ...("value" in budgetWindows ? { budgetWindows: budgetWindows.value } : {}),
+        },
+      };
+    },
+  },
+  // ── person ────────────────────────────────────────────────────────────
+  //
+  // **Two verbs, not three.** `repo`, `area` and `account` each have a
+  // `get`, and `person` does not, because there is no `get_person`
+  // operation to bind: the service layer registers `list_people`,
+  // `update_person` and `delete_person` and nothing else. Inventing a
+  // `person get` here would mean this adapter growing a surface of its own
+  // — one operation's worth of behaviour implemented in the command table
+  // rather than reached through it — which is precisely what §22's "every
+  // adapter parses the same schema through the same call" forbids and what
+  // makes the conformance comparison meaningful. `person list` answers the
+  // same question one row at a time.
+  //
+  // No `delete` verb either, for the same reason `repo` and `area` have
+  // none despite `delete_reference_row` registering one: §23.1 is "archive,
+  // never delete" because attribution rows point at these, and `update
+  // --archive` is the verb that says so.
+  {
+    noun: "person",
+    verb: "list",
+    operation: "list_people",
+    summary: "List profiles.",
+    buildInput: (_rest, flags) => {
+      const includeArchived = booleanFlag(flags, "include-archived");
+      if (!includeArchived.ok) return includeArchived;
+      // `list_people` is paged (`limit`/`cursor`), unlike `list_repos` and
+      // `list_areas`, so those two flags are carried here and nowhere else
+      // in this file. `--limit` goes through `numericFlag` for the reason
+      // `item list` gives: the field is a `z.number()` and a flag is always
+      // a string, so passing it raw would be refused by the schema as a
+      // type error rather than accepted as the number the caller typed.
+      const limit = numericFlag(flags, "limit");
+      if (!limit.ok) return limit;
+      const cursor = stringFlag(flags, "cursor");
+      if (!cursor.ok) return cursor;
+      return {
+        ok: true,
+        input: {
+          includeArchived: includeArchived.value,
+          ...(limit.value === undefined ? {} : { limit: limit.value }),
+          ...(cursor.value === undefined ? {} : { cursor: cursor.value }),
+        },
+      };
+    },
+  },
+  {
+    noun: "person",
+    verb: "update",
+    operation: "update_person",
+    summary:
+      "Edit a profile, or create one if the id is new (needs display-name), and archive or un-archive it.",
+    // The upsert, spelled `update` rather than split into create + update
+    // because `update_person` is one operation — the same shape `account
+    // update` has, and for the same reason: both are keyed on a
+    // caller-supplied natural id. `update_person`'s own header carries the
+    // argument for why `Person` sits with `machines`/`accounts` rather than
+    // with `repos`/`areas` here.
+    buildInput: (rest, flags) => {
+      const idResult = idArg(rest, "person update");
+      if (!("id" in idResult)) return idResult;
+      const displayName = stringFlag(flags, "display-name");
+      if (!displayName.ok) return displayName;
+      const avatar = stringFlag(flags, "avatar");
+      if (!avatar.ok) return avatar;
+      const clearAvatar = booleanFlag(flags, "clear-avatar");
+      if (!clearAvatar.ok) return clearAvatar;
+      if (clearAvatar.value && avatar.value !== undefined) {
+        return {
+          ok: false,
+          envelope: malformed("--avatar and --clear-avatar are mutually exclusive.", ["avatar"]),
+        };
+      }
+      const colour = stringFlag(flags, "colour");
+      if (!colour.ok) return colour;
+      const clearColour = booleanFlag(flags, "clear-colour");
+      if (!clearColour.ok) return clearColour;
+      if (clearColour.value && colour.value !== undefined) {
+        return {
+          ok: false,
+          envelope: malformed("--colour and --clear-colour are mutually exclusive.", ["colour"]),
+        };
+      }
+      const notifyRules = notifyRulesFlag(flags);
+      if (!notifyRules.ok) return notifyRules;
+      const archive = booleanFlag(flags, "archive");
+      if (!archive.ok) return archive;
+      const unarchive = booleanFlag(flags, "unarchive");
+      if (!unarchive.ok) return unarchive;
+      if (archive.value && unarchive.value) {
+        return {
+          ok: false,
+          envelope: malformed("--archive and --unarchive are mutually exclusive.", ["archived"]),
+        };
+      }
+      return {
+        ok: true,
+        input: {
+          id: idResult.id,
+          ...(displayName.value === undefined ? {} : { displayName: displayName.value }),
+          // `avatar` and `colour` are nullable on the operation — `null`
+          // clears, omitted means no change — so each needs a `--clear-*`
+          // switch as well as a value flag. A bare `--avatar ""` cannot
+          // stand in for the clear: the schema is `.trim().min(1)`, so the
+          // empty string is refused rather than read as "remove it".
+          ...(clearAvatar.value
+            ? { avatar: null }
+            : avatar.value === undefined
+              ? {}
+              : { avatar: avatar.value }),
+          ...(clearColour.value
+            ? { colour: null }
+            : colour.value === undefined
+              ? {}
+              : { colour: colour.value }),
+          ...("value" in notifyRules ? { notifyRules: notifyRules.value } : {}),
+          ...(archive.value ? { archived: true } : {}),
+          ...(unarchive.value ? { archived: false } : {}),
         },
       };
     },

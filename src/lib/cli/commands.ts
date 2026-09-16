@@ -387,7 +387,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     summary: "What this build exposes, and the limits a caller has to respect.",
     buildInput: noInput,
   },
-  // MILESTONES.md #92 — repo/area/machine/account nouns. Kept in their own
+  // MILESTONES.md #92 — repo/area/machine/account/person nouns. Kept in their own
   // module (./commands-admin.ts) and appended here as a single spread, per
   // that module's own header, so concurrent CLI rows landing entries above
   // never conflict with this one.
