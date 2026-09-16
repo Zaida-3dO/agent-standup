@@ -106,9 +106,10 @@ export function shapeRefusalMessage(
 ): string {
   const findings = findingsFrom(issues);
   // The bindings matter here specifically: `describe_tool` has **no
-  // command-line verb**, so a CLI reader used to be pointed at `standup
-  // describe tool`, which does not exist. With the real bindings the
-  // pointer falls back to the MCP spelling, which is a call that works.
+  // command-line verb**, so there is no command to point a CLI reader at.
+  // With the real bindings the pointer falls back to the MCP spelling,
+  // which is a call that works, rather than naming a command that does
+  // not exist inside the message meant to unstick them.
   const pointer = invocationWithArgumentFor(
     "describe_tool",
     operation,

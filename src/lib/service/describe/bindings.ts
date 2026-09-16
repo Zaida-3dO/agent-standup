@@ -6,7 +6,7 @@
 // table: `cli/commands.ts` reaches `@/lib/service` through
 // `cli/envelope.ts`, which would close a cycle, and it pulls `node:fs` in
 // via `commands-backfill.ts` — into every web route that words a refusal,
-// none of which import `lib/cli` today.
+// none of which reach `lib/cli` at all.
 //
 // So the tables are read here, inside the service layer, where importing
 // both is free, and handed to `spellingsFor` as data.
@@ -20,15 +20,24 @@
 
 import { COMMANDS } from "@/lib/cli/commands";
 import type { SurfaceBindings } from "@/lib/surfaces";
-import { FOLDED_INTO, operationsOffMcp } from "./advice";
+// `./reachability`, never `./advice` — the latter imports the operation
+// registry, and the registry's own entries import `@/lib/surfaces` to word
+// their refusals, so reaching it from here initialises the registry
+// half-built. See `reachability.ts` for the full shape of that cycle.
+import { FOLDED_INTO, operationsOffMcp } from "./reachability";
 
 /**
  * The command line's `<noun> <verb>` for each operation.
  *
- * Built once. An operation bound to more than one command keeps the first
- * in table order, which is the same one `--help` lists first; the table has
- * no such duplicate today, and if it gains one, naming either is correct
- * because both dispatch to this operation.
+ * Built once. **An operation bound to more than one command keeps the first
+ * in table order**, which is the one `--help` lists first — `.reverse()`
+ * before the `Map` gets that, since a later `set` would otherwise win.
+ *
+ * One operation is bound twice: `get_setting`, under both `config get` and
+ * `config describe`. Either is a true answer, because both dispatch here;
+ * picking the first is a stable choice rather than a correctness
+ * requirement, so a test pins which one is advertised instead of leaving
+ * it to table order to decide silently.
  *
  * **Aliases are deliberately not preferred.** `standup claim` and `standup
  * sweep` both resolve, but the canonical `<noun> <verb>` is what the help

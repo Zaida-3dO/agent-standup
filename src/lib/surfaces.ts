@@ -11,10 +11,9 @@
 // **"Up to" three, not three.** Most operations are not bound on every
 // surface — 47 of 100 have no command-line verb and 56 are waived off every
 // MCP adapter — so a spelling is looked up in what is really bound and
-// omitted when there is nothing to name. It used to be manufactured by
-// string transformation instead, which made all three fields always
-// present and almost always false; `spellingsFor` carries the measurement
-// and the reasoning.
+// omitted when there is nothing to name. Manufacturing one by string
+// transformation instead makes all three fields always present and almost
+// always false; `spellingsFor` carries the measurement and the reasoning.
 //
 // The transport is already known. Every adapter stamps `caller.transport`
 // (`service/context.ts`, SCHEMA.md §21's five values) before the service is
@@ -85,7 +84,7 @@ export interface SurfaceSpelling {
  * layer imports `sessions.ts`. `cli/commands.ts` reaches `@/lib/service`
  * through `cli/envelope.ts`, so importing it here would close a cycle —
  * and would pull `node:fs` (via `commands-backfill.ts`) into every web
- * route that words a refusal, none of which import `lib/cli` today.
+ * route that words a refusal, none of which reach `lib/cli` at all.
  *
  * So the bindings are a parameter. The service layer, which may import both
  * tables freely, passes the real ones; this module stays pure and stays
@@ -112,28 +111,26 @@ export interface SurfaceBindings {
  *
  * ── Why this takes bindings rather than deriving them ───────────────────
  *
- * It used to derive all three by string transformation:
- * `standup ${operation.replace(/_/g, " ")}`, with `mcp` emitted
- * unconditionally. The comment that justified it claimed
- * *"`standup <name with underscores as spaces>` is the shape the command
- * line uses"*, and **that claim was simply false**. The command line is
- * `<noun> <verb>` — `standup item get`, not `standup get item` — as
- * `docs/plans/SCHEMA.md` §20 states and `lookupCommand` enforces. The
- * comment recorded a mistaken belief about the CLI's own grammar, not a
- * trade-off, so it is gone rather than softened.
+ * **A spelling cannot be computed from an operation's name.** The tempting
+ * derivation is `standup ${operation.replace(/_/g, " ")}` with `mcp`
+ * emitted unconditionally, on the theory that `standup <name with
+ * underscores as spaces>` is the shape the command line uses. It is not:
+ * the command line is `<noun> <verb>` — `standup item get`, not `standup
+ * get item` — as `docs/plans/SCHEMA.md` §20 states and `lookupCommand`
+ * enforces. Name and verb coincide only by accident.
  *
- * Measured against the real tables before this change: of 100 registered
- * operations, the advertised `cli` was wrong for **97** — 47 have no verb
- * at all and the rest had the words in the wrong order — and the
- * advertised `mcp` was wrong for the **56** waived off every MCP adapter.
- * It was right for three, by coincidence: `service_info`, and `claim` and
- * `sweep` through aliases.
+ * Measured against the real tables, that derivation gets the `cli` string
+ * wrong for **97 of 100** registered operations — 47 have no verb at all,
+ * and the rest come out with the words in the wrong order — and the `mcp`
+ * string wrong for the **56** waived off every MCP adapter. It lands on
+ * three by coincidence: `service_info`, and `claim` and `sweep` through
+ * aliases.
  *
- * The old comment's fallback — "where a verb differs the operation name is
- * still enough to find it" — assumed the mismatch was rare. It was
- * universal. And its own premise argued for this fix: it said the
- * dispatcher is the authority on what the command line accepts, and then
- * never asked it.
+ * Nor is "the operation name is still enough to find it" a safe fallback,
+ * since that assumes the mismatch is rare when it is universal. The
+ * dispatcher is the authority on what the command line accepts, so the
+ * only reliable spelling is the one it is asked for — which is what the
+ * `bindings` parameter carries.
  */
 export function spellingsFor(
   operation: string,
@@ -164,12 +161,12 @@ export function spellingsFor(
  * ── When the reader's own surface does not bind it ──────────────────────
  *
  * This is not a corner case. `describe_tool` — which two refusal paths
- * point at by name — has **no command-line verb**, so a CLI caller was
- * being told to run `standup describe tool`, which does not exist. Falling
- * back to whatever surface *does* bind it is the honest answer: naming a
- * real call on another surface tells the reader something true and
- * actionable, where naming an invented call on their own surface costs them
- * the round trip the refusal was supposed to save.
+ * point at by name — has **no command-line verb**, so there is nothing to
+ * name for a CLI reader on their own surface. Falling back to whatever
+ * surface *does* bind it is the honest answer: naming a real call
+ * elsewhere tells the reader something true and actionable, where naming
+ * an invented call on their own surface costs them the round trip the
+ * refusal was supposed to save.
  *
  * Nothing is named when nothing is bound anywhere, which cannot happen for
  * a registered operation but is not worth asserting over inside a refusal
@@ -212,9 +209,8 @@ export function invocationFor(
  * who has to work out the argument has been given a lookup, not an answer.
  *
  * Unbound surfaces fall back exactly as `invocationFor` does, and for the
- * same reason — see its note. This is the function both `describe_tool`
- * pointers go through, so it is the one the unbound-CLI case was actually
- * being hit on.
+ * same reason — see its note. Both `describe_tool` pointers go through
+ * this function, which is where the unbound-CLI case actually arises.
  */
 export function invocationWithArgumentFor(
   operation: string,
