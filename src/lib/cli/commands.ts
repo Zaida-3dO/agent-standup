@@ -23,6 +23,7 @@ import { ARTIFACT_COMMANDS } from "./commands-artifacts"; // row #98 — artifac
 import { LOOP_COMMANDS } from "./commands-loops"; // row #100 - open-loop writes
 import { SESSION_COMMANDS } from "./commands-sessions";
 import { CREW_COMMANDS } from "./commands-crew"; // MILESTONES #64 — `standup crew wait`
+import { SCORING_COMMANDS } from "./commands-scoring"; // the `score` noun — run and intervention scoring
 
 /** What building an input produced. */
 export type InputResult =
@@ -283,6 +284,30 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
       "Create a project — a root container for tasks. A project has no state of its own and cannot be transitioned.",
     buildInput: (_rest, flags) => flagsToInput(flags),
   },
+  // `repair`, not `repair-stuck` — the noun already says what is being
+  // repaired, and the hyphenated form would have been a pseudo-verb of
+  // exactly the kind this PR retires elsewhere.
+  //
+  // `--apply` is a bare switch and the operation defaults it to false, so
+  // the command reports what it WOULD change unless asked to change it. It
+  // is read with `booleanFlag` and only sent when true: stamping `false`
+  // here would overwrite the schema's own default with the same value by a
+  // longer route, and hide which side decides the absent case.
+  {
+    noun: "project",
+    verb: "repair",
+    operation: "repair_stuck_projects",
+    summary:
+      "Report tasks under a project that are finished but left the project looking unfinished, and with --apply, fix them. --projectId is required; without --apply nothing is written.",
+    buildInput: (_rest, flags) => {
+      const apply = booleanFlag(flags, "apply");
+      if (!apply.ok) return apply;
+      const built = flagsToInput(flags, ["apply"]);
+      if (!built.ok) return built;
+      const input = built.input as Record<string, unknown>;
+      return { ok: true, input: apply.value ? { ...input, apply: true } : input };
+    },
+  },
   {
     noun: "task",
     verb: "create",
@@ -402,6 +427,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   // serves it — §18 keeps it off MCP because only a shell call can be
   // backgrounded, which makes this entry the feature's sole agent-facing door.
   ...CREW_COMMANDS,
+  ...SCORING_COMMANDS, // the `score` noun — run and intervention scoring
 ]);
 
 /**
