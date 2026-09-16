@@ -73,17 +73,31 @@ async function defaultRunInitSequence(
   return mod.runInitSequence(options);
 }
 
+/**
+ * The flag names `standup init` actually reads — the parser's own list, and
+ * the single source `readInitFlags` iterates.
+ *
+ * **Exported so the help text can be checked against it rather than against
+ * a copy.** `tests/cli-top-level-help.test.ts` previously restated these
+ * five names as literals, which made the check one-directional: renaming a
+ * flag in the *parser* was caught, renaming one in the *help table* was not
+ * — and documenting a flag the command silently ignores is the more likely
+ * direction and the worse failure. Deriving the expectation from here means
+ * the two cannot drift apart without a test noticing.
+ */
+export const INIT_FLAG_NAMES = [
+  "database-url",
+  "provision-url",
+  "database-name",
+  "app-role",
+  "app-password",
+] as const;
+
 /** Reads the flags `standup init` understands. Refuses a bare flag that needs a value. */
 function readInitFlags(
   flags: ParsedArgs["flags"],
 ): { ok: true; value: InitFlags } | { ok: false; envelope: Envelope } {
-  const names = [
-    "database-url",
-    "provision-url",
-    "database-name",
-    "app-role",
-    "app-password",
-  ] as const;
+  const names = INIT_FLAG_NAMES;
   const values: Record<string, string> = {};
   for (const name of names) {
     const result = stringFlag(flags, name);

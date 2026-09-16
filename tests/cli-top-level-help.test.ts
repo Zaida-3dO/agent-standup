@@ -13,6 +13,9 @@ import { describe, expect, it } from "vitest";
 import { EXIT } from "@/lib/cli/envelope";
 import { helpText, runCli } from "@/lib/cli/run";
 import { TOP_LEVEL_COMMANDS, lookupTopLevelCommand } from "@/lib/cli/commands-top-level";
+// The parser's own flag list, so the help-vs-parser checks below derive
+// their expectation from the code under test rather than restating it.
+import { INIT_FLAG_NAMES } from "@/lib/cli/init";
 
 /** The envelope's data, or a failure if it was not an `ok` one. */
 function okData(envelope: { ok: boolean; data?: unknown }): Record<string, unknown> {
@@ -121,20 +124,40 @@ describe("standup <command> --help — describes that command, never the global 
     expect(data).not.toHaveProperty("command");
   });
 
-  it("describes init's real flags, not invented ones", async () => {
-    // Pinned against the parser: every flag named in init's help is one
-    // `readInitFlags` actually reads. A help text that documents a flag the
-    // command ignores is the same failure as the one this row fixes.
+  // Pinned against the parser, in BOTH directions — which the earlier
+  // version of this test only claimed to do. It restated the five flag names
+  // as literals in this file, so it asserted "the help contains these five
+  // strings", not "the help matches the parser". Mutation testing found the
+  // gap: renaming a documented flag to one `readInitFlags` does not read
+  // (`--app-password` -> `--app-secret` in the help table) left all 18 tests
+  // green while `standup init --help` advertised a silently-ignored flag.
+  //
+  // `INIT_FLAG_NAMES` is the parser's own list — `readInitFlags` iterates
+  // exactly it — so the expectation below is derived from the code under
+  // test rather than from a copy that can go stale.
+  it("documents every flag the parser reads", async () => {
     const detail = (lookupTopLevelCommand("init")?.detail as readonly string[]).join("\n");
-    for (const flag of [
-      "--database-url",
-      "--provision-url",
-      "--database-name",
-      "--app-role",
-      "--app-password",
-    ]) {
-      expect(detail).toContain(flag);
+    for (const name of INIT_FLAG_NAMES) {
+      expect(detail).toContain(`--${name}`);
     }
+  });
+
+  // The direction that was missing. Help drifting ahead of the parser is
+  // how a command comes to advertise a flag it ignores, and a user who
+  // passes it gets silence rather than an error.
+  it("documents no flag the parser does not read", async () => {
+    const command = lookupTopLevelCommand("init");
+    const text = [command?.usage ?? "", ...((command?.detail as readonly string[]) ?? [])].join(
+      "\n",
+    );
+    // Every long flag the help mentions, taken from the text itself rather
+    // than listed here — so a newly documented flag is picked up without
+    // this test being edited.
+    const documented = new Set(
+      [...text.matchAll(/--([a-z][a-z0-9-]*)/g)].map((match) => match[1] as string),
+    );
+    const read = new Set<string>(INIT_FLAG_NAMES);
+    expect([...documented].filter((flag) => !read.has(flag))).toEqual([]);
   });
 
   it("leaves `--help` on a noun/verb command answering the global help", async () => {
