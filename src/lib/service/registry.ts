@@ -142,6 +142,11 @@ import { loop } from "./operations/loop";
 // and are waived off the MCP adapters only, where a tool list costs context
 // on every session (`@/lib/adapters/waivers`).
 import { score } from "./operations/score";
+// The project reads and the repair behind one tool, and the two session
+// verbs behind another. Same reasoning as `score` above: the folded verbs
+// stay on HTTP and the command line and are waived off MCP only.
+import { project } from "./operations/project";
+import { session } from "./operations/session";
 import { orientation } from "./operations/orientation";
 import { myWork } from "./operations/my-work";
 // The progress report (MILESTONES.md #136) — session-scoped, and shaped by
@@ -313,6 +318,8 @@ export const OPERATION_REGISTRY = {
   [loopGet.name]: loopGet,
   [loop.name]: loop,
   [score.name]: score,
+  [project.name]: project,
+  [session.name]: session,
   [orientation.name]: orientation,
   [myWork.name]: myWork,
   [progressReport.name]: progressReport,

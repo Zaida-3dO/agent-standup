@@ -1091,6 +1091,97 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is " +
       "identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "get_projects",
+    reason:
+      "Folded into the single `project` tool as action list. Three verbs about one subject " +
+      "spend the per-session tool-list budget three times, and a caller reaching for any of " +
+      "them has already decided it is working on a project. The folded tool dispatches to this " +
+      "operation, so its refusals, its guard ids and its fields reach the caller unchanged, and " +
+      "it stays exposed on HTTP and on the command line. It is a read that runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is " +
+      "satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_projects",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_project_detail",
+    reason:
+      "Folded into the single `project` tool as action detail. The full read beside the list " +
+      "read and the repair; splitting one subject across three tools spends the budget three " +
+      "times to say `id` again. The folded tool dispatches to this operation, so the child and " +
+      "activity limits stay its own rather than being restated. Still reachable on HTTP and the " +
+      "command line. It is a read that runs no state transition, so no registered guard can " +
+      "reject it.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_project_detail",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "repair_stuck_projects",
+    reason:
+      "Folded into the single `project` tool as action repair. The folded tool forwards `apply` " +
+      "exactly as it arrived, so this operation's own dry-run default still decides what an " +
+      "unmentioned flag means — a repair that was not asked to write reports what it would " +
+      "change and writes nothing. Still reachable on HTTP and as `standup project repair`. It " +
+      "reconciles rollup state rather than running a registered state transition, so no " +
+      "registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "repair_stuck_projects",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "register_session",
+    reason:
+      "Folded into the single `session` tool as action register. Registering a session and " +
+      "reading a session's shape are the same subject seen twice, so two tools spend the " +
+      "per-session tool-list budget twice to describe one. The folded tool dispatches to this " +
+      "operation, so the `mayClaim` answer stays resolved against the " +
+      "hook.require_registration_to_claim setting here rather than being recomputed. Still " +
+      "reachable on HTTP and as `standup session register`. It runs no state transition, so no " +
+      "registered guard can reject it.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "register_session",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_session_shape",
+    reason:
+      "Folded into the single `session` tool as action shape. The read beside the registration, " +
+      "and the one a session-shaped guard consults. The folded tool dispatches to this " +
+      "operation, so its window bound stays its own. Still reachable on HTTP and as `standup " +
+      "session shape`. It is a read that runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_session_shape",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */
