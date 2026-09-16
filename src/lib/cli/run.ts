@@ -35,6 +35,10 @@ import {
   type ExitCode,
 } from "./envelope";
 import type { Binding } from "./binding";
+import {
+  isUngeneratedPrismaClient,
+  DIRECT_MODE_UNAVAILABLE_MESSAGE,
+} from "./direct-mode-readiness";
 import { doctorReport } from "./doctor";
 import { runInitCommand } from "./init";
 import { runMcpStdio } from "./mcp";
@@ -296,35 +300,79 @@ export async function runCli(
     return { envelope: resolution.envelope, exitCode: resolution.exitCode };
   }
 
-  const binding = await buildBinding(resolution.config, options);
-  return runCommand(argv, binding);
+  const built = await buildBinding(resolution.config, options);
+  if (!built.ok) return refuse(built.envelope);
+  return runCommand(argv, built.binding);
 }
+
+/**
+ * Either a usable binding, or the refusal to print instead of building one.
+ *
+ * The failure arm exists for exactly one case, and it is a real one rather
+ * than defensive padding: an npm/npx install ships no Prisma schema, so the
+ * generated client that `direct` needs was never produced, and constructing
+ * it throws `@prisma/client did not initialize yet ... run "prisma
+ * generate"` — advice that cannot work, because `prisma generate` reads a
+ * schema and there is none. Detecting it here turns a library-internal
+ * stack trace into a sentence naming the actual remedy. See
+ * `./direct-mode-readiness`.
+ */
+type BindingOutcome = { ok: true; binding: Binding } | { ok: false; envelope: Envelope };
 
 async function buildBinding(
   config: Extract<ReturnType<typeof resolveConfig>, { ok: true }>["config"],
   options: RunCliOptions,
-): Promise<Binding> {
+): Promise<BindingOutcome> {
   const identity = {
     ...(config.sessionId === undefined ? {} : { sessionId: config.sessionId }),
     ...(config.actor === undefined ? {} : { actor: config.actor }),
   };
 
   if (config.binding === "http") {
-    return createHttpBinding({
-      // Non-null by construction: `resolveConfig` returns `http` only when
-      // it resolved a URL, and the two are set in the same branch.
-      baseUrl: config.standupUrl as string,
-      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-      ...identity,
-      ...(config.token === undefined ? {} : { token: config.token }),
-    });
+    return {
+      ok: true,
+      binding: createHttpBinding({
+        // Non-null by construction: `resolveConfig` returns `http` only when
+        // it resolved a URL, and the two are set in the same branch.
+        baseUrl: config.standupUrl as string,
+        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+        ...identity,
+        ...(config.token === undefined ? {} : { token: config.token }),
+      }),
+    };
   }
 
   const loadService =
     options.loadService ??
     (async () => (await import("@/lib/service/live")).service as CallableService);
 
-  return createDirectBinding({ service: await loadService(), ...identity });
+  // The load is attempted, and an ungenerated Prisma client is translated
+  // rather than pre-empted by a probe.
+  //
+  // **Why catching beats checking here.** A probe would have to `import
+  // "@prisma/client"` from this module, and this module is in the entry
+  // chunk — which would put the specifier in `dist/bin/standup.js` and
+  // undo the code splitting that keeps `standup --help` from needing a
+  // database client at all (see this file's header, and the test in
+  // `tests/cli-package-publish.test.ts` that pins it). Catching costs
+  // nothing on the path that works, keeps every Prisma reference inside
+  // the already-deferred chunk, and covers causes a schema-or-client probe
+  // would miss.
+  //
+  // Only the initialisation failure is translated. Anything else is a real
+  // error from a real client and is rethrown untouched — swallowing it
+  // would replace a true message with a misleading one about installation.
+  try {
+    return {
+      ok: true,
+      binding: createDirectBinding({ service: await loadService(), ...identity }),
+    };
+  } catch (error) {
+    if (isUngeneratedPrismaClient(error)) {
+      return { ok: false, envelope: malformed(DIRECT_MODE_UNAVAILABLE_MESSAGE, ["DATABASE_URL"]) };
+    }
+    throw error;
+  }
 }
 
 /**

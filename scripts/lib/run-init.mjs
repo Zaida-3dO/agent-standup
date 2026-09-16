@@ -30,16 +30,36 @@ import { verifyRoundTrip } from "./verify-round-trip.mjs";
 import { provisionAppDatabase } from "./provision-db.mjs";
 import { attemptContainerProvision } from "./container-provision.mjs";
 import { spawn } from "node:child_process";
+import path from "node:path";
+import { findPrismaDir } from "./bundled-prisma.mjs";
 
 /**
  * @typedef {{ info: (message: string) => void, warn: (message: string) => void, error: (message: string, err?: unknown) => void }} Logger
  */
 
-/** Runs `node prisma/seed.mjs` against `databaseUrl` as a real subprocess — the same script `npm run db:seed` runs. */
+/**
+ * Runs `prisma/seed.mjs` against `databaseUrl` as a real subprocess — the
+ * same script `npm run db:seed` runs.
+ *
+ * The seed script is addressed by resolved path rather than by a bare
+ * relative `prisma/seed.mjs`. A relative spelling resolves against the
+ * process's working directory, which on an npm install is the user's own
+ * project — there is no `prisma/` there, so the spawn fails and `standup
+ * init` reports a seed failure on an otherwise healthy database.
+ * `findPrismaDir` prefers `cwd`, so a checkout runs its own seed.
+ */
 function runSeed({ databaseUrl, cwd, env, log }) {
   return new Promise((resolve) => {
     log.info("Seeding reference data...");
-    const child = spawn("node", ["prisma/seed.mjs"], {
+    const prismaDir = findPrismaDir(cwd);
+    if (!prismaDir) {
+      log.error(
+        "Could not find this installation's prisma/ directory, so the seed script cannot be run.",
+      );
+      resolve({ ok: false });
+      return;
+    }
+    const child = spawn("node", [path.join(prismaDir, "seed.mjs")], {
       cwd,
       env: { ...env, DATABASE_URL: databaseUrl },
       stdio: "inherit",

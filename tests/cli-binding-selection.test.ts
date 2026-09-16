@@ -11,6 +11,7 @@
 // resolve … in which case it says so and stops", which is exit code 4.
 import { describe, expect, it } from "vitest";
 import { EXIT, describeResolution, firstDefined, resolveConfig, runCli } from "@/lib/cli";
+import { isUngeneratedPrismaClient } from "@/lib/cli/direct-mode-readiness";
 import type { Binding } from "@/lib/cli";
 
 function config(resolution: ReturnType<typeof resolveConfig>) {
@@ -267,5 +268,77 @@ describe("the binding interface has exactly one method commands use", () => {
       // built input, which is the property this asserts.
       data: { operation: "get_item", input: { id: "abc", full: false } },
     });
+  });
+});
+
+// An npm/npx install ships no generated Prisma client, so selecting the
+// `direct` binding there used to crash with `@prisma/client did not
+// initialize yet. Please run "prisma generate"` — a stack trace into a
+// hashed bundle chunk, carrying advice that cannot work, because a bare
+// `prisma generate` does not generate a client for an installed dependency.
+//
+// Reproduced by packing this repo and installing the tarball into an empty
+// directory; it is invisible from a checkout, where a generated client is
+// lying around. These tests pin the translation, not the crash.
+describe("an ungenerated Prisma client is refused, not crashed through", () => {
+  /** How the placeholder `@prisma/client` actually fails: on construction, not on import. */
+  function ungenerated() {
+    return new Error(
+      '@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again.',
+    );
+  }
+
+  it("classifies the placeholder's error", () => {
+    expect(isUngeneratedPrismaClient(ungenerated())).toBe(true);
+  });
+
+  it("finds it through a wrapping cause", () => {
+    // The throw happens inside a dynamic import, so a loader that wraps it
+    // would otherwise hide the match and restore the raw crash.
+    expect(isUngeneratedPrismaClient(new Error("boom", { cause: ungenerated() }))).toBe(true);
+  });
+
+  it("leaves a real database error alone", () => {
+    // The load-bearing half. A classifier that matched anything would
+    // answer every genuine failure — bad credentials, unreachable host —
+    // with advice about installation: confidently wrong, and harder to
+    // diagnose than an unhandled error would have been.
+    expect(
+      isUngeneratedPrismaClient(new Error("Authentication failed against database server")),
+    ).toBe(false);
+    expect(isUngeneratedPrismaClient(undefined)).toBe(false);
+    expect(isUngeneratedPrismaClient({ message: 42 })).toBe(false);
+  });
+
+  it("refuses with actionable text instead of propagating the crash", async () => {
+    const outcome = await runCli(["item", "get", "item-1"], {
+      env: { DATABASE_URL: "postgresql://u@h/d" },
+      loadService: async () => {
+        throw ungenerated();
+      },
+    });
+
+    expect(outcome.exitCode).toBe(EXIT.MALFORMED);
+    expect(outcome.envelope.ok).toBe(false);
+    const message = outcome.envelope.ok ? "" : outcome.envelope.error.message;
+    // Names the real cause, and the two things that actually work. The
+    // negative assertion is the point: a bare `prisma generate` is the one
+    // remedy that cannot fix this, so the message must not resolve to it.
+    expect(message).toContain("has not been generated");
+    expect(message).toContain("STANDUP_URL");
+    expect(message).toContain("--schema");
+    expect(message).not.toContain("did not initialize yet");
+  });
+
+  it("still propagates an unrelated failure rather than mislabelling it", async () => {
+    // Swallowing this would report a broken database as a broken install.
+    await expect(
+      runCli(["item", "get", "item-1"], {
+        env: { DATABASE_URL: "postgresql://u@h/d" },
+        loadService: async () => {
+          throw new Error("connection refused");
+        },
+      }),
+    ).rejects.toThrow("connection refused");
   });
 });
