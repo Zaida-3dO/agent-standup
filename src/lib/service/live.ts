@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { SettingsCache, type SettingsSource, type StoredOverride } from "@/lib/settings";
 import { ServiceRuntime, prismaTransactionRunner, type CallOptions } from "./runtime";
 import { createServiceDeliverer } from "@/lib/interventions/service-delivery";
+import { produceServiceFindings } from "@/lib/interventions/service-producer";
 // Side-effect import: every hand-written guard under `src/lib/service/guards/`
 // registers into the shared `guardRegistry` as a side effect of importing
 // this module — see that module's own header. Imported here, not in
@@ -146,4 +147,19 @@ export const service: ServiceRuntime = new SettingsInvalidatingRuntime({
   transaction: prismaTransactionRunner(prisma, { maxWait: 2000, timeout: 5000 }),
   resolveSnapshot: () => settingsCache.get(),
   deliverInterventions: interventionDeliverer,
+  // The producer for the same channel (MILESTONES.md #128).
+  //
+  // **The deliverer above can only deliver what something produced**, and
+  // until this was wired the only producer reaching it was the hook route,
+  // which fills the digest via `hold()`. That left the payload's other
+  // member — `findings`, "what this very call triggered, delivered now" —
+  // with no source at all, on a path built so the feature would survive the
+  // hook not being wired.
+  //
+  // This supplies it: it evaluates the entries a service call can actually
+  // answer and hands them to the deliverer. A producer without a deliverer
+  // would find things and drop them, and a deliverer with no producer of
+  // its own can only pass on what somebody else noticed earlier — so the
+  // two are wired together rather than separately.
+  produceInterventions: produceServiceFindings,
 });

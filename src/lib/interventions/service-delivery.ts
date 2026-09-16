@@ -52,8 +52,16 @@ export interface DeliveryCaller {
  * runtime should not have to know what kind of object produces a payload.
  */
 export interface ServiceDeliverer {
-  /** The runtime's hook: result in, result-or-envelope out. */
-  (result: unknown, caller: DeliveryCaller): unknown;
+  /**
+   * The runtime's hook: result in, result-or-envelope out.
+   *
+   * `findings` is what `./service-producer.ts` noticed on this very call,
+   * evaluated inside the transaction and handed across. It defaults to
+   * empty so that every existing caller — the tests, and any adapter that
+   * has not been taught about the producer — keeps working unchanged and
+   * gets exactly the behaviour it had before: a digest, and nothing else.
+   */
+  (result: unknown, caller: DeliveryCaller, findings?: readonly InterventionFinding[]): unknown;
   /**
    * Holds findings for a session's next digest. Returns the ones it could
    * not hold, in the order they were offered.
@@ -122,17 +130,43 @@ export function createServiceDeliverer(options: ServiceDelivererOptions = {}): S
   const accumulator = options.accumulator ?? new DigestAccumulator();
   const clock = options.now ?? Date.now;
 
-  const deliver = (result: unknown, caller: DeliveryCaller): unknown => {
+  const deliver = (
+    result: unknown,
+    caller: DeliveryCaller,
+    findings: readonly InterventionFinding[] = [],
+  ): unknown => {
     // A call naming no session gets nothing. The accumulator is keyed by
     // session and there is no sensible key for a call without one — a
     // shared bucket would deliver one session's findings to another, which
     // is a worse failure than not batching at all. Answered here as well as
     // in `decideDelivery` because reaching that function at all would mean
     // building a payload for a session that cannot have one.
+    //
+    // **This is also the seam the sibling blocker bites at.** `caller.
+    // sessionId` arrives from `X-Standup-Session` (`../mcp/http.ts`), and a
+    // client that does not send that header reaches here with it undefined
+    // and is returned unchanged — however much the producer found. That is
+    // tracked separately and is deliberately not worked around here: a
+    // shared or invented key would be a worse bug than the silence.
     const sessionId = caller.sessionId;
     if (sessionId === undefined) return result;
 
-    const payload = decideDelivery(accumulator, { sessionId, now: clock() });
+    // The findings the producer noticed on this call, passed through rather
+    // than omitted.
+    //
+    // **This key being absent disabled the immediate half of the payload,
+    // and only that half.** `decideDelivery` reads `options.findings ?? []`,
+    // so a call without it partitioned an empty list and nothing could ever
+    // appear under `findings` — "what this very call triggered, delivered
+    // now". The `digest` half was unaffected throughout: `decideDelivery`
+    // calls `accumulator.take()` unconditionally, so a batch the hook route
+    // had placed via `hold()` still came due and still rode back.
+    //
+    // The asymmetry is what made it hard to see. A session could be handed
+    // things noticed five minutes earlier while never being told anything
+    // about the call in its hand, which reads as a quiet channel rather
+    // than a half-connected one.
+    const payload = decideDelivery(accumulator, { sessionId, findings, now: clock() });
     return attachInterventions(result, payload);
   };
 
