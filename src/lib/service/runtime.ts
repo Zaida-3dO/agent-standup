@@ -383,9 +383,9 @@ export class ServiceRuntime {
       if (!isRehearsalRollback(error)) throw error;
       result = { outcome: error.outcome };
       // A rehearsal rolled back, so anything the producer found inside it
-      // described a world that no longer exists. Cleared rather than
-      // delivered: a `dryRun` must not be able to emit a nudge about a
-      // state it deliberately abandoned.
+      // describes a state the transaction abandoned. Cleared rather than
+      // delivered: a `dryRun` must not be able to emit a nudge about work
+      // it deliberately declined to keep.
       produced = [];
     }
 

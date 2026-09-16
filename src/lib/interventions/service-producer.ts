@@ -56,10 +56,11 @@
 // treats it as the reason the path is affordable.
 //
 // What is left is the entries that read **item and board state alone**, and
-// there are six of them. Each one's predicate touches neither `command` nor
-// `tool`:
+// there are eight of them. Each one's predicate touches neither `command`
+// nor `tool`:
 //
 //   - `finished-with-no-reviewer` (I1) — `itemState` + `hasApprovalAtTip`
+//   - `review-without-approval-at-tip` — the same three fields
 //   - `committed-with-no-pull-request` (I26) — `deliveryStage`
 //   - `pull-request-with-no-review-requested` (I27) — `deliveryStage` +
 //     `pullRequestAgeSeconds`
@@ -67,6 +68,16 @@
 //   - `visual-reviews-in-flight-concurrently` (I25) — `pendingVisualReviews`
 //   - `visual-review-deferred-without-record` (I30) —
 //     `visualReviewDeferredUnrecorded`
+//   - `crew-in-flight-without-check-in` — `crewInFlight`, for an
+//     orchestrator-held claim
+//
+// That list is **not** hand-maintained prose: `tests/interventions-producer-
+// reachability.test.ts` derives it by running every predicate in the
+// registry against contexts narrowed to what this producer can assemble, and
+// fails if the set changes. The hand-written version had **six** entries and
+// the test found two more — one reading exactly the same fields as the
+// first, missed because its name reads as a review-time check. Both would
+// have been entries that silently never fired here.
 //
 // These are exactly the "work has stopped moving" entries, and a service
 // call is the *better* moment to ask them than a tool call is. A session
