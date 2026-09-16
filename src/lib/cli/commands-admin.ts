@@ -156,30 +156,122 @@ function notifyRulesFlag(
   }
 }
 
+/**
+ * The five reference-row nouns, and how their two mechanical verbs read.
+ *
+ * ── Why a descriptor table, and why only these two verbs ───────────────
+ *
+ * `list` and `get` were written out five times each and differ in exactly
+ * three ways: the noun, the operation each calls, and whether the collection
+ * read takes `--include-archived` (`machine` and `account` do not — their
+ * operations declare no such field, so sending it would be refused by a
+ * `.strict()` schema). That is data, and it was being expressed as fifty-odd
+ * lines of identical control flow.
+ *
+ * **`create`, `update` and `merge` are NOT here and must not be moved here.**
+ * This file's header explains why: every field those verbs take is
+ * multi-word, so each does a kebab-case-flag to camelCase-field translation
+ * that is genuinely per-command. A table could only express that as a list of
+ * field names per verb, which is the allow-list shape that drops a flag
+ * silently the day someone adds a field to a schema and not to the list.
+ * These two verbs are foldable precisely because neither reads a value flag
+ * that varies by noun.
+ *
+ * The `CommandSpec`s themselves are still built here and spread into one
+ * frozen array, so `COMMANDS` holds ordinary entries and nothing downstream
+ * can tell a generated one from a hand-written one.
+ */
+interface ReferenceRowNoun {
+  readonly noun: string;
+  /** What the id positional is called in a refusal — `machine` names it a name. */
+  readonly idField: "id" | "name";
+  readonly list: { readonly operation: string; readonly summary: string };
+  readonly get: { readonly operation: string; readonly summary: string };
+  /**
+   * Whether the collection read accepts `--include-archived`.
+   *
+   * `machine` and `account` do not: their list operations declare no such
+   * field. Stated per noun rather than assumed, because sending a field a
+   * `.strict()` schema does not declare is a refusal, not a no-op.
+   */
+  readonly listTakesIncludeArchived: boolean;
+}
+
+const REFERENCE_ROW_NOUNS: readonly ReferenceRowNoun[] = [
+  {
+    noun: "repo",
+    idField: "id",
+    list: { operation: "list_repos", summary: "List repositories." },
+    get: { operation: "get_repo", summary: "Show one repository." },
+    listTakesIncludeArchived: true,
+  },
+  {
+    noun: "area",
+    idField: "id",
+    list: { operation: "list_areas", summary: "List areas." },
+    get: { operation: "get_area", summary: "Show one area." },
+    listTakesIncludeArchived: true,
+  },
+  {
+    noun: "machine",
+    idField: "name",
+    list: { operation: "list_machines", summary: "List machines." },
+    get: { operation: "get_machine", summary: "Show one machine." },
+    listTakesIncludeArchived: false,
+  },
+  {
+    noun: "account",
+    idField: "id",
+    list: { operation: "list_accounts", summary: "List accounts." },
+    get: { operation: "get_account", summary: "Show one account." },
+    listTakesIncludeArchived: false,
+  },
+];
+
+/** The `<noun> list` and `<noun> get` pair for one reference-row noun. */
+function referenceRowCommands(row: ReferenceRowNoun): readonly CommandSpec[] {
+  return [
+    {
+      noun: row.noun,
+      verb: "list",
+      operation: row.list.operation,
+      summary: row.list.summary,
+      buildInput: (_rest, flags) => {
+        if (!row.listTakesIncludeArchived) return { ok: true, input: {} };
+        const includeArchived = booleanFlag(flags, "include-archived");
+        if (!includeArchived.ok) return includeArchived;
+        return { ok: true, input: { includeArchived: includeArchived.value } };
+      },
+    },
+    {
+      noun: row.noun,
+      verb: "get",
+      operation: row.get.operation,
+      summary: row.get.summary,
+      buildInput: (rest) => {
+        const value = rest[0];
+        if (value === undefined) {
+          return {
+            ok: false,
+            envelope: malformed(
+              `\`standup ${row.noun} get\` needs ${row.idField === "name" ? "a name" : "an id"}.`,
+              [row.idField],
+            ),
+          };
+        }
+        return { ok: true, input: { [row.idField]: value } };
+      },
+    },
+  ];
+}
+
 export const ADMIN_COMMANDS: readonly CommandSpec[] = Object.freeze([
+  // The mechanical `list`/`get` pairs for repo · area · machine · account,
+  // from the descriptor table above. `person list` is NOT among them — it is
+  // paged, so it reads `--limit` and `--cursor` that no other list reads, and
+  // it stays written out below where that difference is visible.
+  ...REFERENCE_ROW_NOUNS.flatMap(referenceRowCommands),
   // ── repo ──────────────────────────────────────────────────────────────
-  {
-    noun: "repo",
-    verb: "list",
-    operation: "list_repos",
-    summary: "List repositories.",
-    buildInput: (_rest, flags) => {
-      const includeArchived = booleanFlag(flags, "include-archived");
-      if (!includeArchived.ok) return includeArchived;
-      return { ok: true, input: { includeArchived: includeArchived.value } };
-    },
-  },
-  {
-    noun: "repo",
-    verb: "get",
-    operation: "get_repo",
-    summary: "Show one repository.",
-    buildInput: (rest) => {
-      const idResult = idArg(rest, "repo get");
-      if (!("id" in idResult)) return idResult;
-      return { ok: true, input: { id: idResult.id } };
-    },
-  },
   {
     noun: "repo",
     verb: "create",
@@ -251,28 +343,6 @@ export const ADMIN_COMMANDS: readonly CommandSpec[] = Object.freeze([
   // ── area ──────────────────────────────────────────────────────────────
   {
     noun: "area",
-    verb: "list",
-    operation: "list_areas",
-    summary: "List areas.",
-    buildInput: (_rest, flags) => {
-      const includeArchived = booleanFlag(flags, "include-archived");
-      if (!includeArchived.ok) return includeArchived;
-      return { ok: true, input: { includeArchived: includeArchived.value } };
-    },
-  },
-  {
-    noun: "area",
-    verb: "get",
-    operation: "get_area",
-    summary: "Show one area.",
-    buildInput: (rest) => {
-      const idResult = idArg(rest, "area get");
-      if (!("id" in idResult)) return idResult;
-      return { ok: true, input: { id: idResult.id } };
-    },
-  },
-  {
-    noun: "area",
     verb: "create",
     operation: "create_area",
     summary: "Find or create an area by its normalised name.",
@@ -336,26 +406,6 @@ export const ADMIN_COMMANDS: readonly CommandSpec[] = Object.freeze([
   // ── machine ───────────────────────────────────────────────────────────
   {
     noun: "machine",
-    verb: "list",
-    operation: "list_machines",
-    summary: "List machines.",
-    buildInput: () => ({ ok: true, input: {} }),
-  },
-  {
-    noun: "machine",
-    verb: "get",
-    operation: "get_machine",
-    summary: "Show one machine.",
-    buildInput: (rest) => {
-      const id = rest[0];
-      if (id === undefined) {
-        return { ok: false, envelope: malformed("`standup machine get` needs a name.", ["name"]) };
-      }
-      return { ok: true, input: { name: id } };
-    },
-  },
-  {
-    noun: "machine",
     verb: "update",
     operation: "update_machine",
     summary: "Set or clear a machine's source-globs override, creating it if it is new.",
@@ -379,24 +429,6 @@ export const ADMIN_COMMANDS: readonly CommandSpec[] = Object.freeze([
     },
   },
   // ── account ───────────────────────────────────────────────────────────
-  {
-    noun: "account",
-    verb: "list",
-    operation: "list_accounts",
-    summary: "List accounts.",
-    buildInput: () => ({ ok: true, input: {} }),
-  },
-  {
-    noun: "account",
-    verb: "get",
-    operation: "get_account",
-    summary: "Show one account.",
-    buildInput: (rest) => {
-      const idResult = idArg(rest, "account get");
-      if (!("id" in idResult)) return idResult;
-      return { ok: true, input: { id: idResult.id } };
-    },
-  },
   {
     noun: "account",
     verb: "update",
