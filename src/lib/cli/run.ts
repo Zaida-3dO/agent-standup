@@ -17,6 +17,11 @@
 // standing up a server inside a unit test.
 import { parseArgs, booleanFlag, type ParsedArgs } from "./args";
 import { COMMANDS, identityFlags, lookupCommand, nouns } from "./commands";
+import {
+  TOP_LEVEL_COMMANDS,
+  lookupTopLevelCommand,
+  type TopLevelCommandSpec,
+} from "./commands-top-level";
 import { resolveConfig, type CliEnvironment, type CliFileConfig } from "./config";
 import { createDirectBinding, type CallableService } from "./bindings/direct";
 import { createHttpBinding, type FetchLike } from "./bindings/http";
@@ -211,6 +216,24 @@ export async function runCli(
 
   const help = booleanFlag(flags, "help");
   if (!help.ok) return refuse(help.envelope);
+
+  // `--help` on one of the single-word commands describes *that* command.
+  //
+  // **Order is the whole correctness argument here.** A global-help return
+  // placed above this lookup answers `standup init --help` with the global
+  // help and exit 0 — the worst shape a help bug takes, because it is not an
+  // error a person retries but a plausible, specific answer about a
+  // different subject. A reader takes it to mean there is no `init`, when
+  // `init` exists, works, and reports a useful refusal one keystroke away.
+  // So the specific answer is resolved first, and the general one is the
+  // fallback rather than the gate.
+  if (help.value) {
+    const topLevel = lookupTopLevelCommand(words[0]);
+    if (topLevel !== undefined) {
+      return { envelope: ok(topLevelHelpText(topLevel)), exitCode: EXIT.OK };
+    }
+  }
+
   if (help.value || words.length === 0) {
     return { envelope: ok(helpText()), exitCode: EXIT.OK };
   }
@@ -304,16 +327,58 @@ async function buildBinding(
   return createDirectBinding({ service: await loadService(), ...identity });
 }
 
-/** The top-level help, built from the command table rather than written out. */
+/**
+ * The top-level help, built from the command tables rather than written out.
+ *
+ * `setup` is listed **first and separately** from the noun/verb operations.
+ * Those four are dispatched as special cases rather than through `COMMANDS`,
+ * so a help text built from `COMMANDS` alone cannot name them however
+ * carefully it is read — there is no row for them to be read from. Drawing
+ * `setup` from its own table is what makes them reachable here at all.
+ *
+ * Ordering them ahead of the operations is a separate judgement, and the
+ * same one: a person running `--help` on a fresh install needs `init` and
+ * `doctor`, not the several dozen operations that require an installation to
+ * already exist.
+ */
 export function helpText(): {
   usage: string;
+  setup: readonly string[];
+  requires: readonly string[];
   nouns: readonly string[];
   commands: readonly string[];
 } {
   return {
     usage: "standup <noun> <verb> [--json] [--direct] [--as <person>] [--session <id>]",
+    setup: TOP_LEVEL_COMMANDS.map(
+      (command) => `${command.name} — ${command.summary} (\`standup ${command.name} --help\`)`,
+    ),
+    // Stated in help rather than only in the README because this is where a
+    // person who just installed the package looks first, and both are hard
+    // requirements they will otherwise meet as a failure: Postgres is not
+    // swappable, and the package refuses to install below Node 24.
+    requires: [
+      "Postgres — required, and not swappable for SQLite or anything else.",
+      "Node >= 24 — enforced by the package's own engines field.",
+      "Something to run the liveness sweep on a timer: the application has none of its own, so claims from dead sessions are only released when `standup session sweep` (or POST /api/sweep) is invoked. Wire it to cron or a scheduler before relying on liveness.",
+    ],
     nouns: nouns(),
     commands: COMMANDS.map((command) => `${command.noun} ${command.verb} — ${command.summary}`),
+  };
+}
+
+/** The help for one single-word command, built from its table entry. */
+export function topLevelHelpText(command: TopLevelCommandSpec): {
+  command: string;
+  usage: string;
+  summary: string;
+  detail: readonly string[];
+} {
+  return {
+    command: command.name,
+    usage: command.usage,
+    summary: command.summary,
+    detail: command.detail,
   };
 }
 

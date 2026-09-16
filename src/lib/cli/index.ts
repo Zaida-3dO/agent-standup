@@ -53,8 +53,14 @@ export type { InitFlags, InitSource } from "./init/resolve";
 export { runMcpStdio } from "./mcp";
 export type { McpStdioOutcome, RunMcpStdioOptions } from "./mcp";
 
-export { helpText, runCli, runCommand } from "./run";
+export { helpText, runCli, runCommand, topLevelHelpText } from "./run";
 export type { RunCliOptions, RunOutcome } from "./run";
+export {
+  TOP_LEVEL_COMMANDS,
+  lookupTopLevelCommand,
+  topLevelCommandNames,
+} from "./commands-top-level";
+export type { TopLevelCommandSpec } from "./commands-top-level";
 
 export { humanText, render } from "./render";
 export type { Streams } from "./render";
