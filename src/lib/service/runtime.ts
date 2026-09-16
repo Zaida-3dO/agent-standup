@@ -481,10 +481,19 @@ export class ServiceRuntime {
    *      anonymous read traffic.
    *   3. **The operation must be a write.** The gate that matters for cost:
    *      these are real queries and this is the seam every call crosses, so
-   *      running them on every `get_item` would put three lookups on the
-   *      read path. It costs no findings — every entry here describes a fact
-   *      that only a write can change, so a read would re-derive the answer
-   *      the previous write already produced.
+   *      running them on every `get_item` would put **12** sequential
+   *      lookups on the read path for an item far enough along to have a
+   *      commit, a pull request and a review — measured, not estimated; see
+   *      `../interventions/service-producer.ts` for the enumeration.
+   *
+   *      It costs **almost** no findings. Six of the eight entries describe
+   *      a fact only a write can change, so a read would re-derive the
+   *      answer the previous write already produced. The other two are
+   *      time-dependent — `pull-request-with-no-review-requested` and
+   *      `crew-in-flight-without-check-in` both compare a stored timestamp
+   *      against `NOW()`, so they can become true with nobody writing
+   *      anything. Those are **deferred to the session's next write**, not
+   *      dropped, and a session doing work writes constantly.
    *
    * **A producer that throws is swallowed**, for the same reason the
    * deliverer's is and with more at stake: this one runs *inside* the

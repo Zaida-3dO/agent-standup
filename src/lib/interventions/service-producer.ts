@@ -105,18 +105,47 @@
 //
 // These lookups are real queries, and the runtime is the seam every call in
 // the system crosses. Running them on every `get_item` and every
-// `list_items` would put three queries on the read path — the precise cost
-// `../service/operations/hook-decision.ts` and `./context.ts` are shaped
-// around avoiding.
+// `list_items` would put **12 sequential queries** on the read path — the
+// precise cost `../service/operations/hook-decision.ts` and `./context.ts`
+// are shaped around avoiding.
 //
-// A write is the honest gate, and it is not merely the cheap one. Every
-// entry above describes a fact about an item that changes when somebody
-// *does* something: a commit is recorded, a review is requested, a state
-// moves. A read cannot change any of them, so asking after a read would
-// re-derive an answer that is identical to the one the last write already
-// produced. The gate is therefore free of missed findings rather than
-// trading them away — which is the distinction `needs()` makes when it errs
-// towards a wasted query over a silently disarmed entry.
+// Twelve rather than the one-per-field the list above suggests, because
+// `hasApprovingArtifactAtCurrentRoundAndTip` fans out into five of its own.
+// Measured for an `in_review` item with a commit, a pull request and a
+// `lgtm_with_nits` review, by instrumenting `$queryRawUnsafe`:
+//
+//   1. the assignment/item/repo join   7. `currentReviewRound`
+//   2. `deliveryFor`                   8. approving artifacts at round
+//   3. `untrackedNitsFor`              9. artifact kinds at round
+//   4. `pendingVisualReviewsFor`      10. `currentTipCommitSha` again
+//   5. `deferredVisualReviewFor`      11. `crewInFlightFor`
+//   6. `currentTipCommitSha`          12. `readInterventionSettingRows`
+//
+// (6 and 10 are byte-identical — a cheap memoisation for anyone who wants
+// it. The common case is far shorter: a session holding no claim exits
+// after query 1.)
+//
+// A write is the honest gate, and it is not merely the cheap one. **Six of
+// the eight** entries above describe a fact about an item that changes only
+// when somebody *does* something: a commit is recorded, a review is
+// requested, a state moves. A read cannot change any of those, so asking
+// after one would re-derive an answer identical to the last write's.
+//
+// The remaining two are **time-dependent**, and the gate treats them
+// differently — worth knowing before extending it:
+//
+//   - `pull-request-with-no-review-requested` reads `pullRequestAgeSeconds`,
+//     computed as `NOW() - MAX(a."createdAt")`. A pull request simply ages
+//     past the grace window.
+//   - `crew-in-flight-without-check-in` filters on
+//     `a."lastActive" > NOW() - MAKE_INTERVAL(...)`. A crewmate goes quiet
+//     and ages past the dead threshold.
+//
+// Both can become true with nobody writing anything. The gate **defers**
+// them to the session's next write rather than dropping them, and a session
+// doing work writes constantly — so the practical loss is a delay, not a
+// missed finding. That is a weaker claim than "free of missed findings",
+// and it is the one the code supports.
 //
 // ── Time is an argument, never a reading ───────────────────────────────
 //
