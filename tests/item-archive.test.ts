@@ -322,6 +322,61 @@ describeIfDb("delete_item", () => {
       expect(rejection.details?.references?.[0]?.kind).toBe("child");
     });
 
+    // The `items.inbox_project` setting is a reference with no foreign key
+    // behind it: it names a project by TITLE, resolved to an id on every
+    // quick capture. Nothing in the schema records the relationship, so
+    // archiving the inbox looks from the database's side like archiving any
+    // other project, and the consequence surfaces later and elsewhere.
+    //
+    // Fails if the inbox query is dropped from `inboundReferences` — the
+    // inbox would archive silently and later capture would land in a
+    // different project from everything already filed.
+    it("refuses the project the items.inbox_project setting names", async () => {
+      const task = await call<{ parentId: string }>("create_task", {
+        title: "Captured, so the inbox exists",
+        body: "",
+        area: "inbox-archive-ref",
+        originType: "auto",
+        projectId: "inbox",
+      });
+
+      const rejection = await rejectionOf("delete_item", {
+        id: task.parentId,
+        reason: GOOD_REASON,
+      });
+      expect(rejection.code).toBe("guard_rejected");
+      expect(rejection.fields).toContain("acknowledgeReferences");
+      // Named as a setting, not merely counted — a caller has to know WHY
+      // this row is special without a second call.
+      expect(rejection.message).toContain("items.inbox_project");
+      expect(rejection.details?.references?.some((r) => r.kind === "inbox_project_setting")).toBe(
+        true,
+      );
+    });
+
+    // The escape hatch must exist here too: an operator retiring an inbox on
+    // purpose is a legitimate act, and the refusal is there to make it
+    // deliberate rather than to forbid it.
+    //
+    // Fails if the inbox reference is turned into an unconditional refusal
+    // instead of an acknowledgeable one.
+    it("archives the inbox once the caller acknowledges the setting", async () => {
+      const task = await call<{ parentId: string }>("create_task", {
+        title: "Captured, so the inbox exists",
+        body: "",
+        area: "inbox-archive-ack",
+        originType: "auto",
+        projectId: "inbox",
+      });
+
+      const archived = await call<Created>("delete_item", {
+        id: task.parentId,
+        reason: GOOD_REASON,
+        acknowledgeReferences: true,
+      });
+      expect(archived.archivedAt).not.toBeNull();
+    });
+
     // Fails if `acknowledgeReferences` stops being consulted — the refusal
     // would become unconditional and the escape hatch would not exist.
     it("proceeds once the caller acknowledges them", async () => {
@@ -1271,6 +1326,17 @@ describeIfDb("delete_item", () => {
         // items, so there is nothing here for it to leak *into* — the id
         // has to be known already.
         "get_item_history",
+        // The tool the three by-id reads below are reached through, and
+        // exempt for exactly the union of their reasons rather than for a
+        // reason of its own. `read_item` adds no query: every action
+        // dispatches to one of those three operations in the same context,
+        // so whatever each of them does with an archived item is what this
+        // does. Listing it here rather than sweeping it is the honest
+        // entry — a sweep of the fold would be a second, weaker test of
+        // three operations already argued individually below, and the
+        // `action` it would have to be given would decide which one it
+        // actually checked.
+        "read_item",
         // Reads one item's `body` **by id**, paged by character offset — the
         // same shape and the same reason as `get_item_history` immediately
         // above: reaching an archived item by its id still resolves, this
@@ -1300,6 +1366,16 @@ describeIfDb("delete_item", () => {
         // its entry's score, because the guard fired and was rated whatever
         // later became of the row.
         "get_intervention_scores",
+        // Lists the intervention catalogue with each entry's configured
+        // level. It ranges over `BUILTIN_INTERVENTIONS` — a module constant
+        // — and the `interventions.*` rows of the `settings` table, and
+        // returns one row per catalogue entry keyed by entry id. No item is
+        // selected, joined or used to narrow it, and an item id appears
+        // nowhere in its output, so there is nothing here for an archived
+        // row to leak through. An entry's level is a fact about what this
+        // installation enforces, which is independent of any item and must
+        // read the same whatever is on the board.
+        "list_intervention_settings",
         // Aggregates run scores per facet. It ranges over `RunScore` and
         // `Run`, returning counts keyed by facet: no item id is selected,
         // returned, or used to narrow the report, so an archived item

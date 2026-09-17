@@ -252,7 +252,7 @@ describe("deciding from the inbox", () => {
     // over a stale item would pin a human's authorisation to another item's
     // commit while still posting to the right URL.
     expect(writes[0]!.body).toMatchObject({
-      kind: "merge_approval",
+      artifactKind: "merge_approval",
       createdByType: "person",
       createdById: "ope",
       commitSha: "2222222222222222222222222222222222222222",
@@ -284,7 +284,7 @@ describe("deciding from the inbox", () => {
     // verdict they carry, so the id alone cannot tell them apart — a handler
     // wired to the wrong one is invisible to a test that checks only the id.
     expect(writes[0]!.body).toMatchObject({
-      kind: "visual_review",
+      artifactKind: "visual_review",
       verdict: "changes_required",
     });
     expect(writes[0]!.body).not.toMatchObject({ verdict: "lgtm" });

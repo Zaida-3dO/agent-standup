@@ -60,6 +60,15 @@ export interface BoardItem {
   readonly blockedOnType: "person" | "external_process" | "time" | null;
   readonly blockedReason: string | null;
   readonly pauseReason: string | null;
+  /**
+   * The item's external pointers, drawn as key-only chips on the card.
+   *
+   * Optional because this file mirrors the wire by hand and a response from
+   * a server that predates the field carries none — the card renders an
+   * absent list and an empty one identically, as nothing at all, so the
+   * distinction never reaches a reader.
+   */
+  readonly links?: readonly { readonly key: string; readonly url: string }[];
 }
 
 /**

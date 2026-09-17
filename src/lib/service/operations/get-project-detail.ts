@@ -393,7 +393,7 @@ export const getProjectDetail = defineOperation({
       // under it, which is exactly the misreading `childless` exists to
       // prevent.
       throw new NotFoundError(
-        `Item ${input.id} is a ${project.kind}, not a project — it has a state of its own rather than one derived from children. Read it with get_item_detail.`,
+        `Item ${input.id} is a ${project.kind}, not a project — it has a state of its own rather than one derived from children. Read it with get_item, passing full: "detail".`,
         { fields: ["id"] },
       );
     }

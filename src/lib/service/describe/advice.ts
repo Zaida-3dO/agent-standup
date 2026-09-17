@@ -293,17 +293,64 @@ export function attributeTo(text: string, at: number, fallback: string): string 
 export const NON_MCP_REFERENCE_MARKER = "[http/cli]";
 
 /**
+ * Operation names that are also ordinary English words.
+ *
+ * -- Why this list exists, and why it is a list rather than a rule -------
+ *
+ * The bare-word match below is safe for a name like `loop_close` or
+ * `get_item_body` because nothing but a tool reference is ever spelled that
+ * way. It is NOT safe for a name that is also a word people write in
+ * sentences: "your claim can look idle", "closing as cancelled is the
+ * opposite claim" and "the sweep releases claims held by dead ones" are all
+ * correct English about this domain, and not one of them tells anybody to
+ * call a tool.
+ *
+ * The identifiers below are the operations whose names collide with that
+ * vocabulary. For them -- and ONLY for them -- a mention counts as a tool
+ * reference when it is marked as one: in backticks, or immediately followed
+ * by a brace or a parenthesis, which are the two ways a call is written
+ * here.
+ *
+ * **This narrows the check, and the narrowing is bounded to the exact set
+ * of names where the alternative is worse.** Rewording every sentence that
+ * uses these words in their ordinary sense would push the prose away from
+ * how the domain is spoken, to satisfy a detector rather than a reader --
+ * and prose written around a checker is the prose that stops being read.
+ * What is given up is a BARE-WORD stale reference to exactly these three
+ * names; what is kept is every backticked one, which is how all three are
+ * written whenever they are actually being prescribed.
+ *
+ * A name belongs here only if it appears as a word in ordinary prose.
+ * `get_item_body` never will; `release` always will.
+ */
+const ENGLISH_WORD_OPERATIONS: ReadonlySet<string> = new Set([
+  // The ownership verbs. "your claim can look idle", "the sweep releases
+  // claims held by dead ones", "closing as cancelled is the opposite
+  // claim" -- all correct English about this domain, none of them a
+  // prescription.
+  "claim",
+  "release",
+  "takeover",
+  // The record verbs, and `note` is the sharpest case in the whole list:
+  // it is an ordinary noun, it is a `loop` KIND (`kind: "note"`), and it
+  // is a value this codebase writes about constantly -- "belongs in a
+  // note", "the note text", "a note loop that did not restate its kind".
+  // `checkpoint` is the same shape: a resume point is a thing this domain
+  // names, not only a tool.
+  "note",
+  "checkpoint",
+]);
+
+/**
  * Names of operations the text mentions that an MCP caller cannot call.
  *
- * Unlike `mentionedOperations`, this does **not** require backticks. The
- * stale references this class exists for are bare words in prose — "use
- * loop_close instead", "read one with loop_get" — and requiring a backtick
- * would miss every one of them. Loosening the pattern is safe *here* and
- * nowhere else in this module, because the candidate set is a closed list
- * of 55 real operation names rather than a guess at what a tool name looks
- * like: a bare word only matches if it is exactly an operation the waiver
- * table names, so the false-positive mode that killed the snake_case
- * widening (`item_id`, `commit_sha`, `open_loops`) cannot arise.
+ * Unlike `mentionedOperations`, this does **not** require backticks in
+ * general. The stale references this class exists for are bare words in
+ * prose -- "use loop_close instead", "read one with loop_get" -- and
+ * requiring a backtick would miss every one of them. The loose pattern is
+ * safe for any name nothing else is spelled like, which is the whole closed
+ * candidate list apart from `ENGLISH_WORD_OPERATIONS` above; those require a
+ * marker, for the reason given there.
  */
 export function unreachableMentions(
   text: string,
@@ -311,12 +358,52 @@ export function unreachableMentions(
 ): readonly { name: string; at: number }[] {
   if (text.includes(NON_MCP_REFERENCE_MARKER)) return [];
   const found: { name: string; at: number }[] = [];
-  for (const match of text.matchAll(/`?\b([a-z][a-z0-9_]*)\b`?/g)) {
-    const name = match[1];
+  for (const match of text.matchAll(MENTION_PATTERN)) {
+    const name = match[2];
     if (name === undefined || !offMcp.has(name)) continue;
+    if (ENGLISH_WORD_OPERATIONS.has(name) && !readsAsACall(text, match)) continue;
     found.push({ name, at: match.index ?? 0 });
   }
   return found;
+}
+
+/** Every lower-case identifier in the text, with whatever backticks hug it. */
+const MENTION_PATTERN = /(`?)\b([a-z][a-z0-9_]*)\b(`?)/g;
+
+/**
+ * Whether a mention is marked as a call rather than used as a word.
+ *
+ * Backticks around the WHOLE name, or a `{` immediately after --
+ * `takeover {itemId, ...}` is how a call with arguments is written here.
+ * Anything else is prose.
+ *
+ * **A following `(` is deliberately NOT evidence.** "whether it may claim
+ * (governed by ...)" is a sentence with a parenthetical, and an ordinary
+ * English verb followed by an aside is far commoner in this corpus than a
+ * function-call spelling would be -- this module documents tools by name and
+ * brace, never by name and paren. Counting `(` would flag correct prose,
+ * which is the false-positive direction this whole narrowing exists to
+ * avoid.
+ *
+ * **A closing backtick alone is not enough**, and the case that proves it is
+ * `hook.require_registration_to_claim`: a setting whose name ends in one of
+ * these words, so the final token before the closing backtick IS the word,
+ * with a backtick right after it. Reading that as a call would flag a
+ * sentence naming a setting. So an adjacent backtick counts only when the
+ * character on the other side is not part of an identifier -- which is
+ * exactly what distinguishes `release` from ..._to_claim`.
+ */
+function readsAsACall(text: string, match: RegExpExecArray | RegExpMatchArray): boolean {
+  const at = match.index ?? 0;
+  const before = text.slice(Math.max(0, at - 1), at);
+  const opens = match[1] === "`";
+  // A closing backtick is only evidence when nothing identifier-ish runs
+  // into this word from the left -- otherwise the word is the tail of a
+  // longer dotted or underscored name that happens to end in it.
+  const closes = match[3] === "`" && !/[a-z0-9_.]/.test(before);
+  if (opens || closes) return true;
+  const after = text.slice(at + match[0].length, at + match[0].length + 3).trimStart();
+  return after.startsWith("{");
 }
 
 export function findAdviceDefects(entries: readonly AdviceEntry[]): readonly AdviceDefect[] {

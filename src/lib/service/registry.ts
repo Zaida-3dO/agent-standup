@@ -117,6 +117,12 @@ import { getItemHistory } from "./operations/get-item-history";
 // from. Paged by character offset rather than a keyset, for the reason its
 // own header gives — `body` is one scalar on one row, not a growing set.
 import { getItemBody } from "./operations/get-item-body";
+// The three bounded reads of one item behind one tool, because they are one
+// capability seen three times: what a caller reaches for when the whole-item
+// read will not fit, each returning a different unbounded axis of the same
+// item in windows. Waived off MCP as three names and reachable as one plus
+// an action (`@/lib/adapters/waivers`).
+import { readItem } from "./operations/read-item";
 // "What needs this person", in one call (T24) — the union three separate
 // `list_items` reads used to assemble in the browser.
 import { getNeedsYou } from "./operations/get-needs-you";
@@ -131,12 +137,33 @@ import { patchSettings } from "./operations/patch-settings";
 import { putSetting } from "./operations/put-setting";
 import { deleteSetting } from "./operations/delete-setting";
 import { removeUnrecognisedSetting } from "./operations/remove-unrecognised-setting";
+// The intervention catalogue's own configuration surface (MILESTONES.md
+// #128). Separate from the settings operations above because the catalogue
+// is deliberately absent from `SETTINGS_REGISTRY` — see
+// `src/lib/interventions/settings.ts` for why, and
+// `./operations/interventions-shared.ts` for why that makes `put_setting`
+// unusable here rather than merely inconvenient.
+import { listInterventionSettings } from "./operations/list-intervention-settings";
+import { setInterventionLevel } from "./operations/set-intervention-level";
+import { clearInterventionLevel } from "./operations/clear-intervention-level";
 import { claim } from "./operations/claim";
 import { release } from "./operations/release";
 // Reclamation (MILESTONES.md #99): the liveness ladder's trigger, and the
 // takeover that displaces a holder the ladder is not going to release.
 import { sweep } from "./operations/sweep";
 import { takeover } from "./operations/takeover";
+// The whole lifecycle of who holds an item behind one tool — taking it,
+// giving it up, and displacing the holder. The three spend their
+// documentation pointing at each other, which is the practical sign they are
+// one capability with three directions. Waived off MCP as three names and
+// reachable as one plus an action (`@/lib/adapters/waivers`).
+import { ownership } from "./operations/ownership";
+// The four ways an agent puts something on an item's record — a resume
+// point, a remark, a produced artifact, a capability gap — behind one tool.
+// One act seen four times, and the fold states the checkpoint/note
+// asymmetry in its contract rather than leaving it to a refusal. Waived off
+// MCP as four names (`@/lib/adapters/waivers`).
+import { record } from "./operations/record";
 import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
@@ -313,6 +340,7 @@ export const OPERATION_REGISTRY = {
   [getItemHistory.name]: getItemHistory,
   [getItemArtifacts.name]: getItemArtifacts,
   [getItemBody.name]: getItemBody,
+  [readItem.name]: readItem,
   [getNeedsYou.name]: getNeedsYou,
   [getStaleCandidates.name]: getStaleCandidates,
   [getSettings.name]: getSettings,
@@ -321,10 +349,15 @@ export const OPERATION_REGISTRY = {
   [putSetting.name]: putSetting,
   [deleteSetting.name]: deleteSetting,
   [removeUnrecognisedSetting.name]: removeUnrecognisedSetting,
+  [listInterventionSettings.name]: listInterventionSettings,
+  [setInterventionLevel.name]: setInterventionLevel,
+  [clearInterventionLevel.name]: clearInterventionLevel,
   [claim.name]: claim,
   [release.name]: release,
   [sweep.name]: sweep,
   [takeover.name]: takeover,
+  [ownership.name]: ownership,
+  [record.name]: record,
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
   [note.name]: note,

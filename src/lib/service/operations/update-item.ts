@@ -8,6 +8,7 @@ import { NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { resolveAreasRaw, setItemAreas } from "../items/item-areas";
+import { linksInputSchema, normalizeLinks, setItemLinks } from "../items/item-links";
 import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
@@ -61,8 +62,23 @@ const inputSchema = z
     branch: z.string().nullable().optional(),
     needsVisualReview: z.boolean().optional(),
     driveMode: z.enum(["autonomous", "supervised", "manual"]).optional(),
-    mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
+    mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement", "pr"]).optional(),
     customFields: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * Sets the item's link set to exactly this list — a whole-set write, the
+     * same shape `areas` uses and for the same reason: the set arrives whole
+     * everywhere it is written, and a caller that had to compose an add and
+     * a remove could leave an item briefly pointing at the wrong thing.
+     *
+     * **Passing `[]` clears every link**, which is the one genuinely
+     * destructive reading of this field and is deliberate rather than
+     * incidental: there has to be *some* way to remove a link that turned
+     * out to be wrong, and a whole-set write already means "these are the
+     * links" — an empty list is that sentence with nothing in it. Omitting
+     * the field leaves the set untouched, which is what an update that says
+     * nothing about links should do.
+     */
+    links: linksInputSchema.optional(),
     /**
      * Return the whole `items` row rather than the slim default — the same
      * flag `get_item`/`list_items`/`get_board` take (MILESTONES.md #107).
@@ -98,12 +114,19 @@ export type UpdateItemResult = (ItemRecord | ItemWriteRecord) & {
   readonly notifications?: NotificationOutcome;
 };
 
-const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | "agent_judgement"> =
-  {
-    "pre-approved": "pre_approved",
-    "needs-approval": "needs_approval",
-    "agent-judgement": "agent_judgement",
-  };
+const MERGE_AUTHORITY_TO_DB: Record<
+  string,
+  "pre_approved" | "needs_approval" | "agent_judgement" | "pr"
+> = {
+  "pre-approved": "pre_approved",
+  "needs-approval": "needs_approval",
+  "agent-judgement": "agent_judgement",
+  // The one value whose API and DB spellings coincide: `pr` is a single
+  // word, so there is no hyphen to convert. Listed explicitly rather than
+  // left to a fallback, because this map is also what decides which values
+  // the operation ACCEPTS -- an unmapped value is refused.
+  pr: "pr",
+};
 
 /** Every editable field, and how to read its current value off a raw row — for the field-change diff. */
 const EDITABLE_FIELDS = [
@@ -207,6 +230,20 @@ export const updateItem = defineOperation({
       edits.area = resolvedAreas[0];
       delete edits.areas;
     }
+    // Links, resolved the same way and for the same reason: `EDITABLE_FIELDS`
+    // drives a loop that maps one key to one column, and a join table has no
+    // column for it to set. Unlike `area` there is no primary-entry column to
+    // carry, so this one is removed from `edits` outright and handled below.
+    //
+    // Normalised before anything is written, so an unusable URL refuses the
+    // call without having edited the row — the ordering `resolveAreasRaw`
+    // above uses for the same purpose.
+    const rawLinks = edits.links;
+    let resolvedLinks: { key: string; url: string }[] | undefined;
+    if (rawLinks !== undefined) {
+      resolvedLinks = normalizeLinks(rawLinks);
+      delete edits.links;
+    }
     if (edits.repo) {
       const repoRows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
         `SELECT "id" FROM "Repo" WHERE "id" = $1 AND "archivedAt" IS NULL`,
@@ -279,13 +316,39 @@ export const updateItem = defineOperation({
       await setItemAreas(ctx, id, resolvedAreas!);
     }
 
+    // The link set has no column at all, so like `areas` it is invisible to
+    // the diff loop above and has to be asked separately — otherwise
+    // `{ links: [...] }` on its own would be discarded as a no-op by the
+    // early return below.
+    //
+    // Compared against the stored set in the SAME order the read returns
+    // (key, then url), because `normalizeLinks` preserves the caller's order
+    // while `ITEM_LINKS_COLUMN` sorts. Without sorting both sides, sending
+    // the identical set in a different order would read as a change, write
+    // the same rows back, and append a `field_change` event recording that
+    // nothing happened — the phantom-event failure the `mergeAuthority`
+    // comment above documents.
+    const sortedLinks =
+      resolvedLinks === undefined
+        ? undefined
+        : [...resolvedLinks].sort(
+            (a, b) => a.key.localeCompare(b.key) || a.url.localeCompare(b.url),
+          );
+    const linksChanged =
+      sortedLinks !== undefined &&
+      JSON.stringify(sortedLinks) !== JSON.stringify(current.links ?? []);
+
+    if (linksChanged) {
+      await setItemLinks(ctx, id, sortedLinks!);
+    }
+
     if (setClauses.length === 0) {
-      if (!areasChanged) {
+      if (!areasChanged && !linksChanged) {
         return shape(toItemRecord(current));
       }
-      // The primary area is unchanged but the set is not, so there is no
-      // column to UPDATE — re-read the row to pick up the `areas` the write
-      // above just made true, rather than returning the pre-write snapshot.
+      // Only a join table changed, so there is no column to UPDATE — re-read
+      // the row to pick up the `areas`/`links` the write above just made
+      // true, rather than returning the pre-write snapshot.
       const reread = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
         `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,
         id,
@@ -294,13 +357,29 @@ export const updateItem = defineOperation({
       if (!rereadRow) {
         throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
       }
+      // Only the sets that actually changed are recorded. Either one alone
+      // can reach this branch, so listing both unconditionally would append
+      // a `field_change` claiming the untouched set had been rewritten.
+      const joinBefore: Record<string, unknown> = {};
+      const joinAfter: Record<string, unknown> = {};
+      const joinFields: string[] = [];
+      if (areasChanged) {
+        joinBefore.areas = current.areas ?? [current.area];
+        joinAfter.areas = resolvedAreas;
+        joinFields.push("areas");
+      }
+      if (linksChanged) {
+        joinBefore.links = current.links ?? [];
+        joinAfter.links = sortedLinks;
+        joinFields.push("links");
+      }
       await recordFieldChanges(ctx.db, {
         itemId: id,
         actor: callerEventActor(ctx.caller),
         assignmentId: await liveAssignmentId(ctx.db, id, ctx.caller),
-        before: { areas: current.areas ?? [current.area] },
-        after: { areas: resolvedAreas },
-        fields: ["areas"],
+        before: joinBefore,
+        after: joinAfter,
+        fields: joinFields,
       });
       return shape(toItemRecord(rereadRow));
     }
@@ -353,6 +432,13 @@ export const updateItem = defineOperation({
       before.areas = current.areas ?? [current.area];
       after.areas = resolvedAreas;
       fields.push("areas");
+    }
+    // `links` rides alongside for the same reason, and only when it changed
+    // — a set rewritten to its existing contents is not a fact worth a row.
+    if (linksChanged) {
+      before.links = current.links ?? [];
+      after.links = sortedLinks;
+      fields.push("links");
     }
     await recordFieldChanges(ctx.db, {
       itemId: id,

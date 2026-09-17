@@ -117,7 +117,7 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "check_run",
+        artifactKind: "check_run",
         body: "passing",
         ref: "https://build.example/runs/1",
         commitSha: TIP,
@@ -135,7 +135,7 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // having been told the write succeeded.
       const itemId = await createTask();
       for (const body of ["success", "green", "PASSING", "passed", "flaky"]) {
-        const error = await recordFails({ itemId, kind: "check_run", body });
+        const error = await recordFails({ itemId, artifactKind: "check_run", body });
         expect(error.code, body).toBe("invalid_input");
         expect(error.fields, body).toContain("body");
       }
@@ -146,7 +146,7 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // say how the build went records nothing — it is the state this kind
       // exists to end, written under its own name.
       const itemId = await createTask();
-      const error = await recordFails({ itemId, kind: "check_run", body: null });
+      const error = await recordFails({ itemId, artifactKind: "check_run", body: null });
       expect(error.code).toBe("invalid_input");
       expect(error.fields).toContain("body");
     });
@@ -155,7 +155,7 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "check_run",
+        artifactKind: "check_run",
         body: "passing",
         ref: "javascript:alert(1)",
       });
@@ -168,7 +168,7 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // Refusing it would push exactly those callers back to recording
       // nothing, which is the behaviour this whole row exists to end.
       const itemId = await createTask();
-      const artifact = await record({ itemId, kind: "check_run", body: "failing" });
+      const artifact = await record({ itemId, artifactKind: "check_run", body: "failing" });
       expect(artifact.kind).toBe("check_run");
     });
   });
@@ -195,16 +195,16 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // THE claim. A crew asks about the item and learns whether its pull
       // request is passing, without leaving the board.
       const itemId = await createTask();
-      await record({ itemId, kind: "commit", commitSha: TIP });
+      await record({ itemId, artifactKind: "commit", commitSha: TIP });
       await record({
         itemId,
-        kind: "pull_request",
+        artifactKind: "pull_request",
         body: "open",
         ref: "https://forge.example/pr/1",
       });
       await record({
         itemId,
-        kind: "check_run",
+        artifactKind: "check_run",
         body: "passing",
         ref: "https://build.example/runs/1",
         commitSha: TIP,
@@ -227,8 +227,8 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // second. Recorded in sequence so the ordering the read applies is the
       // ordering the rows were written in.
       const itemId = await createTask();
-      await record({ itemId, kind: "check_run", body: "pending", commitSha: TIP });
-      await record({ itemId, kind: "check_run", body: "passing", commitSha: TIP });
+      await record({ itemId, artifactKind: "check_run", body: "pending", commitSha: TIP });
+      await record({ itemId, artifactKind: "check_run", body: "passing", commitSha: TIP });
 
       expect((await detail(itemId)).buildStatus?.status).toBe("passing");
     });
@@ -239,10 +239,10 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // reported and `atTip` is what says not to merge on it.
       const itemId = await createTask();
       const oldSha = "b".repeat(40);
-      await record({ itemId, kind: "commit", commitSha: oldSha });
-      await record({ itemId, kind: "check_run", body: "passing", commitSha: oldSha });
+      await record({ itemId, artifactKind: "commit", commitSha: oldSha });
+      await record({ itemId, artifactKind: "check_run", body: "passing", commitSha: oldSha });
       // A newer commit moves the tip past the one the build ran against.
-      await record({ itemId, kind: "commit", commitSha: TIP });
+      await record({ itemId, artifactKind: "commit", commitSha: TIP });
 
       const build = (await detail(itemId)).buildStatus;
       expect(build?.status).toBe("passing");
@@ -257,11 +257,11 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // not in the pure fold test.
       const itemId = await createTask();
       const branchSha = "c".repeat(40);
-      await record({ itemId, kind: "commit", commitSha: branchSha });
-      await record({ itemId, kind: "check_run", body: "passing", commitSha: branchSha });
+      await record({ itemId, artifactKind: "commit", commitSha: branchSha });
+      await record({ itemId, artifactKind: "check_run", body: "passing", commitSha: branchSha });
       await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: TIP,
         supersedesSha: branchSha,
       });
@@ -276,7 +276,7 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // the build to be stale against, and reporting `false` here would flag
       // a perfectly current build as stale.
       const itemId = await createTask();
-      await record({ itemId, kind: "check_run", body: "passing", commitSha: TIP });
+      await record({ itemId, artifactKind: "check_run", body: "passing", commitSha: TIP });
 
       const build = (await detail(itemId)).buildStatus;
       expect(build?.status).toBe("passing");
@@ -285,8 +285,8 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
 
     it("reports at-tip as unknown when the build recorded no commit", async () => {
       const itemId = await createTask();
-      await record({ itemId, kind: "commit", commitSha: TIP });
-      await record({ itemId, kind: "check_run", body: "failing" });
+      await record({ itemId, artifactKind: "commit", commitSha: TIP });
+      await record({ itemId, artifactKind: "check_run", body: "failing" });
 
       const build = (await detail(itemId)).buildStatus;
       expect(build?.status).toBe("failing");
@@ -298,10 +298,10 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // legible as red. A failing build and a missing approval are different
       // reasons to refuse a merge, and this is the one that names the build.
       const itemId = await createTask();
-      await record({ itemId, kind: "commit", commitSha: TIP });
+      await record({ itemId, artifactKind: "commit", commitSha: TIP });
       await record({
         itemId,
-        kind: "check_run",
+        artifactKind: "check_run",
         body: "failing",
         commitSha: TIP,
         ref: "https://build.example/runs/9",
@@ -317,7 +317,7 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // `pending` is the state polling exists to escape: a crew reading it
       // knows a build is in flight, rather than that none was ever started.
       const itemId = await createTask();
-      await record({ itemId, kind: "check_run", body: "pending", commitSha: TIP });
+      await record({ itemId, artifactKind: "check_run", body: "pending", commitSha: TIP });
       expect((await detail(itemId)).buildStatus?.status).toBe("pending");
     });
 
@@ -326,14 +326,14 @@ describeIfDb("build status on an item's detail, against Postgres", () => {
       // filter were dropped, one of these rows would be folded as a build
       // status — reported as unknown, on an item that never mentioned a build.
       const itemId = await createTask();
-      await record({ itemId, kind: "commit", commitSha: TIP });
+      await record({ itemId, artifactKind: "commit", commitSha: TIP });
       await record({
         itemId,
-        kind: "pull_request",
+        artifactKind: "pull_request",
         body: "open",
         ref: "https://forge.example/pr/2",
       });
-      await record({ itemId, kind: "code_review", verdict: "lgtm", commitSha: TIP });
+      await record({ itemId, artifactKind: "code_review", verdict: "lgtm", commitSha: TIP });
 
       expect((await detail(itemId)).buildStatus).toBeNull();
     });

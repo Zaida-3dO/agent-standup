@@ -874,14 +874,14 @@ describeIfDb("get_board against Postgres", () => {
 
       await runtime.call("record_artifact", {
         itemId: verified.id,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "c001d001",
         createdByType: "agent",
         createdById: "agent-a",
       });
       await runtime.call("record_artifact", {
         itemId: verified.id,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         commitSha: "c001d001",
         body: "Checked — the state matches.",
         createdByType: "agent",
@@ -909,14 +909,14 @@ describeIfDb("get_board against Postgres", () => {
       });
       await runtime.call("record_artifact", {
         itemId: item.id,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "c001d001",
         createdByType: "agent",
         createdById: "agent-a",
       });
       await runtime.call("record_artifact", {
         itemId: item.id,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         commitSha: "c001d001",
         body: "First check — looked fine.",
         createdByType: "agent",
@@ -924,7 +924,7 @@ describeIfDb("get_board against Postgres", () => {
       });
       await runtime.call("record_artifact", {
         itemId: item.id,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         commitSha: "c001d001",
         body: "Second check — actually wrong.",
         createdByType: "person",
@@ -963,7 +963,7 @@ describeIfDb("get_board against Postgres", () => {
       const verified = await createItem({ area, parentId: project.id, originType: "source" });
       await runtime.call("record_artifact", {
         itemId: verified.id,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         // Required: a verification that does not name the code it read
         // cannot be confirmed by anyone else, and `record_artifact` refuses
         // one without it.

@@ -24,6 +24,21 @@
  */
 export const HEADLINE_MAX_CHARS = 200;
 
+/**
+ * One external pointer an item carries — a short label and the URL it opens.
+ *
+ * Its own named type rather than an inline shape, because it crosses three
+ * boundaries that each need to name it: the service record below, the
+ * board's wire format, and the client types that mirror it. A shape repeated
+ * at each of those is a shape that can drift at any one of them.
+ */
+export interface ItemLinkRecord {
+  /** The chip's label — stored lowercased and whitespace-collapsed (`item-links.ts`). */
+  readonly key: string;
+  /** Where it points. Stored as given apart from trimming; never resolved or rewritten. */
+  readonly url: string;
+}
+
 /** One `items` row, as every item operation reads and returns it. */
 export interface ItemRecord {
   readonly id: string;
@@ -52,11 +67,23 @@ export interface ItemRecord {
   readonly area: string;
   /** Every area this item belongs to, primary first (SCHEMA.md §23.1). Never empty. */
   readonly areas: readonly string[];
+  /**
+   * The item's external pointers — the Slack thread, the ticket, the design
+   * doc. Empty on an item that carries none, never null, so a caller renders
+   * the list without branching on its existence.
+   *
+   * In insertion-independent, deterministic order (by key, then url) rather
+   * than by whatever the scan returned: two reads of an unchanged item
+   * should produce byte-identical output, and a chip row that re-arranged
+   * itself between renders would read as instability rather than as the
+   * unordered set it is.
+   */
+  readonly links: readonly ItemLinkRecord[];
   readonly repo: string | null;
   readonly branch: string | null;
   readonly needsVisualReview: boolean;
   readonly driveMode: "autonomous" | "supervised" | "manual";
-  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement";
+  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement" | "pr";
   readonly blockedReason: string | null;
   readonly blockedOnType: "person" | "external_process" | "time" | null;
   readonly blockedOnPersonId: string | null;
@@ -101,6 +128,14 @@ export interface RawItemRow {
   originPersonId: string | null;
   area: string;
   areas: string[] | null;
+  /**
+   * Nullable for the same reason `areas` is: a raw driver row is whatever
+   * the caller's SQL selected, and not every query in the codebase uses
+   * `ITEM_COLUMNS`. The `COALESCE` in that column list supplies the empty
+   * array for a row with no links; this nullability is what lets
+   * `toItemRecord` narrow it rather than pushing a null onto every consumer.
+   */
+  links: ItemLinkRecord[] | null;
   repo: string | null;
   branch: string | null;
   needsVisualReview: boolean;
@@ -171,6 +206,12 @@ export function toItemRecord(row: RawItemRow): ItemRecord {
     // why `tests/item-areas.test.ts` asserts the outcome rather than
     // either mechanism.
     areas: row.areas ?? [row.area],
+    // Empty rather than null for an item carrying none — "this item has no
+    // links" and "this query did not fetch them" are the same answer to a
+    // renderer, and an optional array would make every consumer branch. The
+    // `COALESCE` in `ITEM_COLUMNS` supplies it in the query; this is the
+    // type-level backstop for a query that did not use that list.
+    links: row.links ?? [],
     repo: row.repo,
     branch: row.branch,
     needsVisualReview: row.needsVisualReview,
@@ -281,6 +322,21 @@ export interface BoardItemSummaryRecord extends ItemSummaryRecord {
    * a second per-item lookup (MILESTONES.md #131).
    */
   readonly originType: "person" | "source" | "auto";
+  /**
+   * The item's external pointers, rendered as key-only chips on the card.
+   *
+   * **This is an eighth field a card genuinely draws, which is the test this
+   * shape's header sets** — not a widening back towards the whole row. A
+   * link pair is a handful of bytes and an item carries a handful of them,
+   * so this cannot reintroduce the unbounded growth the slim shape exists to
+   * stop; `body` and `customFields` were 99% of the measured payload and
+   * remain absent.
+   *
+   * Worth the field rather than a second lookup for the same reason
+   * `originType` is: the alternative is one query per card to render a chip
+   * row, on the hottest read in the product.
+   */
+  readonly links: readonly ItemLinkRecord[];
 }
 
 /** The raw shape `$queryRawUnsafe` returns for one board summary row. */
@@ -294,6 +350,7 @@ export interface RawBoardItemSummaryRow extends RawItemSummaryRow {
   blockedOnPersonId: string | null;
   pauseReason: string | null;
   originType: string;
+  links: ItemLinkRecord[] | null;
 }
 
 /** Maps one raw board summary row to `BoardItemSummaryRecord`. */
@@ -309,6 +366,10 @@ export function toBoardItemSummaryRecord(row: RawBoardItemSummaryRow): BoardItem
     blockedOnPersonId: row.blockedOnPersonId,
     pauseReason: row.pauseReason,
     originType: row.originType as BoardItemSummaryRecord["originType"],
+    // Empty rather than null, for the same reason `toItemRecord` narrows it:
+    // a card renders the row without branching on whether links were
+    // fetched.
+    links: row.links ?? [],
   };
 }
 
@@ -389,6 +450,19 @@ export function toItemWriteRecord(record: ItemRecord): ItemWriteRecord {
  */
 export const ITEM_SUMMARY_COLUMNS = ["id", "title", "state", "headline"].join(", ");
 
+/**
+ * The correlated subquery that aggregates an item's links, shared by both
+ * column lists that select them.
+ *
+ * One constant rather than the SQL written twice, because the two lists must
+ * agree: the board's card and the item page render the same chips, and a
+ * difference in ordering or in the `COALESCE` between them would show up as
+ * the two surfaces disagreeing about an item whose links had not changed.
+ * The full reasoning for the shape — why `json_agg` and not two `array_agg`s,
+ * why the `ORDER BY` is load-bearing — is at its use in `ITEM_COLUMNS`.
+ */
+export const ITEM_LINKS_COLUMN = `(SELECT COALESCE(json_agg(json_build_object('key', l."key", 'url', l."url") ORDER BY l."key", l."url"), '[]'::json) FROM "ItemLink" l WHERE l."itemId" = "Item"."id") AS "links"`;
+
 /** The columns the board's slim read selects — `ITEM_SUMMARY_COLUMNS` plus what a card draws. */
 export const BOARD_ITEM_SUMMARY_COLUMNS = [
   ITEM_SUMMARY_COLUMNS,
@@ -401,6 +475,7 @@ export const BOARD_ITEM_SUMMARY_COLUMNS = [
   '"blockedOnPersonId"',
   '"pauseReason"',
   '"originType"',
+  ITEM_LINKS_COLUMN,
 ].join(", ");
 
 export const ITEM_COLUMNS = [
@@ -421,6 +496,26 @@ export const ITEM_COLUMNS = [
   // multiply them by the number of areas — the aggregate has to happen
   // before the row is returned, not after.
   '(SELECT COALESCE(array_agg("areaId" ORDER BY ("areaId" <> "Item"."area"), "areaId"), ARRAY["Item"."area"]) FROM "ItemArea" WHERE "itemId" = "Item"."id") AS "areas"',
+  // Every link this item carries, as `{key, url}` objects. A correlated
+  // subquery for the same reason `areas` uses one — a join would multiply
+  // whole rows by the number of links, and the aggregate has to happen
+  // before the row is returned.
+  //
+  // `json_agg` rather than `array_agg` because a link is a PAIR: two
+  // parallel arrays would have to be zipped by position, and any query that
+  // ordered them differently would silently pair the wrong key with the
+  // wrong URL. One aggregate of objects cannot come apart that way.
+  //
+  // `COALESCE` to an empty array so an item with no links returns `[]`
+  // rather than SQL NULL — `json_agg` over no rows yields NULL, and a
+  // renderer should not have to tell that apart from "not fetched".
+  //
+  // Ordered by key then url, which makes the value a deterministic function
+  // of the stored set: without an ORDER BY the aggregate follows scan order,
+  // so two reads of an unchanged item could return the same links in
+  // different sequences and a caller diffing responses would see a change
+  // that did not happen.
+  ITEM_LINKS_COLUMN,
   "repo",
   "branch",
   '"needsVisualReview"',

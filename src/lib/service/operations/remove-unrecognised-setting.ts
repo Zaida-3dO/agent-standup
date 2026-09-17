@@ -21,6 +21,7 @@ import { InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { isSettingKey } from "@/lib/settings";
+import { INTERVENTION_SETTING_PREFIX } from "@/lib/interventions/settings";
 import { appendSettingChangeEvent, bumpRevision, readOverrideRow } from "./settings-shared";
 
 const inputSchema = z.object({ key: z.string().min(1) }).strict();
@@ -58,6 +59,27 @@ export const removeUnrecognisedSetting = defineOperation({
       // that is absent from the database.
       throw new InvalidInputError(
         `${input.key} is a setting this build declares — clear it with delete_setting.`,
+        { fields: ["key"] },
+      );
+    }
+
+    // The intervention namespace fails `isSettingKey` by design — the
+    // catalogue is deliberately outside `SETTINGS_REGISTRY` — so without
+    // this check it would fall straight through to the delete below, and
+    // this operation would become the one back door that silently discards
+    // an operator's re-levelling.
+    //
+    // The refusal is mirrored from the one above rather than special-cased:
+    // between the three, every key is deletable by exactly one operation.
+    // Note it refuses the *whole* namespace, including an id this build does
+    // not carry, because that is precisely the row worth protecting — a
+    // retired entry's configuration is the only surviving record that the
+    // installation ever made a decision about it, which
+    // `ResolvedInterventionSettings.unknownIds` keeps on purpose.
+    if (input.key.startsWith(`${INTERVENTION_SETTING_PREFIX}.`)) {
+      throw new InvalidInputError(
+        `${input.key} configures an intervention, which is not inert — clear it with ` +
+          `clear_intervention_level.`,
         { fields: ["key"] },
       );
     }

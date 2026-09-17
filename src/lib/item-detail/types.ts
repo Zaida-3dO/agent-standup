@@ -211,6 +211,19 @@ export interface DetailItem {
    * this work was taken up elsewhere was still made.
    */
   readonly supersededById: string | null;
+  /**
+   * The item's external pointers — the chat thread it was discussed in, the
+   * ticket that prompted it, the design doc it implements.
+   *
+   * Rendered in the header as key-only chips, so a reader learns *where to
+   * look* without reading the body prose for a URL somebody may or may not
+   * have pasted there.
+   *
+   * Optional for the same reason the other widenings on this type are: this
+   * file mirrors the wire by hand, and a response carrying no `links` key
+   * renders exactly as one carrying an empty list.
+   */
+  readonly links?: readonly { readonly key: string; readonly url: string }[];
 }
 
 /** The whole detail payload, as `GET /api/items/{id}/detail` returns it. */

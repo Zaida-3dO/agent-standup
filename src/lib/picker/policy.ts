@@ -46,7 +46,7 @@ export type RiskBand = "low" | "medium" | "high";
 /** The item facts risk is derived from — all already on `Item`. */
 export interface RiskInputs {
   readonly priority: "P0" | "P1" | "P2" | "P3";
-  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement";
+  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement" | "pr";
   readonly needsVisualReview: boolean;
   /** The item's declared difficulty map, sparse per SCHEMA.md §1.1a. */
   readonly difficulty?: Readonly<Record<string, number>> | null;

@@ -55,6 +55,7 @@ import { VerdictBadge } from "./VerdictBadge";
 import { TrustBadge } from "@/components/chips/TrustBadge";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { LinkChips } from "@/components/chips/LinkChips";
 import { VerifyStateAction, type VerifyStateStatus } from "./VerifyStateAction";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
 import { StatusBlock } from "./StatusBlock";
@@ -405,6 +406,17 @@ export function ItemDetailView({
               <VerdictBadge verdict={verdict} />
             </span>
           )}
+          {/* The item's external pointers, showing only their keys. The
+              same component the board card uses, so a chip means the same
+              thing on both surfaces.
+
+              Inside this meta row rather than below it, unlike on the card:
+              the chips beside them here are already bordered pills
+              (`ChipLink` wraps one), so these join an existing vocabulary
+              instead of introducing a second one. No press handler is
+              passed — nothing on this page is draggable, so a plain link is
+              all it needs. */}
+          <LinkChips links={item.links ?? []} className={styles.headerLinks} />
         </div>
         {/* The one-line reason an item gives for being in Waiting. Kept
             here as well as in the status block's blocked treatment: this

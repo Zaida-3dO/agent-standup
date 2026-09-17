@@ -128,7 +128,20 @@ const commitShaSchema = z
 const inputSchema = z
   .object({
     itemId: z.string().min(1),
-    kind: z.enum(ARTIFACT_KINDS),
+    /**
+     * Which kind of artifact.
+     *
+     * **Named `artifactKind`, not `kind`, and the extra word is load-bearing.**
+     * `loop` already uses `kind` for an unrelated three-value enum
+     * (`work`/`note`/`blocked_on_person`), and this operation is reached
+     * through the `record` tool, whose own discriminator is `action`. Behind
+     * one name, a bare `kind` would be the second meaning of that word on a
+     * tool whose first meaning is something else entirely — and a caller who
+     * guesses which one a field means guesses wrong roughly half the time.
+     * One unambiguous name per concept is cheaper than the refusal that
+     * teaches them.
+     */
+    artifactKind: z.enum(ARTIFACT_KINDS),
     verdict: z.enum(VERDICT_VALUES).nullable().optional(),
     /**
      * Which review round this belongs to. Coerced, because every flag
@@ -166,7 +179,10 @@ const inputSchema = z
      * Prose on most kinds — and a status enum on two of them.
      *
      * **On `pull_request`, `body` is the PR's status and must be one of
-     * `open` or `closed`**, not a description of the change. **On
+     * `open`, `closed`, `merged` or `draft`**, not a description of the
+     * change. `merged` and `closed` are distinct on purpose — they are
+     * opposite outcomes, and a gate may read which one happened
+     * (`@/lib/pull-requests` carries the full reasoning). **On
      * `check_run` it is the build's status** — one of `passing`, `failing`,
      * `pending`, `error` — and unlike the PR case it is **required**, since
      * a build row that will not say how the build went records nothing.
@@ -183,9 +199,11 @@ const inputSchema = z
      * `pull_request` rows, so moving it is a breaking change to data that
      * is append-only and cannot be rewritten.
      *
-     * A PR that has closed is recorded as a NEW `pull_request` row with
-     * `body: "closed"` — artifacts are append-only, so the row that opened
-     * it is never edited.
+     * A PR whose status changes is recorded as a NEW `pull_request` row
+     * carrying the new status — artifacts are append-only, so the row that
+     * opened it is never edited. That applies to every status equally: a
+     * closure, a merge, and a draft going up for review are all a fresh
+     * row, and the earlier row survives as history.
      */
     body: z
       .string()
@@ -499,7 +517,7 @@ const RECORD_ARTIFACT_CONTRACT = {
         "`merge.requires_authorisation` reads to decide a human authorised the merge.",
     },
     {
-      fields: ["commitSha", "kind"],
+      fields: ["commitSha", "artifactKind"],
       rule: "A `commit` artifact must carry `commitSha`; a `historical_verification` must carry both `commitSha` and a `body` saying what was inspected.",
     },
     {
@@ -510,7 +528,7 @@ const RECORD_ARTIFACT_CONTRACT = {
         "this value, so it must not be an arbitrary string.",
     },
     {
-      fields: ["ref", "kind"],
+      fields: ["ref", "artifactKind"],
       rule: "A `pull_request` artifact must carry the PR's http(s) URL in `ref`, and its `body`, when set, must be one of the pull-request statuses.",
     },
     {
@@ -525,7 +543,7 @@ const RECORD_ARTIFACT_CONTRACT = {
         "at all. Put the sha in `commitSha`; use `ref` for the URL or branch alongside it.",
     },
     {
-      fields: ["body", "kind"],
+      fields: ["body", "artifactKind"],
       rule:
         "A `check_run` artifact records a build's outcome: `body` is REQUIRED and must be one of " +
         `${CHECK_RUN_STATUSES.join(", ")}. Record \`commitSha\` too wherever it is known — a build ` +
@@ -535,7 +553,7 @@ const RECORD_ARTIFACT_CONTRACT = {
         "must be an http(s) URL. A build whose status has changed is a NEW check_run row.",
     },
     {
-      fields: ["verdict", "kind"],
+      fields: ["verdict", "artifactKind"],
       rule: "Only `plan_review`, `code_review` and `visual_review` take a verdict; any other kind must leave it unset or `na`.",
     },
   ],
@@ -547,7 +565,7 @@ const RECORD_ARTIFACT_CONTRACT = {
   examples: [
     {
       itemId: "b1f0c3d2-0000-4000-8000-000000000000",
-      kind: "pull_request",
+      artifactKind: "pull_request",
       ref: "https://github.com/Zaida-3dO/agent-standup/pull/254",
       body: "open",
       createdByType: "agent",
@@ -556,7 +574,7 @@ const RECORD_ARTIFACT_CONTRACT = {
   ],
   example: {
     itemId: "b1f0c3d2-0000-4000-8000-000000000000",
-    kind: "code_review",
+    artifactKind: "code_review",
     verdict: "lgtm_with_nits",
     body: "Reads well. Two things worth fixing before the next round.",
     findings: [
@@ -607,7 +625,10 @@ export const recordArtifact = defineOperation({
     // the item's tip null and refuses the merge with a message about there
     // being no commit at all — while a `commit` row plainly exists. Refusing
     // at the write turns that into an error the caller can act on.
-    if (input.kind === "commit" && (input.commitSha === undefined || input.commitSha === null)) {
+    if (
+      input.artifactKind === "commit" &&
+      (input.commitSha === undefined || input.commitSha === null)
+    ) {
       throw new InvalidInputError("A commit artifact must record its commitSha.", {
         fields: ["commitSha"],
       });
@@ -625,7 +646,7 @@ export const recordArtifact = defineOperation({
     // having recorded one here — and the only way to record one is to supply
     // it. `ref` is already `.trim().min(1)`, so a whitespace-only URL is
     // refused by the schema before this runs.
-    if (input.kind === "pull_request") {
+    if (input.artifactKind === "pull_request") {
       if (input.ref === undefined || input.ref === null) {
         throw new InvalidInputError(
           "A pull_request artifact must record the PR's URL in `ref` — the report renders it as " +
@@ -641,18 +662,25 @@ export const recordArtifact = defineOperation({
           { fields: ["ref"] },
         );
       }
-      // `body` carries the PR's status, and the vocabulary is two words. It
-      // is refused rather than coerced because the alternative — treating
-      // unrecognised prose as `open` — is how a closed PR keeps rendering as
-      // a live link: a caller recording "closed by review" would be read as
-      // open. The read path is deliberately more forgiving (see
-      // `pullRequestStatusOf`), because rows written before this vocabulary
-      // existed cannot be refused retrospectively.
+      // `body` carries the PR's status, and the vocabulary is a closed set
+      // of four words. It is refused rather than coerced because the
+      // alternative — treating unrecognised prose as `open` — is how a
+      // closed PR keeps rendering as a live link: a caller recording "closed
+      // by review" would be read as open. The read path is deliberately more
+      // forgiving (see `pullRequestStatusOf`), because rows written before
+      // this vocabulary existed cannot be refused retrospectively.
+      //
+      // Strictness here is what lets a gate trust the value: `merge_authority:
+      // "pr"` refuses a merge until this field says `merged`, so a forge
+      // spelling like `"merged via squash"` or `"MERGED"` must be refused at
+      // the write rather than quietly read as something else later.
       if (input.body != null && !isPullRequestStatus(input.body.trim())) {
         throw new InvalidInputError(
           `A pull_request artifact's \`body\` records its status and must be one of: ${PULL_REQUEST_STATUSES.join(", ")}. ` +
-            "Record a PR that has closed as a NEW pull_request row with status `closed` — artifacts " +
-            "are append-only, so the row that opened it is never edited.",
+            "Record a PR whose status changed — closed, merged, or a draft going up for review — " +
+            "as a NEW pull_request row carrying the new status; artifacts are append-only, so the " +
+            "row that opened it is never edited. `merged` and `closed` are different facts: use " +
+            "`merged` only when the PR actually landed, since a merge gate may read it.",
           { fields: ["body"] },
         );
       }
@@ -676,7 +704,7 @@ export const recordArtifact = defineOperation({
     // writing `"green"` or `"success"` from a forge's own vocabulary would
     // otherwise get a row that reads as nothing at all, silently, having
     // been told the write succeeded.
-    if (input.kind === "check_run") {
+    if (input.artifactKind === "check_run") {
       if (input.body == null || !isCheckRunStatus(input.body.trim())) {
         throw new InvalidInputError(
           "A check_run artifact's `body` records the build's status and must be one of: " +
@@ -722,7 +750,7 @@ export const recordArtifact = defineOperation({
     // `historical_verification` with no commit and no account of what was
     // inspected would be an unfalsifiable approval wearing a different name,
     // which is precisely the thing this kind exists to be an alternative to.
-    if (input.kind === "historical_verification") {
+    if (input.artifactKind === "historical_verification") {
       if (input.commitSha === undefined || input.commitSha === null) {
         throw new InvalidInputError(
           "A historical_verification must record the commitSha it was checked against — an " +
@@ -757,7 +785,7 @@ export const recordArtifact = defineOperation({
     // nothing checks its content. A field satisfiable by "x" is an optional
     // field with extra keystrokes, and this one is the entire difference
     // between an audited override and a silent one.
-    if (input.kind === MERGE_OVERRIDE_KIND) {
+    if (input.artifactKind === MERGE_OVERRIDE_KIND) {
       if (input.commitSha === undefined || input.commitSha === null) {
         throw new InvalidInputError(
           "A merge_override must record the commitSha it applies to — an override is a " +
@@ -807,7 +835,7 @@ export const recordArtifact = defineOperation({
     // a sha-less override only on an item that records no commit. A caller
     // cannot elect to have no tip, so this is a property of the item rather
     // than a choice the override's author gets to make.
-    if (input.kind === REVIEW_EVIDENCE_OVERRIDE_KIND) {
+    if (input.artifactKind === REVIEW_EVIDENCE_OVERRIDE_KIND) {
       const reason = input.body?.trim() ?? "";
       if (reason.length === 0) {
         throw new InvalidInputError(
@@ -834,7 +862,7 @@ export const recordArtifact = defineOperation({
     // standing permission to merge whatever the item later becomes, which is
     // a far broader grant than a person clicking approve intends to give and
     // has its own separate expression (`mergeAuthority = pre_approved`).
-    if (input.kind === MERGE_APPROVAL_KIND) {
+    if (input.artifactKind === MERGE_APPROVAL_KIND) {
       if (input.commitSha === undefined || input.commitSha === null) {
         throw new InvalidInputError(
           "A merge_approval must record the commitSha it approves — a person's decision applies " +
@@ -854,10 +882,10 @@ export const recordArtifact = defineOperation({
     // matches on kind and verdict alone, so a `plan` row carrying `approved`
     // would be invisible to it but a `test_run` carrying `lgtm` is exactly the
     // sort of thing that reads as a passed gate to a human skimming the table.
-    if (input.verdict != null && !REVIEW_KINDS.has(input.kind) && input.verdict !== "na") {
+    if (input.verdict != null && !REVIEW_KINDS.has(input.artifactKind) && input.verdict !== "na") {
       throw new InvalidInputError(
-        `A ${input.kind} artifact is not a review, so it takes no verdict (or 'na').`,
-        { fields: ["verdict", "kind"] },
+        `A ${input.artifactKind} artifact is not a review, so it takes no verdict (or 'na').`,
+        { fields: ["verdict", "artifactKind"] },
       );
     }
 
@@ -933,14 +961,14 @@ export const recordArtifact = defineOperation({
     //
     // `resolveCreator` has already established that a `person` here names a
     // real `Person` row, so this cannot be satisfied by asserting the string.
-    if (input.kind === MERGE_APPROVAL_KIND && createdByType !== "person") {
+    if (input.artifactKind === MERGE_APPROVAL_KIND && createdByType !== "person") {
       throw new InvalidInputError(
         "Only a person can record a merge_approval — it is the recorded decision of a human " +
           "that this work may land, and an agent recording one would be authorising its own " +
           'merge. Pass createdByType: "person" with the approving person\'s createdById, or ' +
           "hold an assignment on the item as a person. If no human decision has been made, the " +
           "item is correctly still held.",
-        { fields: ["createdByType", "kind"] },
+        { fields: ["createdByType", "artifactKind"] },
       );
     }
     const reviewRound = await resolveReviewRound(ctx, input);
@@ -965,7 +993,7 @@ export const recordArtifact = defineOperation({
                  "followUpItemId",
                  "createdByType"::text AS "createdByType", "createdById", "createdAt"`,
       input.itemId,
-      input.kind,
+      input.artifactKind,
       input.verdict ?? null,
       reviewRound,
       input.commitSha ?? null,
@@ -991,7 +1019,7 @@ export const recordArtifact = defineOperation({
     // is meant to carry — SCHEMA.md §3's `review` event. `assignmentId` is
     // attached when the caller holds one, for the same "which agent said
     // this" attribution `note` gives.
-    if (REVIEW_KINDS.has(input.kind)) {
+    if (REVIEW_KINDS.has(input.artifactKind)) {
       await appendEvent(ctx.db, {
         itemId: input.itemId,
         actor: {
@@ -1001,7 +1029,11 @@ export const recordArtifact = defineOperation({
         },
         assignmentId,
         type: "review",
-        payload: { kind: input.kind, verdict: artifact.verdict, round: artifact.reviewRound },
+        payload: {
+          kind: input.artifactKind,
+          verdict: artifact.verdict,
+          round: artifact.reviewRound,
+        },
       });
     }
 

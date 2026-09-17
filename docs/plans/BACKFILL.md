@@ -124,6 +124,22 @@ Several of your statuses may legitimately land on one of ours — a pipeline tha
 collapse is lossy in the column and reversible in the row:** put your original status in
 `customFields`, and it survives verbatim on the item.
 
+**The run tells you which of your words collapsed**, so this is not something you have to notice by
+reading your own alias map. Any state that more than one of your statuses maps onto is listed after
+the counts, with the source words and how many tasks carried each:
+
+```
+Flattened by the status map (many source statuses -> one state)
+  in_review <- "code review" (14), "ready to merge" (3), "review approved" (6)
+  planning <- "plan-approved" (8), "planning" (11)
+```
+
+That block is the answer to the question this collapse actually raises: *which of my predicates
+lacks a board equivalent?* A query that distinguished `plan-approved` from `planning` is listed
+there as broken, at the moment it breaks, rather than being discovered later by someone searching
+for a fact the board does not carry. One-to-one mappings are not listed — only the collapses, so
+the lines that matter are not buried in the lines that do not.
+
 A status with no alias falls back to a small default vocabulary this application uses for its own
 command-line surface (`todo`, `in-progress`, `review`, `waiting`, `done`). **A status in neither is
 refused**, never defaulted — guessing files somebody's work under a state they never chose.
@@ -415,6 +431,13 @@ writes:
   counted back out of the database, graded and ungraded separately — an import that stored every
   finding but flattened its grading would satisfy a total and still have lost the thing worth
   keeping.
+- **A report of what was flattened**, not only of what was created — the status collapses described
+  in §4. This one is not a pass/fail check and deliberately does not affect the exit code: a
+  many-to-one status map is usually the right modelling call, so refusing it would block correct
+  imports. What it changes is that the loss is *stated at the moment it happens*, with your own
+  words named, instead of being a silent hole in a successful-looking import. It is reported on a
+  re-run too — the mapping is a property of your payload, not of what a given run happened to
+  insert, so a second run does not look lossless.
 - **A spot check**, field by field, on a sample spread across the whole payload rather than the
   first N — and **idempotency** (`--twice`), where the second run must insert zero rows.
 

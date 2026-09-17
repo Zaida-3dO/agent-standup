@@ -300,7 +300,18 @@ export const progressReport = defineOperation({
       // doc); this site was found during the sweep that fixed the load-bearing
       // ones and switched for consistency, not because a tie here could pick
       // a wrong answer — the two rows reaching this term already agree on
-      // both timestamp and closed/open status.
+      // both timestamp and on whether the CASE above calls them closed.
+      //
+      // That CASE tests the literal `'closed'` rather than going through
+      // `pullRequestStatusOf`, because it runs in SQL and cannot call it.
+      // The two are deliberately not kept in lockstep: the CASE only breaks
+      // a tie between rows written at the same instant, and the read below
+      // re-derives the status properly from whichever row wins. So a body
+      // spelled `Closed.` — which the CASE misses and the function catches —
+      // is still read as closed and still not linked. Widening the CASE to
+      // the new statuses would buy nothing: `merged` and `draft` are both
+      // linkable, so they belong on the same side of this tiebreak as
+      // `open`, which is where `ELSE 1` already puts them.
       const prRows = await ctx.db.$queryRawUnsafe<RawPullRequestRow[]>(
         `SELECT DISTINCT ON ("itemId") "itemId", "ref", "body"
            FROM "Artifact"
@@ -317,7 +328,25 @@ export const progressReport = defineOperation({
         // so they can only arrive on a row written before that guard existed
         // — which is exactly when a report is most at risk of rendering
         // something dead, so they are checked at the read as well.
-        if (pullRequestStatusOf(row.body) !== "open") continue;
+        //
+        // **The test is "not closed", not "is open", and the difference is
+        // load-bearing.** `merged` and `draft` joined the status vocabulary
+        // for readers other than this one (`@/lib/pull-requests`), and both
+        // are live URLs a reader can click: a merged PR is the single most
+        // useful link an item can carry after it lands, and a draft is a
+        // real page its author is working in. Written as `!== "open"` this
+        // loop would have silently stopped linking both the moment those
+        // values became recordable — the report would regress not by
+        // rendering something dead, but by withholding something live,
+        // which is the harder failure to notice because it looks exactly
+        // like an item that never had a PR.
+        //
+        // Only `closed` means "do not link", because only `closed` means the
+        // page behind the URL describes work that is not happening. That is
+        // the question this loop actually asks, and phrasing it as the
+        // question rather than as a list of the values that happened to
+        // answer it keeps a future status from defaulting to invisible.
+        if (pullRequestStatusOf(row.body) === "closed") continue;
         if (!isLinkableUrl(row.ref)) continue;
         prUrls.set(row.itemId, row.ref!.trim());
       }

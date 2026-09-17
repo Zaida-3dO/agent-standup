@@ -244,7 +244,8 @@ export interface DeleteItemOutput {
 
 export interface InboundReference {
   /** What kind of thing is pointing here. */
-  readonly kind: "child" | "follow_up_artifact" | "superseded_by" | "live_claim";
+  readonly kind:
+    "child" | "follow_up_artifact" | "superseded_by" | "live_claim" | "inbox_project_setting";
   /** The pointing row's id. */
   readonly id: string;
   /** Enough to recognise it without a second read. */
@@ -260,6 +261,16 @@ export interface InboundReference {
  * row, they resolve fine against an archived one, and listing them would
  * make every archive report references — which would train callers to pass
  * `acknowledgeReferences` reflexively and turn the refusal into a formality.
+ *
+ * **"Points at" is not the same as "holds a foreign key."** Four of the five
+ * relationships below are rows carrying this id in a column; the fifth is
+ * the `items.inbox_project` *setting*, which names a project by title and is
+ * resolved to an id on every quick capture. It is counted for exactly the
+ * reason the others are — something live stops working the way its owner
+ * expects when this row goes quiet — and it is the one a caller is least
+ * likely to have thought of, precisely because no schema relationship
+ * records it. The rule this list follows is the consequence, not the
+ * mechanism.
  */
 async function inboundReferences(ctx: ServiceContext, itemId: string): Promise<InboundReference[]> {
   const references: InboundReference[] = [];
@@ -311,6 +322,49 @@ async function inboundReferences(ctx: ServiceContext, itemId: string): Promise<I
       kind: "live_claim",
       id: row.id,
       detail: `${row.holderId} is holding this item`,
+    });
+  }
+
+  // The `items.inbox_project` setting, when it names this project.
+  //
+  // Not a foreign key and not a row pointing here — it is a *title* in the
+  // settings table, which `resolveInboxProject` turns into this id on every
+  // quick capture. That indirection is exactly why it belongs in this list:
+  // nothing in the schema records the relationship, so archiving the inbox
+  // looks from the database's side like archiving any other empty-ish
+  // project, and the consequence only shows up later and somewhere else.
+  //
+  // The consequence itself is now bounded rather than silent — the lookup
+  // excludes archived rows (`../items/inbox-project.ts`), so a later capture
+  // mints a fresh inbox instead of being filed into this one. That is a
+  // recoverable outcome, not a data-loss one, which is why this is a
+  // reference to acknowledge rather than an outright refusal. But it is
+  // still a consequence a caller should be told about *before* it happens:
+  // the surviving inbox will be a different project from this one, so
+  // everything already filed here stops being where new capture lands, and
+  // a caller who archived it expecting the sentinel to keep working wants to
+  // know that now rather than to discover it from a half-empty inbox.
+  //
+  // Matched on the same shape the resolver looks up by — a live root project
+  // with that title — so the two cannot disagree about which row the setting
+  // means. Comparing the title rather than resolving through the resolver
+  // keeps this read-only: `resolveInboxProject` would *create* the project
+  // if it were missing, which is not something a delete should ever do.
+  const inboxTitle = ctx.settings.values["items.inbox_project"];
+  const inboxRows = await ctx.db.$queryRawUnsafe<{ id: string; title: string }[]>(
+    `SELECT "id", "title" FROM "Item"
+     WHERE "id" = $1 AND "parentId" IS NULL AND "title" = $2 AND "archivedAt" IS NULL`,
+    itemId,
+    inboxTitle,
+  );
+  for (const row of inboxRows) {
+    references.push({
+      kind: "inbox_project_setting",
+      id: row.id,
+      detail:
+        `the items.inbox_project setting names this project ("${row.title}"), so quick capture ` +
+        `files here — archiving it will mint a fresh inbox for later capture rather than ` +
+        `continuing to use this one`,
     });
   }
 

@@ -25,6 +25,7 @@ import { LOOP_COMMANDS } from "./commands-loops"; // row #100 - open-loop writes
 import { SESSION_COMMANDS } from "./commands-sessions";
 import { CREW_COMMANDS } from "./commands-crew"; // MILESTONES #64 — `standup crew wait`
 import { SCORING_COMMANDS } from "./commands-scoring"; // the `score` noun — run and intervention scoring
+import { INTERVENTION_COMMANDS } from "./commands-interventions"; // row #128 — the `intervention` noun
 
 /** What building an input produced. */
 export type InputResult =
@@ -119,13 +120,30 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "get",
     operation: "get_item",
     summary:
-      "Show one item — id, title, state, headline and the latest checkpoint's headline; --full for the whole record.",
+      "Show one item — id, title, state, headline and the latest checkpoint's headline; --full for the whole record, --detail for that plus its subtasks, artifacts, history and assignments.",
     /**
      * `--full` is the command line's spelling of the `full` opt-in
      * (MILESTONES.md #107) — a bare switch, for the same reason `--all` is
      * on `item list`: `--full true` is not a thing anyone types. It goes
      * through `booleanFlag` rather than `flagsToInput`, which refuses a
      * valueless flag outright.
+     *
+     * ── Why the deepest read is `--detail` and not `--full detail` ──────
+     *
+     * The operation's `full` takes three values, and the obvious spelling
+     * of the third would be `--full detail`. The flag parser cannot carry
+     * it: `booleanFlag` refuses a flag given a value and `stringFlag`
+     * refuses a bare one, so a single `--full` cannot be both. Teaching one
+     * command a valued `--full` would mean bending a convention `args.ts`
+     * states for the flag set as a whole, trading a local convenience for a
+     * surface-wide inconsistency — and `--detail` reads better as English
+     * besides.
+     *
+     * So this is purely additive: `--full` keeps meaning the item row, and
+     * no existing invocation changes meaning. The two are mutually
+     * exclusive and sending both is refused by name rather than one
+     * silently winning, because which one won would be a coin-flip the
+     * person could not predict from the command they typed.
      */
     buildInput: (rest, flags) => {
       const id = rest[0];
@@ -134,7 +152,20 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
       }
       const full = booleanFlag(flags, "full");
       if (!full.ok) return full;
-      return { ok: true, input: { id, full: full.value } };
+      const detail = booleanFlag(flags, "detail");
+      if (!detail.ok) return detail;
+      if (full.value && detail.value) {
+        return {
+          ok: false,
+          envelope: malformed(
+            "`--full` and `--detail` ask for different depths and cannot be combined. " +
+              "Use `--full` for the item row, or `--detail` for the row plus its subtasks, " +
+              "artifacts, history and assignments.",
+            ["full", "detail"],
+          ),
+        };
+      }
+      return { ok: true, input: { id, full: detail.value ? "detail" : full.value } };
     },
   },
   {
@@ -544,6 +575,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   // backgrounded, which makes this entry the feature's sole agent-facing door.
   ...CREW_COMMANDS,
   ...SCORING_COMMANDS, // the `score` noun — run and intervention scoring
+  ...INTERVENTION_COMMANDS, // row #128 — the `intervention` noun
 ]);
 
 /**

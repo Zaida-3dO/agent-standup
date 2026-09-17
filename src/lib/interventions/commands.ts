@@ -633,17 +633,57 @@ export function isPullRequestOpen(command: string): boolean {
  * Under-matches like everything else in this module: an unrecognised
  * spelling produces `false` and costs one un-nudged call.
  */
+/**
+ * Whether a statement invokes a git verb that can create a commit.
+ *
+ * Shared by the two signing recognisers rather than written out in each,
+ * because they are the *same* question asked about opposite flags, and two
+ * copies of the verb list would drift the moment one of them learned about
+ * a verb the other did not. `git log --gpg-sign` is not a thing, but scoping
+ * by verb means a future flag of either spelling on a read command cannot
+ * fire either entry.
+ */
+/**
+ * The index of the last token belonging to one argument, starting at `from`.
+ *
+ * Whitespace-splitting a statement tears a quoted argument into pieces, so
+ * "the value of `-m`" is not reliably one token: `-m 'add -S support'`
+ * arrives as `'add`, `-S`, `support'`. This walks to the closing quote so a
+ * caller can skip the whole run rather than a single piece of it.
+ *
+ * Deliberately crude, and biased the same way as everything else here. It
+ * handles the two quote characters a shell uses and does not attempt
+ * escapes, nested quotes or `$(…)`. An **unterminated** quote consumes the
+ * rest of the statement, which is the safe direction for this caller: the
+ * result is that a flag after an unbalanced quote goes unrecognised — one
+ * un-nudged call — rather than prose being read as a flag, which is a false
+ * nudge on a command that was fine.
+ */
+function endOfArgument(tokens: readonly string[], from: number): number {
+  const first = tokens[from];
+  if (first === undefined) return from;
+  const quote = first.startsWith("'") ? "'" : first.startsWith('"') ? '"' : null;
+  // An unquoted value is exactly one token.
+  if (quote === null) return from;
+  // A single token carrying both quotes — `-m 'x'` — is already complete.
+  if (first.length > 1 && first.endsWith(quote)) return from;
+  for (let index = from + 1; index < tokens.length; index += 1) {
+    if (tokens[index]?.endsWith(quote) === true) return index;
+  }
+  return tokens.length - 1;
+}
+
+function createsCommit(statement: string): boolean {
+  return ["commit", "merge", "rebase", "cherry-pick", "revert", "am"].some((verb) =>
+    invokesGitSubcommand(statement, verb),
+  );
+}
+
 export function suppressesCommitSigning(command: string): boolean {
   return splitStatements(command).some((statement) => {
     const trimmed = statement.trim();
 
-    // Only the verbs that can actually create a commit. `git log
-    // --no-gpg-sign` is not a thing, but scoping by verb means a future
-    // flag of the same spelling on a read command cannot fire this.
-    const createsCommit = ["commit", "merge", "rebase", "cherry-pick", "revert", "am"].some(
-      (verb) => invokesGitSubcommand(trimmed, verb),
-    );
-    if (!createsCommit) return false;
+    if (!createsCommit(trimmed)) return false;
 
     const tokens = trimmed.split(/\s+/);
 
@@ -658,6 +698,114 @@ export function suppressesCommitSigning(command: string): boolean {
       const setting = tokens[index + 1];
       if (setting === undefined) continue;
       if (/^(commit|tag)\.gpgsign=(false|no|off|0)$/i.test(setting)) return true;
+    }
+
+    return false;
+  });
+}
+
+/**
+ * Whether a command goes out of its way to *force* commit signing — the
+ * mirror of `suppressesCommitSigning`.
+ *
+ * **Same shape, opposite flag, and the reasoning is symmetrical.** A plain
+ * `git commit` signs when signing is configured and does not when it is not.
+ * That is the operator's standing choice, expressed once in configuration,
+ * and it is the answer for every commit the repository will ever receive. A
+ * command carrying `-S` is overriding that choice inline for this one
+ * commit — the same "a flag that opts out of a safe default" shape
+ * `isBroadGitAdd` and `suppressesCommitSigning` both recognise, rather than
+ * a command that is wrong in itself.
+ *
+ * ── Why this is worth a nudge at all, given signing is the good outcome ──
+ *
+ * The suppression entry is easy to justify: an unsigned commit in a repo
+ * that signs is a visible defect. Forcing a signature looks like the
+ * virtuous direction, which is exactly why it is worth saying something
+ * about — the failure it produces is not a bad commit but a **failed
+ * command**, and one whose error text sends the reader in the wrong
+ * direction. On a machine with no key, `git commit -S` aborts with a
+ * gpg error and no commit is made at all; the work is still there, the
+ * agent reads a signing failure as a broken environment, and the remedy it
+ * reaches for is usually to configure something rather than to drop a flag
+ * it did not need. An installation that signs would have signed anyway.
+ *
+ * So it is a **nudge**, for the same reason its mirror is one: forcing a
+ * signature is frequently legitimate — a repository that does not sign by
+ * default, a release commit held to a higher bar, a machine whose global
+ * config is wrong — and refusing it would refuse a command that may be
+ * exactly right.
+ *
+ * Two spellings count, and they are the mirrors of the two the suppression
+ * check recognises:
+ *
+ *   - `-S` and `--gpg-sign` — the flag on `commit`, `merge`, `rebase`,
+ *     `cherry-pick` and `revert`, each of which can create a commit.
+ *   - `-c commit.gpgsign=true` — a one-call config override, which
+ *     `invokesGitSubcommand` deliberately skips past when finding the
+ *     subcommand, so the tokens are scanned here directly.
+ *
+ * ── What is deliberately NOT recognised ─────────────────────────────────
+ *
+ * `--no-gpg-sign` and `-c commit.gpgsign=false` are the opposite intent and
+ * belong to `suppressesCommitSigning`; matching them here would fire both
+ * entries on one command. Nor does a bare `git commit`: reading the absence
+ * of a flag as forcing would nudge on every commit in the system, which is
+ * the nudge-fatigue failure the catalogue scores a 1.
+ *
+ * **`-S` is matched as its own token only**, which is the one place this
+ * check is materially harder than its mirror. `--no-gpg-sign` is
+ * unambiguous, while `-S` is a single letter that appears as a value
+ * (`git commit -m -S`), inside a bundle, and as an entirely different
+ * option on other commands. Scanning for the bare token — rather than a
+ * substring — is what keeps `git commit -m "add -S support"` off it, and
+ * the tokens after `-m` are skipped for the same reason. Bundled forms like
+ * `-Sm` are **not** matched: under-matching costs one un-nudged call, and
+ * over-matching costs a false nudge on a legitimate command, which is the
+ * direction this whole module biases away from.
+ *
+ * `git config --global commit.gpgsign true` is also not matched, mirroring
+ * its opposite: it changes the machine's standing configuration rather than
+ * signing a commit being made now.
+ */
+export function forcesCommitSigning(command: string): boolean {
+  return splitStatements(command).some((statement) => {
+    const trimmed = statement.trim();
+
+    if (!createsCommit(trimmed)) return false;
+
+    const tokens = trimmed.split(/\s+/);
+
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token === undefined) continue;
+
+      // A message's text is not a flag, and skipping ONE token is not
+      // enough to act on that. The statement is split on whitespace, so
+      // `-m 'add -S support'` arrives as four tokens and the `-S` in the
+      // middle is a token of its own — a test asserting exactly this case
+      // failed against the one-token version, which is why the skip runs to
+      // the end of the quoted run rather than to the next token.
+      if (token === "-m" || token === "--message") {
+        index = endOfArgument(tokens, index + 1);
+        continue;
+      }
+
+      // The explicit flag, as a whole token. `--gpg-sign=<keyid>` is the
+      // documented form for naming a key and is the same act, so it counts;
+      // `--gpg-sign-something` is not a spelling git has and does not.
+      if (token === "-S" || token === "--gpg-sign") return true;
+      if (token !== undefined && token.startsWith("--gpg-sign=")) return true;
+
+      // The inline config override, matched as a `-c` and its value
+      // together so a literal `commit.gpgsign=true` appearing as an
+      // argument to something else is not read as one.
+      if (token === "-c") {
+        const setting = tokens[index + 1];
+        if (setting !== undefined && /^(commit|tag)\.gpgsign=(true|yes|on|1)$/i.test(setting)) {
+          return true;
+        }
+      }
     }
 
     return false;

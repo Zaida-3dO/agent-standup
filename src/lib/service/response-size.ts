@@ -154,7 +154,19 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // *before* an instructed field — `describe/advice.ts`'s `attributeTo`)
   // reads `full: false` as this operation's own field rather than
   // `get_item_body`'s, which has no `full` to accept it.
-  get_item: "`full: false` for the slim record, or `get_item_body` to read the body in windows",
+  // **The clause order is constrained here for the same reason it is on the
+  // detail entry below**, and this entry gained parameters of its own when
+  // the detail read folded in: `artifactLimit` and `historyLimit` are now
+  // `get_item`'s fields, so they must be named before any other tool or
+  // `attributeTo` hands them to whichever tool was mentioned most recently.
+  //
+  // `full: "item"` is named alongside `full: false` because the two shrink
+  // different things: `false` drops to the slim record, `"item"` returns the
+  // row without the detail payload joined in. A caller refused at `full:
+  // "detail"` usually wants the second, and telling them only about the
+  // first sends them further than they needed to go.
+  get_item:
+    '`full: false` for the slim record, `full: "item"` for the row without its detail payload, a smaller `artifactLimit` or `historyLimit`, or `read_item` with `action: "body"` to read the body in windows',
   // **Both of these used to name a call that does not return loops, and
   // that is the correction.** `get_item_detail` suggested `get_item {full:
   // false}` and `orientation` suggested `get_item`; neither returns loops at
@@ -213,7 +225,7 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // both failed the build as `parameter` defects). The check is doing its
   // job in each case; the fix is the ordering, not an exemption.
   get_item_detail:
-    "a smaller `artifactLimit` or `historyLimit`, `get_item_artifacts` to read this item's artifacts (`kind` to filter, `artifactId` for one in full), `get_item_history` with `full: true` for its notes and checkpoints, `loop` with `action: \"list\"` for this item's loops, `get_item_body` to read a large body in windows, or `get_item` with `full: false` for the slim record",
+    'a smaller `artifactLimit` or `historyLimit`, `read_item` with `action: "artifacts"` to read this item\'s artifacts (`kind` to filter, `artifactId` for one in full), `read_item` with `action: "history"` and `full: true` for its notes and checkpoints, `loop` with `action: "list"` for this item\'s loops, `read_item` with `action: "body"` to read a large body in windows, or `get_item` with `full: false` for the slim record',
   // **Now names `limit`, which is the parameter that actually bounds this
   // response.** The advice here predated `orientation` gaining a working
   // `limit`, so it could only redirect a caller to a different call — the
@@ -236,7 +248,7 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // session can be working, which is itself the thing to fix, and `release`
   // is the call that fixes it.
   my_work:
-    "`release` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer",
+    '`ownership` with `action: "release"` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer',
   // The generic fallback names `search`, which answers "find the item I
   // want" — the wrong suggestion here, since a caller refused on this
   // operation already has the item and is mid-way through reading its body.

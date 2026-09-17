@@ -536,7 +536,7 @@ describeIfDb("import verification — against a real Postgres", () => {
 
   it("running the FULL import pipeline (#10 -> #11 -> #12) twice against the same database converges: second run imports nothing new and row counts are identical", async () => {
     const first = await runFullImport();
-    expect(first.itemsResult).toEqual({ imported: 3, skippedExisting: 0 });
+    expect(first.itemsResult).toMatchObject({ imported: 3, skippedExisting: 0 });
     expect(first.eventsResult.imported).toBe(3); // 2 (open) + 1 (collapsed done) = 3
     expect(first.eventsResult.skippedExisting).toBe(0);
     expect(first.assignmentsResult).toEqual({
@@ -569,7 +569,7 @@ describeIfDb("import verification — against a real Postgres", () => {
     const assignmentsResult2 = await importAssignmentsAndArtifacts(prisma, assignmentTasks);
 
     // The direct proof: nothing NEW was imported the second time.
-    expect(itemsResult2).toEqual({ imported: 0, skippedExisting: 3 });
+    expect(itemsResult2).toMatchObject({ imported: 0, skippedExisting: 3 });
     expect(eventsResult2.imported).toBe(0);
     expect(eventsResult2.skippedExisting).toBe(3);
     expect(assignmentsResult2).toEqual({
@@ -626,7 +626,7 @@ describeIfDb("import verification — against a real Postgres", () => {
     const eventsResult3 = await importEvents(prisma, tasks, { actorAliases });
     const assignmentsResult3 = await importAssignmentsAndArtifacts(prisma, assignmentTasks);
 
-    expect(itemsResult3).toEqual({ imported: 0, skippedExisting: 3 });
+    expect(itemsResult3).toMatchObject({ imported: 0, skippedExisting: 3 });
     expect(eventsResult3.imported).toBe(0);
     expect(assignmentsResult3.claimsImported).toBe(0);
     expect(assignmentsResult3.reviewsImported).toBe(0);

@@ -188,6 +188,33 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     }),
     unwrap: (body) => body,
   },
+  // Row #128 — the intervention catalogue's configuration surface. Under
+  // `/api/interventions/**` rather than `/api/settings/**` because these
+  // keys are deliberately outside `SETTINGS_REGISTRY`, and the settings
+  // routes refuse them by design (`requireSettingKey`).
+  list_intervention_settings: {
+    method: "GET",
+    request: () => ({ path: "/api/interventions/settings" }),
+    unwrap: (body) => body,
+  },
+  set_intervention_level: {
+    method: "PUT",
+    request: (input) => {
+      const { id, ...rest } = input;
+      return {
+        path: `/api/interventions/${encodeURIComponent(String(id ?? ""))}/level`,
+        body: rest,
+      };
+    },
+    unwrap: (body) => body,
+  },
+  clear_intervention_level: {
+    method: "DELETE",
+    request: (input) => ({
+      path: `/api/interventions/${encodeURIComponent(String(input.id ?? ""))}/level`,
+    }),
+    unwrap: (body) => body,
+  },
   transition_item: {
     method: "POST",
     request: (input) => {

@@ -117,8 +117,31 @@ describe("the `score` noun", () => {
     // widening the taxonomy by two. If someone later splits `score` back
     // into those, this fails and the reasoning in `commands-scoring.ts` gets
     // re-read rather than quietly reversed.
+    //
+    // ── What this asserts, and what it deliberately does not ────────────
+    //
+    // The decision being protected is that **scoring** lives under one noun.
+    // It is asserted as "no scoring verb is reachable under another noun"
+    // rather than as "no noun named `intervention` exists", because those
+    // are different claims and only the first is the one that was decided.
+    //
+    // The distinction became load-bearing when the catalogue's own
+    // configuration surface arrived (`commands-interventions.ts`): that noun
+    // carries `list`, `set` and `clear`, which re-level an entry and have
+    // nothing to do with scoring a fired one. Reading the original assertion
+    // as forbidding it would have blocked an unrelated capability on the
+    // strength of a shared word — so the assertion now names the thing it
+    // was always about. Splitting the scoring verbs back out still fails it.
     expect(nouns()).not.toContain("run");
-    expect(nouns()).not.toContain("intervention");
+    for (const noun of nouns()) {
+      if (noun === "score") continue;
+      const verbs = verbsFor(noun);
+      for (const scoringVerb of ["derive", "accept", "scores"]) {
+        expect(verbs, `${noun} should not carry the scoring verb ${scoringVerb}`).not.toContain(
+          scoringVerb,
+        );
+      }
+    }
   });
 
   it("spells the aggregate read as a plural verb, not a hyphenated pseudo-verb", () => {

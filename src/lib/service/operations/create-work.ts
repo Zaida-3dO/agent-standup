@@ -48,6 +48,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import {
   COMMON_CREATE_RULES,
+  COMMON_CREATE_CONDITIONALLY_REQUIRED,
   commonCreateShape,
   TITLE_CONVENTION_CONTRACT_RULE,
   type CreatedItem,
@@ -175,6 +176,7 @@ export const createWork = defineOperation({
       TITLE_CONVENTION_CONTRACT_RULE,
       ...COMMON_CREATE_RULES,
     ],
+    conditionallyRequired: COMMON_CREATE_CONDITIONALLY_REQUIRED,
     example: {
       type: "task",
       title: "Let people reset a forgotten password",

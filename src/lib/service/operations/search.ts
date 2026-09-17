@@ -25,13 +25,26 @@
 // is indistinguishable from a filtered one. `state` narrows explicitly for
 // the caller that wants it.
 //
-// **Title and body first, deliberately** (the row's own scoping).
-// Checkpoints, events and artifacts are a substantially larger corpus and a
-// substantially larger piece of work; they are worth attempting once this
-// cheap index is shown to be insufficient. `headline` is included beside
-// title and body because it is a one-line BLUF written to say what the item
-// is — the single most searchable sentence on the row — and indexing it
-// costs one more column in a `WHERE` that already reads two.
+// **Title, headline, body and links — and the scoping is still
+// deliberate.** Checkpoints, notes, events and artifacts remain a
+// substantially larger corpus and a substantially larger piece of work.
+// `headline` is here because it is a one-line BLUF written to say what the
+// item is — the single most searchable sentence on the row.
+//
+// **Links are here because leaving them out inverted the incentive the rest
+// of the product creates.** Measured: 141 of 141 artifact rows carrying a
+// ref had that ref appearing nowhere in their item's body, so a pointer put
+// in its proper typed home was findable by nothing, while the same pointer
+// left in prose was findable by this. That made "record your links properly"
+// an instruction to make the corpus harder to search, and the first caller
+// to notice would reasonably go back to prose. A typed field nothing can
+// find is a write-only field.
+//
+// What is still excluded is excluded honestly rather than silently — the
+// notice names it, on the same principle the `loopMatches` clause already
+// applied to loops. An empty result that does not say where it did not look
+// reads as "no such thing exists", and a session acting on exactly that
+// reading is what this read exists to prevent.
 //
 // **The results are slim, and for this read that is not merely a size
 // decision.** A ranked list is a list of candidates a caller picks from,
@@ -46,7 +59,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { TERMINAL_STATES } from "../board/columns";
 import { areaFilterCondition } from "../items/area-filter";
-import { NOT_ARCHIVED_CONDITION } from "../items/row";
+import { ITEM_LINKS_COLUMN, NOT_ARCHIVED_CONDITION } from "../items/row";
 import { buildExcerpt, rankMatch, type MatchField } from "../items/search-rank";
 import { deriveLoops, LOOP_EVENT_TYPES } from "@/lib/open-loops";
 
@@ -94,7 +107,7 @@ export const RANK_CANDIDATE_CEILING = 500;
 
 const inputSchema = z
   .object({
-    /** The text to find. Matched as a literal substring, case-insensitively, over title, headline and body. */
+    /** The text to find. Matched as a literal substring, case-insensitively, over title, headline, body, and every link's key and URL. */
     query: z.string().trim().min(MIN_QUERY_CHARS),
     /**
      * Narrow to one state. Absent means **every** state, including finished
@@ -231,6 +244,29 @@ export function escapeLikePattern(value: string): string {
 }
 
 /**
+ * What this read does NOT look at, named in the notice so an empty result
+ * cannot be mistaken for an absence.
+ *
+ * **Why this sentence exists.** The notice used to say a term was not found
+ * "in any title, headline or body" and suggest re-spelling it — an accurate
+ * list of what was searched, which a reader inevitably reads as the list of
+ * everything there is. A caller who had recorded a pointer as an artifact
+ * was therefore told, in effect, that it did not exist, and re-spelling was
+ * the one suggestion guaranteed not to help. The corpus a read silently
+ * excludes is precisely the thing a caller cannot infer from the answer.
+ *
+ * The `loopMatches` line set this precedent — it names loops as unsearched
+ * rather than letting a caller assume they were covered — and this is the
+ * same one-clause treatment for the rest.
+ *
+ * Kept as a single named constant rather than written into each branch so
+ * the two empty-result sentences cannot drift into disagreeing about what
+ * was skipped, which is the failure this whole sentence exists to prevent.
+ */
+export const UNSEARCHED_CORPUS_NOTE =
+  "Checkpoints, notes, events and artifacts are not searched at all, so a reference recorded only in one of those will not appear here.";
+
+/**
  * The sentence every search response carries.
  *
  * Search is the one read whose *empty* result is genuinely ambiguous — "no
@@ -260,11 +296,11 @@ export function buildSearchNotice(
     : ` Loop text was not searched; pass includeLoops to cover it.`;
   if (shown === 0 && loopHits === 0) {
     return narrowed
-      ? `No item matches "${query}" under the filters given; searching without state, area, repo or openOnly covers every item.${loopRoute}`
-      : `No item matches "${query}" in any title, headline or body. Search matches literal text, so a shorter or differently-spelled query may find it.${loopRoute}`;
+      ? `No item matches "${query}" under the filters given; searching without state, area, repo or openOnly covers every item.${loopRoute} ${UNSEARCHED_CORPUS_NOTE}`
+      : `No item matches "${query}" in any title, headline, body or link. Search matches literal text, so a shorter or differently-spelled query may find it.${loopRoute} ${UNSEARCHED_CORPUS_NOTE}`;
   }
   if (shown === 0) {
-    return `No item's title, headline or body matches "${query}", but ${loopHits} open ${loopHits === 1 ? "loop" : "loops"} did — read one with \`loop\` \`action: "get"\`, or list them with \`action: "list"\`.`;
+    return `No item's title, headline, body or link matches "${query}", but ${loopHits} open ${loopHits === 1 ? "loop" : "loops"} did — read one with \`loop\` \`action: "get"\`, or list them with \`action: "list"\`.`;
   }
   const loopTail =
     loopHits > 0
@@ -386,7 +422,7 @@ export const search = defineOperation({
   name: "search",
   kind: "read",
   summary:
-    "Finds items by text in title, headline or body, best match first. Searches every state including finished work, unlike the list reads — pass openOnly to exclude it, or state, area and repo to narrow. Loop text is NOT searched unless includeLoops is passed, which adds matching open loops and each loopId. Returns id, title, state, headline and an excerpt; read one in full with get_item.",
+    "Finds items by text in title, headline, body or a link's key or URL, best match first. Searches every state including finished work, unlike the list reads — pass openOnly to exclude it, or state, area and repo to narrow. Loop text is NOT searched unless includeLoops is passed, which adds matching open loops and each loopId; checkpoints, notes, events and artifacts are never searched. Returns id, title, state, headline and an excerpt; read one in full with get_item.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: SearchInput): Promise<SearchOutput> {
@@ -394,11 +430,27 @@ export const search = defineOperation({
     const values: unknown[] = [];
     let paramIndex = 1;
 
-    // The match itself. One parameter used three times rather than three
-    // copies of the same string, so the pattern cannot drift between the
-    // fields it is compared against.
+    // The match itself. One parameter used for every field rather than a
+    // copy of the same string per field, so the pattern cannot drift
+    // between the things it is compared against.
+    //
+    // **The `EXISTS` is what makes a recorded link findable at all**, and it
+    // is the point of this operation's widening. Measured before it: 141 of
+    // 141 artifact rows carrying a ref had that ref appearing nowhere in
+    // their item's body, while this `WHERE` read item columns alone — so
+    // recording a pointer in its proper place made it *less* findable than
+    // leaving it in prose, and any caller told to record links properly was
+    // being told to make the corpus harder to search.
+    //
+    // `EXISTS` rather than a join, because a join multiplies the item row by
+    // its number of links and the ranking below expects one row per item;
+    // de-duplicating afterwards would also break `considered` and the
+    // truncation count, which are counts of items rather than of matches.
+    // Both link columns are trigram-indexed for this predicate.
     conditions.push(
-      `("title" ILIKE $${paramIndex} ESCAPE '\\' OR "headline" ILIKE $${paramIndex} ESCAPE '\\' OR "body" ILIKE $${paramIndex} ESCAPE '\\')`,
+      `("title" ILIKE $${paramIndex} ESCAPE '\\' OR "headline" ILIKE $${paramIndex} ESCAPE '\\' OR "body" ILIKE $${paramIndex} ESCAPE '\\'` +
+        ` OR EXISTS (SELECT 1 FROM "ItemLink" l WHERE l."itemId" = "Item"."id"` +
+        ` AND (l."key" ILIKE $${paramIndex} ESCAPE '\\' OR l."url" ILIKE $${paramIndex} ESCAPE '\\')))`,
     );
     values.push(`%${escapeLikePattern(input.query)}%`);
     paramIndex++;
@@ -438,9 +490,21 @@ export const search = defineOperation({
     // of truncation on its own.
     values.push(RANK_CANDIDATE_CEILING + 1);
     const rows = await ctx.db.$queryRawUnsafe<
-      { id: string; title: string; state: string; headline: string | null; body: string }[]
+      {
+        id: string;
+        title: string;
+        state: string;
+        headline: string | null;
+        body: string;
+        links: { key: string; url: string }[] | null;
+      }[]
     >(
-      `SELECT "id", "title", "state", "headline", "body" FROM "Item"
+      // Links are selected in the SAME statement that matches them, through
+      // the shared `ITEM_LINKS_COLUMN`. Two reads would let the matcher and
+      // the ranker see different link sets for one item — a row matched on a
+      // link and then ranked without it scores null and is silently dropped,
+      // which looks exactly like the search not working.
+      `SELECT "id", "title", "state", "headline", "body", ${ITEM_LINKS_COLUMN} FROM "Item"
        WHERE ${NOT_ARCHIVED_CONDITION} AND ${conditions.join(" AND ")}
        ORDER BY "createdAt" DESC, "id" DESC
        LIMIT $${paramIndex}`,
@@ -452,7 +516,10 @@ export const search = defineOperation({
 
     const ranked: SearchMatch[] = [];
     for (const row of candidates) {
-      const ranking = rankMatch(row, input.query);
+      // `links` is narrowed from the driver's nullable value the same way
+      // `toItemRecord` narrows it — `json_agg` over no rows yields NULL, and
+      // the ranker reads "no links" from an empty list.
+      const ranking = rankMatch({ ...row, links: row.links ?? [] }, input.query);
       // A row the SQL matched always ranks, because both read the same
       // text. Skipping rather than emitting a zero-scored row is the honest
       // handling if that ever stops being true.

@@ -11,9 +11,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const { requestId, caller } = auth;
   const { id } = await params;
   const input: Record<string, unknown> = { id };
+  const url = new URL(request.url);
   // `?full=true` opts out of the slim default (MILESTONES.md #107).
-  const full = new URL(request.url).searchParams.get("full");
+  // `?full=item` and `?full=detail` name the two deeper reads:
+  // `parseBooleanParam` returns an unrecognised string unchanged, so the
+  // schema — not this route — decides which names are depths. That is the
+  // §22 rule about adapters not holding their own idea of a field's
+  // vocabulary, and it is why no enum is restated here.
+  const full = url.searchParams.get("full");
   if (full !== null) input.full = parseBooleanParam(full);
+  // Only forwarded when present, so the schema's own defaults stand for the
+  // absent case. Left as the string the query gave when it is not a number,
+  // so the schema refuses it and names the field rather than this route
+  // turning `?historyLimit=lots` into NaN.
+  for (const field of ["historyLimit", "artifactLimit"] as const) {
+    const raw = url.searchParams.get(field);
+    if (raw === null) continue;
+    input[field] = Number.isNaN(Number(raw)) ? raw : Number(raw);
+  }
   try {
     const item = await service.call("get_item", input, { caller });
     return withRequestId(NextResponse.json({ item }), requestId);

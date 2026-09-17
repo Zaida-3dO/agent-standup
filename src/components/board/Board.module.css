@@ -565,6 +565,23 @@
    text it separated: the pills have their own boundaries, and a leading
    middot against a chip's border reads as a stray character. */
 
+/* The item's link chips. Its own row under `.cardMeta` rather than part of
+   it: that row is middot-separated plain text and these are bordered pills,
+   so sharing a line would read as two vocabularies competing for the same
+   sentence.
+
+   `flex-wrap` because the number of links is unbounded — an item with five
+   of them wraps to a second line rather than widening the card or clipping
+   the last chip. The gap is slightly wider than `.cardMeta`'s because these
+   have borders: pills need more air than words do to stop reading as one
+   run-on control. */
+.cardLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+}
+
 /* ── What a card holds (the subtask rollup) ───────────────────────────────
    The board shows one level, so a parent has to state what it hides. This
    is a disclosure control, not decoration: it is a real <button> so it is

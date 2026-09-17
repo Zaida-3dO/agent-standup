@@ -28,6 +28,7 @@ import {
   BOARD_ITEM_SUMMARY_COLUMNS,
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
+  ITEM_LINKS_COLUMN,
   ITEM_SUMMARY_COLUMNS,
   itemColumnsFor,
 } from "@/lib/service/items/row";
@@ -98,9 +99,17 @@ describe("the slim read's column lists", () => {
     // the item read's is a deliberate, bounded exception (a card cannot be
     // drawn from four fields), and the bound is what stops it drifting back
     // towards the whole row one plausible field at a time.
+    //
+    // `links` is the aggregate a card draws its chip row from, and it earns
+    // its place by the same test every other entry here passes: a card
+    // renders it, and the alternative is one query per card. It cannot
+    // reintroduce the growth this bound exists to stop — a link pair is a
+    // handful of bytes and an item carries a handful of them, where `body`
+    // and `customFields` were 99% of the measured payload and remain absent.
     expect(BOARD_ITEM_SUMMARY_COLUMNS).toBe(
       'id, title, state, headline, kind, priority, area, repo, "blockedReason", ' +
-        '"blockedOnType", "blockedOnPersonId", "pauseReason", "originType"',
+        '"blockedOnType", "blockedOnPersonId", "pauseReason", "originType", ' +
+        ITEM_LINKS_COLUMN,
     );
   });
 });

@@ -1184,6 +1184,160 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
       "is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_detail",
+    reason:
+      'Folded into `get_item` as `full: "detail"`, one of three depths that read a name rather ' +
+      'than infer one. `get_item` already took a `full` flag meaning "the whole row"; the detail ' +
+      "wrapper is that same row plus its subtasks, artifacts, history, summary, build status and " +
+      "assignments, and its `item` key is the identical `ItemRecord` from the identical builder — " +
+      "so one read at a stated depth describes the axis the flag already meant, rather than two " +
+      "tools spending the per-session tool-list budget twice. `full: true` is UNCHANGED and still " +
+      "returns the bare row, deliberately: the response-size guard names `get_item` as the " +
+      "narrower call when this read is refused for size, and widening the flag would make that " +
+      "escape hatch inherit the failure it escapes. The folded tool dispatches to this operation " +
+      "in the same context, so its size refusal and its two limits reach the caller unchanged, " +
+      "and it stays exposed on HTTP, where the item detail view reads it. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_detail",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_body",
+    reason:
+      'Folded into the single `read_item` tool as action body. The three bounded reads of one item are one capability seen three times — what a caller reaches for when the whole-item read will not fit, each returning a different unbounded axis of the same item in windows — so three tools spend the per-session tool-list budget three times to describe one decision. The folded tool dispatches to this operation, so its character-offset paging and its own size refusal reach the caller unchanged. **Its reachability is the point of the waiver, not a casualty of it**: the response-size guard names this read as the remedy when a body will not fit, and the advice is re-spelled to `read_item` with `action: "body"` in the same change, because `advice.ts` fails the build on advice naming a tool the caller cannot call. Still on HTTP and the command line. It runs no state transition, so no registered guard can reject it and §22\'s bound on waivers is satisfied.',
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_body",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_history",
+    reason:
+      "Folded into the single `read_item` tool as action history. Same grouping as action body — one item read in windows, a different unbounded axis. **This one was un-waived once before and for a reason that still holds**: it is the only call returning the note and checkpoint TEXT of an arbitrary item, so when the response-size guard refuses the whole-item read, an agent with no route here is stranded — two sessions were, one tried six routes. What that episode established is that the REMEDY must stay reachable, not that this NAME must stay unwaived; folded into an exposed tool it is still reachable, and the guard's advice moves to `read_item` with `action: \"history\"` and `full: true` in the same change. Still on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_history",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_artifacts",
+    reason:
+      "Folded into the single `read_item` tool as action artifacts. Same grouping as the other two, and the other half of the stranding case `get_item_history` records: on a long-lived item the artifacts are frequently the whole reason the response did not fit, and this is what reaches them — by `kind`, by `artifactId`, and by page. Reachable through the fold, with the guard's advice re-spelled to `read_item` with `action: \"artifacts\"` in the same change. Still on HTTP and the command line. It runs no state transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_artifacts",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "claim",
+    reason:
+      "Folded into the single `ownership` tool as action claim. The three ownership verbs are one lifecycle — taking an item, giving it up, displacing its holder — and they spend their own documentation pointing at each other: this operation's `claims.one_crew_per_item` refusal ends \"Take it over through supersession rather than claiming alongside it\", which is `takeover`, and `release`'s contract says the same in reverse. **On §22's bound**: this operation CAN be rejected by a registered guard, and a fold loses no guard coverage, which is what the bound protects — the delegate runs through its own schema and handler in the same context and throws the SAME refusal object, so the guard's `code`, `guard` id and `fields` reach an MCP caller unchanged. The machine check is narrower still and independently satisfied: the operations reaching `runGuards` through the state machine are `transition_item` and `complete_item`, and this is not among them. Still exposed on HTTP and the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "claim",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "release",
+    reason:
+      "Folded into the single `ownership` tool as action release. Same lifecycle as action claim: a session gives up its OWN live row here, and ending somebody else's claim is action takeover — a distinction this operation's own contract already had to spell out when the two were separate tools, and which reads better as two actions of one tool than as two tool names. The folded tool dispatches to this operation, so its refusals are unchanged. Still on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "release",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "takeover",
+    reason:
+      'Folded into the single `ownership` tool as action takeover. **This operation was un-waived once before and for a reason that still holds**: `claims.one_crew_per_item` refuses a claim on a held item and ends "Take it over through supersession rather than claiming alongside it", and this is the only operation that performs that — two sessions hunted for a tool named "supersession" and both settled on calling `release` on the dead holder, a guessed answer on the operation that decides ownership. What that established is that the REMEDY must stay reachable, not that this NAME must stay unwaived: folded into an exposed tool it is reachable, and it is now reachable from the very tool whose refusal prescribes it, which is a shorter path than before. Still on HTTP and the command line. It runs no state transition, so §22\'s bound on waivers is satisfied.',
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "takeover",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "checkpoint",
+    reason:
+      "Folded into the single `record` tool as action checkpoint. The four ways an agent puts something on an item's record are one act seen four times — a resume point, a remark, a produced artifact, a capability gap — and a caller reaching for any of them has already decided it is writing to the record rather than reading it or moving the work. **The one thing a fold could bury here is stated instead of buried**: this action needs a LIVE ASSIGNMENT and refuses with `conflict` without one, while action note needs none, and that asymmetry is written into the folded tool's contract rules where `describe_tool` returns it. The folded tool dispatches to this operation, so the assignment check and its refusal reach the caller unchanged. Still exposed on HTTP and the command line. It runs no state transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "checkpoint",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "note",
+    reason:
+      "Folded into the single `record` tool as action note. The counterpart to action checkpoint and the one an agent usually wants: it needs no assignment at all, which makes it the right call for a dispatched agent that was never assigned or for anyone recording alongside the holder. That distinction is the most-got-wrong thing about these two operations, so it is stated in the folded tool's contract rules rather than left to be discovered through a refusal. The folded tool dispatches to this operation. Still on HTTP and the command line, and it runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "note",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "record_artifact",
+    reason:
+      "Folded into the single `record` tool as action artifact. Recording a produced thing — a plan, a review, a commit, a check run — is the same act as the other three actions: writing to an item's record. Its kind enum is carried as `artifactKind` rather than `kind`, because `loop` uses `kind` for an unrelated enum and one word meaning two things on adjacent tools is a guess rather than a name. Every rule this operation declares — the commit sha a commit artifact must carry, the status a check_run's body must be, who may record a merge_approval — is enforced by this operation and reaches the caller through the fold unchanged. Still on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "record_artifact",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "report_blocked_on_tool",
+    reason:
+      "Folded into the single `record` tool as action blocked_on_tool. Reporting a tool that could not be used for work an item asked for is a record of what happened, which is what the other three actions are — and it is the action an agent reaches for at exactly the moment it is having trouble finding the right tool, so putting it behind the name it is already using is the point rather than a side effect. The folded tool dispatches to this operation. It has BOTH an HTTP route and a command-line verb, so it is reachable on two surfaces besides the fold, and it runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "report_blocked_on_tool",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

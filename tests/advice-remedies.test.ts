@@ -325,7 +325,13 @@ describe("the check does not fire on advice that is correct", () => {
         {
           operation: "my_work",
           source: "live",
-          text: "`release` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer",
+          // Quoted from `response-size.ts`, in the spelling a caller now
+          // holds: the remedy is an ACTION of `ownership` rather than a tool
+          // named `release`, which is waived off MCP. Written in the live
+          // spelling deliberately — a fixture frozen in a superseded one
+          // stops exercising the case it is named for and starts exercising
+          // the unreachable check instead.
+          text: '`ownership` with `action: "release"` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer',
         },
       ]),
     ).toEqual([]);
@@ -466,21 +472,33 @@ describe("advice naming a tool the caller cannot call", () => {
       expect(offMcp.has(waived), `${waived} should be known as off-MCP`).toBe(true);
     }
     // Live tools must not be in it — the mirror failure, where the class
-    // would flag every correct redirect in the tree.
-    for (const live of ["get_item", "search", "loop", "checkpoint", "create_work"]) {
+    // would flag every correct redirect in the tree. Each subject here is a
+    // FOLD TARGET or a standalone read, never a folded verb: those are the
+    // names that stay on the surface as tools rather than becoming actions
+    // of one, so the control does not need revisiting every time a group of
+    // verbs is folded.
+    for (const live of ["get_item", "search", "loop", "record", "ownership", "create_work"]) {
       expect(offMcp.has(live), `${live} is on MCP and must not be flagged`).toBe(false);
     }
   });
 
   it("catches the `loop_list` remedy the loop fold stranded (the instance that opened the row)", () => {
-    // Verbatim from `response-size.ts` before this fix.
+    // The wording this class was written to catch, reintroduced as a
+    // fixture. **`loop_list` is the only folded name in it deliberately.**
+    // The sentence as originally written also named `get_item_body`, which
+    // is itself folded now — so the fixture would raise two defects and
+    // this assertion would fail for a reason that has nothing to do with
+    // the case it is about. Isolating the subject is what keeps the count
+    // meaningful; `get_item` is named instead, which is on MCP and must
+    // NOT be flagged, so the fixture also proves the detector is
+    // discriminating rather than flagging every tool it sees.
     const defects = findAdviceDefects([
       {
         operation: "get_item_detail",
         source: "reintroduced",
         text:
-          "`loop_list` for this item's loops, `get_item_body` to read a large body in " +
-          "windows, or `get_item` with `full: false` for the slim record",
+          "`loop_list` for this item's loops, or `get_item` with `full: false` for the " +
+          "slim record",
       },
     ]).filter((defect) => defect.kind === "unreachable");
     expect(defects).toHaveLength(1);

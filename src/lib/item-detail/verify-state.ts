@@ -58,7 +58,7 @@ export async function verifyState(
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          kind: "historical_verification",
+          artifactKind: "historical_verification",
           commitSha: input.commitSha,
           body: input.body,
           createdByType: input.createdByType,
