@@ -39,7 +39,11 @@ export function OvernightBlock({ report, now }: OvernightBlockProps) {
   return (
     <section className={styles.block} aria-label="Since your last visit">
       <div className={styles.blockHead}>
-        <h2 className={styles.blockTitle}>Overnight</h2>
+        {/* Not "Overnight": the window opens at 18:00 the previous calendar
+            day, so most of what it counts happened during the evening and
+            the working day, not overnight. The subtitle beside this gives
+            the exact cutoff; the title only has to stop contradicting it. */}
+        <h2 className={styles.blockTitle}>Last 24 hours</h2>
         <span className={styles.blockSubtitle}>{sinceLabel(report.since, now)}</span>
       </div>
 

@@ -6,11 +6,24 @@
   color: var(--text-faint);
 }
 
-/* The whole application: rail beside a column of top-strip-then-page. */
+/* The whole application: rail beside a column of top-strip-then-page.
+ *
+ * `height` — not `min-height` — is what makes the rail's `position: sticky`
+ * mean anything. A sticky element travels within its containing block, and
+ * that distance is the parent's height minus its own; a rail that is itself
+ * `100dvh` inside a shell free to grow with the page therefore has nothing
+ * to travel over, so the whole frame scrolls away with the document instead.
+ * Capping the shell at the viewport puts the scrolling inside it, on `.main`,
+ * where the rail keeps a container that stays put.
+ *
+ * `overflow: hidden` on this row stops a wide child (the board's columns)
+ * from stretching the shell itself — the horizontal scrolling belongs to
+ * the content, not to the application frame. */
 .shell {
   display: flex;
   align-items: flex-start;
-  min-height: 100dvh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .column {
@@ -24,9 +37,23 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* Fills the capped shell so the top strip keeps its place at the top and
+     `.main` below is the one part that scrolls. `min-height: 0` is the
+     vertical twin of the `min-width: 0` above: without it this flex item
+     refuses to shrink below its content's height, the column grows past the
+     shell, and the scrolling escapes back out to the body. */
+  height: 100%;
+  min-height: 0;
 }
 
 .main {
   flex: 1 1 auto;
   min-width: 0;
+  /* The application's scroll region. Vertical scrolling lives here rather
+     than on the body so the rail beside it stays on screen; horizontal
+     scrolling lives here too so a wide page (the board) scrolls its own
+     content instead of dragging the rail sideways with it. `auto` on both
+     axes means neither bar is drawn unless something actually overflows. */
+  min-height: 0;
+  overflow: auto;
 }

@@ -44,11 +44,19 @@
   list-style: none;
 }
 
+/* Stacked at every width, not just on a phone.
+ *
+ * Side by side, `.rowMain` and `.rowMeta` split the card roughly in half:
+ * the blurb — the task title, its headline and what is being asked — was
+ * squeezed into the left half and wrapped early, while the right half held
+ * "waiting 7h" and a single "Open item" link floating in whitespace. The
+ * blurb is the thing being read, so it gets the full width, and the
+ * metadata and controls run inline beneath it where they are still one
+ * glance away. */
 .row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--space-3);
   padding: var(--space-4);
   border: 1px solid var(--border-default);
@@ -82,8 +90,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  min-width: 20rem;
-  flex: 2 1 20rem;
+  /* `min-width: 0` rather than a 20rem floor: this is now the full width of
+     the card, and a flex item's default `min-width: auto` refuses to shrink
+     below its content — which is how a long unbroken title used to push the
+     card wider than its container. */
+  min-width: 0;
 }
 
 .reason {
@@ -124,12 +135,16 @@
   font-size: var(--text-xs);
 }
 
+/* The row's second line: waiting time, then the link and any decision
+   buttons. Reads left-to-right under the thing it refers to rather than
+   right-aligned off the end of it, and wraps rather than overflowing when
+   a decision row carries a link, a sha and two buttons. */
 .rowMeta {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  flex: 1 1 16rem;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  min-width: 0;
 }
 
 .waiting {
@@ -193,36 +208,14 @@
    The overflow came from `.rowMain`'s `min-width: 20rem` — a 320px floor
    inside a 320px viewport that already spends 32px on padding and 2px on
    borders. `flex-basis` alone does not shrink below `min-width`, which is
-   why the row could not reflow no matter what the basis said. */
+   why the row could not reflow no matter what the basis said.
+
+   Stacking is `.row`'s default at every width, so this block carries only
+   the part that is genuinely about a phone: padding, and the 44px touch
+   minimum on each control. */
 @media (max-width: 640px) {
   .panel {
     padding: var(--space-4);
-  }
-
-  .row {
-    /* Stack rather than justify: at this width the meta column has nowhere
-       to sit beside the title, and letting it wrap produced a ragged row
-       whose buttons landed under a different item's text. */
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-3);
-  }
-
-  .rowMain,
-  .rowMeta {
-    /* `min-width: 0` is the load-bearing half. A flex item's default
-       `min-width: auto` refuses to shrink below its content, so the 20rem
-       floor above survived every basis change until this was added. */
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-
-  .rowMeta {
-    /* The decision belongs under the thing being decided, reading
-       left-to-right, not right-aligned off the end of it. */
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: var(--space-3);
   }
 
   .title {
@@ -334,7 +327,6 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2);
-  grid-column: 1 / -1;
   margin-top: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);
@@ -376,12 +368,9 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2);
-  /* `.row` is a wrapping flex container, so a full-width child is one whose
-     basis fills the line — `grid-column` alone does nothing here. The
-     `grid-column` is kept because `.reply` carries it too and the row has
-     been a grid before; the flex basis is what actually forces the break. */
-  flex: 1 0 100%;
-  grid-column: 1 / -1;
+  /* `.row` is a vertical flex column, so this is already on its own line and
+     needs no basis trick to get there — it just must not stretch its
+     children, which `align-items: flex-start` above handles. */
   margin-top: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);

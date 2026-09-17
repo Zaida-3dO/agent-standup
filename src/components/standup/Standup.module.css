@@ -11,11 +11,21 @@
   font-weight: var(--weight-semibold);
 }
 
+/* A column flow rather than a grid.
+ *
+ * Grid places these four blocks on implicit ROWS, and a row is as tall as
+ * its tallest cell — so the short "Needs you" card sat above a band of dead
+ * space the height of whatever "In flight now" happened to need beside it,
+ * and "Projects at a glance" started below that band rather than below the
+ * card it follows. Nothing here is a comparison between columns, so there is
+ * no row relationship worth paying for.
+ *
+ * `columns` lets each block take exactly its own height and the next one
+ * start immediately under it. `break-inside: avoid` on `.block` is the
+ * load-bearing half — without it a card splits across the column boundary. */
 .grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  gap: var(--space-5);
-  align-items: start;
+  columns: 20rem;
+  column-gap: var(--space-5);
 }
 
 .block {
@@ -26,6 +36,12 @@
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--surface-card);
+  /* A column flow has no row gap, so the space between stacked cards is the
+     card's own margin. `break-inside: avoid` keeps a card whole: a bordered
+     box split across a column boundary renders as two half-cards with the
+     border cut through the middle. */
+  break-inside: avoid;
+  margin-bottom: var(--space-5);
 }
 
 .blockHead {
@@ -246,13 +262,12 @@
    exists for: it is what gets read first thing, on a phone, before anyone
    is at a desk.
 
-   `.grid` asks for `minmax(20rem, 1fr)` — a 320px minimum — inside a page
+   `.grid` asks for 20rem-wide columns — a 320px minimum — inside a page
    that already spends `2 * var(--space-6)` on padding. At 320px that
-   cannot fit, and `auto-fit` will not shrink a track below its stated
-   minimum, so the demand becomes horizontal overflow rather than a
-   narrower column. Below 640px the minimum is dropped entirely and the
-   blocks stack, which is the right shape anyway: these are four
-   independent summaries, not a comparison.
+   cannot fit, and the stated column width becomes horizontal overflow
+   rather than a narrower column. Below 640px the width is replaced by a
+   count of one and the blocks stack, which is the right shape anyway:
+   these are four independent summaries, not a comparison.
 
    Measured in a real browser against the real compiled stylesheet, before
    this block existed: 320px overflowed by 24px (scrollWidth 344) and eight
@@ -272,10 +287,14 @@
   }
 
   .grid {
-    /* A single column, stated as 1fr rather than as a smaller `minmax`,
-       so there is no minimum left to overflow at any width. */
-    grid-template-columns: 1fr;
-    gap: var(--space-4);
+    /* A single column, stated as a count rather than as a width, so there
+       is no 20rem minimum left to overflow at any width. */
+    columns: 1;
+    column-gap: var(--space-4);
+  }
+
+  .block {
+    margin-bottom: var(--space-4);
   }
 
   .itemLink,
