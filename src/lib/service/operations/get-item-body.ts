@@ -353,7 +353,7 @@ export const getItemBody = defineOperation({
   name: "get_item_body",
   kind: "read",
   summary:
-    "One item's body, paged by character offset — the window past what get_item and get_item_detail's response-size cap allows a whole body to return.",
+    "One item's body, paged by character offset — the window past what get_item, at any depth, can return of a whole body before its response-size cap.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetItemBodyInput): Promise<GetItemBodyOutput> {

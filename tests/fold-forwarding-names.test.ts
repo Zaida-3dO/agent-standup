@@ -78,7 +78,7 @@ import { describe, expect, it } from "vitest";
 
 import { getOperation } from "@/lib/service/registry";
 import { FOLDED_INTO } from "@/lib/service/describe/reachability";
-import { FOLD_ACTIONS } from "@/lib/service/describe/fold-actions";
+import { discriminatorFor, FOLD_ACTIONS } from "@/lib/service/describe/fold-actions";
 import type { ServiceContext } from "@/lib/service/context";
 import { observeForwarding } from "./helpers/observe-forwarding";
 
@@ -200,6 +200,17 @@ const FORWARDED: readonly {
   {
     operation: "loop_delete",
     input: { itemId: "item-1", loopId: "loop-1", reason: "a duplicate of an earlier loop" },
+  },
+
+  // ── get_item ─────────────────────────────────────────────────────────
+  //
+  // The depth fold. `get_item` forwards to `get_item_detail` only at
+  // `full: "detail"`, and the two limits are the only fields that travel
+  // with it — the delegate takes `id`, not `itemId`, and has no `full` of
+  // its own, so forwarding this tool's `full` would be refused.
+  {
+    operation: "get_item_detail",
+    input: { id: "item-1", historyLimit: 5, artifactLimit: 5 },
   },
 
   // ── create_work ──────────────────────────────────────────────────────
@@ -446,6 +457,22 @@ const OBSERVED: readonly ObservedCase[] = [
     delegate: "get_session_shape",
   },
 
+  // ── get_item ─────────────────────────────────────────────────────────
+  //
+  // The one fold whose discriminator is neither `action` nor `type`: the
+  // depth is `full`, kept under that name because it is the field that
+  // already meant depth and every existing `full: true` goes on meaning
+  // what it meant.
+  //
+  // Only the deepest depth forwards. The other two are answered by
+  // `get_item` itself, which is why the coverage assertion below counts
+  // declared ACTIONS separately from forwarded delegates.
+  {
+    tool: "get_item",
+    input: { full: "detail", id: "item-1" },
+    delegate: "get_item_detail",
+  },
+
   // ── create_work ──────────────────────────────────────────────────────
   //
   // The three that were checked by nothing at all. Note the discriminator
@@ -490,7 +517,7 @@ interface FoldOperation {
 
 describe("every fold forwards to the delegate it claims, under names that delegate accepts", () => {
   it.each(OBSERVED)(
-    "$tool $input.action$input.type reaches $delegate",
+    "$tool $input.action$input.type$input.full reaches $delegate",
     async ({ tool, input, delegate }) => {
       const fold = getOperation(tool as never) as unknown as FoldOperation | undefined;
       expect(fold, `${tool} should be registered`).toBeDefined();
@@ -508,13 +535,35 @@ describe("every fold forwards to the delegate it claims, under names that delega
     },
   );
 
+  /**
+   * Actions a fold answers itself rather than by forwarding.
+   *
+   * **Named one by one, with the reason, rather than the assertion below
+   * being relaxed to "most actions".** Every entry here is an action a
+   * caller can be told about by `describe_tool` and that this file does NOT
+   * check the forwarding of — so the list is the exact cost of the
+   * exemption, written where it can be read, and adding to it is a visible
+   * edit rather than a silent gap.
+   *
+   * `get_item`'s two shallower depths qualify because the tool answers them
+   * with its own query; there is no delegate for a forwarding to reach.
+   * That is a property of this fold rather than a thing left undone: the
+   * depth fold is the one case where the tool folded INTO is also a real
+   * read of its own, so only its deepest depth dispatches.
+   */
+  const ANSWERED_IN_TOOL = new Set(["get_item:summary", "get_item:item"]);
+
   it("observes a forwarding for every action every fold declares", () => {
     // Anti-vacuity of the table above, and the assertion that makes a fold
     // gaining an action fail here. `FOLD_ACTIONS` is what `describe_tool`
     // answers from, so an action a caller can be told about and that is
     // forwarded by nothing observed is exactly the gap this catches.
+    // The discriminator is read from the same table `describe_tool` quotes
+    // it from, rather than guessed at. Three folds name it three different
+    // things — `action`, `type` and `full` — and a test that assumed one
+    // would silently report every case of another as unobserved.
     const observed = new Set(
-      OBSERVED.map((entry) => `${entry.tool}:${String(entry.input.action ?? entry.input.type)}`),
+      OBSERVED.map((entry) => `${entry.tool}:${String(entry.input[discriminatorFor(entry.tool)])}`),
     );
     expect(FOLD_ACTIONS.size).toBeGreaterThan(0);
 
@@ -522,10 +571,26 @@ describe("every fold forwards to the delegate it claims, under names that delega
     for (const [tool, fold] of FOLD_ACTIONS) {
       expect(fold.actions.length, `${tool} declares an empty action list`).toBeGreaterThan(0);
       for (const action of fold.actions) {
-        if (!observed.has(`${tool}:${action}`)) unobserved.push(`${tool}:${action}`);
+        const key = `${tool}:${action}`;
+        if (ANSWERED_IN_TOOL.has(key)) continue;
+        if (!observed.has(key)) unobserved.push(key);
       }
     }
     expect(unobserved).toEqual([]);
+  });
+
+  it("exempts only actions that really are answered without forwarding", () => {
+    // The exemption above is a hole, so it is bounded from both ends. Every
+    // entry must name a real action of a real fold — a stale one would
+    // silently excuse nothing while looking like it excused something, and
+    // a typo'd one would excuse an action that does not exist while the
+    // real action went unchecked.
+    for (const key of ANSWERED_IN_TOOL) {
+      const [tool, action] = key.split(":");
+      const fold = FOLD_ACTIONS.get(tool!);
+      expect(fold, `${key} exempts an action of a tool that folds nothing`).toBeDefined();
+      expect(fold!.actions, `${key} exempts an action ${tool} does not declare`).toContain(action);
+    }
   });
 
   it("observes a forwarding reaching every operation FOLDED_INTO claims is reachable", () => {

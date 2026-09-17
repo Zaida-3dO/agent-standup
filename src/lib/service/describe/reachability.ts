@@ -93,6 +93,7 @@ export const FOLDED_INTO: ReadonlyMap<string, string> = new Map([
   ["repair_stuck_projects", "project"],
   ["register_session", "session"],
   ["get_session_shape", "session"],
+  ["get_item_detail", "get_item"],
 ]);
 
 /**

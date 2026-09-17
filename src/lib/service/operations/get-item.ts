@@ -86,8 +86,17 @@ const inputSchema = z
   })
   .strict();
 
-/** The three depths, after `true`/`false` are normalised to a name. */
-export type ItemDepth = "summary" | "item" | "detail";
+/**
+ * The three depths, after `true`/`false` are normalised to a name.
+ *
+ * Exported as a value as well as a type because `describe/fold-actions.ts`
+ * answers "what verbs does this tool have?" by READING this, never by
+ * retyping it — a second copy of a vocabulary is the drift that makes a
+ * tool advertise one thing and refuse another.
+ */
+export const ITEM_DEPTHS = ["summary", "item", "detail"] as const;
+
+export type ItemDepth = (typeof ITEM_DEPTHS)[number];
 
 /**
  * `full` as one of three names.

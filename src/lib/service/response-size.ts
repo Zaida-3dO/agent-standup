@@ -154,7 +154,19 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // *before* an instructed field — `describe/advice.ts`'s `attributeTo`)
   // reads `full: false` as this operation's own field rather than
   // `get_item_body`'s, which has no `full` to accept it.
-  get_item: "`full: false` for the slim record, or `get_item_body` to read the body in windows",
+  // **The clause order is constrained here for the same reason it is on the
+  // detail entry below**, and this entry gained parameters of its own when
+  // the detail read folded in: `artifactLimit` and `historyLimit` are now
+  // `get_item`'s fields, so they must be named before any other tool or
+  // `attributeTo` hands them to whichever tool was mentioned most recently.
+  //
+  // `full: "item"` is named alongside `full: false` because the two shrink
+  // different things: `false` drops to the slim record, `"item"` returns the
+  // row without the detail payload joined in. A caller refused at `full:
+  // "detail"` usually wants the second, and telling them only about the
+  // first sends them further than they needed to go.
+  get_item:
+    '`full: false` for the slim record, `full: "item"` for the row without its detail payload, a smaller `artifactLimit` or `historyLimit`, or `get_item_body` to read the body in windows',
   // **Both of these used to name a call that does not return loops, and
   // that is the correction.** `get_item_detail` suggested `get_item {full:
   // false}` and `orientation` suggested `get_item`; neither returns loops at

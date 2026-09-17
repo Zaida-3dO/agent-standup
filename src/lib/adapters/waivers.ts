@@ -1184,6 +1184,30 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
       "is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_detail",
+    reason:
+      'Folded into `get_item` as `full: "detail"`, one of three depths that read a name rather ' +
+      'than infer one. `get_item` already took a `full` flag meaning "the whole row"; the detail ' +
+      "wrapper is that same row plus its subtasks, artifacts, history, summary, build status and " +
+      "assignments, and its `item` key is the identical `ItemRecord` from the identical builder — " +
+      "so one read at a stated depth describes the axis the flag already meant, rather than two " +
+      "tools spending the per-session tool-list budget twice. `full: true` is UNCHANGED and still " +
+      "returns the bare row, deliberately: the response-size guard names `get_item` as the " +
+      "narrower call when this read is refused for size, and widening the flag would make that " +
+      "escape hatch inherit the failure it escapes. The folded tool dispatches to this operation " +
+      "in the same context, so its size refusal and its two limits reach the caller unchanged, " +
+      "and it stays exposed on HTTP, where the item detail view reads it. It runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_detail",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

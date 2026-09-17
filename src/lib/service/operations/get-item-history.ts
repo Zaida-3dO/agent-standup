@@ -164,7 +164,7 @@ export const getItemHistory = defineOperation({
   name: "get_item_history",
   kind: "read",
   summary:
-    "One item's history, newest first and paged — the ledger past what get_item_detail's cap returns. Returns each entry without its payload and body; pass full for those.",
+    'One item\'s history, newest first and paged — the ledger past what get_item with full: "detail" caps. Returns each entry without its payload and body; pass full for those.',
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetItemHistoryInput): Promise<GetItemHistoryOutput> {
