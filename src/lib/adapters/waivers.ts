@@ -608,8 +608,8 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     reason:
       "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
       "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
-      "It runs no state transition through the guarded path, so no registered guard can reject it " +
-      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+      "It runs no state transition, so it reaches no registered guard and §22's bound on waivers " +
+      "is satisfied. Reach it over HTTP or as `standup item retype`.",
   },
   {
     adapter: "mcp_stdio",
@@ -622,8 +622,8 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     reason:
       "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
       "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
-      "It runs no state transition through the guarded path, so no registered guard can reject it " +
-      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+      "It runs no state transition, so it reaches no registered guard and §22's bound on waivers " +
+      "is satisfied. Reach it over HTTP or as `standup item restore`.",
   },
   {
     adapter: "mcp_stdio",
@@ -636,8 +636,10 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
     reason:
       "Structural repair — rare, person-driven surgery on a board that has gone wrong, performed " +
       "deliberately by someone who has looked at it rather than reached for mid-task by an agent. " +
-      "It runs no state transition through the guarded path, so no registered guard can reject it " +
-      "and §22's bound on waivers is satisfied. Reach it over HTTP or the command line.",
+      "It runs no state transition, so it reaches no registered guard and §22's bound on waivers " +
+      "is satisfied. It DOES refuse four ways, but on operation-level preconditions that carry ids " +
+      "for callers to match on rather than on registered guards — those are unaffected by this " +
+      "waiver and apply on every surface. Reach it over HTTP or as `standup item archive`.",
   },
   {
     adapter: "mcp_stdio",

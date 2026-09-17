@@ -54,22 +54,51 @@
 //     might be a problem". A caller that has not looked is told what is
 //     pointing at the row and has to say it meant it.
 //
-// ── Why it is exposed on every surface, including MCP ───────────────────
+// ── Where it is reachable: HTTP and the command line, not MCP ───────────
 //
-// Withholding it from MCP was considered — an agent tidying its own mess is
-// precisely the caller this should be hardest for — and is not available.
-// §22 bounds waivers: no adapter exposing any write may waive an operation a
-// guard can reject, so that an adapter cannot decline exactly the operations
-// that are hard to get right and then satisfy the conformance assertions
-// vacuously. This operation refuses in four distinct ways, which is the
-// clearest possible case of an operation §22 means to keep on every surface.
+// Waived off both MCP transports (`../../adapters/waivers.ts`), and reached
+// over HTTP or as `standup item archive`. An agent tidying its own mess is
+// precisely the caller this should be hardest for.
 //
-// That bound is the better answer anyway. A surface-shaped restriction
-// protects nothing it claims to: the same agent holds a command line and an
-// HTTP client, so hiding one door relocates the call rather than preventing
-// it, while costing the property that every adapter refuses identically. The
-// restrictions that survive being routed around are the ones in the refusals
-// above, and those apply wherever the call arrives from.
+// ── Its four refusals are NOT registered guards, and that is deliberate ─
+//
+// This section used to argue the opposite — that withholding it from MCP
+// "is not available", because "§22 bounds waivers: no adapter exposing any
+// write may waive an operation a guard can reject", and this operation
+// "refuses in four distinct ways, which is the clearest possible case of an
+// operation §22 means to keep on every surface". The waiver landed anyway
+// and the comment was left behind, so the file asserted one thing while
+// `waivers.ts` did another. The reasoning error is the part worth keeping:
+//
+// §22's bound speaks about **registered guards**, and none of the four
+// refusals below is one. A registered `Guard`
+// (`../state-machine/guard.ts`) is structurally a *transition* rule — it
+// declares `appliesTo(from, to)` and `runGuards` hands it a `from`/`to`
+// pair. This operation runs no transition; it sets `archivedAt` on a row.
+// It has no pair to offer and could not implement the interface without
+// inventing a fake one. So its refusals are **operation-level
+// preconditions**, checked inline in the handler below.
+//
+// They still carry a stable id in `GuardRejectedError.guard`
+// (`ARCHIVE_REASON_GUARD`, `ARCHIVE_REFERENCES_GUARD`) so a caller can match
+// on the rule rather than on prose — `../../item-detail/archive-state.ts`
+// does exactly that to decide which refusals offer an "acknowledge and
+// proceed" step. That is the house convention for a named precondition,
+// shared with six other operations (`restore_item`, `retype_to_task`,
+// `loop` lifecycle, `merge_areas`, `delete_reference_row`, `complete_item`).
+// **A precondition id is not a registered guard id**, and nothing registers
+// these into `guardRegistry`. `tests/item-archive.test.ts` asserts that
+// separation directly, so it cannot rot back into the claim above.
+//
+// ── The waiver is not the protection ────────────────────────────────────
+//
+// A surface-shaped restriction protects nothing on its own: the same caller
+// holds a command line and an HTTP client, so hiding one door relocates the
+// call rather than preventing it. The restrictions that survive being routed
+// around are the ones in the refusals above, and those apply wherever the
+// call arrives from. The waiver only removes the door an agent would reach
+// for *without deciding to* — it is a speed bump on the mid-task reflex, not
+// a wall, and must not be mistaken for one.
 import { z } from "zod";
 import { GuardRejectedError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";

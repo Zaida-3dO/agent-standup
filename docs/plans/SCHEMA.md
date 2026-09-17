@@ -251,12 +251,23 @@ documentation, because a caller reaching past `cancelled` is not reading the doc
 - `superseded_by` **should name the replacement** whenever there is one, because the common case has
   a survivor.
 
-**It is exposed on every surface, including MCP.** Restricting it to one surface was considered and
-is not available: §22 bounds waivers to operations no guard can reject, and this one refuses four
-ways. It is also the weaker protection — the same caller holds a command line and an HTTP client, so
-hiding one door relocates the call rather than preventing it, and costs the property that every
-adapter refuses identically. The restrictions that survive being routed around are the refusals
-above.
+**It is reachable over HTTP and the command line (`standup item archive`), and waived off both MCP
+transports.** Structural repair is rare, person-driven surgery on a board that has gone wrong —
+performed deliberately by someone who has looked at it, rather than reached for mid-task by an agent.
+
+> This paragraph previously read *"It is exposed on every surface, including MCP. Restricting it to
+> one surface was considered and is not available: §22 bounds waivers to operations no guard can
+> reject, and this one refuses four ways."* Both halves were wrong, and the second is the instructive
+> one. It **does** refuse four ways, but **none of those four refusals is a registered guard.** A
+> registered guard is structurally a *transition* rule — it declares `appliesTo(from, to)` — and this
+> operation runs no transition, so it could not register one. Its four refusals are operation-level
+> preconditions that carry a stable id so a caller can match on the rule rather than the prose. §22's
+> bound speaks only to registered guards, so it never reached this operation, and the waiver is legal.
+
+**The waiver is not the protection, though, and must not be mistaken for it.** The same caller holds
+a command line and an HTTP client, so hiding one door relocates the call rather than preventing it.
+The restrictions that survive being routed around are the refusals above — which is why the steering
+lives there, and why every adapter that does expose the operation refuses identically.
 
 ---
 

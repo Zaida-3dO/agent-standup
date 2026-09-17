@@ -55,8 +55,29 @@ import { reparentItem } from "./operations/reparent-item";
 import { retypeToTask } from "./operations/retype-to-task";
 import { repairStuckProjects } from "./operations/repair-stuck-projects";
 // Removing an item from every read (MILESTONES.md #137). Registered like any
-// other write, and deliberately not waived on any adapter: §22 bounds
-// waivers to operations no guard can reject, and this one refuses four ways.
+// other write, and **waived off both MCP transports** (`../adapters/waivers.ts`)
+// — structural repair is person-driven surgery, reached over HTTP or the
+// command line (`standup item archive`), not something an agent reaches for
+// mid-task.
+//
+// This comment used to claim the opposite — "deliberately not waived on any
+// adapter: §22 bounds waivers to operations no guard can reject, and this one
+// refuses four ways". That was false in two ways at once, and the correction
+// is worth keeping because the mistake is an easy one to make again.
+//
+// It does refuse four ways, but **none of those four is a registered guard**.
+// A registered `Guard` (`state-machine/guard.ts`) is structurally a
+// *transition* rule: it declares `appliesTo(from, to)` and is handed a
+// `from`/`to` pair by `runGuards`. `delete_item` runs no transition — it sets
+// `archivedAt` on a row — so it has no pair to offer and could not implement
+// the interface. Its four refusals are operation-level preconditions that
+// carry a stable id in `GuardRejectedError.guard` so a caller can match on the
+// rule rather than on prose (the shipped archive UI does exactly that). That
+// is the house convention for a named precondition — six other operations use
+// it — and it is *not* the same thing as a registered guard. §22's bound is
+// about the latter, so it does not reach this operation and the waiver is
+// legal. `tests/item-archive.test.ts` states that distinction as an assertion
+// so it cannot quietly rot back into the claim above.
 import { deleteItem } from "./operations/delete-item";
 import { restoreItem } from "./operations/restore-item";
 import { listItems } from "./operations/list-items";
