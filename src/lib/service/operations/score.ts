@@ -234,7 +234,18 @@ export const score = defineOperation({
             {
               runId: input.runId,
               raterType: input.raterType,
-              facets: input.facets,
+              // `score_run` calls this field `scores`; this tool calls it
+              // `facets`, because that is the word the caller is holding —
+              // it is scoring facets, and `accept` takes a field of the same
+              // name. The rename meets the operation HERE rather than in the
+              // caller, which is the same thing the `project` fold does for
+              // `id` -> `projectId`.
+              //
+              // Forwarding it under the tool's own name was a real defect
+              // and refused every `run` call: the delegate schema is
+              // `.strict()`, so the value arrived as an unrecognised key
+              // while the field it needed was reported missing.
+              scores: input.facets,
               ...(input.raterId === undefined ? {} : { raterId: input.raterId }),
             },
             ctx.caller.transport,

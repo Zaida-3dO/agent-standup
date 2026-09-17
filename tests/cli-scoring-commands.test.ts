@@ -14,6 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import { COMMANDS, lookupCommand, nouns, verbsFor } from "@/lib/cli/commands";
+import { getOperation } from "@/lib/service/registry";
 import type { CommandSpec } from "@/lib/cli/commands";
 
 /** Resolves `<noun> <verb>` to its spec, or undefined when nothing is bound. */
@@ -127,18 +128,23 @@ describe("the `score` noun", () => {
 });
 
 describe("each command builds the input its operation's schema declares", () => {
-  it("`score run` takes the run id positionally and parses --facets as JSON", () => {
+  it("`score run` takes the run id positionally and sends --facets as `scores`", () => {
     const input = build("score", "run", ["run-7"], {
       "rater-type": "person",
       "rater-id": "ope",
-      facets: '[{"facet":"code","score":4}]',
+      facets: '[{"facet":"reasoning","score":4}]',
     });
+    // The flag is `--facets` because that is the word a person types; the
+    // operation declares the field as `scores`. The rename happens in the
+    // builder, and `facets` must NOT also survive — `score_run`'s schema is
+    // `.strict()`, so sending both refuses the call.
     expect(input).toEqual({
       runId: "run-7",
       raterType: "person",
       raterId: "ope",
-      facets: [{ facet: "code", score: 4 }],
+      scores: [{ facet: "reasoning", score: 4 }],
     });
+    expect(input).not.toHaveProperty("facets");
   });
 
   it("`score run` refuses --facets that is not JSON, naming the flag", () => {
@@ -312,5 +318,73 @@ describe("the new commands do not collide with the existing table", () => {
     ]) {
       expect(counts.get(operation), operation).toBe(1);
     }
+  });
+});
+
+// ── The check that would have caught the `scores` rename ────────────────
+//
+// Everything above compares the builder's output to a literal written here.
+// That is useful for spelling, and it is BLIND to the one failure that
+// matters most: a field name the builder gets wrong in the same way the
+// expectation gets it wrong. The `score run` builder sent `facets` where the
+// operation declares `scores`, and an assertion written from the builder
+// rather than from the schema agreed with it.
+//
+// So these parse the built input through the operation's OWN schema — the
+// object the service rejects with. A name the schema does not know is
+// refused here, whatever this file expected.
+describe("each command builds input its operation's schema actually accepts", () => {
+  const CASES: readonly {
+    readonly noun: string;
+    readonly verb: string;
+    readonly rest: readonly string[];
+    readonly flags: Record<string, string | true>;
+  }[] = [
+    {
+      noun: "score",
+      verb: "run",
+      rest: ["run-7"],
+      flags: { "rater-type": "agent", facets: '[{"facet":"reasoning","score":4}]' },
+    },
+    { noun: "score", verb: "derive", rest: ["run-7"], flags: { force: true } },
+    {
+      noun: "score",
+      verb: "accept",
+      rest: ["run-7"],
+      flags: { "rater-id": "ope", facets: "reasoning,precision" },
+    },
+    { noun: "score", verb: "scores", rest: [], flags: { threshold: "3", source: "effective" } },
+    { noun: "score", verb: "list", rest: ["item-3"], flags: { limit: "5", scored: "no" } },
+    {
+      noun: "score",
+      verb: "intervention",
+      rest: ["ev-1"],
+      flags: { score: "2", "rater-type": "agent", "rater-id": "sess-9" },
+    },
+    { noun: "score", verb: "interventions", rest: [], flags: { threshold: "2" } },
+    { noun: "item", verb: "artifacts", rest: ["item-1"], flags: { kind: "plan" } },
+    {
+      noun: "item",
+      verb: "blocked-on-tool",
+      rest: ["item-1"],
+      flags: { tool: "browser_capture", needed: "screenshot the header" },
+    },
+    { noun: "project", verb: "repair", rest: [], flags: { projectId: "p-1" } },
+    { noun: "session", verb: "shape", rest: ["sess-1"], flags: { limit: "20" } },
+  ];
+
+  it.each(CASES)("`standup $noun $verb` produces input its operation parses", (testCase) => {
+    const spec = specFor(testCase.noun, testCase.verb)!;
+    const operation = getOperation(spec.operation as never) as unknown as
+      | { input: { safeParse: (value: unknown) => { success: boolean; error?: unknown } } }
+      | undefined;
+    expect(operation, `${spec.operation} should be registered`).toBeDefined();
+
+    const input = build(testCase.noun, testCase.verb, testCase.rest, testCase.flags);
+    const parsed = operation!.input.safeParse(input);
+    expect(
+      parsed.success,
+      `${spec.operation} refused the built input: ${JSON.stringify(parsed.error)}`,
+    ).toBe(true);
   });
 });

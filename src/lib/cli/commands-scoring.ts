@@ -80,6 +80,17 @@ function withNumeric(
  * passed through, for the reason `commands.ts` gives about its own JSON
  * flags: a string that is not JSON at all is not a question the operation's
  * schema could ever be asked.
+ *
+ * **The operation calls this field `scores`, not `facets`.** The flag keeps
+ * the name a person types — they are scoring facets, and `score accept`
+ * takes a `--facets` of its own — so the rename happens here, once. The flag
+ * is declared CONSUMED so `passThroughFlags` does not also forward the raw
+ * JSON string under `facets`: sending both would hand a `.strict()` schema
+ * an unrecognised key alongside the field it wanted, and refuse the call.
+ *
+ * This is a rename of a flag the builder has read for itself, not an
+ * allow-list: every flag this function does not name still passes through
+ * untouched and is refused by the schema if it is wrong.
  */
 function buildScoreRunInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
   const runId = requiredPositional(rest, "score run <run-id>", "runId");
@@ -88,7 +99,7 @@ function buildScoreRunInput(rest: readonly string[], flags: ParsedArgs["flags"])
   const facetsRaw = stringFlag(flags, "facets");
   if (!facetsRaw.ok) return facetsRaw;
 
-  const passthrough = passThroughFlags(flags, []);
+  const passthrough = passThroughFlags(flags, ["facets"]);
   if (!passthrough.ok) return passthrough;
 
   const input: Record<string, unknown> = {
@@ -108,7 +119,7 @@ function buildScoreRunInput(rest: readonly string[], flags: ParsedArgs["flags"])
         ]),
       };
     }
-    input.facets = parsed;
+    input.scores = parsed;
   }
 
   return renameHyphenated(input);

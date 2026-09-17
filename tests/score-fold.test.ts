@@ -161,6 +161,13 @@ describeIfDb("the score fold, against Postgres", () => {
   });
 
   beforeEach(async () => {
+    // Deepest first: a run_scores row points at a run, a run points at an
+    // assignment and an item, and an assignment points at an item. Deleting
+    // an item first is refused by the foreign keys.
+    await prisma.runScore.deleteMany({});
+    await prisma.$executeRawUnsafe(`DELETE FROM "intervention_scores"`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "intervention_events"`);
+    await prisma.run.deleteMany({});
     await prisma.event.deleteMany({});
     await prisma.assignment.deleteMany({});
     await prisma.item.deleteMany({});
@@ -187,6 +194,46 @@ describeIfDb("the score fold, against Postgres", () => {
       },
     });
     return id;
+  }
+
+  /**
+   * Seeds an item, an assignment and a run, returning the run's id.
+   *
+   * A `Run` needs an `Assignment`, which needs an `Item`, so scoring
+   * anything means building the whole chain. The item declares no
+   * difficulty, so `assertFacetsDeclared` finds nothing declared and lets
+   * any facet through — which keeps these tests about the fold's forwarding
+   * rather than about the declaration rule, which `score_run` owns and
+   * tests itself.
+   */
+  async function seedRun(): Promise<string> {
+    const itemId = await seedItem();
+    counter += 1;
+    const assignmentId = `score-fold-assignment-${counter}`;
+    await prisma.assignment.create({
+      data: {
+        id: assignmentId,
+        itemId,
+        role: "builder" as never,
+        holderType: "agent" as never,
+        holderId: "agent-a",
+        sessionId: `sess-score-${counter}`,
+        rootSessionId: `sess-score-${counter}`,
+        machine: "calliope",
+      },
+    });
+    const runId = `score-fold-run-${counter}`;
+    await prisma.run.create({
+      data: {
+        id: runId,
+        itemId,
+        assignmentId,
+        sessionId: `sess-score-${counter}`,
+        model: "opus",
+        effort: "high",
+      },
+    });
+    return runId;
   }
 
   describe("each action reaches the operation it folds", () => {
@@ -334,21 +381,120 @@ describeIfDb("the score fold, against Postgres", () => {
     });
   });
 
+  describe("`run` — the write verb, end to end", () => {
+    // ── The regression this file failed to catch the first time ─────────
+    //
+    // The fold forwarded the caller's `facets` under that name, while
+    // `score_run` declares the field as `scores`. Its schema is `.strict()`,
+    // so every `run` call was refused twice over — `scores` reported
+    // missing, `facets` reported unrecognised — and the fold's PRIMARY WRITE
+    // VERB did not work at all.
+    //
+    // Nothing here caught it, because the only `run` case asserted a
+    // REFUSAL. It passed for the wrong reason: the key was unrecognised
+    // whatever it contained, so the assertion held whether the shape was
+    // wrong or the name was. The lesson is the one this file's header
+    // already states and I applied to `raterId` and not to this: a fold's
+    // forwarding is proved by a call that SUCCEEDS and a value read back,
+    // never by one that is refused.
+    it("records a score, which requires the field to arrive under the delegate's name", async () => {
+      const runId = await seedRun();
+
+      const result = await call<{
+        scored: readonly { facet: string; agentScore: number | null }[];
+      }>("score", {
+        action: "run",
+        runId,
+        raterType: "agent",
+        facets: [
+          { facet: "reasoning", score: 4 },
+          { facet: "precision", score: 5 },
+        ],
+      });
+
+      // Breaks the moment the fold forwards under the wrong name again:
+      // `score_run` is `.strict()`, so the call is refused rather than
+      // returning this.
+      expect(result.scored.map((entry) => entry.facet).sort()).toEqual(["precision", "reasoning"]);
+    });
+
+    it("writes the scores it was given, read back from the store", async () => {
+      const runId = await seedRun();
+      await call("score", {
+        action: "run",
+        runId,
+        raterType: "agent",
+        facets: [{ facet: "reasoning", score: 3 }],
+      });
+
+      const rows = await prisma.runScore.findMany({ where: { runId } });
+      // The value, not merely the shape. A fold that forwarded an empty
+      // array, or the right array under a right-looking name that the
+      // delegate ignored, would not produce this row.
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.facet).toBe("reasoning");
+      expect(rows[0]?.agentScore).toBe(3);
+    });
+
+    it("carries `raterId` through on a person's score", async () => {
+      const runId = await seedRun();
+      await call("score", {
+        action: "run",
+        runId,
+        raterType: "person",
+        raterId: "ope",
+        facets: [{ facet: "reasoning", score: 2 }],
+      });
+
+      const rows = await prisma.runScore.findMany({ where: { runId } });
+      expect(rows[0]?.userScoredBy).toBe("ope");
+    });
+  });
+
   describe("the two fields called `facets` are kept apart", () => {
     it("refuses `run` given the name-list shape `accept` takes", async () => {
       // `score_run` wants `[{facet, score}]`; `accept_run_score` wants
       // `["code"]`. One field carrying both shapes would send the wrong one
       // to whichever action the caller did not mean, so the fold gives them
       // separate names and lets each delegate's schema refuse the other.
+      //
+      // **Asserted on the FIELD the refusal names, not merely on the code.**
+      // Checking `invalid_input` alone passed while `run` was broken for an
+      // entirely unrelated reason — an unrecognised key refuses with the
+      // same code as a badly-shaped one. Naming `scores` is what makes this
+      // about the shape rather than about the plumbing, and the seeded run
+      // means the call gets far enough for the shape to be what fails.
+      const runId = await seedRun();
       const error = await rejection(
         call("score", {
           action: "run",
-          runId: "run-1",
+          runId,
           raterType: "agent",
-          facets: ["code"],
+          facets: ["reasoning"],
         }),
       );
       expect(error.code).toBe("invalid_input");
+      expect(error.fields?.some((field) => field.startsWith("scores"))).toBe(true);
+    });
+
+    it("keeps `accept`'s name list separate from `run`'s objects", async () => {
+      // The other half: `acceptFacets` is a distinct field, so the two
+      // shapes cannot be sent to the wrong delegate.
+      const runId = await seedRun();
+      await call("score", {
+        action: "run",
+        runId,
+        raterType: "agent",
+        facets: [{ facet: "reasoning", score: 4 }],
+      });
+
+      const accepted = await call<{ accepted: readonly { facet: string }[] }>("score", {
+        action: "accept",
+        runId,
+        raterId: "ope",
+        acceptFacets: ["reasoning"],
+      });
+      expect(accepted.accepted.map((entry) => entry.facet)).toEqual(["reasoning"]);
     });
   });
 });
