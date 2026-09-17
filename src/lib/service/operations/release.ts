@@ -12,6 +12,7 @@ import { ConflictError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
+import { releaseNameIfSessionIdle } from "@/lib/agent-names";
 import type { Assignment } from "@/lib/claims";
 import { resolveItemId } from "../items/resolve-id";
 import { assignmentRequiredRule, refuseForMissingAssignment } from "../items/assignment-refusal";
@@ -146,6 +147,18 @@ export const release = defineOperation({
         holderId: assignment.holderId,
       },
     });
+
+    // Give the crew name back once this session is holding nothing else.
+    // A name is drawn as a side effect of registering and claiming, so
+    // without a return path the roster is a consumable — see
+    // `releaseNameIfSessionIdle`, which also explains why this waits for the
+    // session's *last* claim rather than firing on any release.
+    //
+    // Deliberately after the event: the release is the thing that happened
+    // and must be recorded whatever the pool does. This adds no failure mode
+    // of its own — it returns `undefined` rather than throwing when there is
+    // nothing to free.
+    await releaseNameIfSessionIdle(ctx.db, input.sessionId);
 
     return assignment;
   },

@@ -87,15 +87,16 @@ function movedTo(event: SinceEvent, to: string): boolean {
  * fetch calls of its own, matching `@/lib/board/view.ts` and
  * `@/lib/since/view.ts`'s split between fetching and deriving.
  *
- * `requestedLimit` is the `limit` the caller passed to `GET /api/events` to
- * produce `events` — needed to tell "the slice came back short of the page
- * size, so it reached the ledger's start" from "the page came back full, so
- * there may be more history before it" (see `OvernightReport.eventsTruncated`).
+ * **It deliberately does not take the page size.** Whether the report
+ * covers its window is a question about the slice's oldest row, not about
+ * how many rows came back; comparing the length against the requested limit
+ * was what let an empty page pass as complete. Removing the parameter
+ * rather than ignoring it is the point — a page size still in the signature
+ * reads as though it governs the answer, and the next reader would use it.
  */
 export function buildOvernightReport(
   since: string,
   events: readonly SinceEvent[],
-  requestedLimit: number,
   costs: CostsPayload,
   liveAssignments: readonly BoardAssignment[],
 ): OvernightReport {
@@ -123,24 +124,35 @@ export function buildOvernightReport(
     newlyBlocked,
     deadOrStalledNow,
     cost: totalCost(costs),
-    // The page came back exactly full AND still does not reach the cutoff:
-    // the ledger may hold more history before what was fetched, and the
-    // merged/newlyBlocked counts above are then a floor rather than the
-    // whole window. A page that came back short of `requestedLimit` proves
-    // the opposite — the read reached all the way to the ledger's start —
-    // so there is nothing left to miss.
-    eventsTruncated: events.length >= requestedLimit && !coversSince(events, cutoff),
-    // NOTE: `coversSince` asks whether the OLDEST event reaches back past the
-    // cutoff. That is the right question only because the caller now reads the
-    // ledger's tail (see `tailCursor` in `standup/state.ts`). A caller that
-    // reads from the ledger's START satisfies this trivially with ancient
-    // rows and gets `eventsTruncated: false` on a report that covers nothing —
-    // which is exactly what happened before that fix. If you change where the
-    // page is read from, change this with it.
+    // Whether the window this report claims to cover was actually reached.
+    //
+    // The question is only ever "does the slice reach back to the cutoff",
+    // and `coversSince` answers it directly. Qualifying that with "and the
+    // page came back full" was the hole: a page **shorter** than
+    // `requestedLimit` was read as proof the slice had reached the ledger's
+    // start, when it equally means the read landed past the ledger's end and
+    // returned nothing. An empty page made `0 >= 15` false and the report
+    // declared itself complete while covering no events at all — the guard
+    // that exists for exactly this under-reporting, reporting `false` in the
+    // one case where it was most needed.
+    //
+    // Answering on coverage alone is correct in both directions: a genuinely
+    // short page that *does* reach past the cutoff still reports `false`
+    // (nothing was missed — the ledger simply starts inside the window), and
+    // a page that does not reach the cutoff reports `true` whatever its
+    // length, because the counts are then a floor rather than the window.
+    eventsTruncated: !coversSince(events, cutoff),
   };
 }
 
-/** Whether the oldest event in the slice reaches back to (or past) the cutoff. */
+/**
+ * Whether the oldest event in the slice reaches back to (or past) the cutoff.
+ *
+ * An **empty** slice answers `false`: `oldest` stays `Infinity`, which is
+ * not `<= cutoff`. That is the intended answer and the one the truncation
+ * flag depends on — a read that returned nothing has demonstrated nothing
+ * about the window, so the report must not claim to cover it.
+ */
 function coversSince(events: readonly SinceEvent[], cutoff: number): boolean {
   if (!Number.isFinite(cutoff)) return true;
   let oldest = Infinity;

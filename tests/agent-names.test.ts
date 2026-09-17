@@ -23,9 +23,11 @@ import { ConflictError, NotFoundError, isServiceError } from "@/lib/service";
 import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   assignName,
+  diagnoseNameShortage,
   handOutName,
   listActiveNames,
   releaseName,
+  releaseNameIfSessionIdle,
   retireName,
   type AgentNameRow,
 } from "@/lib/agent-names";
@@ -50,9 +52,13 @@ describeIfDb("agent-names — against a real database", () => {
   const seeded: string[] = [];
   let seedCounter = 0;
 
+  /** The area the claim-backed cases hang their items off. */
+  const namesArea = "names-test-area";
+
   beforeAll(async () => {
     scratchUrl = (await createMigratedScratchDatabase(testDatabaseUrl!, dbName)).url;
     prisma = createTestPrismaClient(scratchUrl);
+    await prisma.area.create({ data: { id: namesArea, displayName: "Names test area" } });
   }, 60_000);
 
   afterAll(async () => {
@@ -61,6 +67,10 @@ describeIfDb("agent-names — against a real database", () => {
   });
 
   afterEach(async () => {
+    // Assignments before items: the claim-backed cases above create both,
+    // and the foreign key runs that way round.
+    await prisma.assignment.deleteMany({});
+    await prisma.item.deleteMany({});
     await prisma.agent.deleteMany({ where: { name: { in: seeded } } });
     seeded.length = 0;
   });
@@ -371,6 +381,139 @@ describeIfDb("agent-names — against a real database", () => {
     expect(rounds).toBe(RACE_ROUNDS);
     expect(RACE_ROUNDS).toBeGreaterThanOrEqual(20);
   }, 180_000);
+
+  // -- returning a name to the pool -------------------------------------------
+  //
+  // Without a return path the roster is a consumable: a name is drawn as a
+  // side effect of registering and claiming, and nothing else ever clears
+  // `heldBySessionId`, so every session that ever runs takes one name
+  // permanently. These cases pin the rule that decides *when* it comes back
+  // — the session's last live claim ending, not any single release.
+
+  /** Seeds an item and a live assignment on it for `sessionId`. */
+  async function seedLiveAssignment(sessionId: string, suffix: string): Promise<string> {
+    const itemId = `name-item-${suffix}-${Math.random().toString(36).slice(2, 8)}`;
+    await prisma.item.create({
+      data: {
+        id: itemId,
+        kind: "task",
+        title: "t",
+        body: "b",
+        state: "executing" as never,
+        originType: "auto",
+        area: namesArea,
+        mergeAuthority: "needs_approval",
+      },
+    });
+    const row = await prisma.assignment.create({
+      data: {
+        itemId,
+        role: "builder",
+        holderType: "agent",
+        holderId: "crew-member",
+        sessionId,
+        rootSessionId: sessionId,
+        machine: "laptop",
+        liveness: "running" as never,
+      },
+    });
+    return row.id;
+  }
+
+  it("returns the name once the session's LAST live claim has been released", async () => {
+    const name = await seedOneName("idle");
+    await assignName(prisma, name, "session-idle");
+    const assignmentId = await seedLiveAssignment("session-idle", "last");
+    await prisma.assignment.update({
+      where: { id: assignmentId },
+      data: { releasedAt: new Date() },
+    });
+
+    const freed = await releaseNameIfSessionIdle(prisma, "session-idle");
+    expect(freed?.name).toBe(name);
+
+    const row = await prisma.agent.findUniqueOrThrow({ where: { name } });
+    expect(row.heldBySessionId).toBeNull();
+    expect(row.heldAt).toBeNull();
+  });
+
+  it("KEEPS the name while the session still holds another live claim", async () => {
+    // The property that stops one identity being worn by two crews at once.
+    // A session may hold several items, and `ensureNameForSession` is
+    // idempotent so all of them are narrated under one name — freeing it on
+    // the first release would hand that name out while the session is still
+    // working under it.
+    const name = await seedOneName("busy");
+    await assignName(prisma, name, "session-busy");
+    const first = await seedLiveAssignment("session-busy", "first");
+    await seedLiveAssignment("session-busy", "second");
+    await prisma.assignment.update({ where: { id: first }, data: { releasedAt: new Date() } });
+
+    const freed = await releaseNameIfSessionIdle(prisma, "session-busy");
+    expect(freed).toBeUndefined();
+
+    const row = await prisma.agent.findUniqueOrThrow({ where: { name } });
+    expect(row.heldBySessionId).toBe("session-busy");
+  });
+
+  it("a name returned this way can be handed out again", async () => {
+    // The point of the whole exercise: the pool is genuinely replenished,
+    // not merely marked.
+    const name = await seedOneName("reuse");
+    await assignName(prisma, name, "session-gone");
+    await releaseNameIfSessionIdle(prisma, "session-gone");
+
+    const result = await handOutName(prisma, "session-next");
+    expect(result?.name).toBe(name);
+    expect(result?.heldBySessionId).toBe("session-next");
+  });
+
+  it("is a no-op for a session that holds no name at all", async () => {
+    const freed = await releaseNameIfSessionIdle(prisma, "session-nameless");
+    expect(freed).toBeUndefined();
+  });
+
+  // -- telling the two shortages apart ----------------------------------------
+
+  it("reports an EMPTY roster when no usable name has ever existed", async () => {
+    // Nothing seeded, so there is nothing to hold — the operator needs to
+    // seed, not to go hunting for a leak.
+    expect(await diagnoseNameShortage(prisma)).toBe("empty_roster");
+  });
+
+  it("reports ALL HELD when the roster is populated but every name is taken", async () => {
+    // The opposite remedy: the roster is fine, so reseeding it would be the
+    // wrong move and the operator should look at who is holding names.
+    const names = await seedNames(2, "shortage");
+    await assignName(prisma, names[0]!, "session-a");
+    await assignName(prisma, names[1]!, "session-b");
+
+    expect(await diagnoseNameShortage(prisma)).toBe("all_held");
+    expect(await handOutName(prisma, "session-c")).toBeUndefined();
+  });
+
+  it("reports an EMPTY roster when every name has been retired", async () => {
+    // A retired name is one deliberately taken out of service, so a roster
+    // of nothing but retired names has no usable name in it and seeding is
+    // the right advice. The alternative reading — "populated, all held" —
+    // would send the operator looking for holders that do not exist.
+    const name = await seedOneName("retired-only");
+    await retireName(prisma, name);
+
+    expect(await diagnoseNameShortage(prisma)).toBe("empty_roster");
+  });
+
+  it("reports ALL HELD when a held name sits beside a retired one", async () => {
+    // The discriminator is whether any usable name exists, not how many
+    // rows the table has: one live-but-held name makes this a shortage the
+    // operator should investigate rather than an unseeded installation.
+    const names = await seedNames(2, "mixed");
+    await assignName(prisma, names[0]!, "session-a");
+    await retireName(prisma, names[1]!);
+
+    expect(await diagnoseNameShortage(prisma)).toBe("all_held");
+    expect(await handOutName(prisma, "session-b")).toBeUndefined();
+  });
 
   // -- listActiveNames --------------------------------------------------------
 

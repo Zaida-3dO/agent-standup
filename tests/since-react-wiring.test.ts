@@ -65,6 +65,7 @@ function feedOf(events: readonly SinceEvent[], overrides: Partial<SinceFeed> = {
     events,
     cursor: events.length > 0 ? events[events.length - 1]!.id : "0",
     horizon: "9999",
+    newestId: events.length > 0 ? events[events.length - 1]!.id : null,
     unseenCount: events.reduce((n, e) => (e.seen ? n : n + 1), 0),
     firstVisit: false,
     ...overrides,

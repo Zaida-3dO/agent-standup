@@ -345,7 +345,11 @@ describeIfDb("the events ledger against Postgres", () => {
    * contention into a red test, which is the failure mode being fixed.
    */
   async function readUntilVisible(itemIds: readonly string[], attempts = 200) {
-    let last: Awaited<ReturnType<typeof readSinceBounded>> = { events: [], horizon: 0n };
+    let last: Awaited<ReturnType<typeof readSinceBounded>> = {
+      events: [],
+      horizon: 0n,
+      newestId: null,
+    };
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       last = await prisma.$transaction(async (tx) => readSinceBounded(tx, { since: 0n }));
       const seen = new Set(last.events.map((event) => event.itemId));
@@ -494,5 +498,35 @@ describeIfDb("the events ledger against Postgres", () => {
       expect(after.events.filter((e) => e.itemId === earlyItem).length).toBe(1);
       expect(after.events.filter((e) => e.itemId === lateItem).length).toBe(1);
     }, 30_000);
+  });
+
+  // -------------------------------------------------------------------------
+  // The tail position, and what asking for it costs.
+  // -------------------------------------------------------------------------
+
+  describe("newestId — the cursor sequence, reported on request", () => {
+    it("reports the highest visible id, which is NOT the horizon", () => {
+      // The distinction the whole fix rests on. `horizon` is a transaction
+      // id; `newestId` is an event id. Asserting they differ is the point —
+      // a caller that decremented the horizon to page from would read from a
+      // position the id sequence has not reached and get an empty slice.
+      return prisma.$transaction(async (tx) => {
+        const read = await readSinceBounded(tx, { since: 0n, withNewestId: true });
+        if (read.events.length === 0) return; // Nothing appended yet; nothing to pin.
+        const highest = read.events.reduce((max, e) => (e.id > max ? e.id : max), 0n);
+        expect(read.newestId).toBe(highest);
+        expect(read.newestId).not.toBe(read.horizon);
+      });
+    });
+
+    it("withholds it unless asked, so the poll path pays nothing for it", () => {
+      // `wait_for_crew` calls this once per tick for as long as somebody
+      // waits. Resolving the tail unconditionally would double that path's
+      // query volume to compute a value it never reads.
+      return prisma.$transaction(async (tx) => {
+        const read = await readSinceBounded(tx, { since: 0n });
+        expect(read.newestId).toBeNull();
+      });
+    });
   });
 });
