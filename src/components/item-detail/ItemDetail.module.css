@@ -95,18 +95,21 @@
   font-size: var(--text-xs);
 }
 
-/* ── The headline, promoted ──────────────────────────────────────────────
-   It used to render with `.meta` above — the same treatment as a timestamp
-   — which measured 12.8px at L=62.8 against body text at 13px/L=77.9. The
-   BLUF was literally the smallest and faintest text on the page, fainter
-   than the brief it summarises. That is the inverted hierarchy, and this
-   is the fix: the reader's first line, at the body step, in primary text,
-   capped to a readable measure.
+/* ── The headline leads the header ───────────────────────────────────────
+   The BLUF is what a reader most wants from this page, so it is ranked
+   accordingly: the first line, at the body step, in primary text, capped
+   to a readable measure.
+
+   Given `.meta`'s treatment instead — the same as a timestamp — it would
+   render at 12.8px against body text at 13px and a lower lightness than
+   the brief it summarises, making the one-line answer fainter and smaller
+   than the document it stands in for. Hierarchy has to follow what the
+   reader wants, not what the schema lists first.
 
    `--text-sm` rather than something larger: the `<h1>` above is already
-   `--text-lg`, and two headline-weight lines stacked would restore the
-   wall this is undoing. Rank comes from the CONTRAST with `.sourceTitle`
-   beneath it, not from absolute size. */
+   `--text-lg`, and two headline-weight lines stacked would rebuild the
+   wall of text this ranking exists to break up. Rank comes from the
+   CONTRAST with `.sourceTitle` beneath it, not from absolute size. */
 .headline {
   display: flex;
   flex-wrap: wrap;
@@ -161,11 +164,11 @@
 
 /* ── The editable value ──────────────────────────────────────────────────
    A value that can be edited IS its own control — see
-   docs/DESIGN-LANGUAGE.md §6. This replaced a permanent `Edit` button
-   beside every field (four on one header), which competed with the content
-   it was labelling.
+   docs/DESIGN-LANGUAGE.md §6. A permanent `Edit` button beside every
+   field competes with the content it labels, and a header with four
+   editable fields grows four of them.
 
-   It inherits font and colour so it reads as the text it replaces rather
+   It inherits font and colour so it reads as the text it carries rather
    than as a button sitting in the prose. The affordance is a quiet
    background and a pencil that appear on hover AND on focus — never hover
    alone, which would make the whole feature invisible to a keyboard. */
@@ -224,8 +227,9 @@
 /* The secondary edit affordance, for a value whose PRIMARY action is
    already something else — priority and area are links to a filtered
    board, so click-the-value is taken and the pencil is the second action.
-   The word "Edit" reduced to a 12px icon: same function, a fraction of the
-   visual weight, and it no longer competes with the chip it annotates.
+   A 12px icon rather than the word "Edit": the same function at a
+   fraction of the visual weight, so it annotates the chip instead of
+   competing with it.
 
    Quiet at rest and revealed on hover/focus of the row, but ALWAYS visible
    once focused itself — a keyboard reader must see what they have landed
@@ -700,9 +704,9 @@
 
 /* The excerpt is PROSE and is the thing a reader came for, so it takes the
    body step at full primary colour and is capped to a comfortable measure.
-   Line length is the fix that costs nothing: the brief previously ran the
-   full width of the panel, which at 1400px is ~180 characters a line — far
-   past the point the eye reliably finds the start of the next one. */
+   Line length is the fix that costs nothing: run the full width of the
+   panel, a brief is ~180 characters a line at 1400px — far past the point
+   the eye reliably finds the start of the next one. */
 .overviewExcerpt {
   max-width: var(--measure-prose);
   margin: 0;

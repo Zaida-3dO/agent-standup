@@ -83,11 +83,11 @@ export function SavedViewsView({
       })}
 
       {/* ── Saving, behind a disclosure ────────────────────────────────
-          "Name this view" + "Save view" previously occupied permanent
-          space in the region for an action a reader takes rarely, and one
-          that has no meaning at all until the filters have been changed.
-          The name box now appears on demand, from an icon sized like every
-          other control in the row.
+          Naming a view is a rare action, and one with no meaning at all
+          until the filters have been changed — so it earns an icon in the
+          control row rather than a permanent name box and button. The
+          field appears on demand, from a trigger sized like every other
+          control beside it.
 
           The same visually-hidden-checkbox idiom the axes disclosure in
           `BoardFilterBar.module.css` uses, and for the same reasons

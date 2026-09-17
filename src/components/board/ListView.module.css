@@ -495,9 +495,9 @@
 }
 
 /* What a row holds — the subtask rollup, the same count the kanban card
-   shows (#275). Muted and small for the same reason `.rowRepo` is: it is a
-   quantity about the row, not the row's name, and at sixty-eight rows a
-   badge competing with the title would undo the scan the list exists for.
+   shows (#275). Muted and small because it is a quantity ABOUT the row
+   rather than the row's name, and at sixty-eight rows a badge competing
+   with the title would undo the scan the list exists for.
 
    `display: block` so it takes its own line under the title rather than
    running on after a two-line clamp, where it would appear to be part of
@@ -538,11 +538,9 @@
   letter-spacing: 0.04em;
 }
 
-.rowRepo {
-  display: block;
-  color: var(--text-faint);
-  font-size: var(--text-2xs);
-}
+/* `.rowRepo` is gone: the repo renders as a `RepoChip` now, in both the
+   card-ish row and the table cell, so the muted-text treatment it carried
+   has no remaining caller. */
 
 .owner {
   display: flex;

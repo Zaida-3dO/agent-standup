@@ -1,4 +1,4 @@
-// `bodyExcerpt` — the prose opening Overview shows in place of the whole
+// `bodyExcerpt` — the prose opening Overview shows as its summary of a
 // brief.
 //
 // The cases below are the shapes this repository's own briefs actually take:

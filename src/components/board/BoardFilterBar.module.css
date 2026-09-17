@@ -6,26 +6,28 @@
  * behind it, and NOT `--border-strong`, which bounds quiet regions and is
  * deliberately too faint to outline something you are meant to operate. */
 
-/* ── ONE control row, not a wrapping pile ────────────────────────────────
-   Before this, `.bar` was `flex-wrap: wrap` over search + nine axes +
-   the picker + sort + clear as flat siblings, and `LayoutToggle` /
-   `SavedViewsView` were two further full-bleed rows stacked above and
-   below it by the fragment in `BoardFilterBar.tsx`. Measured at 1440:
-   the layout toggle's wrapper spanned 1209px for a 2-option control, the
-   bar itself was 237px tall, and the first card sat 495px down a 900px
-   viewport — over half the screen was chrome for filters that mostly
-   read "Any".
+/* ── ONE control row ─────────────────────────────────────────────────────
+   A single row that does not wrap: search (sized to a comfortable measure
+   rather than greedy), then a right-aligned cluster of the controls that
+   act on the whole view — layout, the filters trigger, sort, save.
 
-   The replacement is a single row that never wraps: search (sized, not
-   greedy), then a right-aligned cluster of the controls that act on the
-   whole view. The axes are no longer IN this row at all — they live in
-   the disclosure panel below, which is the same mechanism the phone
-   breakpoint already used, now applied at every width.
+   The axes are deliberately NOT in this row. They live in the disclosure
+   panel below, one mechanism applied at every width: an overlay anchored
+   under the trigger on a pointer, a bottom sheet on a phone.
 
-   `position: relative` anchors the desktop axes panel, which is
-   absolutely positioned so opening it OVERLAYS the board rather than
-   pushing it down the page. Pushing was the actual defect on mobile
-   (recorded below) and it is the same defect on desktop. */
+   **Why a row and not a region of stacked parts.** Filters, the layout
+   switch and saved views are three groups acting on one board, and laid
+   out as three full-width rows they cost ~240px of vertical space before
+   the first card — over half a 900px viewport — while a two-option
+   segmented control stretches to the full width of the page simply for
+   being a block. Composed into one line they cost ~50px and each is sized
+   to its own content.
+
+   `position: relative` anchors the axes panel, which is absolutely
+   positioned so opening it OVERLAYS the board. A panel that expands
+   inline pushes the cards down the page, so a reader who opens filters
+   loses sight of the very thing they are filtering — the failure this
+   layout exists to avoid, at every width. */
 .bar {
   position: relative;
   display: flex;
@@ -266,13 +268,29 @@
     flex-wrap: wrap;
   }
 
+  /* The cluster may wrap here, and must: at 375px the four control groups
+     total ~393px and would otherwise overflow the viewport horizontally —
+     measured, not assumed. `row-gap` keeps the wrapped line clear of the
+     one above it. */
   .controls {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
     margin-left: 0;
   }
 
-  .searchWrap {
-    flex: 1 1 100%;
+  /* A vertical divider between controls that have wrapped onto different
+     lines is a stray mark, not a separator. */
+  .controlDivider {
+    display: none;
   }
+
+  /* NOTE: `.searchWrap`'s narrow-width override does NOT live here. Its
+     base rule is declared LATER in this file than this block, and with
+     equal specificity the later rule wins regardless of the media query —
+     so an override written here is silently dead. It sits in the second
+     `max-width: 640px` block near the foot of the file instead, after the
+     base rule it has to beat. Measured: written here, the search box
+     computed `flex: 0 1 352px` and took a whole row. */
 
   /* Re-anchored from the desktop overlay to a bottom sheet. Only the
      properties that actually differ are restated. */
@@ -677,6 +695,20 @@
    Desktop is untouched: this whole block is scoped to the breakpoint, and
    nothing outside it changes size, padding step, or font-size. */
 @media (max-width: 640px) {
+  /* Shares the first line with the Filters trigger rather than taking a
+     whole one: a full-width search box costs a 44px row on the screen with
+     the least vertical space to give, and the trigger beside it is only
+     77px wide. `min-width: 0` lets it shrink below its content width
+     instead of forcing the wrap it is trying to avoid.
+
+     Declared HERE, not in the earlier narrow-width block, because
+     `.searchWrap`'s base rule is further down the file than that block and
+     would win on source order alone. */
+  .searchWrap {
+    flex: 1 1 8rem;
+    min-width: 0;
+  }
+
   .select,
   .direction,
   .search,

@@ -37,6 +37,7 @@ import { StateChip } from "@/components/chips/StateChip";
 import { StatusPicker } from "./StatusPicker";
 import { PriorityChip } from "@/components/chips/PriorityChip";
 import { AreaChip } from "@/components/chips/AreaChip";
+import { RepoChip } from "@/components/chips/RepoChip";
 import { TrustBadge } from "@/components/chips/TrustBadge";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { EmptyState, ErrorState, LoadingState, emptinessOf } from "@/components/states";
@@ -437,9 +438,7 @@ export function ListView({
                               server and client for the same data. */}
                           <span className={styles.rowMeta} aria-hidden="true">
                             <AreaChip area={entry.item.area} />
-                            {entry.item.repo && (
-                              <span className={styles.rowRepo}>{entry.item.repo}</span>
-                            )}
+                            {entry.item.repo && <RepoChip repo={entry.item.repo} />}
                           </span>
                           {/* What this row holds, the same rollup the kanban
                               card shows (#275). Rendered from
@@ -488,9 +487,7 @@ export function ListView({
                         </td>
                         <td className={styles.colArea}>
                           <AreaChip area={entry.item.area} />
-                          {entry.item.repo && (
-                            <span className={styles.rowRepo}>{entry.item.repo}</span>
-                          )}
+                          {entry.item.repo && <RepoChip repo={entry.item.repo} />}
                         </td>
                         <td className={styles.colOwner}>
                           {/* One line per live assignment — SCHEMA.md §2

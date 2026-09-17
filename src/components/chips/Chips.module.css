@@ -33,6 +33,22 @@
   border-color: transparent;
 }
 
+/* A repo. Same colour RULE as an area (a hue hashed from the name) but a
+   different SHAPE, and the difference is deliberate: an area and a repo
+   sitting side by side in identical pills would read as two members of one
+   vocabulary, which is the confusion this whole pass is undoing.
+
+   Square-ish corners and a monospace label, because a repo name is an
+   IDENTIFIER — the same class of string as a branch or a SHA, which
+   `globals.css` §8 already reserves the mono face for — where an area is a
+   human label. Shape survives greyscale and colour blindness; two hues of
+   otherwise-identical pill do not. */
+.repoChip {
+  border-radius: var(--radius-sm);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-ligatures: none;
+}
+
 /* The shape that carries the state when colour cannot (WCAG 1.4.1 — see
    `src/lib/design/tokens.ts`). Sized to stay legible in silhouette at the
    chip's own font size, and `flex: none` so a long label cannot squeeze it

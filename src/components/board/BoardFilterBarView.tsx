@@ -99,9 +99,9 @@ export interface BoardFilterBarViewProps {
    * hrefs, and taking it as a prop keeps this view a plain function that a
    * test can call with no router beneath it (`tests/helpers/react-element.ts`).
    *
-   * It was previously a sibling ABOVE this bar, which is why a
-   * two-option control rendered 1209px wide at 1440 — a block-level row of
-   * its own. Nothing about the control changed; only where it is composed.
+   * Composed INTO the control row rather than stacked above it: as a
+   * block-level row of its own, a two-option segmented control stretches
+   * to the full width of the page (~1209px at 1440) for no benefit.
    */
   readonly layoutToggle?: React.ReactNode;
   /**

@@ -8,6 +8,8 @@ import { BoardColumn } from "@/components/board/BoardColumn";
 import { ItemCard } from "@/components/board/ItemCard";
 import { NeedsYouBadge } from "@/components/board/NeedsYouBadge";
 import { TrustBadge } from "@/components/chips/TrustBadge";
+import { AreaChip } from "@/components/chips/AreaChip";
+import { RepoChip } from "@/components/chips/RepoChip";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
@@ -561,14 +563,38 @@ describe("ItemCard", () => {
     expect(textOf(card)).not.toContain("null");
   });
 
-  it("shows the repo when there is one, and omits it cleanly when there isn't", () => {
-    expect(
-      textOf(ItemCard({ entry: entry("backlog", { repo: "infra" }), needsYou: false, now: 0 })),
-    ).toContain("infra");
-    const noRepo = textOf(
-      ItemCard({ entry: entry("backlog", { repo: null }), needsYou: false, now: 0 }),
-    );
-    expect(noRepo).not.toContain("null");
+  it("shows the repo as a chip when there is one, and omits it cleanly when there isn't", () => {
+    // Asserted on the `RepoChip` element and its prop rather than on
+    // flattened text: the repo is a pill now (docs/DESIGN-LANGUAGE.md §2),
+    // and a nested component is an unrendered REFERENCE in this harness —
+    // `walk` stops at it, so `textOf` reports the card as repo-less even
+    // though the repo renders. Same convention as the `TrustBadge`
+    // assertions below, for the same reason. `RepoChip`'s own rendering is
+    // proved in tests/chips-component.test.ts.
+    const withRepo = ItemCard({
+      entry: entry("backlog", { repo: "infra" }),
+      needsYou: false,
+      now: 0,
+    });
+    const chip = findOneByType(withRepo, RepoChip);
+    expect(chip, "the board card renders no repo chip").toBeDefined();
+    expect((chip!.props as { repo?: string }).repo).toBe("infra");
+
+    // Omitted entirely rather than rendered empty — a bordered pill
+    // containing nothing is worse than no pill.
+    const noRepo = ItemCard({ entry: entry("backlog", { repo: null }), needsYou: false, now: 0 });
+    expect(findAllByType(noRepo, RepoChip)).toHaveLength(0);
+    expect(textOf(noRepo)).not.toContain("null");
+  });
+
+  it("shows the area as a chip, so the board's own grouping is visible on the cards", () => {
+    // The area was not rendered on a card AT ALL before this pass, which
+    // meant the axis the board is grouped by was invisible on the things
+    // being grouped.
+    const card = ItemCard({ entry: entry("backlog", { area: "infra" }), needsYou: false, now: 0 });
+    const chip = findOneByType(card, AreaChip);
+    expect(chip, "the board card renders no area chip").toBeDefined();
+    expect((chip!.props as { area?: string }).area).toBe("infra");
   });
 
   it("renders the state readably, without its underscores", () => {

@@ -91,9 +91,10 @@ mono, and a number is not an identifier**: counts and costs are tabular sans via
 
 ### Measure
 
-Prose is capped at **`--measure-prose` (68ch)**. An item body rendered across a 1400px viewport is ~180
-characters a line; the eye loses the start of the next line and re-reads. This is the single cheapest
-readability fix in the app, and it is why the item body is no longer full-bleed.
+Prose is capped at **`--measure-prose` (68ch)**. Run full-bleed, an item body on a 1400px viewport is
+~180 characters a line, and past roughly 90 the eye stops reliably finding the start of the next line
+and re-reads one it has already read. The cap is the cheapest readability win available here, so
+every prose surface takes it.
 
 ---
 

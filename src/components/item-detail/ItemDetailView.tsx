@@ -53,6 +53,8 @@ import { SummaryPanel } from "./SummaryPanel";
 import { Markdown } from "./Markdown";
 import { VerdictBadge } from "./VerdictBadge";
 import { TrustBadge } from "@/components/chips/TrustBadge";
+import { AreaChip } from "@/components/chips/AreaChip";
+import { RepoChip } from "@/components/chips/RepoChip";
 import { VerifyStateAction, type VerifyStateStatus } from "./VerifyStateAction";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
 import { StatusBlock } from "./StatusBlock";
@@ -373,18 +375,23 @@ export function ItemDetailView({
               this value (M10 T10) — "what else is in this area" becomes
               one click. See `boardLinkFor`'s header for the contract this
               targets. */}
+          {/* The pills themselves, not plain text inside the link. These
+              are the two values Ope named specifically: they rendered as
+              faint muted text at the same weight as everything around
+              them, so the things a reader scans for disappeared into the
+              prose. The link is unchanged — only what it wraps. */}
           <ChipLink
             href={boardLinkFor("area", item.area)}
             label={`Filter the board by area: ${item.area}`}
           >
-            <span>{item.area}</span>
+            <AreaChip area={item.area} />
           </ChipLink>
           {item.repo !== null && (
             <ChipLink
               href={boardLinkFor("repo", item.repo)}
               label={`Filter the board by repo: ${item.repo}`}
             >
-              <span>{item.repo}</span>
+              <RepoChip repo={item.repo} />
             </ChipLink>
           )}
           {item.branch !== null && <span className={styles.sha}>{item.branch}</span>}

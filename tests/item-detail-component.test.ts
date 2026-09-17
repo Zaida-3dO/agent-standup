@@ -386,7 +386,7 @@ describe("ItemDetailView", () => {
       const titleControl = labels.find((l) => l?.startsWith("Title:"));
       expect(
         titleControl,
-        "the title is no longer an accessibly-named control — a keyboard or screen-reader user cannot edit it",
+        "the title is not an accessibly-named control — a keyboard or screen-reader user cannot edit it",
       ).toBeDefined();
       expect(titleControl).toContain("A title");
       expect(titleControl).toContain("edit");

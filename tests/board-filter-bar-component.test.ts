@@ -333,15 +333,15 @@ describe("the axes disclosure toggle (narrow-width collapse)", () => {
     // Two channels, and the test asserts BOTH, because they serve different
     // readers and either one regressing alone would be a real defect.
     //
-    // The count used to be a trailing clause in the visible label ("Filters
-    // -- 2 active"). It is now a filled pill carrying the bare numeral, with
-    // the sentence moved into a visually-hidden span. A sighted reader gets
-    // the number pre-attentively; a screen-reader user gets it in words.
-    // Asserting only the numeral would pass on a pill whose accessible
-    // sentence had been dropped, which is the regression that matters most.
+    // The count renders twice over: a filled pill carrying the bare
+    // numeral, and a visually-hidden sentence naming it in words. A sighted
+    // reader gets the number pre-attentively; a screen-reader user gets it
+    // as language. Asserting only the numeral would pass on a pill whose
+    // accessible sentence had been dropped, which is the regression that
+    // matters most.
     expect(
       texts.some((t) => t === "2"),
-      "the visible count pill no longer renders the active-filter number",
+      "the visible count pill is missing the active-filter number",
     ).toBe(true);
     expect(
       texts.some((t) => t.includes("2 filters active")),

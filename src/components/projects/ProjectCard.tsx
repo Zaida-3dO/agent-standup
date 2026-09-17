@@ -17,6 +17,7 @@ import type { ProjectRollup } from "@/lib/projects/types";
 import { bandsOf, countsOf, liveCrewCount, progressOf, relativeTime } from "@/lib/projects/view";
 import { projectBoardHref } from "@/lib/board/filters";
 import { AreaChip } from "@/components/chips/AreaChip";
+import { RepoChip } from "@/components/chips/RepoChip";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import styles from "./Projects.module.css";
 
@@ -151,11 +152,7 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
 
       <div className={styles.meta}>
         <AreaChip area={project.area} />
-        {project.repo !== null && (
-          <span className={styles.repo} data-repo={project.repo}>
-            {project.repo}
-          </span>
-        )}
+        {project.repo !== null && <RepoChip repo={project.repo} />}
         <span className={styles.activity}>{relativeTime(project.lastActivity, now)}</span>
       </div>
 

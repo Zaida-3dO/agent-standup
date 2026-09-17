@@ -168,16 +168,45 @@ describe("the filter sheet at phone widths", () => {
     expect(declaration(openedPanelRule(), "background")).toBe("var(--surface-panel)");
   });
 
-  it("applies only at phone widths, leaving the desktop filter bar untouched", () => {
-    // Every declaration asserted above must live inside the breakpoint.
-    // The whole-stylesheet rule set for this selector is exactly the one
-    // narrow rule — a second, unconditional one would restyle the desktop.
-    expect(rulesFor(FILTER_BAR_CSS, OPENED)).toHaveLength(1);
+  it("keeps its SHEET geometry inside the breakpoint, so desktop is not restyled", () => {
+    // There are now two rules for this selector, and that is correct: the
+    // disclosure applies at every width (filters are summoned, not
+    // permanent), so a base rule reveals the panel as an overlay anchored
+    // under the trigger, and this narrow-width rule re-anchors the SAME
+    // element as a bottom sheet.
+    //
+    // What must not leak is the sheet's own geometry. `position: fixed`
+    // and the bottom-edge anchoring belong to the phone only — applied
+    // unconditionally they would pin the desktop panel to the foot of the
+    // viewport, a long way from the control that opened it.
+    const all = rulesFor(FILTER_BAR_CSS, OPENED);
+    const narrow = rulesFor(NARROW, OPENED);
+    expect(all.length, "the opened-panel rule disappeared entirely").toBeGreaterThan(0);
+    expect(narrow, `no ${OPENED} rule inside the phone-width block`).toHaveLength(1);
+
+    // Every rule for this selector that is NOT the narrow one must not
+    // carry the sheet's own geometry. Compared by identity against the
+    // narrow rule's body rather than by re-parsing, so this stays true if
+    // a third rule is ever added.
+    for (const rule of all.filter((r) => r !== narrow[0])) {
+      expect(
+        declaration(rule, "position"),
+        "sheet geometry (position: fixed) escaped the phone breakpoint and is now restyling the desktop panel",
+      ).not.toBe("fixed");
+    }
   });
 
   it("still shows the panel when the disclosure is open", () => {
     // The property row 74ef86fb established, and one this row keeps: the
     // sheet is worth nothing unless opening it reveals the axes.
-    expect(declaration(openedPanelRule(), "display")).toBe("flex");
+    //
+    // Asserted against the narrow rule OR the base one — the reveal is now
+    // declared in the base stylesheet and inherited by the sheet, so
+    // demanding it be restated inside the breakpoint would fail a correct
+    // stylesheet for not repeating itself.
+    const revealed =
+      declaration(openedPanelRule(), "display") === "flex" ||
+      rulesFor(FILTER_BAR_CSS, OPENED).some((rule) => declaration(rule, "display") === "flex");
+    expect(revealed, "opening the disclosure fails to reveal the axes").toBe(true);
   });
 });

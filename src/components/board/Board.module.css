@@ -544,10 +544,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* `align-items: center` because this row now mixes bare text (the state
+   word) with pills, which have their own box — baseline-aligning the two
+   leaves the pill sitting low against the text beside it. */
 .cardMeta {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  align-items: center;
+  gap: var(--space-1);
   margin-top: 0.1rem;
   font-size: var(--text-3xs);
   color: var(--text-faint);
@@ -557,9 +561,9 @@
   text-transform: capitalize;
 }
 
-.repo::before {
-  content: "· ";
-}
+/* The `·` separator that used to precede the repo is gone with the muted
+   text it separated: the pills have their own boundaries, and a leading
+   middot against a chip's border reads as a stray character. */
 
 /* ── What a card holds (the subtask rollup) ───────────────────────────────
    The board shows one level, so a parent has to state what it hides. This

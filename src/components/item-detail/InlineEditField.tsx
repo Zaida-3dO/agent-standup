@@ -81,9 +81,10 @@ export function InlineEditField({
     }
 
     // ── The value IS the control ──────────────────────────────────────
-    // Previously this rendered the value plus a permanent `Edit` button
-    // beside it, repeated for every field — chrome competing with the
-    // content, and four of them on one header.
+    // A permanent `Edit` button beside every field is chrome competing
+    // with the content it labels, and it scales badly: a header with four
+    // editable fields grows four buttons that all say the same word. The
+    // value is what the reader came for, so the value is what they act on.
     //
     // A real `<button>`, not a click handler on a span: that is what makes
     // it reachable by Tab, activated by BOTH Enter and Space, and
