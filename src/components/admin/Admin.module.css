@@ -21,14 +21,14 @@
 
 .heading {
   margin: 0 0 0.35rem;
-  font-size: 1.4rem;
+  font-size: var(--text-lg);
 }
 
 .blurb {
   margin: 0 0 1.25rem;
   max-width: 60rem;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -49,7 +49,7 @@
   border-radius: 0.4rem;
   background: var(--surface-card);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   text-decoration: none;
 }
 
@@ -69,7 +69,7 @@
 
 .sectionTitle {
   margin: 0 0 0.75rem;
-  font-size: 1rem;
+  font-size: var(--text-sm);
 }
 
 .rows {
@@ -109,7 +109,7 @@
 
 .rowId {
   font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
@@ -118,7 +118,7 @@
   border-radius: 999px;
   background: var(--border-default);
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-3xs);
   font-weight: 700;
 }
 
@@ -137,7 +137,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
 }
 
@@ -165,14 +165,14 @@
 }
 
 .label {
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
 .help {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.74rem;
+  font-size: var(--text-2xs);
   line-height: 1.45;
 }
 
@@ -184,7 +184,7 @@
   border-radius: 0.35rem;
   background: var(--surface-app);
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   min-width: 14rem;
 }
 
@@ -200,7 +200,7 @@
   border-radius: 0.35rem;
   color: var(--text-muted);
   font-family: ui-monospace, monospace;
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
 
 .actions {
@@ -216,7 +216,7 @@
   border-radius: 0.35rem;
   background: var(--border-default);
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -235,19 +235,19 @@
 .error {
   margin: 0.3rem 0 0;
   color: var(--state-blocked-fg);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   line-height: 1.4;
 }
 
 .empty {
   margin: 0;
   color: var(--text-faint);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .note {
   margin: 0 0 0.75rem;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   line-height: 1.45;
 }

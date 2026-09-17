@@ -18,7 +18,7 @@
 .option {
   padding: 0.25rem 0.7rem;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   text-decoration: none;
 }
 
