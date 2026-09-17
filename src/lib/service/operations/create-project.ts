@@ -16,6 +16,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import {
   COMMON_CREATE_RULES,
+  COMMON_CREATE_CONDITIONALLY_REQUIRED,
   commonCreateShape,
   insertItem,
   areaSpellingCheck,
@@ -55,6 +56,7 @@ export const createProject = defineOperation({
     // `invalid_input` refusal — and so `describe_tool` can state it on
     // demand rather than it being charged to every turn in `summary`.
     rules: [TITLE_CONVENTION_CONTRACT_RULE, ...COMMON_CREATE_RULES],
+    conditionallyRequired: COMMON_CREATE_CONDITIONALLY_REQUIRED,
     example: {
       title: "Let people reset a forgotten password",
       body: "The reset link expires too fast.",

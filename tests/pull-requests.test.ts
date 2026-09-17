@@ -208,7 +208,7 @@ describe("merged and draft are read as themselves, not flattened into open", () 
 
   it("reads a recorded draft as draft", () => {
     // Fails if the `draft` branch is dropped, collapsing a parked draft back
-    // into the `open` it is indistinguishable from today.
+    // into the `open` it would otherwise be indistinguishable from.
     expect(pullRequestStatusOf("draft")).toBe("draft");
   });
 

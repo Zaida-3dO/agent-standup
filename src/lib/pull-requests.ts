@@ -46,10 +46,10 @@
 /**
  * The state a recorded pull request is in.
  *
- * ── Why this used to be two values, and why it is now four ─────────────
+ * ── Why four values, over the two-value argument this reverses ─────────
  *
- * This comment used to argue for exactly two. The argument was sound for the
- * reader it considered, and is worth stating before it is overturned:
+ * This comment argued for exactly two. The argument is sound for the reader
+ * it considers, and is worth stating before it is overturned:
  *
  * > Two values, not a copy of any forge's state vocabulary. The report asks
  * > exactly one question of a PR — "should this render as a link?" — and
@@ -66,19 +66,19 @@
  *
  * `merged` and `closed` are not two spellings of "not open" — they are
  * **opposite outcomes**. One says the work shipped; the other says it was
- * abandoned. Today both store as `closed`, so the board cannot tell them
- * apart at all, and anything reading a PR's status as an *outcome* rather
- * than as link-or-no-link gets a wrong answer with no way to detect it. A
- * gate built on the old vocabulary would pass an abandoned PR as readily as
- * a merged one, which is the exact inversion of what it exists to prevent
+ * abandoned. Collapsed into one value they store identically, so the board
+ * cannot tell them apart at all, and anything reading a PR's status as an
+ * *outcome* rather than as link-or-no-link gets a wrong answer with no way
+ * to detect it. A gate built on a two-value vocabulary would pass an
+ * abandoned PR as readily as a merged one, the exact inversion of its purpose
  * (`../service/guards/merge.ts`, `merge_authority: "pr"`). This was reported
  * independently, twice, by callers who had no contact with each other —
  * which is the signal that it is the model that is wrong here, not one
  * caller's expectation of it.
  *
  * Note what does **not** change: `merged` still renders as a live link, so
- * the report's own behaviour is untouched. The old argument proved that
- * `merged` is uninteresting *to the report*, and it still is. It does not
+ * the report's own behaviour is untouched. The two-value argument proves
+ * that `merged` is uninteresting *to the report*, and it is. It does not
  * follow that the fact is uninteresting to record — the report simply was
  * never the thing that needed it.
  *
@@ -95,8 +95,8 @@
  * its author or on a reviewer (`draft` vs `open`). Forge states with no such
  * question behind them — locked, queued, auto-merge-enabled — stay out.
  *
- * A status change is recorded the way a closure always has been: a **new
- * `pull_request` row** superseding the old one, never an edit. See the
+ * A status change is recorded the way a closure is: a **new `pull_request`
+ * row** superseding the one before it, never an edit. See the
  * module header — `artifacts` is append-only and the merge gate's "at tip"
  * reasoning depends on it. So a draft going up for review is a fresh row
  * saying `open`, and the draft period survives in the history rather than

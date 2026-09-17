@@ -18,7 +18,7 @@
 // ── Why it reads only the NEWEST row ────────────────────────────────────
 //
 // `pull_request` artifacts are append-only and a status change is recorded
-// as a new row superseding the old (`@/lib/pull-requests`), so an item's PR
+// as a new row superseding the one before it (`@/lib/pull-requests`), so an item's PR
 // history is a sequence: opened, perhaps closed, perhaps re-opened, perhaps
 // merged. Only the last row describes the PR *now*.
 //

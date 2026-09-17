@@ -25,14 +25,13 @@
 -- about `needs_approval` changes — no existing row's meaning moves, and the
 -- clause that holds work for a person's decision is untouched.
 --
--- ── Why it could not exist until now ────────────────────────────────────
+-- ── Why it depends on the PR status vocabulary ──────────────────────────
 --
--- The evidence it reads has to be able to state the fact, and until this
--- release it could not. `pull_request` artifacts carried a two-word status
--- vocabulary — `open` and `closed` — so a PR that MERGED and a PR that was
--- CLOSED WITHOUT MERGING stored identically, despite being opposite
--- outcomes. A clause reading that would have passed an abandoned PR exactly
--- as readily as a landed one, which is the precise inversion of its purpose.
+-- The evidence it reads has to be able to state the fact. A two-word status
+-- vocabulary of `open` and `closed` cannot: a PR that MERGED and a PR that
+-- was CLOSED WITHOUT MERGING store identically under it, despite being
+-- opposite outcomes, so a clause reading that would pass an abandoned PR
+-- exactly as readily as a landed one — the precise inversion of its purpose.
 -- `merged` joins the status vocabulary in the same release
 -- (`src/lib/pull-requests.ts`), and this value depends on it.
 --
