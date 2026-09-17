@@ -118,12 +118,12 @@ summary	intervention	clear	5bf3f64b00d9ecb9
 summary	intervention	list	a1a64f152656c474
 summary	intervention	set	af955fbbc693acdd
 summary	item	archive	cbf16bc7dbf1df4b
-summary	item	artifact	bc952d3a81e35c95
+summary	item	artifact	2230c0507da0a10b
 summary	item	artifacts	b224846912e56bc1
 summary	item	blocked-on-tool	416af2abc6ea70b8
 summary	item	complete	df657d8c871cad34
 summary	item	create	d45de333b5b4edb5
-summary	item	get	8a75b22917d28408
+summary	item	get	d714476b4c69a299
 summary	item	list	8cc7263e959e6322
 summary	item	loop	b7142e190195f708
 summary	item	loop-close	b06cbafa860435fe
