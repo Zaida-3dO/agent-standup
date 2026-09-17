@@ -18,6 +18,9 @@ command	config	list	get_settings
 command	config	set	put_setting
 command	crew	name	get_crew_name
 command	crew	wait	wait_for_crew
+command	intervention	clear	clear_intervention_level
+command	intervention	list	list_intervention_settings
+command	intervention	set	set_intervention_level
 command	item	archive	delete_item
 command	item	artifact	record_artifact
 command	item	artifacts	get_item_artifacts
@@ -83,6 +86,7 @@ noun	area
 noun	backfill
 noun	config
 noun	crew
+noun	intervention
 noun	item
 noun	loop
 noun	machine
@@ -110,6 +114,9 @@ summary	config	list	cf69f7eedca9f027
 summary	config	set	0b70a66022bf9fab
 summary	crew	name	b4ec1328c8758d5b
 summary	crew	wait	c43e314117c651d1
+summary	intervention	clear	5bf3f64b00d9ecb9
+summary	intervention	list	a1a64f152656c474
+summary	intervention	set	af955fbbc693acdd
 summary	item	archive	cbf16bc7dbf1df4b
 summary	item	artifact	bc952d3a81e35c95
 summary	item	artifacts	b224846912e56bc1
@@ -175,6 +182,7 @@ verbs	area	create get list merge update
 verbs	backfill	run
 verbs	config	clear describe get list set
 verbs	crew	name wait
+verbs	intervention	clear list set
 verbs	item	archive artifact artifacts blocked-on-tool complete create get list loop loop-close loop-delete loop-edit loop-get loops note orientation request-review restore retype search stale transition update
 verbs	loop	add close delete edit get list
 verbs	machine	get list update
