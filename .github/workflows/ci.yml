@@ -243,6 +243,13 @@ jobs:
       # doubt it, so a stale one sends them looking for a path that moved.
       - name: Check the served route index matches the route tree
         run: npm run check:http-routes
+      # The same argument as the check above, for the map the COMMAND LINE
+      # uses. It was 68 hand-written entries across eight files, restating
+      # facts the routes already declared and drifting from them silently;
+      # it is now generated, so this is what keeps it honest. A route added
+      # without regenerating fails here, naming the command to run.
+      - name: Check the CLI route map matches the route tree
+        run: npm run check:cli-routes
       - name: Lint
         run: npm run lint
       - name: Format check

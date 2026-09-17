@@ -1,0 +1,196 @@
+alias	claim	session	claim
+alias	ls	item	list
+alias	show	item	get
+alias	sweep	session	sweep
+command	account	get	get_account
+command	account	list	list_accounts
+command	account	update	update_account
+command	area	create	create_area
+command	area	get	get_area
+command	area	list	list_areas
+command	area	merge	merge_areas
+command	area	update	update_area
+command	backfill	run	backfill
+command	config	clear	delete_setting
+command	config	describe	get_setting
+command	config	get	get_setting
+command	config	list	get_settings
+command	config	set	put_setting
+command	crew	name	get_crew_name
+command	crew	wait	wait_for_crew
+command	intervention	clear	clear_intervention_level
+command	intervention	list	list_intervention_settings
+command	intervention	set	set_intervention_level
+command	item	archive	delete_item
+command	item	artifact	record_artifact
+command	item	artifacts	get_item_artifacts
+command	item	blocked-on-tool	report_blocked_on_tool
+command	item	complete	complete_item
+command	item	create	create_item
+command	item	get	get_item
+command	item	list	list_items
+command	item	loop	loop_add
+command	item	loop-close	loop_close
+command	item	loop-delete	loop_delete
+command	item	loop-edit	loop_edit
+command	item	loop-get	loop_get
+command	item	loops	loop_list
+command	item	note	note
+command	item	orientation	orientation
+command	item	request-review	request_review
+command	item	restore	restore_item
+command	item	retype	retype_to_task
+command	item	search	search
+command	item	stale	get_stale_candidates
+command	item	transition	transition_item
+command	item	update	update_item
+command	loop	add	loop_add
+command	loop	close	loop_close
+command	loop	delete	loop_delete
+command	loop	edit	loop_edit
+command	loop	get	loop_get
+command	loop	list	loop_list
+command	machine	get	get_machine
+command	machine	list	list_machines
+command	machine	update	update_machine
+command	person	list	list_people
+command	person	update	update_person
+command	project	create	create_project
+command	project	repair	repair_stuck_projects
+command	repo	create	create_repo
+command	repo	get	get_repo
+command	repo	list	list_repos
+command	repo	update	update_repo
+command	score	accept	accept_run_score
+command	score	derive	derive_run_score
+command	score	intervention	score_intervention
+command	score	interventions	get_intervention_scores
+command	score	list	list_runs
+command	score	run	score_run
+command	score	scores	get_run_scores
+command	service	info	service_info
+command	session	checkpoint	checkpoint
+command	session	claim	claim
+command	session	heartbeat	heartbeat
+command	session	my-work	my_work
+command	session	progress	progress_report
+command	session	register	register_session
+command	session	release	release
+command	session	shape	get_session_shape
+command	session	sweep	sweep
+command	session	takeover	takeover
+command	subtask	create	create_subtask
+command	task	create	create_task
+noun	account
+noun	area
+noun	backfill
+noun	config
+noun	crew
+noun	intervention
+noun	item
+noun	loop
+noun	machine
+noun	person
+noun	project
+noun	repo
+noun	score
+noun	service
+noun	session
+noun	subtask
+noun	task
+summary	account	get	60bb322dd28395de
+summary	account	list	d652af4c84193378
+summary	account	update	dd225d86ce02cae8
+summary	area	create	97e08b97b93217b2
+summary	area	get	0853e5da04e281a1
+summary	area	list	9c0a345ee6c7baca
+summary	area	merge	f3ef080b7514b68a
+summary	area	update	3b9899025131cc38
+summary	backfill	run	9e4eed3ac3640486
+summary	config	clear	e6468796dc26af98
+summary	config	describe	d4e735324077fe65
+summary	config	get	b5c32b0d52c35d63
+summary	config	list	cf69f7eedca9f027
+summary	config	set	0b70a66022bf9fab
+summary	crew	name	b4ec1328c8758d5b
+summary	crew	wait	c43e314117c651d1
+summary	intervention	clear	5bf3f64b00d9ecb9
+summary	intervention	list	a1a64f152656c474
+summary	intervention	set	af955fbbc693acdd
+summary	item	archive	cbf16bc7dbf1df4b
+summary	item	artifact	2230c0507da0a10b
+summary	item	artifacts	b224846912e56bc1
+summary	item	blocked-on-tool	416af2abc6ea70b8
+summary	item	complete	df657d8c871cad34
+summary	item	create	d45de333b5b4edb5
+summary	item	get	d714476b4c69a299
+summary	item	list	8cc7263e959e6322
+summary	item	loop	b7142e190195f708
+summary	item	loop-close	b06cbafa860435fe
+summary	item	loop-delete	97a3e5a49b3fea0d
+summary	item	loop-edit	6b1e630f8bb9b957
+summary	item	loop-get	7751ac440e4fdd37
+summary	item	loops	713a3beeb7b13029
+summary	item	note	93d9e1d3f90a4243
+summary	item	orientation	46bb09bd14026074
+summary	item	request-review	fc02ef16e38e3285
+summary	item	restore	fec63939342d2740
+summary	item	retype	1f5d7207cf8119f6
+summary	item	search	0377725be93aaad8
+summary	item	stale	0e11f04012c3d92d
+summary	item	transition	dc15901c130fed1b
+summary	item	update	fdba7208ada25937
+summary	loop	add	78e5dea48fdb9191
+summary	loop	close	409159ab09ad5da7
+summary	loop	delete	ee283ad58d0ec173
+summary	loop	edit	80b59bdc8c4296ad
+summary	loop	get	39e16826f0d8f38b
+summary	loop	list	32bdf9b1abef5c2c
+summary	machine	get	d27c3118a7d83081
+summary	machine	list	22be1adba353ccea
+summary	machine	update	e1e010b1e4e6eb59
+summary	person	list	1a427ed9b875d764
+summary	person	update	a06d796ff6418500
+summary	project	create	76a9b4ff733283b6
+summary	project	repair	3a2ceab8b84f05da
+summary	repo	create	5ecb9ba99cd40804
+summary	repo	get	6c09683338b3c354
+summary	repo	list	407f5d00e7257b40
+summary	repo	update	37893b1ec9d08ade
+summary	score	accept	095faa0063bef7a6
+summary	score	derive	87c452d1146bac97
+summary	score	intervention	db4eb80205e2c252
+summary	score	interventions	2a2cbd1172f3b028
+summary	score	list	1b303616e21bfb87
+summary	score	run	0f23f7519ab92685
+summary	score	scores	b8557cc1eb4db1be
+summary	service	info	f1463a8ef93ac905
+summary	session	checkpoint	18f582cacd181457
+summary	session	claim	e0555ccb7bce6f14
+summary	session	heartbeat	bb99e6fa19b1ce3c
+summary	session	my-work	36beea9fcc045f2e
+summary	session	progress	8a2a680feb2d2302
+summary	session	register	a408142360bd2b5c
+summary	session	release	d7affa2f5f7ece89
+summary	session	shape	977f6d2ef6ff08e4
+summary	session	sweep	7bfc6289ad003fd0
+summary	session	takeover	b6b926b7ce0e655e
+summary	subtask	create	9066a624f6e1c7dd
+summary	task	create	c849afba653b6c31
+verbs	account	get list update
+verbs	area	create get list merge update
+verbs	backfill	run
+verbs	config	clear describe get list set
+verbs	crew	name wait
+verbs	intervention	clear list set
+verbs	item	archive artifact artifacts blocked-on-tool complete create get list loop loop-close loop-delete loop-edit loop-get loops note orientation request-review restore retype search stale transition update
+verbs	loop	add close delete edit get list
+verbs	machine	get list update
+verbs	person	list update
+verbs	project	create repair
+verbs	repo	create get list update
+verbs	score	accept derive intervention interventions list run scores
+verbs	service	info
+verbs	session	checkpoint claim heartbeat my-work progress register release shape sweep takeover
+verbs	subtask	create
+verbs	task	create

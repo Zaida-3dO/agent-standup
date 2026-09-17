@@ -1,45 +1,33 @@
 // The HTTP adapter's `repos` collection endpoint — SCHEMA.md §19
 // `GET /repos`, `POST /repos`. MILESTONES.md #92.
 //
-// A thin shell over `service.call` (SCHEMA.md §22), same shape as
+// A thin shell over one service call (SCHEMA.md §22), same shape as
 // `src/app/api/items/route.ts`: parse the request into a name and an input,
-// call the service, render the result.
-import { NextResponse } from "next/server";
+// call the service, render the result. The shell is `runReferenceRow`; the
+// authentication gate and the service call stay here, because two scanners
+// read this file's literal text to decide what it does.
 import { service } from "@/lib/service/live";
-import {
-  authenticatedCaller,
-  withRequestId,
-  invalidJsonResponse,
-  readJsonBody,
-  serviceErrorResponse,
-} from "../admin-respond";
-import { listInput } from "../_shared/reference-row";
+import { authenticatedCaller } from "../admin-respond";
+import { listInput, runReferenceRow } from "../_shared/reference-row";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
-  const { requestId, caller } = auth;
-  const input = listInput(request);
 
-  try {
-    const result = await service.call("list_repos", input, { caller });
-    return withRequestId(NextResponse.json(result), requestId);
-  } catch (error) {
-    return serviceErrorResponse(error, requestId);
-  }
+  return runReferenceRow(request, auth, {
+    query: listInput,
+    call: ({ caller, input }) => service.call("list_repos", input, { caller }),
+  });
 }
 
 export async function POST(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
-  const { requestId, caller } = auth;
-  const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse(requestId);
 
-  try {
-    const repo = await service.call("create_repo", body, { caller });
-    return withRequestId(NextResponse.json({ repo }, { status: 201 }), requestId);
-  } catch (error) {
-    return serviceErrorResponse(error, requestId);
-  }
+  return runReferenceRow(request, auth, {
+    readsBody: true,
+    wrapAs: "repo",
+    status: 201,
+    call: ({ caller, input }) => service.call("create_repo", input, { caller }),
+  });
 }
