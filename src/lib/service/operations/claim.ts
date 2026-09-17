@@ -160,8 +160,8 @@ async function resolveClaimMachine(
     throw new InvalidInputError(
       `This claim omitted \`machine\` and session ${input.sessionId} has not ` +
         `registered, so there is no declared machine to inherit. Either register the ` +
-        `session (\`register_session\`), which is how a machine is stated once and ` +
-        `reused, or pass \`machine\` on this call.`,
+        `session (\`session\` with action register), which is how a machine is stated ` +
+        `once and reused, or pass \`machine\` on this call.`,
       { fields: ["machine"] },
     );
   }
@@ -261,7 +261,7 @@ export const claim = defineOperation({
       },
       {
         fields: ["machine", "sessionId"],
-        rule: "`machine` is optional only for a session that has already registered: it is inherited from `Session.machine`. An UNREGISTERED session omitting it is refused by name rather than having a machine guessed for it — either `register_session` first, or pass `machine` on this call.",
+        rule: "`machine` is optional only for a session that has already registered: it is inherited from `Session.machine`. An UNREGISTERED session omitting it is refused by name rather than having a machine guessed for it — either register the session first with `session` action register, or pass `machine` on this call.",
       },
     ],
     example: {

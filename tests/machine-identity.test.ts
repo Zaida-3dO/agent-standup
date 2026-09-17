@@ -245,6 +245,11 @@ describeIfDb("the machine a session registers with, and the claim that inherits 
     expect(error.fields).toContain("machine");
     // The refusal has to name both routes out, since either genuinely fixes
     // it. Fails if the message degrades to a bare "machine is required".
-    expect(error.message).toContain("register_session");
+    //
+    // The registration route is named as the caller can reach it: `session`
+    // with action register, which is the spelling an MCP caller has. Both
+    // halves are asserted, so dropping either route still fails here.
+    expect(error.message).toContain("action register");
+    expect(error.message).toContain("`machine`");
   });
 });

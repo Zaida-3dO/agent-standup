@@ -120,6 +120,23 @@ describe("aliases resolve to the same operation, so nothing downstream sees them
     }
   });
 
+  it("routes no alias at all to the deprecated create", () => {
+    // An alias is the shortest possible spelling, so an alias pointing at
+    // `create_item` is the easiest route to the one create verb a caller
+    // should not reach for — the one that infers the kind from whether a
+    // parent was supplied, rather than being told. The three explicit
+    // creates each say what they make.
+    //
+    // Asserted over the whole table rather than against one spelling, so an
+    // alias routing here under ANY name fails this.
+    for (const [alias, [noun, verb]] of Object.entries(ALIASES)) {
+      const command = COMMANDS.find((entry) => entry.noun === noun && entry.verb === verb);
+      expect(command?.operation, `alias ${alias} routes to ${command?.operation}`).not.toBe(
+        "create_item",
+      );
+    }
+  });
+
   it("an alias and its long form produce the identical command and rest", () => {
     const viaAlias = lookupCommand(["show", "abc"]);
     const viaLongForm = lookupCommand(["item", "get", "abc"]);

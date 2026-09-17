@@ -24,10 +24,8 @@
 // property of the call rather than a label on it.
 import { malformed } from "./envelope";
 import { numericFlag, stringFlag, type ParsedArgs } from "./args";
+import { GLOBAL_FLAGS } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
-
-/** The flags the dispatcher handles itself, never part of an operation's input. */
-const GLOBAL_FLAGS = new Set(["json", "direct", "as", "session", "url", "help"]);
 
 /**
  * Builds `register_session`'s input.
@@ -78,6 +76,43 @@ function buildRegisterInput(_rest: readonly string[], flags: ParsedArgs["flags"]
   return { ok: true, input };
 }
 
+/**
+ * `standup session shape <session-id>` — what this session has been doing.
+ *
+ * The session id is a positional rather than `--session`: this verb reads a
+ * session someone names, which is not always the session running the
+ * command, and reusing the global identity flag for a subject would conflate
+ * "who am I" with "who am I asking about".
+ *
+ * `--limit` is re-typed because the schema declares a number and a command
+ * line only ever produces strings. Every other flag passes through under its
+ * own name and is refused by the operation's `.strict()` schema if it is
+ * wrong — nothing here filters.
+ */
+function buildSessionShapeInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
+  const sessionId = rest[0];
+  if (sessionId === undefined) {
+    return {
+      ok: false,
+      envelope: malformed("`standup session shape` needs a session id.", ["sessionId"]),
+    };
+  }
+  const limit = numericFlag(flags, "limit");
+  if (!limit.ok) return limit;
+
+  const input: Record<string, unknown> = { sessionId };
+  for (const [name, value] of Object.entries(flags)) {
+    if (GLOBAL_FLAGS.has(name)) continue;
+    if (name === "limit") continue;
+    if (value === true) {
+      return { ok: false, envelope: malformed(`--${name} needs a value.`, [name]) };
+    }
+    input[name] = value;
+  }
+  if (limit.value !== undefined) input.limit = limit.value;
+  return { ok: true, input };
+}
+
 export const SESSION_COMMANDS: readonly CommandSpec[] = Object.freeze([
   {
     noun: "session",
@@ -86,5 +121,13 @@ export const SESSION_COMMANDS: readonly CommandSpec[] = Object.freeze([
     summary:
       "Registers this session and reports which hook to install, and whether it may claim (`hook.require_registration_to_claim`, off by default, is what decides this — the protocol version alone does not).",
     buildInput: buildRegisterInput,
+  },
+  {
+    noun: "session",
+    verb: "shape",
+    operation: "get_session_shape",
+    summary:
+      "Report the shape of a session's recent work — what it has been calling and how much, which is what decides whether a session-shaped guard applies to it.",
+    buildInput: buildSessionShapeInput,
   },
 ]);

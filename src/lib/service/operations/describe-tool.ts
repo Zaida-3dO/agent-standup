@@ -44,6 +44,7 @@ import type { ServiceContext } from "../context";
 import { describeFields, type FieldDescriptor } from "../describe/fields";
 import { spellingsFor, type SurfaceSpelling } from "@/lib/surfaces";
 import { bindingsFor } from "../describe/bindings";
+import { FOLD_ACTIONS, discriminatorFor } from "../describe/fold-actions";
 import { currentBuildInfo, type BuildInfo } from "@/lib/build-info";
 import type { AdapterName } from "@/lib/adapters/registry";
 import { waiversFor, type AdapterWaiver } from "@/lib/adapters/waivers";
@@ -226,6 +227,38 @@ export interface ToolContract {
    */
   readonly fields: readonly FieldDescriptor[];
   /**
+   * Whether an MCP caller has this tool of its own.
+   *
+   * False for an operation waived off every MCP adapter. Read together with
+   * `foldedInto`: false WITH a fold means the behaviour is reachable under
+   * another name; false WITHOUT one means it is reachable on HTTP or the
+   * command line only.
+   */
+  readonly onMcp: boolean;
+  /**
+   * The tool that reaches this operation's behaviour, when it is folded.
+   *
+   * Present only for a folded operation. A caller refused on a name it
+   * remembers gets the name it should use instead, which is the question it
+   * actually has.
+   */
+  readonly foldedInto?: string;
+  /**
+   * Every verb this tool accepts, when it folds several.
+   *
+   * Present only for a folding tool. Listing them is what makes the
+   * `action` parameter discoverable without a second call.
+   */
+  readonly verbs?: readonly string[];
+  /**
+   * The fields the named `action` cannot run without.
+   *
+   * Present only when an `action` was named and the tool folds. Read from
+   * the same table the fold refuses from, so what is advertised and what is
+   * enforced are one fact rather than two that can drift.
+   */
+  readonly requiredForAction?: readonly string[];
+  /**
    * The rules the schema cannot express, **as the operation declares them**.
    *
    * ── Absent and empty are different answers ──────────────────────────────
@@ -315,6 +348,19 @@ const inputSchema = z
      * cost this whole operation exists to avoid paying.
      */
     tool: z.string().trim().min(1, "tool is required").optional(),
+    /**
+     * Which verb of a folded tool to describe.
+     *
+     * A folded tool takes its verb as a field, so "what does `loop`
+     * require?" has no single answer — `add` needs `text`, `close` needs
+     * `loopId`. Naming the action narrows the answer to the call the caller
+     * is actually about to make.
+     *
+     * Ignored for a tool that folds nothing, rather than refused: a caller
+     * that passes one by habit is not making an error worth a round trip,
+     * and the answer it gets is the same answer it wanted.
+     */
+    action: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -493,12 +539,46 @@ export const describeTool = defineOperation({
       });
     }
 
+    const bindings = bindingsFor(found.name);
+    const fold = FOLD_ACTIONS.get(found.name);
+
+    // An action named against a tool that folds must be one of its verbs.
+    // Refused with the FULL list rather than a bare "unknown action": a
+    // caller reaching here has a verb that is wrong, and the likely cause is
+    // a near miss — the spelling from another surface, or the operation name
+    // it was folded from. Denying without the list makes finding the right
+    // one a second call, which is the cost this whole operation exists to
+    // avoid.
+    if (input.action !== undefined && fold !== undefined && !fold.actions.includes(input.action)) {
+      const field = discriminatorFor(found.name);
+      throw new NotFoundError(
+        `No such ${field} on \`${found.name}\`: ${input.action}. ` +
+          `Known ${field}s: ${fold.actions.join(", ")}.`,
+        {
+          fields: ["action"],
+          details: { tool: found.name, action: input.action, known: fold.actions },
+        },
+      );
+    }
+
     return {
       name: found.name,
       kind: found.kind,
       summary: found.summary,
-      invocation: spellingsFor(found.name, bindingsFor(found.name)),
+      invocation: spellingsFor(found.name, bindings),
       fields: describeFields(found.input),
+      // Read off the same tables the system dispatches and refuses from, so
+      // a caller is told what is true rather than what was once written
+      // down. `onMcp` is always present because false is a real answer; the
+      // rest are spread-or-absent, because "this tool folds nothing" and
+      // "this tool folds these" are different answers and an empty list
+      // would collapse them.
+      onMcp: bindings.onMcp,
+      ...(bindings.foldedInto === undefined ? {} : { foldedInto: bindings.foldedInto }),
+      ...(fold === undefined ? {} : { verbs: fold.actions }),
+      ...(input.action !== undefined && fold !== undefined
+        ? { requiredForAction: fold.requiredByAction[input.action] ?? [] }
+        : {}),
       // Spread-or-nothing, not `?? []`. An operation that declares no
       // contract omits the key; one that declares a contract carries its
       // rules even when the list is empty. Those are different answers —

@@ -756,7 +756,12 @@ describe("describe_tool declares claim's crew and uniqueness rules", () => {
     const contract = await contractFor("claim");
     const rule = declaredRules(contract).find((entry) => entry.fields.includes("machine"));
     expect(rule, "claim declares no rule about machine").toBeDefined();
-    expect(rule!.rule).toContain("register_session");
+    // Named as an MCP caller can reach it — `register_session` is folded
+    // into `session`, so the rule names the action rather than a tool the
+    // caller does not have. Still asserts both routes out, which is what
+    // this rule exists to say.
+    expect(rule!.rule).toContain("action register");
+    expect(rule!.rule).toContain("`machine`");
   });
 
   it("declares the role/roleCustom pairing in both directions", async () => {
@@ -1164,7 +1169,12 @@ describe("a refusal names the surface the caller is on", () => {
 
   it("formats an invocation per surface, from the real binding", () => {
     const register = bindingsFor("register_session");
-    expect(invocationFor("register_session", "mcp", register)).toBe("`register_session`");
+    // Folded into `session` on MCP, so an MCP reader is given the tool it
+    // actually has, and told which operation it reaches. The CLI spelling is
+    // unaffected: the fold is an MCP-surface change only.
+    expect(invocationFor("register_session", "mcp", register)).toBe(
+      "`session` (which `register_session` is folded into)",
+    );
     expect(invocationFor("register_session", "cli", register)).toBe("`standup session register`");
     const describe = bindingsFor("describe_tool");
     expect(invocationWithArgumentFor("describe_tool", "create_item", "mcp", describe)).toBe(

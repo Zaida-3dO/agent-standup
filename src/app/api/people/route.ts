@@ -18,15 +18,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
+import { listInput } from "../_shared/reference-row";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const url = new URL(request.url);
-  const includeArchived = url.searchParams.get("includeArchived");
-  const input: Record<string, unknown> = {};
-  if (includeArchived !== null) input.includeArchived = includeArchived === "true";
+  const input = listInput(request);
   // `list_people` is paged (MILESTONES.md #109), and this route read only
   // `includeArchived` — so `limit` and `cursor` arrived and were dropped,
   // and a caller asking for one page silently got the default hundred with

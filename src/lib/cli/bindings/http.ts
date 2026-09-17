@@ -22,6 +22,7 @@ import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
 import { BACKFILL_HTTP_ROUTES } from "./http-routes-backfill";
 import { ARTIFACT_HTTP_ROUTES } from "./http-routes-artifacts"; // row #98 — artifact writes
 import { LOOP_HTTP_ROUTES } from "./http-routes-loops"; // row #100 - open-loop writes
+import { SCORING_HTTP_ROUTES } from "./http-routes-scoring"; // the `score` noun, and the four on existing nouns
 import { SESSION_HTTP_ROUTES } from "./http-routes-sessions";
 import { ACTOR_HEADER, CLI_TRANSPORT_HEADER, SESSION_HEADER } from "@/lib/session-transport-header";
 import { REQUEST_ID_HEADER } from "@/lib/request-id-header";
@@ -228,6 +229,7 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
   ...ARTIFACT_HTTP_ROUTES, // row #98 — artifact writes
   ...LOOP_HTTP_ROUTES, // row #100 - open-loop writes
   ...SESSION_HTTP_ROUTES, // row #43 — the registration handshake
+  ...SCORING_HTTP_ROUTES, // the eleven that had no command line, and so no route
 });
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */

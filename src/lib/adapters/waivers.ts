@@ -981,6 +981,207 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and a tool call blocks the calling " +
       "session on both. Backgrounding is the whole point, so the command line is the door.",
   },
+
+  {
+    adapter: "mcp_http",
+    operation: "score_run",
+    reason:
+      "Folded into the single `score` tool, which takes the verb as an `action` field. Seven " +
+      "scoring verbs spend the per-session tool-list budget seven times to describe one capability " +
+      "— judging how a piece of work went — and a caller reaching for any of them has already " +
+      "decided it is scoring something. The folded tool dispatches to this operation, so its " +
+      "refusals, its guard ids and its fields reach the caller unchanged, and it stays exposed on " +
+      "HTTP at `POST /api/runs/{id}/score` and on the command line as `standup score run`. It runs " +
+      "no state transition, so no registered guard can reject it and §22's bound on waivers is " +
+      "satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "score_run",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is " +
+      "identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "derive_run_score",
+    reason:
+      "Folded into the single `score` tool as `action: derive`. Seven scoring verbs spend the " +
+      "per-session tool-list budget seven times to say `runId` again; the verb is one enum field " +
+      "rather than seven tool descriptions. The folded tool dispatches to this operation, so the " +
+      "`scoring.auto_derive` rule and the `force` override stay in one place and reach the caller " +
+      "unchanged. Still on HTTP at `POST /api/runs/{id}/derive` and as `standup score derive`. It " +
+      "runs no state transition, so no registered guard can reject it.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "derive_run_score",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is " +
+      "identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "accept_run_score",
+    reason:
+      "Folded into the single `score` tool as `action: accept`. The folded tool dispatches to " +
+      "this operation, so the rule that omitting the facet list accepts every facet carrying an " +
+      "agent score and no user score stays here rather than being restated. Still reachable on HTTP " +
+      "at `POST /api/runs/{id}/accept` and as `standup score accept`. It runs no state transition, " +
+      "so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "accept_run_score",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is " +
+      "identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_run_scores",
+    reason:
+      "Folded into the single `score` tool as `action: runs`. An aggregate read of the same rows " +
+      "the other scoring verbs write; splitting the read from the write across two tools would " +
+      "spend the tool budget twice to describe one capability. Still on HTTP at " +
+      "`GET /api/runs/scores` and as `standup score scores`. It is a read that runs no state " +
+      "transition, " +
+      "so no registered guard can reject it and §22's bound is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_run_scores",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is " +
+      "identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "score_intervention",
+    reason:
+      "Folded into the single `score` tool as `action: intervention`. It rates a catalogue firing " +
+      "rather than a run, but the question is the same shape — a 1-5 judgement from an agent or a " +
+      "person — so a second tool would spend the budget twice to express one idea. The folded tool " +
+      "dispatches here, so the rater rules reach the caller unchanged. Still on HTTP at " +
+      "`POST /api/interventions/{id}/score` and as `standup score intervention`. It runs no " +
+      "state " +
+      "transition, so no registered guard can reject it.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "score_intervention",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is " +
+      "identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_intervention_scores",
+    reason:
+      "Folded into the single `score` tool as `action: interventions`. The aggregate beside the " +
+      "firing-level write, flagging the entries that persistently score 1 or 2. Still on HTTP at " +
+      "`GET /api/interventions/scores` and as `standup score interventions`. It is a read that runs " +
+      "no state transition, so no registered guard can reject it and §22's bound on waivers is " +
+      "satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_intervention_scores",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost is " +
+      "identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_projects",
+    reason:
+      "Folded into the single `project` tool as action list. Three verbs about one subject " +
+      "spend the per-session tool-list budget three times, and a caller reaching for any of " +
+      "them has already decided it is working on a project. The folded tool dispatches to this " +
+      "operation, so its refusals, its guard ids and its fields reach the caller unchanged, and " +
+      "it stays exposed on HTTP and on the command line. It is a read that runs no state " +
+      "transition, so no registered guard can reject it and §22's bound on waivers is " +
+      "satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_projects",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_project_detail",
+    reason:
+      "Folded into the single `project` tool as action detail. The full read beside the list " +
+      "read and the repair; splitting one subject across three tools spends the budget three " +
+      "times to say `id` again. The folded tool dispatches to this operation, so the child and " +
+      "activity limits stay its own rather than being restated. Still reachable on HTTP and the " +
+      "command line. It is a read that runs no state transition, so no registered guard can " +
+      "reject it.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_project_detail",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "repair_stuck_projects",
+    reason:
+      "Folded into the single `project` tool as action repair. The folded tool forwards `apply` " +
+      "exactly as it arrived, so this operation's own dry-run default still decides what an " +
+      "unmentioned flag means — a repair that was not asked to write reports what it would " +
+      "change and writes nothing. Still reachable on HTTP and as `standup project repair`. It " +
+      "reconciles rollup state rather than running a registered state transition, so no " +
+      "registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "repair_stuck_projects",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "register_session",
+    reason:
+      "Folded into the single `session` tool as action register. Registering a session and " +
+      "reading a session's shape are the same subject seen twice, so two tools spend the " +
+      "per-session tool-list budget twice to describe one. The folded tool dispatches to this " +
+      "operation, so the `mayClaim` answer stays resolved against the " +
+      "hook.require_registration_to_claim setting here rather than being recomputed. Still " +
+      "reachable on HTTP and as `standup session register`. It runs no state transition, so no " +
+      "registered guard can reject it.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "register_session",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_session_shape",
+    reason:
+      "Folded into the single `session` tool as action shape. The read beside the registration, " +
+      "and the one a session-shaped guard consults. The folded tool dispatches to this " +
+      "operation, so its window bound stays its own. Still reachable on HTTP and as `standup " +
+      "session shape`. It is a read that runs no state transition, so no registered guard can " +
+      "reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_session_shape",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */
