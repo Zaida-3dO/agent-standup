@@ -14,6 +14,7 @@ import {
   validateSetting,
   type SettingKey,
 } from "@/lib/settings";
+import { INTERVENTION_SETTING_PREFIX } from "@/lib/interventions/settings";
 
 /** One row of `settings`, as this module reads and writes it. */
 export interface RawSettingRow {
@@ -76,13 +77,49 @@ export interface UnrecognisedSetting {
  * Mirrors `resolveSettings`'s own partition (SCHEMA.md §17.3) rather than
  * inventing a second one: a row is unrecognised when `isSettingKey` says so,
  * and that is the only test either place applies.
+ *
+ * ── Except the intervention namespace, which is undeclared on purpose ───
+ *
+ * `isSettingKey` alone is not a sufficient test, and the gap is not
+ * cosmetic. `src/lib/interventions/settings.ts` argues at length why the
+ * catalogue's keys are deliberately **not** in `SETTINGS_REGISTRY`, so every
+ * `interventions.*` row fails `isSettingKey` and would land in this list —
+ * under a heading that tells the reader the rows "affect nothing" beside a
+ * button offering to remove them.
+ *
+ * Both halves of that would be false. The rows are read on the hook path by
+ * `resolveInterventionSettings` and they decide whether an entry blocks, so
+ * removing one silently reverts a deliberate re-levelling while reporting it
+ * as tidying up inert debris. They have their own surface, their own
+ * operations and their own reset, and this is the one place that needs to
+ * know they are configuration rather than residue.
+ *
+ * Matched by **prefix and separator** rather than by joining against the
+ * catalogue, which is the same reasoning `readInterventionSettingRows` gives
+ * for scanning by prefix: the rows that most need to be excluded here are
+ * exactly the ones the catalogue cannot explain — a retired entry's
+ * configuration, which `ResolvedInterventionSettings.unknownIds` keeps on
+ * purpose. A catalogue join would call those unrecognised and offer to
+ * delete the one surviving record that the installation ever chose.
  */
 export function renderUnrecognisedSettings(
   overrideRows: readonly RawSettingRow[],
 ): UnrecognisedSetting[] {
   return overrideRows
-    .filter((row) => !isSettingKey(row.key))
+    .filter((row) => !isSettingKey(row.key) && !isInterventionSettingKey(row.key))
     .map((row) => ({ key: row.key, storedValue: row.value }));
+}
+
+/**
+ * Whether a key belongs to the intervention configuration namespace.
+ *
+ * The separator is part of the test. A bare `interventions` row, or one
+ * under a key like `interventionsomething.x`, is not configuration for an
+ * entry and stays unrecognised — which is the honest answer, since nothing
+ * reads it.
+ */
+function isInterventionSettingKey(key: string): boolean {
+  return key.startsWith(`${INTERVENTION_SETTING_PREFIX}.`);
 }
 
 /** Renders one declared key, given the stored value if a row exists (`undefined` = no row). */

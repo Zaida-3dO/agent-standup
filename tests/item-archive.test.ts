@@ -1300,6 +1300,16 @@ describeIfDb("delete_item", () => {
         // its entry's score, because the guard fired and was rated whatever
         // later became of the row.
         "get_intervention_scores",
+        // Lists the intervention catalogue with each entry's configured
+        // level. It ranges over `BUILTIN_INTERVENTIONS` — a module constant
+        // — and the `interventions.*` rows of the `settings` table, and
+        // returns one row per catalogue entry keyed by entry id. No item is
+        // selected, joined or used to narrow it, and an item id appears
+        // nowhere in its output, so there is nothing here for an archived
+        // row to leak through. An entry's level is a fact about what this
+        // installation enforces, which is independent of any item and must
+        // read the same whatever is on the board.
+        "list_intervention_settings",
         // Aggregates run scores per facet. It ranges over `RunScore` and
         // `Run`, returning counts keyed by facet: no item id is selected,
         // returned, or used to narrow the report, so an archived item
