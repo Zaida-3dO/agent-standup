@@ -37,6 +37,7 @@ import {
   isRebaseOrDivergenceCheck,
   isWorkRecordingCommand,
   suppressesCommitSigning,
+  forcesCommitSigning,
 } from "./commands";
 import type { Intervention, InterventionContext, InterventionVerdict } from "./types";
 
@@ -950,6 +951,99 @@ const commitSigningExplicitlySuppressed: Intervention = {
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
     if (!suppressesCommitSigning(context.command)) return { triggered: false };
+    return { triggered: true, data: { command: context.command } };
+  },
+};
+
+/**
+ * Commit signing forced on the command line — the mirror of
+ * `commit-signing-explicitly-suppressed`.
+ *
+ * **The default is deliberately not the finding, exactly as it is not for
+ * the suppression entry.** A plain `git commit` signs when signing is
+ * configured and does not when it is not. That is the operator's standing
+ * choice, made once, and it is already the right answer for every commit
+ * this repository will receive. A command carrying `-S` or `--gpg-sign`
+ * overrides that choice inline for this one commit — the "flag that opts out
+ * of a safe default" shape, not a command that is wrong in itself. Reading
+ * the *absence* of the flag as a finding would fire on every commit in the
+ * system.
+ *
+ * ── Why the virtuous-looking direction is worth a nudge ────────────────
+ *
+ * The suppression entry is easy to argue for: an unsigned commit in a
+ * repository that signs is a visible defect. This one looks like the good
+ * direction, and that is precisely what makes it worth saying something
+ * about, because the failure it produces is not a bad commit — it is a
+ * **failed command that reads as a broken environment**. On a machine with
+ * no key, `git commit -S` aborts with a gpg error and writes nothing; the
+ * agent sees a signing failure, concludes something is misconfigured, and
+ * reaches for the machine's git config rather than for the flag it did not
+ * need. Meanwhile an installation that actually signs would have signed
+ * without being asked. So the flag buys nothing where signing is configured
+ * and costs a confusing failure where it is not.
+ *
+ * **A nudge, not a block**, for the same reason its mirror is one. Forcing a
+ * signature is frequently legitimate — a repository that does not sign by
+ * default, a release commit held to a higher bar, a machine whose global
+ * configuration is wrong — and an installation with no convention either way
+ * would be refused by a rule it never adopted. A nudge names the default and
+ * leaves the call to the caller, which is the weakest level that still
+ * works.
+ *
+ * ── Ungated on the repository's effective `commit.gpgsign` ─────────────
+ *
+ * The sharper version of this entry would fire only where signing is
+ * *already* configured, since that is exactly where the flag is redundant.
+ * It is not built, and the reason is recorded rather than left as a gap
+ * somebody rediscovers: the effective `commit.gpgsign` is local git
+ * configuration on the machine the command runs on, and nothing in this
+ * system observes it. `InterventionContext` carries no such field, and
+ * adding one would mean the hook reading and reporting local git config on
+ * every call — a new signal on the highest-volume path in the system, for an
+ * entry whose payoff is a nudge.
+ *
+ * So this is the ungated version: a pure string check on the command, like
+ * `commit-signing-explicitly-suppressed` and four other shipped entries,
+ * costing no query and no new context. **What it gives up is stated plainly
+ * rather than hidden** — on an installation that signs by default, the flag
+ * is merely redundant and this still mentions it. That is the false positive
+ * this entry knowingly accepts, and it is the reason the level is a nudge:
+ * being occasionally unnecessary is survivable at `nudge` and would not be
+ * at any blocking level.
+ */
+const commitSigningForcedOnTheCommandLine: Intervention = {
+  id: "commit-signing-forced-on-the-command-line",
+  source: "builtin",
+  summary:
+    "A commit-creating command that explicitly forces signing rather than using the default.",
+  phase: "pre",
+  audience: "agent",
+  defaultLevel: "nudge",
+  // Immediate, for the reason its mirror is: the commit this speaks to is
+  // being made by the call it rides on, and on a machine with no key the
+  // command is about to fail — an observation delivered five minutes later
+  // arrives after the confusion it exists to prevent.
+  defaultTiming: "immediate",
+  messages: {
+    plain:
+      "This command explicitly forces commit signing. Without the flag, git would sign the " +
+      "commit anyway if this repository is configured to sign — and if it is not, the flag makes " +
+      "the command fail rather than producing an unsigned commit. Consider running it without " +
+      "the flag and letting the configured behaviour stand.",
+    prominent:
+      "⚠️ This command goes out of its way to turn commit signing on. The default needs no flag: " +
+      "a plain `git commit` signs when signing is configured and does not when it is not, so " +
+      "forcing it here overrides whatever this repository asked for. Where signing is already " +
+      "configured the flag changes nothing; where it is not — no key on this machine — the " +
+      "commit does not fail to be signed, it simply fails, and the gpg error reads as a broken " +
+      "environment rather than as one unnecessary flag. Consider running it without the flag. If " +
+      "you do genuinely need this commit signed regardless of configuration, proceed; this is a " +
+      "nudge and it does not stop you.",
+  },
+  predicate(context: InterventionContext): InterventionVerdict {
+    if (context.command === undefined) return { triggered: false };
+    if (!forcesCommitSigning(context.command)) return { triggered: false };
     return { triggered: true, data: { command: context.command } };
   },
 };
@@ -1922,6 +2016,7 @@ export const BUILTIN_INTERVENTIONS: readonly Intervention[] = [
   squashMergeRefComparison,
   rebaseRestraint,
   commitSigningExplicitlySuppressed,
+  commitSigningForcedOnTheCommandLine,
   batchVisualReviews,
   dispatchOverUnresolvedToolBlock,
   wideCrewDispatch,

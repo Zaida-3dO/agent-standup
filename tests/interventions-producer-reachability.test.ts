@@ -165,6 +165,11 @@ const SITUATIONS: readonly InterventionContext[] = [
   { command: "git log --oneline origin/main..HEAD", itemId: "i1" },
   { command: "git rebase main", itemId: "i1" },
   { command: "git commit --no-gpg-sign -m x", itemId: "i1" },
+  // The mirror of the line above. Both signing entries key on command text
+  // alone, so both are hook-reachable and neither is answerable on a service
+  // call — which is what the assertion below asserts by leaving them out of
+  // `EXPECTED_SERVICE_ENTRIES`.
+  { command: "git commit -S -m x", itemId: "i1" },
   { command: "grep -r foo /", itemId: "i1" },
   { tool: "AskUserQuestion", isAskingUser: true },
   {

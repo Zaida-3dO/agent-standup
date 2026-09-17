@@ -167,6 +167,18 @@ export interface GetEventsOutput {
   readonly cursor: string;
   /** SCHEMA.md §3's visibility horizon, so a caller can tell a short delay from a stuck one. */
   readonly horizon: string;
+  /**
+   * The highest event `id` this read can see, or `null` on an empty ledger.
+   *
+   * **This, not `horizon`, is the value `since` is comparable with.**
+   * `horizon` is a Postgres transaction id bounding `txId`; `since` bounds
+   * `id`. They count different things and drift apart without limit, so
+   * arithmetic on `horizon` cannot produce a valid cursor — it yields a
+   * position the `id` sequence may not have reached, and the read comes
+   * back empty while looking like a ledger with nothing new in it. A caller
+   * reading the ledger's tail pages back from `newestId`.
+   */
+  readonly newestId: string | null;
   /** How many of the returned events this profile has not seen. */
   readonly unseenCount: number;
   /** Whether this profile has ever marked anything seen — false on a genuine first visit. See the module header. */
@@ -202,9 +214,17 @@ export const getEvents = defineOperation({
     // a full row and then dropping two fields would return the same bytes
     // to the caller while still reading every byte out of Postgres, which
     // is the defect this bound exists to prevent rather than to disguise.
-    const { events, horizon } = input.full
-      ? await readSinceBounded(ctx.db, { since, limit: input.limit, full: true })
-      : await readSinceBounded(ctx.db, { since, limit: input.limit });
+    // `withNewestId` because this operation reports the tail position to its
+    // callers — it is the one reader that needs it, and the one that pays
+    // for the extra statement.
+    const { events, horizon, newestId } = input.full
+      ? await readSinceBounded(ctx.db, {
+          since,
+          limit: input.limit,
+          full: true,
+          withNewestId: true,
+        })
+      : await readSinceBounded(ctx.db, { since, limit: input.limit, withNewestId: true });
 
     // Read state for exactly the events in this slice — one query keyed on
     // the ids already in hand, rather than a join inside `readSinceBounded`.
@@ -291,6 +311,7 @@ export const getEvents = defineOperation({
       events: visible,
       cursor: lastId,
       horizon: horizon.toString(),
+      newestId: newestId === null ? null : newestId.toString(),
       // Counted over the whole slice, not over `visible` — with
       // `unseenOnly` on those are the same number, and without it the
       // count still means "how much of this is new to you".

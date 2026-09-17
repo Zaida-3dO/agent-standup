@@ -30,7 +30,7 @@ export interface NeedsYouItem {
   readonly blockedReason: string | null;
   /** ISO 8601 — when the item last changed. What "how long it's waited" is computed from. */
   readonly updatedAt: string;
-  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement";
+  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement" | "pr";
   /** Whether someone still has to look at this. */
   readonly needsVisualReview: boolean;
   /**

@@ -18,7 +18,7 @@ import type { SourceClaim, SourceReview } from "../import-assignments-artifacts"
 import { importEvents } from "../import-events";
 import type { ActorAliasTarget } from "../import-events";
 import { importItems } from "../import-items";
-import type { SourceTask } from "../import-items";
+import type { SourceTask, StatusMappingEntry } from "../import-items";
 import type { BackfillPayload, BackfillTask } from "./contract";
 
 /** Everything the sequence touches. Narrowed to the union of what the three importers each need. */
@@ -63,6 +63,16 @@ export interface BackfillCounts {
   readonly findingsWithoutSeverity: number;
   /** Tasks whose history could not be attached because no item row matched — always empty in a clean run. */
   readonly tasksWithoutMatchingItem: readonly string[];
+  /**
+   * Every distinct source status in the payload and the state it mapped to.
+   *
+   * Carried so the run can report what it FLATTENED as well as what it
+   * created. See `ImportItemsResult.statusMapping` — the collapse is
+   * invisible in a successful import, and a consumer of the source
+   * vocabulary otherwise finds out only by searching for a fact the board
+   * does not carry.
+   */
+  readonly statusMapping: readonly StatusMappingEntry[];
 }
 
 /**
@@ -160,5 +170,6 @@ export async function backfillTasks(
     findingsOnSkippedArtifacts: assignmentsArtifacts.findingsOnSkippedArtifacts,
     findingsWithoutSeverity: assignmentsArtifacts.findingsWithoutSeverity,
     tasksWithoutMatchingItem: events.tasksWithoutMatchingItem,
+    statusMapping: items.statusMapping,
   };
 }

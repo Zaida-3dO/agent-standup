@@ -1891,8 +1891,8 @@ configuration, and proves it with a live round trip. **Every other command prefl
 worst available outcome.
 
 **Shape.** `standup <noun> <verb>`, nouns `account` · `area` · `backfill` · `config` · `crew` ·
-`item` · `loop` · `machine` · `person` · `project` · `repo` · `score` · `service` · `session` ·
-`subtask` · `task`, plus `init`, `doctor`, `hook` and `mcp`, which name one thing each. A short
+`intervention` · `item` · `loop` · `machine` · `person` · `project` · `repo` · `score` · `service` ·
+`session` · `subtask` · `task`, plus `init`, `doctor`, `hook` and `mcp`, which name one thing each. A short
 alias list covers the commands used constantly; aliases resolve to the same operation, so nothing
 downstream sees them.
 

@@ -140,6 +140,70 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(rule!.fields).toContain("originType");
   });
 
+  // ── The advertised schema must not contradict the rules ──────────────
+  //
+  // A caller reads the schema first. `originType` has to stay `.optional()`
+  // in Zod — it may be inherited from the calling session's registration,
+  // which the parse cannot see — so a payload saying only `"required":
+  // false` while `rules` calls it required in practice states both halves
+  // and reconciles neither, and the half read first is the misleading one.
+  it("marks originType conditionally required rather than plainly optional", async () => {
+    const contract = await contractFor("create_work");
+    const originType = contract.fields.find((entry) => entry.name === "originType");
+    expect(originType).toBeDefined();
+
+    // Still optional in the schema, because it genuinely may be omitted by
+    // the large class of callers that inherit it. Flipping this to `true`
+    // would be the opposite lie — telling them to send a value they do not
+    // need. Fails if someone "resolves" the contradiction that way.
+    expect(originType!.required).toBe(false);
+
+    // And carries the condition that makes it required for everyone else.
+    // Fails if the marker is dropped, which is the state the schema and the
+    // rules contradicted each other in.
+    expect(originType!.conditionallyRequired).toBeDefined();
+    expect(originType!.conditionallyRequired).toMatch(/personId/);
+  });
+
+  it("marks originPersonId conditionally required, naming what triggers it", async () => {
+    // The second field of the origin triple. Its requirement is fully
+    // determined by `originType` resolving to `person`, so a caller can see
+    // the consequence of that choice before making it rather than after
+    // being refused for it.
+    const contract = await contractFor("create_work");
+    const field = contract.fields.find((entry) => entry.name === "originPersonId");
+    expect(field).toBeDefined();
+    expect(field!.required).toBe(false);
+    expect(field!.conditionallyRequired).toBeDefined();
+    expect(field!.conditionallyRequired).toMatch(/person/);
+  });
+
+  it("carries the conditional markers on every create, not just create_work", async () => {
+    // The four creates share one declaration precisely so a caller reaching
+    // any of them gets the same answer. Fails if the map is wired into one
+    // contract and forgotten on another — the drift this sharing prevents.
+    for (const tool of ["create_work", "create_task", "create_subtask", "create_project"]) {
+      const contract = await contractFor(tool);
+      const originType = contract.fields.find((entry) => entry.name === "originType");
+      expect(originType?.conditionallyRequired, tool).toBeDefined();
+    }
+  });
+
+  it("never marks a field that the schema already calls required", async () => {
+    // The marker means "optional here, enforced later". Attaching it to an
+    // already-required field would be a contradiction of its own, so it is
+    // dropped rather than rendered. Asserted across every tool so a future
+    // declaration cannot quietly introduce one.
+    for (const tool of OPERATION_NAMES) {
+      const contract = await contractFor(tool);
+      for (const field of contract.fields) {
+        if (field.conditionallyRequired !== undefined) {
+          expect(field.required, `${tool}.${field.name}`).toBe(false);
+        }
+      }
+    }
+  });
+
   it("answers for complete_item with the whole conditional matrix", async () => {
     const contract = await contractFor("complete_item");
     const text = ruleText(contract);

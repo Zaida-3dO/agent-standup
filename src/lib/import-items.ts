@@ -245,9 +245,43 @@ export interface ImportItemsOptions {
   statusAliases?: Record<string, ItemState>;
 }
 
+/**
+ * One source status word, and the state it landed on.
+ *
+ * Counted per distinct source spelling rather than per task, because the
+ * question this answers is about the *mapping* — "which of my words stopped
+ * being distinguishable" — not about how much work happened to be in each
+ * state at import time.
+ */
+export interface StatusMappingEntry {
+  /** The source's own status word, exactly as the payload spelled it. */
+  readonly sourceStatus: string;
+  /** The state it resolved to. */
+  readonly state: ItemState;
+  /** How many tasks carried this source status. */
+  readonly tasks: number;
+}
+
 export interface ImportItemsResult {
   imported: number;
   skippedExisting: number;
+  /**
+   * Every distinct source status seen, and what it mapped to.
+   *
+   * Collected so the run can report what it FLATTENED, not only what it
+   * created. A status map is frequently many-to-one — several source words
+   * legitimately land on one state — and that collapse is invisible in a
+   * successful-looking import: the counts all reconcile, every row is
+   * written, and a consumer of the source vocabulary discovers only later
+   * that a distinction they depended on is absent from the query surface.
+   *
+   * Reported rather than prevented, deliberately. A many-to-one map is
+   * usually the right modelling call — this application ships twelve states
+   * and no source is obliged to have twelve — so refusing one would block
+   * correct imports. What the caller is owed is knowing it happened, at the
+   * moment it happens, with the source words named.
+   */
+  readonly statusMapping: readonly StatusMappingEntry[];
 }
 
 /**
@@ -287,8 +321,29 @@ export async function importItems(
 ): Promise<ImportItemsResult> {
   let imported = 0;
   let skippedExisting = 0;
+  /**
+   * Source status -> the state it mapped to, and how many tasks carried it.
+   *
+   * Accumulated for EVERY task, including those skipped as already present.
+   * The mapping is a property of the payload, not of what this particular
+   * run happened to insert, so a re-run against an already-populated
+   * database must report the same flattening as the first run did. Reporting
+   * it only for inserted rows would make the second run look lossless.
+   */
+  const statusMapping = new Map<string, { state: ItemState; tasks: number }>();
 
   for (const task of tasks) {
+    // Resolved before the skip check, for the reason above — and it also
+    // keeps an unmappable status a hard failure on a re-run rather than one
+    // that is quietly skipped past.
+    const mappedState = mapSourceStatus(task.status, task.id, options.statusAliases);
+    const seen = statusMapping.get(task.status);
+    if (seen) {
+      seen.tasks++;
+    } else {
+      statusMapping.set(task.status, { state: mappedState, tasks: 1 });
+    }
+
     const existing = await client.item.findFirst({
       where: { customFields: { path: ["legacy_id"], equals: task.id } },
       select: { id: true },
@@ -298,7 +353,7 @@ export async function importItems(
       continue;
     }
 
-    const state = mapSourceStatus(task.status, task.id, options.statusAliases);
+    const state = mappedState;
 
     let repoId: string | null = null;
     if (task.repo) {
@@ -364,5 +419,23 @@ export async function importItems(
     imported++;
   }
 
-  return { imported, skippedExisting };
+  return {
+    imported,
+    skippedExisting,
+    // Sorted by state, then by source spelling, so the words that collapsed
+    // onto the same state appear adjacent in the report. That adjacency is
+    // what makes a many-to-one mapping legible at a glance rather than
+    // something a reader has to reconstruct by scanning a list.
+    statusMapping: [...statusMapping.entries()]
+      .map(([sourceStatus, entry]) => ({
+        sourceStatus,
+        state: entry.state,
+        tasks: entry.tasks,
+      }))
+      .sort(
+        (left, right) =>
+          left.state.localeCompare(right.state) ||
+          left.sourceStatus.localeCompare(right.sourceStatus),
+      ),
+  };
 }

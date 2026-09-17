@@ -159,7 +159,10 @@ describeIfDb("importItems — against a real Postgres", () => {
 
   it("imports a task, remapping status, preserving the source id, and resolving area via ensureArea", async () => {
     const result = await importItems(prisma, [baseTask], { repoAliases: { "web-app": "web" } });
-    expect(result).toEqual({ imported: 1, skippedExisting: 0 });
+    // `toMatchObject`, not `toEqual`: the result also carries `statusMapping`
+    // (the flattening report), which this test is not about. Its own
+    // assertions live in the block below and in backfill-runner.test.ts.
+    expect(result).toMatchObject({ imported: 1, skippedExisting: 0 });
 
     const row = await prisma.item.findFirstOrThrow({
       where: { customFields: { path: ["legacy_id"], equals: "src-1" } },
@@ -236,16 +239,62 @@ describeIfDb("importItems — against a real Postgres", () => {
     expect(row.area).toBe("research");
   });
 
+  it("reports the status mapping, counting tasks per distinct source word", async () => {
+    // The raw material for the flattening report: which source words were
+    // seen, what each became, and how many tasks carried it. Two words onto
+    // one state is the case that matters — a collapse leaves no trace in any
+    // count, so this is the only place it becomes visible.
+    //
+    // Fails if `statusMapping` stops being collected, or if it counts
+    // distinct states rather than distinct source words — which would hide
+    // exactly the many-to-one case it exists to expose.
+    const result = await importItems(
+      prisma,
+      [
+        { ...baseTask, id: "map-1", status: "plan-approved" },
+        { ...baseTask, id: "map-2", status: "planning" },
+        { ...baseTask, id: "map-3", status: "planning" },
+      ],
+      {
+        repoAliases: { "web-app": "web" },
+        statusAliases: { "plan-approved": "planning", planning: "planning" },
+      },
+    );
+
+    expect(result.statusMapping).toEqual([
+      { sourceStatus: "plan-approved", state: "planning", tasks: 1 },
+      { sourceStatus: "planning", state: "planning", tasks: 2 },
+    ]);
+  });
+
+  it("reports the status mapping even for tasks skipped as already present", async () => {
+    // The mapping describes the PAYLOAD, not what a run happened to insert.
+    // A re-run inserts nothing, and must still report the same flattening —
+    // otherwise re-running to check what a load did reports it as lossless.
+    //
+    // Fails if the mapping is collected after the already-present skip.
+    const tasks: SourceTask[] = [{ ...baseTask, id: "map-skip-1", status: "todo" }];
+    const options = { repoAliases: { "web-app": "web" } };
+
+    const first = await importItems(prisma, tasks, options);
+    expect(first.imported).toBe(1);
+
+    const second = await importItems(prisma, tasks, options);
+    expect(second.imported).toBe(0);
+    expect(second.skippedExisting).toBe(1);
+    expect(second.statusMapping).toEqual([{ sourceStatus: "todo", state: "on_deck", tasks: 1 }]);
+  });
+
   it("is idempotent: running the same import twice against the same populated database does not duplicate rows", async () => {
     const task: SourceTask = { ...baseTask, id: "idempotent-1" };
 
     const first = await importItems(prisma, [task], { repoAliases: { "web-app": "web" } });
-    expect(first).toEqual({ imported: 1, skippedExisting: 0 });
+    expect(first).toMatchObject({ imported: 1, skippedExisting: 0 });
 
     // Second run against the SAME already-populated database, not a fresh
     // one — this is the run that actually exercises the dedup check.
     const second = await importItems(prisma, [task], { repoAliases: { "web-app": "web" } });
-    expect(second).toEqual({ imported: 0, skippedExisting: 1 });
+    expect(second).toMatchObject({ imported: 0, skippedExisting: 1 });
 
     const rows = await prisma.item.findMany({
       where: { customFields: { path: ["legacy_id"], equals: "idempotent-1" } },

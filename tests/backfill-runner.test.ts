@@ -740,6 +740,107 @@ describeDb("runBackfill (real database)", () => {
     expect(text).toContain("findings retention: COMPLETE");
   }, 120_000);
 
+  // ── Reporting what was FLATTENED, not only what was created ──────────
+  //
+  // A status map is frequently many-to-one, and that collapse leaves no
+  // trace in any count: every row lands, every reconciliation sums, the run
+  // exits 0. The loss shows up much later, when somebody searches for a
+  // distinction the query surface does not carry.
+
+  it("names the source statuses that collapsed onto one state, with their counts", async () => {
+    // Two source words onto one state — the exact shape of the report: a
+    // pipeline distinguishing "plan approved" from "still planning" has one
+    // destination here, so a queue predicate that told them apart lacks a
+    // board equivalent.
+    //
+    // Fails if the flattening block is dropped from the report, which is the
+    // silent-hole state being fixed.
+    const base = payloadFixture();
+    const report = await runBackfill(
+      prisma,
+      parsePayload({
+        ...base,
+        statusAliases: { "plan-approved": "planning", planning: "planning" },
+        tasks: [
+          { ...base.tasks[0], status: "plan-approved" },
+          { ...base.tasks[1], status: "planning" },
+        ],
+      }),
+      RUN_OPTIONS,
+    );
+
+    const text = formatRunReport(report);
+    expect(text).toContain("Flattened by the status map");
+    // Both source words named, so a reader knows WHICH of their words lost
+    // its distinctness rather than merely that something did.
+    expect(text).toContain('"plan-approved"');
+    expect(text).toContain('"planning"');
+    // And the state they landed on.
+    expect(text).toMatch(/planning <-/);
+    // And where the original survives, which is the actionable half.
+    expect(text).toContain("customFields");
+  }, 120_000);
+
+  it("stays silent when every status maps one-to-one", async () => {
+    // The report must not cry wolf. The default fixture maps `executing` and
+    // `merged` to distinct states, so nothing was flattened and the block is
+    // absent entirely.
+    //
+    // Fails if the block is rendered unconditionally — which would put a
+    // "flattened" heading on a lossless import and teach readers to skip it,
+    // the failure that makes the real warning worthless.
+    const report = await runBackfill(prisma, payloadFixture(), RUN_OPTIONS);
+    expect(formatRunReport(report)).not.toContain("Flattened by the status map");
+  }, 120_000);
+
+  it("reports the flattening on a RE-RUN too, when every row is skipped as present", async () => {
+    // The mapping is a property of the payload, not of what a given run
+    // inserted. A second run inserts nothing, so a naive implementation that
+    // collected the mapping only for rows it wrote would report the import
+    // as lossless — exactly the wrong answer for someone re-running to check
+    // what a load did.
+    //
+    // Fails if the mapping is collected after the already-present skip.
+    const base = payloadFixture();
+    const payload = parsePayload({
+      ...base,
+      statusAliases: { "plan-approved": "planning", planning: "planning" },
+      tasks: [
+        { ...base.tasks[0], status: "plan-approved" },
+        { ...base.tasks[1], status: "planning" },
+      ],
+    });
+    await runBackfill(prisma, payload, RUN_OPTIONS);
+
+    const second = await runBackfill(prisma, payload, RUN_OPTIONS);
+    expect(second.counts.itemsImported).toBe(0);
+    expect(second.counts.itemsSkipped).toBe(2);
+    expect(formatRunReport(second)).toContain("Flattened by the status map");
+  }, 120_000);
+
+  it("does not fail the run for flattening — it is a report, not a verdict", async () => {
+    // A many-to-one map is usually the right modelling call, so refusing one
+    // would block correct imports. The exit code is reserved for losses that
+    // are actually faults.
+    //
+    // Fails if flattening is ever wired into `verificationPassed`.
+    const base = payloadFixture();
+    const report = await runBackfill(
+      prisma,
+      parsePayload({
+        ...base,
+        statusAliases: { "plan-approved": "planning", planning: "planning" },
+        tasks: [
+          { ...base.tasks[0], status: "plan-approved" },
+          { ...base.tasks[1], status: "planning" },
+        ],
+      }),
+      RUN_OPTIONS,
+    );
+    expect(report.verification.items.matches).toBe(true);
+    expect(report.verification.historyRetention.matches).toBe(true);
+  }, 120_000);
+
   it("REFUSES a malformed finding rather than importing the artifact without it", async () => {
     // Refusing beats repairing: a coerced list looks complete and is not.
     const base = payloadFixture();

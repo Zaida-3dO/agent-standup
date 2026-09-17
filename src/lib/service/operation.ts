@@ -61,6 +61,26 @@ export interface OperationContract {
   /** The rules JSON Schema cannot express. */
   readonly rules: readonly OperationRule[];
   /**
+   * Fields that read as optional in the schema but are enforced after it,
+   * mapped to a short phrase naming the condition.
+   *
+   * The advertised schema and the rules array must not contradict each
+   * other. A field that Zod has to leave `.optional()` — because what makes
+   * it required is a fact the parse cannot see, such as what the calling
+   * session declared at registration — would otherwise advertise
+   * `"required": false` while `rules` calls it required in practice. Each
+   * statement is true of a different moment, and the payload reads as a
+   * contradiction, with the schema being the half callers read first.
+   *
+   * Declared here so the marker and the rule that explains it are written in
+   * one place, by the operation that enforces them. `describe_tool` renders
+   * this onto the field descriptor; nothing infers it.
+   *
+   * Keep the phrase short and conditional — it is rendered inline next to
+   * the field, not as a second rule. The full account belongs in `rules`.
+   */
+  readonly conditionallyRequired?: Readonly<Record<string, string>>;
+  /**
    * A minimal call that satisfies every rule above, as an illustration.
    * Deliberately a value rather than prose: a caller copies it.
    */

@@ -125,7 +125,7 @@ export const SETTINGS_REGISTRY = {
   }),
 
   "items.default_merge_authority": define({
-    schema: z.enum(["pre-approved", "needs-approval", "agent-judgement"]),
+    schema: z.enum(["pre-approved", "needs-approval", "agent-judgement", "pr"]),
     default: "needs-approval",
     label: "Default merge authority",
     help: "What merge authority a new item gets when nothing sets one. Setting this to pre-approved means every item created afterwards skips the human approval gate.",
@@ -196,6 +196,62 @@ export const SETTINGS_REGISTRY = {
       "value means a claim held by a dead session is never handed back.",
     category: "Liveness",
     appliesWhen: "next-sweep",
+    sensitive: true,
+    irreversible: false,
+    formerEnv: [],
+  }),
+
+  // The ceiling on the signal-less exemption.
+  //
+  // The exemption itself is right: a holder that registered no hook and has
+  // emitted nothing is quiet because that is how it was configured, not
+  // because it died, so elapsed silence is not evidence about it. What was
+  // missing is any upper bound — the carve-out had no expiry, so such a
+  // claim could never be reclaimed by any automatic path at all, at any age.
+  //
+  // That is not a rare corner. A session reaching the server over the MCP
+  // mount declares no `hookVersion` and posts no tool calls, so it is born
+  // into the exempt class and its claim is immortal from the moment it is
+  // made. Measured on a live installation: one rehearsal reported 219 such
+  // holders against 53 ordinary releases, on 200 distinct items, the oldest
+  // quiet 16.5 days, and a sample of those items were all already `merged`
+  // or `research_done` — the work finished, the claim outliving it with
+  // nothing in the system able to take it back.
+  //
+  // So the exemption keeps its meaning and gains a horizon: silence is not
+  // evidence *until* the claim is old enough that no plausible unit of work
+  // is still running behind it. The default is deliberately far above every
+  // other liveness threshold — 48x the dead threshold, 6x the eviction one —
+  // because the cost of being wrong is asymmetric. Leaving a dead claim in
+  // place costs a visible, hand-reclaimable stranded row, while releasing a
+  // live holder's costs it a refused write: `describeAssignmentRefusal`
+  // answers that case with `released_free`, which tells the agent its quiet
+  // claim was reclaimed and to claim again and carry on. (`taken_over` is
+  // checked first, so a genuine overlap gets a warning rather than an
+  // invitation to re-claim.) That recovery path is why this bound can be a
+  // horizon rather than a guess. A day of continuous silence from a
+  // session that never once spoke is a long way past any real work unit, and
+  // a holder that emits a single `heartbeat` leaves this class permanently.
+  "liveness.signal_less_claim_max_seconds": define({
+    schema: z.number().int().positive(),
+    default: 86_400,
+    label: "Signal-less claim ceiling",
+    help:
+      "Seconds a holder that has never emitted any signal, and registered no hook to emit one " +
+      "with, may keep its claim before the sweep will release it anyway. Such a holder is " +
+      "normally exempt from release entirely, because its silence is how it was configured " +
+      "rather than evidence it died — this is the age at which that stops being a safe " +
+      "assumption and the claim is reclaimed like any other. Measured from the claim, since by " +
+      "definition nothing has moved `last_active` off it. Deliberately far above the dead " +
+      "threshold: releasing a claim a live session still believes it holds is the harmful " +
+      "direction, so this errs towards leaving a stranded claim visible for longer. One " +
+      "`heartbeat` call removes a holder from this class for good. Raising it means a crashed " +
+      "hookless session's claim blocks its item for longer; lowering it towards the dead " +
+      "threshold risks evicting quiet sessions that are genuinely working.",
+    category: "Liveness",
+    appliesWhen: "next-sweep",
+    // Lowering it releases claims this rule protects, which is the
+    // direction that can take an item from a session that is still alive.
     sensitive: true,
     irreversible: false,
     formerEnv: [],

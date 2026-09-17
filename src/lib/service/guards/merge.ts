@@ -73,8 +73,9 @@ import {
   resolveApprovingArtifactAtCurrentRoundAndTip,
 } from "./merge-review-round";
 import { APPROVING_VERDICTS, requiresLinkedFollowUp } from "../../verdicts";
+import { pullRequestHasMerged } from "./merge-pull-request";
 
-const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement"]);
+const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement", "pr"]);
 
 /**
  * The sentence every code-review refusal ends with, naming the override and
@@ -610,6 +611,20 @@ export const mergeRequiresVisualReviewGuard: Guard = {
  *     the ones that do not announce it. It also still warns off the
  *     tempting-but-wrong route of recording the review as a person, which no
  *     longer satisfies this clause at all.
+ *   - `pr` — may merge only once the item's **newest** `pull_request`
+ *     artifact reports `merged`. Unlike the three above it is not an answer
+ *     to "who decides": the condition is an objective fact about a forge,
+ *     so no click and no judgement satisfies it — only the PR actually
+ *     landing does. **Stricter than `pre_approved`, not looser**, which is
+ *     worth saying plainly because a fourth value on an authorisation enum
+ *     reads like a relaxation: `pre_approved` returns ok having checked
+ *     nothing, this has something real to check.
+ *
+ *     Newest row only, and deliberately not tip-scoped — `./merge-pull-request.ts`
+ *     carries both arguments. It grants nothing about quality: the review
+ *     clauses never read `mergeAuthority`, so an item on `pr` still needs its
+ *     approving `code_review` (and `visual_review` when required) exactly as
+ *     any other item does.
  *   - `agent_judgement` — DECISIONS.md §9: "the agent decides at the gate
  *     ... and must record a one-line rationale". No schema column or event
  *     payload carries this yet (row #27, the transition operation itself,
@@ -658,6 +673,38 @@ export const mergeRequiresAuthorisationGuard: Guard = {
             // a remedy naming a value the operation refuses is the
             // unreachable-remedy failure #243 fixed elsewhere in this file.
             'belongs on the item: set mergeAuthority to "pre-approved" with update_item.',
+          { fields: ["state"] },
+        );
+      }
+      return guardOk;
+    }
+
+    if (authority === "pr") {
+      const pr = await pullRequestHasMerged(input.db, input.item.id);
+      if (!pr.satisfied) {
+        // Two different faults, two different remedies. A missing row is
+        // usually bookkeeping — the PR exists and nobody recorded it — and
+        // saying "merge your PR" to that caller sends them to look at a PR
+        // that may already have merged. A row that says `open` is the real
+        // condition being unmet.
+        return guardRejected(
+          pr.status === undefined
+            ? "merge_authority is pr — this item may merge only once its pull request has " +
+                "merged, and no pull_request artifact has been recorded for it. If the PR " +
+                "exists, record it with record_artifact (kind `pull_request`, the PR's http(s) " +
+                "URL in `ref`); once it merges, record a NEW pull_request row with body " +
+                "`merged`, since artifacts are append-only."
+            : `merge_authority is pr — this item may merge only once its pull request has ` +
+                `merged, and the newest pull_request artifact reports \`${pr.status}\`` +
+                `${pr.ref ? ` (${pr.ref})` : ""}. ` +
+                (pr.status === "closed"
+                  ? "A closed PR is not a merged one — if the work landed under a different PR, " +
+                    "record that PR and its merge. "
+                  : "") +
+                "Merge the PR on the forge, then record a NEW pull_request row with body " +
+                "`merged` — artifacts are append-only, so the row that opened it is never " +
+                "edited. No approval or override substitutes for this: the condition is a fact " +
+                "about the PR, not a decision anyone can make here.",
           { fields: ["state"] },
         );
       }

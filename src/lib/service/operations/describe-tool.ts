@@ -75,6 +75,12 @@ export interface ToolSource {
     readonly rules: readonly OperationRule[];
     readonly example?: unknown;
     readonly examples?: readonly unknown[];
+    /**
+     * Fields the schema must leave optional but something later enforces —
+     * rendered onto the field descriptor so the advertised schema and the
+     * `rules` below cannot contradict each other. See `OperationContract`.
+     */
+    readonly conditionallyRequired?: Readonly<Record<string, string>>;
   };
   readonly input: unknown;
 }
@@ -566,7 +572,13 @@ export const describeTool = defineOperation({
       kind: found.kind,
       summary: found.summary,
       invocation: spellingsFor(found.name, bindings),
-      fields: describeFields(found.input),
+      // The operation's own `conditionallyRequired` map rides along, so a
+      // field the schema must leave optional — because what makes it
+      // required is resolved after the parse — is not advertised as plainly
+      // optional while the `rules` below call it required in practice. That
+      // contradiction within one payload is what this closes; the schema is
+      // the half a caller reads first.
+      fields: describeFields(found.input, found.contract?.conditionallyRequired),
       // Read off the same tables the system dispatches and refuses from, so
       // a caller is told what is true rather than what was once written
       // down. `onMcp` is always present because false is a real answer; the

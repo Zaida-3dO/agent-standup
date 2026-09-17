@@ -383,19 +383,29 @@ interface OccupancyRow {
 /**
  * How long a holder may be quiet before I15 stops deferring to it.
  *
- * Twelve hours. The bound exists because `liveness` cannot carry this on its
- * own: `sweepLiveness` has no caller (MILESTONES.md #99) and the claim insert
- * is `ON CONFLICT DO NOTHING`, so a crashed session's row stays `running`
- * indefinitely and every future crew in that repository is refused on behalf
- * of a crew that stopped days ago. Three separate crews hit exactly that on
+ * Twelve hours. The bound exists because `liveness` cannot be relied on to
+ * carry this on its own. The claim insert is `ON CONFLICT DO NOTHING`, so a
+ * crashed session's row is never overwritten by a later claim, and whether
+ * it is ever cleared depends on something outside this module running the
+ * sweep — which an installation may simply not have wired up. Until it is
+ * cleared, every future crew in that repository is refused on behalf of a
+ * crew that stopped days ago. Three separate crews hit exactly that on
  * 2026-08-31, all deferred to one holder ~10.9 days quiet.
+ *
+ * A second route to the same stranding, which is why this bound stays even
+ * where the sweep does run: a holder that registered no hook and has emitted
+ * no signal is deliberately exempt from release, because its silence is how
+ * it was configured rather than evidence it died. That exemption is capped
+ * (`liveness.signal_less_claim_max_seconds`) but the cap is measured in
+ * days, so a quiet holder can outlive this bound by a wide margin while
+ * still being legitimately unreleased.
  *
  * Twelve hours rather than something tighter because the cost of the two
  * errors is not symmetric. Too short and a genuine collision goes unblocked
  * while its holder is merely thinking — a long test run, a slow review, a
  * session waiting on a person — which is the incident this entry exists to
  * prevent. Too long and a stale row blocks a live crew, which is annoying,
- * visible immediately, and self-correcting once the sweep exists. So the
+ * visible immediately, and self-correcting wherever the sweep is run. So the
  * bound is set well past any plausible pause within a working session and
  * well inside the multi-day staleness that was actually observed, and it is
  * deliberately not tuned finer than that: a threshold chosen to the minute

@@ -225,19 +225,52 @@ export function eventColumnsFor(full: boolean): string {
  * Note that `<=` rather than `<` is an equivalent mutation here, not a gap:
  * `pg_snapshot_xmin` is the oldest *still-active* txid, so no committed row's
  * `txId` can equal it, and no test can distinguish the two.
+ *
+ * **`newestId` is returned beside `horizon`, and the two are not
+ * interchangeable.** `horizon` is a transaction id and bounds `txId`;
+ * `newestId` is an *event* id and is the only value of the sequence `since`
+ * is compared against. They are different counters over different things —
+ * a transaction can append many events or none — so no arithmetic relates
+ * one to the other, and a caller that wants to read the ledger's tail has
+ * to start from `newestId`. Returning it is what makes that possible
+ * without a second round trip; deriving a cursor from `horizon` instead
+ * reads from a position the `id` sequence may not have reached, which
+ * returns an empty page that looks exactly like a quiet ledger.
+ *
+ * `null` when no row is visible at all, which is the honest answer for an
+ * empty ledger and keeps a caller from treating `0` as a real position. It
+ * is also `null` unless `withNewestId` asks for it: resolving it costs a
+ * second statement, and the long-poll path (`@/lib/crew/wait-core`) calls
+ * this once per tick and does not want it. Charging every reader for a value
+ * one of them needs is how a cheap poll becomes an expensive one.
  */
 export async function readSinceBounded(
   db: TransactionHandle,
-  args: { readonly since: bigint; readonly limit?: number; readonly full: true },
-): Promise<{ events: EventRow[]; horizon: bigint }>;
+  args: {
+    readonly since: bigint;
+    readonly limit?: number;
+    readonly full: true;
+    readonly withNewestId?: boolean;
+  },
+): Promise<{ events: EventRow[]; horizon: bigint; newestId: bigint | null }>;
 export async function readSinceBounded(
   db: TransactionHandle,
-  args: { readonly since: bigint; readonly limit?: number; readonly full?: false },
-): Promise<{ events: SlimEventRow[]; horizon: bigint }>;
+  args: {
+    readonly since: bigint;
+    readonly limit?: number;
+    readonly full?: false;
+    readonly withNewestId?: boolean;
+  },
+): Promise<{ events: SlimEventRow[]; horizon: bigint; newestId: bigint | null }>;
 export async function readSinceBounded(
   db: TransactionHandle,
-  args: { readonly since: bigint; readonly limit?: number; readonly full?: boolean },
-): Promise<{ events: (EventRow | SlimEventRow)[]; horizon: bigint }> {
+  args: {
+    readonly since: bigint;
+    readonly limit?: number;
+    readonly full?: boolean;
+    readonly withNewestId?: boolean;
+  },
+): Promise<{ events: (EventRow | SlimEventRow)[]; horizon: bigint; newestId: bigint | null }> {
   const horizon = await visibilityHorizon(db);
   const limit = args.limit ?? 500;
   // `full` defaults to **false**, so a caller that does not name a
@@ -256,5 +289,24 @@ export async function readSinceBounded(
     horizon,
     limit,
   );
-  return { events: rows, horizon };
+
+  // The newest id under the *same* visibility bound the slice used. Bounded
+  // by `txId < horizon` for the same reason the slice is: a caller handed a
+  // `newestId` it cannot then read back would page towards a row this read
+  // deliberately withheld, which is the skip SCHEMA.md §3 exists to prevent.
+  //
+  // Asked for explicitly rather than always, because it is a second
+  // statement. The long-poll path runs this function once per tick for as
+  // long as a caller waits, so an unconditional extra query there doubles
+  // the read volume of a wait that is already the busiest reader of this
+  // table — and it would buy nothing, since that path pages by cursor and
+  // never needs the tail.
+  if (args.withNewestId !== true) {
+    return { events: rows, horizon, newestId: null };
+  }
+  const newestRows = await db.$queryRawUnsafe<{ newestId: bigint | null }[]>(
+    `SELECT MAX("id") AS "newestId" FROM "Event" WHERE "txId" < $1`,
+    horizon,
+  );
+  return { events: rows, horizon, newestId: newestRows[0]?.newestId ?? null };
 }

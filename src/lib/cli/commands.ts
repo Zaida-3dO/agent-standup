@@ -25,6 +25,7 @@ import { LOOP_COMMANDS } from "./commands-loops"; // row #100 - open-loop writes
 import { SESSION_COMMANDS } from "./commands-sessions";
 import { CREW_COMMANDS } from "./commands-crew"; // MILESTONES #64 — `standup crew wait`
 import { SCORING_COMMANDS } from "./commands-scoring"; // the `score` noun — run and intervention scoring
+import { INTERVENTION_COMMANDS } from "./commands-interventions"; // row #128 — the `intervention` noun
 
 /** What building an input produced. */
 export type InputResult =
@@ -544,6 +545,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
   // backgrounded, which makes this entry the feature's sole agent-facing door.
   ...CREW_COMMANDS,
   ...SCORING_COMMANDS, // the `score` noun — run and intervention scoring
+  ...INTERVENTION_COMMANDS, // row #128 — the `intervention` noun
 ]);
 
 /**

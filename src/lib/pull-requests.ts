@@ -46,14 +46,64 @@
 /**
  * The state a recorded pull request is in.
  *
- * Two values, not a copy of any forge's state vocabulary. The report asks
- * exactly one question of a PR — "should this render as a link?" — and every
- * forge state answers it one way or the other. `merged` is deliberately
- * absent: a merged PR's item reaches `merged` on its own, and a link to a
- * merged PR is still a live link, so recording the merge adds a third value
- * that no reader here would branch on differently from `open`.
+ * ── Why four values, over the two-value argument this reverses ─────────
+ *
+ * This comment argued for exactly two. The argument is sound for the reader
+ * it considers, and is worth stating before it is overturned:
+ *
+ * > Two values, not a copy of any forge's state vocabulary. The report asks
+ * > exactly one question of a PR — "should this render as a link?" — and
+ * > every forge state answers it one way or the other. `merged` is
+ * > deliberately absent: a merged PR's item reaches `merged` on its own, and
+ * > a link to a merged PR is still a live link, so recording the merge adds
+ * > a third value that no reader here would branch on differently from
+ * > `open`.
+ *
+ * **The error is the premise that the report is the only reader.** That was
+ * true when this module had one caller, and the vocabulary was correctly
+ * sized to it. It stopped being true, and the cost landed on a question the
+ * link-rendering purpose never asks: *did this work land?*
+ *
+ * `merged` and `closed` are not two spellings of "not open" — they are
+ * **opposite outcomes**. One says the work shipped; the other says it was
+ * abandoned. Collapsed into one value they store identically, so the board
+ * cannot tell them apart at all, and anything reading a PR's status as an
+ * *outcome* rather than as link-or-no-link gets a wrong answer with no way
+ * to detect it. A gate built on a two-value vocabulary would pass an
+ * abandoned PR as readily as a merged one, the exact inversion of its purpose
+ * (`../service/guards/merge.ts`, `merge_authority: "pr"`). This was reported
+ * independently, twice, by callers who had no contact with each other —
+ * which is the signal that it is the model that is wrong here, not one
+ * caller's expectation of it.
+ *
+ * Note what does **not** change: `merged` still renders as a live link, so
+ * the report's own behaviour is untouched. The two-value argument proves
+ * that `merged` is uninteresting *to the report*, and it is. It does not
+ * follow that the fact is uninteresting to record — the report simply was
+ * never the thing that needed it.
+ *
+ * `draft` is the same mistake at the other end of a PR's life. A parked
+ * draft and a PR sitting in front of reviewers are both `open`, and a board
+ * reader deciding where attention is owed needs them apart: one is waiting
+ * on its author, the other on a reviewer. Collapsing them makes a column of
+ * open PRs unreadable for the one purpose anybody scans it for.
+ *
+ * **This is still not a copy of a forge's vocabulary**, and that bound is
+ * the thing being kept. Each value earns its place by a question a reader
+ * of *this* board asks: is there something to click (`open`, `draft`,
+ * `merged`), did the work land (`merged` vs `closed`), and is it waiting on
+ * its author or on a reviewer (`draft` vs `open`). Forge states with no such
+ * question behind them — locked, queued, auto-merge-enabled — stay out.
+ *
+ * A status change is recorded the way a closure is: a **new `pull_request`
+ * row** superseding the one before it, never an edit. See the
+ * module header — `artifacts` is append-only and the merge gate's "at tip"
+ * reasoning depends on it. So a draft going up for review is a fresh row
+ * saying `open`, and the draft period survives in the history rather than
+ * being overwritten. No schema change: `body` already carries the status as
+ * text.
  */
-export const PULL_REQUEST_STATUSES = ["open", "closed"] as const;
+export const PULL_REQUEST_STATUSES = ["open", "closed", "merged", "draft"] as const;
 
 export type PullRequestStatus = (typeof PULL_REQUEST_STATUSES)[number];
 
@@ -99,6 +149,23 @@ export function isPullRequestStatus(value: unknown): value is PullRequestStatus 
  * So the closed side is matched case-insensitively and allows trailing
  * punctuation or an explanatory clause after the word.
  *
+ * ── `merged` and `draft` are matched the same way, and it is still safe ──
+ *
+ * Both are matched by the identical leading-word rule, and neither widens
+ * what counts as `open`. The safety property above is about not turning a
+ * dead PR into a live link, and these two cannot: `draft` and `merged` are
+ * *more* specific than the `open` they fall back from, so the worst outcome
+ * of a missed match is the status this function already returned.
+ *
+ * `merged` in particular narrows rather than widens. A legacy row whose body
+ * leads with "merged" is read as merged instead of open — which is the
+ * honest reading of what it says, and the one a gate needs. A row that does
+ * not say it stays `open`, exactly as before, so no unvalidated row is
+ * promoted to an outcome nobody recorded. That direction matters for the
+ * merge authority that reads this: falling back to `open` leaves a gate
+ * refusing, and a gate that refuses on absent evidence is the failure mode
+ * to have.
+ *
  * **The leniency is deliberately one-directional, and that asymmetry is the
  * safety property.** Nothing here widens what counts as `open`: an
  * unrecognised body still falls through to `open`, so the only behaviour
@@ -113,12 +180,20 @@ export function isPullRequestStatus(value: unknown): value is PullRequestStatus 
  */
 export function pullRequestStatusOf(body: string | null | undefined): PullRequestStatus {
   if (body == null) return DEFAULT_PULL_REQUEST_STATUS;
+  const trimmed = body.trim();
   // Anchored at the start: the body must *lead* with the word, so a review
   // note that merely mentions "closed" partway through — "keeping this open
   // until the sibling PR is closed" — is not read as a closure. A trailing
   // clause is allowed only after a boundary that is not a letter, so
   // `closedown` does not match.
-  return /^closed\b/i.test(body.trim()) ? "closed" : DEFAULT_PULL_REQUEST_STATUS;
+  if (/^closed\b/i.test(trimmed)) return "closed";
+  // `merged` before `draft` is not a precedence decision — a body can only
+  // lead with one word — but the order does encode which fact costs more to
+  // get wrong. Both use the same anchored, case-insensitive, word-boundary
+  // rule as `closed`, so `mergedown` and `draftsman` match neither.
+  if (/^merged\b/i.test(trimmed)) return "merged";
+  if (/^draft\b/i.test(trimmed)) return "draft";
+  return DEFAULT_PULL_REQUEST_STATUS;
 }
 
 /**

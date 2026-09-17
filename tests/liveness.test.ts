@@ -710,6 +710,9 @@ describeIfDb("sweepLiveness — against a real database", () => {
     afterEach(async () => {
       await prisma.toolCall.deleteMany({});
       await prisma.session.deleteMany({});
+      // The name-return cases seed `Agent` rows; clear them so a held name
+      // cannot survive into another case and decide its outcome.
+      await prisma.agent.deleteMany({});
     });
 
     it("does NOT release the claim of an unhooked holder quiet past the dead threshold", async () => {
@@ -858,6 +861,242 @@ describeIfDb("sweepLiveness — against a real database", () => {
 
       expect(result.exempted).toEqual([]);
       expect(result.released).toEqual([row.id]);
+    });
+
+    // -- The ceiling on the exemption ---------------------------------------
+    //
+    // The exemption is right about what silence means, but until this bound
+    // it never expired, so a signal-less claim could not be reclaimed by any
+    // automatic path at any age. That is not a corner case: a session on the
+    // MCP mount declares no hook version and posts no tool calls, so it is
+    // born exempt. A rehearsal on a live installation reported 219 such
+    // holders against 53 ordinary releases, across 200 items, the oldest
+    // quiet 16.5 days, on items that had already reached `merged`.
+
+    it("still exempts a signal-less holder INSIDE the ceiling", async () => {
+      // The protective half, and the case that must keep working. Well past
+      // the dead threshold but well inside the ceiling, so silence is still
+      // not evidence and the claim is left alone.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 40_000,
+        hookVersion: null,
+        sessionId: "session-inside-ceiling",
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "liveness.signal_less_claim_max_seconds": 86_400,
+        }),
+        actor,
+        { guards },
+      );
+
+      expect(result.released).toEqual([]);
+      expect(result.exempted).toEqual([
+        expect.objectContaining({ assignmentId, sessionId: "session-inside-ceiling" }),
+      ]);
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(row.releasedAt).toBeNull();
+    });
+
+    it("RELEASES a signal-less holder past the ceiling — the exemption expires", async () => {
+      // The fix, reduced to one assertion. Same holder shape as the test
+      // above in every respect except age; the only thing deciding its fate
+      // is the ceiling. Without the bound this row is exempt forever, which
+      // is the stranded-claim leak.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 90_000,
+        hookVersion: null,
+        sessionId: "session-past-ceiling",
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "liveness.signal_less_claim_max_seconds": 86_400,
+        }),
+        actor,
+        { guards },
+      );
+
+      expect(result.exempted).toEqual([]);
+      expect(result.released).toEqual([assignmentId]);
+
+      // Released in the database, not merely reported — and the claim is
+      // genuinely available again, which is the outcome the item needed.
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(row.releasedAt).not.toBeNull();
+      expect(row.liveness).toBe("dead");
+    });
+
+    it("does not fire early — a holder just inside the ceiling is still exempt", async () => {
+      // The fencepost, in the direction that matters. A test that only
+      // asserted the firing case would pass with a ceiling of zero, which
+      // would release every signal-less holder the instant it claimed.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 3_000,
+        hookVersion: null,
+        sessionId: "session-at-boundary",
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "liveness.signal_less_claim_max_seconds": 3_600,
+        }),
+        actor,
+        { guards },
+      );
+
+      expect(result.released).toEqual([]);
+      expect(result.exempted).toEqual([expect.objectContaining({ assignmentId })]);
+    });
+
+    it("treats the ceiling itself as reached, not as still protected", async () => {
+      // Pins the comparison to `<` rather than `<=`, which no other case
+      // here can distinguish: the two differ only when the claim's age is
+      // EXACTLY the threshold. `now` is passed explicitly so the age is that
+      // value precisely rather than a few milliseconds either side of it,
+      // which is the only way this boundary is testable at all.
+      const itemId = await seedItem();
+      const claimedAt = new Date("2026-08-18T00:00:00.000Z");
+      const ceilingSeconds = 3_600;
+      await prisma.session.create({
+        data: {
+          id: "session-exactly-at-ceiling",
+          machine: "laptop",
+          transport: "cli_direct" as never,
+          hookVersion: null,
+        },
+      });
+      const row = await prisma.assignment.create({
+        data: {
+          itemId,
+          role: "builder",
+          holderType: "agent",
+          holderId: "crew-member",
+          sessionId: "session-exactly-at-ceiling",
+          rootSessionId: "session-exactly-at-ceiling",
+          machine: "laptop",
+          liveness: "running" as never,
+          lastActive: claimedAt,
+          claimedAt,
+        },
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "liveness.signal_less_claim_max_seconds": ceilingSeconds,
+        }),
+        actor,
+        { guards, now: new Date(claimedAt.getTime() + ceilingSeconds * 1000) },
+      );
+
+      expect(result.exempted).toEqual([]);
+      expect(result.released).toEqual([row.id]);
+    });
+
+    it("returns the holder's crew name to the pool when it releases the claim", async () => {
+      // The pool's own leak, and the path that matters for it: a session
+      // that crashed is exactly the one that will never call `release`
+      // itself, so a name drawn at registration would stay held by a session
+      // that has ended. Reclaiming the claim without the name would leave
+      // the roster draining for the same reason the board was.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 90_000,
+        hookVersion: null,
+        sessionId: "session-named-holder",
+      });
+      await prisma.agent.create({
+        data: { name: "sweep-freed-name", heldBySessionId: "session-named-holder" },
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "liveness.signal_less_claim_max_seconds": 86_400,
+        }),
+        actor,
+        { guards },
+      );
+
+      expect(result.released).toEqual([assignmentId]);
+      const agent = await prisma.agent.findUniqueOrThrow({ where: { name: "sweep-freed-name" } });
+      expect(agent.heldBySessionId).toBeNull();
+      expect(agent.heldAt).toBeNull();
+    });
+
+    it("leaves the crew name held when a rehearsal reports the release", async () => {
+      // `dryRun` must write nothing at all, and the name is a write like any
+      // other — a rehearsal that quietly drained the pool would be exactly
+      // the kind of side effect the flag exists to promise against.
+      const itemId = await seedItem();
+      await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 90_000,
+        hookVersion: null,
+        sessionId: "session-rehearsed-name",
+      });
+      await prisma.agent.create({
+        data: { name: "sweep-kept-name", heldBySessionId: "session-rehearsed-name" },
+      });
+
+      await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "liveness.signal_less_claim_max_seconds": 86_400,
+        }),
+        actor,
+        { guards, dryRun: true },
+      );
+
+      const agent = await prisma.agent.findUniqueOrThrow({ where: { name: "sweep-kept-name" } });
+      expect(agent.heldBySessionId).toBe("session-rehearsed-name");
+    });
+
+    it("reports a past-ceiling release as a rehearsal without writing it", async () => {
+      // The safety property for the operator running this for the first
+      // time: the newly-reclaimable population must be inspectable before
+      // any of it is actually released.
+      const itemId = await seedItem();
+      const assignmentId = await seedNeverSignalledHolder(itemId, {
+        quietForSeconds: 90_000,
+        hookVersion: null,
+        sessionId: "session-rehearsed",
+      });
+
+      const result = await sweepLiveness(
+        dbHandle(),
+        snapshot({
+          "liveness.stale_after_seconds": 900,
+          "liveness.dead_after_seconds": 1800,
+          "liveness.signal_less_claim_max_seconds": 86_400,
+        }),
+        actor,
+        { guards, dryRun: true },
+      );
+
+      expect(result.released).toEqual([assignmentId]);
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+      expect(row.releasedAt).toBeNull();
+      expect(row.liveness).toBe("running");
     });
   });
 

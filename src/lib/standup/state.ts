@@ -33,22 +33,38 @@ const OVERNIGHT_EVENTS_LIMIT = 15;
 /**
  * The `since` cursor that lands a page of `limit` rows at the ledger's tail.
  *
- * `horizon` is the newest id a read can see, and ids are a gapless-enough
- * sequence that `horizon - limit` is a good page boundary: too low and the
- * page is merely larger than asked for (the LIMIT still bounds it), never
- * smaller. Clamped at 0 so a ledger shorter than one page reads from the
- * start, which is correct — there is nothing before it to miss.
+ * **Takes the newest event `id`, and nothing else will do.** `since` is
+ * compared against `id`, so only a value from that same sequence can be
+ * decremented into a page boundary. The visibility `horizon` is a Postgres
+ * transaction id (`pg_snapshot_xmin`) bounding `txId`; it counts
+ * transactions, while `id` counts events, so the two diverge without limit
+ * — one transaction may append several events or none. Measured on a live
+ * installation the horizon stood at 28,817 while the newest event id was
+ * 15,360, so a cursor derived from the horizon started roughly 13,400 rows
+ * past the end of the ledger and every page came back **empty**. That is
+ * the worst possible failure shape here: an empty page is indistinguishable
+ * from a quiet night, so the report rendered a confident "0 merged, 0
+ * blocked" while spend — which reaches its data by a real timestamp bound —
+ * showed thousands of dollars of activity over the same window.
  *
- * Returns `undefined` on an unparseable horizon so the caller falls back to
- * an unbounded `since`, which is the pre-existing behaviour rather than a
- * new failure mode.
+ * Ids are a gapless-enough sequence that `newestId - limit` is a good page
+ * boundary: too low and the page is merely larger than asked for (the LIMIT
+ * still bounds it), never smaller. Clamped at 0 so a ledger shorter than one
+ * page reads from the start, which is correct — there is nothing before it
+ * to miss.
+ *
+ * Returns `undefined` for a `null` or unparseable id so the caller falls
+ * back to an unbounded `since`. That fallback reads the ledger's *start*
+ * rather than its tail, which is wrong for this report — but it is wrong
+ * *visibly*, because a page of ancient rows fails to reach the cutoff and
+ * `eventsTruncated` says so, where the empty page did not.
  */
-export function tailCursor(horizon: string, limit: number): string | undefined {
-  // `BigInt("")` is 0n rather than a throw, so an empty horizon would silently
+export function tailCursor(newestId: string | null, limit: number): string | undefined {
+  // `BigInt("")` is 0n rather than a throw, so an empty id would silently
   // become a read from the ledger's start — the exact bug this exists to stop.
   // Demand digits explicitly instead of relying on the constructor to refuse.
-  if (!/^\d+$/.test(horizon.trim())) return undefined;
-  const parsed = BigInt(horizon.trim());
+  if (newestId === null || !/^\d+$/.test(newestId.trim())) return undefined;
+  const parsed = BigInt(newestId.trim());
   const start = parsed - BigInt(limit);
   return (start > 0n ? start : 0n).toString();
 }
@@ -92,12 +108,16 @@ export async function fetchStandup(
   // to cover last night by accident; the window is wrong at any page size,
   // and the smaller the page the more certainly it shows.
   //
-  // A cheap first probe gets `horizon` (the newest visible event id), and the
-  // real read then starts one page back from it. Two round-trips rather than
-  // one, deliberately: `since` is an id cursor and takes no timestamp, so
-  // this is the only way to reach the tail without widening the API.
+  // A cheap first probe gets `newestId` (the highest visible event id), and
+  // the real read then starts one page back from it. Two round-trips rather
+  // than one, deliberately: `since` is an id cursor and takes no timestamp,
+  // so this is the only way to reach the tail without widening the API.
+  //
+  // It must be `newestId` and not `horizon`: the horizon is a transaction id
+  // bounding `txId`, not a position in the `id` sequence `since` pages over.
+  // See `tailCursor` for what conflating them did.
   const probe = await fetchFeed({ personId, limit: 1 }, fetchImpl);
-  const tailStart = tailCursor(probe.horizon, OVERNIGHT_EVENTS_LIMIT);
+  const tailStart = tailCursor(probe.newestId, OVERNIGHT_EVENTS_LIMIT);
 
   const [feed, costs, inProgress, projects, needsYou] = await Promise.all([
     // `full: true` — see `OVERNIGHT_EVENTS_LIMIT`'s own comment on why this
@@ -110,13 +130,7 @@ export async function fetchStandup(
   ]);
 
   const liveAssignments = inProgress.entries.flatMap((entry) => entry.assignments);
-  const overnight = buildOvernightReport(
-    since,
-    feed.events,
-    OVERNIGHT_EVENTS_LIMIT,
-    costs,
-    liveAssignments,
-  );
+  const overnight = buildOvernightReport(since, feed.events, costs, liveAssignments);
 
   // `fetchNeedsYou` returns the page and its `total` since T24; this screen
   // renders the rows only, so it takes the items and leaves the count.
