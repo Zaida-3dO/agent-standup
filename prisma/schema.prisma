@@ -164,6 +164,11 @@ model Item {
   // "which reviews are relying on this item existing".
   followUpFor Artifact[]   @relation("ArtifactFollowUp")
   areaLinks   ItemArea[]
+  // The item's external pointers (`ItemLink`). Named `links` rather than
+  // `itemLinks` because it is the word every surface uses for them — and
+  // deliberately not `linkRefs`, which would suggest they reference a
+  // vocabulary table the way `areaLinks` does. They reference nothing.
+  links       ItemLink[]
   // `Item_archivedAt_idx` is deliberately absent here and lives only in the
   // migration SQL. It is a PARTIAL index — `WHERE "archivedAt" IS NOT NULL`
   // — which this schema language cannot express, and declaring the full
@@ -284,6 +289,66 @@ model ItemArea {
 
   @@id([itemId, areaId])
   @@index([areaId])
+}
+
+// An external pointer an item carries — the Slack thread it was discussed
+// in, the ticket that prompted it, the design doc it implements.
+//
+// **A pointer is not an artifact, and keeping the two apart is the whole
+// reason this table exists rather than six more `ArtifactKind` values.**
+// Every member of that enum is something the work PRODUCED — a commit, a
+// review, a build, a screenshot. A Slack thread that predates the item and a
+// ticket that caused it are CONTEXT, and filing them as artifacts would put
+// input and output in one bucket that `get_item_artifacts` serves to every
+// reader meaning "show me the evidence". The enum's own comments are careful
+// about that distinction; this table is what lets them stay careful.
+//
+// **Key and url, rather than a kind from a fixed vocabulary.** Which
+// pointers an installation has is installation-specific — one runs two
+// separate ticket systems with different id shapes and different lifecycles,
+// and no enum written here can name them both without guessing. A short free
+// label is the shape that survives that, and it is what a chip renders.
+//
+// **The primary key IS the de-duplication.** Recording the same (key, url)
+// on the same item twice is idempotent because the database will not hold
+// the second row, not because a write path remembers to check first — which
+// is the difference between a guarantee and a convention. It also means two
+// concurrent writers cannot race past a check-then-write, a failure the
+// artifact importer's application-level dedupe key is explicitly documented
+// as not protecting against.
+//
+// The key is part of that identity on purpose. One URL under two labels is
+// two claims ("the ticket" and "the escalation thread" can be one page), and
+// collapsing them would silently discard the second; the same key pointing
+// at two URLs is likewise two links, which is how an item carries three docs.
+model ItemLink {
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  // The chip's label — short, free text, lowercased and trimmed on the way
+  // in so `Slack` and `slack` are one link rather than two rows the primary
+  // key cannot tell apart. Normalisation happens at the write path
+  // (`item-links.ts`) rather than here, because a database cannot express it
+  // and a caller deserves to be told which value was stored.
+  key    String
+  // Where it points. Validated by scheme at the write path — permissively,
+  // refusing only the executable schemes (`link-url.ts` carries the full
+  // reasoning and the measurement that ruled out an http(s) allowlist).
+  //
+  // Not a foreign key to anything and deliberately unparsed: the product
+  // never resolves, fetches or interprets this value. It stores it and
+  // renders it, exactly as the schema's `check_run` comment says of a build
+  // status — an external fact, known by the caller, recorded by the party
+  // that observed it.
+  url    String
+
+  @@id([itemId, key, url])
+  // Search reaches items through their links (`search.ts`), which asks the
+  // opposite question from the primary key's: given a URL or a label, which
+  // items carry it. The PK's leading `itemId` cannot serve that, so the two
+  // trigram indexes in the migration do — and they live only there, because
+  // a GIN index with an operator class has no datamodel representation the
+  // way this B-tree does.
+  @@index([url])
 }
 
 enum Role {

@@ -20,6 +20,7 @@ import { z } from "zod";
 import { GuardRejectedError, InvalidInputError, NotFoundError } from "../errors";
 import type { ServiceContext } from "../context";
 import { resolveAreasRaw, setItemAreas } from "./item-areas";
+import { linksInputSchema, normalizeLinks, setItemLinks } from "./item-links";
 import { noSuchRepoMessage } from "./no-such-repo";
 import { resolveSessionDefaults } from "./session-defaults";
 import { callerEventActor } from "./event-attribution";
@@ -121,6 +122,20 @@ export const commonCreateShape = {
   needsVisualReview: z.boolean().optional(),
   difficulty: z.record(z.string(), z.number().int().min(1).max(5)).optional(),
   customFields: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * The item's external pointers — `[{key: "slack", url: "..."}]`.
+   *
+   * Accepted at creation rather than only through a later edit because the
+   * pointers are usually the reason the item is being minted at all: a
+   * ticket or a chat thread is what prompted the work, and a caller that
+   * has to mint first and then patch can leave the item briefly unfindable
+   * by the very reference it exists for.
+   *
+   * Omitted means no links, which is distinct from `[]` only in intent —
+   * both store nothing. Unlike `area`, nothing is inherited and nothing is
+   * required: most items carry none.
+   */
+  links: linksInputSchema.optional(),
   /**
    * Return the whole `items` row rather than the slim default — the same
    * flag the reads and the other writes take (MILESTONES.md #107). Off by
@@ -652,6 +667,29 @@ export async function insertItem(
   // set just written is what this call created, by definition.
   await setItemAreas(ctx, row.id, resolvedAreas);
   row.areas = resolvedAreas;
+
+  // The links, written and patched onto the row for exactly the reasons the
+  // areas above are: the `ITEM_COLUMNS` subquery ran as part of the
+  // `INSERT ... RETURNING`, before these rows existed, so the value it
+  // returned is the empty pre-write fallback rather than what this call
+  // created.
+  //
+  // Normalised here rather than in the schema so the scheme refusal is the
+  // one sentence every write path produces — see `linksInputSchema`. That
+  // means an unusable URL fails the call after the item row is inserted, and
+  // that is correct rather than merely tolerable: every creation path runs
+  // inside one transaction, so the refusal rolls the insert back and no item
+  // exists carrying a link the caller was told was rejected.
+  //
+  // Sorted to match what a subsequent read returns. `normalizeLinks`
+  // preserves the caller's order, but `ITEM_LINKS_COLUMN` orders by key then
+  // url — so echoing the input order here would make the create response and
+  // the very next `get_item` disagree about an item nothing had touched.
+  if (input.links !== undefined) {
+    const links = normalizeLinks(input.links);
+    await setItemLinks(ctx, row.id, links);
+    row.links = [...links].sort((a, b) => a.key.localeCompare(b.key) || a.url.localeCompare(b.url));
+  }
 
   // "Every mutating call appends a row" (SCHEMA.md §3). A create has no
   // prior value to diff, so it is recorded as a field-change from null —

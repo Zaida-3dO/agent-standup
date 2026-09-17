@@ -56,6 +56,12 @@ function itemRecord(overrides: Partial<ItemRecord> = {}): ItemRecord {
     // is present because `ItemRecord` carries it, not because a rule can
     // ask about it. Kept in step with `area` so the fixture stays coherent.
     areas: ["web"],
+    // Present because `ItemRecord` carries it, and empty because no
+    // notification rule may ask about an item's links — the same reason
+    // `areas` above is here at all. An empty list is also what a real item
+    // with no links reads back as, so the fixture stays a shape a write
+    // path could actually produce.
+    links: [],
     repo: null,
     branch: null,
     needsVisualReview: false,
