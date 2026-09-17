@@ -131,6 +131,15 @@ import { patchSettings } from "./operations/patch-settings";
 import { putSetting } from "./operations/put-setting";
 import { deleteSetting } from "./operations/delete-setting";
 import { removeUnrecognisedSetting } from "./operations/remove-unrecognised-setting";
+// The intervention catalogue's own configuration surface (MILESTONES.md
+// #128). Separate from the settings operations above because the catalogue
+// is deliberately absent from `SETTINGS_REGISTRY` — see
+// `src/lib/interventions/settings.ts` for why, and
+// `./operations/interventions-shared.ts` for why that makes `put_setting`
+// unusable here rather than merely inconvenient.
+import { listInterventionSettings } from "./operations/list-intervention-settings";
+import { setInterventionLevel } from "./operations/set-intervention-level";
+import { clearInterventionLevel } from "./operations/clear-intervention-level";
 import { claim } from "./operations/claim";
 import { release } from "./operations/release";
 // Reclamation (MILESTONES.md #99): the liveness ladder's trigger, and the
@@ -321,6 +330,9 @@ export const OPERATION_REGISTRY = {
   [putSetting.name]: putSetting,
   [deleteSetting.name]: deleteSetting,
   [removeUnrecognisedSetting.name]: removeUnrecognisedSetting,
+  [listInterventionSettings.name]: listInterventionSettings,
+  [setInterventionLevel.name]: setInterventionLevel,
+  [clearInterventionLevel.name]: clearInterventionLevel,
   [claim.name]: claim,
   [release.name]: release,
   [sweep.name]: sweep,

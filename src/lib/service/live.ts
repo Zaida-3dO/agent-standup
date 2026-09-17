@@ -78,6 +78,13 @@ export const SETTINGS_WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   // the test below demanded it rather than because anyone remembered to —
   // which is the whole reason that test derives the list from the source.
   "remove_unrecognised_setting",
+  // Re-levelling an intervention writes to the same `settings` table and
+  // bumps the same shared counter, so a held snapshot is stale the moment
+  // one commits. The rows are not *declared* settings — the catalogue is
+  // deliberately outside `SETTINGS_REGISTRY` — but staleness is a property
+  // of the revision rather than of the registry, and these move it.
+  "set_intervention_level",
+  "clear_intervention_level",
 ]);
 
 /**
