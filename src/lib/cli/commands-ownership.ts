@@ -62,7 +62,23 @@ import type { CommandSpec, InputResult } from "./commands";
  *     require one, but the mapping from `--session` is identical either way,
  *     so the difference lives in the schema rather than here.
  */
-const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
+/**
+ * The verb descriptors this module's commands are built from.
+ *
+ * ⚠️ **Declared with `satisfies`, never with a `Record<string, VerbFields>`
+ * annotation.** The annotation widens `keyof typeof VERBS` to `string`,
+ * which silently defeats the `build(verb: keyof typeof VERBS)` constraint
+ * below, because every string satisfies it: `build("clajm")` compiles, and
+ * `VERBS[verb]` is then `undefined` at run time, so the verb's builder
+ * reads no positional and no switch — a field parsed, accepted and quietly
+ * not applied. `satisfies` keeps the keys literal instead, so a mistyped
+ * verb is a compile error naming every valid key, while each value is
+ * still checked against `VerbFields`.
+ *
+ * `tests/cli-verb-keys.test.ts` pins that every key here is reachable from
+ * a command, which is the half a type cannot state.
+ */
+const VERBS = Object.freeze({
   claim: { itemId: "session claim <item-id>", numbers: { pid: "pid" }, session: true },
   release: { itemId: "session release <item-id>", session: true },
   heartbeat: { itemId: "session heartbeat <item-id>", session: true },
@@ -74,7 +90,7 @@ const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
   note: { itemId: "item note <item-id>", session: true },
   orientation: { itemId: "item orientation <item-id>", numbers: { limit: "limit" } },
   "crew-name": { session: true },
-});
+} satisfies Readonly<Record<string, VerbFields>>);
 
 /** One verb's builder, by the key it is listed under above. */
 function build(
@@ -83,7 +99,7 @@ function build(
   rest: readonly string[],
   flags: Parameters<ReturnType<typeof buildVerbInput>>[1],
 ) => InputResult {
-  return buildVerbInput(VERBS[verb]!);
+  return buildVerbInput(VERBS[verb]);
 }
 
 export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
