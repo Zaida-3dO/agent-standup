@@ -86,6 +86,9 @@ describe("the `backfill` route, as a table entry", () => {
       method: "POST",
       path: "/api/backfill",
       pathFields: {},
+      // Nothing is lifted into the query string either: the whole `{ payload }`
+      // wrapper is the body, which is the point of the two assertions above.
+      queryFields: {},
       sendsBody: true,
       unwrapKey: null,
     });

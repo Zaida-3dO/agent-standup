@@ -109,14 +109,18 @@ describe("the generated CLI route map", () => {
     if (route.unwrapKey === null || WRAPPED_BY_THE_OPERATION.has(operation)) return;
     const source = sourceServing(operation);
     expect(source, `no route.ts calls ${operation}`).toBeDefined();
-    // The key must appear as a response property somewhere in the route
-    // that serves it. Deliberately a weak-but-independent check: it reads
-    // the route source rather than the generator's own parse, so it fails
-    // on the `reviewRequest`/`event` class of mistake — a declared key the
-    // route never emits — without re-implementing the response parsing that
-    // the generator refuses to do in the first place.
+    // The key must appear in the route that serves it, as either the
+    // response property it wraps the result in (`NextResponse.json({ repo })`)
+    // or the `wrapAs` the shared shell renders it under. Deliberately a
+    // weak-but-independent check: it reads the route source rather than the
+    // generator's own parse, so it fails on the `reviewRequest`/`event`
+    // class of mistake — a declared key the route never emits — without
+    // re-implementing the response parsing the generator refuses to do.
+    const emitted =
+      new RegExp(`\\b${route.unwrapKey}\\s*[:,}]`).test(source!) ||
+      new RegExp(`wrapAs:\\s*"${route.unwrapKey}"`).test(source!);
     expect(
-      new RegExp(`\\b${route.unwrapKey}\\s*[:,}]`).test(source!),
+      emitted,
       `${operation} declares unwrapKey "${route.unwrapKey}", which its route never emits`,
     ).toBe(true);
   });

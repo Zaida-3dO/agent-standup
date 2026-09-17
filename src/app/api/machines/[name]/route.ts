@@ -1,41 +1,37 @@
 // The HTTP adapter's single-machine endpoint — SCHEMA.md §19
 // `GET /machines/{name}`, `PATCH /machines/{name}`. MILESTONES.md #92.
 // `PATCH` upserts — see `update-machine.ts`'s header.
-import { NextResponse } from "next/server";
+//
+// The shell around each call is `runReferenceRow`. Two things stay here, in
+// a file named `route.ts`, because two scanners read this file's literal
+// text to decide what it does: the authentication gate, and the service
+// call. See `_shared/reference-row.ts` for which scanner reads which.
+//
+// The path parameter is `name` rather than `id`, and it carries the input
+// field of the same name — a machine is addressed by what it is called.
 import { service } from "@/lib/service/live";
-import {
-  authenticatedCaller,
-  withRequestId,
-  invalidJsonResponse,
-  readJsonBody,
-  serviceErrorResponse,
-} from "../../admin-respond";
+import { authenticatedCaller } from "../../admin-respond";
+import { runReferenceRow } from "../../_shared/reference-row";
 
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
-  const { requestId, caller } = auth;
-  const { name } = await params;
-  try {
-    const machine = await service.call("get_machine", { name }, { caller });
-    return withRequestId(NextResponse.json({ machine }), requestId);
-  } catch (error) {
-    return serviceErrorResponse(error, requestId);
-  }
+
+  return runReferenceRow(request, auth, {
+    params,
+    wrapAs: "machine",
+    call: ({ caller, input }) => service.call("get_machine", input, { caller }),
+  });
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ name: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
-  const { requestId, caller } = auth;
-  const { name } = await params;
-  const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse(requestId);
 
-  try {
-    const machine = await service.call("update_machine", { ...body, name }, { caller });
-    return withRequestId(NextResponse.json({ machine }), requestId);
-  } catch (error) {
-    return serviceErrorResponse(error, requestId);
-  }
+  return runReferenceRow(request, auth, {
+    params,
+    readsBody: true,
+    wrapAs: "machine",
+    call: ({ caller, input }) => service.call("update_machine", input, { caller }),
+  });
 }

@@ -1,42 +1,33 @@
 // The HTTP adapter's `areas` collection endpoint — SCHEMA.md §19
 // `GET /areas`, `POST /areas`. MILESTONES.md #92. Same shape as
 // ../repos/route.ts.
-import { NextResponse } from "next/server";
+//
+// The shell around each call is `runReferenceRow`. Two things stay here, in
+// a file named `route.ts`, because two scanners read this file's literal
+// text to decide what it does: the authentication gate, and the service
+// call. See `_shared/reference-row.ts` for which scanner reads which.
 import { service } from "@/lib/service/live";
-import {
-  authenticatedCaller,
-  withRequestId,
-  invalidJsonResponse,
-  readJsonBody,
-  serviceErrorResponse,
-} from "../admin-respond";
-import { listInput } from "../_shared/reference-row";
+import { authenticatedCaller } from "../admin-respond";
+import { listInput, runReferenceRow } from "../_shared/reference-row";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
-  const { requestId, caller } = auth;
-  const input = listInput(request);
 
-  try {
-    const result = await service.call("list_areas", input, { caller });
-    return withRequestId(NextResponse.json(result), requestId);
-  } catch (error) {
-    return serviceErrorResponse(error, requestId);
-  }
+  return runReferenceRow(request, auth, {
+    query: listInput,
+    call: ({ caller, input }) => service.call("list_areas", input, { caller }),
+  });
 }
 
 export async function POST(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
-  const { requestId, caller } = auth;
-  const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse(requestId);
 
-  try {
-    const area = await service.call("create_area", body, { caller });
-    return withRequestId(NextResponse.json({ area }, { status: 201 }), requestId);
-  } catch (error) {
-    return serviceErrorResponse(error, requestId);
-  }
+  return runReferenceRow(request, auth, {
+    readsBody: true,
+    wrapAs: "area",
+    status: 201,
+    call: ({ caller, input }) => service.call("create_area", input, { caller }),
+  });
 }

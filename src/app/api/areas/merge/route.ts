@@ -5,29 +5,20 @@
 // write from renaming or archiving one row, and it is refused the same way
 // those two are — see `merge_areas`' own header for the reasoning.
 //
-// A thin shell over `service.call` (SCHEMA.md §22): validation, guards and
-// the de-duplication pass all live in the operation.
-import { NextResponse } from "next/server";
+// A thin shell over one service call (SCHEMA.md §22): validation, guards and
+// the de-duplication pass all live in the operation. The shell is
+// `runReferenceRow`; the authentication gate and the service call stay here,
+// because two scanners read this file's literal text to decide what it does.
 import { service } from "@/lib/service/live";
-import {
-  authenticatedCaller,
-  withRequestId,
-  invalidJsonResponse,
-  readJsonBody,
-  serviceErrorResponse,
-} from "../../admin-respond";
+import { authenticatedCaller } from "../../admin-respond";
+import { runReferenceRow } from "../../_shared/reference-row";
 
 export async function POST(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
-  const { requestId, caller } = auth;
-  const body = await readJsonBody(request);
-  if (body === null) return invalidJsonResponse(requestId);
 
-  try {
-    const result = await service.call("merge_areas", body, { caller });
-    return withRequestId(NextResponse.json(result), requestId);
-  } catch (error) {
-    return serviceErrorResponse(error, requestId);
-  }
+  return runReferenceRow(request, auth, {
+    readsBody: true,
+    call: ({ caller, input }) => service.call("merge_areas", input, { caller }),
+  });
 }

@@ -396,6 +396,34 @@ export function collectCliRoutes() {
         if (declaration) expression = declaration[1];
       }
 
+      // A handler that delegates its shell to `runReferenceRow` declares the
+      // path binding in the shell's options instead of in the call: it passes
+      // `params`, and optionally a `pathFields` map renaming a parameter onto
+      // a differently-spelled input field. Read here so that sharing a
+      // handler body does not silently unbind the ids — which is exactly what
+      // happened when the reference-row routes were folded, and what
+      // `tests/cli-generated-routes.test.ts` caught.
+      //
+      // With no `pathFields` the parameter carries the field of the same
+      // name, which is the shell's own default.
+      // Matched up to the options object without pinning the arguments
+      // before it: the shell takes the proven caller as well as the request,
+      // because the authentication gate stays in the route file. A matcher
+      // spelling those arguments out went stale the moment the gate moved
+      // back, and silently unbound eleven path parameters again.
+      const shell = /runReferenceRow\([\s\S]*?\{([\s\S]*?)\n  \}\)/.exec(block);
+      if (shell && /\bparams\b/.test(shell[1])) {
+        const renames = /pathFields:\s*\{([^}]*)\}/.exec(shell[1]);
+        const declared = {};
+        if (renames) {
+          for (const pair of renames[1].matchAll(/(\w+)\s*:\s*"([^"]+)"/g))
+            declared[pair[1]] = pair[2];
+        }
+        expression = `{ ${parameters
+          .map((parameter) => `${declared[parameter] ?? parameter}: ${parameter}`)
+          .join(", ")} }`;
+      }
+
       // Fields a BODY-CARRYING route nonetheless reads from the query
       // string. `transition_item` is the case: it reads `?dry_run=true`
       // while taking everything else as a body, and sending that flag in the
