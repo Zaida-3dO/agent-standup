@@ -337,10 +337,13 @@ describe("the sibling-selector reveal that the toggle's reachability exists to s
     // inside the media query: `position: fixed` applied unconditionally
     // would pin the desktop panel to the foot of the viewport, far from
     // the control that opened it.
+    // `toMatch` takes no message argument, so the claim is asserted as a
+    // boolean with one attached instead — a bare regex failure here would
+    // print the whole breakpoint body and say nothing about what broke.
     const narrow = narrowBlock();
-    expect(narrow).toMatch(
-      /\.axesToggle:checked\s*~\s*\.axes\s*\{[^}]*position:\s*fixed/,
+    expect(
+      /\.axesToggle:checked\s*~\s*\.axes\s*\{[^}]*position:\s*fixed/.test(narrow),
       "the phone breakpoint fails to re-anchor the panel as a bottom sheet",
-    );
+    ).toBe(true);
   });
 });

@@ -112,6 +112,48 @@ describe.each(["dark", "light"] as const)("contrast — %s theme", (scope) => {
     expect(failures).toEqual([]);
   });
 
+  // ── The plain text ramp ───────────────────────────────────────────────
+  //
+  // The state, priority and area palettes were all verified here; the four
+  // ordinary text roles were not, and they are what nearly every string in
+  // the app is painted with. `--text-faint` alone is used ~70 times — on
+  // counts, timestamps, legends and placeholders, none of which are
+  // decoration — so an unreadable value there is not a small defect, it is
+  // the app reading as a wall of grey.
+  //
+  // Checked against all FOUR surfaces rather than just the card, because
+  // unlike a chip (which always sits on a card) body text is painted on
+  // every elevation level, and the darkest surface is not the tightest
+  // pairing in both themes: on dark the card is worst, on light the sunken
+  // well is. Testing one surface would pass a token that fails on another.
+  it("every text role passes AA (4.5:1) on every surface it is painted on", () => {
+    const failures: string[] = [];
+    for (const surface of ["surface-card", "surface-panel", "surface-app", "surface-sunken"]) {
+      for (const text of ["text-primary", "text-secondary", "text-muted", "text-faint"]) {
+        const ratio = contrastRatio(oklchOf(text, scope), oklchOf(surface, scope));
+        if (ratio < AA_TEXT) failures.push(`${text} on ${surface}: ${ratio.toFixed(2)}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("keeps the four text roles ordered, so the ramp still encodes emphasis", () => {
+    // Fixing a contrast failure by raising a role until it matches its
+    // neighbour would pass the test above while destroying what the ramp is
+    // FOR: four weights of emphasis, not four greys. Each step must stay
+    // strictly quieter than the one before it against the same surface.
+    const card = surfaceCard();
+    const ratios = ["text-primary", "text-secondary", "text-muted", "text-faint"].map((t) =>
+      contrastRatio(oklchOf(t, scope), card),
+    );
+    for (let i = 1; i < ratios.length; i += 1) {
+      expect(
+        ratios[i]! < ratios[i - 1]!,
+        `the text ramp is not strictly decreasing: ${ratios.map((r) => r.toFixed(2)).join(" > ")}`,
+      ).toBe(true);
+    }
+  });
+
   it("every state's -border passes AA for UI (3:1) against --surface-card", () => {
     const failures: string[] = [];
     for (const state of ITEM_STATES) {
