@@ -322,6 +322,61 @@ describeIfDb("delete_item", () => {
       expect(rejection.details?.references?.[0]?.kind).toBe("child");
     });
 
+    // The `items.inbox_project` setting is a reference with no foreign key
+    // behind it: it names a project by TITLE, resolved to an id on every
+    // quick capture. Nothing in the schema records the relationship, so
+    // archiving the inbox looks from the database's side like archiving any
+    // other project, and the consequence surfaces later and elsewhere.
+    //
+    // Fails if the inbox query is dropped from `inboundReferences` — the
+    // inbox would archive silently and later capture would land in a
+    // different project from everything already filed.
+    it("refuses the project the items.inbox_project setting names", async () => {
+      const task = await call<{ parentId: string }>("create_task", {
+        title: "Captured, so the inbox exists",
+        body: "",
+        area: "inbox-archive-ref",
+        originType: "auto",
+        projectId: "inbox",
+      });
+
+      const rejection = await rejectionOf("delete_item", {
+        id: task.parentId,
+        reason: GOOD_REASON,
+      });
+      expect(rejection.code).toBe("guard_rejected");
+      expect(rejection.fields).toContain("acknowledgeReferences");
+      // Named as a setting, not merely counted — a caller has to know WHY
+      // this row is special without a second call.
+      expect(rejection.message).toContain("items.inbox_project");
+      expect(rejection.details?.references?.some((r) => r.kind === "inbox_project_setting")).toBe(
+        true,
+      );
+    });
+
+    // The escape hatch must exist here too: an operator retiring an inbox on
+    // purpose is a legitimate act, and the refusal is there to make it
+    // deliberate rather than to forbid it.
+    //
+    // Fails if the inbox reference is turned into an unconditional refusal
+    // instead of an acknowledgeable one.
+    it("archives the inbox once the caller acknowledges the setting", async () => {
+      const task = await call<{ parentId: string }>("create_task", {
+        title: "Captured, so the inbox exists",
+        body: "",
+        area: "inbox-archive-ack",
+        originType: "auto",
+        projectId: "inbox",
+      });
+
+      const archived = await call<Created>("delete_item", {
+        id: task.parentId,
+        reason: GOOD_REASON,
+        acknowledgeReferences: true,
+      });
+      expect(archived.archivedAt).not.toBeNull();
+    });
+
     // Fails if `acknowledgeReferences` stops being consulted — the refusal
     // would become unconditional and the escape hatch would not exist.
     it("proceeds once the caller acknowledges them", async () => {
