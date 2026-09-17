@@ -96,7 +96,23 @@ const facetsAsList = {
  * per flag: `score run` takes an array of objects and `score accept` an
  * array of strings, under the same flag name.
  */
-const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
+/**
+ * The verb descriptors this module's commands are built from.
+ *
+ * ⚠️ **Declared with `satisfies`, never with a `Record<string, VerbFields>`
+ * annotation.** The annotation widens `keyof typeof VERBS` to `string`,
+ * which silently defeats the `build(verb: keyof typeof VERBS)` constraint
+ * below, because every string satisfies it: `build("clajm")` compiles, and
+ * `VERBS[verb]` is then `undefined` at run time, so the verb's builder
+ * reads no positional and no switch — a field parsed, accepted and quietly
+ * not applied. `satisfies` keeps the keys literal instead, so a mistyped
+ * verb is a compile error naming every valid key, while each value is
+ * still checked against `VerbFields`.
+ *
+ * `tests/cli-verb-keys.test.ts` pins that every key here is reachable from
+ * a command, which is the half a type cannot state.
+ */
+const VERBS = Object.freeze({
   run: {
     positional: { field: "runId", usage: "score run <run-id>", required: true },
     transforms: { facets: facetsAsJson },
@@ -130,7 +146,7 @@ const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
     rename: HYPHENATED,
   },
   interventions: { numbers: { threshold: "threshold" }, rename: HYPHENATED },
-});
+} satisfies Readonly<Record<string, VerbFields>>);
 
 /** One verb's builder, by the key it is listed under above. */
 function build(
@@ -139,7 +155,7 @@ function build(
   rest: readonly string[],
   flags: Parameters<ReturnType<typeof buildVerbInput>>[1],
 ) => InputResult {
-  return buildVerbInput(VERBS[verb]!);
+  return buildVerbInput(VERBS[verb]);
 }
 
 export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([

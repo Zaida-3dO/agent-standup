@@ -38,7 +38,23 @@ import type { CommandSpec, InputResult } from "./commands";
  * their schemas declare `z.coerce.number()`, so the string a command line
  * necessarily produces is converted in the one place every adapter shares.
  */
-const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
+/**
+ * The verb descriptors this module's commands are built from.
+ *
+ * ⚠️ **Declared with `satisfies`, never with a `Record<string, VerbFields>`
+ * annotation.** The annotation widens `keyof typeof VERBS` to `string`,
+ * which silently defeats the `build(verb: keyof typeof VERBS)` constraint
+ * below, because every string satisfies it: `build("clajm")` compiles, and
+ * `VERBS[verb]` is then `undefined` at run time, so the verb's builder
+ * reads no positional and no switch — a field parsed, accepted and quietly
+ * not applied. `satisfies` keeps the keys literal instead, so a mistyped
+ * verb is a compile error naming every valid key, while each value is
+ * still checked against `VerbFields`.
+ *
+ * `tests/cli-verb-keys.test.ts` pins that every key here is reachable from
+ * a command, which is the half a type cannot state.
+ */
+const VERBS = Object.freeze({
   artifact: { itemId: "item artifact <item-id>", session: true },
   "request-review": { itemId: "item request-review <item-id>", session: true },
   artifacts: {
@@ -53,7 +69,7 @@ const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
     numbers: { limit: "limit" },
   },
   "blocked-on-tool": { itemId: "item blocked-on-tool <item-id>", session: true },
-});
+} satisfies Readonly<Record<string, VerbFields>>);
 
 /** One verb's builder, by the key it is listed under above. */
 function build(
@@ -62,7 +78,7 @@ function build(
   rest: readonly string[],
   flags: Parameters<ReturnType<typeof buildVerbInput>>[1],
 ) => InputResult {
-  return buildVerbInput(VERBS[verb]!);
+  return buildVerbInput(VERBS[verb]);
 }
 
 export const ARTIFACT_COMMANDS: readonly CommandSpec[] = Object.freeze([
