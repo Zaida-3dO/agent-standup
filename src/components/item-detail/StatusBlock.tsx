@@ -21,6 +21,7 @@
 // tested at all. The caller — which already knows what "now" means for its
 // screen — passes it in, exactly as `StalenessDot` takes a duration rather
 // than a timestamp.
+import { Pencil } from "lucide-react";
 import { StalenessDot } from "@/components/chips/StalenessDot";
 import { StateChip } from "@/components/chips/StateChip";
 import { PriorityChip } from "@/components/chips/PriorityChip";
@@ -105,11 +106,11 @@ export function StatusBlock({ item, column, status, now, edit = {} }: StatusBloc
             {edit.onStartEdit && (
               <button
                 type="button"
-                className={detailStyles.inlineEditButton}
-                aria-label="Edit priority"
+                className={detailStyles.editAffordance}
+                aria-label={`Priority: ${item.priority} — activate to edit`}
                 onClick={() => edit.onStartEdit?.("priority")}
               >
-                Edit
+                <Pencil size={12} aria-hidden="true" />
               </button>
             )}
           </span>
@@ -125,9 +126,16 @@ export function StatusBlock({ item, column, status, now, edit = {} }: StatusBloc
       </div>
 
       {/* Area — editable here rather than in the header meta row, so both
-          priority and area sit beside the same "Edit" affordance pattern
-          as state/priority above, and the header stays the title and
-          headline's own space. */}
+          priority and area sit beside the same edit affordance as
+          state/priority above, and the header stays the title and
+          headline's own space.
+
+          These two keep a SEPARATE affordance rather than becoming
+          click-the-value like the title and headline, because the value is
+          already a link: the chip navigates to the board filtered by it.
+          One element cannot carry two primary actions, so the pencil is the
+          second one — reduced from the word "Edit" to the same quiet icon
+          used elsewhere, which is what stops it competing with the value. */}
       <div className={styles.row} data-region="area">
         <span className={styles.rowLabel}>Area</span>
         {editingArea ? (
@@ -154,11 +162,11 @@ export function StatusBlock({ item, column, status, now, edit = {} }: StatusBloc
             {edit.onStartEdit && (
               <button
                 type="button"
-                className={detailStyles.inlineEditButton}
-                aria-label="Edit area"
+                className={detailStyles.editAffordance}
+                aria-label={`Area: ${item.area} — activate to edit`}
                 onClick={() => edit.onStartEdit?.("area")}
               >
-                Edit
+                <Pencil size={12} aria-hidden="true" />
               </button>
             )}
           </span>

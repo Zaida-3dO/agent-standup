@@ -222,13 +222,46 @@ describe("ItemDetailView", () => {
   it("renders the item body as markdown rather than as text", () => {
     // Row #120's complaint: a brief's `##` and pipe tables were reaching
     // the screen as literal characters.
+    //
+    // On the `brief` tab, which is where the body lives now — Overview
+    // excerpts it and links here rather than rendering it. The assertion
+    // is unchanged in substance: the body reaches a `Markdown`, not a
+    // text node.
     const body = ["## Heading", "", "| a | b |", "|---|---|", "| 1 | 2 |"].join("\n");
     const element = ItemDetailView({
+      activeTab: "brief",
       loadState: { status: "loaded", detail: detail({ item: detailItem({ body }) }) },
     });
     const rendered = findAllByType(element, Markdown);
     expect(rendered).toHaveLength(1);
     expect((rendered[0]!.props as Record<string, unknown>).source).toBe(body);
+  });
+
+  it("does NOT render the whole body on the Overview tab — it excerpts and signposts", () => {
+    // The progressive-disclosure rule, as an assertion. Overview used to
+    // render the entire brief on arrival: 3321 characters and three code
+    // blocks on a real item, before anything a reader scans for.
+    //
+    // The single-character change this catches: putting `<Markdown
+    // source={item.body} />` back into the Overview panel, which is
+    // exactly how this regresses.
+    const body = ["The opening sentence of the brief.", "", "## Heading", "", "More detail."].join(
+      "\n",
+    );
+    const element = ItemDetailView({
+      loadState: { status: "loaded", detail: detail({ item: detailItem({ body }) }) },
+    });
+    expect(
+      findAllByType(element, Markdown),
+      "Overview is rendering the full body again instead of an excerpt",
+    ).toHaveLength(0);
+    // ...and the excerpt IS there, so the assertion above is about
+    // disclosure rather than about a panel that rendered nothing at all.
+    const text = [...walk(element)]
+      .map((el) => (el.props as { children?: unknown }).children)
+      .filter((c): c is string => typeof c === "string")
+      .join(" ");
+    expect(text).toContain("The opening sentence of the brief.");
   });
 
   it("hands the status block the server's column, not one it recomputed", () => {
@@ -332,7 +365,17 @@ describe("ItemDetailView", () => {
   });
 
   describe("inline edit on title and headline (M10 T10)", () => {
-    it("shows the title as plain text, with an Edit control, when not editing", () => {
+    it("makes the title itself the edit control, keyboard-reachable and named", () => {
+      // The `Edit` chrome is gone: the value IS the control (see
+      // docs/DESIGN-LANGUAGE.md §6). Three things have to remain true for
+      // that to be an improvement rather than a regression, and all three
+      // are asserted here because each fails independently:
+      //
+      //   1. the title still renders;
+      //   2. it is a real <button>, so Tab reaches it and BOTH Enter and
+      //      Space activate it — a div with onClick satisfies neither;
+      //   3. it has an accessible name saying what will be edited, since
+      //      the bare value does not say what it is.
       const element = ItemDetailView({
         loadState: { status: "loaded", detail: detail({ item: detailItem({ title: "A title" }) }) },
         edit: { onStartEdit: () => {} },
@@ -340,7 +383,27 @@ describe("ItemDetailView", () => {
       expect(textOf(element)).toContain("A title");
       const buttons = [...walk(element)].filter((el) => el.type === "button");
       const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
-      expect(labels).toContain("Edit title");
+      const titleControl = labels.find((l) => l?.startsWith("Title:"));
+      expect(
+        titleControl,
+        "the title is no longer an accessibly-named control — a keyboard or screen-reader user cannot edit it",
+      ).toBeDefined();
+      expect(titleControl).toContain("A title");
+      expect(titleControl).toContain("edit");
+    });
+
+    it("renders the title as plain text, not a button, when editing is not offered", () => {
+      // A control that does nothing is worse than no control. A read-only
+      // caller (one that wires no `onStartEdit`) must not get a focusable
+      // button that swallows a Tab stop and then ignores the press.
+      const element = ItemDetailView({
+        loadState: { status: "loaded", detail: detail({ item: detailItem({ title: "A title" }) }) },
+      });
+      const labels = [...walk(element)]
+        .filter((el) => el.type === "button")
+        .map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
+      expect(labels.some((l) => l?.startsWith("Title:"))).toBe(false);
+      expect(textOf(element)).toContain("A title");
     });
 
     it("hands InlineEditField the title's own draft while title is the editing field", () => {

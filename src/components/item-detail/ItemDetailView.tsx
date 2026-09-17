@@ -26,6 +26,7 @@
 // why it is empty — "no summary, an item gets one when it is completed" —
 // rather than rendering a blank panel, which a reader cannot distinguish
 // from a section that failed to load.
+import { Pencil } from "lucide-react";
 import type { ReactNode } from "react";
 import type { DetailLoadState } from "@/lib/item-detail/state";
 import type { DetailHistoryEntry } from "@/lib/item-detail/types";
@@ -38,10 +39,11 @@ import {
   waitingReason,
 } from "@/lib/item-detail/view";
 import { primaryLine, hasDistinctHeadline } from "@/lib/item-headline-display";
-import { DEFAULT_TAB, type DetailTab } from "@/lib/item-detail/tabs";
+import { DEFAULT_TAB, TAB_LABELS, hashForTab, type DetailTab } from "@/lib/item-detail/tabs";
 import type { ItemEditProps } from "@/lib/item-detail/edit-state";
 import type { EventType } from "@/lib/events";
 import { boardLinkFor } from "@/lib/item-detail/board-link";
+import { bodyExcerpt } from "@/lib/item-detail/excerpt";
 import { SubtaskTree } from "./SubtaskTree";
 import { HistoryList } from "./HistoryList";
 import { PlanPanel } from "./PlanPanel";
@@ -236,6 +238,10 @@ export function ItemDetailView({
   const status = statusSummary(loadState.detail, now);
   const reason = waitingReason(item);
   const verdict = latestVerdict(artifacts);
+  // The prose opening of the brief, for Overview's summary. Computed here
+  // rather than in the panel so it is a plain value the DOM-free component
+  // tests can assert against.
+  const excerpt = bodyExcerpt(item.body);
   const planArtifacts = artifactsForTab(artifacts, "plan");
   const reviewArtifacts = artifactsForTab(artifacts, "reviews");
   // MILESTONES.md #131: the header leads with `headline` where one exists,
@@ -297,16 +303,22 @@ export function ItemDetailView({
           </div>
         ) : (
           <h1 className={styles.title}>
-            {primaryLine(item)}
-            {edit.onStartEdit && (
+            {/* The title is its own edit control, like every other
+                editable value — see `InlineEditField`'s header and
+                docs/DESIGN-LANGUAGE.md §6. The button carries no visible
+                word, so the heading still reads as a heading. */}
+            {edit.onStartEdit ? (
               <button
                 type="button"
-                className={styles.inlineEditButton}
-                aria-label="Edit title"
+                className={styles.editable}
+                aria-label={`Title: ${primaryLine(item)} — activate to edit`}
                 onClick={() => edit.onStartEdit?.("title")}
               >
-                Edit
+                <span>{primaryLine(item)}</span>
+                <Pencil className={styles.editableIcon} size={14} aria-hidden="true" />
               </button>
+            ) : (
+              primaryLine(item)
             )}
           </h1>
         )}
@@ -319,8 +331,15 @@ export function ItemDetailView({
 
         {/* The headline — the one-line BLUF (MILESTONES.md #107) — gets
             its own inline edit row rather than sharing the title's, since
-            the two are independent fields with independent saves. */}
-        <div className={styles.meta} data-field="headline">
+            the two are independent fields with independent saves.
+
+            `.headline`, NOT `.meta`. It was rendering in the metadata row's
+            treatment: 12.8px at L=62.8, measured SMALLER and FAINTER than
+            the 13px/L=77.9 body text it summarises, and sandwiched between
+            two Edit buttons. It is the thing a reader most wants, so it now
+            leads the header at the body step in primary text. See
+            docs/DESIGN-LANGUAGE.md §8 for the ranking of the three fields. */}
+        <div className={styles.headline} data-field="headline">
           <InlineEditField
             label="Headline"
             value={item.headline}
@@ -479,12 +498,76 @@ export function ItemDetailView({
         }}
       />
 
-      {/* Overview — the item's own brief. This is where the markdown
-          complaint actually bites: every imported item carries a full
-          brief, and it is the longest markdown on the page. */}
+      {/* ── Overview: a summary and a set of signposts ───────────────────
+          It used to render `item.body` in full — every code block, every
+          argument — on arrival. Measured on a real item: 3321 characters
+          and three code blocks, a 1289px page, before anything a reader
+          scans for.
+
+          A landing page answers "what is this and where is the rest of
+          it". So: the opening prose of the brief, then a row of counted
+          links to the tabs that hold the detail. The full brief has its
+          own tab now and is one click away.
+
+          The counts are what make the disclosure honest — "Reviews 0" and
+          "Reviews 3" are different invitations, and hiding content behind
+          a tab that does not say how much is there teaches a reader to
+          distrust the tabs. */}
       {panel(
         "overview",
         activeTab === "overview",
+        <div className={styles.overview}>
+          {item.body === "" ? (
+            <p className={styles.empty}>This item has no description.</p>
+          ) : (
+            <>
+              {/* `excerpt` can be empty for a brief that is nothing but a
+                  code block — genuinely no prose to show. The link below
+                  still gets the reader to it, so the panel is never a dead
+                  end. */}
+              {excerpt !== "" && <p className={styles.overviewExcerpt}>{excerpt}</p>}
+              <a className={styles.overviewMore} href={hashForTab("brief")}>
+                {excerpt === "" ? "Read the brief" : "Read the full brief"}
+              </a>
+            </>
+          )}
+
+          <ul className={styles.signposts}>
+            {(
+              [
+                ["plan", planArtifacts.length, "plan artifact"],
+                ["reviews", reviewArtifacts.length, "review"],
+                ["subtasks", subtasks.length, "subtask"],
+                ["activity", history.length, "event"],
+              ] as const
+            ).map(([tab, count, noun]) => (
+              <li key={tab}>
+                <a className={styles.signpost} href={hashForTab(tab)} data-signpost={tab}>
+                  <span className={styles.signpostLabel}>{TAB_LABELS[tab]}</span>
+                  {/* The count is the point of the signpost, so it is the
+                      loud half. Tabular so a two-digit count does not
+                      shift the label beside it. */}
+                  <span className={`${styles.signpostCount} tabular`} data-empty={count === 0}>
+                    {count}
+                  </span>
+                  {/* Said in words for a screen reader, which would
+                      otherwise hear "Plan 3" and have to infer the noun. */}
+                  <span className={styles.visuallyHidden}>
+                    {count} {noun}
+                    {count === 1 ? "" : "s"}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>,
+      )}
+
+      {/* The brief in full, on its own tab — the content Overview used to
+          dump. Unchanged in every way except where it is painted. */}
+      {panel(
+        "brief",
+        activeTab === "brief",
         item.body === "" ? (
           <p className={styles.empty}>This item has no description.</p>
         ) : (

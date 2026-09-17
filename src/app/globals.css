@@ -538,6 +538,18 @@
   --radius-md: 6px;
   --radius-lg: 12px;
   --radius-full: 999px;
+
+  /* The maximum line length for PROSE — a brief, a summary, a finding.
+     Not for tables, code or any layout measured in columns.
+
+     68ch, which lands in the 45–75 characters typography has long treated
+     as the comfortable band. The failure it prevents is specific: a brief
+     rendered across a wide panel runs ~180 characters a line, and past
+     roughly 90 the eye stops reliably finding the start of the next line
+     and re-reads one it has already read. `ch` rather than a pixel width
+     so the measure follows the font size instead of silently widening in
+     characters whenever the text gets smaller. */
+  --measure-prose: 68ch;
 }
 
 /* Exposes the tokens to the utility generator, so `bg-surface-card` and

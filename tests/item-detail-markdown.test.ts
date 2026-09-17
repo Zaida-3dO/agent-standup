@@ -349,8 +349,14 @@ describe("Markdown — what it renders", () => {
 
 describe("the tab model", () => {
   it("has the tabs the page is built from, in order", () => {
+    // `brief` sits second, directly after the summary that links to it:
+    // Overview no longer renders the body, it excerpts it and signposts
+    // here. Order is asserted, not just membership, because the strip is
+    // rendered by mapping this list and the sequence is what a reader
+    // scans.
     expect([...TABS]).toEqual([
       "overview",
+      "brief",
       "plan",
       "reviews",
       "subtasks",

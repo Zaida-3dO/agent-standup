@@ -15,6 +15,7 @@
 // Title, headline and area stay free text — area is open-ended (an item's
 // area is whichever string the caller used at creation, not a fixed list
 // this component can enumerate) and a select would need to fetch one.
+import { Pencil } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { Priority } from "@/lib/design/tokens";
 import { PRIORITIES } from "@/lib/design/tokens";
@@ -66,21 +67,48 @@ export function InlineEditField({
   advice = null,
 }: InlineEditFieldProps) {
   if (!editing) {
+    const isEmpty = value === null || value === "";
+    const shown = isEmpty ? placeholderFor(kind, label) : value;
+
+    // Not editable: plain text, with no control wrapped around it. A
+    // button that does nothing is worse than no button.
+    if (!onStartEdit) {
+      return (
+        <span className={styles.inlineEditView} data-field={label.toLowerCase()}>
+          <span className={isEmpty ? styles.empty : undefined}>{shown}</span>
+        </span>
+      );
+    }
+
+    // ── The value IS the control ──────────────────────────────────────
+    // Previously this rendered the value plus a permanent `Edit` button
+    // beside it, repeated for every field — chrome competing with the
+    // content, and four of them on one header.
+    //
+    // A real `<button>`, not a click handler on a span: that is what makes
+    // it reachable by Tab, activated by BOTH Enter and Space, and
+    // announced as something that can be operated. The affordance is drawn
+    // on hover and on focus (never hover alone — see
+    // docs/DESIGN-LANGUAGE.md §6), so a keyboard reader gets the same
+    // signal a mouse reader does.
+    //
+    // The accessible name says what editing this will change, because the
+    // value alone ("P2") does not say what it IS, and a screen-reader user
+    // tabbing the header would otherwise hear a list of bare values.
     return (
       <span className={styles.inlineEditView} data-field={label.toLowerCase()}>
-        <span className={value === null || value === "" ? styles.empty : undefined}>
-          {value === null || value === "" ? placeholderFor(kind, label) : value}
-        </span>
-        {onStartEdit && (
-          <button
-            type="button"
-            className={styles.inlineEditButton}
-            aria-label={`Edit ${label.toLowerCase()}`}
-            onClick={onStartEdit}
-          >
-            Edit
-          </button>
-        )}
+        <button
+          type="button"
+          className={styles.editable}
+          aria-label={`${label}: ${isEmpty ? "empty" : value} — activate to edit`}
+          onClick={onStartEdit}
+        >
+          <span className={isEmpty ? styles.empty : undefined}>{shown}</span>
+          {/* Decorative: the accessible name above already carries the
+              affordance, so announcing a pencil as well would be the same
+              fact twice. */}
+          <Pencil className={styles.editableIcon} size={12} aria-hidden="true" />
+        </button>
       </span>
     );
   }

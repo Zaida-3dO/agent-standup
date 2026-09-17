@@ -95,6 +95,30 @@
   font-size: var(--text-xs);
 }
 
+/* ── The headline, promoted ──────────────────────────────────────────────
+   It used to render with `.meta` above — the same treatment as a timestamp
+   — which measured 12.8px at L=62.8 against body text at 13px/L=77.9. The
+   BLUF was literally the smallest and faintest text on the page, fainter
+   than the brief it summarises. That is the inverted hierarchy, and this
+   is the fix: the reader's first line, at the body step, in primary text,
+   capped to a readable measure.
+
+   `--text-sm` rather than something larger: the `<h1>` above is already
+   `--text-lg`, and two headline-weight lines stacked would restore the
+   wall this is undoing. Rank comes from the CONTRAST with `.sourceTitle`
+   beneath it, not from absolute size. */
+.headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--measure-prose);
+  margin-bottom: var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
 .reason {
   margin: 0.5rem 0 0;
   color: var(--state-blocked-fg);
@@ -133,6 +157,120 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
+}
+
+/* ── The editable value ──────────────────────────────────────────────────
+   A value that can be edited IS its own control — see
+   docs/DESIGN-LANGUAGE.md §6. This replaced a permanent `Edit` button
+   beside every field (four on one header), which competed with the content
+   it was labelling.
+
+   It inherits font and colour so it reads as the text it replaces rather
+   than as a button sitting in the prose. The affordance is a quiet
+   background and a pencil that appear on hover AND on focus — never hover
+   alone, which would make the whole feature invisible to a keyboard. */
+.editable {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: -2px calc(-1 * var(--space-1));
+  padding: 2px var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.editable:hover {
+  border-color: var(--border-default);
+  background: var(--surface-raised);
+}
+
+/* Focus gets the border AND the app-wide ring from `globals.css` §9 — the
+   ring alone is the generic "you are here", while the border is the
+   specific "this is editable", and a keyboard reader should get both. */
+.editable:focus-visible {
+  border-color: var(--border-control);
+  background: var(--surface-raised);
+}
+
+/* The pencil is hidden until the value is hovered or focused, so a header
+   at rest is content and not a column of icons. `visibility` rather than
+   `display` keeps it in the layout, so revealing it does not shift the
+   text beside it. */
+.editableIcon {
+  flex: none;
+  visibility: hidden;
+  color: var(--text-faint);
+}
+
+.editable:hover .editableIcon,
+.editable:focus-visible .editableIcon {
+  visibility: visible;
+}
+
+/* Touch has no hover, so the affordance would never appear. Show it
+   always below the pointer breakpoint — a permanent 12px pencil is a much
+   smaller cost than an editable field a touch reader cannot discover. */
+@media (hover: none) {
+  .editableIcon {
+    visibility: visible;
+  }
+}
+
+/* The secondary edit affordance, for a value whose PRIMARY action is
+   already something else — priority and area are links to a filtered
+   board, so click-the-value is taken and the pencil is the second action.
+   The word "Edit" reduced to a 12px icon: same function, a fraction of the
+   visual weight, and it no longer competes with the chip it annotates.
+
+   Quiet at rest and revealed on hover/focus of the row, but ALWAYS visible
+   once focused itself — a keyboard reader must see what they have landed
+   on. It keeps a 24px box so the target stays clickable at icon size. */
+.editAffordance {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Revealed by hovering the VALUE GROUP it belongs to, and always once it
+   is focused itself.
+
+   Scoped to `.inlineEditView` — the wrapper `StatusBlock` puts around both
+   of these values — and deliberately NOT to a `.row` ancestor: StatusBlock
+   renders its rows from its OWN module, so a `.row` written here is a
+   different generated class name and would silently never match. That is
+   the CSS-modules trap this comment exists to stop the next change
+   walking into. */
+.inlineEditView:hover .editAffordance,
+.inlineEditView:focus-within .editAffordance,
+.editAffordance:focus-visible {
+  opacity: 1;
+}
+
+.editAffordance:hover {
+  border-color: var(--border-default);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+/* No hover on touch, so the affordance would never appear at all. */
+@media (hover: none) {
+  .editAffordance {
+    opacity: 1;
+  }
 }
 
 .inlineEditButton {
@@ -549,6 +687,106 @@
    would indent the whole page relative to the header above it. */
 .panel {
   min-width: 0;
+}
+
+/* ── Overview: summary and signposts ─────────────────────────────────────
+   The panel that used to render the whole brief. See `ItemDetailView.tsx`
+   for the measurements; this is the layout for what replaced it. */
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* The excerpt is PROSE and is the thing a reader came for, so it takes the
+   body step at full primary colour and is capped to a comfortable measure.
+   Line length is the fix that costs nothing: the brief previously ran the
+   full width of the panel, which at 1400px is ~180 characters a line — far
+   past the point the eye reliably finds the start of the next one. */
+.overviewExcerpt {
+  max-width: var(--measure-prose);
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+.overviewMore {
+  align-self: flex-start;
+  color: var(--accent-fg-on-surface, var(--state-in_review-fg));
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.overviewMore:hover,
+.overviewMore:focus-visible {
+  text-decoration: underline;
+}
+
+/* The signpost row — one link per tab that holds detail, each carrying its
+   own count. A grid rather than a flex row so the cards keep equal widths
+   and the numbers line up across them. */
+.signposts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.signpost {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.signpost:hover {
+  border-color: var(--border-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.signpostLabel {
+  font-size: var(--text-xs);
+}
+
+/* The count is the reason the signpost exists, so it is the loud half —
+   the tab label is already in the strip above. */
+.signpostCount {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+/* An empty section recedes rather than disappearing. It still has to be
+   reachable — "no reviews yet" is an answer — but it must not compete with
+   a section that has something in it. */
+.signpostCount[data-empty="true"] {
+  color: var(--text-faint);
+  font-weight: var(--weight-normal);
+}
+
+/* Same idiom as elsewhere in the app — `clip-path`, never `display: none`,
+   which would drop it from the accessibility tree it exists to serve. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* A section is the only thing in its panel now, so the margin that

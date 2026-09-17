@@ -555,20 +555,38 @@ describe("StatusBlock — chip links back to a filtered board (M10 T10)", () => 
 });
 
 describe("StatusBlock — priority and area inline edit (M10 T10)", () => {
-  it("shows an Edit control for priority and area when onStartEdit is wired", () => {
+  it("offers an accessibly-named edit control for priority and area when onStartEdit is wired", () => {
+    // The visible word "Edit" is gone — these are icon-only buttons now
+    // (docs/DESIGN-LANGUAGE.md §6), which makes the accessible NAME the
+    // only thing a screen-reader user has. So the name is what this
+    // asserts, and it must carry the field and its current value: an
+    // unnamed icon button is an unusable control, not a tidier one.
     const element = render({ edit: { onStartEdit: () => {} } });
     const buttons = [...walk(element)].filter((el) => el.type === "button");
     const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
-    expect(labels).toContain("Edit priority");
-    expect(labels).toContain("Edit area");
+    const priority = labels.find((l) => l?.startsWith("Priority:"));
+    const area = labels.find((l) => l?.startsWith("Area:"));
+    expect(priority, "the priority edit control has no accessible name").toBeDefined();
+    expect(area, "the area edit control has no accessible name").toBeDefined();
+    // The name says what activating it does, not just what the value is.
+    expect(priority).toContain("edit");
+    expect(area).toContain("edit");
   });
 
-  it("shows no Edit control when onStartEdit is absent", () => {
-    const element = render({});
-    const buttons = [...walk(element)].filter((el) => el.type === "button");
-    const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
-    expect(labels).not.toContain("Edit priority");
-    expect(labels).not.toContain("Edit area");
+  it("shows no edit control at all when onStartEdit is absent", () => {
+    // Asserted by COUNTING the controls that survive, not by checking that
+    // two particular strings are missing: a label-absence assertion passes
+    // for free the moment the labels are reworded, which is exactly what
+    // just happened to this suite's other half.
+    const wired = render({ edit: { onStartEdit: () => {} } });
+    const bare = render({});
+    const editControls = (el: ReturnType<typeof render>) =>
+      [...walk(el)]
+        .filter((n) => n.type === "button")
+        .map((b) => (b.props as { "aria-label"?: string })["aria-label"])
+        .filter((l) => l?.startsWith("Priority:") || l?.startsWith("Area:"));
+    expect(editControls(wired)).toHaveLength(2);
+    expect(editControls(bare)).toHaveLength(0);
   });
 
   it("hands InlineEditField the priority kind, editing, and the draft while priority is the editing field", () => {
