@@ -1208,6 +1208,45 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
       "is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_body",
+    reason:
+      'Folded into the single `read_item` tool as action body. The three bounded reads of one item are one capability seen three times — what a caller reaches for when the whole-item read will not fit, each returning a different unbounded axis of the same item in windows — so three tools spend the per-session tool-list budget three times to describe one decision. The folded tool dispatches to this operation, so its character-offset paging and its own size refusal reach the caller unchanged. **Its reachability is the point of the waiver, not a casualty of it**: the response-size guard names this read as the remedy when a body will not fit, and the advice is re-spelled to `read_item` with `action: "body"` in the same change, because `advice.ts` fails the build on advice naming a tool the caller cannot call. Still on HTTP and the command line. It runs no state transition, so no registered guard can reject it and §22\'s bound on waivers is satisfied.',
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_body",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_history",
+    reason:
+      "Folded into the single `read_item` tool as action history. Same grouping as action body — one item read in windows, a different unbounded axis. **This one was un-waived once before and for a reason that still holds**: it is the only call returning the note and checkpoint TEXT of an arbitrary item, so when the response-size guard refuses the whole-item read, an agent with no route here is stranded — two sessions were, one tried six routes. What that episode established is that the REMEDY must stay reachable, not that this NAME must stay unwaived; folded into an exposed tool it is still reachable, and the guard's advice moves to `read_item` with `action: \"history\"` and `full: true` in the same change. Still on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_history",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "get_item_artifacts",
+    reason:
+      "Folded into the single `read_item` tool as action artifacts. Same grouping as the other two, and the other half of the stranding case `get_item_history` records: on a long-lived item the artifacts are frequently the whole reason the response did not fit, and this is what reaches them — by `kind`, by `artifactId`, and by page. Reachable through the fold, with the guard's advice re-spelled to `read_item` with `action: \"artifacts\"` in the same change. Still on HTTP and the command line. It runs no state transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "get_item_artifacts",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

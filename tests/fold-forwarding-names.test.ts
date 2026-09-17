@@ -202,6 +202,22 @@ const FORWARDED: readonly {
     input: { itemId: "item-1", loopId: "loop-1", reason: "a duplicate of an earlier loop" },
   },
 
+  // ── read_item ────────────────────────────────────────────────────────
+  //
+  // All three take `id`, never `itemId`, and all three are `.strict()` — so
+  // the fold forwarding the write tools' spelling of the same concept would
+  // be refused on every call. Each entry carries every field its action can
+  // forward, so a rename on either side fails here.
+  { operation: "get_item_body", input: { id: "item-1", offset: 10, limit: 500 } },
+  {
+    operation: "get_item_history",
+    input: { id: "item-1", full: true, limit: 20, cursor: "42" },
+  },
+  {
+    operation: "get_item_artifacts",
+    input: { id: "item-1", artifactId: "a-1", kind: "plan", full: true, limit: 10, cursor: "7" },
+  },
+
   // ── get_item ─────────────────────────────────────────────────────────
   //
   // The depth fold. `get_item` forwards to `get_item_detail` only at
@@ -455,6 +471,23 @@ const OBSERVED: readonly ObservedCase[] = [
     tool: "session",
     input: { action: "shape", sessionId: "sess-1" },
     delegate: "get_session_shape",
+  },
+
+  // ── read_item ────────────────────────────────────────────────────────
+  {
+    tool: "read_item",
+    input: { action: "body", id: "item-1", offset: 10 },
+    delegate: "get_item_body",
+  },
+  {
+    tool: "read_item",
+    input: { action: "history", id: "item-1", full: true },
+    delegate: "get_item_history",
+  },
+  {
+    tool: "read_item",
+    input: { action: "artifacts", id: "item-1", kind: "plan" },
+    delegate: "get_item_artifacts",
   },
 
   // ── get_item ─────────────────────────────────────────────────────────

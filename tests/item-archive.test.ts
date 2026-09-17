@@ -1326,6 +1326,17 @@ describeIfDb("delete_item", () => {
         // items, so there is nothing here for it to leak *into* — the id
         // has to be known already.
         "get_item_history",
+        // The tool the three by-id reads below are reached through, and
+        // exempt for exactly the union of their reasons rather than for a
+        // reason of its own. `read_item` adds no query: every action
+        // dispatches to one of those three operations in the same context,
+        // so whatever each of them does with an archived item is what this
+        // does. Listing it here rather than sweeping it is the honest
+        // entry — a sweep of the fold would be a second, weaker test of
+        // three operations already argued individually below, and the
+        // `action` it would have to be given would decide which one it
+        // actually checked.
+        "read_item",
         // Reads one item's `body` **by id**, paged by character offset — the
         // same shape and the same reason as `get_item_history` immediately
         // above: reaching an archived item by its id still resolves, this

@@ -166,7 +166,7 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // "detail"` usually wants the second, and telling them only about the
   // first sends them further than they needed to go.
   get_item:
-    '`full: false` for the slim record, `full: "item"` for the row without its detail payload, a smaller `artifactLimit` or `historyLimit`, or `get_item_body` to read the body in windows',
+    '`full: false` for the slim record, `full: "item"` for the row without its detail payload, a smaller `artifactLimit` or `historyLimit`, or `read_item` with `action: "body"` to read the body in windows',
   // **Both of these used to name a call that does not return loops, and
   // that is the correction.** `get_item_detail` suggested `get_item {full:
   // false}` and `orientation` suggested `get_item`; neither returns loops at
@@ -225,7 +225,7 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // both failed the build as `parameter` defects). The check is doing its
   // job in each case; the fix is the ordering, not an exemption.
   get_item_detail:
-    "a smaller `artifactLimit` or `historyLimit`, `get_item_artifacts` to read this item's artifacts (`kind` to filter, `artifactId` for one in full), `get_item_history` with `full: true` for its notes and checkpoints, `loop` with `action: \"list\"` for this item's loops, `get_item_body` to read a large body in windows, or `get_item` with `full: false` for the slim record",
+    'a smaller `artifactLimit` or `historyLimit`, `read_item` with `action: "artifacts"` to read this item\'s artifacts (`kind` to filter, `artifactId` for one in full), `read_item` with `action: "history"` and `full: true` for its notes and checkpoints, `loop` with `action: "list"` for this item\'s loops, `read_item` with `action: "body"` to read a large body in windows, or `get_item` with `full: false` for the slim record',
   // **Now names `limit`, which is the parameter that actually bounds this
   // response.** The advice here predated `orientation` gaining a working
   // `limit`, so it could only redirect a caller to a different call — the

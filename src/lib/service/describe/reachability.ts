@@ -94,6 +94,9 @@ export const FOLDED_INTO: ReadonlyMap<string, string> = new Map([
   ["register_session", "session"],
   ["get_session_shape", "session"],
   ["get_item_detail", "get_item"],
+  ["get_item_body", "read_item"],
+  ["get_item_history", "read_item"],
+  ["get_item_artifacts", "read_item"],
 ]);
 
 /**

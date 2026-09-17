@@ -117,6 +117,12 @@ import { getItemHistory } from "./operations/get-item-history";
 // from. Paged by character offset rather than a keyset, for the reason its
 // own header gives — `body` is one scalar on one row, not a growing set.
 import { getItemBody } from "./operations/get-item-body";
+// The three bounded reads of one item behind one tool, because they are one
+// capability seen three times: what a caller reaches for when the whole-item
+// read will not fit, each returning a different unbounded axis of the same
+// item in windows. Waived off MCP as three names and reachable as one plus
+// an action (`@/lib/adapters/waivers`).
+import { readItem } from "./operations/read-item";
 // "What needs this person", in one call (T24) — the union three separate
 // `list_items` reads used to assemble in the browser.
 import { getNeedsYou } from "./operations/get-needs-you";
@@ -322,6 +328,7 @@ export const OPERATION_REGISTRY = {
   [getItemHistory.name]: getItemHistory,
   [getItemArtifacts.name]: getItemArtifacts,
   [getItemBody.name]: getItemBody,
+  [readItem.name]: readItem,
   [getNeedsYou.name]: getNeedsYou,
   [getStaleCandidates.name]: getStaleCandidates,
   [getSettings.name]: getSettings,

@@ -473,14 +473,22 @@ describe("advice naming a tool the caller cannot call", () => {
   });
 
   it("catches the `loop_list` remedy the loop fold stranded (the instance that opened the row)", () => {
-    // Verbatim from `response-size.ts` before this fix.
+    // The wording this class was written to catch, reintroduced as a
+    // fixture. **`loop_list` is the only folded name in it deliberately.**
+    // The sentence as originally written also named `get_item_body`, which
+    // is itself folded now — so the fixture would raise two defects and
+    // this assertion would fail for a reason that has nothing to do with
+    // the case it is about. Isolating the subject is what keeps the count
+    // meaningful; `get_item` is named instead, which is on MCP and must
+    // NOT be flagged, so the fixture also proves the detector is
+    // discriminating rather than flagging every tool it sees.
     const defects = findAdviceDefects([
       {
         operation: "get_item_detail",
         source: "reintroduced",
         text:
-          "`loop_list` for this item's loops, `get_item_body` to read a large body in " +
-          "windows, or `get_item` with `full: false` for the slim record",
+          "`loop_list` for this item's loops, or `get_item` with `full: false` for the " +
+          "slim record",
       },
     ]).filter((defect) => defect.kind === "unreachable");
     expect(defects).toHaveLength(1);

@@ -22,6 +22,7 @@ import { PROJECT_ACTIONS, PROJECT_ACTION_FIELDS } from "../operations/project";
 import { SESSION_ACTIONS, SESSION_ACTION_FIELDS } from "../operations/session";
 import { CREATE_WORK_TYPES } from "../operations/create-work";
 import { ITEM_DEPTHS } from "../operations/get-item";
+import { READ_ITEM_ACTIONS, READ_ITEM_ACTION_FIELDS } from "../operations/read-item";
 
 /** One folded tool's verbs, and what each of them cannot run without. */
 export interface FoldActions {
@@ -109,6 +110,15 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       // are the reverse case: accepted only at `detail`, and refused by
       // name elsewhere, which is a contract rule rather than a requirement.
       requiredByAction: Object.freeze({ summary: [], item: [], detail: [] }),
+    },
+  ],
+  [
+    "read_item",
+    {
+      actions: [...READ_ITEM_ACTIONS],
+      requiredByAction: Object.fromEntries(
+        Object.entries(READ_ITEM_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
+      ),
     },
   ],
   [

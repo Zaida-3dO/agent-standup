@@ -344,26 +344,39 @@ describe("the waiver list", () => {
 
     const detailAdvice = narrowerCallFor("get_item_detail");
     expect(detailAdvice).toBeDefined();
-    // The two remedies that reach the data. Before this change the advice
-    // named neither, and every route it did name answered a different
-    // question than the one the refused caller had asked.
-    expect(detailAdvice).toContain("get_item_artifacts");
-    expect(detailAdvice).toContain("get_item_history");
+    // The two remedies that reach the data, named in the spelling a caller
+    // holds. Every route the advice names other than these answers a
+    // different question than the one the refused caller asked: the loops,
+    // the body and the slim record each shrink a different part of the
+    // payload and none of them returns an artifact or a note body at all.
+    //
+    // **The tools are named by their folded spelling, which is the same
+    // assertion and not a weaker one.** What has to be true is that a
+    // refused caller can follow the advice; the advice has to name a call
+    // they can make, and after the fold that call is `read_item` with an
+    // action. Asserting the pre-fold names here would pin the advice to
+    // tools no MCP caller can call, which is the defect this test exists to
+    // prevent rather than a stricter form of preventing it.
+    expect(detailAdvice).toContain('read_item` with `action: "artifacts"');
+    expect(detailAdvice).toContain('read_item` with `action: "history"');
     // Named with the parameter that makes each useful, not by name alone:
-    // `get_item_history` returns a slim ledger without `full`, which is
-    // not the note text the caller was refused while reading.
+    // the history read returns a slim ledger without `full`, which is not
+    // the note text the caller was refused while reading.
     expect(detailAdvice).toContain("full: true");
-    expect(collapsed).toContain("get_item_artifacts");
+    expect(collapsed).toContain('action: \"artifacts\"');
 
-    // And both are genuinely callable, which is the half a string
-    // assertion cannot see. This is the same coupling `advice.ts`'s
-    // `unreachable` check enforces at build time, asserted here against
-    // the waiver table directly so the reason survives even if that
-    // checker is ever relaxed.
+    // And the capability is genuinely reachable, which is the half a string
+    // assertion cannot see. Asserted as REACHABILITY rather than as
+    // non-waiver, for the reason `reachableOnMcp`'s header gives: what the
+    // two stranded sessions lacked was a route to their item's notes and
+    // artifacts, and a route through a fold is a route. The tool they are
+    // reached through is asserted callable too, so this cannot pass by the
+    // fold target itself having gone off the surface.
     for (const operation of ["get_item_artifacts", "get_item_history"]) {
-      expect(isWaived("mcp_http", operation)).toBe(false);
-      expect(isWaived("mcp_stdio", operation)).toBe(false);
+      expect(reachableOnMcp(operation), `${operation} is unreachable on MCP`).toBe(true);
     }
+    expect(isWaived("mcp_http", "read_item")).toBe(false);
+    expect(isWaived("mcp_stdio", "read_item")).toBe(false);
   });
 
   it("keeps the move remedy reachable for the guard that actually prescribes it", () => {
