@@ -562,12 +562,25 @@ const OBSERVED: readonly ObservedCase[] = [
   // ── record ────────────────────────────────────────────────
   {
     tool: "record",
-    input: { action: "checkpoint", itemId: "item-1", sessionId: "sess-1", body: "a checkpoint" },
+    input: {
+      action: "checkpoint",
+      itemId: "item-1",
+      sessionId: "sess-1",
+      body: "a checkpoint",
+      headline: "a headline",
+    },
     delegate: "checkpoint",
   },
   {
     tool: "record",
-    input: { action: "note", itemId: "item-1", body: "a remark" },
+    input: {
+      action: "note",
+      itemId: "item-1",
+      body: "a remark",
+      actorType: "agent",
+      actorId: "agent-a",
+      sessionId: "sess-1",
+    },
     delegate: "note",
   },
   {
@@ -578,6 +591,21 @@ const OBSERVED: readonly ObservedCase[] = [
       artifactKind: "plan",
       createdByType: "agent",
       createdById: "agent-a",
+      // Every OPTIONAL field this action can forward, present deliberately.
+      // The arrival check below only sees fields the fixture supplies, so a
+      // minimal fixture makes it vacuous for exactly the fields most likely
+      // to be dropped — `findings` above all, which carries the substance
+      // of every review recorded through this fold.
+      body: "the plan",
+      verdict: "lgtm",
+      reviewRound: 2,
+      commitSha: "abcdef1",
+      supersedesSha: "0123456",
+      ref: "some-branch",
+      browserSession: "sess-b",
+      followUpItemId: "item-2",
+      findings: [{ text: "a finding", severity: "low" }],
+      sessionId: "sess-1",
     },
     delegate: "record_artifact",
   },
@@ -588,6 +616,9 @@ const OBSERVED: readonly ObservedCase[] = [
       itemId: "item-1",
       tool: "browser_capture",
       needed: "screenshot the header",
+      reason: "not_granted",
+      refusal: "the tool was not in the allowlist",
+      sessionId: "sess-1",
     },
     delegate: "report_blocked_on_tool",
   },
@@ -601,6 +632,20 @@ const OBSERVED: readonly ObservedCase[] = [
       holderType: "agent",
       holderId: "builder-1",
       sessionId: "sess-1",
+      // Every optional field, and `rootSessionId` above all: omitting it
+      // silently defaults to this session and declares a second crew, which
+      // is the documented trap this fold's own contract rule warns about.
+      // A fold that accepted it and dropped it would reinstate that trap
+      // for a caller who had correctly avoided it.
+      rootSessionId: "sess-0",
+      parentSessionId: "sess-0",
+      roleCustom: "a custom role",
+      machine: "calliope",
+      pid: 1234,
+      branch: "main",
+      worktree: "/tmp/wt",
+      model: "opus",
+      effort: "high",
     },
     delegate: "claim",
   },
@@ -696,6 +741,38 @@ interface FoldOperation {
   readonly handler: (ctx: ServiceContext, input: never) => Promise<unknown>;
 }
 
+/**
+ * Fields a fold deliberately forwards under a different name.
+ *
+ * **Declared per tool and per field rather than as a blanket exemption**,
+ * so the arrival check below stays a real assertion. A fold that renames a
+ * field is doing something a reader must be told about — `read_item` takes
+ * the write tools' `itemId` and hands its delegates `id`, because those
+ * three reads are `.strict()` and spell it that way — and the cost of the
+ * exemption is one line each, written where it can be read.
+ *
+ * An entry here is not a waiver: the field must still ARRIVE, under the
+ * name given. Renaming to a name the delegate does not accept fails on the
+ * delegate's own `.strict()` parse, exactly as it did before.
+ *
+ * **Keyed by `tool:action`, not by tool.** `project` renames `id` to
+ * `projectId` for `repair` and forwards it untouched as `id` for `detail`,
+ * because the two delegates spell it differently — so a per-tool map would
+ * have to state one of those wrongly, and would then hide a real drop on
+ * the other action.
+ */
+const RENAMED_IN_FLIGHT: Readonly<Record<string, Readonly<Record<string, string>> | undefined>> = {
+  "read_item:body": { itemId: "id" },
+  "read_item:history": { itemId: "id" },
+  "read_item:artifacts": { itemId: "id" },
+  // The `fa83f2b9` rename itself: `score` presents one `facets` field and
+  // `score_run` receives it as `scores`. Forwarding it under its own name
+  // is the defect that refused every `score run` call while three checks
+  // stayed green, so this entry is the one most worth reading twice.
+  "score:run": { facets: "scores" },
+  "project:repair": { id: "projectId" },
+};
+
 describe("every fold forwards to the delegate it claims, under names that delegate accepts", () => {
   it.each(OBSERVED)(
     "$tool $input.action$input.type$input.full reaches $delegate",
@@ -713,6 +790,36 @@ describe("every fold forwards to the delegate it claims, under names that delega
         forwarded.map((call) => call.operation),
         `${tool} ${String(input.action ?? input.type)} forwarded somewhere unexpected`,
       ).toEqual([delegate]);
+
+      // ── And that every field the caller gave ARRIVED ──────────────────
+      //
+      // The assertion above observes WHICH delegate was reached. It cannot
+      // see a field that was dropped on the way, because a payload missing
+      // an optional field parses exactly as cleanly as one carrying it.
+      // That is the `fa83f2b9` class precisely — parsed, validated, and
+      // silently discarded while the call reports success — and it is the
+      // class this whole file exists to end.
+      //
+      // Measured: a fold that builds its delegate payload without
+      // `findings` discards every findings array it is handed, and the
+      // whole suite stays green unless something asserts arrival. The same
+      // holds for `ownership`'s `rootSessionId` — the field whose absence
+      // silently declares a second crew. Whether a drop is noticed must be
+      // a property of this guard rather than a coincidence of which folds
+      // happen to have a behavioural read-back test.
+      const arrived = forwarded[0]?.input as Record<string, unknown> | undefined;
+      expect(arrived, `${tool} forwarded no payload to observe`).toBeDefined();
+      const renames = RENAMED_IN_FLIGHT[`${tool}:${String(input[discriminatorFor(tool)])}`];
+      for (const [field, value] of Object.entries(input)) {
+        if (field === discriminatorFor(tool)) continue;
+        if (value === undefined) continue;
+        const under = renames?.[field] ?? field;
+        expect(
+          arrived,
+          `${tool} ${String(input.action ?? input.type)} accepted \`${field}\` and did not ` +
+            `forward it to ${delegate} as \`${under}\` — a field parsed and silently dropped`,
+        ).toHaveProperty(under);
+      }
     },
   );
 

@@ -50,6 +50,8 @@ import {
   requiredFieldNames,
   instructedIdentifiers,
   operationsOffMcp,
+  unreachableMentions,
+  ENGLISH_WORD_OPERATIONS,
   NON_MCP_REFERENCE_MARKER,
 } from "@/lib/service/describe/advice";
 import { narrowerCallFor } from "@/lib/service/response-size";
@@ -689,5 +691,83 @@ ${describeDefects(defects)}`,
     const defects = findUndocumentedNestedShapes([stripped]);
     expect(defects).toHaveLength(1);
     expect(defects[0]!.named).toBe("scores");
+  });
+});
+
+/**
+ * The bare-word detector treats five operation names as ordinary English.
+ *
+ * `unreachableMentions` matches a bare word for every off-MCP operation,
+ * because the stale references it exists to catch are written that way —
+ * "use loop_close instead". Five names cannot be read that way, because
+ * they are also words this domain speaks in: "your claim can look idle",
+ * "belongs in a note". For those five, and only those, a mention counts
+ * only when marked as a call.
+ *
+ * **That carve-out is a real reduction in reach, so it is pinned here
+ * rather than left to a reader to rediscover from the implementation.**
+ * The set is a build-enforced guard's blind spot: every name in it is one
+ * whose bare-word stale reference ships unflagged. Adding a name is
+ * therefore a decision about what the guard stops seeing, and it should
+ * fail a test until somebody says so deliberately.
+ */
+describe("the English-word carve-out in the unreachable check", () => {
+  it("covers exactly the five names it was argued for", () => {
+    // Pinned as a set, so adding a sixth is a visible edit to this list
+    // rather than a silent narrowing of a build-enforced guard.
+    expect([...ENGLISH_WORD_OPERATIONS].sort()).toEqual([
+      "checkpoint",
+      "claim",
+      "note",
+      "release",
+      "takeover",
+    ]);
+  });
+
+  it("admits only names that are genuinely ordinary English", () => {
+    // The criterion the list states for itself: `get_item_body` never
+    // appears as a word in prose, `release` always will. A name with an
+    // underscore is a tool spelling and nothing else, so it can never
+    // need this exemption — and a future edit adding one would be
+    // widening the blind spot past its stated argument.
+    for (const name of ENGLISH_WORD_OPERATIONS) {
+      expect(name, `${name} is a tool spelling, not an English word`).not.toContain("_");
+    }
+  });
+
+  it("still flags every OTHER off-MCP name written bare", () => {
+    // The reach that is kept. This is the half that must not erode: a
+    // stale bare-word reference to any folded verb outside the five is
+    // still a build failure.
+    const offMcp = operationsOffMcp();
+    for (const bare of ["loop_close", "get_item_body", "record_artifact", "get_item_detail"]) {
+      expect(offMcp.has(bare), `${bare} should be off MCP`).toBe(true);
+      expect(
+        unreachableMentions(`read it with ${bare} instead`, offMcp).map((m) => m.name),
+        `${bare} written bare must still be flagged`,
+      ).toEqual([bare]);
+    }
+  });
+
+  it("flags a carved-out name when it is marked as a call, and not when it is prose", () => {
+    const offMcp = operationsOffMcp();
+    // Marked as a call — backticks, or a following brace — is how these
+    // five are written whenever they are actually being prescribed.
+    for (const marked of ["call `claim` first", 'ownership {action: "x"} then release {itemId}']) {
+      expect(
+        unreachableMentions(marked, offMcp).length,
+        `${marked} names a tool and must be flagged`,
+      ).toBeGreaterThan(0);
+    }
+    // Ordinary prose, including the dotted setting name whose final token
+    // is one of the five — the case that rules out reading a trailing
+    // backtick alone as evidence.
+    for (const prose of [
+      "your claim can look idle",
+      "the sweep releases claims held by dead ones",
+      "governed by `hook.require_registration_to_claim`",
+    ]) {
+      expect(unreachableMentions(prose, offMcp), `${prose} is prose, not a call`).toEqual([]);
+    }
   });
 });
