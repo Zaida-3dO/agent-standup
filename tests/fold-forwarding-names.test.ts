@@ -427,7 +427,7 @@ const OBSERVED: readonly ObservedCase[] = [
     delegate: "get_project_detail",
   },
   // `id` on the fold, `projectId` at the delegate — the same class of
-  // rename as `score`'s, and unobserved until now.
+  // rename as `score`'s, and one only an observation can confirm.
   {
     tool: "project",
     input: { action: "repair", id: "project-1" },

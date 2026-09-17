@@ -245,12 +245,12 @@ describe("the waiver list", () => {
     // advice moves to the folded spelling in the same commit, because
     // `advice.ts`'s `unreachable` class fails the build otherwise.
     //
-    // **This is a trade and it is conceded rather than talked away.** It is
-    // stronger in two cases the old form could not see at all — a fold
-    // target that does not exist, and a fold chain whose terminal tool is
-    // itself waived, both of which the name test PASSED — and weaker in
-    // exactly one: an operation waived and folded into an exposed tool. See
-    // `reachableOnMcp`'s header for the full case table.
+    // **This is a trade and it is conceded rather than talked away.** A
+    // name check is blind to two cases this one catches — a fold target
+    // that does not exist, and a fold chain whose terminal tool is itself
+    // waived — and stricter in exactly one: an operation waived and folded
+    // into an exposed tool, which a name check refuses and this one
+    // permits. See `reachableOnMcp`'s header for the full case table.
     //
     // The comment below asks that a failure here be re-argued rather than
     // silently kept. That is what this is: the argument is that
@@ -427,8 +427,9 @@ describe("isWaived / waiversFor / exposedOperations", () => {
     // It is also out of scope for folding on the merits: six flat fields,
     // zero contract rules, and folding it into `complete_item` or
     // `update_item` would infer intent from which fields arrived — the
-    // bound that retired the old `create_item` and that every fold in this
-    // lineage has had to clear.
+    // bound every fold here has to clear, and the reason a tool that
+    // guesses its subject from the shape of its input has no place on this
+    // surface.
     expect(isWaived("mcp_http", "transition_item")).toBe(false);
     expect(isWaived("mcp_stdio", "transition_item")).toBe(false);
     expect(isWaived("mcp_http", "create_item")).toBe(true);

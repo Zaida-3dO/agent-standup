@@ -99,7 +99,7 @@ export const FOLDED_INTO: ReadonlyMap<string, string> = new Map([
  * Whether an MCP caller can reach `operation` at all — directly, or through
  * the tool it was folded into.
  *
- * ── The invariant this expresses, and why the old one was the wrong shape ─
+ * ── The invariant this expresses ───────────────────────────────────────
  *
  * `tests/adapter-waivers.test.ts` protects a class of mistake §22's own
  * bound cannot see: a waiver that is legal — no guard loses coverage — and
@@ -121,8 +121,8 @@ export const FOLDED_INTO: ReadonlyMap<string, string> = new Map([
  * `advice.ts`'s `unreachable` class fails the build on advice naming a tool
  * the caller cannot call.
  *
- * **Stated honestly, replacing the name test with this is a TRADE, not a
- * superset.** Over the space of (waived?, folded?, target reachable?):
+ * **Stated honestly, this is a TRADE rather than a strict superset of the
+ * name test.** Over the space of (waived?, folded?, target reachable?):
  *
  *   - exposed, not folded — both pass. Equal.
  *   - waived, not folded — both fail. Equal.
