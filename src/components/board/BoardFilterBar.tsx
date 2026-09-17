@@ -167,15 +167,22 @@ export function BoardFilterBar({ query, options, views, onViewsChange }: BoardFi
 
   return (
     <>
-      {/* The layout switch sits above the filter axes rather than among
-          them, because it is not an axis: it changes the SHAPE of the
-          result, not which rows are in it. Putting it in the row of selects
-          would imply it narrows the board, which is the same confusion
-          `BOARD_LAYOUT_PARAM` keeps it out of `BOARD_FILTER_PARAMS` to
-          avoid — and "clear filters" would then look like it should reset
-          it, which it deliberately does not. */}
-      <LayoutToggle query={query} />
+      {/* The layout switch and the saved-views control are composed INTO
+          the bar's control row rather than stacked as rows of their own.
+
+          They were three sibling block elements in this fragment, which is
+          the whole reason the region sprawled: a two-option segmented
+          control rendered 1209px wide at 1440 because it was a
+          block-level row, and "Name this view" spent a permanent row on an
+          action that only means anything once filters have changed.
+
+          The layout switch is still NOT an axis — it changes the SHAPE of
+          the result, not which rows are in it — and it is still kept out
+          of `BOARD_FILTER_PARAMS` so "clear filters" does not reset it.
+          That separation is now carried by a divider and by its position
+          in the control cluster rather than by living on its own line. */}
       <BoardFilterBarView
+        layoutToggle={<LayoutToggle query={query} />}
         query={query}
         onFilterChange={onFilterChange}
         onSortChange={(sort) => navigate(sortChanged(query, sort))}
@@ -198,19 +205,21 @@ export function BoardFilterBar({ query, options, views, onViewsChange }: BoardFi
         onVisibilityChange={onVisibilityChange}
         pickerOpen={pickerOpen}
         onTogglePicker={() => setPickerOpen((open) => !open)}
-      />
-      <SavedViewsView
-        views={views}
-        currentQuery={currentQueryString}
-        onApply={(view) => router.replace(`/board${view.query === "" ? "" : `?${view.query}`}`)}
-        onDelete={(name) => persist(viewDeleted(views, name))}
-        nameDraft={nameDraft}
-        onNameDraftChange={(value) => {
-          setNameDraft(value);
-          setWriteError(null);
-        }}
-        onSave={onSave}
-        saveProblem={saveProblem}
+        savedViews={
+          <SavedViewsView
+            views={views}
+            currentQuery={currentQueryString}
+            onApply={(view) => router.replace(`/board${view.query === "" ? "" : `?${view.query}`}`)}
+            onDelete={(name) => persist(viewDeleted(views, name))}
+            nameDraft={nameDraft}
+            onNameDraftChange={(value) => {
+              setNameDraft(value);
+              setWriteError(null);
+            }}
+            onSave={onSave}
+            saveProblem={saveProblem}
+          />
+        }
       />
     </>
   );

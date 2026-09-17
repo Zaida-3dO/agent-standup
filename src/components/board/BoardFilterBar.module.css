@@ -6,24 +6,90 @@
  * behind it, and NOT `--border-strong`, which bounds quiet regions and is
  * deliberately too faint to outline something you are meant to operate. */
 
+/* ── ONE control row, not a wrapping pile ────────────────────────────────
+   Before this, `.bar` was `flex-wrap: wrap` over search + nine axes +
+   the picker + sort + clear as flat siblings, and `LayoutToggle` /
+   `SavedViewsView` were two further full-bleed rows stacked above and
+   below it by the fragment in `BoardFilterBar.tsx`. Measured at 1440:
+   the layout toggle's wrapper spanned 1209px for a 2-option control, the
+   bar itself was 237px tall, and the first card sat 495px down a 900px
+   viewport — over half the screen was chrome for filters that mostly
+   read "Any".
+
+   The replacement is a single row that never wraps: search (sized, not
+   greedy), then a right-aligned cluster of the controls that act on the
+   whole view. The axes are no longer IN this row at all — they live in
+   the disclosure panel below, which is the same mechanism the phone
+   breakpoint already used, now applied at every width.
+
+   `position: relative` anchors the desktop axes panel, which is
+   absolutely positioned so opening it OVERLAYS the board rather than
+   pushing it down the page. Pushing was the actual defect on mobile
+   (recorded below) and it is the same defect on desktop. */
 .bar {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border-strong);
   background: var(--surface-panel);
 }
 
-/* The axes wrap as a group rather than individually, so a narrow viewport
-   breaks the row between whole controls and never between a label and the
-   select it names. */
-.axes {
+/* Everything that is not the search box, pushed to the trailing edge and
+   kept on one line. `margin-left: auto` rather than `justify-content:
+   space-between` on the parent, so the search box keeps its own width
+   instead of being stretched to meet this cluster. */
+.controls {
   display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* A hairline between the control groups — layout | filters | sort | save.
+   Cheaper than boxing each group, and it stops four adjacent controls from
+   reading as one undifferentiated strip of buttons. */
+.controlDivider {
+  align-self: stretch;
+  width: 1px;
+  margin: var(--space-1) var(--space-1);
+  background: var(--border-default);
+}
+
+/* ── The axes panel ──────────────────────────────────────────────────────
+   Hidden at EVERY width until summoned, which is the brief's first ask.
+   On desktop it is an overlay anchored under the "Filters" button; the
+   phone breakpoint below re-anchors the same element as a bottom sheet.
+
+   One element, two presentations — NOT two components. The disclosure's
+   checkbox/label/aria wiring carries a lot of hard-won reasoning (see the
+   block under `.axesToggle`), and a second desktop-only disclosure would
+   have to reproduce every bit of it or quietly lose it. */
+.axes {
+  display: none;
+  position: absolute;
+  z-index: 40;
+  top: calc(100% - var(--space-1));
+  right: var(--space-4);
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--space-3);
+  gap: var(--space-4) var(--space-3);
+  width: min(52rem, calc(100vw - var(--space-8)));
+  max-height: min(70vh, 34rem);
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  /* Opaque and shadowed: this floats over cards, and the one shadow token
+     exists for exactly this case (`globals.css` §2 — elevation is borders,
+     except for something that must detach from arbitrary content). */
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-overlay);
+}
+
+.axesToggle:checked ~ .axes {
+  display: flex;
 }
 
 /* ── The axes disclosure (row 74ef86fb-9da8-4ab1-9b63-9eb84bd43ee6) ────────
@@ -79,19 +145,81 @@
   border: 0;
 }
 
+/* The visible trigger, now shown at EVERY width rather than only below
+   641px. 32px tall to match the other controls in the row; the phone
+   breakpoint grows it back to the 44px touch target. */
 .axesSummary {
-  display: none;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  flex: none;
   width: fit-content;
-  min-height: 44px;
+  height: 32px;
   padding: 0 var(--space-3);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-md);
-  background: var(--surface-raised);
+  background: var(--surface-sunken);
   color: var(--text-secondary);
   font-size: var(--text-2xs);
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.axesSummary:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+/* The checkbox is visually hidden, so the open state has to be drawn on
+   this label — otherwise the only feedback that filtering is open is the
+   panel itself, which is exactly what a reader looks away from when they
+   go back to the board. */
+.axesToggle:checked ~ .axesSummary {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-primary);
+}
+
+/* The hidden checkbox cannot show a focus ring, so its focus is drawn on
+   the label the reader actually sees. Without this, tabbing to the filter
+   trigger looked like focus had vanished. */
+.axesToggle:focus-visible ~ .axesSummary {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The active-filter count. A filled pill rather than parenthesised text:
+   this is the one number in the row that says the board is not showing
+   everything, and it has to survive a glance. */
+.axesCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--text-3xs);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Same idiom as `Board.module.css`'s — `clip-path` rather than
+   `display: none`, which would remove it from the accessibility tree and
+   silence the very announcement it exists to make. Local to this module
+   because CSS modules do not share class names across files. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ── The filter SHEET at phone widths (MILESTONES.md #76) ────────────────
@@ -123,19 +251,37 @@
    which is the "you can still mint work" half of this row. The ladder is
    documented in `CommandPalette.module.css`. */
 @media (max-width: 640px) {
+  /* Back to the 44px touch target; the base rule's 32px is a pointer
+     size and too small for a thumb. */
   .axesSummary {
-    display: inline-flex;
+    min-height: 44px;
+    height: auto;
   }
 
-  .axes {
-    display: none;
-    width: 100%;
+  /* The row may wrap here — below 640px the search box and the control
+     cluster genuinely do not fit on one line, and forcing them to would
+     shrink the search box past usefulness. This is the ONE place wrapping
+     is still correct, and it wraps between whole groups. */
+  .bar {
+    flex-wrap: wrap;
   }
 
+  .controls {
+    margin-left: 0;
+  }
+
+  .searchWrap {
+    flex: 1 1 100%;
+  }
+
+  /* Re-anchored from the desktop overlay to a bottom sheet. Only the
+     properties that actually differ are restated. */
   .axesToggle:checked ~ .axes {
-    display: flex;
     position: fixed;
     z-index: 50;
+    top: auto;
+    width: auto;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
     /* Anchored to the bottom edge: the half of the screen a thumb reaches
        without regripping the phone. A top-anchored panel puts the controls
        furthest from the thumb and under the notch. */
@@ -165,29 +311,23 @@
   }
 }
 
-.axis,
-.sortGroup {
+.axis {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 
+/* Sort sits in the single control ROW, so its label is INLINE rather than
+   stacked above the select. Stacked, it was the tallest thing in the row
+   and forced the whole bar to 54px to accommodate a 30px control. The
+   axes inside the disclosure panel keep their stacked labels — there they
+   are in a grid with room, and a label above its select is easier to scan
+   down a column. */
 .sortGroup {
-  display: grid;
-  grid-template-columns: auto auto;
-  grid-template-areas:
-    "label label"
-    "select direction";
+  display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: var(--space-1) var(--space-2);
-}
-
-.sortGroup .axisLabel {
-  grid-area: label;
-}
-
-.sortGroup .select {
-  grid-area: select;
+  gap: var(--space-2);
 }
 
 .axisLabel {
@@ -217,8 +357,8 @@
 }
 
 .direction {
-  grid-area: direction;
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   width: 30px;
@@ -236,12 +376,19 @@
   color: var(--text-primary);
 }
 
+/* Sized to its content, NOT greedy. `flex: 1 1 16rem` made this 1177px of
+   a 1209px bar at 1440 — a search box wide enough for a paragraph, for
+   queries that are typically one word. It now takes a comfortable fixed
+   measure and gives the rest of the row back to the controls.
+   `flex-shrink` is left on so a narrow viewport takes it from here first,
+   which is correct: the box stays usable long after the row would have
+   wrapped. */
 .searchWrap {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 1 1 16rem;
-  min-width: 12rem;
+  flex: 0 1 22rem;
+  min-width: 9rem;
 }
 
 .searchIcon {
@@ -311,6 +458,66 @@
 .viewChip[data-active="true"] {
   border-color: var(--accent-border);
   color: var(--text-primary);
+}
+
+/* ── The save-a-view disclosure ──────────────────────────────────────────
+   Same idiom as `.axesToggle` above — a real checkbox, visually hidden but
+   focusable and in the accessibility tree, with the visible affordance on
+   the label beside it. `clip`/`position: absolute` rather than
+   `display: none`, which would drop it from the tab order and take the
+   panel it controls with it. */
+.saveToggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.saveSummary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.saveSummary:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.saveToggle:checked ~ .saveSummary {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-primary);
+}
+
+/* The hidden checkbox cannot draw its own ring, so focus is shown on the
+   label the reader actually sees. */
+.saveToggle:focus-visible ~ .saveSummary {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.savePanel {
+  display: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.saveToggle:checked ~ .savePanel {
+  display: inline-flex;
 }
 
 .viewName {
