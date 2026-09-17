@@ -20,9 +20,9 @@
 // A test that renders the grammar twice and compares it to itself passes
 // forever and proves nothing. The baseline in
 // `tests/fixtures/cli-grammar-baseline.txt` was generated on `main` at
-// `b2a2aa4`, BEFORE any module was folded, and committed unchanged. It is
-// evidence from the old world, which is the only kind that can testify
-// about a change to the new one.
+// `b2a2aa4`, BEFORE any module was folded, and committed unchanged. Evidence
+// captured independently of the code under test is the only kind that can
+// testify about a change to it.
 //
 // **Updating this fixture is how the grammar changes.** That is deliberate
 // friction: a row that genuinely adds a verb updates the fixture in the same
@@ -43,9 +43,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ALIASES, COMMANDS, nouns, verbsFor } from "@/lib/cli/commands";
-// A plain `.mjs` script, imported for the one renderer it owns — so the
-// text this asserts on and the text a person can print by hand come from
-// the same function rather than from two that agree today.
+// A plain `.mjs` script, imported for the one renderer it owns, so the text
+// this asserts on and the text a person can print by hand come from a single
+// function rather than from two that merely agree.
 import { renderGrammar } from "../scripts/cli-grammar-snapshot.mjs";
 
 const BASELINE = path.join(process.cwd(), "tests", "fixtures", "cli-grammar-baseline.txt");

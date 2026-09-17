@@ -1,5 +1,5 @@
 // The `backfill` route in the command line's HTTP binding
-// (`src/lib/cli/bindings/http-routes-backfill.ts`).
+// (`src/lib/cli/bindings/http.ts`, built from `cli-routes.generated.ts`).
 //
 // **Why this file exists.** The r06 review of PR #79 found that nothing
 // under `tests/` imported `BACKFILL_HTTP_ROUTES` or exercised the route:
@@ -11,7 +11,7 @@
 // Every fixture is invented; this repository is public (CLAUDE.md).
 import { describe, expect, it } from "vitest";
 import { createHttpBinding, HTTP_ROUTES } from "@/lib/cli";
-import { BACKFILL_HTTP_ROUTES } from "@/lib/cli/bindings/http-routes-backfill";
+import { GENERATED_ROUTES } from "@/lib/cli/bindings/cli-routes.generated";
 
 function capture(response: Response) {
   const seen: { url: string; init: RequestInit }[] = [];
@@ -36,19 +36,23 @@ const INPUT = {
   payload: { version: 1, defaultArea: "imported", tasks: [] },
 };
 
-describe("BACKFILL_HTTP_ROUTES, as a table entry", () => {
-  it("declares exactly the `backfill` route and nothing else", () => {
-    expect(Object.keys(BACKFILL_HTTP_ROUTES)).toEqual(["backfill"]);
+describe("the `backfill` route, as a table entry", () => {
+  it("is present in the binding's route table", () => {
+    // The question that matters for a generated map is whether the
+    // operation is reachable at all: an absent entry means
+    // `standup backfill run --url ...` dispatches to no route and answers
+    // `not_implemented`.
+    expect(HTTP_ROUTES.backfill).toBeDefined();
   });
 
   it("is POST — a bulk write, never a GET", () => {
     // Not cosmetic: a payload of this size cannot go in a query string, and
     // a GET carrying a body is not something every intermediary preserves.
-    expect(BACKFILL_HTTP_ROUTES.backfill?.method).toBe("POST");
+    expect(HTTP_ROUTES.backfill?.method).toBe("POST");
   });
 
   it("sends the whole input as the body, with nothing lifted into the path", () => {
-    const built = BACKFILL_HTTP_ROUTES.backfill?.request(INPUT);
+    const built = HTTP_ROUTES.backfill?.request(INPUT);
 
     expect(built?.path).toBe("/api/backfill");
     // The `{ payload }` wrapper must survive intact: the route's own schema
@@ -59,7 +63,7 @@ describe("BACKFILL_HTTP_ROUTES, as a table entry", () => {
   it("keeps the path constant regardless of the payload's contents", () => {
     // There is no interpolation in this route, and a test that only ever
     // passed an empty task list would not show that.
-    const built = BACKFILL_HTTP_ROUTES.backfill?.request({
+    const built = HTTP_ROUTES.backfill?.request({
       payload: { version: 1, defaultArea: "other", tasks: [{ id: "T-1" }] },
     });
 
@@ -69,13 +73,22 @@ describe("BACKFILL_HTTP_ROUTES, as a table entry", () => {
   it("returns the response body unwrapped, because the route uses no envelope key", () => {
     const body = { itemsImported: 3, reminder: "still enabled" };
 
-    expect(BACKFILL_HTTP_ROUTES.backfill?.unwrap(body)).toBe(body);
+    expect(HTTP_ROUTES.backfill?.unwrap(body)).toBe(body);
   });
 
-  it("is spread into the binding's shared route table under the operation's own name", () => {
-    // The one line in `http.ts` that wires this module in. If the spread is
-    // dropped, `standup backfill run --url ...` dispatches to no route.
-    expect(HTTP_ROUTES.backfill).toBe(BACKFILL_HTTP_ROUTES.backfill);
+  it("is derived from the route tree rather than written by hand", () => {
+    // The generated map is the route tree's own account of itself, so
+    // pinning the whole entry pins the four facts the binding acts on. It
+    // fails if `src/app/api/backfill/route.ts` moves, changes method, or
+    // starts lifting a field into its path — each of which would change
+    // where this command sends its payload.
+    expect(GENERATED_ROUTES.backfill).toEqual({
+      method: "POST",
+      path: "/api/backfill",
+      pathFields: {},
+      sendsBody: true,
+      unwrapKey: null,
+    });
   });
 });
 

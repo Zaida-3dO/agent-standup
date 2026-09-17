@@ -17,13 +17,7 @@ import type { Rejection, ServiceErrorCode } from "@/lib/service";
 import { SERVICE_ERROR_CODES, faultContext } from "@/lib/service";
 import { log, newRequestId } from "@/lib/log";
 import { bindingOk, bindingRejected, type Binding, type BindingResult } from "../binding";
-import { ADMIN_HTTP_ROUTES } from "./http-routes-admin";
-import { OWNERSHIP_HTTP_ROUTES } from "./http-routes-ownership";
-import { BACKFILL_HTTP_ROUTES } from "./http-routes-backfill";
-import { ARTIFACT_HTTP_ROUTES } from "./http-routes-artifacts"; // row #98 — artifact writes
-import { LOOP_HTTP_ROUTES } from "./http-routes-loops"; // row #100 - open-loop writes
-import { SCORING_HTTP_ROUTES } from "./http-routes-scoring"; // the `score` noun, and the four on existing nouns
-import { SESSION_HTTP_ROUTES } from "./http-routes-sessions";
+import { GENERATED_ROUTES, type GeneratedRoute } from "./cli-routes.generated";
 import { ACTOR_HEADER, CLI_TRANSPORT_HEADER, SESSION_HEADER } from "@/lib/session-transport-header";
 import { REQUEST_ID_HEADER } from "@/lib/request-id-header";
 
@@ -82,6 +76,63 @@ function queryString(input: Record<string, unknown>): string {
 }
 
 /**
+ * Turns one generated route into the request/unwrap pair this binding uses.
+ *
+ * The generated map is DATA — a method, a path template, which input field
+ * each path parameter carries, whether a body is read, and which response
+ * key holds the result. This is the one place that data becomes behaviour,
+ * and the behaviour it produces is exactly what the 68 hand-written
+ * `RouteSpec` entries produced before it: the path fields are lifted out of
+ * the input and interpolated, and what remains travels as a body on a write
+ * or as a query string on a read.
+ *
+ * **Lifting rather than copying is the point.** A path field must not also
+ * appear in the body: the route merges the path value back in itself, so
+ * sending it twice would mean two spellings of the same value reaching an
+ * operation whose schema is `.strict()`.
+ */
+function specFor(route: GeneratedRoute): RouteSpec {
+  return {
+    method: route.method,
+    request: (input) => {
+      const rest = { ...input };
+      let path = route.path;
+      for (const [parameter, field] of Object.entries(route.pathFields)) {
+        path = path.replace(`{${parameter}}`, encodeURIComponent(String(rest[field] ?? "")));
+        delete rest[field];
+      }
+      // Fields a body-carrying route reads from the query string instead.
+      // `transition_item`'s `dryRun` is the case, and it is the one field
+      // where getting this wrong is expensive rather than merely wrong: sent
+      // in the body the route never sees it, and a rehearsal silently
+      // becomes a real move.
+      //
+      // **Only emitted when `true`**, matching the route, which treats
+      // anything else — including the parameter being absent — as a real
+      // move. Emitting `?dry_run=false` would be a second spelling of the
+      // default that nothing else in the system produces.
+      let query = "";
+      for (const [field, parameter] of Object.entries(route.queryFields)) {
+        if (rest[field] === true) query = `?${parameter}=true`;
+        delete rest[field];
+      }
+
+      // Everything the path did not take. On a write it is the body; on a
+      // read it is the query string, because a `GET` carries no body and
+      // dropping it instead would make the two bindings disagree about what
+      // a flag such as `--full` does from one command line.
+      return route.sendsBody
+        ? { path: `${path}${query}`, body: rest }
+        : { path: `${path}${queryString(rest)}` };
+    },
+    unwrap:
+      route.unwrapKey === null
+        ? (body) => body
+        : (body) => property(body, route.unwrapKey as string),
+  };
+}
+
+/**
  * Every operation the API exposes, by the name the service knows it as.
  *
  * Keyed on operation names rather than on paths so that the question this
@@ -89,221 +140,27 @@ function queryString(input: Record<string, unknown>): string {
  * lookup, and an operation the API does not route is refused with
  * `not_implemented` naming the operation, which is a true statement about
  * this binding rather than a transport error the caller has to interpret.
+ *
+ * **Built from the route tree, not written by hand.** This was 68 entries
+ * across eight files, each restating a method, a path, a path field and an
+ * unwrap key that the route serving the operation already declared — a
+ * second copy that nothing compared, and that had drifted: 39 of the 68
+ * spelled the identity `unwrap` out in six lines, and ten reference-row
+ * reads silently dropped every input but the path id while their siblings
+ * forwarded the rest. `scripts/generate-cli-routes.mjs` now reads those
+ * facts from `src/app/api/**\/route.ts`, and `npm run check:cli-routes`
+ * fails when the generated file and the tree disagree.
+ *
+ * The eight-file split went with it. `http-routes-admin.ts`'s header said
+ * it existed because concurrent branches landed entries in the same table
+ * and conflicted — merge-conflict avoidance that had become architecture.
+ * Generating the map removes the conflict surface outright.
  */
-export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
-  create_item: {
-    method: "POST",
-    request: (input) => ({ path: "/api/items", body: input }),
-    unwrap: (body) => property(body, "item"),
-  },
-  // The three explicit creates. Each posts to its own collection, so which
-  // kind is being made is visible in the request rather than inferred from
-  // the body — the same property the operations exist to give a caller.
-  create_project: {
-    method: "POST",
-    request: (input) => ({ path: "/api/projects", body: input }),
-    unwrap: (body) => property(body, "item"),
-  },
-  create_task: {
-    method: "POST",
-    request: (input) => ({ path: "/api/tasks", body: input }),
-    unwrap: (body) => property(body, "item"),
-  },
-  create_subtask: {
-    method: "POST",
-    request: (input) => ({ path: "/api/subtasks", body: input }),
-    unwrap: (body) => property(body, "item"),
-  },
-  get_item: {
-    method: "GET",
-    // `id` goes in the path; every other input — `full` (MILESTONES.md
-    // #107) — goes in the query string. Without this the two
-    // bindings would disagree about what `--full` does: `direct` would
-    // return the whole record and `http` the slim shape, from one command
-    // line. Row #85's one-interface test compares exactly that.
-    request: (input) => {
-      const { id, ...rest } = input;
-      return {
-        path: `/api/items/${encodeURIComponent(String(id ?? ""))}${queryString(rest)}`,
-      };
-    },
-    unwrap: (body) => property(body, "item"),
-  },
-  update_item: {
-    method: "PATCH",
-    request: (input) => {
-      const { id, ...rest } = input;
-      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}`, body: rest };
-    },
-    unwrap: (body) => property(body, "item"),
-  },
-  list_items: {
-    method: "GET",
-    request: (input) => ({ path: `/api/items${queryString(input)}` }),
-    unwrap: (body) => body,
-  },
-  // Stale candidates. `GET /api/stale-candidates` returns the result object
-  // unwrapped, like every other list-shaped read, so `unwrap` is the
-  // identity — the same shape `direct` returns for the same call.
-  get_stale_candidates: {
-    method: "GET",
-    request: (input) => ({ path: `/api/stale-candidates${queryString(input)}` }),
-    unwrap: (body) => body,
-  },
-  // Row #105. `GET /search` returns the result object unwrapped, like every
-  // other list-shaped read, so `unwrap` is the identity — the same shape
-  // `direct` returns for the same call.
-  search: {
-    method: "GET",
-    request: (input) => ({ path: `/api/search${queryString(input)}` }),
-    unwrap: (body) => body,
-  },
-  // Row #83 — `standup config`. `src/app/api/settings/**` returns every
-  // settings operation's result unwrapped already (SCHEMA.md §19), so
-  // `unwrap` is the identity for all four — the same shape `direct` returns.
-  get_settings: {
-    method: "GET",
-    request: () => ({ path: "/api/settings" }),
-    unwrap: (body) => body,
-  },
-  get_setting: {
-    method: "GET",
-    request: (input) => ({
-      path: `/api/settings/${encodeURIComponent(String(input.key ?? ""))}`,
-    }),
-    unwrap: (body) => body,
-  },
-  put_setting: {
-    method: "PUT",
-    request: (input) => {
-      const { key, ...rest } = input;
-      return { path: `/api/settings/${encodeURIComponent(String(key ?? ""))}`, body: rest };
-    },
-    unwrap: (body) => body,
-  },
-  delete_setting: {
-    method: "DELETE",
-    request: (input) => ({
-      path: `/api/settings/${encodeURIComponent(String(input.key ?? ""))}`,
-    }),
-    unwrap: (body) => body,
-  },
-  // Row #128 — the intervention catalogue's configuration surface. Under
-  // `/api/interventions/**` rather than `/api/settings/**` because these
-  // keys are deliberately outside `SETTINGS_REGISTRY`, and the settings
-  // routes refuse them by design (`requireSettingKey`).
-  list_intervention_settings: {
-    method: "GET",
-    request: () => ({ path: "/api/interventions/settings" }),
-    unwrap: (body) => body,
-  },
-  set_intervention_level: {
-    method: "PUT",
-    request: (input) => {
-      const { id, ...rest } = input;
-      return {
-        path: `/api/interventions/${encodeURIComponent(String(id ?? ""))}/level`,
-        body: rest,
-      };
-    },
-    unwrap: (body) => body,
-  },
-  clear_intervention_level: {
-    method: "DELETE",
-    request: (input) => ({
-      path: `/api/interventions/${encodeURIComponent(String(input.id ?? ""))}/level`,
-    }),
-    unwrap: (body) => body,
-  },
-  transition_item: {
-    method: "POST",
-    request: (input) => {
-      // `dryRun` travels as the `?dry_run=` query parameter the route reads
-      // (SCHEMA.md §19), not in the body — mirroring how `id` above always
-      // moves from the operation's flat input into the path. Only ever set
-      // to `true`; the route treats anything else, including the parameter
-      // being absent, as a real move.
-      const { id, dryRun, ...rest } = input;
-      const query = dryRun === true ? "?dry_run=true" : "";
-      return {
-        path: `/api/items/${encodeURIComponent(String(id ?? ""))}/transition${query}`,
-        body: rest,
-      };
-    },
-    // The route answers `{ item, outcome }` for a real move and `{ outcome }`
-    // alone for a rehearsal (`transition/route.ts`'s `RehearsalRollback`
-    // unwrapping) — the same two shapes the `direct` binding's own
-    // rehearsal handling produces. Returning the body unchanged, rather
-    // than pulling one key out the way the single-item routes above do, is
-    // what keeps those two shapes identical between bindings.
-    unwrap: (body) => body,
-  },
-  complete_item: {
-    method: "POST",
-    request: (input) => {
-      const { id, ...rest } = input;
-      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}/complete`, body: rest };
-    },
-    unwrap: (body) => property(body, "item"),
-  },
-  // The three structural-repair verbs (`item archive`, `item restore`,
-  // `item retype`). They are waived off both MCP transports, so the command
-  // line and the API are the whole surface — which means the `http` binding
-  // needs them or the verbs work in `direct` mode and answer
-  // `not_implemented` the moment `STANDUP_URL` is set. The routes they
-  // address already existed; only this table was missing them.
-  //
-  // `DELETE` with a body, which is unusual enough to note: `delete_item`
-  // requires a `reason`, and requiring it is the point of the operation
-  // rather than an incidental field, so it cannot travel in the path and a
-  // query string would make a sentence-long reason someone else's escaping
-  // problem. `route.ts` reads the body on DELETE for exactly this reason.
-  delete_item: {
-    method: "DELETE",
-    request: (input) => {
-      const { id, ...rest } = input;
-      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}`, body: rest };
-    },
-    // The whole envelope, not `item` — `archived` is what distinguishes
-    // "this call archived it" from "it was already archived", and `effect`
-    // says in words what the archive means for reads. The route returns the
-    // envelope unwrapped for that reason, and pulling `item` out here would
-    // reintroduce the misreading `DeleteItemOutput` is shaped to prevent,
-    // and make this binding disagree with `direct`.
-    unwrap: (body) => body,
-  },
-  restore_item: {
-    method: "POST",
-    request: (input) => {
-      const { id, ...rest } = input;
-      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}/restore`, body: rest };
-    },
-    // Same envelope reasoning as `delete_item`: the route returns the
-    // service result unwrapped.
-    unwrap: (body) => body,
-  },
-  retype_to_task: {
-    method: "POST",
-    request: (input) => {
-      const { id, ...rest } = input;
-      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}/retype`, body: rest };
-    },
-    // This one the route DOES wrap as `{ item }`, unlike the two above, so
-    // it unwraps like the other single-item writes.
-    unwrap: (body) => property(body, "item"),
-  },
-  // MILESTONES.md #92 — repo/area/machine/account routes, kept in their own
-  // module (./http-routes-admin.ts) and spread in as a single line, per
-  // that module's own header, so concurrent CLI rows adding entries above
-  // never conflict with this one.
-  ...ADMIN_HTTP_ROUTES,
-  ...OWNERSHIP_HTTP_ROUTES,
-  ...BACKFILL_HTTP_ROUTES,
-  ...ARTIFACT_HTTP_ROUTES, // row #98 — artifact writes
-  ...LOOP_HTTP_ROUTES, // row #100 - open-loop writes
-  ...SESSION_HTTP_ROUTES, // row #43 — the registration handshake
-  ...SCORING_HTTP_ROUTES, // the eleven that had no command line, and so no route
-});
+export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze(
+  Object.fromEntries(
+    Object.entries(GENERATED_ROUTES).map(([operation, route]) => [operation, specFor(route)]),
+  ),
+);
 
 /** The minimal `fetch` this binding needs, so a test can supply one. */
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
