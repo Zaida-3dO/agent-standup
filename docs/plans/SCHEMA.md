@@ -255,14 +255,18 @@ documentation, because a caller reaching past `cancelled` is not reading the doc
 transports.** Structural repair is rare, person-driven surgery on a board that has gone wrong —
 performed deliberately by someone who has looked at it, rather than reached for mid-task by an agent.
 
-> This paragraph previously read *"It is exposed on every surface, including MCP. Restricting it to
-> one surface was considered and is not available: §22 bounds waivers to operations no guard can
-> reject, and this one refuses four ways."* Both halves were wrong, and the second is the instructive
-> one. It **does** refuse four ways, but **none of those four refusals is a registered guard.** A
-> registered guard is structurally a *transition* rule — it declares `appliesTo(from, to)` — and this
-> operation runs no transition, so it could not register one. Its four refusals are operation-level
-> preconditions that carry a stable id so a caller can match on the rule rather than the prose. §22's
-> bound speaks only to registered guards, so it never reached this operation, and the waiver is legal.
+> **Why §22's bound does not forbid that waiver, since this operation plainly refuses four ways.**
+> The bound speaks about **registered guards**, and none of these four refusals is one. A registered
+> guard is structurally a *transition* rule — it declares `appliesTo(from, to)`, and the state
+> machine hands it the pair being attempted. This operation runs no transition; it sets `archived_at`
+> on a row. It has no pair to offer and so could not register a guard without inventing a fake one.
+> Its four refusals are **operation-level preconditions** instead, checked inline, each carrying a
+> stable id so a caller can match on the rule rather than on the prose. A precondition id is not a
+> registered guard id, the bound never reaches this operation, and the waiver is legal.
+>
+> Worth stating explicitly because the shorter reading — "it refuses four ways, so §22 pins it to
+> every surface" — is easy to reach and wrong, and would make this section contradict the waiver list
+> it describes.
 
 **The waiver is not the protection, though, and must not be mistaken for it.** The same caller holds
 a command line and an HTTP client, so hiding one door relocates the call rather than preventing it.
