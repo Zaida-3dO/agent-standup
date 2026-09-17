@@ -171,7 +171,7 @@ describeIfDb("progress_report against Postgres", () => {
     async function recordPr(itemId: string, ref: string, body?: string): Promise<void> {
       await runtime.call("record_artifact", {
         itemId,
-        kind: "pull_request",
+        artifactKind: "pull_request",
         ref,
         ...(body === undefined ? {} : { body }),
         createdByType: "agent",
@@ -307,7 +307,11 @@ describeIfDb("progress_report against Postgres", () => {
       });
       await recordPr(itemId, "https://example.com/org/repo/pull/23", "open");
       await prisma.artifact.updateMany({
-        where: { itemId, kind: "pull_request", ref: "https://example.com/org/repo/pull/23" },
+        where: {
+          itemId,
+          kind: "pull_request",
+          ref: "https://example.com/org/repo/pull/23",
+        },
         data: { createdAt: new Date("2026-01-02T00:00:00.000Z") },
       });
 
@@ -322,7 +326,7 @@ describeIfDb("progress_report against Postgres", () => {
       const error = await runtime
         .call("record_artifact", {
           itemId,
-          kind: "pull_request",
+          artifactKind: "pull_request",
           createdByType: "agent",
           createdById: "a-crew-session",
         })
@@ -347,7 +351,7 @@ describeIfDb("progress_report against Postgres", () => {
         const error = await runtime
           .call("record_artifact", {
             itemId,
-            kind: "pull_request",
+            artifactKind: "pull_request",
             ref,
             createdByType: "agent",
             createdById: "a-crew-session",
@@ -365,7 +369,7 @@ describeIfDb("progress_report against Postgres", () => {
       const error = await runtime
         .call("record_artifact", {
           itemId,
-          kind: "pull_request",
+          artifactKind: "pull_request",
           ref: "https://example.com/p/1",
           body: "closed by review",
           createdByType: "agent",

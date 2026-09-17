@@ -232,14 +232,14 @@ describeIfDb("read_item, against Postgres", () => {
       const created = await makeItem("body");
       await runtime.call("record_artifact", {
         itemId: created.id,
-        kind: "plan",
+        artifactKind: "plan",
         body: "the plan",
         createdByType: "agent",
         createdById: "tester",
       });
       await runtime.call("record_artifact", {
         itemId: created.id,
-        kind: "commit",
+        artifactKind: "commit",
         body: "the commit",
         commitSha: "abc1234",
         createdByType: "agent",
@@ -268,7 +268,7 @@ describeIfDb("read_item, against Postgres", () => {
       const created = await makeItem("body");
       const recorded = (await runtime.call("record_artifact", {
         itemId: created.id,
-        kind: "plan",
+        artifactKind: "plan",
         body: "the whole plan text",
         createdByType: "agent",
         createdById: "tester",

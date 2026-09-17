@@ -102,7 +102,8 @@ export const ARTIFACT_COMMANDS: readonly CommandSpec[] = Object.freeze([
     noun: "item",
     verb: "artifact",
     operation: "record_artifact",
-    summary: "Records an artifact — a plan, a review, a commit, a screenshot — against an item.",
+    summary:
+      "Records an artifact — a plan, a review, a commit, a screenshot — against an item. --artifactKind says which; it is not --kind, because kind means something else on the loop verbs.",
     buildInput: buildRecordArtifactInput,
   },
   {

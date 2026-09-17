@@ -167,7 +167,12 @@ export interface RespondInput {
 }
 
 interface ArtifactBody {
-  readonly kind: string;
+  /**
+   * `artifactKind`, which is what the operation names this field — `kind`
+   * means something else on the loop tool, and one word with two meanings
+   * on adjacent surfaces is a guess rather than a name.
+   */
+  readonly artifactKind: string;
   readonly createdByType: "person";
   readonly createdById: string;
   readonly verdict?: string;
@@ -230,7 +235,7 @@ export async function approve(
   }
 
   const body: ArtifactBody = {
-    kind,
+    artifactKind: kind,
     createdByType: "person",
     // The person who clicked, never the session that rendered the page.
     // This is what makes the authorisation mean anything: `createdByType`
@@ -344,7 +349,7 @@ export async function reject(
     response = await recordArtifact(
       input.itemId,
       {
-        kind,
+        artifactKind: kind,
         createdByType: "person",
         createdById: input.personId,
         verdict: "changes_required",

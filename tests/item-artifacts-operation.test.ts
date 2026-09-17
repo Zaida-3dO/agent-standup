@@ -74,7 +74,7 @@ describeIfDb("get_item_artifacts against Postgres", () => {
   ): Promise<{ id: string }> {
     return runtime.call("record_artifact", {
       itemId,
-      kind: "plan",
+      artifactKind: "plan",
       body: "a plan",
       createdByType: "agent",
       createdById: "tester",
@@ -150,7 +150,7 @@ describeIfDb("get_item_artifacts against Postgres", () => {
   it("omits body and findings by default and returns them under full", async () => {
     const { id } = await createItem();
     await addArtifact(id, {
-      kind: "code_review",
+      artifactKind: "code_review",
       verdict: "lgtm",
       body: "b".repeat(500),
       findings: [{ text: "a finding", severity: "low" }],
@@ -282,10 +282,14 @@ describeIfDb("get_item_artifacts against Postgres", () => {
 
   it("filters by kind, newest first", async () => {
     const { id } = await createItem();
-    await addArtifact(id, { kind: "plan", body: "plan one" });
-    await addArtifact(id, { kind: "code_review", verdict: "changes_required", body: "review one" });
-    await addArtifact(id, { kind: "plan", body: "plan two" });
-    await addArtifact(id, { kind: "code_review", verdict: "lgtm", body: "review two" });
+    await addArtifact(id, { artifactKind: "plan", body: "plan one" });
+    await addArtifact(id, {
+      artifactKind: "code_review",
+      verdict: "changes_required",
+      body: "review one",
+    });
+    await addArtifact(id, { artifactKind: "plan", body: "plan two" });
+    await addArtifact(id, { artifactKind: "code_review", verdict: "lgtm", body: "review two" });
 
     const reviews = await artifactsOf({ id, kind: "code_review" });
     expect(reviews.artifacts.map((a) => a.kind)).toEqual(["code_review", "code_review"]);

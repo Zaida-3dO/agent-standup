@@ -254,7 +254,7 @@ describe("describe_tool returns one tool's full contract", () => {
     const contract = await contractFor("record_artifact");
 
     const rule = declaredRules(contract).find(
-      (entry) => entry.fields.includes("kind") && /check_run/.test(entry.rule),
+      (entry) => entry.fields.includes("artifactKind") && /check_run/.test(entry.rule),
     );
     expect(rule).toBeDefined();
     // Required, which is the half a caller cannot guess from a nullable field.
@@ -264,7 +264,8 @@ describe("describe_tool returns one tool's full contract", () => {
     }
     // The kind is reachable at all — a rule describing a kind the enum does
     // not offer would be documentation for something uncallable.
-    const kindField = contract.fields.find((entry) => entry.name === "kind");
+    const kindField = contract.fields.find((entry) => entry.name === "artifactKind");
+    expect(kindField, "record_artifact declares no artifactKind field").toBeDefined();
     expect(kindField?.enumValues).toContain("check_run");
   });
 

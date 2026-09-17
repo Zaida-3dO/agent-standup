@@ -160,7 +160,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     // all, which is the failure mode a happy-path-only suite has.
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "plan_review",
+      artifactKind: "plan_review",
       verdict: "changes_required",
       createdByType: "person",
       createdById: "user-a",
@@ -170,7 +170,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
 
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "plan_review",
+      artifactKind: "plan_review",
       verdict: "approved",
       createdByType: "person",
       createdById: "user-a",
@@ -191,14 +191,14 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     // rejection from "never approved".
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "commit",
+      artifactKind: "commit",
       commitSha: "5ba71100",
       createdByType: "agent",
       createdById: "agent-a",
     });
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "plan_review",
+      artifactKind: "plan_review",
       verdict: "approved",
       createdByType: "person",
       createdById: "user-a",
@@ -211,7 +211,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     // is for this commit", which is the whole content of the tip check.
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "plan_review",
+      artifactKind: "plan_review",
       verdict: "approved",
       commitSha: "5ba71100",
       createdByType: "person",
@@ -232,7 +232,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
 
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "commit",
+      artifactKind: "commit",
       commitSha: "5ba00001",
       createdByType: "agent",
       createdById: "agent-a",
@@ -247,7 +247,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     // the case that would slip through if `createdByType` were defaulted.
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "code_review",
+      artifactKind: "code_review",
       verdict: "lgtm",
       commitSha: "5ba00001",
       createdByType: "agent",
@@ -261,7 +261,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     // and `createdByType` records who wrote the artifact either way.
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "code_review",
+      artifactKind: "code_review",
       verdict: "lgtm",
       commitSha: "5ba00001",
       createdByType: "person",
@@ -273,7 +273,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     // The person's recorded DECISION is what clears it (SCHEMA.md §6e).
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "merge_approval",
+      artifactKind: "merge_approval",
       commitSha: "5ba00001",
       createdByType: "person",
       createdById: "user-a",
@@ -292,14 +292,14 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
 
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "commit",
+      artifactKind: "commit",
       commitSha: "5ba00001",
       createdByType: "agent",
       createdById: "agent-a",
     });
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "code_review",
+      artifactKind: "code_review",
       verdict: "lgtm",
       commitSha: "5ba00001",
       createdByType: "person",
@@ -308,7 +308,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     // A newer commit moves the tip past what was reviewed.
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "commit",
+      artifactKind: "commit",
       commitSha: "5ba00002",
       createdByType: "agent",
       createdById: "agent-a",
@@ -326,7 +326,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
 
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "plan_review",
+      artifactKind: "plan_review",
       verdict: "approved",
       createdByType: "person",
       createdById: "user-a",
@@ -335,7 +335,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
 
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "commit",
+      artifactKind: "commit",
       commitSha: "5ba0f1a1",
       createdByType: "agent",
       createdById: "agent-a",
@@ -345,7 +345,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
 
     await runtime.call("record_artifact", {
       itemId: id,
-      kind: "code_review",
+      artifactKind: "code_review",
       verdict: "lgtm",
       commitSha: "5ba0f1a1",
       createdByType: "agent",

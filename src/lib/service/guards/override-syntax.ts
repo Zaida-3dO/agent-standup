@@ -83,7 +83,12 @@ import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH } from "./merge-override";
 export function overrideCallSyntax(kind: string, withCommitSha: boolean): string {
   const fields = [
     `"itemId": "<this item>"`,
-    `"kind": "${kind}"`,
+    // `artifactKind`, which is what the operation names this field. The
+    // printed call is parsed by `record_artifact`'s own schema in a test,
+    // precisely so this sentence cannot advertise a field the schema does
+    // not accept — a bypass documented in terms the parser rejects is an
+    // undiscoverable one.
+    `"artifactKind": "${kind}"`,
     ...(withCommitSha ? [`"commitSha": "<sha>"`] : []),
     `"body": "<why, in your own words>"`,
     `"createdByType": "agent"`,
