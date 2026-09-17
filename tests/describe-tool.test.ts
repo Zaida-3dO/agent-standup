@@ -37,7 +37,7 @@ import {
 } from "@/lib/service";
 import type { ServiceFacts } from "@/lib/service/operations/describe-tool";
 import { currentBuildInfo, DEV_VERSION, UNKNOWN_REVISION } from "@/lib/build-info";
-import { OPERATION_NAMES } from "@/lib/service/registry";
+import { getOperation, OPERATION_NAMES } from "@/lib/service/registry";
 import { CHECK_RUN_STATUSES } from "@/lib/check-runs";
 import { SHIPPED_CHAR_CAP, SHIPPED_MAX, SHIPPED_MIN } from "@/lib/service/summaries/validate";
 import { HEADLINE_MAX_CHARS } from "@/lib/service/items/row";
@@ -254,7 +254,7 @@ describe("describe_tool returns one tool's full contract", () => {
     const contract = await contractFor("record_artifact");
 
     const rule = declaredRules(contract).find(
-      (entry) => entry.fields.includes("kind") && /check_run/.test(entry.rule),
+      (entry) => entry.fields.includes("artifactKind") && /check_run/.test(entry.rule),
     );
     expect(rule).toBeDefined();
     // Required, which is the half a caller cannot guess from a nullable field.
@@ -264,7 +264,8 @@ describe("describe_tool returns one tool's full contract", () => {
     }
     // The kind is reachable at all — a rule describing a kind the enum does
     // not offer would be documentation for something uncallable.
-    const kindField = contract.fields.find((entry) => entry.name === "kind");
+    const kindField = contract.fields.find((entry) => entry.name === "artifactKind");
+    expect(kindField, "record_artifact declares no artifactKind field").toBeDefined();
     expect(kindField?.enumValues).toContain("check_run");
   });
 
@@ -415,10 +416,22 @@ describe("describe_tool returns one tool's full contract", () => {
     //
     // Note what this still does NOT assert: an absent key is not a statement
     // that the operation has no preconditions. It says only that none were
-    // declared. `get_item` is a read whose schema genuinely says everything;
-    // the four operations that reported an empty list while enforcing an
-    // assignment check are covered below.
-    const contract = await contractFor("get_item");
+    // declared. `get_board` is a read whose schema genuinely says
+    // everything; the four operations that reported an empty list while
+    // enforcing an assignment check are covered below.
+    //
+    // **The subject is chosen for a property it holds incidentally**, which
+    // is a hazard worth guarding rather than trusting: nothing about
+    // `get_board` promises it will never declare a contract, and the day it
+    // does, this test fails as though the handler had regressed. So the
+    // assertion below reads the registry and names the real problem — this
+    // subject does not fit — rather than reporting a defect that is not
+    // there.
+    expect(
+      getOperation("get_board")?.contract,
+      "get_board declares a contract, so it cannot stand for an operation that declares none — pick another subject",
+    ).toBeUndefined();
+    const contract = await contractFor("get_board");
     expect(contract).not.toHaveProperty("rules");
     expect(contract.rules).toBeUndefined();
     expect(contract.fields.length).toBeGreaterThan(0);
@@ -439,8 +452,13 @@ describe("describe_tool returns one tool's full contract", () => {
   // caller asks, three documents were changed to say `checkpoint` needs no
   // claim, and three sessions were refused after following them.
   it("distinguishes declaring no contract from declaring one with no rules", async () => {
-    // Half one: no contract at all → the key is absent.
-    const noContract = await contractFor("get_item");
+    // Half one: no contract at all → the key is absent. Same subject as
+    // above, with the same guard on the choice for the same reason.
+    expect(
+      getOperation("get_board")?.contract,
+      "get_board declares a contract, so it cannot stand for an operation that declares none — pick another subject",
+    ).toBeUndefined();
+    const noContract = await contractFor("get_board");
     expect(noContract.rules).toBeUndefined();
 
     // Half two: a declared contract → the key is present. `describe_tool`

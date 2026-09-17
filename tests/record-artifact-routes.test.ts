@@ -82,7 +82,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
       const id = await seedItem();
       const response = await artifactsRoute.POST(
         jsonRequest(`http://test.invalid/api/items/${id}/artifacts`, "POST", {
-          kind: "code_review",
+          artifactKind: "code_review",
           verdict: "lgtm",
           commitSha: "a1b2c3d",
           createdByType: "person",
@@ -114,7 +114,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
       const response = await artifactsRoute.POST(
         jsonRequest(`http://test.invalid/api/items/${id}/artifacts`, "POST", {
           itemId: other,
-          kind: "plan",
+          artifactKind: "plan",
           createdByType: "agent",
           createdById: "agent-a",
         }),
@@ -131,7 +131,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
     it("answers 404 for an item that does not exist", async () => {
       const response = await artifactsRoute.POST(
         jsonRequest("http://test.invalid/api/items/nope/artifacts", "POST", {
-          kind: "plan",
+          artifactKind: "plan",
           createdByType: "agent",
           createdById: "agent-a",
         }),
@@ -147,7 +147,7 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
       const id = await seedItem();
       const response = await artifactsRoute.POST(
         jsonRequest(`http://test.invalid/api/items/${id}/artifacts`, "POST", {
-          kind: "commit",
+          artifactKind: "commit",
           createdByType: "agent",
           createdById: "agent-a",
         }),

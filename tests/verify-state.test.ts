@@ -48,7 +48,7 @@ describe("verifyState", () => {
     expect(impl.calls[0]!.url).toBe("/api/ui/items/item-1/artifacts");
     expect(impl.calls[0]!.method).toBe("POST");
     expect(impl.calls[0]!.body).toEqual({
-      kind: "historical_verification",
+      artifactKind: "historical_verification",
       commitSha: "abc123",
       body: validInput.body,
       createdByType: "person",

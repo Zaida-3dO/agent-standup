@@ -675,7 +675,7 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
           ...(hasTip ? { commitSha: "a".repeat(40) } : {}),
         });
         expect(parsed.success).toBe(true);
-        expect(call.kind).toBe(REVIEW_EVIDENCE_OVERRIDE_KIND);
+        expect(call.artifactKind).toBe(REVIEW_EVIDENCE_OVERRIDE_KIND);
         // The field the caller must replace is present and is a
         // placeholder, not a fabricated reason — a canned justification in
         // an example is what a hurried caller copies verbatim, and it would

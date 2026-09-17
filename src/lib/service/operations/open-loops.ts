@@ -162,7 +162,7 @@ export const loopAdd = defineOperation({
   kind: "write",
   summary:
     "Records a loose end on an item — work that still needs doing but is not big enough to be its own item. " +
-    "Loops track WORK, not notes: a reference, an index or a status marker belongs in the repo or in a `note` " +
+    'Loops track WORK, not notes: a reference, an index or a status marker belongs in the repo or in a `record` with `action: "note"` ' +
     "on the item, not here. Pass kind: note for one recorded here anyway, so it stays out of the count of work " +
     "outstanding, or kind: blocked_on_person for something waiting on a human.",
   // Stryker restore all

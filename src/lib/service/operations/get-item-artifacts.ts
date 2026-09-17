@@ -220,7 +220,7 @@ export const getItemArtifacts = defineOperation({
   name: "get_item_artifacts",
   kind: "read",
   summary:
-    "One item's artifacts, newest first and paged — plans, reviews, commits and check runs, reachable when get_item_detail is too large to return. Returns each without its body and findings; pass full for those, or artifactId for one in full.",
+    'One item\'s artifacts, newest first and paged — plans, reviews, commits and check runs, reachable when get_item with full: "detail" is too large to return. Returns each without its body and findings; pass full for those, or artifactId for one in full.',
   // Stryker restore all
   input: inputSchema,
   async handler(

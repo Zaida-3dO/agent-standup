@@ -1903,8 +1903,30 @@ recorded in full anyway, because a reader treating a shorter list as normative h
 that the untidiness does not: they "fix" the code to match the document and delete working commands.
 A count that is honest and slightly unflattering is worth more here than one that reads well.
 
-Two of them name a capability that is one tool on MCP and a noun here, deliberately: `loop` and
+Several of them name a capability that is one tool on MCP and a noun here, deliberately: `loop` and
 `score` are spelled the same on both surfaces, so one capability has one name wherever it is reached.
+
+**The MCP surface is deliberately smaller than this one, and the two are not in competition.** An
+MCP tool list is sent to the model on *every session*, so a tool there costs context permanently
+whether or not it is ever called; a command-line verb nobody types costs nothing. That asymmetry is
+the whole reason for the waiver table (§22) and for the folded tools: `get_item` takes a depth,
+`read_item`, `record`, `ownership`, `loop`, `score`, `project`, `session` and `create_work` each take
+the verb as a field, and the operations behind them are waived off MCP alone. Every one of them stays
+reachable over HTTP, on the command line, and through the tool it was folded into — a narrower tool
+list, never a narrower capability, which is what `tests/adapter-waivers.test.ts`'s stranding
+assertion enforces.
+
+**No count is written here on purpose.** `tests/mcp-tool-surface.test.ts` derives the number from the
+adapter's own exposed list and asserts it, along with the properties that make the number mean
+anything: every tool something was folded into is itself on the surface, and every folded verb is
+still exposed by a non-MCP adapter. A figure in prose drifts the first time a tool is added or
+waived, and a smaller surface that broke a capability would read as an improvement.
+
+The compaction is asserted **separately from the total**, against the fold table rather than the
+tool list, because the two move for unrelated reasons: folding removes names and registering a new
+capability adds them. A fold undone in the same window as a capability arriving would leave the
+total looking right while the surface is less compact than it claims, and only the separate
+assertion notices.
 
 **Output.** Human-readable by default, `--json` for anything parsing it — one document, one envelope,
 `{ ok, data }` or `{ ok, error: { code, message, fields } }`, with all human text on standard error so

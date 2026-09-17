@@ -141,7 +141,7 @@ describeIfDb("what the people write path unblocks", () => {
 
     const artifact = (await runtime.call("record_artifact", {
       itemId: item.id,
-      kind: "code_review",
+      artifactKind: "code_review",
       verdict: "lgtm",
       createdByType: "person",
       createdById: reviewer.id,

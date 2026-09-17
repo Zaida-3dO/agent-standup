@@ -114,7 +114,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         reviewRound: 3,
         commitSha: "abc1234",
@@ -149,7 +149,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const withFindings = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm_with_nits",
         findings: [{ text: "naming", severity: "low" }],
         createdByType: "agent",
@@ -160,7 +160,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
       const empty = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         findings: [],
         createdByType: "agent",
@@ -176,7 +176,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         findings: [{ text: "x", severity: "catastrophic" }],
         createdByType: "agent",
@@ -218,7 +218,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         findings: '[{"text": "a real finding", "severity": "medium"}]',
         createdByType: "agent",
@@ -247,7 +247,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         findings: 42,
         createdByType: "agent",
@@ -270,7 +270,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         findings: [{ severity: "medium", text: "the shape the reporter guessed first" }],
         createdByType: "agent",
@@ -288,7 +288,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
     it("refuses an item that does not exist", async () => {
       const error = await recordFails({
         itemId: "no-such-item",
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -301,7 +301,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -320,7 +320,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         body: "I looked at it and it seemed fine.",
         createdByType: "agent",
         createdById: "agent-a",
@@ -336,7 +336,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -351,7 +351,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         commitSha: "abc1234",
         body: "   \n  ",
         createdByType: "agent",
@@ -371,7 +371,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "merge_override",
+        artifactKind: "merge_override",
         body: "Nothing material changed since the review; docs only.",
         createdByType: "agent",
         createdById: "agent-a",
@@ -386,7 +386,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "merge_override",
+        artifactKind: "merge_override",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -399,7 +399,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "merge_override",
+        artifactKind: "merge_override",
         commitSha: "abc1234",
         body: "   \n  ",
         createdByType: "agent",
@@ -417,7 +417,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "merge_override",
+        artifactKind: "merge_override",
         commitSha: "abc1234",
         body: "fine",
         createdByType: "agent",
@@ -436,7 +436,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "merge_override",
+        artifactKind: "merge_override",
         commitSha: "abc1234",
         body: "Rebased onto main after approval; no source changes since the review.",
         createdByType: "agent",
@@ -461,7 +461,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "review_evidence_override",
+        artifactKind: "review_evidence_override",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -474,7 +474,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "review_evidence_override",
+        artifactKind: "review_evidence_override",
         commitSha: "abc1234",
         body: "   \n  ",
         createdByType: "agent",
@@ -488,7 +488,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "review_evidence_override",
+        artifactKind: "review_evidence_override",
         commitSha: "abc1234",
         body: "fine",
         createdByType: "agent",
@@ -515,7 +515,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "review_evidence_override",
+        artifactKind: "review_evidence_override",
         body: "Backfilled row; the work shipped days ago and no commit artifact was ever recorded.",
         createdByType: "agent",
         createdById: "agent-a",
@@ -536,13 +536,13 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "merge_approval",
+        artifactKind: "merge_approval",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
       });
       expect(error.code).toBe("invalid_input");
-      expect(error.fields).toEqual(["createdByType", "kind"]);
+      expect(error.fields).toEqual(["createdByType", "artifactKind"]);
       // The refusal has to say why, not merely no: an agent recording one
       // would be the held item authorising its own merge.
       const text = (error as unknown as Error).message;
@@ -553,7 +553,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "merge_approval",
+        artifactKind: "merge_approval",
         createdByType: "person",
         createdById: "user-a",
       });
@@ -572,7 +572,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "merge_approval",
+        artifactKind: "merge_approval",
         commitSha: "abc1234",
         createdByType: "person",
         createdById: "nobody-at-all",
@@ -584,7 +584,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "merge_approval",
+        artifactKind: "merge_approval",
         commitSha: "abc1234",
         createdByType: "person",
         createdById: "user-a",
@@ -601,7 +601,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "97837fa",
         supersedesSha: "e993415",
         createdByType: "agent",
@@ -615,7 +615,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "1a2b3c4",
         createdByType: "agent",
         createdById: "agent-a",
@@ -627,7 +627,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         commitSha: "abc1234",
         body: "Read the merged code at abc123: the routes named in the brief are absent.",
         createdByType: "agent",
@@ -644,7 +644,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "historical_verification",
+        artifactKind: "historical_verification",
         commitSha: "abc1234",
         body: "inspected",
         verdict: "lgtm",
@@ -652,27 +652,27 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
         createdById: "agent-a",
       });
       expect(error.code).toBe("invalid_input");
-      expect(error.fields).toEqual(["verdict", "kind"]);
+      expect(error.fields).toEqual(["verdict", "artifactKind"]);
     });
 
     it("refuses a verdict on an artifact that is not a review", async () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "test_run",
+        artifactKind: "test_run",
         verdict: "lgtm",
         createdByType: "agent",
         createdById: "agent-a",
       });
       expect(error.code).toBe("invalid_input");
-      expect(error.fields).toEqual(["verdict", "kind"]);
+      expect(error.fields).toEqual(["verdict", "artifactKind"]);
     });
 
     it("allows 'na' on a non-review, which is what that verdict is for", async () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "abc1234",
         verdict: "na",
         createdByType: "agent",
@@ -685,7 +685,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
     it("refuses when it cannot tell who produced the artifact", async () => {
       const itemId = await createTask();
-      const error = await recordFails({ itemId, kind: "plan" });
+      const error = await recordFails({ itemId, artifactKind: "plan" });
       // Deliberately not defaulted. `createdByType` decides whether a human
       // authorised a merge on a needs_approval item, so a guess here is the
       // difference between a real gate and a decorative one.
@@ -697,7 +697,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm_with_followups",
         followUpItemId: "no-such-item",
         createdByType: "agent",
@@ -733,7 +733,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "not-hex-at-all",
         createdByType: "agent",
         createdById: "agent-a",
@@ -748,7 +748,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       // this is testing the LENGTH bound specifically, not the charset one.
       const error = await recordFails({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "abc123",
         createdByType: "agent",
         createdById: "agent-a",
@@ -761,7 +761,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         // 41 hex characters — one longer than a full sha-1.
         commitSha: "a".repeat(41),
         createdByType: "agent",
@@ -775,7 +775,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "ABC1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -788,7 +788,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -804,7 +804,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(sha.length).toBe(40);
       const artifact = await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: sha,
         createdByType: "agent",
         createdById: "agent-a",
@@ -816,7 +816,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "plan",
+        artifactKind: "plan",
         commitSha: null,
         createdByType: "agent",
         createdById: "agent-a",
@@ -840,7 +840,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
         },
       });
 
-      const artifact = await record({ itemId, kind: "plan", sessionId: "session-1" });
+      const artifact = await record({ itemId, artifactKind: "plan", sessionId: "session-1" });
       expect(artifact.createdByType).toBe("agent");
       expect(artifact.createdById).toBe("agent-b");
     });
@@ -861,7 +861,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
       const artifact = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         sessionId: "session-1",
         createdByType: "person",
@@ -883,7 +883,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         createdByType: "person",
         createdById: "nobody-at-all",
@@ -911,7 +911,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         createdByType: "person",
         createdById: "nobody-at-all",
@@ -964,7 +964,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
         const error = (await emptyRuntime
           .call("record_artifact", {
             itemId: "no-people-task",
-            kind: "code_review",
+            artifactKind: "code_review",
             verdict: "lgtm",
             createdByType: "person",
             createdById: "ope",
@@ -998,7 +998,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         createdByType: "person",
         createdById: "user-a",
@@ -1017,7 +1017,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         createdByType: "agent",
         createdById: "some-agent-nobody-registered",
@@ -1048,7 +1048,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
       const error = await recordFails({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         sessionId: "session-ghost",
       });
@@ -1072,7 +1072,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
         },
       });
 
-      const error = await recordFails({ itemId, kind: "plan", sessionId: "session-1" });
+      const error = await recordFails({ itemId, artifactKind: "plan", sessionId: "session-1" });
       // A released assignment is not a live one — crediting it would let a
       // finished session keep producing attributed artifacts.
       expect(error.code).toBe("invalid_input");
@@ -1084,7 +1084,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       await record({
         itemId,
-        kind: "plan_review",
+        artifactKind: "plan_review",
         verdict: "approved",
         reviewRound: 4,
         createdByType: "agent",
@@ -1093,7 +1093,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
       const next = await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -1109,7 +1109,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "plan",
+        artifactKind: "plan",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -1120,14 +1120,14 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       await record({
         itemId,
-        kind: "plan",
+        artifactKind: "plan",
         reviewRound: 2,
         createdByType: "agent",
         createdById: "agent-a",
       });
       const artifact = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         reviewRound: 5,
         createdByType: "agent",
@@ -1140,7 +1140,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const artifact = await record({
         itemId,
-        kind: "plan",
+        artifactKind: "plan",
         reviewRound: "3",
         createdByType: "agent",
         createdById: "agent-a",
@@ -1155,7 +1155,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       const error = await recordFails({
         itemId,
-        kind: "plan",
+        artifactKind: "plan",
         reviewRound: 0,
         createdByType: "agent",
         createdById: "agent-a",
@@ -1169,7 +1169,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         reviewRound: 2,
         createdByType: "person",
@@ -1178,6 +1178,9 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
       const events = await prisma.event.findMany({ where: { itemId, type: "review" } });
       expect(events).toHaveLength(1);
+      // The EVENT PAYLOAD keeps `kind`: it is the stored row's column, read by
+      // everything that consumes the ledger, and renaming the input field is
+      // not a licence to rewrite history's shape. Only the INPUT moved.
       expect(events[0]?.payload).toEqual({ kind: "code_review", verdict: "lgtm", round: 2 });
       expect(events[0]?.actorType).toBe("person");
     });
@@ -1186,7 +1189,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       const itemId = await createTask();
       await record({
         itemId,
-        kind: "commit",
+        artifactKind: "commit",
         commitSha: "abc1234",
         createdByType: "agent",
         createdById: "agent-a",
@@ -1215,7 +1218,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
       const artifact = await record({
         itemId,
-        kind: "code_review",
+        artifactKind: "code_review",
         verdict: "lgtm",
         createdByType: "person",
         createdById: "user-a",
@@ -1235,7 +1238,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
 
       const artifact = await record({
         itemId: projectId,
-        kind: "test_run",
+        artifactKind: "test_run",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -1250,7 +1253,7 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       // operation validates nothing". Existence is checked; state is not.
       const error = await recordFails({
         itemId: "no-such-item",
-        kind: "test_run",
+        artifactKind: "test_run",
         createdByType: "agent",
         createdById: "agent-a",
       });
@@ -1331,6 +1334,9 @@ describeIfDb("request_review (#98), against Postgres", () => {
     await prisma.artifact.create({
       data: {
         itemId,
+        // The DATABASE COLUMN, which keeps its name. Only the operation's
+        // input field moved; the stored schema is untouched, which is what
+        // makes the rename a surface change rather than a migration.
         kind: "plan" as never,
         reviewRound: 3,
         createdByType: "agent",

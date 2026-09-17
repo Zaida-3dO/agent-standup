@@ -68,7 +68,7 @@ describe("approve — needs_approval", () => {
     // at the tip; a `code_review` here — which is what this code used to write —
     // satisfies nothing and leaves the item held.
     expect(calls[0]?.body).toMatchObject({
-      kind: "merge_approval",
+      artifactKind: "merge_approval",
       createdByType: "person",
       createdById: "ope",
       commitSha: TIP,
@@ -157,7 +157,7 @@ describe("approve — plan_review", () => {
 
     expect(result).toEqual({ ok: true });
     expect(calls[0]?.body).toMatchObject({
-      kind: "plan_review",
+      artifactKind: "plan_review",
       verdict: "lgtm",
       createdByType: "person",
       createdById: "ope",
@@ -200,7 +200,7 @@ describe("approve — needs_visual_review", () => {
 
     expect(result).toEqual({ ok: true });
     expect(calls[0]?.body).toMatchObject({
-      kind: "visual_review",
+      artifactKind: "visual_review",
       verdict: "lgtm",
       createdByType: "person",
       commitSha: TIP,
@@ -316,7 +316,7 @@ describe("reject", () => {
     expect(result).toEqual({ ok: true });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.body).toMatchObject({
-      kind: "visual_review",
+      artifactKind: "visual_review",
       verdict: "changes_required",
       createdByType: "person",
     });

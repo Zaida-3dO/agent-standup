@@ -21,6 +21,10 @@ import { SCORE_ACTIONS, SCORE_ACTION_FIELDS } from "../operations/score";
 import { PROJECT_ACTIONS, PROJECT_ACTION_FIELDS } from "../operations/project";
 import { SESSION_ACTIONS, SESSION_ACTION_FIELDS } from "../operations/session";
 import { CREATE_WORK_TYPES } from "../operations/create-work";
+import { ITEM_DEPTHS } from "../operations/get-item";
+import { READ_ITEM_ACTIONS, READ_ITEM_ACTION_FIELDS } from "../operations/read-item";
+import { OWNERSHIP_ACTIONS, OWNERSHIP_ACTION_FIELDS } from "../operations/ownership";
+import { RECORD_ACTIONS, RECORD_ACTION_FIELDS } from "../operations/record";
 
 /** One folded tool's verbs, and what each of them cannot run without. */
 export interface FoldActions {
@@ -54,7 +58,9 @@ const LOOP_REQUIRED: Readonly<Record<string, readonly string[]>> = Object.freeze
  *
  * `create_work` is included even though its discriminator is called `type`
  * rather than `action`: a caller asking what it needs has the same question,
- * and the answer is per-kind in exactly the same way.
+ * and the answer is per-kind in exactly the same way. `get_item` is included
+ * for the same reason under a third name, `full` — its verbs are depths, and
+ * "what do I pass for the deepest read" is the same question again.
  */
 export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, FoldActions>([
   [
@@ -92,6 +98,50 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
     },
   ],
   [
+    "get_item",
+    {
+      // The depths, named. The boolean spellings `true` and `false` are
+      // deliberately NOT listed: they are synonyms for two of these, and a
+      // caller asking what verbs this tool has wants the vocabulary that
+      // covers all three, not two ways of saying two of them.
+      actions: [...ITEM_DEPTHS],
+      // Every depth requires only `id`, which the schema states for the
+      // tool as a whole — so there is nothing per-depth to report, and
+      // reporting a requirement that is not per-action would be the
+      // confident wrong answer this table exists to avoid. The two limits
+      // are the reverse case: accepted only at `detail`, and refused by
+      // name elsewhere, which is a contract rule rather than a requirement.
+      requiredByAction: Object.freeze({ summary: [], item: [], detail: [] }),
+    },
+  ],
+  [
+    "read_item",
+    {
+      actions: [...READ_ITEM_ACTIONS],
+      requiredByAction: Object.fromEntries(
+        Object.entries(READ_ITEM_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
+      ),
+    },
+  ],
+  [
+    "ownership",
+    {
+      actions: [...OWNERSHIP_ACTIONS],
+      requiredByAction: Object.fromEntries(
+        Object.entries(OWNERSHIP_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
+      ),
+    },
+  ],
+  [
+    "record",
+    {
+      actions: [...RECORD_ACTIONS],
+      requiredByAction: Object.fromEntries(
+        Object.entries(RECORD_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
+      ),
+    },
+  ],
+  [
     "create_work",
     {
       actions: [...CREATE_WORK_TYPES],
@@ -108,7 +158,19 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
   ],
 ]);
 
-/** The field a folded tool names its verb, for the refusal to quote correctly. */
-export function discriminatorFor(tool: string): "action" | "type" {
-  return tool === "create_work" ? "type" : "action";
+/**
+ * The field a folded tool names its verb, for the refusal to quote
+ * correctly.
+ *
+ * Three names rather than one, because the tools were not built to a
+ * template: `create_work` takes a `type` because the thing being made has a
+ * kind, and `get_item` takes a `full` because the flag already meant depth
+ * and keeping its name is what lets every existing `full: true` go on
+ * meaning what it meant. Quoting the wrong one would send a caller looking
+ * for a field their tool does not have, which is worse than not naming it.
+ */
+export function discriminatorFor(tool: string): "action" | "type" | "full" {
+  if (tool === "create_work") return "type";
+  if (tool === "get_item") return "full";
+  return "action";
 }

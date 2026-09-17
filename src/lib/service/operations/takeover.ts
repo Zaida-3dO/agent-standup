@@ -63,12 +63,12 @@ export const takeover = defineOperation({
   name: "takeover",
   kind: "write",
   summary:
-    "Takes an item from another session. Free if that session is dead; requires force plus a written reason if it may be alive. Releases the holder's claim but does NOT assign the item to you — call claim next — and does not stop the displaced session.",
+    'Takes an item from another session. Free if that session is dead; requires force plus a written reason if it may be alive. Frees the holder\'s assignment but does NOT assign the item to you — use `ownership` with `action: "claim"` next — and does not stop the displaced session.',
   contract: {
     rules: [
       {
         fields: ["itemId"],
-        rule: "A takeover RELEASES the previous assignment; it does NOT assign the item to the caller. Call `claim` immediately afterwards, through the front door — until you do, you hold nothing, and a checkpoint will not attribute to you. Claiming is deliberately not folded in: it has its own guards, and a takeover that also claimed would be two operations wearing one name.",
+        rule: 'A takeover FREES the previous assignment; it does NOT assign the item to the caller. Run `ownership` with `action: "claim"` immediately afterwards, through the front door — until you do, you hold nothing, and a checkpoint will not attribute to you. Taking is deliberately a separate action: it has its own guards, and one action that did both would be two operations wearing one name.',
       },
       {
         fields: ["fromSessionId"],

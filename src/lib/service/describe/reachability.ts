@@ -93,4 +93,81 @@ export const FOLDED_INTO: ReadonlyMap<string, string> = new Map([
   ["repair_stuck_projects", "project"],
   ["register_session", "session"],
   ["get_session_shape", "session"],
+  ["get_item_detail", "get_item"],
+  ["get_item_body", "read_item"],
+  ["get_item_history", "read_item"],
+  ["get_item_artifacts", "read_item"],
+  ["claim", "ownership"],
+  ["release", "ownership"],
+  ["takeover", "ownership"],
+  ["checkpoint", "record"],
+  ["note", "record"],
+  ["record_artifact", "record"],
+  ["report_blocked_on_tool", "record"],
 ]);
+
+/**
+ * Whether an MCP caller can reach `operation` at all — directly, or through
+ * the tool it was folded into.
+ *
+ * ── The invariant this expresses ───────────────────────────────────────
+ *
+ * `tests/adapter-waivers.test.ts` protects a class of mistake §22's own
+ * bound cannot see: a waiver that is legal — no guard loses coverage — and
+ * still wrong, because it removes the one surface an agent was *told to
+ * use*. `guard.response_too_large` refuses `get_item_detail` and its advice
+ * names `get_item_history` and `get_item_artifacts` as the way to reach
+ * that item's notes and artifacts. Waive those off MCP and a refusal
+ * prescribes a remedy the refused caller cannot perform. It is not
+ * hypothetical: two sessions hit exactly that dead end, one tried six
+ * routes and found nothing, another lost a spec it had written into a note.
+ *
+ * That invariant was written as `isWaived(...) === false`, and while every
+ * remedy was its own tool the two were the same statement. **They are not
+ * the same statement once folds exist.** What has to be true is that the
+ * CAPABILITY is reachable; non-waiver of a NAME was only ever the way to
+ * say so. A remedy folded into an exposed tool is still reachable — the
+ * fold dispatches to the operation that implements it and hands back its
+ * refusal object unedited — and its spelling moves with it, because
+ * `advice.ts`'s `unreachable` class fails the build on advice naming a tool
+ * the caller cannot call.
+ *
+ * **Stated honestly, this is a TRADE rather than a strict superset of the
+ * name test.** Over the space of (waived?, folded?, target reachable?):
+ *
+ *   - exposed, not folded — both pass. Equal.
+ *   - waived, not folded — both fail. Equal.
+ *   - waived, folded into an EXPOSED tool — the name test fails, this
+ *     passes. **A loosening, and it is conceded**: it is precisely the case
+ *     the `read_item` fold is, and the only way that fold can ship.
+ *   - waived, folded into a WAIVED tool — both fail, but this one fails for
+ *     the right reason rather than by coincidence.
+ *   - waived, folded into a tool that does not exist, or a fold chain whose
+ *     terminal tool is waived — the name test PASSED both (it never
+ *     consulted `FOLDED_INTO` at all); this fails. **Two strengthenings.**
+ *
+ * The conceded case is closed by a second assertion rather than by claiming
+ * it away: `tests/adapter-waivers.test.ts` cross-checks `FOLDED_INTO`
+ * against `FOLD_ACTIONS` so a fold cannot be a valid target while declaring
+ * no action that reaches what it folds, and
+ * `tests/fold-forwarding-names.test.ts` OBSERVES each fold reaching each
+ * delegate. Without those, this function trusts a name-to-name map: an
+ * operation could be "reachable" through a fold that has no action for it.
+ *
+ * Recursive so a fold chain resolves to what a caller actually holds. A
+ * cycle would not terminate, and cannot arise from a correct table — so it
+ * is guarded rather than trusted, and reports unreachable, the conservative
+ * answer, rather than hanging the build.
+ */
+export function reachableOnMcp(operation: string): boolean {
+  const offMcp = operationsOffMcp();
+  const seen = new Set<string>();
+  let current = operation;
+  for (;;) {
+    if (seen.has(current)) return false;
+    seen.add(current);
+    const folded = FOLDED_INTO.get(current);
+    if (folded === undefined) return !offMcp.has(current);
+    current = folded;
+  }
+}

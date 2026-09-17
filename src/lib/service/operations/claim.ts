@@ -245,11 +245,11 @@ export const claim = defineOperation({
         // a `parameter` defect that fails the build. That is the very
         // defect class this rule was added to fix, so getting it wrong here
         // would be the joke writing itself.
-        rule: "TAKING A HELD ITEM OVER. When `claims.one_crew_per_item` refuses this claim, the item belongs to another crew and no amount of re-claiming will win it — supersede the holder with `takeover {itemId, fromSessionId: <the holder's sessionId>, bySessionId: <yours>, holderType, holderId}`. A takeover releases the holder's assignment but does NOT assign the item to you, so call `claim` again afterwards to actually take it. When the holder is still live — liveness `running` or `stalled` rather than `dead` — `takeover` additionally requires `force: true` and a written `reason`, because taking work from a session that may still be doing it is a decision somebody has to own in the record.",
+        rule: 'TAKING A HELD ITEM OVER. When `claims.one_crew_per_item` refuses this, the item belongs to another crew and no amount of re-trying will win it — supersede the holder with `ownership {action: "takeover", itemId, fromSessionId: <the holder\'s sessionId>, bySessionId: <yours>, holderType, holderId}`. That action frees the holder\'s assignment but does NOT assign the item to you, so run `ownership` with `action: "claim"` again afterwards to actually take it. When the holder is still live — liveness `running` or `stalled` rather than `dead` — the takeover action additionally requires `force: true` and a written `reason`, because taking work from a session that may still be doing it is a decision somebody has to own in the record.',
       },
       {
         fields: ["sessionId", "itemId"],
-        rule: "ONE LIVE ROW PER SESSION PER ITEM. A session that already holds a live assignment on this item cannot claim a second one — change roles by releasing first. Enforced by a partial unique index rather than a pre-read, so it is decided by the database and refuses with `conflict` naming the row you already hold.",
+        rule: 'ONE LIVE ROW PER SESSION PER ITEM. A session that already holds a live assignment on this item cannot take a second one — change roles by giving up the first, with `ownership` and `action: "release"`. Enforced by a partial unique index rather than a pre-read, so it is decided by the database and refuses with `conflict` naming the row you already hold.',
       },
       {
         fields: ["role", "itemId"],

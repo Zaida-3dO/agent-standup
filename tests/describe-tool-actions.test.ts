@@ -83,7 +83,16 @@ describe("describe_tool lists a folded tool's verbs", () => {
   });
 
   it("reports no verbs for a tool that folds nothing", async () => {
-    const contract = await describeTool({ tool: "get_item" });
+    // The subject has to be a tool that folds nothing, which is a property
+    // it holds incidentally rather than promises — so the choice is
+    // guarded. A tool that gains a fold makes this test fail as though the
+    // handler had regressed, and the assertion below names the real cause
+    // instead.
+    expect(
+      FOLD_ACTIONS.has("get_board"),
+      "get_board folds something, so it cannot stand for a tool that folds nothing — pick another subject",
+    ).toBe(false);
+    const contract = await describeTool({ tool: "get_board" });
     // Absent, not empty. "This tool folds nothing" and "this tool folds an
     // empty set" are different answers, and an empty array would collapse
     // them — the same distinction `rules` already draws.
@@ -121,8 +130,12 @@ describe("describe_tool answers per action", () => {
   it("ignores an action on a tool that folds nothing, rather than refusing", async () => {
     // A caller passing one by habit is not making an error worth a round
     // trip, and the answer it gets is the answer it wanted.
-    const contract = await describeTool({ tool: "get_item", action: "anything" });
-    expect(contract.name).toBe("get_item");
+    expect(
+      FOLD_ACTIONS.has("get_board"),
+      "get_board folds something, so it cannot stand for a tool that folds nothing — pick another subject",
+    ).toBe(false);
+    const contract = await describeTool({ tool: "get_board", action: "anything" });
+    expect(contract.name).toBe("get_board");
     expect(contract.requiredForAction).toBeUndefined();
   });
 });
@@ -171,6 +184,10 @@ describe("describe_tool reports where a folded operation went", () => {
   });
 
   it("reports an unfolded MCP tool as on-MCP with no fold", async () => {
+    // `get_item` is a fold TARGET rather than a folded operation, so it is
+    // still the right subject here: it is exposed on MCP and appears in no
+    // `FOLDED_INTO` key. The two properties are different, which is exactly
+    // what this asserts.
     const contract = await describeTool({ tool: "get_item" });
     expect(contract.onMcp).toBe(true);
     expect(contract.foldedInto).toBeUndefined();

@@ -117,6 +117,12 @@ import { getItemHistory } from "./operations/get-item-history";
 // from. Paged by character offset rather than a keyset, for the reason its
 // own header gives — `body` is one scalar on one row, not a growing set.
 import { getItemBody } from "./operations/get-item-body";
+// The three bounded reads of one item behind one tool, because they are one
+// capability seen three times: what a caller reaches for when the whole-item
+// read will not fit, each returning a different unbounded axis of the same
+// item in windows. Waived off MCP as three names and reachable as one plus
+// an action (`@/lib/adapters/waivers`).
+import { readItem } from "./operations/read-item";
 // "What needs this person", in one call (T24) — the union three separate
 // `list_items` reads used to assemble in the browser.
 import { getNeedsYou } from "./operations/get-needs-you";
@@ -146,6 +152,18 @@ import { release } from "./operations/release";
 // takeover that displaces a holder the ladder is not going to release.
 import { sweep } from "./operations/sweep";
 import { takeover } from "./operations/takeover";
+// The whole lifecycle of who holds an item behind one tool — taking it,
+// giving it up, and displacing the holder. The three spend their
+// documentation pointing at each other, which is the practical sign they are
+// one capability with three directions. Waived off MCP as three names and
+// reachable as one plus an action (`@/lib/adapters/waivers`).
+import { ownership } from "./operations/ownership";
+// The four ways an agent puts something on an item's record — a resume
+// point, a remark, a produced artifact, a capability gap — behind one tool.
+// One act seen four times, and the fold states the checkpoint/note
+// asymmetry in its contract rather than leaving it to a refusal. Waived off
+// MCP as four names (`@/lib/adapters/waivers`).
+import { record } from "./operations/record";
 import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
@@ -322,6 +340,7 @@ export const OPERATION_REGISTRY = {
   [getItemHistory.name]: getItemHistory,
   [getItemArtifacts.name]: getItemArtifacts,
   [getItemBody.name]: getItemBody,
+  [readItem.name]: readItem,
   [getNeedsYou.name]: getNeedsYou,
   [getStaleCandidates.name]: getStaleCandidates,
   [getSettings.name]: getSettings,
@@ -337,6 +356,8 @@ export const OPERATION_REGISTRY = {
   [release.name]: release,
   [sweep.name]: sweep,
   [takeover.name]: takeover,
+  [ownership.name]: ownership,
+  [record.name]: record,
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
   [note.name]: note,

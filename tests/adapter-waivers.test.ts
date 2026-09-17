@@ -17,6 +17,8 @@ import {
   waiversNameRegisteredAdapters,
 } from "@/lib/adapters/waivers";
 import { listOperations, OPERATION_NAMES } from "@/lib/service";
+import { FOLDED_INTO, reachableOnMcp } from "@/lib/service/describe/reachability";
+import { FOLD_ACTIONS } from "@/lib/service/describe/fold-actions";
 import { narrowerCallFor } from "@/lib/service/response-size";
 import { createMcpServer } from "@/lib/mcp/server";
 import { toolsFromOperations } from "@/lib/mcp/tools";
@@ -230,10 +232,98 @@ describe("the waiver list", () => {
       // frequently the whole reason the response did not fit.
       "get_item_artifacts",
     ];
+    // ── Reachability, not non-waiver ──────────────────────────────────
+    //
+    // This assertion used to read `expect(isWaived(...)).toBe(false)` on
+    // each MCP adapter, and while every remedy was its own tool the two
+    // said the same thing. They stop saying the same thing once a remedy
+    // can be FOLDED: what has to be true is that the capability is
+    // reachable by the refused caller, and non-waiver of a name was only
+    // ever the way to express that. A remedy folded into an exposed tool is
+    // still reachable — the fold dispatches to the operation that
+    // implements it and returns its refusal object unedited — and the
+    // advice moves to the folded spelling in the same commit, because
+    // `advice.ts`'s `unreachable` class fails the build otherwise.
+    //
+    // **This is a trade and it is conceded rather than talked away.** A
+    // name check is blind to two cases this one catches — a fold target
+    // that does not exist, and a fold chain whose terminal tool is itself
+    // waived — and stricter in exactly one: an operation waived and folded
+    // into an exposed tool, which a name check refuses and this one
+    // permits. See `reachableOnMcp`'s header for the full case table.
+    //
+    // The comment below asks that a failure here be re-argued rather than
+    // silently kept. That is what this is: the argument is that
+    // `get_item_history` and `get_item_artifacts` remain reachable through
+    // `read_item`, so the capability the two stranded sessions lacked is
+    // present and only its spelling moved. The conceded case is closed by
+    // the cross-check in the test that follows, which is what stops "folded
+    // into an exposed tool" from being taken on trust.
     for (const operation of AGENT_REMEDIATION_OPERATIONS) {
-      expect(isWaived("mcp_http", operation)).toBe(false);
-      expect(isWaived("mcp_stdio", operation)).toBe(false);
+      expect(reachableOnMcp(operation), `${operation} is not reachable by an MCP caller`).toBe(
+        true,
+      );
     }
+  });
+
+  it("every folded operation is reachable through an action its fold declares", () => {
+    // The cross-check that closes the loosening above.
+    //
+    // `reachableOnMcp` resolves a waived operation through `FOLDED_INTO`,
+    // which is a name-to-name map and nothing more. Nothing in it asserts
+    // the fold actually EXPOSES AN ACTION reaching the folded behaviour:
+    // `FOLDED_INTO` and `FOLD_ACTIONS` are independent tables, written in
+    // different files, with no relationship the compiler can see. So
+    // without this, an operation could be reported reachable through a fold
+    // that has no action for it — a waiver justified by a door that does
+    // not open.
+    //
+    // Note what this does NOT do, deliberately: it does not check that the
+    // right action reaches the right delegate. That is not assertable from
+    // two maps, because both are declarations — the only way to know is to
+    // run the fold and see. `tests/fold-forwarding-names.test.ts` does
+    // exactly that and asserts every `FOLDED_INTO` key is OBSERVED being
+    // reached. This test is the cheap structural half; that one is the
+    // behavioural half, and the pair is what makes the concession safe.
+    expect(FOLDED_INTO.size).toBeGreaterThan(0);
+
+    for (const [folded, tool] of FOLDED_INTO) {
+      const fold = FOLD_ACTIONS.get(tool);
+      expect(fold, `${tool} folds ${folded} but declares no actions`).toBeDefined();
+      expect(fold!.actions.length, `${tool} declares an empty action list`).toBeGreaterThan(0);
+      // And the tool a caller is redirected to is one they actually hold.
+      // A fold target waived off MCP would make every operation folded into
+      // it unreachable while each looked individually accounted for.
+      expect(reachableOnMcp(tool), `${tool} is itself unreachable on MCP`).toBe(true);
+    }
+  });
+
+  it("reports an operation waived off every MCP adapter and folded into nothing as unreachable", () => {
+    // **The negative control, and it is load-bearing rather than tidy.**
+    //
+    // Every operation the assertions above check is, by construction, one
+    // that IS reachable — so `reachableOnMcp` hardcoded to `return true`
+    // passes all of them. Measured: that mutation left the whole file
+    // green. An assertion that only ever asks for `true` cannot tell a
+    // working predicate from a constant, which is the same hollowness this
+    // PR's first commit removed from the forwarding guard.
+    //
+    // `backfill` is the right subject precisely because it is the dull
+    // case: waived from both MCP transports, in `FOLDED_INTO` nowhere, and
+    // waived for a reason (per-session tool-list cost) that has nothing to
+    // do with folding and so will not be disturbed by this PR or the next
+    // one. `readiness` is the same shape and is checked alongside it, so a
+    // single waiver being edited does not quietly remove the control.
+    expect(reachableOnMcp("backfill")).toBe(false);
+    expect(reachableOnMcp("readiness")).toBe(false);
+
+    // And the premises, so this cannot pass for the wrong reason — a typo'd
+    // operation name is unreachable too, and would satisfy the two lines
+    // above while checking nothing.
+    expect(isWaived("mcp_http", "backfill")).toBe(true);
+    expect(isWaived("mcp_stdio", "backfill")).toBe(true);
+    expect(FOLDED_INTO.has("backfill")).toBe(false);
+    expect(OPERATION_NAMES).toContain("backfill");
   });
 
   it("keeps the bounded-read remedies reachable for the guard that prescribes them", () => {
@@ -254,26 +344,39 @@ describe("the waiver list", () => {
 
     const detailAdvice = narrowerCallFor("get_item_detail");
     expect(detailAdvice).toBeDefined();
-    // The two remedies that reach the data. Before this change the advice
-    // named neither, and every route it did name answered a different
-    // question than the one the refused caller had asked.
-    expect(detailAdvice).toContain("get_item_artifacts");
-    expect(detailAdvice).toContain("get_item_history");
+    // The two remedies that reach the data, named in the spelling a caller
+    // holds. Every route the advice names other than these answers a
+    // different question than the one the refused caller asked: the loops,
+    // the body and the slim record each shrink a different part of the
+    // payload and none of them returns an artifact or a note body at all.
+    //
+    // **The tools are named by their folded spelling, which is the same
+    // assertion and not a weaker one.** What has to be true is that a
+    // refused caller can follow the advice; the advice has to name a call
+    // they can make, and after the fold that call is `read_item` with an
+    // action. Asserting the pre-fold names here would pin the advice to
+    // tools no MCP caller can call, which is the defect this test exists to
+    // prevent rather than a stricter form of preventing it.
+    expect(detailAdvice).toContain('read_item` with `action: "artifacts"');
+    expect(detailAdvice).toContain('read_item` with `action: "history"');
     // Named with the parameter that makes each useful, not by name alone:
-    // `get_item_history` returns a slim ledger without `full`, which is
-    // not the note text the caller was refused while reading.
+    // the history read returns a slim ledger without `full`, which is not
+    // the note text the caller was refused while reading.
     expect(detailAdvice).toContain("full: true");
-    expect(collapsed).toContain("get_item_artifacts");
+    expect(collapsed).toContain('action: \"artifacts\"');
 
-    // And both are genuinely callable, which is the half a string
-    // assertion cannot see. This is the same coupling `advice.ts`'s
-    // `unreachable` check enforces at build time, asserted here against
-    // the waiver table directly so the reason survives even if that
-    // checker is ever relaxed.
+    // And the capability is genuinely reachable, which is the half a string
+    // assertion cannot see. Asserted as REACHABILITY rather than as
+    // non-waiver, for the reason `reachableOnMcp`'s header gives: what the
+    // two stranded sessions lacked was a route to their item's notes and
+    // artifacts, and a route through a fold is a route. The tool they are
+    // reached through is asserted callable too, so this cannot pass by the
+    // fold target itself having gone off the surface.
     for (const operation of ["get_item_artifacts", "get_item_history"]) {
-      expect(isWaived("mcp_http", operation)).toBe(false);
-      expect(isWaived("mcp_stdio", operation)).toBe(false);
+      expect(reachableOnMcp(operation), `${operation} is unreachable on MCP`).toBe(true);
     }
+    expect(isWaived("mcp_http", "read_item")).toBe(false);
+    expect(isWaived("mcp_stdio", "read_item")).toBe(false);
   });
 
   it("keeps the move remedy reachable for the guard that actually prescribes it", () => {
@@ -314,14 +417,34 @@ describe("isWaived / waiversFor / exposedOperations", () => {
     expect(isWaived("mcp_stdio", "backfill")).toBe(true);
     expect(isWaived("http", "backfill")).toBe(false);
     expect(isWaived("cli", "backfill")).toBe(false);
-    // `checkpoint` is the sentinel for "still exposed": it is one of the
-    // most-called agent-facing tools and is deliberately not waived. It took
-    // this role from `create_task`, which is now reached through the folded
-    // `create_work` tool and waived off MCP with the other two creates — a
-    // sentinel has to be a tool no planned fold will ever touch, or it stops
-    // being a positive control and becomes another thing to edit.
-    expect(isWaived("mcp_http", "checkpoint")).toBe(false);
-    expect(isWaived("mcp_stdio", "checkpoint")).toBe(false);
+    // `transition_item` is the sentinel for "still exposed".
+    //
+    // **This is its second move, and the second one is different in kind
+    // from the first.** The role was originally `create_task`'s; it went to
+    // `checkpoint` when `create_task` was folded into `create_work`, under
+    // the rule that a sentinel has to be a tool no planned fold will ever
+    // touch or it stops being a positive control and becomes another thing
+    // to edit. `checkpoint` is now folded into `record`, so that rule has
+    // cost two edits and been satisfied by intent both times.
+    //
+    // `transition_item` satisfies it MECHANICALLY, which is why this move
+    // is terminal rather than the next one in a series. It is one of the
+    // two operations in `GUARD_RUNNING_OPERATIONS` above — the only
+    // registered operations reaching `runGuards` through the state machine
+    // — and the §22-bound assertion there refuses a waiver naming either.
+    // So waiving `transition_item` off MCP fails this file whatever anyone
+    // intends, rather than relying on a future planner reading a comment.
+    // A positive control protected by an assertion is a better positive
+    // control than one protected by a request.
+    //
+    // It is also out of scope for folding on the merits: six flat fields,
+    // zero contract rules, and folding it into `complete_item` or
+    // `update_item` would infer intent from which fields arrived — the
+    // bound every fold here has to clear, and the reason a tool that
+    // guesses its subject from the shape of its input has no place on this
+    // surface.
+    expect(isWaived("mcp_http", "transition_item")).toBe(false);
+    expect(isWaived("mcp_stdio", "transition_item")).toBe(false);
     expect(isWaived("mcp_http", "create_item")).toBe(true);
     // The folded-away creates and loop verbs are waived on MCP only.
     expect(isWaived("mcp_http", "create_task")).toBe(true);
@@ -355,9 +478,12 @@ describe("isWaived / waiversFor / exposedOperations", () => {
   });
 
   it("filters a list down to what an adapter exposes", () => {
-    const all = [{ name: "backfill" }, { name: "checkpoint" }];
-    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["checkpoint"]);
-    expect(exposedOperations("http", all).map((o) => o.name)).toEqual(["backfill", "checkpoint"]);
+    const all = [{ name: "backfill" }, { name: "transition_item" }];
+    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["transition_item"]);
+    expect(exposedOperations("http", all).map((o) => o.name)).toEqual([
+      "backfill",
+      "transition_item",
+    ]);
   });
 });
 
@@ -372,7 +498,7 @@ describe("the MCP adapter honours its waiver", () => {
     const tools = toolsFromOperations(exposedOperations("mcp_http", listOperations()));
     expect(tools.map((t) => t.name)).not.toContain("backfill");
     expect(tools.map((t) => t.name)).not.toContain("get_crew_name");
-    expect(tools.map((t) => t.name)).toContain("checkpoint");
+    expect(tools.map((t) => t.name)).toContain("transition_item");
     // The folded tools are the ones MCP exposes: one loop tool with an
     // action field, one create tool with a required type field.
     expect(tools.map((t) => t.name)).toContain("create_work");
@@ -396,7 +522,7 @@ describe("the MCP adapter honours its waiver", () => {
     );
 
     expect(registered.length).toBeGreaterThan(0);
-    expect(registered).toContain("checkpoint");
+    expect(registered).toContain("transition_item");
     expect(registered).toContain("create_work");
     expect(registered).toContain("loop");
     expect(registered).not.toContain("backfill");
