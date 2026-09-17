@@ -75,10 +75,18 @@ CREATE INDEX "ItemLink_url_idx" ON "ItemLink"("url");
 -- stated rather than inherited by ordering — the extension is not in the
 -- datamodel, so nothing else would notice if that ordering ever changed.
 --
--- These indexes live only here and are deliberately absent from
--- `schema.prisma`: an index with an operator class has no datamodel
--- representation, exactly as the partial index on `Item.archivedAt` does
--- not, so declaring them there is impossible rather than merely omitted.
+-- These indexes are ALSO declared in `schema.prisma`, unlike the partial
+-- index on `Item.archivedAt` which lives only here. The distinction is what
+-- the datamodel can express: a partial index (`WHERE ...`) genuinely cannot
+-- be written there, but a GIN index with an operator class CAN
+-- (`@@index([url(ops: raw("gin_trgm_ops"))], type: Gin, ...)`), and `Item`
+-- already declares two that way. Leaving these out of the datamodel is
+-- therefore real drift rather than an unavoidable exemption — `prisma
+-- migrate diff` sees an index in the database with no counterpart in the
+-- schema and emits `DROP INDEX` for each, which
+-- `tests/partial-index-drift.test.ts` fails on by design. The generalisable
+-- rule: "the migration has it" is not sufficient for an index Prisma can
+-- model.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE INDEX "ItemLink_url_trgm_idx" ON "ItemLink" USING GIN ("url" gin_trgm_ops);
