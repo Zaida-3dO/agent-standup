@@ -8,8 +8,33 @@
 //
 // Find-or-create rather than create: the second task filed to the inbox must
 // land in the same project as the first, or the "inbox" is a pile of
-// single-task projects. The lookup is `title = $1 AND parentId IS NULL`,
-// which is the definition of a root project with that name.
+// single-task projects. The lookup is `title = $1 AND parentId IS NULL AND
+// archivedAt IS NULL`, which is the definition of a *live* root project with
+// that name.
+//
+// **Why the archived filter is part of the lookup and not an afterthought.**
+// Without it, archiving the inbox does not retire it — it makes it a trap.
+// `delete_item` archives by setting `archivedAt`, which withholds the row
+// from every ordinary read but leaves it perfectly findable by this
+// `$queryRawUnsafe`. So every later `projectId: "inbox"` task resolved to
+// the archived project and was inserted *into* it: invisible to the board,
+// to `list_items`, to `search`, and to `get_projects`, because those all
+// exclude an archived subtree. The tasks were not orphaned in any way a
+// consistency check could notice, either — they had a valid non-null
+// `parentId` pointing at a real row, so an orphan sweep passes them. The
+// only symptom is capture filed to the inbox stops appearing, with no error
+// at any point.
+//
+// Excluding archived rows here makes an archived inbox behave the way a
+// caller archiving it plainly intends: the sentinel stops resolving to it
+// and mints a fresh inbox on the next capture, exactly as it would on a
+// database where the inbox had never existed. The archived row keeps its
+// history and its contents; it simply stops swallowing new work.
+//
+// This is the same posture `reparent_item` already takes — it refuses a
+// parent in an archived area rather than filing a live child underneath
+// one — applied at the only other place the product picks a parent for a
+// caller instead of being handed one.
 //
 // **The race, and why it is left where it is.** Two concurrent inbox creates
 // can both find nothing and both insert, producing two projects with the
@@ -63,7 +88,7 @@ export async function resolveInboxProject(
 
   const existing = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
     `SELECT "id" FROM "Item"
-     WHERE "parentId" IS NULL AND "title" = $1
+     WHERE "parentId" IS NULL AND "title" = $1 AND "archivedAt" IS NULL
      ORDER BY "createdAt" ASC, "id" ASC
      LIMIT 1`,
     title,
