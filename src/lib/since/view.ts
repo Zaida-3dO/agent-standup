@@ -16,7 +16,16 @@ import type { SinceEvent, SinceFeed } from "./types";
 
 /** An empty feed — the initial render state, and the shape a test starts from. */
 export function emptyFeed(): SinceFeed {
-  return { events: [], cursor: "0", horizon: "0", unseenCount: 0, firstVisit: false };
+  return {
+    events: [],
+    cursor: "0",
+    horizon: "0",
+    // `null`, not `"0"` — an absent feed has no newest row, and `"0"` is a
+    // real position a caller could page from and believe.
+    newestId: null,
+    unseenCount: 0,
+    firstVisit: false,
+  };
 }
 
 /**

@@ -15,6 +15,7 @@
 // without a real sleep — see tests/liveness.test.ts for why that matters
 // more here than almost anywhere else in this repository.
 import { holderHasNeverSignalled } from "./claim-eviction";
+import { releaseNameIfSessionIdle } from "./agent-names";
 import { NotFoundError } from "./service/errors";
 import { applyTransition } from "./service/state-machine/transition";
 import { guardRegistry, type GuardRegistry } from "./service/state-machine/guard";
@@ -231,6 +232,7 @@ export async function sweepLiveness(
   const dryRun = options.dryRun ?? false;
   const staleAfterSeconds = settings.values["liveness.stale_after_seconds"];
   const deadAfterSeconds = settings.values["liveness.dead_after_seconds"];
+  const signalLessClaimMaxSeconds = settings.values["liveness.signal_less_claim_max_seconds"];
   const resumeAttemptsBeforeBlocked = settings.values["dispatch.resume_attempts_before_blocked"];
 
   // The two correlated subqueries are what let this pass ask
@@ -294,8 +296,10 @@ export async function sweepLiveness(
     //
     // What is given up is stated plainly in `claim-eviction.ts`: an unhooked
     // session that dies inside its first signal-less stretch keeps its claim
-    // until somebody takes it over by hand. That is a bounded, visible,
-    // reversible cost, and it is the same trade the other path already made.
+    // until the ceiling below expires, or somebody takes it over by hand.
+    // That is a bounded, visible, reversible cost, and it is the same trade
+    // the other path already made — "bounded" being literally true only
+    // since the ceiling; before it, this cost had no upper limit at all.
     // The escape is unchanged: one `heartbeat` call moves `lastActive` off
     // `claimedAt` and puts the holder back under ordinary judgement forever.
     // The third condition is not redundant with `holderHasNeverSignalled`,
@@ -325,10 +329,42 @@ export async function sweepLiveness(
     const withinInsertOrderingAllowance =
       lastActiveBehindClaimByMs <= CLAIM_STAMP_ORDERING_ALLOWANCE_MS;
 
+    // ── The ceiling on the exemption ──
+    //
+    // Everything above says why a signal-less holder's silence is not
+    // evidence. None of it says the exemption should last forever, and
+    // until this bound it did: such a claim was unreclaimable by any
+    // automatic path, at any age. That turned a safety carve-out into the
+    // permanent leak the sweep exists to prevent, and it did so at scale
+    // rather than in a corner — a session that reaches the server over the
+    // MCP mount declares no hook version and posts no tool calls, so it
+    // qualifies from the instant it claims. A rehearsal on a live
+    // installation reported 219 exempt holders against 53 ordinary
+    // releases, across 200 items, the oldest quiet 16.5 days, on items that
+    // had already reached `merged`.
+    //
+    // So the exemption now expires. Past
+    // `liveness.signal_less_claim_max_seconds` the holder is judged like
+    // any other: measured from `claimedAt`, because by construction nothing
+    // has moved `lastActive` off it, so the claim's age is the only clock
+    // this holder has. The threshold is far above the dead threshold on
+    // purpose — see the setting's own reasoning for the asymmetry, which is
+    // that a wrongly-released claim produces two sessions that both believe
+    // they own the item while a wrongly-kept one is merely visible and
+    // hand-reclaimable.
+    //
+    // Note this reads `claimedAt`, not `quietForSeconds`. For an exempt
+    // holder the two are the same number, but they answer different
+    // questions, and only the claim's age is a fact the database set on
+    // insert — `lastActive` is a column a stamp or a restore can move.
+    const claimAgeSeconds = (now.getTime() - row.claimedAt.getTime()) / 1000;
+    const signalLessClaimStillProtected = claimAgeSeconds < signalLessClaimMaxSeconds;
+
     const exemptFromRelease =
       rung === "dead" &&
       row.holderHookVersion === null &&
       withinInsertOrderingAllowance &&
+      signalLessClaimStillProtected &&
       holderHasNeverSignalled({
         lastActive: row.lastActive,
         claimedAt: row.claimedAt,
@@ -389,6 +425,17 @@ export async function sweepLiveness(
         payload: { assignmentId: row.id, role: null, holderId: row.holderId },
         body: SWEEP_RELEASE_BODY,
       });
+
+      // Return the crew name too, once this session is holding nothing
+      // else. This is the path that matters for the pool: a session that
+      // crashed is exactly the one that will never call `release` itself,
+      // so a name drawn at registration would otherwise be held forever by
+      // a session that has ended. Reclaiming the claim without
+      // reclaiming the name would leave the roster draining for the same
+      // reason the board was.
+      //
+      // Skipped entirely under `dryRun`, like every other write here.
+      await releaseNameIfSessionIdle(db, row.sessionId);
     }
 
     // The increment and the read are one statement in a real pass. A

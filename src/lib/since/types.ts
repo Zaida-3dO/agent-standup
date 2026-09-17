@@ -69,6 +69,15 @@ export interface SinceFeed {
   readonly events: readonly SinceEvent[];
   readonly cursor: string;
   readonly horizon: string;
+  /**
+   * The highest event `id` visible now, or `null` on an empty ledger.
+   *
+   * The cursor sequence — `since` is compared against `id`. `horizon` is a
+   * transaction id and belongs to a different counter entirely, so it is
+   * never a valid starting point for paging. See the operation's own field
+   * doc for why conflating them reads as a ledger with nothing new in it.
+   */
+  readonly newestId: string | null;
   readonly unseenCount: number;
   /** True when this profile has never marked anything seen — the first visit. */
   readonly firstVisit: boolean;

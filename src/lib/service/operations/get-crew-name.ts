@@ -32,7 +32,7 @@ import { z } from "zod";
 import { ConflictError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
-import { handOutName, type AgentNameRow } from "@/lib/agent-names";
+import { diagnoseNameShortage, handOutName, type AgentNameRow } from "@/lib/agent-names";
 
 const inputSchema = z
   .object({
@@ -57,14 +57,27 @@ export const getCrewName = defineOperation({
   async handler(ctx: ServiceContext, input: GetCrewNameInput): Promise<AgentNameRow> {
     const name = await handOutName(ctx.db, input.sessionId);
     if (!name) {
-      // The roster is exhausted — every name is retired or already held.
+      // No name was available — but "there are none" and "they are all
+      // taken" are different failures with different fixes, and the refusal
+      // has to say which. One `COUNT(*)` on a path that is already rare
+      // buys that; see `diagnoseNameShortage` for why conflating them sends
+      // each reader to the wrong remedy.
+      //
       // Not the caller's fault, and not `not_found` (nothing named was
       // looked up): the installation cannot satisfy the request right now,
       // the same posture `assignName`'s "already held" refusal takes
       // (agent-names.ts) toward a row that exists but cannot be had.
-      throw new ConflictError("No crew name is available — every name is retired or held.", {
-        fields: [],
-      });
+      const shortage = await diagnoseNameShortage(ctx.db);
+      throw new ConflictError(
+        shortage === "empty_roster"
+          ? "No crew name is available — the roster is empty. Seed it with some names before " +
+              "asking for one; none have been loaded, so nothing is being held or leaked."
+          : "No crew name is available — the roster is populated but every name is " +
+              "held or retired. Names return to the pool when their session releases its last " +
+              "claim, so either wait for one, or look for sessions holding claims they have " +
+              "finished with.",
+        { fields: [], details: { rule: "name_pool_exhausted", shortage } },
+      );
     }
     return name;
   },

@@ -61,20 +61,20 @@ describe("buildOvernightReport", () => {
         ts: "2026-08-18T07:00:00.000Z",
       }),
     ];
-    const report = buildOvernightReport(SINCE, events, 200, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs(), []);
     expect(report.merged).toHaveLength(1);
     expect(report.newlyBlocked).toHaveLength(1);
   });
 
   it("excludes events before the cutoff", () => {
     const events = [event({ id: "1", type: "merge", ts: "2026-08-17T23:00:00.000Z" })];
-    const report = buildOvernightReport(SINCE, events, 200, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs(), []);
     expect(report.merged).toHaveLength(0);
   });
 
   it("includes an event exactly at the cutoff", () => {
     const events = [event({ id: "1", type: "merge", ts: SINCE })];
-    const report = buildOvernightReport(SINCE, events, 200, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs(), []);
     expect(report.merged).toHaveLength(1);
   });
 
@@ -85,7 +85,7 @@ describe("buildOvernightReport", () => {
       assignment({ liveness: "dead" }),
       assignment({ liveness: "superseded" }),
     ];
-    const report = buildOvernightReport(SINCE, [], 200, costs(), assignments);
+    const report = buildOvernightReport(SINCE, [], costs(), assignments);
     expect(report.deadOrStalledNow).toBe(2);
   });
 
@@ -116,7 +116,7 @@ describe("buildOvernightReport", () => {
         },
       ],
     });
-    const report = buildOvernightReport(SINCE, [], 200, payload, []);
+    const report = buildOvernightReport(SINCE, [], payload, []);
     expect(report.cost).toBe(4);
   });
 
@@ -136,28 +136,42 @@ describe("buildOvernightReport", () => {
         },
       ],
     });
-    const report = buildOvernightReport(SINCE, [], 200, payload, []);
+    const report = buildOvernightReport(SINCE, [], payload, []);
     expect(report.cost).toBeNull();
   });
 
-  it("flags eventsTruncated when the page came back full and still does not reach the cutoff", () => {
-    // requestedLimit is 2, and the page returned exactly 2 rows, none of
-    // which is at or before the cutoff — there may be more history before
-    // what was fetched.
+  it("flags eventsTruncated when the slice does not reach back to the cutoff", () => {
+    // Neither row is at or before the cutoff, so there may be more history
+    // before what was fetched and the counts are a floor.
     const events = [
       event({ id: "1", ts: "2026-08-18T05:00:00.000Z" }),
       event({ id: "2", ts: "2026-08-18T06:00:00.000Z" }),
     ];
-    const report = buildOvernightReport(SINCE, events, 2, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs(), []);
     expect(report.eventsTruncated).toBe(true);
   });
 
-  it("does not flag eventsTruncated when the page came back short of the limit", () => {
-    // The page returned fewer rows than requested — the read reached the
-    // ledger's own start, so there is nothing earlier to have missed.
+  it("flags eventsTruncated on a short page that still does not reach the cutoff", () => {
+    // A page shorter than the caller asked for is not proof that the read
+    // reached the ledger's start: the slice still stops after the cutoff, so
+    // events in the window may be missing.
     const events = [event({ id: "1", ts: "2026-08-18T05:00:00.000Z" })];
-    const report = buildOvernightReport(SINCE, events, 200, costs(), []);
-    expect(report.eventsTruncated).toBe(false);
+    const report = buildOvernightReport(SINCE, events, costs(), []);
+    expect(report.eventsTruncated).toBe(true);
+  });
+
+  it("flags eventsTruncated when the slice is empty", () => {
+    // The case that matters most, because it is the one a wrong answer is
+    // invisible in. A cursor derived from the visibility horizon — a
+    // transaction id rather than an event id — reads past the end of the
+    // ledger and returns nothing. Qualifying this flag with a page-size
+    // comparison lets zero rows report `false`, so the report declares
+    // itself complete while covering no events at all: a confident
+    // "0 merged, 0 blocked" over a window it never actually read.
+    const report = buildOvernightReport(SINCE, [], costs(), []);
+    expect(report.merged).toHaveLength(0);
+    expect(report.newlyBlocked).toHaveLength(0);
+    expect(report.eventsTruncated).toBe(true);
   });
 
   it("does not flag eventsTruncated when the oldest event already reaches the cutoff", () => {
@@ -165,7 +179,7 @@ describe("buildOvernightReport", () => {
       event({ id: "1", ts: "2026-08-17T23:00:00.000Z" }),
       event({ id: "2", ts: "2026-08-18T05:00:00.000Z" }),
     ];
-    const report = buildOvernightReport(SINCE, events, 2, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs(), []);
     expect(report.eventsTruncated).toBe(false);
   });
 });

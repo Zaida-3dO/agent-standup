@@ -240,6 +240,99 @@ export async function releaseName(
 }
 
 /**
+ * Why `handOutName` came back empty — the two situations it cannot tell
+ * apart on its own, separated by one `COUNT(*)`.
+ *
+ * `empty_roster` means no usable name exists: the seed has not run, or every
+ * name has been retired, and either way the fix is to load some names.
+ * `all_held` means usable names exist and every one of them is taken, and
+ * the fix is to wait, or to look at why names are not coming back. Those are
+ * different problems with different remedies, and a single "no name is
+ * available" sends both readers looking in the wrong place — the one with
+ * an unseeded installation goes hunting for a leak that is not there, and
+ * the one with a genuine shortage reseeds a roster that is already full.
+ *
+ * The discriminator is deliberately "is there a usable name", not "is the
+ * table non-empty". A roster of nothing but retired names has nothing to
+ * hand out and nobody holding anything, so reporting it as a shortage would
+ * send an operator looking for holders that do not exist.
+ *
+ * Counted rather than inferred, and only on the failure path: the
+ * successful hand-out stays exactly one statement, which is what keeps this
+ * diagnosis free in the case that actually runs. Retired names are excluded
+ * because a roster of nothing but retired names is not a populated one for
+ * any purpose a caller has.
+ */
+export type NameShortage = "empty_roster" | "all_held";
+
+export async function diagnoseNameShortage(client: AgentNameClient): Promise<NameShortage> {
+  const rows = await client.$queryRawUnsafe<{ usable: bigint }[]>(
+    `SELECT COUNT(*)::bigint AS "usable" FROM "Agent" WHERE "retiredAt" IS NULL`,
+  );
+  // A missing row would mean the count did not run. Report `all_held`: it is
+  // the conservative answer, since it sends the reader to look at holds
+  // rather than telling them to seed a roster that may be perfectly fine.
+  const usable = rows[0]?.usable;
+  if (usable === undefined) return "all_held";
+  return usable === 0n ? "empty_roster" : "all_held";
+}
+
+/**
+ * Returns `sessionId`'s crew name to the pool, but only once that session
+ * holds no live claim anywhere.
+ *
+ * **Why the pool needs this at all.** A name is drawn as a side effect of
+ * `register_session` and `claim` and the hold is stored on `Agent`, so
+ * without a path that clears it the roster is a consumable: every session
+ * that ever registers takes one name permanently, and a long-running
+ * installation exhausts the pool with names held by sessions that ended
+ * weeks ago. Nothing else clears `heldBySessionId`.
+ *
+ * **Why it is keyed on the session's *last* claim rather than on any
+ * release.** The hold belongs to the session, not to one assignment — a
+ * session may hold several items at once, and `ensureNameForSession` is
+ * deliberately idempotent so that all of them are narrated under one
+ * identity. Freeing the name when any single claim ends would hand that
+ * identity to another session while the first is still working under it,
+ * and the board would then show two different crews wearing one name in the
+ * same history. So the count has to reach zero first.
+ *
+ * **Why the count is read in the same transaction as the release that
+ * prompted it.** The caller has just set `releasedAt` on the row it is
+ * giving up; this counts what remains. Both statements are inside the
+ * operation's transaction, so no concurrent claim can slip between them and
+ * be missed — a claim that commits first is counted, and one that commits
+ * after has taken a name of its own through `ensureNameForSession`.
+ *
+ * Returns the freed row, or `undefined` when the session still holds work,
+ * holds no name, or its name was already returned. Every one of those is an
+ * ordinary outcome rather than an error: this runs as a courtesy on the way
+ * out of a release, and a release must not fail because the pool
+ * bookkeeping had nothing to do.
+ */
+export async function releaseNameIfSessionIdle(
+  client: AgentNameClient,
+  sessionId: string,
+): Promise<AgentNameRow | undefined> {
+  const held = await nameHeldBy(client, sessionId);
+  if (!held) return undefined;
+
+  const live = await client.$queryRawUnsafe<{ liveCount: bigint }[]>(
+    `SELECT COUNT(*)::bigint AS "liveCount"
+       FROM "Assignment"
+      WHERE "sessionId" = $1 AND "releasedAt" IS NULL`,
+    sessionId,
+  );
+  // `COUNT(*)` always returns exactly one row, so a missing row would mean
+  // the query did not run at all; treat that as "still busy" and keep the
+  // name rather than freeing one on an answer we did not get.
+  const liveCount = live[0]?.liveCount;
+  if (liveCount === undefined || liveCount > 0n) return undefined;
+
+  return releaseName(client, held.name, sessionId);
+}
+
+/**
  * Retires a name permanently. Does **not** clear an existing hold —
  * "names appear throughout history" (SCHEMA.md §9), so a name retired while
  * still held by a live session keeps recording who held it rather than
