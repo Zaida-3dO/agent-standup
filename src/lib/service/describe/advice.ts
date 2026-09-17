@@ -323,7 +323,7 @@ export const NON_MCP_REFERENCE_MARKER = "[http/cli]";
  * A name belongs here only if it appears as a word in ordinary prose.
  * `get_item_body` never will; `release` always will.
  */
-const ENGLISH_WORD_OPERATIONS: ReadonlySet<string> = new Set([
+export const ENGLISH_WORD_OPERATIONS: ReadonlySet<string> = new Set([
   // The ownership verbs. "your claim can look idle", "the sweep releases
   // claims held by dead ones", "closing as cancelled is the opposite
   // claim" -- all correct English about this domain, none of them a
