@@ -234,7 +234,7 @@ export function assignmentRequiredRule(action: string): {
       `met. Holding no assignment, ${action} has nothing to attribute to. If you were dispatched ` +
       `to this item and mean to hold it, take it first with \`ownership\` and ` +
       `\`action: "claim"\`. If you are reporting alongside the session that holds it, use ` +
-      `\`note\`, which needs no assignment at all. An assignment that ` +
+      `\`record\` with \`action: "note"\`, which needs no assignment at all. An assignment that ` +
       `has been given up, or taken over after going quiet, also fails this — the refusal names ` +
       `which of those three cases you are in and what to do about it, including when taking it ` +
       `back would take the item from somebody.`,

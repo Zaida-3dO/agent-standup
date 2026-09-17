@@ -202,6 +202,52 @@ const FORWARDED: readonly {
     input: { itemId: "item-1", loopId: "loop-1", reason: "a duplicate of an earlier loop" },
   },
 
+  // ── record ────────────────────────────────────────────────
+  //
+  // `record_artifact` receives `artifactKind`, not `kind` -- the rename that
+  // makes one name mean one thing across the folded surface, and exactly the
+  // class of rename that broke a fold once before.
+  {
+    operation: "checkpoint",
+    input: {
+      itemId: "item-1",
+      sessionId: "sess-1",
+      body: "what was tried and what is next",
+      headline: "a one-line BLUF",
+    },
+  },
+  {
+    operation: "note",
+    input: {
+      itemId: "item-1",
+      body: "a remark",
+      actorType: "agent",
+      actorId: "agent-a",
+      sessionId: "sess-1",
+    },
+  },
+  {
+    operation: "record_artifact",
+    input: {
+      itemId: "item-1",
+      artifactKind: "plan",
+      body: "the plan",
+      createdByType: "agent",
+      createdById: "agent-a",
+    },
+  },
+  {
+    operation: "report_blocked_on_tool",
+    input: {
+      itemId: "item-1",
+      tool: "browser_capture",
+      needed: "screenshot the header",
+      reason: "not_granted",
+      refusal: "not in this agent's allowlist",
+      sessionId: "sess-1",
+    },
+  },
+
   // ── ownership ──────────────────────────────────────────────
   //
   // `takeover` is the entry worth reading twice: it names BOTH sides of the
@@ -513,6 +559,39 @@ const OBSERVED: readonly ObservedCase[] = [
 
   // ── read_item ────────────────────────────────────────────────────────
   // ── ownership ──────────────────────────────────────────────
+  // ── record ────────────────────────────────────────────────
+  {
+    tool: "record",
+    input: { action: "checkpoint", itemId: "item-1", sessionId: "sess-1", body: "a checkpoint" },
+    delegate: "checkpoint",
+  },
+  {
+    tool: "record",
+    input: { action: "note", itemId: "item-1", body: "a remark" },
+    delegate: "note",
+  },
+  {
+    tool: "record",
+    input: {
+      action: "artifact",
+      itemId: "item-1",
+      artifactKind: "plan",
+      createdByType: "agent",
+      createdById: "agent-a",
+    },
+    delegate: "record_artifact",
+  },
+  {
+    tool: "record",
+    input: {
+      action: "blocked_on_tool",
+      itemId: "item-1",
+      tool: "browser_capture",
+      needed: "screenshot the header",
+    },
+    delegate: "report_blocked_on_tool",
+  },
+
   {
     tool: "ownership",
     input: {

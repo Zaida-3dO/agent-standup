@@ -24,6 +24,7 @@ import { CREATE_WORK_TYPES } from "../operations/create-work";
 import { ITEM_DEPTHS } from "../operations/get-item";
 import { READ_ITEM_ACTIONS, READ_ITEM_ACTION_FIELDS } from "../operations/read-item";
 import { OWNERSHIP_ACTIONS, OWNERSHIP_ACTION_FIELDS } from "../operations/ownership";
+import { RECORD_ACTIONS, RECORD_ACTION_FIELDS } from "../operations/record";
 
 /** One folded tool's verbs, and what each of them cannot run without. */
 export interface FoldActions {
@@ -128,6 +129,15 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       actions: [...OWNERSHIP_ACTIONS],
       requiredByAction: Object.fromEntries(
         Object.entries(OWNERSHIP_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
+      ),
+    },
+  ],
+  [
+    "record",
+    {
+      actions: [...RECORD_ACTIONS],
+      requiredByAction: Object.fromEntries(
+        Object.entries(RECORD_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
     },
   ],

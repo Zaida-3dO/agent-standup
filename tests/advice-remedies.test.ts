@@ -472,8 +472,12 @@ describe("advice naming a tool the caller cannot call", () => {
       expect(offMcp.has(waived), `${waived} should be known as off-MCP`).toBe(true);
     }
     // Live tools must not be in it — the mirror failure, where the class
-    // would flag every correct redirect in the tree.
-    for (const live of ["get_item", "search", "loop", "checkpoint", "create_work"]) {
+    // would flag every correct redirect in the tree. Each subject here is a
+    // FOLD TARGET or a standalone read, never a folded verb: those are the
+    // names that stay on the surface as tools rather than becoming actions
+    // of one, so the control does not need revisiting every time a group of
+    // verbs is folded.
+    for (const live of ["get_item", "search", "loop", "record", "ownership", "create_work"]) {
       expect(offMcp.has(live), `${live} is on MCP and must not be flagged`).toBe(false);
     }
   });

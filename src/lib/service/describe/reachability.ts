@@ -100,6 +100,10 @@ export const FOLDED_INTO: ReadonlyMap<string, string> = new Map([
   ["claim", "ownership"],
   ["release", "ownership"],
   ["takeover", "ownership"],
+  ["checkpoint", "record"],
+  ["note", "record"],
+  ["record_artifact", "record"],
+  ["report_blocked_on_tool", "record"],
 ]);
 
 /**

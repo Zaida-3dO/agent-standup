@@ -323,7 +323,23 @@ export const NON_MCP_REFERENCE_MARKER = "[http/cli]";
  * A name belongs here only if it appears as a word in ordinary prose.
  * `get_item_body` never will; `release` always will.
  */
-const ENGLISH_WORD_OPERATIONS: ReadonlySet<string> = new Set(["claim", "release", "takeover"]);
+const ENGLISH_WORD_OPERATIONS: ReadonlySet<string> = new Set([
+  // The ownership verbs. "your claim can look idle", "the sweep releases
+  // claims held by dead ones", "closing as cancelled is the opposite
+  // claim" -- all correct English about this domain, none of them a
+  // prescription.
+  "claim",
+  "release",
+  "takeover",
+  // The record verbs, and `note` is the sharpest case in the whole list:
+  // it is an ordinary noun, it is a `loop` KIND (`kind: "note"`), and it
+  // is a value this codebase writes about constantly -- "belongs in a
+  // note", "the note text", "a note loop that did not restate its kind".
+  // `checkpoint` is the same shape: a resume point is a thing this domain
+  // names, not only a tool.
+  "note",
+  "checkpoint",
+]);
 
 /**
  * Names of operations the text mentions that an MCP caller cannot call.

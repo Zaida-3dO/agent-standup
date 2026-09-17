@@ -1286,6 +1286,58 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
       "is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "checkpoint",
+    reason:
+      "Folded into the single `record` tool as action checkpoint. The four ways an agent puts something on an item's record are one act seen four times — a resume point, a remark, a produced artifact, a capability gap — and a caller reaching for any of them has already decided it is writing to the record rather than reading it or moving the work. **The one thing a fold could bury here is stated instead of buried**: this action needs a LIVE ASSIGNMENT and refuses with `conflict` without one, while action note needs none, and that asymmetry is written into the folded tool's contract rules where `describe_tool` returns it. The folded tool dispatches to this operation, so the assignment check and its refusal reach the caller unchanged. Still exposed on HTTP and the command line. It runs no state transition, so no registered guard can reject it and §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "checkpoint",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "note",
+    reason:
+      "Folded into the single `record` tool as action note. The counterpart to action checkpoint and the one an agent usually wants: it needs no assignment at all, which makes it the right call for a dispatched agent that was never assigned or for anyone recording alongside the holder. That distinction is the most-got-wrong thing about these two operations, so it is stated in the folded tool's contract rules rather than left to be discovered through a refusal. The folded tool dispatches to this operation. Still on HTTP and the command line, and it runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "note",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "record_artifact",
+    reason:
+      "Folded into the single `record` tool as action artifact. Recording a produced thing — a plan, a review, a commit, a check run — is the same act as the other three actions: writing to an item's record. Its kind enum is carried as `artifactKind` rather than `kind`, because `loop` uses `kind` for an unrelated enum and one word meaning two things on adjacent tools is a guess rather than a name. Every rule this operation declares — the commit sha a commit artifact must carry, the status a check_run's body must be, who may record a merge_approval — is enforced by this operation and reaches the caller through the fold unchanged. Still on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "record_artifact",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "report_blocked_on_tool",
+    reason:
+      "Folded into the single `record` tool as action blocked_on_tool. Reporting a tool that could not be used for work an item asked for is a record of what happened, which is what the other three actions are — and it is the action an agent reaches for at exactly the moment it is having trouble finding the right tool, so putting it behind the name it is already using is the point rather than a side effect. The folded tool dispatches to this operation. It has BOTH an HTTP route and a command-line verb, so it is reachable on two surfaces besides the fold, and it runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "report_blocked_on_tool",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

@@ -147,6 +147,21 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
   }
 
   /**
+   * Calls a record verb the way an MCP caller has to reach it.
+   *
+   * The four record verbs are waived off MCP and reached as `record` with an
+   * `action`, so a test proving these guarantees survive the real MCP layers
+   * has to go through the tool an MCP caller actually holds. The INPUTS are
+   * untouched: each site still builds exactly the payload it built before,
+   * and this adds only the discriminator -- the fold's claim is that it
+   * forwards those fields unchanged, and a test that also rewrote them would
+   * assume what it is checking.
+   */
+  async function callRecord(action: string, input: Record<string, unknown>) {
+    return callTool("record", { action, ...input });
+  }
+
+  /**
    * Calls an ownership verb the way an MCP caller has to reach it.
    *
    * The three ownership verbs are waived off MCP and reached as `ownership`
@@ -365,7 +380,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
     it("records a checkpoint through MCP and reports success, not the internal error a bigint id used to cause", async () => {
       const itemId = await seedItem();
       await callOwnership("claim", claimInput(itemId));
-      const result = await callTool("checkpoint", {
+      const result = await callRecord("checkpoint", {
         itemId,
         sessionId: "s1",
         body: "Tried X, ruled out Y, next is Z.",
@@ -388,7 +403,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("rejects a checkpoint through MCP from a session holding no live assignment", async () => {
       const itemId = await seedItem();
-      const result = await callTool("checkpoint", { itemId, sessionId: "ghost", body: "x" });
+      const result = await callRecord("checkpoint", { itemId, sessionId: "ghost", body: "x" });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
         code: "conflict",
@@ -399,7 +414,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
     it("rejects an empty checkpoint body through MCP as invalid_input", async () => {
       const itemId = await seedItem();
       await callOwnership("claim", claimInput(itemId));
-      const result = await callTool("checkpoint", { itemId, sessionId: "s1", body: "   " });
+      const result = await callRecord("checkpoint", { itemId, sessionId: "s1", body: "   " });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({ code: "invalid_input" });
     });
@@ -412,7 +427,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
   describe("note", () => {
     it("records a note through MCP with no live assignment required, and reports success", async () => {
       const itemId = await seedItem();
-      const result = await callTool("note", { itemId, body: "A remark from MCP." });
+      const result = await callRecord("note", { itemId, body: "A remark from MCP." });
       expect(result.isError).toBeFalsy();
       expect(typeof (result.structuredContent as { id: string }).id).toBe("string");
 
@@ -427,7 +442,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
       const claimed = await callOwnership("claim", claimInput(itemId));
       const assignmentId = (claimed.structuredContent as { id: string }).id;
 
-      await callTool("note", { itemId, sessionId: "s1", body: "from the builder" });
+      await callRecord("note", { itemId, sessionId: "s1", body: "from the builder" });
 
       const rows = await prisma.event.findMany({ where: { itemId, type: "note" } });
       expect(rows[0]?.assignmentId).toBe(assignmentId);
@@ -436,13 +451,13 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("rejects an empty note body through MCP as invalid_input", async () => {
       const itemId = await seedItem();
-      const result = await callTool("note", { itemId, body: "" });
+      const result = await callRecord("note", { itemId, body: "" });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({ code: "invalid_input" });
     });
 
     it("rejects a note on a non-existent item through MCP as not_found", async () => {
-      const result = await callTool("note", { itemId: "no-such-item", body: "x" });
+      const result = await callRecord("note", { itemId: "no-such-item", body: "x" });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({ code: "not_found", fields: ["itemId"] });
     });
