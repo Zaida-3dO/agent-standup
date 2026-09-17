@@ -19,7 +19,7 @@
 // it returns, which is what this module does.
 
 /** Where in an item the query was found. The order of this list is the order of preference. */
-export const MATCH_FIELDS = ["title", "headline", "body"] as const;
+export const MATCH_FIELDS = ["title", "headline", "body", "link"] as const;
 export type MatchField = (typeof MATCH_FIELDS)[number];
 
 /**
@@ -43,6 +43,22 @@ const FIELD_WEIGHT: Readonly<Record<MatchField, number>> = Object.freeze({
   title: 100,
   headline: 40,
   body: 10,
+  // A link sits between a headline and a body, and the reasoning is the
+  // mirror image of the body's. A pointer is not prose *about* the item: an
+  // item carrying a link to a given ticket is, with near-certainty, the item
+  // for that ticket — far stronger evidence than the same id appearing in
+  // some paragraph of a brief, which is often a passing mention of
+  // neighbouring work. So a link match outranks a body match comfortably.
+  //
+  // It sits below `headline` rather than above because the two answer
+  // different questions and the ranking has to serve the query as typed. A
+  // caller who types a URL will match a link and essentially nothing else,
+  // so the weight barely matters for that case. A caller who types a word
+  // like `slack` matches every link key in the corpus at once, and those are
+  // a much weaker answer to "find the item about X" than a headline written
+  // to say what the item is. Ranking link above headline would push a
+  // haystack of chip labels over the one sentence authored to be searched.
+  link: 35,
 });
 
 /**
@@ -64,6 +80,15 @@ export interface SearchableFields {
   readonly title: string;
   readonly headline: string | null;
   readonly body: string;
+  /**
+   * The item's links, each contributing both its key and its URL to the
+   * searchable text.
+   *
+   * Optional so every existing caller and test that ranks a row without
+   * links keeps compiling and keeps meaning what it did — an absent list and
+   * an empty one both mean "no link matched", which is the honest reading.
+   */
+  readonly links?: readonly { readonly key: string; readonly url: string }[];
 }
 
 /** Why a row is in the result, and how strongly. */
@@ -76,7 +101,53 @@ export interface MatchRanking {
 function fieldValue(fields: SearchableFields, field: MatchField): string {
   if (field === "title") return fields.title;
   if (field === "headline") return fields.headline ?? "";
-  return fields.body;
+  if (field === "body") return fields.body;
+  // `link` never reaches here — it is scored per-link by `scoreLinks`,
+  // because the field is a LIST and this function returns one string. See
+  // that function for why concatenating them would be wrong rather than
+  // merely inelegant.
+  return "";
+}
+
+/**
+ * Scores an item's links, taking the best single link rather than the sum.
+ *
+ * **Each link is scored on its own, and the values are never concatenated.**
+ * Joining them into one string would be the obvious shortcut and it corrupts
+ * two of the three signals `scoreField` computes. The exact-match bonus
+ * would become unreachable the moment an item had two links, because the
+ * joined haystack can never equal a single query — so an item whose link is
+ * exactly the URL the caller pasted would rank *lower* for having a second,
+ * unrelated link. And the word-start bonus would be decided by whatever
+ * separator the join used, making it a property of this function's
+ * formatting rather than of the data.
+ *
+ * **The best link wins rather than the sum**, which is the opposite of how
+ * `rankMatch` accumulates across its three text fields, and deliberately so.
+ * Those are three different descriptions of one item, so matching in several
+ * is genuinely more evidence. Links are repeated instances of one field, and
+ * summing them would rank an item carrying five loosely-matching pointers
+ * above an item whose single link is exactly what was asked for — quantity
+ * of pointers, rather than quality of match.
+ *
+ * Key and URL are both searched, and the better of the two counts. A caller
+ * pastes a URL, or types a label; both are the same question asked of the
+ * same link.
+ */
+function scoreLinks(fields: SearchableFields, query: string): number {
+  const links = fields.links;
+  if (links === undefined || links.length === 0) return 0;
+
+  const weight = FIELD_WEIGHT.link;
+  let best = 0;
+  for (const link of links) {
+    const score = Math.max(
+      scoreField(link.key, query, weight),
+      scoreField(link.url, query, weight),
+    );
+    if (score > best) best = score;
+  }
+  return best;
 }
 
 /** Whether the character before a match is anything other than a letter or a digit. */
@@ -108,11 +179,18 @@ function scoreField(haystack: string, query: string, weight: number): number {
 /**
  * Ranks one row against one query.
  *
- * Returns `null` when the query appears in none of the three fields. That
- * is not expected for a row the SQL matched — the `ILIKE` and this function
- * look at the same text — but it is the honest return for "this row does
- * not match", and the operation uses it to keep an unmatched row out of the
- * results rather than emitting one with a meaningless score.
+ * Returns `null` when the query appears in none of the searched fields.
+ * That is not expected for a row the SQL matched — the `ILIKE` and this
+ * function look at the same text — but it is the honest return for "this row
+ * does not match", and the operation uses it to keep an unmatched row out of
+ * the results rather than emitting one with a meaningless score.
+ *
+ * **A row matched on its links only ranks if its links were handed over.**
+ * The SQL matches links through a subquery on `ItemLink` while this function
+ * reads `fields.links`, so a caller that selects the one without passing the
+ * other gets a row dropped here as unmatched — which is why `search.ts`
+ * fetches the two together in a single statement rather than as two reads
+ * that could fall out of step.
  *
  * **The score is a sum across fields, and the reported field is the
  * strongest single one.** An item whose title *and* body both mention the
@@ -127,7 +205,10 @@ export function rankMatch(fields: SearchableFields, query: string): MatchRanking
   let bestScore = 0;
 
   for (const field of MATCH_FIELDS) {
-    const score = scoreField(fieldValue(fields, field), query, FIELD_WEIGHT[field]);
+    const score =
+      field === "link"
+        ? scoreLinks(fields, query)
+        : scoreField(fieldValue(fields, field), query, FIELD_WEIGHT[field]);
     if (score === 0) continue;
     total += score;
     if (score > bestScore) {

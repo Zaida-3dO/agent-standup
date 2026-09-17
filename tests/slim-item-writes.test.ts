@@ -199,6 +199,12 @@ describe("narrowing a created item to what a create returns", () => {
   });
 
   it("drops every field beyond the ones it names, so the shape cannot grow by accident", () => {
+    // `links` is here on the same footing as `areas`: a create resolves it
+    // in a way the caller cannot predict — keys lowercased and
+    // whitespace-collapsed, the pair de-duplicated, the set returned ordered
+    // by key then url rather than as it was sent — so a caller that echoed
+    // back its own input would hold the wrong set. Fixed-width and tiny, so
+    // it cannot reintroduce the unbounded growth this list bounds.
     expect(Object.keys(toCreatedWriteRecord(created)).sort()).toEqual([
       "area",
       "areas",
@@ -207,6 +213,7 @@ describe("narrowing a created item to what a create returns", () => {
       "headline",
       "id",
       "kind",
+      "links",
       "mergeAuthority",
       "needsVisualReview",
       "originPersonId",
