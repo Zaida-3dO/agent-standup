@@ -32,6 +32,7 @@ import {
   ITEM_COLUMNS,
   toItemRecord,
   toItemWriteRecord,
+  type ItemLinkRecord,
   type ItemRecord,
   type ItemWriteRecord,
   type RawItemRow,
@@ -440,6 +441,21 @@ export interface CreatedWriteRecord extends ItemWriteRecord {
   readonly area: string;
   readonly areas: readonly string[];
   /**
+   * The resolved link set — present for exactly the reason `areas` is, and
+   * failing the same test if it were left out.
+   *
+   * A caller cannot echo back what it sent and be right: keys are
+   * lowercased and whitespace-collapsed, the pair `(key, url)` is
+   * de-duplicated, and the set comes back ordered by key then url rather
+   * than in the order it was given — so an item created with
+   * `[{key: "Slack", …}, {key: "slack", …}]` carries one link, spelled
+   * differently from either.
+   *
+   * Empty on an item created without any, never absent, so a caller need
+   * not branch on whether the field is there.
+   */
+  readonly links: readonly ItemLinkRecord[];
+  /**
    * Inherited from the `repo` row when the caller did not state it
    * (MILESTONES.md #126), so it is frequently a value the call never
    * contained.
@@ -477,6 +493,7 @@ export function toCreatedWriteRecord(record: CreatedItem): CreatedWriteRecord {
     priority: record.priority,
     area: record.area,
     areas: record.areas,
+    links: record.links,
     needsVisualReview: record.needsVisualReview,
     originType: record.originType,
     originPersonId: record.originPersonId,

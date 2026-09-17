@@ -224,7 +224,27 @@ describe("the notice a search carries", () => {
     const filtered = buildSearchNotice(0, "hook", false, true);
     expect(unfiltered).not.toBe(filtered);
     expect(filtered).toMatch(/filters/i);
-    expect(unfiltered).toMatch(/any title, headline or body/i);
+    expect(unfiltered).toMatch(/any title, headline, body or link/i);
+  });
+
+  // A notice that lists only what WAS searched reads as a list of everything
+  // there is, so a caller who recorded a reference in a corpus this read
+  // never touches is told in effect that it does not exist — and
+  // re-spelling, the one remedy an unqualified notice offers, cannot help.
+  // The `loopMatches` clause already set this precedent for loops; this is
+  // the same treatment for the rest.
+  //
+  // Fails if `UNSEARCHED_CORPUS_NOTE` is dropped from either empty-result
+  // branch, or if it stops naming the corpora by name.
+  it("names the corpora it did not search on an empty result", () => {
+    for (const notice of [
+      buildSearchNotice(0, "hook", false, false),
+      buildSearchNotice(0, "hook", false, true),
+    ]) {
+      expect(notice).toMatch(/not searched/i);
+      expect(notice).toMatch(/artifacts/i);
+      expect(notice).toMatch(/checkpoints/i);
+    }
   });
 
   it("routes a caller to the full record rather than returning it", () => {

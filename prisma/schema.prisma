@@ -342,13 +342,30 @@ model ItemLink {
   url    String
 
   @@id([itemId, key, url])
-  // Search reaches items through their links (`search.ts`), which asks the
-  // opposite question from the primary key's: given a URL or a label, which
-  // items carry it. The PK's leading `itemId` cannot serve that, so the two
-  // trigram indexes in the migration do — and they live only there, because
-  // a GIN index with an operator class has no datamodel representation the
-  // way this B-tree does.
+  // Exact lookup by URL — "which item carries this link?", asked with a URL
+  // pasted from a chat window. The primary key's leading `itemId` cannot
+  // serve that question, and a B-tree answers anchored equality far more
+  // cheaply than the trigram indexes below.
   @@index([url])
+  // Search reaches items through their links (`search.ts`) with an
+  // unanchored `ILIKE '%term%'`, which no B-tree can serve: a leading `%`
+  // says the match may begin anywhere, leaving a sequential scan as the only
+  // plan. `gin_trgm_ops` decomposes each value into three-character
+  // substrings so the pattern becomes a lookup plus a recheck.
+  //
+  // Both columns, because both are searched and for different questions: a
+  // caller pastes a URL fragment to find the item, or types a label
+  // ("slack") to find every item carrying one.
+  //
+  // Declared here as well as in the migration — unlike the partial index on
+  // `Item.archivedAt`, which this language genuinely cannot express. A GIN
+  // index with an operator class CAN be expressed (`Item` declares two), so
+  // leaving these out of the datamodel is real drift: `prisma migrate diff`
+  // would see indexes in the database with no counterpart here and emit a
+  // `DROP INDEX` for each, which `tests/partial-index-drift.test.ts` fails
+  // on by design.
+  @@index([url(ops: raw("gin_trgm_ops"))], type: Gin, name: "ItemLink_url_trgm_idx")
+  @@index([key(ops: raw("gin_trgm_ops"))], type: Gin, name: "ItemLink_key_trgm_idx")
 }
 
 enum Role {
