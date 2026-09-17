@@ -28,11 +28,31 @@ import { FOLDED_INTO } from "@/lib/service/describe/reachability";
  * How many tools an MCP caller is offered.
  *
  * Reached by folding the scoring, project, session, create, loop, read,
- * record and ownership verbs into tools that take an `action`, and waiving
- * the verbs themselves off MCP alone — every one of them stays reachable on
- * HTTP, on the command line, and through the tool it was folded into.
+ * record and ownership verbs into tools that take their verb as a field, and
+ * waiving the verbs themselves off MCP alone — every one of them stays
+ * reachable on HTTP, on the command line, and through the tool it was folded
+ * into.
+ *
+ * **This number moves for two unrelated reasons, and only one of them is a
+ * compaction.** Folding removes tools; registering a new capability adds
+ * them. So the folds' own saving is asserted separately below, against
+ * `FOLDED_INTO` rather than against this total — otherwise a fold could be
+ * undone and the count stay right because something new arrived in the same
+ * window, which is exactly the drift a typed figure hides.
  */
-const EXPECTED_MCP_TOOL_COUNT = 28;
+const EXPECTED_MCP_TOOL_COUNT = 31;
+
+/**
+ * How many tool names the folds remove from the surface.
+ *
+ * `FOLDED_INTO` has one entry per folded operation, and each distinct target
+ * is one name those operations are reached through — so the saving is the
+ * difference. Derived rather than typed, so it cannot disagree with the
+ * table that produces it.
+ */
+function toolsSavedByFolding(): number {
+  return FOLDED_INTO.size - new Set(FOLDED_INTO.values()).size;
+}
 
 /** The tools an MCP caller is actually offered, derived from the waiver table. */
 function mcpTools(): string[] {
@@ -48,6 +68,21 @@ describe("the MCP tool surface", () => {
     // the surface rather than only that a number moved. Reading that list is
     // usually the whole diagnosis.
     expect(tools.length, `tools on MCP: ${tools.join(", ")}`).toBe(EXPECTED_MCP_TOOL_COUNT);
+  });
+
+  it("saves the tool names the folds claim to save", () => {
+    // The compaction, stated independently of the total. A fold undone
+    // while some new capability is registered leaves the total looking
+    // right and the surface less compact than it says — this is the
+    // assertion that notices.
+    //
+    // 31 operations are folded into 9 tools: the six loop verbs, three
+    // creates, seven scoring verbs, three project verbs, two session verbs,
+    // one detail read, three bounded reads, three ownership verbs and four
+    // record verbs.
+    expect(FOLDED_INTO.size).toBe(31);
+    expect(new Set(FOLDED_INTO.values()).size).toBe(9);
+    expect(toolsSavedByFolding()).toBe(22);
   });
 
   it("offers the same surface over both MCP transports", () => {

@@ -1917,10 +1917,16 @@ list, never a narrower capability, which is what `tests/adapter-waivers.test.ts`
 assertion enforces.
 
 **No count is written here on purpose.** `tests/mcp-tool-surface.test.ts` derives the number from the
-adapter's own exposed list and asserts it, along with the two properties that make the number mean
+adapter's own exposed list and asserts it, along with the properties that make the number mean
 anything: every tool something was folded into is itself on the surface, and every folded verb is
 still exposed by a non-MCP adapter. A figure in prose drifts the first time a tool is added or
 waived, and a smaller surface that broke a capability would read as an improvement.
+
+The compaction is asserted **separately from the total**, against the fold table rather than the
+tool list, because the two move for unrelated reasons: folding removes names and registering a new
+capability adds them. A fold undone in the same window as a capability arriving would leave the
+total looking right while the surface is less compact than it claims, and only the separate
+assertion notices.
 
 **Output.** Human-readable by default, `--json` for anything parsing it — one document, one envelope,
 `{ ok, data }` or `{ ok, error: { code, message, fields } }`, with all human text on standard error so
