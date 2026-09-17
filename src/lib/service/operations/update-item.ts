@@ -61,7 +61,7 @@ const inputSchema = z
     branch: z.string().nullable().optional(),
     needsVisualReview: z.boolean().optional(),
     driveMode: z.enum(["autonomous", "supervised", "manual"]).optional(),
-    mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
+    mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement", "pr"]).optional(),
     customFields: z.record(z.string(), z.unknown()).optional(),
     /**
      * Return the whole `items` row rather than the slim default — the same
@@ -98,12 +98,19 @@ export type UpdateItemResult = (ItemRecord | ItemWriteRecord) & {
   readonly notifications?: NotificationOutcome;
 };
 
-const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | "agent_judgement"> =
-  {
-    "pre-approved": "pre_approved",
-    "needs-approval": "needs_approval",
-    "agent-judgement": "agent_judgement",
-  };
+const MERGE_AUTHORITY_TO_DB: Record<
+  string,
+  "pre_approved" | "needs_approval" | "agent_judgement" | "pr"
+> = {
+  "pre-approved": "pre_approved",
+  "needs-approval": "needs_approval",
+  "agent-judgement": "agent_judgement",
+  // The one value whose API and DB spellings coincide: `pr` is a single
+  // word, so there is no hyphen to convert. Listed explicitly rather than
+  // left to a fallback, because this map is also what decides which values
+  // the operation ACCEPTS -- an unmapped value is refused.
+  pr: "pr",
+};
 
 /** Every editable field, and how to read its current value off a raw row — for the field-change diff. */
 const EDITABLE_FIELDS = [

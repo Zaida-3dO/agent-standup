@@ -56,7 +56,7 @@ export interface ItemRecord {
   readonly branch: string | null;
   readonly needsVisualReview: boolean;
   readonly driveMode: "autonomous" | "supervised" | "manual";
-  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement";
+  readonly mergeAuthority: "pre_approved" | "needs_approval" | "agent_judgement" | "pr";
   readonly blockedReason: string | null;
   readonly blockedOnType: "person" | "external_process" | "time" | null;
   readonly blockedOnPersonId: string | null;

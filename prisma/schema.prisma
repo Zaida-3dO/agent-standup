@@ -38,10 +38,17 @@ enum DriveMode {
   manual
 }
 
+/// Who — or what — authorises a merge. The first three answer "who decides";
+/// `pr` answers "what must be true", which is why it is not a fourth kind of
+/// decider. See `src/lib/service/guards/merge.ts` for each value's clause.
 enum MergeAuthority {
   pre_approved
   needs_approval
   agent_judgement
+  /// May merge only once the item's newest `pull_request` artifact reports
+  /// `merged`. An objective fact, not a judgement, so no human click is
+  /// required — and STRICTER than `pre_approved`, which checks nothing.
+  pr
 }
 
 enum BlockedOnType {

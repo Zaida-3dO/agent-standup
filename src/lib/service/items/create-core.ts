@@ -105,7 +105,7 @@ export const commonCreateShape = {
    */
   driveMode: z.enum(["autonomous", "supervised", "manual"]).optional(),
   /** Omitted = `items.default_merge_authority` (SCHEMA.md §17.2). */
-  mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
+  mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement", "pr"]).optional(),
   /**
    * Omitted = inherited from `repo.needsVisualReview` (MILESTONES.md #126),
    * or `false` when there is no `repo`. Left `optional()` rather than
@@ -295,12 +295,19 @@ export function assertOriginResolved(input: {
   );
 }
 
-const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | "agent_judgement"> =
-  {
-    "pre-approved": "pre_approved",
-    "needs-approval": "needs_approval",
-    "agent-judgement": "agent_judgement",
-  };
+const MERGE_AUTHORITY_TO_DB: Record<
+  string,
+  "pre_approved" | "needs_approval" | "agent_judgement" | "pr"
+> = {
+  "pre-approved": "pre_approved",
+  "needs-approval": "needs_approval",
+  "agent-judgement": "agent_judgement",
+  // The one value whose API and DB spellings coincide: `pr` is a single
+  // word, so there is no hyphen to convert. Listed explicitly rather than
+  // left to a fallback, because this map is also what decides which values
+  // the operation ACCEPTS -- an unmapped value is refused.
+  pr: "pr",
+};
 
 /**
  * The parent's depth, as the number of ancestor hops to a root.

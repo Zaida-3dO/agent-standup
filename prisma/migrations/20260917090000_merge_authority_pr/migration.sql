@@ -1,0 +1,44 @@
+-- `MergeAuthority`.'pr' — may merge only once the linked PR reports merged.
+--
+-- ── The gap this closes ─────────────────────────────────────────────────
+--
+-- The three existing values answer "who decides": nobody (`pre_approved`), a
+-- person (`needs_approval`), or the agent at the gate (`agent_judgement`).
+-- The rule crews actually run is none of those, because it is not about who
+-- decides at all:
+--
+--     this item may merge only when its pull request has actually merged.
+--
+-- That is an objective, externally-checkable fact rather than a judgement, so
+-- unlike `needs_approval` it needs no human click — and unlike `pre_approved`
+-- it is not the absence of a gate. With no value for it, the rule was
+-- expressed by setting items to `pre_approved` and enforcing the real
+-- condition outside the product entirely, where the board cannot see it, and
+-- where it is advisory by construction.
+--
+-- ── It is STRICTER than `pre_approved`, not a softening ─────────────────
+--
+-- Worth stating because a fourth value on an authorisation enum reads like a
+-- loosening. It is the opposite: `pre_approved` returns "ok" immediately with
+-- nothing checked, whereas this has something real to verify and refuses
+-- until it holds. Items on this value move from no check to a check. Nothing
+-- about `needs_approval` changes — no existing row's meaning moves, and the
+-- clause that holds work for a person's decision is untouched.
+--
+-- ── Why it could not exist until now ────────────────────────────────────
+--
+-- The evidence it reads has to be able to state the fact, and until this
+-- release it could not. `pull_request` artifacts carried a two-word status
+-- vocabulary — `open` and `closed` — so a PR that MERGED and a PR that was
+-- CLOSED WITHOUT MERGING stored identically, despite being opposite
+-- outcomes. A clause reading that would have passed an abandoned PR exactly
+-- as readily as a landed one, which is the precise inversion of its purpose.
+-- `merged` joins the status vocabulary in the same release
+-- (`src/lib/pull-requests.ts`), and this value depends on it.
+--
+-- Additive only. No existing row changes meaning, and no backfill is
+-- performed: nothing was recording this rule under another name — items
+-- following it were set to `pre_approved`, which is a real and different
+-- statement ("no gate"), so reinterpreting those rows would assert a rule
+-- their owners never wrote down here.
+ALTER TYPE "MergeAuthority" ADD VALUE IF NOT EXISTS 'pr';

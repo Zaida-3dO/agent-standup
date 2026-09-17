@@ -216,8 +216,9 @@ export const TRANSITION_FIELD = {
  *
  * The values are the spellings `update_item` **accepts**, which for
  * `mergeAuthority` means the hyphenated enum member: `update-item.ts`'s
- * schema is `z.enum(["pre-approved", "needs-approval", "agent-judgement"])`
- * and maps to the underscored DB form internally. A remedy naming
+ * schema is `z.enum(["pre-approved", "needs-approval", "agent-judgement",
+ * "pr"])` and maps to the underscored DB form internally — `pr` being the
+ * one member whose two spellings coincide, as it has no hyphen. A remedy naming
  * `pre_approved` would be advice the operation refuses — the
  * unreachable-remedy defect this whole item exists to remove, and one the
  * advice lint fails the build over.
