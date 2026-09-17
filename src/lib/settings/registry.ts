@@ -221,11 +221,15 @@ export const SETTINGS_REGISTRY = {
   // So the exemption keeps its meaning and gains a horizon: silence is not
   // evidence *until* the claim is old enough that no plausible unit of work
   // is still running behind it. The default is deliberately far above every
-  // other liveness threshold — 16x the dead threshold, 2x the eviction one —
-  // because the cost of being wrong is asymmetric. Releasing a live holder's
-  // claim produces two sessions that each believe they own the item, which
-  // is neither visible nor recoverable; leaving a dead one costs a visible,
-  // hand-reclaimable stranded row. A day of continuous silence from a
+  // other liveness threshold — 48x the dead threshold, 6x the eviction one —
+  // because the cost of being wrong is asymmetric. Leaving a dead claim in
+  // place costs a visible, hand-reclaimable stranded row, while releasing a
+  // live holder's costs it a refused write: `describeAssignmentRefusal`
+  // answers that case with `released_free`, which tells the agent its quiet
+  // claim was reclaimed and to claim again and carry on. (`taken_over` is
+  // checked first, so a genuine overlap gets a warning rather than an
+  // invitation to re-claim.) That recovery path is why this bound can be a
+  // horizon rather than a guess. A day of continuous silence from a
   // session that never once spoke is a long way past any real work unit, and
   // a holder that emits a single `heartbeat` leaves this class permanently.
   "liveness.signal_less_claim_max_seconds": define({
