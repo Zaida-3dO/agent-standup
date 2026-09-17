@@ -255,6 +255,124 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
       };
     },
   },
+  // ── Structural repair: `archive`, `restore`, `retype` ─────────────────
+  //
+  // The three operations waived off both MCP transports
+  // (`../adapters/waivers.ts`), because structural repair is rare,
+  // person-driven surgery rather than something an agent reaches for
+  // mid-task. Each of those waivers says "reach it over HTTP or the command
+  // line" — **these verbs are what makes that sentence true.** Until they
+  // existed the promise named a door that was not there, and the only way in
+  // was a hand-rolled HTTP request with a JSON body, which for `item
+  // archive` meant hand-writing the operation with the most preconditions in
+  // the registry.
+  //
+  // Build the door the waiver claims, then waive: the pattern `c8d4cc5` set
+  // for `wait_for_crew` and `commands-admin.ts` for `update_person`.
+  //
+  // The id is a positional on all three, not a flag. It is the one argument
+  // every invocation has and the thing the sentence is *about* — `standup
+  // item archive <id> --reason "..."` is how anyone would type it, and the
+  // same shape `item get` already uses.
+  {
+    noun: "item",
+    verb: "archive",
+    operation: "delete_item",
+    summary:
+      "Remove an item from every ordinary read, for a row that should never have existed — a duplicate, or one created by accident. Requires --reason of at least 20 characters, which must not describe a cancellation; use `item move <id> cancelled` for work that was real and is not being done. --supersededById names the surviving replacement. Refuses while things point at it unless --acknowledge-references.",
+    /**
+     * `--acknowledge-references` is a bare switch and the schema defaults it
+     * to false, so it is read with `booleanFlag` and only sent when the
+     * caller passed it — the shape `project repair` uses for `--apply`.
+     * Stamping `false` here would overwrite the schema's own default with
+     * the same value by a longer route and hide which side decides the
+     * absent case.
+     *
+     * `--reason` is deliberately NOT checked here, neither for presence nor
+     * for length nor for cancellation wording. This file's header: field
+     * validation belongs to the operation's schema, the single place input
+     * is validated, so re-checking here would create a rejection this
+     * adapter produces that no other adapter would — and the conformance
+     * suite compares adapters on exactly that.
+     */
+    buildInput: (rest, flags) => {
+      const id = rest[0];
+      if (id === undefined) {
+        return {
+          ok: false,
+          envelope: malformed("`standup item archive` needs an item id.", ["id"]),
+        };
+      }
+      const acknowledgeReferences = booleanFlag(flags, "acknowledge-references");
+      if (!acknowledgeReferences.ok) return acknowledgeReferences;
+      const built = flagsToInput(flags, ["acknowledge-references"]);
+      if (!built.ok) return built;
+      return {
+        ok: true,
+        input: {
+          ...(built.input as Record<string, unknown>),
+          id,
+          ...(acknowledgeReferences.value === true ? { acknowledgeReferences: true } : {}),
+        },
+      };
+    },
+  },
+  {
+    noun: "item",
+    verb: "restore",
+    operation: "restore_item",
+    summary:
+      "Bring an archived item back into every ordinary read. Refuses a row that was archived in favour of another — restoring it un-makes that judgement and puts two rows for one piece of work back on the board — unless --acknowledge-superseded says the caller looked at both and meant it.",
+    buildInput: (rest, flags) => {
+      const id = rest[0];
+      if (id === undefined) {
+        return {
+          ok: false,
+          envelope: malformed("`standup item restore` needs an item id.", ["id"]),
+        };
+      }
+      const acknowledgeSuperseded = booleanFlag(flags, "acknowledge-superseded");
+      if (!acknowledgeSuperseded.ok) return acknowledgeSuperseded;
+      const built = flagsToInput(flags, ["acknowledge-superseded"]);
+      if (!built.ok) return built;
+      return {
+        ok: true,
+        input: {
+          ...(built.input as Record<string, unknown>),
+          id,
+          ...(acknowledgeSuperseded.value === true ? { acknowledgeSuperseded: true } : {}),
+        },
+      };
+    },
+  },
+  {
+    noun: "item",
+    verb: "retype",
+    operation: "retype_to_task",
+    summary:
+      "Turn a childless project into a task under --projectId (an item id, or the literal `inbox`) — the fix for a row created with no parent and therefore no state of its own. Leaves state alone. --full returns the whole row rather than the slim default.",
+    buildInput: (rest, flags) => {
+      const id = rest[0];
+      if (id === undefined) {
+        return {
+          ok: false,
+          envelope: malformed("`standup item retype` needs an item id.", ["id"]),
+        };
+      }
+      const full = booleanFlag(flags, "full");
+      if (!full.ok) return full;
+      const built = flagsToInput(flags, ["full"]);
+      if (!built.ok) return built;
+      return {
+        ok: true,
+        input: {
+          ...(built.input as Record<string, unknown>),
+          id,
+          ...(full.value === true ? { full: true } : {}),
+        },
+      };
+    },
+  },
   {
     noun: "item",
     verb: "create",
