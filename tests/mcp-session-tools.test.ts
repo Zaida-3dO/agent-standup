@@ -146,6 +146,24 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
     return id;
   }
 
+  /**
+   * Calls an ownership verb the way an MCP caller has to reach it.
+   *
+   * The three ownership verbs are waived off MCP and reached as `ownership`
+   * with an `action`, so a test proving the guarantees survive the real MCP
+   * layers has to go through the tool an MCP caller actually holds — calling
+   * the waived name would prove the guarantee over a route nobody has, which
+   * is worse than not testing it.
+   *
+   * The INPUTS are untouched: each call site still builds exactly the payload
+   * it built before, and this adds the discriminator. That is deliberate —
+   * the fold's whole claim is that it forwards those fields unchanged, and a
+   * test that also rewrote them would be assuming what it is checking.
+   */
+  async function callOwnership(action: string, input: Record<string, unknown>) {
+    return callTool("ownership", { action, ...input });
+  }
+
   function claimInput(itemId: string, overrides: Record<string, unknown> = {}) {
     return {
       itemId,
@@ -165,7 +183,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
   describe("claim", () => {
     it("claims an item through the MCP tool and returns the real assignment", async () => {
       const itemId = await seedItem();
-      const result = await callTool("claim", claimInput(itemId));
+      const result = await callOwnership("claim", claimInput(itemId));
       expect(result.isError).toBeFalsy();
       expect(result.structuredContent).toMatchObject({
         itemId,
@@ -192,7 +210,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
         // test exists to exercise.
         await registerSessions(prisma, [`race-a-${round}`, `race-b-${round}`]);
         const [first, second] = await Promise.all([
-          callTool(
+          callOwnership(
             "claim",
             claimInput(itemId, {
               role: "orchestrator",
@@ -200,7 +218,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
               rootSessionId,
             }),
           ),
-          callTool(
+          callOwnership(
             "claim",
             claimInput(itemId, {
               role: "orchestrator",
@@ -229,14 +247,14 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("a sequential second orchestrator claim through MCP is refused with the real conflict shape", async () => {
       const itemId = await seedItem();
-      await callTool(
+      await callOwnership(
         "claim",
         claimInput(itemId, { role: "orchestrator", sessionId: "s1", rootSessionId: "s1" }),
       );
       // Same root session as the first claim (same crew) — a second, real
       // crew reading the same item back would be refused by the crew check
       // (`guard_rejected`) before ever reaching the index this asserts on.
-      const second = await callTool(
+      const second = await callOwnership(
         "claim",
         claimInput(itemId, { role: "orchestrator", sessionId: "s2", rootSessionId: "s1" }),
       );
@@ -249,7 +267,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("rejects a malformed claim (missing required fields) as invalid_input, through MCP", async () => {
       const itemId = await seedItem();
-      const result = await callTool("claim", { itemId, role: "builder" });
+      const result = await callOwnership("claim", { itemId, role: "builder" });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({ code: "invalid_input" });
     });
@@ -262,8 +280,8 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
   describe("release", () => {
     it("releases through the MCP tool and stamps releasedAt", async () => {
       const itemId = await seedItem();
-      await callTool("claim", claimInput(itemId));
-      const result = await callTool("release", { itemId, sessionId: "s1" });
+      await callOwnership("claim", claimInput(itemId));
+      const result = await callOwnership("release", { itemId, sessionId: "s1" });
       expect(result.isError).toBeFalsy();
       expect(result.structuredContent?.releasedAt).not.toBeNull();
 
@@ -276,9 +294,9 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("a double release through MCP is refused as a conflict", async () => {
       const itemId = await seedItem();
-      await callTool("claim", claimInput(itemId));
-      await callTool("release", { itemId, sessionId: "s1" });
-      const second = await callTool("release", { itemId, sessionId: "s1" });
+      await callOwnership("claim", claimInput(itemId));
+      await callOwnership("release", { itemId, sessionId: "s1" });
+      const second = await callOwnership("release", { itemId, sessionId: "s1" });
       expect(second.isError).toBe(true);
       expect(second.structuredContent).toMatchObject({
         code: "conflict",
@@ -288,7 +306,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("releasing through MCP refuses a session that holds nothing on the item", async () => {
       const itemId = await seedItem();
-      const result = await callTool("release", { itemId, sessionId: "ghost" });
+      const result = await callOwnership("release", { itemId, sessionId: "ghost" });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
         code: "conflict",
@@ -304,7 +322,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
   describe("heartbeat", () => {
     it("bumps lastActive through the MCP tool", async () => {
       const itemId = await seedItem();
-      const claimed = await callTool("claim", claimInput(itemId));
+      const claimed = await callOwnership("claim", claimInput(itemId));
       const assignmentId = (claimed.structuredContent as { id: string }).id;
       await prisma.assignment.update({
         where: { id: assignmentId },
@@ -329,8 +347,8 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("a heartbeat through MCP after release is refused — an ended lease cannot be kept alive", async () => {
       const itemId = await seedItem();
-      await callTool("claim", claimInput(itemId));
-      await callTool("release", { itemId, sessionId: "s1" });
+      await callOwnership("claim", claimInput(itemId));
+      await callOwnership("release", { itemId, sessionId: "s1" });
       const result = await callTool("heartbeat", { itemId, sessionId: "s1" });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({ code: "conflict" });
@@ -346,7 +364,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
   describe("checkpoint", () => {
     it("records a checkpoint through MCP and reports success, not the internal error a bigint id used to cause", async () => {
       const itemId = await seedItem();
-      await callTool("claim", claimInput(itemId));
+      await callOwnership("claim", claimInput(itemId));
       const result = await callTool("checkpoint", {
         itemId,
         sessionId: "s1",
@@ -380,7 +398,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("rejects an empty checkpoint body through MCP as invalid_input", async () => {
       const itemId = await seedItem();
-      await callTool("claim", claimInput(itemId));
+      await callOwnership("claim", claimInput(itemId));
       const result = await callTool("checkpoint", { itemId, sessionId: "s1", body: "   " });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({ code: "invalid_input" });
@@ -406,7 +424,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
 
     it("attributes a note through MCP to the caller's live assignment when sessionId names one", async () => {
       const itemId = await seedItem();
-      const claimed = await callTool("claim", claimInput(itemId));
+      const claimed = await callOwnership("claim", claimInput(itemId));
       const assignmentId = (claimed.structuredContent as { id: string }).id;
 
       await callTool("note", { itemId, sessionId: "s1", body: "from the builder" });
@@ -440,7 +458,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
     it("refuses a second orchestrator while the lease is live, then accepts one once the sweep releases it", async () => {
       const itemId = await seedItem();
 
-      const first = await callTool(
+      const first = await callOwnership(
         "claim",
         claimInput(itemId, {
           role: "orchestrator",
@@ -453,7 +471,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
       // Before: the lease is live, so a second orchestrator is refused —
       // the same conflict the sequential test above establishes, repeated
       // here as the "before" half of this test's own before/after.
-      const blocked = await callTool(
+      const blocked = await callOwnership(
         "claim",
         claimInput(itemId, {
           role: "orchestrator",
@@ -486,7 +504,7 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
       // After: the item was refusing a second orchestrator a moment ago and
       // now accepts one through the exact same MCP call — the expired lease
       // genuinely freed the item, this isn't just the sweep's own report.
-      const afterSweep = await callTool(
+      const afterSweep = await callOwnership(
         "claim",
         claimInput(itemId, {
           role: "orchestrator",

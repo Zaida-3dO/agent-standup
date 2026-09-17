@@ -202,6 +202,44 @@ const FORWARDED: readonly {
     input: { itemId: "item-1", loopId: "loop-1", reason: "a duplicate of an earlier loop" },
   },
 
+  // ── ownership ──────────────────────────────────────────────
+  //
+  // `takeover` is the entry worth reading twice: it names BOTH sides of the
+  // displacement under their own names, so a fold that collapsed them onto
+  // one `sessionId` would be refused here rather than silently displacing
+  // the wrong session.
+  {
+    operation: "claim",
+    input: {
+      itemId: "item-1",
+      role: "builder",
+      holderType: "agent",
+      holderId: "builder-1",
+      sessionId: "sess-1",
+      rootSessionId: "sess-0",
+      parentSessionId: "sess-0",
+      machine: "calliope",
+      pid: 1234,
+      branch: "main",
+      worktree: "/tmp/wt",
+      model: "opus",
+      effort: "high",
+    },
+  },
+  { operation: "release", input: { itemId: "item-1", sessionId: "sess-1" } },
+  {
+    operation: "takeover",
+    input: {
+      itemId: "item-1",
+      fromSessionId: "sess-1",
+      bySessionId: "sess-2",
+      holderType: "agent",
+      holderId: "builder-2",
+      reason: "the holder has been quiet for an hour",
+      force: true,
+    },
+  },
+
   // ── read_item ────────────────────────────────────────────────────────
   //
   // All three take `id`, never `itemId`, and all three are `.strict()` — so
@@ -474,6 +512,37 @@ const OBSERVED: readonly ObservedCase[] = [
   },
 
   // ── read_item ────────────────────────────────────────────────────────
+  // ── ownership ──────────────────────────────────────────────
+  {
+    tool: "ownership",
+    input: {
+      action: "claim",
+      itemId: "item-1",
+      role: "builder",
+      holderType: "agent",
+      holderId: "builder-1",
+      sessionId: "sess-1",
+    },
+    delegate: "claim",
+  },
+  {
+    tool: "ownership",
+    input: { action: "release", itemId: "item-1", sessionId: "sess-1" },
+    delegate: "release",
+  },
+  {
+    tool: "ownership",
+    input: {
+      action: "takeover",
+      itemId: "item-1",
+      fromSessionId: "sess-1",
+      bySessionId: "sess-2",
+      holderType: "agent",
+      holderId: "builder-2",
+    },
+    delegate: "takeover",
+  },
+
   {
     tool: "read_item",
     input: { action: "body", id: "item-1", offset: 10 },

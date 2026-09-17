@@ -325,7 +325,13 @@ describe("the check does not fire on advice that is correct", () => {
         {
           operation: "my_work",
           source: "live",
-          text: "`release` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer",
+          // Quoted from `response-size.ts`, in the spelling a caller now
+          // holds: the remedy is an ACTION of `ownership` rather than a tool
+          // named `release`, which is waived off MCP. Written in the live
+          // spelling deliberately — a fixture frozen in a superseded one
+          // stops exercising the case it is named for and starts exercising
+          // the unreachable check instead.
+          text: '`ownership` with `action: "release"` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer',
         },
       ]),
     ).toEqual([]);

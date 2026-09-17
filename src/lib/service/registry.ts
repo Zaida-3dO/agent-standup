@@ -152,6 +152,12 @@ import { release } from "./operations/release";
 // takeover that displaces a holder the ladder is not going to release.
 import { sweep } from "./operations/sweep";
 import { takeover } from "./operations/takeover";
+// The whole lifecycle of who holds an item behind one tool — taking it,
+// giving it up, and displacing the holder. The three spend their
+// documentation pointing at each other, which is the practical sign they are
+// one capability with three directions. Waived off MCP as three names and
+// reachable as one plus an action (`@/lib/adapters/waivers`).
+import { ownership } from "./operations/ownership";
 import { heartbeat } from "./operations/heartbeat";
 import { checkpoint } from "./operations/checkpoint";
 import { note } from "./operations/note";
@@ -344,6 +350,7 @@ export const OPERATION_REGISTRY = {
   [release.name]: release,
   [sweep.name]: sweep,
   [takeover.name]: takeover,
+  [ownership.name]: ownership,
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
   [note.name]: note,

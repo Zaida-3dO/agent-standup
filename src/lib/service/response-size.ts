@@ -248,7 +248,7 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   // session can be working, which is itself the thing to fix, and `release`
   // is the call that fixes it.
   my_work:
-    "`release` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer",
+    '`ownership` with `action: "release"` on the items this session has finished — `my_work` takes no `limit`, so the remedy is holding fewer items rather than asking for fewer',
   // The generic fallback names `search`, which answers "find the item I
   // want" — the wrong suggestion here, since a caller refused on this
   // operation already has the item and is mid-way through reading its body.

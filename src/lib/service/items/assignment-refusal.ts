@@ -231,10 +231,12 @@ export function assignmentRequiredRule(action: string): {
       `Requires YOUR OWN live assignment on this item — a row on \`Assignment\` matching both ` +
       `\`itemId\` and \`sessionId\` with \`releasedAt\` unset. This is a database check, so no ` +
       `schema can state it and a valid-looking call is refused with \`conflict\` when it is not ` +
-      `met. Holding no assignment, ${action} has nothing to attribute to: if you were dispatched ` +
-      `to this item, \`claim\` it first; if you are reporting alongside the session that holds it, ` +
-      `use \`note\`, which needs no assignment. A claim that has been released, or reclaimed after ` +
-      `going quiet, also fails this — the refusal names which of those three cases you are in and ` +
-      `what to do about it, including when re-claiming would take the item from somebody.`,
+      `met. Holding no assignment, ${action} has nothing to attribute to. If you were dispatched ` +
+      `to this item and mean to hold it, take it first with \`ownership\` and ` +
+      `\`action: "claim"\`. If you are reporting alongside the session that holds it, use ` +
+      `\`note\`, which needs no assignment at all. An assignment that ` +
+      `has been given up, or taken over after going quiet, also fails this — the refusal names ` +
+      `which of those three cases you are in and what to do about it, including when taking it ` +
+      `back would take the item from somebody.`,
   };
 }

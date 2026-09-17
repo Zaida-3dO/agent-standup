@@ -1247,6 +1247,45 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
       "is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "claim",
+    reason:
+      "Folded into the single `ownership` tool as action claim. The three ownership verbs are one lifecycle — taking an item, giving it up, displacing its holder — and they spend their own documentation pointing at each other: this operation's `claims.one_crew_per_item` refusal ends \"Take it over through supersession rather than claiming alongside it\", which is `takeover`, and `release`'s contract says the same in reverse. **On §22's bound**: this operation CAN be rejected by a registered guard, and a fold loses no guard coverage, which is what the bound protects — the delegate runs through its own schema and handler in the same context and throws the SAME refusal object, so the guard's `code`, `guard` id and `fields` reach an MCP caller unchanged. The machine check is narrower still and independently satisfied: the operations reaching `runGuards` through the state machine are `transition_item` and `complete_item`, and this is not among them. Still exposed on HTTP and the command line.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "claim",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "release",
+    reason:
+      "Folded into the single `ownership` tool as action release. Same lifecycle as action claim: a session gives up its OWN live row here, and ending somebody else's claim is action takeover — a distinction this operation's own contract already had to spell out when the two were separate tools, and which reads better as two actions of one tool than as two tool names. The folded tool dispatches to this operation, so its refusals are unchanged. Still on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "release",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "takeover",
+    reason:
+      'Folded into the single `ownership` tool as action takeover. **This operation was un-waived once before and for a reason that still holds**: `claims.one_crew_per_item` refuses a claim on a held item and ends "Take it over through supersession rather than claiming alongside it", and this is the only operation that performs that — two sessions hunted for a tool named "supersession" and both settled on calling `release` on the dead holder, a guessed answer on the operation that decides ownership. What that established is that the REMEDY must stay reachable, not that this NAME must stay unwaived: folded into an exposed tool it is reachable, and it is now reachable from the very tool whose refusal prescribes it, which is a shorter path than before. Still on HTTP and the command line. It runs no state transition, so §22\'s bound on waivers is satisfied.',
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "takeover",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */
