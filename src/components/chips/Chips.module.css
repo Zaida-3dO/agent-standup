@@ -125,10 +125,10 @@
 
    `text-decoration: none` because the pill IS the affordance here — an
    underline inside a bordered capsule reads as two competing signals for
-   one thing. The hover and focus treatment below is what replaces it, and
-   it has to be present: a link a reader cannot tell is a link is not
-   usable, and removing the underline without putting something back is the
-   common way that happens.
+   one thing. The hover and focus treatment below then carries the whole
+   affordance, and it has to be present: a link a reader cannot tell is a
+   link is not usable, so an undecorated anchor needs some other signal that
+   it can be clicked.
 
    Colour comes from `--text-secondary` rather than a link blue. A row of
    these sits in a card's meta line beside the state and repo, and giving
