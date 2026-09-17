@@ -195,7 +195,7 @@ const taskSchema = z
     /** An existing `people.id`. Required when `originType` is `person`. */
     originPersonId: z.string().min(1).optional(),
     /** Omitted defaults to `needs_approval`. */
-    mergeAuthority: z.enum(["pre_approved", "needs_approval", "agent_judgement"]).optional(),
+    mergeAuthority: z.enum(["pre_approved", "needs_approval", "agent_judgement", "pr"]).optional(),
     /** `path@content_hash`. Relative — an absolute path records the converting machine's layout. */
     sourceRef: z.string().min(1).optional(),
     /** Anything with no typed column, preserved verbatim. `legacy_id` here is always overridden. */

@@ -125,7 +125,7 @@ export const SETTINGS_REGISTRY = {
   }),
 
   "items.default_merge_authority": define({
-    schema: z.enum(["pre-approved", "needs-approval", "agent-judgement"]),
+    schema: z.enum(["pre-approved", "needs-approval", "agent-judgement", "pr"]),
     default: "needs-approval",
     label: "Default merge authority",
     help: "What merge authority a new item gets when nothing sets one. Setting this to pre-approved means every item created afterwards skips the human approval gate.",

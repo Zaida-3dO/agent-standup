@@ -20,8 +20,45 @@ export interface FieldDescriptor {
   readonly name: string;
   /** A short type name: `string`, `enum`, `array<object>`, `record`. */
   readonly type: string;
-  /** Whether the field may be omitted. A defaulted field may be. */
+  /**
+   * Whether the field may be omitted. A defaulted field may be.
+   *
+   * Read together with `conditionallyRequired`: this is the *schema's*
+   * answer, and for a handful of fields the schema is not the whole answer.
+   */
   readonly required: boolean;
+  /**
+   * Set when the field reads as optional here but is enforced later.
+   *
+   * ── Why a third state, rather than flipping `required` ──────────────────
+   *
+   * Some fields cannot be required at parse time and still work. The
+   * motivating case is `originType` on every create: it may be inherited
+   * from the calling session's registration, which is a database fact this
+   * schema cannot see, so making it `required` in Zod would refuse exactly
+   * the callers the inheritance exists to relieve. It is therefore
+   * `.optional()` in the schema and refused after resolution instead.
+   *
+   * That left `describe_tool` advertising `"required": false` for a field
+   * its own `rules` array called "required in practice" — a contradiction
+   * in one payload, and the schema is the half a caller reads first. A
+   * caller who read the schema and copied the example (which passed
+   * `originType`) learned the field was mandatory only by being refused.
+   *
+   * Flipping `required` to `true` would be the other lie: the field
+   * genuinely may be omitted, by the large class of callers that inherit it,
+   * and a blanket `true` would tell them to send something they do not need.
+   * Neither boolean is true of this field, which is the argument for not
+   * making it one.
+   *
+   * So the value is a short phrase naming the condition — "unless the
+   * calling session declared a personId at registration" — rendered
+   * alongside `required: false`. It is supplied by the operation's own
+   * contract rather than detected here, because only the operation knows
+   * what enforces it; `describeFields` cannot read a rule that lives in a
+   * handler.
+   */
+  readonly conditionallyRequired?: string;
   /** The permitted values, when the type is an enum. */
   readonly enumValues?: readonly string[];
   /** The value used when the field is omitted, when there is one. */
@@ -219,12 +256,24 @@ function enumValuesEntry(node: ZodNode): { enumValues?: readonly string[] } {
  * `describe_tool` throwing, because the rules half of the answer is still
  * worth returning.
  */
-export function describeFields(schema: unknown): readonly FieldDescriptor[] {
+export function describeFields(
+  schema: unknown,
+  /**
+   * The operation's declared `conditionallyRequired` map, when it has one.
+   *
+   * Passed in rather than detected: what makes such a field required lives
+   * in a handler or a later resolution step, which this module cannot read.
+   * Omitting it yields exactly the previous output, so every operation that
+   * declares nothing is unaffected.
+   */
+  conditionallyRequired?: Readonly<Record<string, string>>,
+): readonly FieldDescriptor[] {
   const object = objectNode(schema as ZodNode);
   const shape = object?.shape;
   if (!shape) return [];
   return Object.entries(shape).map(([name, field]) => {
     const { node, optional, nullable, hasDefault, defaultValue } = unwrap(field);
+    const condition = conditionallyRequired?.[name];
     return {
       name,
       type: typeNameOf(node),
@@ -236,6 +285,14 @@ export function describeFields(schema: unknown): readonly FieldDescriptor[] {
       ...enumValuesEntry(node),
       ...(hasDefault ? { defaultValue } : {}),
       ...(nullable ? { nullable: true } : {}),
+      // Only ever attached to a field the schema calls optional. A
+      // declaration naming a field that is already required is a
+      // contradiction of its own, and silently rendering it would hide the
+      // mistake rather than surface it — so it is dropped here and the
+      // metadata sweep is what complains about it.
+      ...(condition !== undefined && (optional || hasDefault)
+        ? { conditionallyRequired: condition }
+        : {}),
     };
   });
 }

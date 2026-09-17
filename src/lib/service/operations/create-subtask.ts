@@ -26,6 +26,7 @@ import type { ServiceContext } from "../context";
 import {
   ancestorDepthOf,
   COMMON_CREATE_RULES,
+  COMMON_CREATE_CONDITIONALLY_REQUIRED,
   commonCreateShape,
   insertItem,
   areaSpellingCheck,
@@ -73,6 +74,7 @@ export const createSubtask = defineOperation({
     // `invalid_input` refusal — and so `describe_tool` can state it on
     // demand rather than it being charged to every turn in `summary`.
     rules: [TITLE_CONVENTION_CONTRACT_RULE, ...COMMON_CREATE_RULES],
+    conditionallyRequired: COMMON_CREATE_CONDITIONALLY_REQUIRED,
     example: {
       title: "Send the reset email",
       body: "Wire the mailer to the reset flow.",

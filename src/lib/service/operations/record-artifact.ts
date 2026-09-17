@@ -166,7 +166,10 @@ const inputSchema = z
      * Prose on most kinds — and a status enum on two of them.
      *
      * **On `pull_request`, `body` is the PR's status and must be one of
-     * `open` or `closed`**, not a description of the change. **On
+     * `open`, `closed`, `merged` or `draft`**, not a description of the
+     * change. `merged` and `closed` are distinct on purpose — they are
+     * opposite outcomes, and a gate may read which one happened
+     * (`@/lib/pull-requests` carries the full reasoning). **On
      * `check_run` it is the build's status** — one of `passing`, `failing`,
      * `pending`, `error` — and unlike the PR case it is **required**, since
      * a build row that will not say how the build went records nothing.
@@ -183,9 +186,11 @@ const inputSchema = z
      * `pull_request` rows, so moving it is a breaking change to data that
      * is append-only and cannot be rewritten.
      *
-     * A PR that has closed is recorded as a NEW `pull_request` row with
-     * `body: "closed"` — artifacts are append-only, so the row that opened
-     * it is never edited.
+     * A PR whose status changes is recorded as a NEW `pull_request` row
+     * carrying the new status — artifacts are append-only, so the row that
+     * opened it is never edited. That applies to every status equally: a
+     * closure, a merge, and a draft going up for review are all a fresh
+     * row, and the earlier row survives as history.
      */
     body: z
       .string()
@@ -641,18 +646,25 @@ export const recordArtifact = defineOperation({
           { fields: ["ref"] },
         );
       }
-      // `body` carries the PR's status, and the vocabulary is two words. It
-      // is refused rather than coerced because the alternative — treating
-      // unrecognised prose as `open` — is how a closed PR keeps rendering as
-      // a live link: a caller recording "closed by review" would be read as
-      // open. The read path is deliberately more forgiving (see
-      // `pullRequestStatusOf`), because rows written before this vocabulary
-      // existed cannot be refused retrospectively.
+      // `body` carries the PR's status, and the vocabulary is a closed set
+      // of four words. It is refused rather than coerced because the
+      // alternative — treating unrecognised prose as `open` — is how a
+      // closed PR keeps rendering as a live link: a caller recording "closed
+      // by review" would be read as open. The read path is deliberately more
+      // forgiving (see `pullRequestStatusOf`), because rows written before
+      // this vocabulary existed cannot be refused retrospectively.
+      //
+      // Strictness here is what lets a gate trust the value: `merge_authority:
+      // "pr"` refuses a merge until this field says `merged`, so a forge
+      // spelling like `"merged via squash"` or `"MERGED"` must be refused at
+      // the write rather than quietly read as something else later.
       if (input.body != null && !isPullRequestStatus(input.body.trim())) {
         throw new InvalidInputError(
           `A pull_request artifact's \`body\` records its status and must be one of: ${PULL_REQUEST_STATUSES.join(", ")}. ` +
-            "Record a PR that has closed as a NEW pull_request row with status `closed` — artifacts " +
-            "are append-only, so the row that opened it is never edited.",
+            "Record a PR whose status changed — closed, merged, or a draft going up for review — " +
+            "as a NEW pull_request row carrying the new status; artifacts are append-only, so the " +
+            "row that opened it is never edited. `merged` and `closed` are different facts: use " +
+            "`merged` only when the PR actually landed, since a merge gate may read it.",
           { fields: ["body"] },
         );
       }

@@ -307,6 +307,59 @@ describeIfDb("explicit create operations", () => {
       expect(Number(inboxes[0]?.count)).toBe(1);
     });
 
+    it("does NOT file into an ARCHIVED inbox — it mints a fresh one instead", async () => {
+      // THE DEFECT. Archiving the inbox did not retire it, it made it a trap:
+      // the lookup matched an archived row, so every later capture was
+      // inserted INTO the archived project. Those tasks are invisible to the
+      // board, list_items, search and get_projects — and no orphan check can
+      // see it either, because they have a valid non-null parentId pointing
+      // at a real row. The only symptom is that capture stops appearing.
+      //
+      // Fails if the `archivedAt IS NULL` term is dropped from the lookup.
+      const first = await call("create_task", {
+        ...base("Before the archive", "inbox-archived"),
+        projectId: "inbox",
+      });
+
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "archivedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`,
+        first.parentId,
+      );
+
+      const second = await call("create_task", {
+        ...base("After the archive", "inbox-archived"),
+        projectId: "inbox",
+      });
+
+      // A different project — the sentinel minted a fresh inbox, exactly as
+      // it would on a database where none had ever existed.
+      expect(second.parentId).not.toBe(first.parentId);
+
+      // And the fresh one is live, not a second archived row.
+      const parent = await prisma.$queryRawUnsafe<{ archivedAt: Date | null; title: string }[]>(
+        `SELECT "archivedAt", "title" FROM "Item" WHERE "id" = $1`,
+        second.parentId,
+      );
+      expect(parent[0]?.archivedAt).toBeNull();
+      expect(parent[0]?.title).toBe("Inbox");
+    });
+
+    it("keeps reusing the live inbox while it is NOT archived", async () => {
+      // The control for the test above: the archived filter must not make
+      // every capture mint a new project. Fails if the lookup is broken
+      // outright rather than narrowed — which the archived test alone would
+      // not catch, since a resolver that always inserts also passes it.
+      const first = await call("create_task", {
+        ...base("One", "inbox-live-control"),
+        projectId: "inbox",
+      });
+      const second = await call("create_task", {
+        ...base("Two", "inbox-live-control"),
+        projectId: "inbox",
+      });
+      expect(second.parentId).toBe(first.parentId);
+    });
+
     // Fails if the resolver reads a hardcoded "Inbox" rather than the
     // resolved setting — the default-only test above cannot tell the two
     // apart, which is why this one exists.

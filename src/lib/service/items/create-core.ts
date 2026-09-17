@@ -105,7 +105,7 @@ export const commonCreateShape = {
    */
   driveMode: z.enum(["autonomous", "supervised", "manual"]).optional(),
   /** Omitted = `items.default_merge_authority` (SCHEMA.md §17.2). */
-  mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement"]).optional(),
+  mergeAuthority: z.enum(["pre-approved", "needs-approval", "agent-judgement", "pr"]).optional(),
   /**
    * Omitted = inherited from `repo.needsVisualReview` (MILESTONES.md #126),
    * or `false` when there is no `repo`. Left `optional()` rather than
@@ -212,6 +212,29 @@ export const areaSpellingMessage = {
  * entry are the paths the corresponding refusal carries, so a caller that
  * has been refused can match the rule to the rejection without reading prose.
  */
+/**
+ * The origin triple's conditional requirements, for `describe_tool`.
+ *
+ * Declared beside `COMMON_CREATE_RULES` and spread into the same four create
+ * contracts, so the marker on the field and the rule explaining it cannot
+ * drift apart or be added to one create and forgotten on another.
+ *
+ * These are exactly the fields whose requirement the schema cannot state.
+ * `originType` is `.optional()` because it may be inherited from the calling
+ * session's registration — a database fact the parse cannot see — and
+ * `originPersonId` becomes mandatory only once `originType` *resolves* to
+ * `person`, which likewise happens after the parse and may be the result of
+ * inheritance rather than anything in the call.
+ */
+export const COMMON_CREATE_CONDITIONALLY_REQUIRED: Readonly<Record<string, string>> = Object.freeze(
+  {
+    originType:
+      "required unless the calling session registered with a personId, which declares a person origin it inherits on every create",
+    originPersonId:
+      "required once originType resolves to person, including when that person was inherited from the session rather than named here",
+  },
+);
+
 export const COMMON_CREATE_RULES = [
   {
     fields: ["originType", "originPersonId", "driveMode"],
@@ -220,8 +243,10 @@ export const COMMON_CREATE_RULES = [
       "that registered with a `personId` declares a person origin once and inherits it — " +
       "`originType`, `originPersonId` and `driveMode` — on every later create, while a " +
       "session that declared nothing must name `originType` per call. An explicit value " +
-      "always wins over the declaration. JSON Schema can express neither the inheritance " +
-      "nor the requirement, so neither appears in the advertised schema.",
+      "always wins over the declaration. JSON Schema can express neither the inheritance nor " +
+      "the requirement, so the field is advertised as optional — but it carries a " +
+      "`conditionallyRequired` note saying so on the field itself, rather than leaving the " +
+      "schema and this rule to contradict each other.",
   },
   {
     fields: ["originPersonId"],
@@ -280,6 +305,26 @@ export type CommonCreateInput = z.infer<z.ZodObject<typeof commonCreateShape>>;
  *
  * The message names the way out that costs nothing per call, because the
  * caller most likely to hit this is one making many creates in a row.
+ *
+ * ── Why it names the whole origin triple in one refusal ─────────────────
+ *
+ * It used to refuse `originType` alone, and a caller that fixed it by
+ * sending `originType: "person"` was then refused a second time for
+ * `originPersonId`. Two round trips for one fixable mistake — and avoidably
+ * so, because `originPersonId`'s requirement is *fully determined* by the
+ * answer to the first refusal. At the moment the first message is written,
+ * "and `person` will also need `originPersonId`" is already known.
+ *
+ * So the refusal states the consequence of each choice it offers rather than
+ * leaving the caller to discover it by picking one. This is the same
+ * standard the rest of this file's refusals hold to — name the field, name
+ * what to pass — extended to the field the answer will require next.
+ *
+ * It deliberately does not go further and refuse a *supplied* `person` with
+ * no `originPersonId`: that contradiction is caught at parse time by the
+ * shared refinement (see `originPersonCheck` above), which is earlier and
+ * names the field already. This function's job is only the case the parse
+ * could not see.
  */
 export function assertOriginResolved(input: {
   originType?: string;
@@ -290,17 +335,27 @@ export function assertOriginResolved(input: {
     "originType is required — pass person, source or auto. A session that registered with a " +
       "personId inherits a person origin on every later create and need not send this field; " +
       "reaching this message means no such declaration was found for the calling session, so " +
-      "name originType in the call or register with a personId.",
-    { fields: ["originType"] },
+      "name originType in the call or register with a personId. If you choose `person`, send " +
+      "`originPersonId` naming an existing person in the same call — it is required whenever " +
+      "originType resolves to person, and sending it now avoids a second refusal. `source` and " +
+      "`auto` need no companion field.",
+    { fields: ["originType", "originPersonId"] },
   );
 }
 
-const MERGE_AUTHORITY_TO_DB: Record<string, "pre_approved" | "needs_approval" | "agent_judgement"> =
-  {
-    "pre-approved": "pre_approved",
-    "needs-approval": "needs_approval",
-    "agent-judgement": "agent_judgement",
-  };
+const MERGE_AUTHORITY_TO_DB: Record<
+  string,
+  "pre_approved" | "needs_approval" | "agent_judgement" | "pr"
+> = {
+  "pre-approved": "pre_approved",
+  "needs-approval": "needs_approval",
+  "agent-judgement": "agent_judgement",
+  // The one value whose API and DB spellings coincide: `pr` is a single
+  // word, so there is no hyphen to convert. Listed explicitly rather than
+  // left to a fallback, because this map is also what decides which values
+  // the operation ACCEPTS -- an unmapped value is refused.
+  pr: "pr",
+};
 
 /**
  * The parent's depth, as the number of ancestor hops to a root.

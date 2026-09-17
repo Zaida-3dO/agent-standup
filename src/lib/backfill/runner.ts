@@ -507,6 +507,42 @@ export function formatRunReport(report: BackfillRunReport): string {
     lines.push(`  repo labels with no mapping: ${report.repos.unmapped.join(", ")}`);
   }
 
+  // ── What the mapping FLATTENED ────────────────────────────────────────
+  //
+  // A migration that reports only what it created reads as lossless when it
+  // is not. The status map is frequently many-to-one — several source words
+  // landing on one state — and that collapse leaves no trace in any count:
+  // every row is written, every reconciliation sums, and the run exits 0. A
+  // consumer of the source vocabulary discovers the loss much later, by
+  // searching for a distinction the query surface does not carry, with no
+  // documented route from the source fact to its board representation.
+  //
+  // So the collapses are named, with their source words and task counts,
+  // and the reader is told where the original survives. Only the collapses:
+  // listing every one-to-one mapping as well would bury the two lines that
+  // matter in a table of lines that do not, which is how a report stops
+  // being read at all.
+  const collapsed = new Map<string, typeof report.counts.statusMapping>();
+  for (const entry of report.counts.statusMapping) {
+    const group = collapsed.get(entry.state);
+    if (group) collapsed.set(entry.state, [...group, entry]);
+    else collapsed.set(entry.state, [entry]);
+  }
+  const manyToOne = [...collapsed.entries()].filter(([, group]) => group.length > 1);
+  if (manyToOne.length > 0) {
+    lines.push("");
+    lines.push("Flattened by the status map (many source statuses -> one state)");
+    for (const [state, group] of manyToOne) {
+      const words = group
+        .map((entry) => `${JSON.stringify(entry.sourceStatus)} (${entry.tasks})`)
+        .join(", ");
+      lines.push(`  ${state} <- ${words}`);
+    }
+    lines.push("  These source statuses are not distinguishable by state. A predicate that");
+    lines.push("  depended on telling them apart needs another source — the original status is");
+    lines.push("  preserved verbatim on each item, in the customFields key the payload supplied.");
+  }
+
   // The history reconciliation, stated as an accounting that must SUM.
   //
   // A row count on its own cannot see a loss upstream of itself: it

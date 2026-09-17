@@ -926,6 +926,207 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
+    // ── `pr`: the authority whose evidence is a fact, not a decision ─────
+    //
+    // The clause reads the item's NEWEST `pull_request` artifact and refuses
+    // until it reports `merged`. Every case below names the source change
+    // that would make it pass wrongly, per this file's convention.
+
+    it("pr: ALLOWS when the newest pull_request artifact reports merged", async () => {
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({ itemId: id, kind: "pull_request", body: "merged" });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("pr: REFUSES while the PR is still open, and says to merge it", async () => {
+      // The ordinary unmet case. Fails if the clause returns guardOk without
+      // consulting the artifact — i.e. if `pr` were treated as an alias for
+      // `pre_approved`, which is the shape a careless implementation takes.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({ itemId: id, kind: "pull_request", body: "open" });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+        fields?: readonly string[];
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.message).toMatch(/reports `open`/);
+      expect(error.fields).toEqual(["state"]);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("pr: REFUSES a CLOSED pull request — closed is not merged", async () => {
+      // THE POINT OF THE WHOLE CHANGE. Before `merged` existed as a status,
+      // a PR that merged and a PR abandoned without merging both stored as
+      // `closed`, so a gate reading the status could not tell "the work
+      // landed" from "the work was dropped" — and would have passed the
+      // abandoned one. Fails if `closed` is ever treated as satisfying, or
+      // if the two statuses are collapsed back together.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({ itemId: id, kind: "pull_request", body: "closed" });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.message).toMatch(/A closed PR is not a merged one/);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("pr: REFUSES with no pull_request artifact at all, and names the recording remedy", async () => {
+      // A distinct fault from "the PR is open", and deliberately given a
+      // different message: this is usually a bookkeeping gap (the PR exists
+      // and nobody recorded it), so telling this caller to "merge your PR"
+      // sends them to look at one that may already have merged. Fails if the
+      // two cases are folded into one message.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.message).toMatch(/no pull_request artifact has been recorded/);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("pr: reads the NEWEST row only — a later close supersedes an earlier merge", async () => {
+      // Artifacts are append-only and a status change is a new row, so an
+      // item can have merged, then had a follow-up PR closed unmerged. Only
+      // the last row describes the PR now.
+      //
+      // Fails if the clause is written as "does ANY pull_request row say
+      // merged", which is the obvious-but-wrong reading and passes exactly
+      // the abandoned-work case this authority exists to catch.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({
+        itemId: id,
+        kind: "pull_request",
+        body: "merged",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "pull_request",
+        body: "closed",
+        createdAt: new Date(),
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("pr: reads the NEWEST row only — a later merge supersedes an earlier close", async () => {
+      // The same rule in the allowing direction, so the test above cannot be
+      // satisfied by a clause that simply refuses whenever any `closed` row
+      // exists. A re-proposed piece of work that finally landed must merge.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({
+        itemId: id,
+        kind: "pull_request",
+        body: "closed",
+        createdAt: new Date(Date.now() - 60_000),
+      });
+      await createArtifact({
+        itemId: id,
+        kind: "pull_request",
+        body: "merged",
+        createdAt: new Date(),
+      });
+      await callTransition(id, "merged", reg);
+      expect(await readState(id)).toBe("merged");
+    });
+
+    it("pr: REFUSES a draft — a draft PR has not landed", async () => {
+      // `draft` joined the vocabulary in the same change as `merged`. It is
+      // not a near-miss for merged and must not read as one.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({ itemId: id, kind: "pull_request", body: "draft" });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+        message?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(error.message).toMatch(/reports `draft`/);
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("pr: a merge_approval does NOT satisfy it — the condition is a fact, not a decision", async () => {
+      // The boundary that keeps this authority meaningful, asserted the same
+      // way `needs_approval`'s boundaries are. No human decision substitutes
+      // for the PR actually having merged: a person cannot approve their way
+      // past a PR that is still open, because the clause is not asking
+      // anyone's permission.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
+      await createArtifact({ itemId: id, kind: "pull_request", body: "open" });
+      await createArtifact({
+        itemId: id,
+        kind: "merge_approval",
+        commitSha: "sha-tip",
+        createdByType: "person",
+      });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
+    });
+
+    it("pr: is STRICTER than pre_approved — the same item merges on pre_approved and refuses on pr", async () => {
+      // The claim the migration and the guard doc both make, stated as a
+      // test rather than as prose. A fourth value on an authorisation enum
+      // reads like a loosening, and this is what shows it is not: identical
+      // evidence, and `pr` is the one that holds.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+
+      const permissive = await createTask({ state: "in_review", mergeAuthority: "pre_approved" });
+      await createArtifact({ itemId: permissive, kind: "pull_request", body: "open" });
+      await callTransition(permissive, "merged", reg);
+      expect(await readState(permissive)).toBe("merged");
+
+      const gated = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({ itemId: gated, kind: "pull_request", body: "open" });
+      await callTransition(gated, "merged", reg).catch(() => undefined);
+      expect(await readState(gated)).toBe("in_review");
+    });
+
+    it("pr: an unrecognised legacy body falls through to open and REFUSES, rather than passing", async () => {
+      // The read path is lenient about rows written before the status
+      // vocabulary existed, and that leniency has to fail safe here: an
+      // unrecognised body reads as `open`, so the gate refuses. Fails if the
+      // fallback is ever changed to something that satisfies this clause,
+      // which would let an unvalidated row authorise a merge.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresAuthorisationGuard);
+      const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
+      await createArtifact({ itemId: id, kind: "pull_request", body: "some old note" });
+      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
+        guard?: string;
+      };
+      expect(error.guard).toBe("merge.requires_authorisation");
+      expect(await readState(id)).toBe("in_review");
+    });
+
     it("needs_approval: REFUSES when the person's approval is at an EARLIER round than the current one, even though a person approved at some point — round-2 review-1 defect", async () => {
       // The regression test for the composition bug review round 1 found:
       // a person approved code_review at round 1; the item was then
