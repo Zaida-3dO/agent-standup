@@ -31,195 +31,59 @@
 // to `commands.ts`, deliberately not exported so this file cannot be forced
 // to touch that file's internals) so `passThroughFlags` below is the same
 // behaviour, defined once for every command in this file.
-import { booleanFlag, numericFlag, type ParsedArgs } from "./args";
-import { itemIdPositional, passThroughFlags, withSessionId } from "./flags";
+import { buildVerbInput, type VerbFields } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
 
-function buildClaimInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const idResult = itemIdPositional(rest, "session claim <item-id>");
-  if (!idResult.ok) return idResult;
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  const withSession = withSessionId(passthrough.input, flags);
-  if (!withSession.ok) return withSession;
-
-  const input: Record<string, unknown> = { ...withSession.input, itemId: idResult.itemId };
-  // `pid` is the one numeric field `claim`'s schema declares
-  // (`z.number().int().nullable().optional()`) — every other field here is
-  // a string all the way through, so this is the one spot a CLI flag
-  // (always a string) needs a type coercion rather than a straight
-  // pass-through. It goes through the shared `numericFlag` so the CLI has
-  // one spelling of "this flag is a number" rather than a per-command one.
-  const pid = numericFlag(flags, "pid");
-  if (!pid.ok) return pid;
-  if (pid.value !== undefined) input.pid = pid.value;
-  return { ok: true, input };
-}
-
-/** `release` and `heartbeat` share exactly one shape: `{ itemId, sessionId }`, nothing else. */
-function buildItemSessionInput(usage: string) {
-  return (rest: readonly string[], flags: ParsedArgs["flags"]): InputResult => {
-    const idResult = itemIdPositional(rest, usage);
-    if (!idResult.ok) return idResult;
-    const passthrough = passThroughFlags(flags);
-    if (!passthrough.ok) return passthrough;
-    const withSession = withSessionId(passthrough.input, flags);
-    if (!withSession.ok) return withSession;
-    return { ok: true, input: { ...withSession.input, itemId: idResult.itemId } };
-  };
-}
-
-function buildCheckpointInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const idResult = itemIdPositional(rest, "session checkpoint <item-id>");
-  if (!idResult.ok) return idResult;
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  const withSession = withSessionId(passthrough.input, flags);
-  if (!withSession.ok) return withSession;
-  return { ok: true, input: { ...withSession.input, itemId: idResult.itemId } };
-}
-
 /**
- * `session takeover <item-id> --fromSessionId … --bySessionId … --holderType … --holderId … [--force] [--reason …]`.
+ * What each verb reads from the words and flags after it.
  *
- * `--force` is the one boolean flag in this file, and it needs the same kind
- * of pre-handling the numeric `pid` coercion in `buildClaimInput` needs, for
- * the mirror-image reason: `passThroughFlags` refuses a valueless flag
- * ("--force needs a value"), which for a boolean is exactly backwards —
- * a bare `--force` is the *correct* way to write it. So it is read with
- * `booleanFlag` before the pass-through sees it, which also refuses
- * `--force yes` as "does not take a value" rather than forwarding a string to
- * a `z.boolean()` that would then complain about a type the caller never
- * meant to supply.
- */
-function buildTakeoverInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const idResult = itemIdPositional(rest, "session takeover <item-id>");
-  if (!idResult.ok) return idResult;
-
-  const force = booleanFlag(flags, "force");
-  if (!force.ok) return force;
-
-  // `force` is withheld from the pass-through (it has already been read as a
-  // boolean) rather than destructured out, so there is no unused binding.
-  const others = Object.fromEntries(
-    Object.entries(flags).filter(([name]) => name !== "force"),
-  ) as ParsedArgs["flags"];
-  const passthrough = passThroughFlags(others);
-  if (!passthrough.ok) return passthrough;
-
-  const input: Record<string, unknown> = { ...passthrough.input, itemId: idResult.itemId };
-  // Sent only when actually given. `takeover`'s schema declares `force` as
-  // optional, and a call that never mentioned it should not be recorded as
-  // having explicitly declined to force.
-  if (flags.force !== undefined) input.force = force.value;
-  return { ok: true, input };
-}
-
-/**
- * `sweep` takes one optional switch, `--dry-run`, and is otherwise a
- * no-argument operation. The switch is read with `booleanFlag` for the same
- * reason `--force` is on `takeover`: a bare `--dry-run` is the correct way to
- * write it, and the pass-through refuses a valueless flag with "--dry-run
- * needs a value", which is exactly backwards for a boolean.
+ * ⚠️ **POSITIONALS AND BARE SWITCHES ONLY.** Every value-carrying flag
+ * reaches the operation untouched and is refused, if wrong, by that
+ * operation's own `.strict()` schema. Listing value-flag names here would
+ * turn this table into the allow-list that silently drops a field — see
+ * `buildVerbInput`'s own header for why that defect cannot be caught by a
+ * refusal-shaped test, and `tests/cli-merged-builder-fields.test.ts` for the
+ * assertion that can.
  *
- * Everything else is still passed through untouched, so a stray flag is
- * refused by the operation's `.strict()` schema with the offending field
- * named rather than being dropped here, where the caller would never learn
- * that their flag did nothing — which on an operation that releases other
- * sessions' claims is the difference between a rehearsal and a live run.
- */
-function buildSweepInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const dryRun = booleanFlag(flags, "dry-run");
-  if (!dryRun.ok) return dryRun;
-
-  const others = Object.fromEntries(
-    Object.entries(flags).filter(([name]) => name !== "dry-run"),
-  ) as ParsedArgs["flags"];
-  const passthrough = passThroughFlags(others);
-  if (!passthrough.ok) return passthrough;
-
-  const input: Record<string, unknown> = { ...passthrough.input };
-  // Sent only when actually given, matching `takeover`'s handling of
-  // `--force`: the schema declares it optional, and a call that never
-  // mentioned it should not be recorded as having explicitly asked for a
-  // live run.
-  if (flags["dry-run"] !== undefined) input.dryRun = dryRun.value;
-  return { ok: true, input };
-}
-
-function buildMyWorkInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  return withSessionId(passthrough.input, flags);
-}
-
-/**
- * `progress_report` takes the same session flag `my_work` does — the
- * difference between the two is what the server does with the session, not
- * how a caller names it.
+ * Eleven builders were written out separately and differ only in these few
+ * facts. The differences that looked like per-verb logic are all here:
  *
- * `--include-completed` is a bare switch, because that is what a switch looks
- * like here and `--include-completed true` is not a thing anyone would type.
- * It therefore cannot go through `passThroughFlags`, which refuses a
- * valueless flag: it is read by `booleanFlag` and declared consumed, exactly
- * as `--all` and `--full` are on `item list`.
+ *   - `claim` reads `--pid`, the one numeric field its schema declares.
+ *   - `takeover` reads `--force` and `sweep` reads `--dry-run` as bare
+ *     switches sent only when written, because both are optional on their
+ *     schemas and a call that never mentioned one should not be recorded as
+ *     having declined it.
+ *   - `progress` reads `--include-completed` as an ordinary switch, which is
+ *     always sent.
+ *   - `orientation` reads `--limit` as a number and takes NO session: its
+ *     input schema has no session field at all, being item-scoped rather
+ *     than session-scoped.
+ *   - `note`'s session is optional where claim/release/heartbeat/checkpoint
+ *     require one, but the mapping from `--session` is identical either way,
+ *     so the difference lives in the schema rather than here.
  */
-function buildProgressReportInput(
-  _rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const includeCompleted = booleanFlag(flags, "include-completed");
-  if (!includeCompleted.ok) return includeCompleted;
-  const passthrough = passThroughFlags(flags, ["include-completed"]);
-  if (!passthrough.ok) return passthrough;
-  const withSession = withSessionId(passthrough.input, flags);
-  if (!withSession.ok) return withSession;
-  return {
-    ok: true,
-    input: { ...withSession.input, includeCompleted: includeCompleted.value },
-  };
-}
+const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
+  claim: { itemId: "session claim <item-id>", numbers: { pid: "pid" }, session: true },
+  release: { itemId: "session release <item-id>", session: true },
+  heartbeat: { itemId: "session heartbeat <item-id>", session: true },
+  takeover: { itemId: "session takeover <item-id>", optionalSwitches: { force: "force" } },
+  sweep: { optionalSwitches: { "dry-run": "dryRun" } },
+  checkpoint: { itemId: "session checkpoint <item-id>", session: true },
+  "my-work": { session: true },
+  progress: { switches: { "include-completed": "includeCompleted" }, session: true },
+  note: { itemId: "item note <item-id>", session: true },
+  orientation: { itemId: "item orientation <item-id>", numbers: { limit: "limit" } },
+  "crew-name": { session: true },
+});
 
-function buildNoteInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const idResult = itemIdPositional(rest, "item note <item-id>");
-  if (!idResult.ok) return idResult;
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  // `note`'s own `sessionId` is optional (SCHEMA.md §7 — a person's remark
-  // holds none), unlike claim/release/heartbeat/checkpoint's required one —
-  // but the mapping from `--session` is identical either way.
-  const withSession = withSessionId(passthrough.input, flags);
-  if (!withSession.ok) return withSession;
-  return { ok: true, input: { ...withSession.input, itemId: idResult.itemId } };
-}
-
-function buildOrientationInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const idResult = itemIdPositional(rest, "item orientation <item-id>");
-  if (!idResult.ok) return idResult;
-  // `--limit` names a `z.number()` field, so it converts here and is
-  // declared consumed — otherwise the raw string would reach the operation
-  // and be refused as `invalid_input`.
-  const limit = numericFlag(flags, "limit");
-  if (!limit.ok) return limit;
-  const passthrough = passThroughFlags(flags, ["limit"]);
-  if (!passthrough.ok) return passthrough;
-  // No `--session` mapping here: `orientation`'s input schema has no
-  // session field at all (it is item-scoped, not session-scoped — see this
-  // file's header).
-  return {
-    ok: true,
-    input: {
-      ...passthrough.input,
-      itemId: idResult.itemId,
-      ...(limit.value === undefined ? {} : { limit: limit.value }),
-    },
-  };
-}
-
-function buildCrewNameInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  return withSessionId(passthrough.input, flags);
+/** One verb's builder, by the key it is listed under above. */
+function build(
+  verb: keyof typeof VERBS,
+): (
+  rest: readonly string[],
+  flags: Parameters<ReturnType<typeof buildVerbInput>>[1],
+) => InputResult {
+  return buildVerbInput(VERBS[verb]!);
 }
 
 export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
@@ -228,21 +92,21 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "claim",
     operation: "claim",
     summary: "Takes ownership of an item in a role. Atomic — two agents can't both win.",
-    buildInput: buildClaimInput,
+    buildInput: build("claim"),
   },
   {
     noun: "session",
     verb: "release",
     operation: "release",
     summary: "Gives up ownership of an item.",
-    buildInput: buildItemSessionInput("session release <item-id>"),
+    buildInput: build("release"),
   },
   {
     noun: "session",
     verb: "heartbeat",
     operation: "heartbeat",
     summary: "Still alive. Unnecessary if your hook flushes tool calls; needed if you run no hook.",
-    buildInput: buildItemSessionInput("session heartbeat <item-id>"),
+    buildInput: build("heartbeat"),
   },
   {
     noun: "session",
@@ -250,7 +114,7 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "takeover",
     summary:
       "Takes an item from another session. Free if that session is dead; needs --force and --reason if it may be alive.",
-    buildInput: buildTakeoverInput,
+    buildInput: build("takeover"),
   },
   {
     noun: "session",
@@ -258,7 +122,7 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "sweep",
     summary:
       "Runs the liveness sweep: ages quiet sessions, releases claims held by dead ones, escalates stuck items. --dry-run reports what it would do and writes nothing.",
-    buildInput: buildSweepInput,
+    buildInput: build("sweep"),
   },
   {
     noun: "session",
@@ -266,14 +130,14 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "checkpoint",
     summary:
       "Records what you tried, what you ruled out, what's next. --headline gives it a one-line BLUF that reads pick up without the prose.",
-    buildInput: buildCheckpointInput,
+    buildInput: build("checkpoint"),
   },
   {
     noun: "session",
     verb: "my-work",
     operation: "my_work",
     summary: "What this session holds right now, and in what role.",
-    buildInput: buildMyWorkInput,
+    buildInput: build("my-work"),
   },
   {
     noun: "session",
@@ -281,14 +145,14 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "progress_report",
     summary:
       "A progress report on everything this session holds, in one fixed shape every time it is asked. Finished work is counted but not listed; --include-completed lists it.",
-    buildInput: buildProgressReportInput,
+    buildInput: build("progress"),
   },
   {
     noun: "item",
     verb: "note",
     operation: "note",
     summary: "Leaves a timestamped remark on an item.",
-    buildInput: buildNoteInput,
+    buildInput: build("note"),
   },
   {
     noun: "item",
@@ -296,14 +160,14 @@ export const OWNERSHIP_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "orientation",
     summary:
       "Catch me up: latest checkpoint, current state, what changed since, open loops, and crew.",
-    buildInput: buildOrientationInput,
+    buildInput: build("orientation"),
   },
   {
     noun: "crew",
     verb: "name",
     operation: "get_crew_name",
     summary: "Requests a name for a new agent. Hands out one available name, atomically.",
-    buildInput: buildCrewNameInput,
+    buildInput: build("crew-name"),
   },
 ]);
 

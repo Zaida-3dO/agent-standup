@@ -10,7 +10,7 @@
 // set AS A WHOLE: which names the dispatcher keeps for itself, and how the
 // rest reach an operation.
 import { malformed, type ErrorEnvelope } from "./envelope";
-import { stringFlag, type ParsedArgs } from "./args";
+import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
 
 /**
  * The flags the dispatcher handles itself — never part of an operation's
@@ -118,4 +118,127 @@ export function itemIdPositional(
     return { ok: false, envelope: malformed(`\`standup ${usage}\` needs an item id.`, ["itemId"]) };
   }
   return { ok: true, itemId };
+}
+
+/**
+ * What one verb reads from the words and flags after it.
+ *
+ * ⚠️ **POSITIONALS AND BARE SWITCHES ONLY. NEVER VALUE-FLAG NAMES.**
+ *
+ * This is the shape of a descriptor, and the shape is the safety property.
+ * Every field below names either a positional word or a flag written without
+ * a value; every *value-carrying* flag reaches the operation through
+ * `passThroughFlags` untouched, and the operation's own `.strict()` schema
+ * does the refusing.
+ *
+ * Adding a `fields: ["headline", "reason", ...]` key here — a list of the
+ * value flags a verb accepts — is the one change that reintroduces row
+ * `fa83f2b9`, and it is worth being precise about why it is so hard to
+ * catch. A builder filtered to such a list silently DROPS any flag missing
+ * from it. The dropped field is valid on the shared schema, so nothing
+ * refuses: the call is parsed, the value is discarded, and the caller is
+ * answered with a success. This codebase has shipped that defect three
+ * times; the first was a `--reason` on a close that was accepted and thrown
+ * away.
+ *
+ * It also means **a refusal-shaped test cannot catch it.** Asserting that a
+ * bad flag is refused passes against the bug, because the bug refuses
+ * nothing. The regression tests for this write a value and read it back
+ * through a separate call — see `tests/cli-loop-noun-fields.test.ts` and
+ * `tests/cli-merged-builder-fields.test.ts`, which is the only assertion
+ * that can tell "kept" from "accepted and discarded".
+ */
+export interface VerbFields {
+  /**
+   * The leading item-id positional, and the usage line a refusal shows.
+   *
+   * Absent for a verb that takes no item — `session my-work` and `crew name`
+   * are about the session, not about one item.
+   */
+  readonly itemId?: string;
+  /**
+   * Bare switches, by flag name, mapped onto the input field each sets.
+   *
+   * Read with `booleanFlag` and declared consumed, because
+   * `passThroughFlags` refuses a valueless flag — which for a switch is
+   * exactly backwards, since a bare `--force` is the correct way to write
+   * it.
+   */
+  readonly switches?: Readonly<Record<string, string>>;
+  /**
+   * Switches sent ONLY when the flag was actually written.
+   *
+   * `takeover`'s `--force` and `sweep`'s `--dry-run` are optional on their
+   * schemas, and a call that never mentioned one should not be recorded as
+   * having explicitly declined it. Named separately from `switches` rather
+   * than inferred, because "absent means false" and "absent means absent"
+   * are different claims and only the verb knows which it makes.
+   */
+  readonly optionalSwitches?: Readonly<Record<string, string>>;
+  /** Flags naming a numeric field, converted before the schema sees a string. */
+  readonly numbers?: Readonly<Record<string, string>>;
+  /** Whether `--session` maps onto the operation's own `sessionId` field. */
+  readonly session?: boolean;
+}
+
+/**
+ * Builds one verb's input from its descriptor.
+ *
+ * Reads the item id, then the verb's switches and numbers, then forwards
+ * every remaining flag untouched. **Field validation is not done here** — a
+ * missing required field is left absent so the operation's own schema is
+ * what refuses it and names it, which is the rule `commands.ts`'s
+ * `CommandSpec` header states and the reason this builder can be shared at
+ * all.
+ */
+export function buildVerbInput(
+  fields: VerbFields,
+): (rest: readonly string[], flags: ParsedArgs["flags"]) => FieldsResult {
+  return (rest, flags) => {
+    const consumed: string[] = [];
+    const values: Record<string, unknown> = {};
+
+    for (const [name, field] of Object.entries(fields.switches ?? {})) {
+      const read = booleanFlag(flags, name);
+      if (!read.ok) return read;
+      consumed.push(name);
+      values[field] = read.value;
+    }
+
+    for (const [name, field] of Object.entries(fields.optionalSwitches ?? {})) {
+      const read = booleanFlag(flags, name);
+      if (!read.ok) return read;
+      consumed.push(name);
+      if (flags[name] !== undefined) values[field] = read.value;
+    }
+
+    for (const [name, field] of Object.entries(fields.numbers ?? {})) {
+      const read = numericFlag(flags, name);
+      if (!read.ok) return read;
+      consumed.push(name);
+      if (read.value !== undefined) values[field] = read.value;
+    }
+
+    const passthrough = passThroughFlags(flags, consumed);
+    if (!passthrough.ok) return passthrough;
+
+    let input: Record<string, unknown> = passthrough.input;
+    if (fields.session === true) {
+      const withSession = withSessionId(input, flags);
+      if (!withSession.ok) return withSession;
+      input = withSession.input;
+    }
+
+    const merged: Record<string, unknown> = { ...input, ...values };
+
+    if (fields.itemId !== undefined) {
+      const idResult = itemIdPositional(rest, fields.itemId);
+      if (!idResult.ok) return idResult;
+      // Last, so a `--itemId` flag cannot displace the id the person typed
+      // as the subject of the command.
+      merged.itemId = idResult.itemId;
+    }
+
+    return { ok: true, input: merged };
+  };
 }
