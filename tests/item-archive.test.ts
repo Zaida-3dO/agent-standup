@@ -20,7 +20,16 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, listOperations, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
-import { cancellationPhraseIn } from "@/lib/service/operations/delete-item";
+import {
+  ARCHIVE_REASON_GUARD,
+  ARCHIVE_REFERENCES_GUARD,
+  cancellationPhraseIn,
+} from "@/lib/service/operations/delete-item";
+// Imported for its registration side effect as well as for the registry
+// itself: `guardRegistry` is populated by importing `guards/index.ts`, so
+// asserting an id is absent from it is only meaningful once that has run.
+import { guardRegistry } from "@/lib/service/state-machine/guard";
+import "@/lib/service/guards";
 import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
@@ -96,6 +105,70 @@ describe("cancellationPhraseIn — the wording that means cancel, not remove", (
   // sentence case would slip straight past the check.
   it("matches regardless of case", () => {
     expect(cancellationPhraseIn("We DECIDED NOT TO ship it")).toBeDefined();
+  });
+});
+
+// The distinction that four separate comments in this repository got wrong,
+// stated here as an assertion so it cannot be got wrong a fifth time.
+//
+// `delete_item` refuses four ways, and none of those four is a **registered
+// guard**. Three source comments and one section of SCHEMA.md read those four
+// refusals as registered guards and concluded the operation could not be
+// waived off MCP under §22 — one of them calling it "the clearest possible
+// case of an operation §22 means to keep on every surface" — while
+// `adapters/waivers.ts` had in fact waived it off both MCP transports. The
+// files disagreed with each other for as long as both were true-looking.
+//
+// The reason the waiver is legal is structural, and it is the thing worth
+// pinning down: a registered `Guard` is a *transition* rule. It declares
+// `appliesTo(from, to)` and `runGuards` hands it a from/to pair. `delete_item`
+// runs no transition — it sets `archivedAt` on a row — so it has no pair to
+// offer and could not implement the interface without inventing a fake one.
+// Its refusals are operation-level preconditions instead, which still carry a
+// stable id so a caller can match on the rule rather than on prose.
+//
+// Both halves are asserted, because either one alone is re-derivable into the
+// wrong conclusion: that the ids exist and are carried (so nobody "fixes" them
+// away as dead constants), and that they are deliberately absent from
+// `guardRegistry` (so nobody registers them believing §22 demands it).
+describe("the archive refusals are preconditions, not registered guards", () => {
+  // Fails if either id is registered into `guardRegistry` — which is exactly
+  // the change someone would make on reading the comments as they were, and
+  // the change that would make the MCP waiver illegal under §22 without
+  // anything else in the suite noticing.
+  it.each([ARCHIVE_REASON_GUARD, ARCHIVE_REFERENCES_GUARD])(
+    "%s is deliberately not in the guard registry",
+    (id) => {
+      expect(guardRegistry.has(id)).toBe(false);
+    },
+  );
+
+  // Fails if the registry is empty or unpopulated, which would make the
+  // assertion above pass for the wrong reason — every id is absent from a
+  // registry nothing registered into. `guards/index.ts` populates it as an
+  // import side effect, so an import reshuffle is a real way to lose it.
+  it("checks that against a registry that is actually populated", () => {
+    expect(guardRegistry.all().length).toBeGreaterThan(0);
+  });
+
+  // Fails if a registered guard is ever added whose id starts `items.archive`
+  // — the shape a future "let us register these properly" change would take.
+  // Stated as a prefix rather than the two exact ids so it also catches a
+  // third one being added beside them.
+  it("registers no guard at all under the items.archive prefix", () => {
+    const archiveGuards = guardRegistry
+      .all()
+      .filter((guard) => guard.id.startsWith("items.archive"));
+    expect(archiveGuards).toEqual([]);
+  });
+
+  // Fails if the ids stop being carried on the refusals — the opposite
+  // regression, and the one that would break the shipped archive UI, which
+  // matches on these exact values to decide which refusals offer an
+  // "acknowledge and proceed" step (`item-detail/archive-state.ts`).
+  it("still carries ids the UI can match on, rather than prose", () => {
+    expect(ARCHIVE_REASON_GUARD).toBe("items.archive_reason_is_not_a_cancellation");
+    expect(ARCHIVE_REFERENCES_GUARD).toBe("items.archive_has_inbound_references");
   });
 });
 

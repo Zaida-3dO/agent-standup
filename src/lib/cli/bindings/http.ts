@@ -219,6 +219,52 @@ export const HTTP_ROUTES: Readonly<Record<string, RouteSpec>> = Object.freeze({
     },
     unwrap: (body) => property(body, "item"),
   },
+  // The three structural-repair verbs (`item archive`, `item restore`,
+  // `item retype`). They are waived off both MCP transports, so the command
+  // line and the API are the whole surface — which means the `http` binding
+  // needs them or the verbs work in `direct` mode and answer
+  // `not_implemented` the moment `STANDUP_URL` is set. The routes they
+  // address already existed; only this table was missing them.
+  //
+  // `DELETE` with a body, which is unusual enough to note: `delete_item`
+  // requires a `reason`, and requiring it is the point of the operation
+  // rather than an incidental field, so it cannot travel in the path and a
+  // query string would make a sentence-long reason someone else's escaping
+  // problem. `route.ts` reads the body on DELETE for exactly this reason.
+  delete_item: {
+    method: "DELETE",
+    request: (input) => {
+      const { id, ...rest } = input;
+      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}`, body: rest };
+    },
+    // The whole envelope, not `item` — `archived` is what distinguishes
+    // "this call archived it" from "it was already archived", and `effect`
+    // says in words what the archive means for reads. The route returns the
+    // envelope unwrapped for that reason, and pulling `item` out here would
+    // reintroduce the misreading `DeleteItemOutput` is shaped to prevent,
+    // and make this binding disagree with `direct`.
+    unwrap: (body) => body,
+  },
+  restore_item: {
+    method: "POST",
+    request: (input) => {
+      const { id, ...rest } = input;
+      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}/restore`, body: rest };
+    },
+    // Same envelope reasoning as `delete_item`: the route returns the
+    // service result unwrapped.
+    unwrap: (body) => body,
+  },
+  retype_to_task: {
+    method: "POST",
+    request: (input) => {
+      const { id, ...rest } = input;
+      return { path: `/api/items/${encodeURIComponent(String(id ?? ""))}/retype`, body: rest };
+    },
+    // This one the route DOES wrap as `{ item }`, unlike the two above, so
+    // it unwraps like the other single-item writes.
+    unwrap: (body) => property(body, "item"),
+  },
   // MILESTONES.md #92 — repo/area/machine/account routes, kept in their own
   // module (./http-routes-admin.ts) and spread in as a single line, per
   // that module's own header, so concurrent CLI rows adding entries above

@@ -251,12 +251,27 @@ documentation, because a caller reaching past `cancelled` is not reading the doc
 - `superseded_by` **should name the replacement** whenever there is one, because the common case has
   a survivor.
 
-**It is exposed on every surface, including MCP.** Restricting it to one surface was considered and
-is not available: §22 bounds waivers to operations no guard can reject, and this one refuses four
-ways. It is also the weaker protection — the same caller holds a command line and an HTTP client, so
-hiding one door relocates the call rather than preventing it, and costs the property that every
-adapter refuses identically. The restrictions that survive being routed around are the refusals
-above.
+**It is reachable over HTTP and the command line (`standup item archive`), and waived off both MCP
+transports.** Structural repair is rare, person-driven surgery on a board that has gone wrong —
+performed deliberately by someone who has looked at it, rather than reached for mid-task by an agent.
+
+> **Why §22's bound does not forbid that waiver, since this operation plainly refuses four ways.**
+> The bound speaks about **registered guards**, and none of these four refusals is one. A registered
+> guard is structurally a *transition* rule — it declares `appliesTo(from, to)`, and the state
+> machine hands it the pair being attempted. This operation runs no transition; it sets `archived_at`
+> on a row. It has no pair to offer and so could not register a guard without inventing a fake one.
+> Its four refusals are **operation-level preconditions** instead, checked inline, each carrying a
+> stable id so a caller can match on the rule rather than on the prose. A precondition id is not a
+> registered guard id, the bound never reaches this operation, and the waiver is legal.
+>
+> Worth stating explicitly because the shorter reading — "it refuses four ways, so §22 pins it to
+> every surface" — is easy to reach and wrong, and would make this section contradict the waiver list
+> it describes.
+
+**The waiver is not the protection, though, and must not be mistaken for it.** The same caller holds
+a command line and an HTTP client, so hiding one door relocates the call rather than preventing it.
+The restrictions that survive being routed around are the refusals above — which is why the steering
+lives there, and why every adapter that does expose the operation refuses identically.
 
 ---
 
