@@ -404,14 +404,33 @@ describe("isWaived / waiversFor / exposedOperations", () => {
     expect(isWaived("mcp_stdio", "backfill")).toBe(true);
     expect(isWaived("http", "backfill")).toBe(false);
     expect(isWaived("cli", "backfill")).toBe(false);
-    // `checkpoint` is the sentinel for "still exposed": it is one of the
-    // most-called agent-facing tools and is deliberately not waived. It took
-    // this role from `create_task`, which is now reached through the folded
-    // `create_work` tool and waived off MCP with the other two creates — a
-    // sentinel has to be a tool no planned fold will ever touch, or it stops
-    // being a positive control and becomes another thing to edit.
-    expect(isWaived("mcp_http", "checkpoint")).toBe(false);
-    expect(isWaived("mcp_stdio", "checkpoint")).toBe(false);
+    // `transition_item` is the sentinel for "still exposed".
+    //
+    // **This is its second move, and the second one is different in kind
+    // from the first.** The role was originally `create_task`'s; it went to
+    // `checkpoint` when `create_task` was folded into `create_work`, under
+    // the rule that a sentinel has to be a tool no planned fold will ever
+    // touch or it stops being a positive control and becomes another thing
+    // to edit. `checkpoint` is now folded into `record`, so that rule has
+    // cost two edits and been satisfied by intent both times.
+    //
+    // `transition_item` satisfies it MECHANICALLY, which is why this move
+    // is terminal rather than the next one in a series. It is one of the
+    // two operations in `GUARD_RUNNING_OPERATIONS` above — the only
+    // registered operations reaching `runGuards` through the state machine
+    // — and the §22-bound assertion there refuses a waiver naming either.
+    // So waiving `transition_item` off MCP fails this file whatever anyone
+    // intends, rather than relying on a future planner reading a comment.
+    // A positive control protected by an assertion is a better positive
+    // control than one protected by a request.
+    //
+    // It is also out of scope for folding on the merits: six flat fields,
+    // zero contract rules, and folding it into `complete_item` or
+    // `update_item` would infer intent from which fields arrived — the
+    // bound that retired the old `create_item` and that every fold in this
+    // lineage has had to clear.
+    expect(isWaived("mcp_http", "transition_item")).toBe(false);
+    expect(isWaived("mcp_stdio", "transition_item")).toBe(false);
     expect(isWaived("mcp_http", "create_item")).toBe(true);
     // The folded-away creates and loop verbs are waived on MCP only.
     expect(isWaived("mcp_http", "create_task")).toBe(true);
@@ -445,9 +464,12 @@ describe("isWaived / waiversFor / exposedOperations", () => {
   });
 
   it("filters a list down to what an adapter exposes", () => {
-    const all = [{ name: "backfill" }, { name: "checkpoint" }];
-    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["checkpoint"]);
-    expect(exposedOperations("http", all).map((o) => o.name)).toEqual(["backfill", "checkpoint"]);
+    const all = [{ name: "backfill" }, { name: "transition_item" }];
+    expect(exposedOperations("mcp_http", all).map((o) => o.name)).toEqual(["transition_item"]);
+    expect(exposedOperations("http", all).map((o) => o.name)).toEqual([
+      "backfill",
+      "transition_item",
+    ]);
   });
 });
 
@@ -462,7 +484,7 @@ describe("the MCP adapter honours its waiver", () => {
     const tools = toolsFromOperations(exposedOperations("mcp_http", listOperations()));
     expect(tools.map((t) => t.name)).not.toContain("backfill");
     expect(tools.map((t) => t.name)).not.toContain("get_crew_name");
-    expect(tools.map((t) => t.name)).toContain("checkpoint");
+    expect(tools.map((t) => t.name)).toContain("transition_item");
     // The folded tools are the ones MCP exposes: one loop tool with an
     // action field, one create tool with a required type field.
     expect(tools.map((t) => t.name)).toContain("create_work");
@@ -486,7 +508,7 @@ describe("the MCP adapter honours its waiver", () => {
     );
 
     expect(registered.length).toBeGreaterThan(0);
-    expect(registered).toContain("checkpoint");
+    expect(registered).toContain("transition_item");
     expect(registered).toContain("create_work");
     expect(registered).toContain("loop");
     expect(registered).not.toContain("backfill");
