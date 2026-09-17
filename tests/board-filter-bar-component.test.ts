@@ -324,12 +324,29 @@ describe("the axes disclosure toggle (narrow-width collapse)", () => {
     const texts = spans.flatMap((el) => {
       const children = (el.props as { children?: unknown }).children;
       if (typeof children === "string") return [children];
+      if (typeof children === "number") return [String(children)];
       if (Array.isArray(children)) {
-        return [children.filter((c) => typeof c === "string").join("")];
+        return [children.filter((c) => typeof c === "string" || typeof c === "number").join("")];
       }
       return [];
     });
-    expect(texts.some((t) => t.includes("2 active"))).toBe(true);
+    // Two channels, and the test asserts BOTH, because they serve different
+    // readers and either one regressing alone would be a real defect.
+    //
+    // The count renders twice over: a filled pill carrying the bare
+    // numeral, and a visually-hidden sentence naming it in words. A sighted
+    // reader gets the number pre-attentively; a screen-reader user gets it
+    // as language. Asserting only the numeral would pass on a pill whose
+    // accessible sentence had been dropped, which is the regression that
+    // matters most.
+    expect(
+      texts.some((t) => t === "2"),
+      "the visible count pill is missing the active-filter number",
+    ).toBe(true);
+    expect(
+      texts.some((t) => t.includes("2 filters active")),
+      "the accessible sentence naming the active filter count is gone",
+    ).toBe(true);
   });
 });
 

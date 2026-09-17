@@ -15,7 +15,7 @@
   gap: 0.4rem;
   padding: 0.85rem 0.75rem;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -37,7 +37,7 @@
 .detail {
   margin: 0;
   color: var(--text-faint);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
 
 /* A withheld region is bounded so it reads as a region that exists and was
@@ -73,7 +73,7 @@
    URL harder to read back accurately. */
 .call {
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   overflow-wrap: anywhere;
 }
 
@@ -87,7 +87,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 

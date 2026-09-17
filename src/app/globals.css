@@ -102,7 +102,17 @@
   --text-primary: var(--n-50);
   --text-secondary: var(--n-300);
   --text-muted: var(--n-400);
-  --text-faint: var(--n-500);
+  /* The quietest text in the system, and it still has to be READ.
+     `--n-500` is 3.80:1 against `--surface-card` — under the 4.5:1 floor —
+     and this role is used on counts, timestamps, legends and placeholders
+     across the app, none of which are decoration. Sitting between `--n-500`
+     and `--n-600` on the ramp rather than taking either: `--n-500` fails,
+     and `--n-600` is `--text-muted`'s own neighbourhood, which would
+     collapse the distinction between the two roles.
+
+     Verified in `tests/design-tokens-contrast.test.ts` against all four
+     surfaces, in both themes, rather than asserted here. */
+  --text-faint: oklch(0.61 0.012 275);
   --text-inverse: var(--n-950);
 
   /* Borders. `--border-subtle` divides things that belong together;
@@ -378,7 +388,13 @@
   --text-primary: var(--n-950);
   --text-secondary: var(--n-700);
   --text-muted: var(--n-600);
-  --text-faint: var(--n-500);
+  /* Darker than the ramp's own 500 step: at `--n-500` this role reads
+     3.91:1 against `--surface-sunken` and 4.27:1 against `--surface-app`,
+     both under the 4.5:1 floor. Light needs a LOWER lightness here where
+     dark needs a higher one — each theme has to put distance between this
+     text and its own surfaces, and those surfaces sit at opposite ends of
+     the ramp. */
+  --text-faint: oklch(0.52 0.012 275);
   --text-inverse: var(--n-0);
 
   --border-subtle: var(--n-100);
@@ -538,6 +554,18 @@
   --radius-md: 6px;
   --radius-lg: 12px;
   --radius-full: 999px;
+
+  /* The maximum line length for PROSE — a brief, a summary, a finding.
+     Not for tables, code or any layout measured in columns.
+
+     68ch, which lands in the 45–75 characters typography has long treated
+     as the comfortable band. The failure it prevents is specific: a brief
+     rendered across a wide panel runs ~180 characters a line, and past
+     roughly 90 the eye stops reliably finding the start of the next line
+     and re-reads one it has already read. `ch` rather than a pixel width
+     so the measure follows the font size instead of silently widening in
+     characters whenever the text gets smaller. */
+  --measure-prose: 68ch;
 }
 
 /* Exposes the tokens to the utility generator, so `bg-surface-card` and

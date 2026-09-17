@@ -10,6 +10,8 @@ import { waitingTone } from "@/lib/board/view";
 import { isDraggable } from "@/lib/board/drag";
 import { hasDistinctHeadline, primaryLine } from "@/lib/item-headline-display";
 import { TrustBadge } from "@/components/chips/TrustBadge";
+import { AreaChip } from "@/components/chips/AreaChip";
+import { RepoChip } from "@/components/chips/RepoChip";
 import { relativeTime } from "@/lib/projects/view";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { LinkChips } from "@/components/chips/LinkChips";
@@ -290,9 +292,15 @@ export function ItemCard({
           ))}
         </ul>
       )}
+      {/* Area and repo as PILLS, not as muted text — the two things a
+          reader scans a board for were rendering at the same weight as
+          everything around them (docs/DESIGN-LANGUAGE.md §2). The area
+          was not shown on a card at all before this, which meant the
+          board's own grouping was invisible on the cards that make it up. */}
       <div className={styles.cardMeta}>
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>
-        {entry.item.repo && <span className={styles.repo}>{entry.item.repo}</span>}
+        <AreaChip area={entry.item.area} />
+        {entry.item.repo && <RepoChip repo={entry.item.repo} />}
       </div>
       {/* The item's external pointers — the chat thread, the ticket, the
           design doc — as key-only chips.

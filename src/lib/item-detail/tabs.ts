@@ -28,6 +28,13 @@
 /** Every tab, in the order the strip shows them. */
 export const TABS = [
   "overview",
+  // The item's own brief, in full. It was rendered INTO Overview, which
+  // made the landing page a document dump: an imported item carries a
+  // kilobytes-long brief with code blocks, and all of it painted on
+  // arrival ahead of anything a reader scans for. Overview now summarises
+  // and links here, so the full text is one click away rather than the
+  // first thing between the reader and the page.
+  "brief",
   "plan",
   "reviews",
   "subtasks",
@@ -55,6 +62,7 @@ export const DEFAULT_TAB: DetailTab = "overview";
  */
 export const TAB_LABELS: Record<DetailTab, string> = {
   overview: "Overview",
+  brief: "Brief",
   plan: "Plan",
   reviews: "Reviews",
   subtasks: "Subtasks",

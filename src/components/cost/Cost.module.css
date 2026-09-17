@@ -27,14 +27,14 @@
 
 .title {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: var(--text-lg);
   font-weight: 600;
 }
 
 .subtitle {
   margin: 0.25rem 0 0;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .controls {
@@ -54,7 +54,7 @@
 .chipActive {
   padding: 0.3rem 0.7rem;
   border-radius: 999px;
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   cursor: pointer;
   border: 1px solid var(--border-subtle);
   background: transparent;
@@ -91,14 +91,14 @@
 }
 
 .summaryLabel {
-  font-size: 0.7rem;
+  font-size: var(--text-3xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
 
 .summaryValue {
-  font-size: 1.15rem;
+  font-size: var(--text-md);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -112,7 +112,7 @@
   border: 1px solid var(--border-subtle);
   border-left: 3px solid var(--warning, #d97706);
   border-radius: 0.35rem;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -135,14 +135,14 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .caption {
   text-align: left;
   padding-bottom: 0.5rem;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
 
 .table th,
@@ -153,7 +153,7 @@
 }
 
 .table thead th {
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);

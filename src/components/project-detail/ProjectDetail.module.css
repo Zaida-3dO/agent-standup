@@ -31,7 +31,7 @@
 }
 
 .breadcrumb {
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -47,7 +47,7 @@
 
 .heading {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: var(--text-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -55,7 +55,7 @@
 .headline {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.95rem;
+  font-size: var(--text-sm);
   line-height: 1.45;
 }
 
@@ -64,7 +64,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.6rem;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -73,7 +73,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 /* ── The derived-state block ─────────────────────────────────────────────
@@ -101,13 +101,13 @@
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
   border: 1px solid var(--border-strong);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
 .derivedNote {
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 /* The plain-language sentence. Visible, not only an aria-label: the whole
@@ -115,7 +115,7 @@
 .derivedSentence {
   margin: 0 0 0.7rem;
   color: var(--text-secondary);
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -128,7 +128,7 @@
   border-left: 3px solid var(--state-blocked-border);
   border-radius: 0 4px 4px 0;
   background: var(--surface-sunken);
-  font-size: 0.87rem;
+  font-size: var(--text-xs);
 }
 
 .causeLabel {
@@ -148,7 +148,7 @@
 .causeReason {
   width: 100%;
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 /* ── Progress ────────────────────────────────────────────────────────── */
@@ -162,7 +162,7 @@
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 0.3rem;
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -202,7 +202,7 @@
 .stripLegend {
   margin: 0.4rem 0 0;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   line-height: 1.5;
 }
 
@@ -222,19 +222,19 @@
 
 .sectionTitle {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--text-sm);
   font-weight: 620;
 }
 
 .sectionCount {
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .sectionNote {
   margin: 0 0 0.6rem;
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .list {
@@ -269,7 +269,7 @@
 .childTitle {
   flex: 1 1 12rem;
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   font-weight: 550;
   text-decoration: none;
 }
@@ -284,7 +284,7 @@
   align-items: center;
   gap: 0.45rem;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .childProgress {
@@ -297,7 +297,7 @@
   border-radius: 999px;
   background: var(--trust-unverified-bg);
   color: var(--trust-unverified);
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   font-weight: 600;
 }
 
@@ -306,7 +306,7 @@
   align-items: center;
   gap: 0.3rem;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
 
 .crewDot {
@@ -331,7 +331,7 @@
 
 .blockedTitle {
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   font-weight: 550;
   text-decoration: none;
 }
@@ -342,13 +342,13 @@
 
 .blockedReason {
   color: var(--text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 
 .blockedMeta {
   color: var(--text-muted);
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
 }
 
 /* ── Activity ───────────────────────────────────────────────────────── */
@@ -360,7 +360,7 @@
   gap: 0.45rem;
   padding: 0.35rem 0;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.83rem;
+  font-size: var(--text-xs);
 }
 
 .activityType {
@@ -369,7 +369,7 @@
   background: var(--surface-sunken);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: var(--text-2xs);
 }
 
 .activityItem {
@@ -384,14 +384,14 @@
 .activityBody {
   width: 100%;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 
 .activityWhen {
   margin-left: auto;
   color: var(--text-muted);
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
   white-space: nowrap;
 }
 
@@ -403,7 +403,7 @@
   border-radius: 6px;
   background: var(--surface-raised);
   color: var(--text-muted);
-  font-size: 0.83rem;
+  font-size: var(--text-xs);
 }
 
 /* ── Repair ─────────────────────────────────────────────────────────── */
@@ -426,14 +426,14 @@
 
 .repairTitle {
   margin: 0 0 0.4rem;
-  font-size: 0.95rem;
+  font-size: var(--text-sm);
   font-weight: 620;
 }
 
 .repairText {
   margin: 0 0 0.5rem;
   color: var(--text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -446,7 +446,7 @@
   border-radius: 0 4px 4px 0;
   background: var(--surface-sunken);
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -466,7 +466,7 @@
 
 .repairLabel {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .repairInput {
@@ -475,7 +475,7 @@
   border-radius: 4px;
   background: var(--surface-app);
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .repairButton {
@@ -484,7 +484,7 @@
   border-radius: 4px;
   background: var(--surface-raised);
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   font-weight: 550;
   cursor: pointer;
 }
@@ -502,7 +502,7 @@
   margin: 0.6rem 0 0;
   padding: 0.5rem 0.6rem;
   border-radius: 4px;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -520,5 +520,5 @@
 
 .empty {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }

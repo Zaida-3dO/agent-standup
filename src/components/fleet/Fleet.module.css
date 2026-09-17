@@ -18,14 +18,14 @@
 
 .heading {
   margin: 0;
-  font-size: 1.35rem;
+  font-size: var(--text-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
 }
 
 .count {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 /* ── Filters ────────────────────────────────────────────────────────── */
@@ -41,7 +41,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
 }
 
@@ -52,7 +52,7 @@
   background: var(--surface-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 /* ── Sweep — its GLOBAL scope is the whole point of this panel ────────── */
@@ -68,7 +68,7 @@
   background: var(--surface-raised);
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -93,7 +93,7 @@
 .sweepConfirmText {
   margin: 0 0 0.6rem;
   color: var(--state-blocked-fg);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -109,7 +109,7 @@
   background: var(--state-blocked-border);
   color: var(--surface-app);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   cursor: pointer;
 }
@@ -126,20 +126,20 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
 .sweepError {
   margin-top: 0.5rem;
   color: var(--state-blocked-fg);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .sweepResult {
   margin-top: 0.5rem;
   color: var(--text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 /* ── Takeover ───────────────────────────────────────────────────────── */
@@ -155,7 +155,7 @@
 
 .takeoverText {
   margin: 0 0 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -163,7 +163,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   margin-bottom: 0.5rem;
 }
@@ -175,14 +175,14 @@
   background: var(--surface-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   resize: vertical;
 }
 
 .takeoverError {
   margin: 0 0 0.5rem;
   color: var(--state-blocked-fg);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .takeoverActions {
@@ -197,7 +197,7 @@
   background: var(--accent);
   color: var(--accent-fg);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   cursor: pointer;
 }
@@ -214,7 +214,7 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -234,7 +234,7 @@
 
 .groupHeading {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
@@ -246,13 +246,13 @@
 .groupEmpty {
   margin: 0;
   color: var(--text-faint);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .th {
@@ -296,14 +296,14 @@
   border-radius: 999px;
   background: var(--state-blocked-border);
   color: var(--surface-app);
-  font-size: 0.68rem;
+  font-size: var(--text-3xs);
   font-weight: 700;
   white-space: nowrap;
 }
 
 .sessionId {
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
   color: var(--text-faint);
 }
 
@@ -314,7 +314,7 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
   cursor: pointer;
   white-space: nowrap;
 }

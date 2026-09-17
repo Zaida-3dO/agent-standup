@@ -91,6 +91,25 @@ export interface BoardFilterBarViewProps {
   /** Whether the picker is open. Held by the container, like the search draft. */
   readonly pickerOpen?: boolean;
   readonly onTogglePicker?: () => void;
+  /**
+   * The layout switch, rendered INTO the control row rather than above it.
+   *
+   * Passed in as an element rather than imported here, for the reason this
+   * whole directory is prop-driven: `LayoutToggle` builds `next/link`
+   * hrefs, and taking it as a prop keeps this view a plain function that a
+   * test can call with no router beneath it (`tests/helpers/react-element.ts`).
+   *
+   * Composed INTO the control row rather than stacked above it: as a
+   * block-level row of its own, a two-option segmented control stretches
+   * to the full width of the page (~1209px at 1440) for no benefit.
+   */
+  readonly layoutToggle?: React.ReactNode;
+  /**
+   * The saved-views control, composed into the trailing edge of the same
+   * row for the same reason as `layoutToggle` — it was a third full-width
+   * row spending permanent space on an occasional action.
+   */
+  readonly savedViews?: React.ReactNode;
 }
 
 /**
@@ -410,6 +429,8 @@ export function BoardFilterBarView({
   onVisibilityChange,
   pickerOpen = false,
   onTogglePicker,
+  layoutToggle,
+  savedViews,
 }: BoardFilterBarViewProps) {
   const active = activeFilterCount(query.filters);
   const ascending = query.direction === "asc";
@@ -539,7 +560,21 @@ export function BoardFilterBarView({
         aria-expanded={false}
       >
         <SlidersHorizontal size={13} aria-hidden="true" />
-        <span>Filters{active > 0 ? ` — ${active} active` : ""}</span>
+        <span>Filters</span>
+        {/* The count as a pill rather than as " — 3 active" in the label.
+            It is the one number in this row that says the board is not
+            showing everything, and a filled pill survives a glance where
+            a trailing clause does not. The accessible name below still
+            says it in words, so the pill is reinforcement and never the
+            only carrier. */}
+        {active > 0 && (
+          <span className={styles.axesCount} aria-hidden="true">
+            {active}
+          </span>
+        )}
+        <span className={styles.visuallyHidden}>
+          {active > 0 ? `${active} filter${active === 1 ? "" : "s"} active` : "no filters active"}
+        </span>
       </label>
       <div id="board-axes-panel" className={styles.axes}>
         {shows("area") && (
@@ -634,63 +669,83 @@ export function BoardFilterBarView({
         {shows("level") && (
           <LevelAxis value={level} onChange={(value) => onFilterChange("level", value)} />
         )}
+
+        {/* Inside the axes panel, not on a row of its own. "More filters"
+            decides WHICH axes exist, so it belongs with the axes it adds
+            and removes — beside them it read as a tenth filter; below them
+            it spent a whole row of the bar on a control that is only
+            meaningful once a reader is already choosing axes. */}
+        <MoreFiltersPicker
+          open={pickerOpen}
+          onToggle={onTogglePicker}
+          visible={visibleFilters}
+          filters={query.filters}
+          onVisibilityChange={onVisibilityChange}
+        />
       </div>
 
-      <MoreFiltersPicker
-        open={pickerOpen}
-        onToggle={onTogglePicker}
-        visible={visibleFilters}
-        filters={query.filters}
-        onVisibilityChange={onVisibilityChange}
-      />
+      <div className={styles.controls}>
+        {layoutToggle}
+        <span className={styles.controlDivider} aria-hidden="true" />
+        {/* The trigger and its panel are siblings, so the label sits here
+            in the control cluster while `.axes` above is positioned
+            against `.bar`. */}
 
-      <div className={styles.sortGroup}>
-        <label className={styles.axisLabel} htmlFor="board-sort">
-          Sort
-        </label>
-        <select
-          id="board-sort"
-          className={styles.select}
-          value={query.sort}
-          onChange={(event) => onSortChange(event.target.value as BoardSortKey)}
-        >
-          {BOARD_SORT_KEYS.map((key: BoardSortKey) => (
-            <option key={key} value={key}>
-              {sortLabel(key)}
-            </option>
-          ))}
-        </select>
-        {/* The arrow is not the only channel: the accessible name says the
-            direction in words, because an arrow glyph is exactly the kind of
-            single-character difference that carries no meaning to a screen
-            reader and very little at a glance. */}
-        <button
-          type="button"
-          className={styles.direction}
-          onClick={onToggleDirection}
-          aria-label={
-            ascending
-              ? `Sorted ascending by ${sortLabel(query.sort).toLowerCase()} — switch to descending`
-              : `Sorted descending by ${sortLabel(query.sort).toLowerCase()} — switch to ascending`
-          }
-          data-direction={query.direction}
-        >
-          <span aria-hidden="true">{ascending ? "↑" : "↓"}</span>
-        </button>
+        <div className={styles.sortGroup}>
+          <label className={styles.axisLabel} htmlFor="board-sort">
+            Sort
+          </label>
+          <select
+            id="board-sort"
+            className={styles.select}
+            value={query.sort}
+            onChange={(event) => onSortChange(event.target.value as BoardSortKey)}
+          >
+            {BOARD_SORT_KEYS.map((key: BoardSortKey) => (
+              <option key={key} value={key}>
+                {sortLabel(key)}
+              </option>
+            ))}
+          </select>
+          {/* The arrow is not the only channel: the accessible name says the
+              direction in words, because an arrow glyph is exactly the kind of
+              single-character difference that carries no meaning to a screen
+              reader and very little at a glance. */}
+          <button
+            type="button"
+            className={styles.direction}
+            onClick={onToggleDirection}
+            aria-label={
+              ascending
+                ? `Sorted ascending by ${sortLabel(query.sort).toLowerCase()} — switch to descending`
+                : `Sorted descending by ${sortLabel(query.sort).toLowerCase()} — switch to ascending`
+            }
+            data-direction={query.direction}
+          >
+            <span aria-hidden="true">{ascending ? "↑" : "↓"}</span>
+          </button>
+        </div>
+
+        {/* Rendered only when something is narrowed. A permanently visible
+            "clear" is a control that does nothing most of the time, and the
+            count is what makes it honest about how much it will undo — the
+            same rule the nav badges follow. */}
+        {active > 0 && (
+          <button type="button" className={styles.clear} onClick={onClearFilters}>
+            <X size={13} aria-hidden="true" />
+            <span>
+              Clear {active} filter{active === 1 ? "" : "s"}
+            </span>
+          </button>
+        )}
+
+        {savedViews !== undefined && (
+          <>
+            <span className={styles.controlDivider} aria-hidden="true" />
+            {savedViews}
+          </>
+        )}
       </div>
-
-      {/* Rendered only when something is narrowed. A permanently visible
-          "clear" is a control that does nothing most of the time, and the
-          count is what makes it honest about how much it will undo — the
-          same rule the nav badges follow. */}
-      {active > 0 && (
-        <button type="button" className={styles.clear} onClick={onClearFilters}>
-          <X size={13} aria-hidden="true" />
-          <span>
-            Clear {active} filter{active === 1 ? "" : "s"}
-          </span>
-        </button>
-      )}
     </div>
   );
 }

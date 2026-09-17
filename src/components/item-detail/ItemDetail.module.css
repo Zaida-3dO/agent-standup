@@ -36,7 +36,7 @@
 
 .title {
   margin: 0 0 0.5rem;
-  font-size: 1.35rem;
+  font-size: var(--text-lg);
   line-height: 1.3;
 }
 
@@ -46,7 +46,7 @@
 .sourceTitle {
   margin: -0.3rem 0 0.5rem;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   font-family: var(--font-mono, monospace);
 }
 
@@ -57,7 +57,7 @@
   border-radius: 0.25rem;
   background: var(--border-default);
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   font-weight: 700;
 }
 
@@ -66,7 +66,7 @@
   border-radius: 0.25rem;
   background: var(--accent-bg);
   color: var(--state-in_review-fg);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -76,7 +76,7 @@
   border-radius: 0.25rem;
   background: var(--state-research_done-bg);
   color: var(--state-research_done-fg);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
 }
 
 .state {
@@ -84,7 +84,7 @@
   border-radius: 0.25rem;
   background: var(--border-default);
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
 }
 
 .meta {
@@ -92,13 +92,40 @@
   flex-wrap: wrap;
   gap: 0.75rem;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
+}
+
+/* ── The headline leads the header ───────────────────────────────────────
+   The BLUF is what a reader most wants from this page, so it is ranked
+   accordingly: the first line, at the body step, in primary text, capped
+   to a readable measure.
+
+   Given `.meta`'s treatment instead — the same as a timestamp — it would
+   render at 12.8px against body text at 13px and a lower lightness than
+   the brief it summarises, making the one-line answer fainter and smaller
+   than the document it stands in for. Hierarchy has to follow what the
+   reader wants, not what the schema lists first.
+
+   `--text-sm` rather than something larger: the `<h1>` above is already
+   `--text-lg`, and two headline-weight lines stacked would rebuild the
+   wall of text this ranking exists to break up. Rank comes from the
+   CONTRAST with `.sourceTitle` beneath it, not from absolute size. */
+.headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--measure-prose);
+  margin-bottom: var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 
 .reason {
   margin: 0.5rem 0 0;
   color: var(--state-blocked-fg);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 /* A chip wrapped as a link back to a filtered board — M10 T10. No border
@@ -135,13 +162,128 @@
   gap: 0.4rem;
 }
 
+/* ── The editable value ──────────────────────────────────────────────────
+   A value that can be edited IS its own control — see
+   docs/DESIGN-LANGUAGE.md §6. A permanent `Edit` button beside every
+   field competes with the content it labels, and a header with four
+   editable fields grows four of them.
+
+   It inherits font and colour so it reads as the text it carries rather
+   than as a button sitting in the prose. The affordance is a quiet
+   background and a pencil that appear on hover AND on focus — never hover
+   alone, which would make the whole feature invisible to a keyboard. */
+.editable {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: -2px calc(-1 * var(--space-1));
+  padding: 2px var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.editable:hover {
+  border-color: var(--border-default);
+  background: var(--surface-raised);
+}
+
+/* Focus gets the border AND the app-wide ring from `globals.css` §9 — the
+   ring alone is the generic "you are here", while the border is the
+   specific "this is editable", and a keyboard reader should get both. */
+.editable:focus-visible {
+  border-color: var(--border-control);
+  background: var(--surface-raised);
+}
+
+/* The pencil is hidden until the value is hovered or focused, so a header
+   at rest is content and not a column of icons. `visibility` rather than
+   `display` keeps it in the layout, so revealing it does not shift the
+   text beside it. */
+.editableIcon {
+  flex: none;
+  visibility: hidden;
+  color: var(--text-faint);
+}
+
+.editable:hover .editableIcon,
+.editable:focus-visible .editableIcon {
+  visibility: visible;
+}
+
+/* Touch has no hover, so the affordance would never appear. Show it
+   always below the pointer breakpoint — a permanent 12px pencil is a much
+   smaller cost than an editable field a touch reader cannot discover. */
+@media (hover: none) {
+  .editableIcon {
+    visibility: visible;
+  }
+}
+
+/* The secondary edit affordance, for a value whose PRIMARY action is
+   already something else — priority and area are links to a filtered
+   board, so click-the-value is taken and the pencil is the second action.
+   A 12px icon rather than the word "Edit": the same function at a
+   fraction of the visual weight, so it annotates the chip instead of
+   competing with it.
+
+   Quiet at rest and revealed on hover/focus of the row, but ALWAYS visible
+   once focused itself — a keyboard reader must see what they have landed
+   on. It keeps a 24px box so the target stays clickable at icon size. */
+.editAffordance {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Revealed by hovering the VALUE GROUP it belongs to, and always once it
+   is focused itself.
+
+   Scoped to `.inlineEditView` — the wrapper `StatusBlock` puts around both
+   of these values — and deliberately NOT to a `.row` ancestor: StatusBlock
+   renders its rows from its OWN module, so a `.row` written here is a
+   different generated class name and would silently never match. That is
+   the CSS-modules trap this comment exists to stop the next change
+   walking into. */
+.inlineEditView:hover .editAffordance,
+.inlineEditView:focus-within .editAffordance,
+.editAffordance:focus-visible {
+  opacity: 1;
+}
+
+.editAffordance:hover {
+  border-color: var(--border-default);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+/* No hover on touch, so the affordance would never appear at all. */
+@media (hover: none) {
+  .editAffordance {
+    opacity: 1;
+  }
+}
+
 .inlineEditButton {
   padding: 0.1rem 0.5rem;
   border: 1px solid var(--surface-card);
   border-radius: var(--radius-md, 6px);
   background: transparent;
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   cursor: pointer;
 }
 
@@ -158,24 +300,24 @@
   background: var(--surface-app);
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .inlineEditAdvice {
   color: var(--text-faint);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   font-style: italic;
 }
 
 .inlineEditError {
   color: var(--state-blocked-fg);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .body {
   margin: 0.75rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   line-height: 1.5;
   white-space: pre-wrap;
 }
@@ -193,19 +335,19 @@
 
 .sectionTitle {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
 
 .progress {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .empty {
   margin: 0;
   color: var(--text-faint);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .tree {
@@ -220,7 +362,7 @@
   gap: 0.5rem;
   padding: 0.4rem 0.5rem;
   border-bottom: 1px solid var(--surface-card);
-  font-size: 0.88rem;
+  font-size: var(--text-sm);
 }
 
 .treeTitle {
@@ -252,7 +394,7 @@
 .roundTitle {
   margin: 0 0 0.35rem;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -268,7 +410,7 @@
   border: 1px solid var(--border-default);
   border-radius: 0.35rem;
   margin-bottom: 0.4rem;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .artifactHead {
@@ -289,7 +431,7 @@
   border-radius: 0.25rem;
   background: var(--border-default);
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
 }
 
 /* `lgtm` and its tiers read as a pass; anything else is work still owed.
@@ -308,13 +450,13 @@
 .sha {
   color: var(--text-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .artifactBody {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   line-height: 1.45;
   white-space: pre-wrap;
 }
@@ -365,7 +507,7 @@
 .historyDayHeading {
   margin: 0 0 0.35rem;
   color: var(--text-faint);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -383,7 +525,7 @@
   gap: 0.6rem;
   padding: 0.4rem 0;
   border-bottom: 1px solid var(--surface-card);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .historyIcon {
@@ -397,7 +539,7 @@
   flex: none;
   width: 11rem;
   color: var(--text-faint);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .historyType {
@@ -430,7 +572,7 @@
   border-radius: var(--radius-md, 6px);
   background: transparent;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -442,14 +584,14 @@
 
 .historyPagerLabel {
   color: var(--text-faint);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
 }
 
 .truncated {
   margin: 0.5rem 0 0;
   color: var(--text-faint);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   font-style: italic;
 }
 
@@ -460,7 +602,7 @@
 .summaryLabel {
   margin: 0 0 0.25rem;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -469,7 +611,7 @@
   margin: 0;
   padding-left: 1.1rem;
   color: var(--text-secondary);
-  font-size: 0.88rem;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -549,6 +691,106 @@
    would indent the whole page relative to the header above it. */
 .panel {
   min-width: 0;
+}
+
+/* ── Overview: summary and signposts ─────────────────────────────────────
+   The panel that used to render the whole brief. See `ItemDetailView.tsx`
+   for the measurements; this is the layout for what replaced it. */
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* The excerpt is PROSE and is the thing a reader came for, so it takes the
+   body step at full primary colour and is capped to a comfortable measure.
+   Line length is the fix that costs nothing: run the full width of the
+   panel, a brief is ~180 characters a line at 1400px — far past the point
+   the eye reliably finds the start of the next one. */
+.overviewExcerpt {
+  max-width: var(--measure-prose);
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+.overviewMore {
+  align-self: flex-start;
+  color: var(--accent-fg-on-surface, var(--state-in_review-fg));
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.overviewMore:hover,
+.overviewMore:focus-visible {
+  text-decoration: underline;
+}
+
+/* The signpost row — one link per tab that holds detail, each carrying its
+   own count. A grid rather than a flex row so the cards keep equal widths
+   and the numbers line up across them. */
+.signposts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.signpost {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.signpost:hover {
+  border-color: var(--border-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.signpostLabel {
+  font-size: var(--text-xs);
+}
+
+/* The count is the reason the signpost exists, so it is the loud half —
+   the tab label is already in the strip above. */
+.signpostCount {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+/* An empty section recedes rather than disappearing. It still has to be
+   reachable — "no reviews yet" is an answer — but it must not compete with
+   a section that has something in it. */
+.signpostCount[data-empty="true"] {
+  color: var(--text-faint);
+  font-weight: var(--weight-normal);
+}
+
+/* Same idiom as elsewhere in the app — `clip-path`, never `display: none`,
+   which would drop it from the accessibility tree it exists to serve. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* A section is the only thing in its panel now, so the margin that
@@ -1112,12 +1354,12 @@ details[open] > .disclosureSummary .disclosureHint::before {
 .verifyPrompt {
   margin: 0 0 var(--space-2);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .verifyCaveat {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .verifyButtons {
@@ -1128,13 +1370,13 @@ details[open] > .disclosureSummary .disclosureHint::before {
 .verifyDone {
   margin: var(--space-2) 0 0;
   color: var(--state-merged-fg);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .verifyError {
   margin: var(--space-2) 0 0;
   color: var(--state-blocked-fg);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .verifyUnavailable {
@@ -1143,7 +1385,7 @@ details[open] > .disclosureSummary .disclosureHint::before {
   border: 1px dashed var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 /* ── Archive and restore (the affordance #274's reversibility was built for) ──
@@ -1163,7 +1405,7 @@ details[open] > .disclosureSummary .disclosureHint::before {
 
 .archiveStartHint {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .archiveForm {
@@ -1177,7 +1419,7 @@ details[open] > .disclosureSummary .disclosureHint::before {
   display: block;
   margin-bottom: var(--space-2);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .archiveReasonInput {
@@ -1188,14 +1430,14 @@ details[open] > .disclosureSummary .disclosureHint::before {
   background: var(--surface-raised);
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   resize: vertical;
 }
 
 .archiveHint {
   margin: var(--space-2) 0;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .archiveButtons {
@@ -1217,14 +1459,14 @@ details[open] > .disclosureSummary .disclosureHint::before {
 .archivedHeading {
   margin: 0 0 var(--space-2);
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
 .archivedReason {
   margin: 0 0 var(--space-2);
   color: var(--text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 .archiveError {
@@ -1240,13 +1482,13 @@ details[open] > .disclosureSummary .disclosureHint::before {
 .archiveErrorMessage {
   margin: 0 0 var(--space-2);
   color: var(--state-blocked-fg);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
   white-space: pre-wrap;
 }
 
 .archiveSuperseded {
   margin: 0 0 var(--space-2);
-  font-size: 0.82rem;
+  font-size: var(--text-xs);
 }
 
 /* ── Cancelling: a closing act, not a destructive one ─────────────────────
@@ -1273,7 +1515,7 @@ details[open] > .disclosureSummary .disclosureHint::before {
 
 .cancelStartHint {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .cancelForm {
@@ -1293,7 +1535,7 @@ details[open] > .disclosureSummary .disclosureHint::before {
 .cancelClosedText {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 /* Separates the two acts on the shared panel. Without it they read as one

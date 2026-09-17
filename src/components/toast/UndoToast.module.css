@@ -23,7 +23,7 @@
   background: var(--surface-overlay);
   box-shadow: var(--shadow-overlay);
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -46,7 +46,7 @@
 .reason {
   margin: 0.25rem 0 0;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
 
 /* The message and the reason stack; the buttons sit beside them, so this
@@ -94,7 +94,7 @@
   background: none;
   color: var(--text-muted);
   font: inherit;
-  font-size: 1rem;
+  font-size: var(--text-sm);
   line-height: 1;
   cursor: pointer;
 }

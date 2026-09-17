@@ -25,6 +25,7 @@ import {
   sortChildren,
 } from "@/lib/project-detail/view";
 import { AreaChip } from "@/components/chips/AreaChip";
+import { RepoChip } from "@/components/chips/RepoChip";
 import { DerivedStatePanel } from "./DerivedStatePanel";
 import { RepairPanel } from "./RepairPanel";
 import styles from "./ProjectDetail.module.css";
@@ -91,11 +92,7 @@ export function ProjectDetailView({
         )}
         <div className={styles.headerMeta}>
           <AreaChip area={detail.project.area} />
-          {detail.project.repo !== null && (
-            <span className={styles.repo} data-repo={detail.project.repo}>
-              {detail.project.repo}
-            </span>
-          )}
+          {detail.project.repo !== null && <RepoChip repo={detail.project.repo} />}
           {crew > 0 && (
             <span
               className={styles.crew}

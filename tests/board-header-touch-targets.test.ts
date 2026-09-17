@@ -361,6 +361,19 @@ describe("board header — tap targets at phone widths (PR #311)", () => {
       "searchChord",
       "createLabel",
       "name",
+      // Layout wrappers introduced when the filter region became one
+      // composition. Both are containers that position other things and
+      // carry no pointer target of their own — the controls INSIDE
+      // `.controls` (the axes summary, the sort select, the direction
+      // button, the layout toggle's options) each keep their own 44px
+      // rule, which is where the guarantee actually lives. `.searchWrap`
+      // wraps the search input, whose own box is the target.
+      "controls",
+      "searchWrap",
+      // A 1px decorative hairline between control groups, hidden at phone
+      // widths because the groups wrap onto separate lines there and a
+      // vertical rule between two lines is a stray mark. Nothing to tap.
+      "controlDivider",
     ]);
     const rosterSelectors = new Set(MIN_HEIGHT_TARGETS.map((t) => `.${t.selector.slice(1)}`));
     rosterSelectors.add(".densityButton");

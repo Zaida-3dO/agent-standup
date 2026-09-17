@@ -71,21 +71,26 @@
 //   - Deleting the `.axesToggle:checked ~ .axes { display: flex }` sibling
 //     rule fails "checking the toggle reveals the axes" — the checkbox
 //     would still be reachable but would do nothing.
-//   - Moving that sibling rule outside the `max-width: 640px` block fails
-//     the desktop-unaffected test, or the narrow-collapse test, depending on
-//     which direction it moved.
-//   - Adding `display: none` to `.axes`'s own base rule (outside the
-//     `max-width: 640px` block) fails "declares .axes visible
-//     unconditionally, so nothing above 640px depends on the checkbox" —
-//     row 51099bdd corrected this bullet: there is no
-//     `@media (min-width: 641px)` override anywhere in the source
-//     (`grep -rn "641" src/` matches only prose), and desktop is unaffected
-//     by ABSENCE rather than by an explicit override — `.axes` is
-//     `display: flex` in its base rule and only ever collapsed inside the
-//     narrow-width block, so a viewport that never matches that query has
-//     no narrower rule to override. The mutation above (adding a
-//     `display: none` to the base rule instead) is the one that actually
-//     exercises this test.
+//   - Changing `.axes`'s base rule to `display: flex` fails "collapses
+//     .axes by default" — filters would permanently occupy the bar, which
+//     is the whole thing this disclosure exists to prevent.
+//   - Deleting `position: absolute` from that base rule fails "overlays the
+//     panel rather than pushing the board down the page": a panel that
+//     expands inline shifts the cards out from under a reader who has just
+//     opened filters.
+//   - Deleting `position: fixed` from the narrow-width copy of the sibling
+//     rule fails the bottom-sheet test, which is what keeps the phone
+//     presentation anchored to the thumb rather than to the trigger.
+//
+// ── One disclosure, at every width ────────────────────────────────────
+//
+// Filters are summoned rather than permanent, so the BASE rule collapses
+// the panel and the breakpoint decides only where it is painted. That makes
+// source order load-bearing: a base rule declared later in the file beats a
+// media-query rule of equal specificity written earlier, so a narrow-width
+// override has to sit after the base rule it means to beat.
+// `withoutNarrowBlock()` exists so a test can assert against exactly the
+// rules a desktop viewport sees.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -186,6 +191,37 @@ function narrowBlock(): string {
   return out;
 }
 
+/**
+ * The stylesheet with every exact `@media (max-width: 640px)` block cut
+ * OUT — the rules that apply at every width, including desktop.
+ *
+ * The counterpart to `narrowBlock()`, and it exists for the same reason:
+ * asserting "this rule holds on desktop" against the whole file would pass
+ * for a rule that only ever appears inside the phone breakpoint. Reuses the
+ * same exact-prelude matching and brace walking, so a prelude narrowed to
+ * `... and (min-width: 500px)` is treated as a different block by both
+ * helpers rather than by one of them.
+ */
+function withoutNarrowBlock(): string {
+  const header = "@media (max-width: 640px)";
+  let out = "";
+  let index = 0;
+  while (true) {
+    const start = CODE.indexOf(header, index);
+    if (start === -1) break;
+    const afterHeader = CODE.slice(start + header.length).match(/^\s*\{/);
+    if (!afterHeader) {
+      index = start + header.length;
+      continue;
+    }
+    const open = start + header.length + afterHeader[0].length - 1;
+    const close = matchingBrace(CODE, open);
+    out += CODE.slice(index, start);
+    index = close + 1;
+  }
+  return out + CODE.slice(index);
+}
+
 function has(body: string, property: string, value?: string): boolean {
   return body.split(";").some((part) => {
     const colon = part.indexOf(":");
@@ -255,33 +291,59 @@ describe("the axes toggle checkbox stays in the tab order at every width", () =>
 });
 
 describe("the sibling-selector reveal that the toggle's reachability exists to serve", () => {
-  it("shows .axes once the toggle is checked, below 641px", () => {
-    // Without this, the checkbox could be perfectly reachable and still do
-    // nothing — reachability alone is not the contract, reachability THAT
-    // WORKS is.
-    const narrow = narrowBlock();
-    expect(narrow).toMatch(/\.axesToggle:checked\s*~\s*\.axes\s*\{[^}]*display:\s*flex/);
-  });
+  // ── The disclosure is now AT EVERY WIDTH, not only below 641px ────────
+  //
+  // Filters are hidden until summoned on desktop too, so the axes panel is
+  // collapsed in the BASE rule rather than inside the narrow-width block.
+  // The phone breakpoint decides only WHERE the panel is painted — it
+  // re-anchors the same element as a bottom sheet — never whether it
+  // shows at all.
+  //
+  // What these tests guarded is unchanged and still the point: the
+  // visually-hidden checkbox must remain reachable (asserted in the
+  // describe above) AND must actually reveal the panel. Reachability alone
+  // was never the contract — reachability THAT WORKS is.
 
-  it("collapses .axes by default below 641px, so there is something to reveal", () => {
-    const narrow = narrowBlock();
-    const bodies = [...narrow.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-      .filter((m) => m[1]!.split(",").some((s) => s.trim() === ".axes"))
-      .map((m) => m[2]!);
-    expect(bodies.some((b) => has(b, "display", "none"))).toBe(true);
-  });
-
-  it("declares .axes visible unconditionally, so nothing above 640px depends on the checkbox", () => {
-    // The desktop guarantee, and it is an ABSENCE rather than an override:
-    // `.axes` is `display: flex` unconditionally at the top of the file
-    // (never touched outside the `max-width: 640px` block), so a viewport
-    // that never matches that query renders the axes regardless of the
-    // checkbox's state — there is no narrower rule for a wide viewport to
-    // need overriding. If a `display: none` on `.axes` ever migrated out of
-    // the narrow-width block, this is the test that would fail.
+  it("collapses .axes by default, so filters are summoned rather than permanent", () => {
+    // The single-character change this catches: `display: flex` in the base
+    // `.axes` rule, which would put eight selects back on screen at all
+    // times and undo the disclosure entirely.
     const bodies = rulesFor(".axes");
     expect(bodies.length, "no .axes rule found at all").toBeGreaterThan(0);
-    const unconditional = bodies[0]!;
-    expect(has(unconditional, "display", "flex")).toBe(true);
+    expect(
+      has(bodies[0]!, "display", "none"),
+      "the axes panel is not collapsed by default — filters are permanently occupying the bar again",
+    ).toBe(true);
+  });
+
+  it("shows .axes once the toggle is checked, at every width", () => {
+    // The reveal itself, in the BASE stylesheet rather than inside a media
+    // query — so it holds on desktop and on a phone alike.
+    const base = withoutNarrowBlock();
+    expect(base).toMatch(/\.axesToggle:checked\s*~\s*\.axes\s*\{[^}]*display:\s*flex/);
+  });
+
+  it("overlays the panel rather than pushing the board down the page", () => {
+    // A panel that expands inline pushes the cards down, so a reader who
+    // opens filters loses sight of the very things they are filtering.
+    // Guarded because "make it inline again" is a natural-looking
+    // simplification that silently reintroduces that.
+    const bodies = rulesFor(".axes");
+    expect(has(bodies[0]!, "position", "absolute")).toBe(true);
+  });
+
+  it("re-anchors the panel as a bottom sheet at phone widths, inside the breakpoint", () => {
+    // The phone presentation is a POSITION change only, and it has to stay
+    // inside the media query: `position: fixed` applied unconditionally
+    // would pin the desktop panel to the foot of the viewport, far from
+    // the control that opened it.
+    // `toMatch` takes no message argument, so the claim is asserted as a
+    // boolean with one attached instead — a bare regex failure here would
+    // print the whole breakpoint body and say nothing about what broke.
+    const narrow = narrowBlock();
+    expect(
+      /\.axesToggle:checked\s*~\s*\.axes\s*\{[^}]*position:\s*fixed/.test(narrow),
+      "the phone breakpoint fails to re-anchor the panel as a bottom sheet",
+    ).toBe(true);
   });
 });

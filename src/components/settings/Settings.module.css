@@ -21,13 +21,13 @@
 
 .heading {
   margin: 0 0 0.35rem;
-  font-size: 1.4rem;
+  font-size: var(--text-lg);
 }
 
 .subheading {
   margin: 0 0 1.5rem;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
 }
 
 .links {
@@ -42,7 +42,7 @@
   border-radius: 0.4rem;
   background: var(--surface-card);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   text-decoration: none;
 }
 
@@ -64,13 +64,13 @@
 
 .sectionTitle {
   margin: 0 0 0.3rem;
-  font-size: 1rem;
+  font-size: var(--text-sm);
 }
 
 .sectionNote {
   margin: 0 0 1rem;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -102,14 +102,14 @@
 }
 
 .label {
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
 .key {
   color: var(--text-faint);
   font-family: ui-monospace, monospace;
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
 }
 
 /* Value-source badges — the three states of SCHEMA.md §17.2's table. Each
@@ -118,7 +118,7 @@
 .badge {
   padding: 0.12rem 0.45rem;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: var(--text-3xs);
   font-weight: 700;
   background: var(--border-default);
   color: var(--text-muted);
@@ -137,13 +137,13 @@
 .help {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   line-height: 1.45;
 }
 
 .appliesWhen {
   color: var(--text-faint);
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
 }
 
 .control {
@@ -162,7 +162,7 @@
   border-radius: 0.35rem;
   background: var(--surface-app);
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
   min-width: 14rem;
 }
 
@@ -178,7 +178,7 @@
   border-radius: 0.35rem;
   background: var(--border-default);
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -203,14 +203,14 @@
 .confirmPrompt {
   margin: 0;
   color: var(--state-blocked-fg);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   line-height: 1.4;
 }
 
 .error {
   margin: 0;
   color: var(--state-blocked-fg);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   line-height: 1.4;
 }
 
@@ -221,13 +221,13 @@
   border-radius: 0.35rem;
   background: var(--state-blocked-bg);
   color: var(--state-blocked-fg);
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
   line-height: 1.45;
 }
 
 .storedValue {
   font-family: ui-monospace, monospace;
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -238,7 +238,7 @@
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, auto) minmax(0, 1fr);
   gap: 0.4rem 1rem;
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 .readOnlyName {
@@ -267,5 +267,5 @@
 .empty {
   margin: 0;
   color: var(--text-faint);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }

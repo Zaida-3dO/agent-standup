@@ -82,28 +82,66 @@ export function SavedViewsView({
         );
       })}
 
+      {/* ── Saving, behind a disclosure ────────────────────────────────
+          Naming a view is a rare action, and one with no meaning at all
+          until the filters have been changed — so it earns an icon in the
+          control row rather than a permanent name box and button. The
+          field appears on demand, from a trigger sized like every other
+          control beside it.
+
+          The same visually-hidden-checkbox idiom the axes disclosure in
+          `BoardFilterBar.module.css` uses, and for the same reasons
+          documented there: a real focusable checkbox (never `display:
+          none`, never `aria-hidden`, which would take the panel behind it
+          out of the tab order), with `aria-expanded` on the visible label
+          because the `checkbox` role does not support it. Keeping one
+          idiom means one set of accessibility properties to get right. */}
       <input
-        type="text"
-        className={styles.viewName}
-        value={nameDraft}
-        onChange={(event) => onNameDraftChange(event.target.value)}
-        placeholder="Name this view"
-        aria-label="Name for a new saved view"
+        type="checkbox"
+        id="board-save-view-toggle"
+        className={styles.saveToggle}
+        defaultChecked={false}
+        onChange={(event) => {
+          const label = event.currentTarget.nextElementSibling;
+          if (label instanceof HTMLElement) {
+            label.setAttribute("aria-expanded", String(event.currentTarget.checked));
+          }
+        }}
       />
-      <button
-        type="button"
-        className={styles.clear}
-        onClick={onSave}
-        disabled={saveProblem !== null}
-        aria-label="Save the current filters and sort as a view"
+      <label
+        htmlFor="board-save-view-toggle"
+        className={styles.saveSummary}
+        role="button"
+        aria-controls="board-save-view-panel"
+        aria-expanded={false}
       >
-        Save view
-      </button>
-      {saveProblem !== null && (
-        <span className={styles.viewHint} role="status">
-          {saveProblem}
-        </span>
-      )}
+        <Bookmark size={13} aria-hidden="true" />
+        <span className={styles.visuallyHidden}>Save the current filters as a view</span>
+      </label>
+      <span id="board-save-view-panel" className={styles.savePanel}>
+        <input
+          type="text"
+          className={styles.viewName}
+          value={nameDraft}
+          onChange={(event) => onNameDraftChange(event.target.value)}
+          placeholder="Name this view"
+          aria-label="Name for a new saved view"
+        />
+        <button
+          type="button"
+          className={styles.clear}
+          onClick={onSave}
+          disabled={saveProblem !== null}
+          aria-label="Save the current filters and sort as a view"
+        >
+          Save
+        </button>
+        {saveProblem !== null && (
+          <span className={styles.viewHint} role="status">
+            {saveProblem}
+          </span>
+        )}
+      </span>
     </div>
   );
 }

@@ -161,16 +161,25 @@ async function mount(): Promise<void> {
   });
 }
 
+// The edit affordance is the VALUE itself now, not a separate `Edit`
+// button beside it (docs/DESIGN-LANGUAGE.md §6), so these match on the
+// accessible-name PREFIX — "Title: …", "Headline: …" — rather than on a
+// fixed string. The name carries the current value, which is exactly what
+// makes it useful to a screen reader and exactly why it cannot be matched
+// literally.
+//
+// Matched by prefix rather than by class so this keeps testing the thing
+// that matters: a real, accessibly-named <button> a keyboard can reach.
 function editTitleButton(): HTMLButtonElement {
-  const button = container.querySelector<HTMLButtonElement>('button[aria-label="Edit title"]');
+  const button = container.querySelector<HTMLButtonElement>('button[aria-label^="Title:"]');
   if (!button)
-    throw new Error("no Edit title button rendered — the fixture is wrong, not the code");
+    throw new Error("no title edit control rendered — the fixture is wrong, not the code");
   return button;
 }
 
 function editHeadlineButton(): HTMLButtonElement {
-  const button = container.querySelector<HTMLButtonElement>('button[aria-label="Edit headline"]');
-  if (!button) throw new Error("no Edit headline button rendered");
+  const button = container.querySelector<HTMLButtonElement>('button[aria-label^="Headline:"]');
+  if (!button) throw new Error("no headline edit control rendered");
   return button;
 }
 
