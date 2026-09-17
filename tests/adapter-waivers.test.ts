@@ -17,6 +17,8 @@ import {
   waiversNameRegisteredAdapters,
 } from "@/lib/adapters/waivers";
 import { listOperations, OPERATION_NAMES } from "@/lib/service";
+import { FOLDED_INTO, reachableOnMcp } from "@/lib/service/describe/reachability";
+import { FOLD_ACTIONS } from "@/lib/service/describe/fold-actions";
 import { narrowerCallFor } from "@/lib/service/response-size";
 import { createMcpServer } from "@/lib/mcp/server";
 import { toolsFromOperations } from "@/lib/mcp/tools";
@@ -230,10 +232,98 @@ describe("the waiver list", () => {
       // frequently the whole reason the response did not fit.
       "get_item_artifacts",
     ];
+    // ── Reachability, not non-waiver ──────────────────────────────────
+    //
+    // This assertion used to read `expect(isWaived(...)).toBe(false)` on
+    // each MCP adapter, and while every remedy was its own tool the two
+    // said the same thing. They stop saying the same thing once a remedy
+    // can be FOLDED: what has to be true is that the capability is
+    // reachable by the refused caller, and non-waiver of a name was only
+    // ever the way to express that. A remedy folded into an exposed tool is
+    // still reachable — the fold dispatches to the operation that
+    // implements it and returns its refusal object unedited — and the
+    // advice moves to the folded spelling in the same commit, because
+    // `advice.ts`'s `unreachable` class fails the build otherwise.
+    //
+    // **This is a trade and it is conceded rather than talked away.** It is
+    // stronger in two cases the old form could not see at all — a fold
+    // target that does not exist, and a fold chain whose terminal tool is
+    // itself waived, both of which the name test PASSED — and weaker in
+    // exactly one: an operation waived and folded into an exposed tool. See
+    // `reachableOnMcp`'s header for the full case table.
+    //
+    // The comment below asks that a failure here be re-argued rather than
+    // silently kept. That is what this is: the argument is that
+    // `get_item_history` and `get_item_artifacts` remain reachable through
+    // `read_item`, so the capability the two stranded sessions lacked is
+    // present and only its spelling moved. The conceded case is closed by
+    // the cross-check in the test that follows, which is what stops "folded
+    // into an exposed tool" from being taken on trust.
     for (const operation of AGENT_REMEDIATION_OPERATIONS) {
-      expect(isWaived("mcp_http", operation)).toBe(false);
-      expect(isWaived("mcp_stdio", operation)).toBe(false);
+      expect(reachableOnMcp(operation), `${operation} is not reachable by an MCP caller`).toBe(
+        true,
+      );
     }
+  });
+
+  it("every folded operation is reachable through an action its fold declares", () => {
+    // The cross-check that closes the loosening above.
+    //
+    // `reachableOnMcp` resolves a waived operation through `FOLDED_INTO`,
+    // which is a name-to-name map and nothing more. Nothing in it asserts
+    // the fold actually EXPOSES AN ACTION reaching the folded behaviour:
+    // `FOLDED_INTO` and `FOLD_ACTIONS` are independent tables, written in
+    // different files, with no relationship the compiler can see. So
+    // without this, an operation could be reported reachable through a fold
+    // that has no action for it — a waiver justified by a door that does
+    // not open.
+    //
+    // Note what this does NOT do, deliberately: it does not check that the
+    // right action reaches the right delegate. That is not assertable from
+    // two maps, because both are declarations — the only way to know is to
+    // run the fold and see. `tests/fold-forwarding-names.test.ts` does
+    // exactly that and asserts every `FOLDED_INTO` key is OBSERVED being
+    // reached. This test is the cheap structural half; that one is the
+    // behavioural half, and the pair is what makes the concession safe.
+    expect(FOLDED_INTO.size).toBeGreaterThan(0);
+
+    for (const [folded, tool] of FOLDED_INTO) {
+      const fold = FOLD_ACTIONS.get(tool);
+      expect(fold, `${tool} folds ${folded} but declares no actions`).toBeDefined();
+      expect(fold!.actions.length, `${tool} declares an empty action list`).toBeGreaterThan(0);
+      // And the tool a caller is redirected to is one they actually hold.
+      // A fold target waived off MCP would make every operation folded into
+      // it unreachable while each looked individually accounted for.
+      expect(reachableOnMcp(tool), `${tool} is itself unreachable on MCP`).toBe(true);
+    }
+  });
+
+  it("reports an operation waived off every MCP adapter and folded into nothing as unreachable", () => {
+    // **The negative control, and it is load-bearing rather than tidy.**
+    //
+    // Every operation the assertions above check is, by construction, one
+    // that IS reachable — so `reachableOnMcp` hardcoded to `return true`
+    // passes all of them. Measured: that mutation left the whole file
+    // green. An assertion that only ever asks for `true` cannot tell a
+    // working predicate from a constant, which is the same hollowness this
+    // PR's first commit removed from the forwarding guard.
+    //
+    // `backfill` is the right subject precisely because it is the dull
+    // case: waived from both MCP transports, in `FOLDED_INTO` nowhere, and
+    // waived for a reason (per-session tool-list cost) that has nothing to
+    // do with folding and so will not be disturbed by this PR or the next
+    // one. `readiness` is the same shape and is checked alongside it, so a
+    // single waiver being edited does not quietly remove the control.
+    expect(reachableOnMcp("backfill")).toBe(false);
+    expect(reachableOnMcp("readiness")).toBe(false);
+
+    // And the premises, so this cannot pass for the wrong reason — a typo'd
+    // operation name is unreachable too, and would satisfy the two lines
+    // above while checking nothing.
+    expect(isWaived("mcp_http", "backfill")).toBe(true);
+    expect(isWaived("mcp_stdio", "backfill")).toBe(true);
+    expect(FOLDED_INTO.has("backfill")).toBe(false);
+    expect(OPERATION_NAMES).toContain("backfill");
   });
 
   it("keeps the bounded-read remedies reachable for the guard that prescribes them", () => {
