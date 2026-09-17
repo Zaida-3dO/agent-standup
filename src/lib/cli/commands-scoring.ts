@@ -29,214 +29,8 @@
 // against the singular one is how `item loops` already distinguishes the
 // read from the write. A hyphenated pseudo-verb would have contradicted the
 // same PR's removal of six of them elsewhere.
-import { malformed, type ErrorEnvelope } from "./envelope";
-import { booleanFlag, numericFlag, stringFlag, type ParsedArgs } from "./args";
-import { passThroughFlags } from "./flags";
+import { buildVerbInput, type VerbFields } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
-
-/** Reads the leading positional a verb requires, naming it when it is absent. */
-function requiredPositional(
-  rest: readonly string[],
-  usage: string,
-  field: string,
-): { ok: true; value: string } | { ok: false; envelope: ErrorEnvelope } {
-  const value = rest[0];
-  if (value === undefined) {
-    return {
-      ok: false,
-      envelope: malformed(`\`standup ${usage}\` needs a ${field}.`, [field]),
-    };
-  }
-  return { ok: true, value };
-}
-
-/**
- * Folds the numeric flags a verb's schema declares as numbers.
- *
- * This is **not** the allow-list the warning above forbids: every flag still
- * passes through, and this only re-types the ones the schema declares as
- * numbers. A flag not named here still reaches the operation — as a string,
- * where the schema refuses it if that is wrong. Nothing is dropped.
- */
-function withNumeric(
-  input: Record<string, unknown>,
-  flags: ParsedArgs["flags"],
-  names: readonly string[],
-): InputResult {
-  const out: Record<string, unknown> = { ...input };
-  for (const name of names) {
-    const parsed = numericFlag(flags, name);
-    if (!parsed.ok) return parsed;
-    if (parsed.value !== undefined) out[name] = parsed.value;
-  }
-  return { ok: true, input: out };
-}
-
-/**
- * `standup score run <run-id> --rater-type … --facets '[…]'`.
- *
- * `--facets` carries JSON because the field is an array of objects, which a
- * flag cannot otherwise express. Invalid JSON is refused here rather than
- * passed through, for the reason `commands.ts` gives about its own JSON
- * flags: a string that is not JSON at all is not a question the operation's
- * schema could ever be asked.
- *
- * **The operation calls this field `scores`, not `facets`.** The flag keeps
- * the name a person types — they are scoring facets, and `score accept`
- * takes a `--facets` of its own — so the rename happens here, once. The flag
- * is declared CONSUMED so `passThroughFlags` does not also forward the raw
- * JSON string under `facets`: sending both would hand a `.strict()` schema
- * an unrecognised key alongside the field it wanted, and refuse the call.
- *
- * This is a rename of a flag the builder has read for itself, not an
- * allow-list: every flag this function does not name still passes through
- * untouched and is refused by the schema if it is wrong.
- */
-function buildScoreRunInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const runId = requiredPositional(rest, "score run <run-id>", "runId");
-  if (!runId.ok) return runId;
-
-  const facetsRaw = stringFlag(flags, "facets");
-  if (!facetsRaw.ok) return facetsRaw;
-
-  const passthrough = passThroughFlags(flags, ["facets"]);
-  if (!passthrough.ok) return passthrough;
-
-  const input: Record<string, unknown> = {
-    ...(passthrough.input as Record<string, unknown>),
-    runId: runId.value,
-  };
-
-  if (facetsRaw.value !== undefined) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(facetsRaw.value);
-    } catch {
-      return {
-        ok: false,
-        envelope: malformed('--facets must be JSON, e.g. \'[{"facet":"x","score":4}]\'.', [
-          "facets",
-        ]),
-      };
-    }
-    input.scores = parsed;
-  }
-
-  return renameHyphenated(input);
-}
-
-function buildDeriveRunScoreInput(
-  rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const runId = requiredPositional(rest, "score derive <run-id>", "runId");
-  if (!runId.ok) return runId;
-  const force = booleanFlag(flags, "force");
-  if (!force.ok) return force;
-  const passthrough = passThroughFlags(flags, ["force"]);
-  if (!passthrough.ok) return passthrough;
-
-  const input: Record<string, unknown> = {
-    ...(passthrough.input as Record<string, unknown>),
-    runId: runId.value,
-  };
-  // Only sent when given: the schema's own default is what decides the
-  // absent case, and stamping `false` here would overwrite it.
-  if (force.value) input.force = true;
-  return renameHyphenated(input);
-}
-
-/**
- * `standup score accept <run-id> --rater-id … [--facets a,b]`.
- *
- * `--facets` is a comma-separated list here rather than JSON, because the
- * field is an array of plain strings and `a,b` is what a person types.
- */
-function buildAcceptRunScoreInput(
-  rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const runId = requiredPositional(rest, "score accept <run-id>", "runId");
-  if (!runId.ok) return runId;
-
-  const facets = stringFlag(flags, "facets");
-  if (!facets.ok) return facets;
-
-  const passthrough = passThroughFlags(flags, []);
-  if (!passthrough.ok) return passthrough;
-
-  const input: Record<string, unknown> = {
-    ...(passthrough.input as Record<string, unknown>),
-    runId: runId.value,
-  };
-  if (facets.value !== undefined) {
-    input.facets = facets.value
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part !== "");
-  }
-  return renameHyphenated(input);
-}
-
-function buildGetRunScoresInput(_rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const passthrough = passThroughFlags(flags, []);
-  if (!passthrough.ok) return passthrough;
-  const numeric = withNumeric(passthrough.input as Record<string, unknown>, flags, ["threshold"]);
-  if (!numeric.ok) return numeric;
-  return renameHyphenated(numeric.input as Record<string, unknown>);
-}
-
-/**
- * `standup score list` — the runs, optionally narrowed.
- *
- * `--session` is the global identity flag, so it maps onto the operation's
- * own `sessionId` the way every other session-scoped command reads it.
- */
-function buildListRunsInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const passthrough = passThroughFlags(flags, []);
-  if (!passthrough.ok) return passthrough;
-  const numeric = withNumeric(passthrough.input as Record<string, unknown>, flags, ["limit"]);
-  if (!numeric.ok) return numeric;
-
-  const input: Record<string, unknown> = { ...(numeric.input as Record<string, unknown>) };
-  // An item id may be given positionally, which is how every other
-  // item-taking verb reads one.
-  if (rest[0] !== undefined) input.itemId = rest[0];
-
-  const session = stringFlag(flags, "session");
-  if (!session.ok) return session;
-  if (session.value !== undefined) input.sessionId = session.value;
-
-  return renameHyphenated(input);
-}
-
-function buildScoreInterventionInput(
-  rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const eventId = requiredPositional(rest, "score intervention <event-id>", "eventId");
-  if (!eventId.ok) return eventId;
-  const passthrough = passThroughFlags(flags, []);
-  if (!passthrough.ok) return passthrough;
-  const numeric = withNumeric(passthrough.input as Record<string, unknown>, flags, ["score"]);
-  if (!numeric.ok) return numeric;
-
-  return renameHyphenated({
-    ...(numeric.input as Record<string, unknown>),
-    eventId: eventId.value,
-  });
-}
-
-function buildGetInterventionScoresInput(
-  _rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const passthrough = passThroughFlags(flags, []);
-  if (!passthrough.ok) return passthrough;
-  const numeric = withNumeric(passthrough.input as Record<string, unknown>, flags, ["threshold"]);
-  if (!numeric.ok) return numeric;
-  return renameHyphenated(numeric.input as Record<string, unknown>);
-}
 
 /**
  * Maps the hyphenated command-line spelling onto the schema's camelCase.
@@ -256,12 +50,96 @@ const HYPHENATED: Readonly<Record<string, string>> = Object.freeze({
   "session-id": "sessionId",
 });
 
-function renameHyphenated(input: Record<string, unknown>): InputResult {
-  const out: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(input)) {
-    out[HYPHENATED[name] ?? name] = value;
-  }
-  return { ok: true, input: out };
+/** `--facets '[{"facet":"code","score":4}]'` — an array of objects, so JSON. */
+const facetsAsJson = {
+  // The operation calls this field `scores`, not `facets`. The flag keeps
+  // the word a person types — they are scoring facets, and `score accept`
+  // takes a `--facets` of its own — so the rename happens here, once.
+  to: "scores",
+  parse: (raw: string) => {
+    try {
+      return { ok: true as const, value: JSON.parse(raw) as unknown };
+    } catch {
+      return {
+        ok: false as const,
+        message: '--facets must be JSON, e.g. \'[{"facet":"x","score":4}]\'.',
+      };
+    }
+  },
+};
+
+/** `--facets a,b` — an array of plain strings, so a comma-separated list. */
+const facetsAsList = {
+  to: "facets",
+  parse: (raw: string) => ({
+    ok: true as const,
+    value: raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part !== ""),
+  }),
+};
+
+/**
+ * What each verb reads from the words and flags after it.
+ *
+ * ⚠️ **POSITIONALS, BARE SWITCHES, RENAMES AND TRANSFORMS ONLY — NEVER A
+ * LIST OF THE VALUE FLAGS A VERB ACCEPTS.** A rename maps a spelling; a
+ * transform reshapes one named flag's value; neither filters. Every flag
+ * not mentioned reaches the operation untouched, and that operation's own
+ * `.strict()` schema refuses a wrong one by name. A `fields: [...]` key
+ * here would silently drop anything omitted from it — `buildVerbInput`
+ * carries the reasoning, `tests/cli-merged-builder-fields.test.ts` the
+ * assertion that can catch it.
+ *
+ * The two `--facets` entries are why transforms are per verb rather than
+ * per flag: `score run` takes an array of objects and `score accept` an
+ * array of strings, under the same flag name.
+ */
+const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
+  run: {
+    positional: { field: "runId", usage: "score run <run-id>", required: true },
+    transforms: { facets: facetsAsJson },
+    rename: HYPHENATED,
+  },
+  derive: {
+    positional: { field: "runId", usage: "score derive <run-id>", required: true },
+    // Sent only when given: the schema's own default decides the absent
+    // case, and stamping `false` here would overwrite it.
+    optionalSwitches: { force: "force" },
+    rename: HYPHENATED,
+  },
+  accept: {
+    positional: { field: "runId", usage: "score accept <run-id>", required: true },
+    transforms: { facets: facetsAsList },
+    rename: HYPHENATED,
+  },
+  scores: { numbers: { threshold: "threshold" }, rename: HYPHENATED },
+  list: {
+    // An item id may be given positionally, which is how every other
+    // item-taking verb reads one — and optionally, because `score list`
+    // with none lists every run.
+    positional: { field: "itemId", usage: "score list", required: false },
+    numbers: { limit: "limit" },
+    session: true,
+    rename: HYPHENATED,
+  },
+  intervention: {
+    positional: { field: "eventId", usage: "score intervention <event-id>", required: true },
+    numbers: { score: "score" },
+    rename: HYPHENATED,
+  },
+  interventions: { numbers: { threshold: "threshold" }, rename: HYPHENATED },
+});
+
+/** One verb's builder, by the key it is listed under above. */
+function build(
+  verb: keyof typeof VERBS,
+): (
+  rest: readonly string[],
+  flags: Parameters<ReturnType<typeof buildVerbInput>>[1],
+) => InputResult {
+  return buildVerbInput(VERBS[verb]!);
 }
 
 export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
@@ -271,7 +149,7 @@ export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "score_run",
     summary:
       'Record a score for a run, per facet. --rater-type agent writes the frozen self-assessment; --rater-type person writes the human judgement beside it and needs --rater-id. --facets takes JSON, e.g. \'[{"facet":"code","score":4}]\'.',
-    buildInput: buildScoreRunInput,
+    buildInput: build("run"),
   },
   {
     noun: "score",
@@ -279,7 +157,7 @@ export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "derive_run_score",
     summary:
       "Derive a run's score from its reviews. --force writes even when scoring.auto_derive is off, for a run being backfilled by hand.",
-    buildInput: buildDeriveRunScoreInput,
+    buildInput: build("derive"),
   },
   {
     noun: "score",
@@ -287,7 +165,7 @@ export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "accept_run_score",
     summary:
       "Accept a run's agent scores as the person's own. Needs --rater-id. --facets a,b accepts only those; omitted accepts every facet carrying an agent score and no user score.",
-    buildInput: buildAcceptRunScoreInput,
+    buildInput: build("accept"),
   },
   {
     noun: "score",
@@ -295,7 +173,7 @@ export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "get_run_scores",
     summary:
       "Aggregate run scores per facet, worst first, with the runs in the window that carry no score at all. --source effective prefers a person's judgement over the agent's.",
-    buildInput: buildGetRunScoresInput,
+    buildInput: build("scores"),
   },
   {
     noun: "score",
@@ -303,7 +181,7 @@ export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "list_runs",
     summary:
       "List runs and their ids — the id every other scoring verb asks for. --scored no is the useful filter: what has not been judged yet.",
-    buildInput: buildListRunsInput,
+    buildInput: build("list"),
   },
   {
     noun: "score",
@@ -311,7 +189,7 @@ export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "score_intervention",
     summary:
       "Rate one intervention firing 1-5. --note is worth adding on a low score: a 1 can mean the detection was wrong, or that it was right and the message did not say what to do next.",
-    buildInput: buildScoreInterventionInput,
+    buildInput: build("intervention"),
   },
   {
     noun: "score",
@@ -319,6 +197,6 @@ export const SCORING_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "get_intervention_scores",
     summary:
       "Aggregate intervention scores per catalogue entry, flagging the ones that persistently score 1 or 2.",
-    buildInput: buildGetInterventionScoresInput,
+    buildInput: build("interventions"),
   },
 ]);

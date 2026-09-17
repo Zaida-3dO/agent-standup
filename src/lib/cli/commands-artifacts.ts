@@ -12,89 +12,57 @@
 // place every adapter shares. Coercing here as well would be a second,
 // adapter-local conversion — and the first thing to drift the day the schema
 // changes what it accepts.
-import { booleanFlag, numericFlag, type ParsedArgs } from "./args";
-import { itemIdPositional, passThroughFlags, withSessionId } from "./flags";
+import { buildVerbInput, type VerbFields } from "./flags";
 import type { CommandSpec, InputResult } from "./commands";
 
-function buildRecordArtifactInput(
-  rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const idResult = itemIdPositional(rest, "item artifact <item-id>");
-  if (!idResult.ok) return idResult;
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  const withSession = withSessionId(passthrough.input, flags);
-  if (!withSession.ok) return withSession;
-  return { ok: true, input: { ...withSession.input, itemId: idResult.itemId } };
-}
-
-function buildRequestReviewInput(rest: readonly string[], flags: ParsedArgs["flags"]): InputResult {
-  const idResult = itemIdPositional(rest, "item request-review <item-id>");
-  if (!idResult.ok) return idResult;
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  const withSession = withSessionId(passthrough.input, flags);
-  if (!withSession.ok) return withSession;
-  return { ok: true, input: { ...withSession.input, itemId: idResult.itemId } };
-}
-
 /**
- * `standup item artifacts <item-id>` — the read beside the `artifact` write.
+ * What each verb reads from the words and flags after it.
  *
- * Plural against the singular verb that records one, the same way `item
- * loops` reads against `item loop`, so the verb that lists and the verb that
- * writes cannot be typed for each other.
+ * ⚠️ **POSITIONALS AND BARE SWITCHES ONLY.** Every value-carrying flag
+ * reaches the operation untouched, and that operation's own `.strict()`
+ * schema refuses a wrong one by name. Listing value-flag names here would
+ * make this the allow-list that drops a field in silence — `buildVerbInput`
+ * carries the full reasoning, and `tests/cli-merged-builder-fields.test.ts`
+ * carries the assertion that can catch it.
  *
- * Until this binding existed the operation was reachable on MCP alone: it has
- * no HTTP route at all, so this command is its only non-MCP reachability.
+ * Three of these four differed only in their usage line. The two real
+ * differences are stated rather than inferred:
  *
- * `--full` is a bare switch, so it is read with `booleanFlag` and declared
- * consumed rather than falling through `passThroughFlags`, which refuses a
- * valueless flag. `--limit` is re-typed because the schema declares a number
- * and a command line only ever produces strings. Neither is an allow-list:
- * every other flag still passes through under its own name and is refused by
- * the operation's own `.strict()` schema if it is wrong.
+ *   - `artifacts` names its item `id`, not `itemId` — it is a read of one
+ *     item, spelled the way every other single-item read spells it.
+ *   - `artifacts` alone reads `--full` and `--limit`: a bare switch and a
+ *     numeric flag, which a pass-through cannot handle (it refuses a
+ *     valueless flag, and a schema declaring a number cannot take a string).
+ *
+ * `reviewRound` and `round` need no coercion even though both are numbers:
+ * their schemas declare `z.coerce.number()`, so the string a command line
+ * necessarily produces is converted in the one place every adapter shares.
  */
-function buildGetItemArtifactsInput(
-  rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const idResult = itemIdPositional(rest, "item artifacts <item-id>");
-  if (!idResult.ok) return idResult;
-  const full = booleanFlag(flags, "full");
-  if (!full.ok) return full;
-  const limit = numericFlag(flags, "limit");
-  if (!limit.ok) return limit;
-  const passthrough = passThroughFlags(flags, ["full", "limit"]);
-  if (!passthrough.ok) return passthrough;
+const VERBS: Readonly<Record<string, VerbFields>> = Object.freeze({
+  artifact: { itemId: "item artifact <item-id>", session: true },
+  "request-review": { itemId: "item request-review <item-id>", session: true },
+  artifacts: {
+    itemId: "item artifacts <item-id>",
+    itemIdField: "id",
+    // `optionalSwitches`, not `switches`: this verb sent `full` only when it
+    // was written. The schema defaults it to `false`, so sending `false`
+    // explicitly would behave identically — but "the caller asked for the
+    // default" and "the caller said nothing" are different statements, and
+    // this is a fold, not a place to start making one of them for them.
+    optionalSwitches: { full: "full" },
+    numbers: { limit: "limit" },
+  },
+  "blocked-on-tool": { itemId: "item blocked-on-tool <item-id>", session: true },
+});
 
-  // The operation names the item `id`, not `itemId` — it is a read of one
-  // item, spelled the way every other single-item read spells it.
-  const input: Record<string, unknown> = { ...passthrough.input, id: idResult.itemId };
-  if (full.value) input.full = true;
-  if (limit.value !== undefined) input.limit = limit.value;
-  return { ok: true, input };
-}
-
-/**
- * `standup item blocked-on-tool <item-id> --tool … --needed …`.
- *
- * Every field but the item id is a flag: none of them is the single obvious
- * subject of the command the way a loop's text is, and `--tool` and
- * `--needed` read as the two separate answers they are.
- */
-function buildReportBlockedOnToolInput(
+/** One verb's builder, by the key it is listed under above. */
+function build(
+  verb: keyof typeof VERBS,
+): (
   rest: readonly string[],
-  flags: ParsedArgs["flags"],
-): InputResult {
-  const idResult = itemIdPositional(rest, "item blocked-on-tool <item-id>");
-  if (!idResult.ok) return idResult;
-  const passthrough = passThroughFlags(flags);
-  if (!passthrough.ok) return passthrough;
-  const withSession = withSessionId(passthrough.input, flags);
-  if (!withSession.ok) return withSession;
-  return { ok: true, input: { ...withSession.input, itemId: idResult.itemId } };
+  flags: Parameters<ReturnType<typeof buildVerbInput>>[1],
+) => InputResult {
+  return buildVerbInput(VERBS[verb]!);
 }
 
 export const ARTIFACT_COMMANDS: readonly CommandSpec[] = Object.freeze([
@@ -104,14 +72,14 @@ export const ARTIFACT_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "record_artifact",
     summary:
       "Records an artifact — a plan, a review, a commit, a screenshot — against an item. --artifactKind says which; it is not --kind, because kind means something else on the loop verbs.",
-    buildInput: buildRecordArtifactInput,
+    buildInput: build("artifact"),
   },
   {
     noun: "item",
     verb: "request-review",
     operation: "request_review",
     summary: "Requests a review of an item, recording that one was asked for.",
-    buildInput: buildRequestReviewInput,
+    buildInput: build("request-review"),
   },
   {
     noun: "item",
@@ -119,7 +87,7 @@ export const ARTIFACT_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "get_item_artifacts",
     summary:
       "List an item's artifacts — kind, verdict, ref and who recorded it. --kind filters, --artifactId reads one in full, --full returns bodies rather than summaries.",
-    buildInput: buildGetItemArtifactsInput,
+    buildInput: build("artifacts"),
   },
   {
     noun: "item",
@@ -127,6 +95,6 @@ export const ARTIFACT_COMMANDS: readonly CommandSpec[] = Object.freeze([
     operation: "report_blocked_on_tool",
     summary:
       "Report a tool you could not use for the work an item asked of you. --tool names it, --needed says what the brief wanted done with it, --refusal records what it said back.",
-    buildInput: buildReportBlockedOnToolInput,
+    buildInput: build("blocked-on-tool"),
   },
 ]);

@@ -157,6 +157,15 @@ export interface VerbFields {
    */
   readonly itemId?: string;
   /**
+   * What the leading positional is called in the operation's input.
+   *
+   * Defaults to `itemId`. `get_item_artifacts` names it `id` — it is a read
+   * of ONE item, spelled the way every other single-item read spells it —
+   * and sending the wrong one would be refused by a `.strict()` schema
+   * naming a field the person never typed.
+   */
+  readonly itemIdField?: string;
+  /**
    * Bare switches, by flag name, mapped onto the input field each sets.
    *
    * Read with `booleanFlag` and declared consumed, because
@@ -179,6 +188,54 @@ export interface VerbFields {
   readonly numbers?: Readonly<Record<string, string>>;
   /** Whether `--session` maps onto the operation's own `sessionId` field. */
   readonly session?: boolean;
+  /**
+   * A leading positional that is not an item id, and the field it carries.
+   *
+   * `score run <run-id>` and `score intervention <event-id>` read a run and
+   * an event. `required: false` makes it optional — `score interventions`
+   * takes an item id positionally if one is given and lists everything if
+   * not.
+   */
+  readonly positional?: {
+    readonly field: string;
+    readonly usage: string;
+    readonly required: boolean;
+  };
+  /**
+   * Command-line spellings mapped onto the schema's field names.
+   *
+   * A RENAME, not a filter, and the difference is the whole safety
+   * property: a flag with no entry here passes through under its own name
+   * and is refused by the operation's `.strict()` schema if it is wrong.
+   * Nothing is dropped.
+   */
+  readonly rename?: Readonly<Record<string, string>>;
+  /**
+   * Flags whose STRING value a verb reshapes before the schema sees it, and
+   * the field each result lands under.
+   *
+   * `score run --facets` carries JSON because its field is an array of
+   * objects; `score accept --facets` carries `a,b` because its field is an
+   * array of plain strings. Same flag, two verbs, two shapes — so the
+   * reshaping is per verb and cannot be a property of the flag name.
+   *
+   * **This is a TRANSFORM, not an allow-list.** A flag named here is read
+   * and declared consumed so it is not also forwarded raw; every flag NOT
+   * named here still passes through untouched. Nothing is dropped. The
+   * `to` field is what lets `--facets` land on `scores`, keeping the word a
+   * person types separate from the word the schema uses.
+   */
+  readonly transforms?: Readonly<
+    Record<
+      string,
+      {
+        readonly to: string;
+        readonly parse: (
+          raw: string,
+        ) => { ok: true; value: unknown } | { ok: false; message: string };
+      }
+    >
+  >;
 }
 
 /**
@@ -212,6 +269,18 @@ export function buildVerbInput(
       if (flags[name] !== undefined) values[field] = read.value;
     }
 
+    for (const [name, transform] of Object.entries(fields.transforms ?? {})) {
+      const raw = stringFlag(flags, name);
+      if (!raw.ok) return raw;
+      consumed.push(name);
+      if (raw.value === undefined) continue;
+      const parsed = transform.parse(raw.value);
+      if (!parsed.ok) {
+        return { ok: false, envelope: malformed(parsed.message, [name]) };
+      }
+      values[transform.to] = parsed.value;
+    }
+
     for (const [name, field] of Object.entries(fields.numbers ?? {})) {
       const read = numericFlag(flags, name);
       if (!read.ok) return read;
@@ -229,14 +298,39 @@ export function buildVerbInput(
       input = withSession.input;
     }
 
-    const merged: Record<string, unknown> = { ...input, ...values };
+    let merged: Record<string, unknown> = { ...input, ...values };
+
+    if (fields.rename !== undefined) {
+      const renamed: Record<string, unknown> = {};
+      for (const [name, value] of Object.entries(merged)) {
+        renamed[fields.rename[name] ?? name] = value;
+      }
+      merged = renamed;
+    }
+
+    if (fields.positional !== undefined) {
+      const value = rest[0];
+      if (value === undefined) {
+        if (fields.positional.required) {
+          return {
+            ok: false,
+            envelope: malformed(
+              `\`standup ${fields.positional.usage}\` needs a ${fields.positional.field}.`,
+              [fields.positional.field],
+            ),
+          };
+        }
+      } else {
+        merged[fields.positional.field] = value;
+      }
+    }
 
     if (fields.itemId !== undefined) {
       const idResult = itemIdPositional(rest, fields.itemId);
       if (!idResult.ok) return idResult;
-      // Last, so a `--itemId` flag cannot displace the id the person typed
-      // as the subject of the command.
-      merged.itemId = idResult.itemId;
+      // Last, so a flag of the same name cannot displace the id the person
+      // typed as the subject of the command.
+      merged[fields.itemIdField ?? "itemId"] = idResult.itemId;
     }
 
     return { ok: true, input: merged };
