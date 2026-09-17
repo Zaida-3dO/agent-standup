@@ -12,6 +12,7 @@ import { hasDistinctHeadline, primaryLine } from "@/lib/item-headline-display";
 import { TrustBadge } from "@/components/chips/TrustBadge";
 import { relativeTime } from "@/lib/projects/view";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
+import { LinkChips } from "@/components/chips/LinkChips";
 import styles from "./Board.module.css";
 
 export interface ItemCardProps {
@@ -293,6 +294,25 @@ export function ItemCard({
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>
         {entry.item.repo && <span className={styles.repo}>{entry.item.repo}</span>}
       </div>
+      {/* The item's external pointers — the chat thread, the ticket, the
+          design doc — as key-only chips.
+
+          Its own row rather than folded into `cardMeta` above: that row is
+          a middot-separated sentence of plain text, and dropping bordered
+          pills into it would put two visual vocabularies on one line. This
+          row renders nothing at all when there are no links, so a card
+          without them is unchanged.
+
+          The press handler is why this component takes one. The card is a
+          drag source and an anchor is natively draggable, so without
+          stopping propagation a press on a chip picks the card up and the
+          link never opens — the same reasoning, and the same fix, as the
+          subtask toggle below. */}
+      <LinkChips
+        links={entry.item.links ?? []}
+        className={styles.cardLinks}
+        onChipPointerDown={(event) => event.stopPropagation()}
+      />
       {/* What this card holds, and the way into it.
 
           Rendered only when there IS a rollup: `subtasks` is `null` for a

@@ -1308,3 +1308,15 @@ details[open] > .disclosureSummary .disclosureHint::before {
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);
 }
+
+/* The link chips in the item header. `display: contents` so the chips
+   become direct children of `.meta`'s flex row rather than sitting in a
+   nested box — they then share that row's gap and wrapping exactly as the
+   area and repo chips beside them do.
+
+   The alternative, a nested flex row with its own gap, puts the links at a
+   different rhythm from their neighbours on the same line, which reads as a
+   misalignment rather than as a group. */
+.headerLinks {
+  display: contents;
+}
