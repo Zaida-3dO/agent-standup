@@ -53,6 +53,7 @@ import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { parseDelegateInput } from "../shape-refusal";
+import { rejectForeignFields, type FoldForwarding } from "../foreign-fields";
 import { ARTIFACT_KINDS, recordArtifact } from "./record-artifact";
 import { BLOCKED_ON_TOOL_REASONS, reportBlockedOnTool } from "./report-blocked-on-tool";
 import { checkpoint } from "./checkpoint";
@@ -166,6 +167,28 @@ const inputSchema = z
 
 export type RecordInput = z.infer<typeof inputSchema>;
 
+/**
+ * Which delegate each action forwards to, for the foreign-field guard.
+ *
+ * The schemas themselves, not a list of their field names: the legitimate
+ * set for an action IS what its delegate declares, and deriving it means
+ * the guard cannot drift from the forwarding two dozen lines below. A field
+ * added to `record_artifact` becomes acceptable on `action: "artifact"` the
+ * moment it is declared there, with no edit here.
+ *
+ * `record` renames nothing on the way out — every field arrives under the
+ * name the caller used — so there is no `renames` entry. The one name that
+ * differs, `artifactKind` versus the delegate's own `artifactKind`, is the
+ * same on both sides; it differs from `loop`'s `kind`, which is a different
+ * tool entirely.
+ */
+const FORWARDING: FoldForwarding<RecordAction> = Object.freeze({
+  checkpoint: { schema: checkpoint.input },
+  note: { schema: note.input },
+  artifact: { schema: recordArtifact.input },
+  blocked_on_tool: { schema: reportBlockedOnTool.input },
+});
+
 /** Refuses an action that is missing a field it cannot run without. */
 function requireFields(input: RecordInput): void {
   const missing = RECORD_ACTION_FIELDS[input.action].required.filter(
@@ -216,6 +239,12 @@ export const record = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: RecordInput): Promise<unknown> {
+    // Before the required-field check, so a call carrying a foreign field is
+    // told about the foreign field rather than about whatever it was
+    // mistaken for — a `note` sent with `findings` and no `body` should
+    // hear about `findings` first, since that is the mistake that would
+    // otherwise have been swallowed.
+    rejectForeignFields("record", input.action, input, FORWARDING);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()`

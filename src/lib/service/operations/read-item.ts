@@ -51,6 +51,7 @@ import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { parseDelegateInput } from "../shape-refusal";
+import { rejectForeignFields, type FoldForwarding } from "../foreign-fields";
 import { ARTIFACT_KINDS } from "./record-artifact";
 import { getItemBody } from "./get-item-body";
 import { getItemHistory } from "./get-item-history";
@@ -140,10 +141,27 @@ export type ReadItemInput = z.infer<typeof inputSchema>;
  * anywhere saying so. Naming the field and the action is what turns that
  * into something they can fix in one step.
  */
-const NOT_ON_ACTION: Readonly<Record<ReadItemAction, readonly string[]>> = Object.freeze({
-  body: ["cursor", "full", "artifactId", "kind"],
-  history: ["offset", "artifactId", "kind"],
-  artifacts: ["offset"],
+/**
+ * Which delegate each action forwards to, for the foreign-field guard.
+ *
+ * **This replaced a hand-written `NOT_ON_ACTION` table that listed the same
+ * eight fields.** The table was correct when written and this fold was, at
+ * the time of the sweep, the only one besides `ownership` with any
+ * foreign-field rejection at all. It is derived now for the reason the
+ * whole sweep exists: a list of what an action does NOT take is a second
+ * statement of what it DOES take, maintained by a different edit, and a
+ * field added to `get_item_artifacts` would have had to be remembered in
+ * two places or be silently dropped on the other two actions.
+ *
+ * The derived set is identical to what the table asserted — `body` refuses
+ * cursor/full/artifactId/kind, `history` refuses offset/artifactId/kind,
+ * `artifacts` refuses offset — and `tests/read-item-fold.test.ts` pins that
+ * equivalence rather than it being asserted here.
+ */
+const FORWARDING: FoldForwarding<ReadItemAction> = Object.freeze({
+  body: { schema: getItemBody.input },
+  history: { schema: getItemHistory.input },
+  artifacts: { schema: getItemArtifacts.input },
 });
 
 /** Refuses an action that is missing a field it cannot run without. */
@@ -158,21 +176,6 @@ function requireFields(input: ReadItemInput): void {
       missing.length === 1 ? "was" : "were"
     } not supplied. Resend the call with ${list} set.`,
     { fields: missing },
-  );
-}
-
-/** Refuses a field that means nothing on the action it arrived with. */
-function rejectMisplacedFields(input: ReadItemInput): void {
-  const misplaced = NOT_ON_ACTION[input.action].filter(
-    (field) => input[field as keyof ReadItemInput] !== undefined,
-  );
-  if (misplaced.length === 0) return;
-  const list = misplaced.map((field) => `\`${field}\``).join(" and ");
-  throw new InvalidInputError(
-    `read_item action "${input.action}" does not accept ${list}. ` +
-      `Drop ${misplaced.length === 1 ? "it" : "them"}, or use the action that reads ` +
-      `what ${misplaced.length === 1 ? "it bounds" : "they bound"}.`,
-    { fields: [...misplaced] },
   );
 }
 
@@ -206,8 +209,8 @@ export const readItem = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ReadItemInput): Promise<unknown> {
+    rejectForeignFields("read_item", input.action, input, FORWARDING);
     requireFields(input);
-    rejectMisplacedFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()`
     // schema accepts, and forwards each as it arrived — absent stays

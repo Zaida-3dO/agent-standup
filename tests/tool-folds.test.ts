@@ -376,24 +376,35 @@ describeIfDb("the folded loop and create_work tools, against Postgres", () => {
 
     // Fails if the fold swallows the underlying operation's NotFoundError
     // or rewrites it — the refusal must arrive as the unfolded call's.
-    it.each(["get", "close", "edit", "delete"])(
-      "refuses action %s naming a loop that does not exist",
-      async (action) => {
-        const itemId = await seedItem();
-        const error = await rejection(
-          call("loop", {
-            action,
-            itemId,
-            loopId: "no-such-loop",
-            text: "text for the edit case",
-            reason: "a reason long enough to pass the minimum length rule",
-          }),
-        );
-        expect(error.code).toBe("not_found");
-        expect(error.fields).toContain("loopId");
-        expect(error.message).toContain("no-such-loop");
+    //
+    // **Each case carries only the fields its own action accepts.** This
+    // used to send `text` and `reason` on all four, which was convenient
+    // and depended on the fold silently discarding the ones that did not
+    // belong: `get` takes neither and `close` takes no `text`. Now that a
+    // foreign field is refused by name, those extras would refuse the call
+    // as `invalid_input` before it ever reached the lookup, and the test
+    // would be asserting the wrong refusal — so the fixture states per
+    // action what that action actually takes.
+    it.each([
+      { action: "get", extra: {} },
+      {
+        action: "close",
+        extra: { reason: "a reason long enough to pass the minimum length rule" },
       },
-    );
+      { action: "edit", extra: { text: "text for the edit case" } },
+      {
+        action: "delete",
+        extra: { reason: "a reason long enough to pass the minimum length rule" },
+      },
+    ])("refuses action $action naming a loop that does not exist", async ({ action, extra }) => {
+      const itemId = await seedItem();
+      const error = await rejection(
+        call("loop", { action, itemId, loopId: "no-such-loop", ...extra }),
+      );
+      expect(error.code).toBe("not_found");
+      expect(error.fields).toContain("loopId");
+      expect(error.message).toContain("no-such-loop");
+    });
 
     // The deletion-reason steering is one of the refusals the fold promises
     // to deliver unchanged. Fails if `delete` stops dispatching to

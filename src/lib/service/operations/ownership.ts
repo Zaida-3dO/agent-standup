@@ -54,6 +54,7 @@ import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { parseDelegateInput } from "../shape-refusal";
+import { rejectForeignFields, type FoldForwarding } from "../foreign-fields";
 import { claim } from "./claim";
 import { release } from "./release";
 import { takeover } from "./takeover";
@@ -178,44 +179,28 @@ const inputSchema = z
 export type OwnershipInput = z.infer<typeof inputSchema>;
 
 /**
- * Fields that mean something to one action and nothing to the others.
+ * Which delegate each action forwards to, for the foreign-field guard.
  *
- * The fold's schema is ONE object shared by all three actions, so a field
- * only `claim` uses is structurally acceptable on `release` — and because
- * the `release` branch does not forward it, the delegate's own `.strict()`
- * parse never sees it either. Without this table such a field is accepted
- * and silently dropped, which is the one outcome the strict schema exists
- * to prevent: a caller that believed it was releasing a particular lease
- * would get no signal that the field did nothing.
+ * **This replaced a hand-written `ACTION_ONLY_FIELDS` table, and the
+ * replacement is the whole argument for deriving.** That table named five
+ * fields — `leaseKey`, `rootSessionId`, `parentSessionId`, `role`,
+ * `roleCustom` — out of nineteen on this tool. The header comment above it
+ * described the hazard exactly and correctly, and the table then covered
+ * about a quarter of it: `machine`, `pid`, `branch`, `worktree`, `model`
+ * and `effort` were all equally claim-only and all silently dropped on a
+ * `release`, and `sessionId` was silently dropped on a `takeover` — the
+ * one action where getting a session wrong displaces the wrong crew.
+ *
+ * Nothing about that was carelessness. It is what a hand-written list of
+ * exceptions does: it is written once against the fields somebody thought
+ * of, and there is no mechanism that notices the rest. Deriving from the
+ * delegates' own schemas covers all nineteen with no list to keep.
  */
-const ACTION_ONLY_FIELDS: Readonly<Record<string, OwnershipAction>> = Object.freeze({
-  leaseKey: "claim",
-  rootSessionId: "claim",
-  parentSessionId: "claim",
-  role: "claim",
-  roleCustom: "claim",
+const FORWARDING: FoldForwarding<OwnershipAction> = Object.freeze({
+  claim: { schema: claim.input },
+  release: { schema: release.input },
+  takeover: { schema: takeover.input },
 });
-
-/** Refuses a field that belongs to a different action than the one asked for. */
-function rejectForeignFields(input: OwnershipInput): void {
-  const foreign = Object.entries(ACTION_ONLY_FIELDS)
-    .filter(
-      ([field, owner]) =>
-        owner !== input.action && input[field as keyof OwnershipInput] !== undefined,
-    )
-    .map(([field]) => field);
-
-  if (foreign.length === 0) return;
-  const list = foreign.map((field) => `\`${field}\``).join(" and ");
-  throw new InvalidInputError(
-    `ownership action "${input.action}" does not accept ${list}, which ${
-      foreign.length === 1 ? "belongs" : "belong"
-    } to action "claim". Remove ${list}, or use the action that takes ${
-      foreign.length === 1 ? "it" : "them"
-    }.`,
-    { fields: foreign },
-  );
-}
 
 /** Refuses an action that is missing a field it cannot run without. */
 function requireFields(input: OwnershipInput): void {
@@ -262,7 +247,7 @@ export const ownership = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: OwnershipInput): Promise<unknown> {
-    rejectForeignFields(input);
+    rejectForeignFields("ownership", input.action, input, FORWARDING);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()`
