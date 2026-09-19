@@ -407,6 +407,18 @@ model Assignment {
   sessionId       String
   parentSessionId String?
   rootSessionId   String
+  /**
+   * The lease key this claim was made under — one value carrying
+   * `rootSessionId`, `sessionId`, `holderType` and `holderId`
+   * (src/lib/lease-key.ts).
+   *
+   * Nullable because a row written by an older build genuinely has none,
+   * and because it is always derivable from the four `NOT NULL` columns
+   * beside it — so a missing key loses no information and needs no
+   * sentinel. The backfill in `20260919090000_assignment_lease_key`
+   * populates it for every pre-existing row.
+   */
+  leaseKey        String?
   machine         String
   pid             Int?
   branch          String?
@@ -425,6 +437,7 @@ model Assignment {
   @@index([sessionId])
   @@index([itemId, role])
   @@index([rootSessionId])
+  @@index([leaseKey])
 }
 
 enum ActorType {

@@ -71,6 +71,7 @@ function liveRow(overrides: Partial<Assignment>): Assignment {
     sessionId: "session-1",
     parentSessionId: null,
     rootSessionId: "root-1",
+    leaseKey: null,
     machine: "laptop",
     pid: null,
     branch: null,

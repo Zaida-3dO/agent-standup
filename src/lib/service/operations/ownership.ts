@@ -79,7 +79,14 @@ export type OwnershipAction = (typeof OWNERSHIP_ACTIONS)[number];
 export const OWNERSHIP_ACTION_FIELDS: Readonly<
   Record<OwnershipAction, { readonly required: readonly string[] }>
 > = Object.freeze({
-  claim: { required: ["itemId", "role", "holderType", "holderId", "sessionId"] },
+  // `holderType`, `holderId` and `sessionId` left OUT deliberately since the
+  // lease key: they are carried inside `leaseKey`, so requiring them here
+  // would refuse a correct key-only claim before `claim` ever sees it. The
+  // delegate's `resolveLease` refuses a call that states neither a key nor
+  // that whole set, which is the check this list cannot express — it can
+  // only ask "is this field present", and the real rule is "is EITHER shape
+  // complete". `itemId` and `role` stay, because no shape supplies them.
+  claim: { required: ["itemId", "role"] },
   release: { required: ["itemId", "sessionId"] },
   takeover: {
     required: ["itemId", "fromSessionId", "bySessionId", "holderType", "holderId"],
@@ -114,13 +121,24 @@ const inputSchema = z
     /** Required when the role is `custom` — enforced by the delegate. */
     roleCustom: z.string().min(1).nullable().optional(),
     /**
-     * The crew this claim belongs to.
+     * **The one field carrying who is claiming** on action `claim` —
+     * `rootSessionId`, `sessionId`, `holderType` and `holderId` are all
+     * implicit in it (`src/lib/lease-key.ts`). Issued by `session` with
+     * action register, and returned on every claim response.
      *
-     * **Defaults to the caller's own `sessionId` when omitted**, which
-     * declares this session the root of a new crew. That default is right
-     * for an orchestrator and wrong for a dispatched agent — see the
-     * contract rule below, which is where a caller reading the tool will
-     * find it.
+     * A claim stating neither this nor the full legacy set is refused by
+     * the delegate rather than defaulted, which is the point of the field.
+     */
+    leaseKey: z.string().min(1).nullable().optional(),
+    /**
+     * The crew this claim belongs to. **Deprecated in favour of
+     * `leaseKey`,** which carries it.
+     *
+     * Still accepted, and on that legacy path it still **defaults to the
+     * caller's own `sessionId` when omitted**, which declares this session
+     * the root of a new crew. That default is right for an orchestrator and
+     * wrong for a dispatched agent — see the contract rule below, which is
+     * where a caller reading the tool will find it.
      */
     rootSessionId: z.string().min(1).nullable().optional(),
     parentSessionId: z.string().min(1).nullable().optional(),
@@ -157,6 +175,46 @@ const inputSchema = z
 
 export type OwnershipInput = z.infer<typeof inputSchema>;
 
+/**
+ * Fields that mean something to one action and nothing to the others.
+ *
+ * The fold's schema is ONE object shared by all three actions, so a field
+ * only `claim` uses is structurally acceptable on `release` — and because
+ * the `release` branch does not forward it, the delegate's own `.strict()`
+ * parse never sees it either. Without this table such a field is accepted
+ * and silently dropped, which is the one outcome the strict schema exists
+ * to prevent: a caller that believed it was releasing a particular lease
+ * would get no signal that the field did nothing.
+ */
+const ACTION_ONLY_FIELDS: Readonly<Record<string, OwnershipAction>> = Object.freeze({
+  leaseKey: "claim",
+  rootSessionId: "claim",
+  parentSessionId: "claim",
+  role: "claim",
+  roleCustom: "claim",
+});
+
+/** Refuses a field that belongs to a different action than the one asked for. */
+function rejectForeignFields(input: OwnershipInput): void {
+  const foreign = Object.entries(ACTION_ONLY_FIELDS)
+    .filter(
+      ([field, owner]) =>
+        owner !== input.action && input[field as keyof OwnershipInput] !== undefined,
+    )
+    .map(([field]) => field);
+
+  if (foreign.length === 0) return;
+  const list = foreign.map((field) => `\`${field}\``).join(" and ");
+  throw new InvalidInputError(
+    `ownership action "${input.action}" does not accept ${list}, which ${
+      foreign.length === 1 ? "belongs" : "belong"
+    } to action "claim". Remove ${list}, or use the action that takes ${
+      foreign.length === 1 ? "it" : "them"
+    }.`,
+    { fields: foreign },
+  );
+}
+
 /** Refuses an action that is missing a field it cannot run without. */
 function requireFields(input: OwnershipInput): void {
   const missing = OWNERSHIP_ACTION_FIELDS[input.action].required.filter(
@@ -190,8 +248,8 @@ export const ownership = defineOperation({
         rule: 'Three actions, three meanings of "which session". On claim, sessionId is the session claiming. On release it is the session giving up its OWN live row — a session can only release what it holds, so to end somebody else\'s claim use takeover instead. takeover takes neither: it names fromSessionId (being displaced) and bySessionId (taking over) separately, because a call that gets those the wrong way round must be refusable rather than silently correct.',
       },
       {
-        fields: ["rootSessionId"],
-        rule: "On action claim this names the crew. Omitted, it DEFAULTS TO YOUR OWN sessionId, which declares this session the root of a new crew — right for an orchestrator, and wrong for a dispatched agent claiming alongside one. A dispatched agent must pass its orchestrator's session id here, or it is refused as a second crew on the item even though it was sent to help. parentSessionId is a separate field for the spawn tree and does NOT satisfy this.",
+        fields: ["leaseKey", "rootSessionId"],
+        rule: "On action claim, leaseKey carries the crew and the holder together and a call stating neither it nor the full legacy set — sessionId, holderType and holderId — is REFUSED rather than defaulted. If you were dispatched, ask the agent that dispatched you for its key. The legacy fields still work meanwhile: on that path an omitted rootSessionId still DEFAULTS TO YOUR OWN sessionId, declaring this session the root of a new crew, which is right for an orchestrator and wrong for a dispatched agent claiming alongside one. parentSessionId is a separate field for the spawn tree and does NOT satisfy this.",
       },
       {
         fields: ["action", "reason", "force"],
@@ -202,6 +260,7 @@ export const ownership = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: OwnershipInput): Promise<unknown> {
+    rejectForeignFields(input);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()`
@@ -219,9 +278,10 @@ export const ownership = defineOperation({
             {
               itemId: input.itemId,
               role: input.role,
-              holderType: input.holderType,
-              holderId: input.holderId,
-              sessionId: input.sessionId,
+              ...(input.holderType === undefined ? {} : { holderType: input.holderType }),
+              ...(input.holderId === undefined ? {} : { holderId: input.holderId }),
+              ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+              ...(input.leaseKey === undefined ? {} : { leaseKey: input.leaseKey }),
               ...(input.roleCustom === undefined ? {} : { roleCustom: input.roleCustom }),
               ...(input.rootSessionId === undefined ? {} : { rootSessionId: input.rootSessionId }),
               ...(input.parentSessionId === undefined
