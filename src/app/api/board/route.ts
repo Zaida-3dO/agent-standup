@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
-import { parseBooleanParam } from "../_shared/query";
+import { queryInput } from "../_shared/query";
 import { parseLevelFilter } from "@/lib/board/filters";
 
 export async function GET(request: Request) {
@@ -18,26 +18,14 @@ export async function GET(request: Request) {
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const url = new URL(request.url);
-  const input: Record<string, unknown> = {};
-
-  const priority = url.searchParams.get("priority");
-  if (priority !== null) input.priority = priority;
-  const area = url.searchParams.get("area");
-  if (area !== null) input.area = area;
-  const repo = url.searchParams.get("repo");
-  if (repo !== null) input.repo = repo;
-  const kind = url.searchParams.get("kind");
-  if (kind !== null) input.kind = kind;
-  const state = url.searchParams.get("state");
-  if (state !== null) input.state = state;
-  const assignee = url.searchParams.get("assignee");
-  if (assignee !== null) input.assignee = assignee;
-  const actor = url.searchParams.get("actor");
-  if (actor !== null) input.actor = actor;
-  const search = url.searchParams.get("search");
-  if (search !== null) input.search = search;
-  const project = url.searchParams.get("project");
-  if (project !== null) input.project = project;
+  // Read off the operation's own schema (`../_shared/query.ts`) for every
+  // field except `level`, whose URL spelling deliberately differs from the
+  // operation's own shape (see below) and so is read separately and
+  // exempted here. `trust` — documented in `get-board.ts` as the filter
+  // answering "show me only the rows I can trust" — is one of the fields
+  // this closes: reading every declared field by name means it cannot be
+  // absent from a route that reads them all.
+  const input = queryInput(request, "get_board", ["level"]);
 
   // The level filter is the one axis whose URL form is not its service form:
   // the address carries `exclude:0` (one atomic value, so a hand-edited link
@@ -75,33 +63,6 @@ export async function GET(request: Request) {
     const parsed = parseLevelFilter(rawLevel);
     if (parsed !== undefined) input.level = { mode: parsed.mode, levels: [...parsed.levels] };
   }
-  // The ordering (MILESTONES.md #75). Passed through as strings for the
-  // operation's own enums to accept or refuse — the adapter validates
-  // nothing itself, so an unknown sort key is refused in one place with the
-  // same message however the caller arrived.
-  const sort = url.searchParams.get("sort");
-  if (sort !== null) input.sort = sort;
-  const direction = url.searchParams.get("direction");
-  if (direction !== null) input.direction = direction;
-  const includeTerminal = url.searchParams.get("includeTerminal");
-  if (includeTerminal !== null) input.includeTerminal = parseBooleanParam(includeTerminal);
-  // The opt-in out of the slim card shape (MILESTONES.md #107). The board UI
-  // does not pass it — every field a card renders is in the default shape —
-  // but a caller wanting whole records has one way in rather than none.
-  const full = url.searchParams.get("full");
-  if (full !== null) input.full = parseBooleanParam(full);
-  // The pagination controls (MILESTONES.md #109). `column` names the one
-  // section to page; `limit`/`cursor` page it. `limit` is parsed to a number
-  // because every query param arrives as a string and the operation's schema
-  // types it as an integer — passing the string through would be rejected as
-  // invalid input rather than honoured, so the adapter converts and lets the
-  // service refuse anything that is not a number on its own terms.
-  const column = url.searchParams.get("column");
-  if (column !== null) input.column = column;
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) input.limit = Number(limit);
-  const cursor = url.searchParams.get("cursor");
-  if (cursor !== null) input.cursor = cursor;
 
   try {
     const board = await service.call("get_board", input, { caller });

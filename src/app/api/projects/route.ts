@@ -18,30 +18,20 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
-import { parseBooleanParam } from "../_shared/query";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = {};
-
-  const area = url.searchParams.get("area");
-  if (area !== null) input.area = area;
-  const repo = url.searchParams.get("repo");
-  if (repo !== null) input.repo = repo;
-  // Finished projects are off by default (the operation's own default); this
-  // is how a caller asks for them back. Parsed rather than passed through as
-  // a string, because every query param arrives as text and the operation's
-  // schema types it as a boolean — handing it the raw string would be
-  // rejected as invalid input rather than honoured.
-  const includeCompleted = url.searchParams.get("includeCompleted");
-  if (includeCompleted !== null) input.includeCompleted = parseBooleanParam(includeCompleted);
-  // Archived projects are off by default, the same shape as `includeCompleted`
-  // above and for the same reason it is parsed rather than forwarded raw.
-  const includeArchived = url.searchParams.get("includeArchived");
-  if (includeArchived !== null) input.includeArchived = parseBooleanParam(includeArchived);
+  // Read off the operation's own schema (`../_shared/query.ts`) rather than
+  // by hand — this route read 4 of the 6 declared fields and never
+  // mentioned `limit` or `cursor`, so `nextCursor` named a page no HTTP
+  // caller could request. `list_people`'s route had the identical bug and
+  // was fixed by reading `limit`/`cursor` explicitly; this closes it the
+  // structural way instead, so the operation's next paged field cannot be
+  // dropped the same way.
+  const input = queryInput(request, "get_projects");
 
   try {
     const result = await service.call("get_projects", input, { caller });

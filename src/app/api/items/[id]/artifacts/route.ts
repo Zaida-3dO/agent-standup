@@ -24,33 +24,20 @@ import {
   invalidJsonResponse,
   serviceErrorResponse,
 } from "../../../_shared/respond";
-import { parseBooleanParam } from "../../../_shared/query";
+import { queryInput } from "../../../_shared/query";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const { id } = await params;
-  const url = new URL(request.url);
 
-  // Only parameters actually present are forwarded. Sending a key the caller
-  // did not ask for would overwrite the schema's own default with this
-  // adapter's idea of one, which is the drift §22 rules out — the schema
-  // decides the absent case, here as everywhere.
-  const input: Record<string, unknown> = { id };
-  const artifactId = url.searchParams.get("artifactId");
-  if (artifactId !== null) input.artifactId = artifactId;
-  const kind = url.searchParams.get("kind");
-  if (kind !== null) input.kind = kind;
-  const cursor = url.searchParams.get("cursor");
-  if (cursor !== null) input.cursor = cursor;
-  const full = url.searchParams.get("full");
-  if (full !== null) input.full = parseBooleanParam(full);
-  const limit = url.searchParams.get("limit");
-  // Left as the string the query gave when it is not a number, so the
-  // schema refuses it and names the field, rather than this route turning
-  // `?limit=lots` into NaN and refusing something the caller never typed.
-  if (limit !== null) input.limit = Number.isNaN(Number(limit)) ? limit : Number(limit);
+  // Read off the operation's own schema (`../../_shared/query.ts`) for
+  // every field except `id` (the path param, set directly).
+  const input: Record<string, unknown> = {
+    id,
+    ...queryInput(request, "get_item_artifacts", ["id"]),
+  };
 
   try {
     const result = await service.call("get_item_artifacts", input, { caller });

@@ -7,37 +7,20 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../../respond";
+import { queryInput } from "../../../_shared/query";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const { id } = await params;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = { id };
 
-  // `historyLimit` is passed through as a number when present and omitted
-  // entirely when absent, so the operation's own default applies rather
-  // than this adapter re-declaring it. A non-numeric value is passed
-  // through as-is for the operation's schema to reject — an adapter that
-  // silently swallowed it would turn a caller's mistake into a surprising
-  // default instead of an error naming the field.
-  const historyLimit = url.searchParams.get("historyLimit");
-  if (historyLimit !== null) {
-    const parsed = Number(historyLimit);
-    input.historyLimit = Number.isNaN(parsed) ? historyLimit : parsed;
-  }
-
-  // `artifactLimit` is read on exactly the same terms as its sibling above.
-  // It was accepted by the operation and never read here, so a caller
-  // narrowing this response — which is one of the reads most likely to be
-  // refused for size — could halve its history and not its artifacts, and
-  // the parameter that would have worked was silently ignored.
-  const artifactLimit = url.searchParams.get("artifactLimit");
-  if (artifactLimit !== null) {
-    const parsed = Number(artifactLimit);
-    input.artifactLimit = Number.isNaN(parsed) ? artifactLimit : parsed;
-  }
+  // Read off the operation's own schema (`../../../_shared/query.ts`) for
+  // every field except `id` (the path param, set directly).
+  const input: Record<string, unknown> = {
+    id,
+    ...queryInput(request, "get_item_detail", ["id"]),
+  };
 
   try {
     const detail = await service.call("get_item_detail", input, {

@@ -5,15 +5,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-  const sessionId = url.searchParams.get("sessionId");
-  const input: Record<string, unknown> = {};
-  if (sessionId !== null) input.sessionId = sessionId;
+  // Read off the operation's own schema (`../_shared/query.ts`).
+  const input = queryInput(request, "my_work");
 
   try {
     const result = await service.call("my_work", input, { caller });

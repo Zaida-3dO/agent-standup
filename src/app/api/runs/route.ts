@@ -11,22 +11,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../_shared/respond";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-
-  // Only parameters actually present are forwarded, so the schema's own
-  // defaults decide every absent case rather than this adapter inventing one.
-  const input: Record<string, unknown> = {};
-  for (const name of ["itemId", "sessionId", "since", "scored"] as const) {
-    const raw = url.searchParams.get(name);
-    if (raw !== null) input[name] = raw;
-  }
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) input.limit = Number.isNaN(Number(limit)) ? limit : Number(limit);
+  // Read off the operation's own schema (`../_shared/query.ts`).
+  const input = queryInput(request, "list_runs");
 
   try {
     const result = await service.call("list_runs", input, { caller });

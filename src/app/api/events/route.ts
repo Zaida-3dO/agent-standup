@@ -15,34 +15,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
-import { parseBooleanParam } from "../_shared/query";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = {};
-
-  const since = url.searchParams.get("since");
-  if (since !== null) input.since = since;
-  const personId = url.searchParams.get("personId");
-  if (personId !== null) input.personId = personId;
-  const unseenOnly = url.searchParams.get("unseenOnly");
-  if (unseenOnly !== null) input.unseenOnly = parseBooleanParam(unseenOnly);
-  const full = url.searchParams.get("full");
-  if (full !== null) input.full = parseBooleanParam(full);
-
-  // `limit` is a number in the schema, so it has to arrive as one. A
-  // non-numeric string is forwarded untouched rather than dropped or
-  // coerced to a default — the schema then refuses it naming `limit`,
-  // which is a better answer than silently serving a different page size
-  // than the caller asked for.
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) {
-    const parsed = Number(limit);
-    input.limit = limit.trim() !== "" && Number.isFinite(parsed) ? parsed : limit;
-  }
+  // Read off the operation's own schema (`../_shared/query.ts`).
+  const input = queryInput(request, "get_events");
 
   try {
     const events = await service.call("get_events", input, { caller });

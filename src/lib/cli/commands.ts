@@ -52,10 +52,6 @@ export interface CommandSpec {
   readonly buildInput: (rest: readonly string[], flags: ParsedArgs["flags"]) => InputResult;
 }
 
-function noInput(): InputResult {
-  return { ok: true, input: {} };
-}
-
 /**
  * Collects the value-carrying flags into an operation input.
  *
@@ -557,7 +553,14 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "info",
     operation: "service_info",
     summary: "What this build exposes, and the limits a caller has to respect.",
-    buildInput: noInput,
+    // Was `noInput`, so `--kind` — the operation's own `kind: z.enum(["read",
+    // "write"]).optional()`, "Restrict the catalogue to one kind" — could
+    // never reach the operation: this is the CLI's only surface for
+    // `service_info` (no HTTP route, waived off MCP), so the field was
+    // unreachable everywhere. `flagsToInput` is the same generic
+    // flag-passthrough every other single-field command here uses; there is
+    // no positional argument to consume first.
+    buildInput: (_rest, flags) => flagsToInput(flags),
   },
   // MILESTONES.md #92 — repo/area/machine/account/person nouns. Kept in their own
   // module (./commands-admin.ts) and appended here as a single spread, per

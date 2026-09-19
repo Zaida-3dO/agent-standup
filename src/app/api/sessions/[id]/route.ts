@@ -7,29 +7,21 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../../items/respond";
-import { parseBooleanParam } from "../../_shared/query";
+import { queryInput } from "../../_shared/query";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const { id } = await context.params;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = { sessionId: id };
-
-  const full = url.searchParams.get("full");
-  if (full !== null) input.full = parseBooleanParam(full);
-
-  // The two caps arrive as numbers or not at all. A non-numeric string is
-  // forwarded untouched so the schema refuses it naming the field, rather
-  // than this adapter quietly substituting a default the caller did not ask
-  // for — the same rule `../../events/route.ts` applies to `limit`.
-  for (const name of ["callLimit", "eventLimit"] as const) {
-    const raw = url.searchParams.get(name);
-    if (raw === null) continue;
-    const parsed = Number(raw);
-    input[name] = raw.trim() !== "" && Number.isFinite(parsed) ? parsed : raw;
-  }
+  // Read off the operation's own schema (`../../_shared/query.ts`) for
+  // every field except `sessionId`, which is the path param under a
+  // different name and so is set directly rather than read from the query
+  // string.
+  const input: Record<string, unknown> = {
+    sessionId: id,
+    ...queryInput(request, "get_session_detail", ["sessionId"]),
+  };
 
   try {
     const result = await service.call("get_session_detail", input, { caller });

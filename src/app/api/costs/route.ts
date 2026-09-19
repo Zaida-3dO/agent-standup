@@ -13,24 +13,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = {};
-
-  const groupBy = url.searchParams.get("groupBy");
-  if (groupBy !== null) input.groupBy = groupBy;
-  const since = url.searchParams.get("since");
-  if (since !== null) input.since = since;
-  const until = url.searchParams.get("until");
-  if (until !== null) input.until = until;
-  const itemId = url.searchParams.get("itemId");
-  if (itemId !== null) input.itemId = itemId;
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) input.limit = Number(limit);
+  // Read off the operation's own schema (`../_shared/query.ts`).
+  const input = queryInput(request, "get_costs");
 
   try {
     const result = await service.call("get_costs", input, { caller });

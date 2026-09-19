@@ -17,38 +17,24 @@ import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { serviceErrorResponse } from "../items/respond";
 import { authenticatedCaller, withRequestId } from "../_shared/respond";
-import { parseBooleanParam } from "../_shared/query";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const url = new URL(request.url);
-  const input: Record<string, unknown> = {};
+  // Read off the operation's own schema (`../_shared/query.ts`) for every
+  // field except `query` itself, which is exempted and read separately below
+  // because this route accepts two URL spellings (`q` and `query`) for one
+  // schema field — a route-specific alias the schema has no way to declare.
+  const input = queryInput(request, "search", ["query"]);
 
   // Read through untouched when absent, so the operation's own schema is
   // what refuses a missing query — with the same code and the same field
   // path every other adapter would produce for the same call.
   const query = url.searchParams.get("q") ?? url.searchParams.get("query");
   if (query !== null) input.query = query;
-  const state = url.searchParams.get("state");
-  if (state !== null) input.state = state;
-  const area = url.searchParams.get("area");
-  if (area !== null) input.area = area;
-  const repo = url.searchParams.get("repo");
-  if (repo !== null) input.repo = repo;
-  const openOnly = url.searchParams.get("openOnly");
-  if (openOnly !== null) input.openOnly = parseBooleanParam(openOnly);
-  // Read for the same reason every other filter here is: the operation
-  // accepts it. Dropping it did not merely ignore a filter — the notice on
-  // an empty result ends "Loop text was not searched; pass includeLoops to
-  // cover it", so a caller who HAD passed it was advised to pass it again,
-  // and a script that trusted `loopMatches: []` concluded a marker did not
-  // exist anywhere when it did.
-  const includeLoops = url.searchParams.get("includeLoops");
-  if (includeLoops !== null) input.includeLoops = parseBooleanParam(includeLoops);
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) input.limit = Number(limit);
 
   try {
     const result = await service.call("search", input, { caller });
