@@ -142,7 +142,11 @@ export const repairStuckProjects = defineOperation({
         rule: "Defaults to false. A call that omits it reports what would change and writes nothing.",
       },
     ],
-    example: { projectId: "inbox", apply: false },
+    // Not the literal "inbox" in the worked example — see create_task's
+    // identical note. The rule above still documents "inbox" as the honest
+    // choice when the destination is genuinely unknown; this example shows
+    // the more common call, where the caller has a real destination.
+    example: { projectId: "<a project id from a project listing>", apply: false },
   },
   async handler(
     ctx: ServiceContext,

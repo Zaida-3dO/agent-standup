@@ -128,7 +128,11 @@ export const retypeToTask = defineOperation({
         rule: "The new parent must exist, must not be in an archived area, and must not be the item itself.",
       },
     ],
-    example: { id: "a-stuck-project-id", projectId: "inbox" },
+    // Not the literal "inbox" in the worked example — see create_task's
+    // identical note. The sentinel stays supported and documented in the
+    // rule above; this example shows the more common call, where the caller
+    // has a real project in hand.
+    example: { id: "a-stuck-project-id", projectId: "<a project id from a project listing>" },
   },
   async handler(
     ctx: ServiceContext,

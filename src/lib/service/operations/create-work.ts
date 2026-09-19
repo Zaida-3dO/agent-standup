@@ -183,7 +183,14 @@ export const createWork = defineOperation({
       body: "The reset link expires too fast.",
       area: "web",
       originType: "auto",
-      projectId: "inbox",
+      // Not the literal "inbox" — that resolves and is a legitimate choice,
+      // but a worked example is what a caller without a real project id
+      // copies verbatim, and copying this one is exactly how the catch-all
+      // project ends up holding work that was never triaged there on
+      // purpose. Look up a real project (get_board, list_items) and pass
+      // its id; "inbox" remains available and stays documented in the rule
+      // above — this example simply shows the more common, real call.
+      projectId: "<a project id from a project listing>",
     },
   },
   // Stryker restore all
