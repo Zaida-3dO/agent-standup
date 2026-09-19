@@ -108,16 +108,22 @@ export class LeaseKeyError extends Error {
 const HOLDER_TYPES: readonly HolderType[] = ["person", "agent"];
 
 /**
- * Characters that cannot appear in a field, because they are the
- * separators.
+ * The character joining the four fields before encoding.
  *
- * Fields are joined with `\u0000` before encoding, which no session id,
- * holder id or holder type can legitimately contain. Rejecting them on the
- * way IN is what keeps decoding unambiguous — without it, a holder id
- * containing the separator would decode into two fields and silently shift
- * every field after it.
+ * **U+001F (ASCII Unit Separator), and deliberately not U+0000.** A NUL
+ * would be the obvious choice and is the one character that cannot work:
+ * Postgres refuses a NUL inside a `text` value outright (`ERROR: null
+ * character not permitted`), so `chr(0)` raises instead of concatenating
+ * and the migration's backfill could not reproduce this encoding at all.
+ * U+001F is legal in `text`, is `chr(31)` in SQL, and is the character
+ * ASCII defines for exactly this job.
+ *
+ * No session id, holder id or holder type can legitimately contain it.
+ * Rejecting one that does, on the way IN, is what keeps decoding
+ * unambiguous — without it a holder id carrying the separator would decode
+ * into two fields and silently shift every field after it.
  */
-const FIELD_SEPARATOR = "\u0000";
+const FIELD_SEPARATOR = "\u001f";
 
 function assertEncodable(field: string, name: keyof LeaseIdentity): void {
   if (field.length === 0) {
@@ -126,8 +132,8 @@ function assertEncodable(field: string, name: keyof LeaseIdentity): void {
   if (field.includes(FIELD_SEPARATOR)) {
     throw new LeaseKeyError(
       "malformed",
-      `\`${name}\` contains a NUL character, which a lease key uses as its field separator ` +
-        `and therefore cannot carry.`,
+      `\`${name}\` contains a unit-separator character (U+001F), which a lease key uses ` +
+        `as its field separator and therefore cannot carry.`,
     );
   }
 }

@@ -8,6 +8,8 @@
 // a run can silently skip. The database-backed consequences (that a claimed
 // row carries the key, that the backfill derives the same string) belong to
 // the DB-gated files and are asserted there.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -78,7 +80,7 @@ describe("encodeLeaseKey / decodeLeaseKey", () => {
   });
 
   it("refuses a field containing the separator rather than encoding it ambiguously", () => {
-    expect(() => encodeLeaseKey(identity({ holderId: "a\u0000b" }))).toThrow(LeaseKeyError);
+    expect(() => encodeLeaseKey(identity({ holderId: "a\u001fb" }))).toThrow(LeaseKeyError);
   });
 
   it("refuses a holder type outside the vocabulary", () => {
@@ -132,7 +134,7 @@ describe("encodeLeaseKey / decodeLeaseKey", () => {
     it("a body altered under an unchanged checksum", () => {
       const [prefix, body, sum] = encodeLeaseKey(identity()).split(".") as [string, string, string];
       const tamperedBody = Buffer.from(
-        ["root-session-1", "worker-session-2", "agent", "somebody-else"].join("\u0000"),
+        ["root-session-1", "worker-session-2", "agent", "somebody-else"].join("\u001f"),
         "utf8",
       ).toString("base64url");
       expect(body).not.toBe(tamperedBody);
@@ -145,6 +147,143 @@ describe("encodeLeaseKey / decodeLeaseKey", () => {
   it("looksLikeLeaseKey tells a key apart from a session id", () => {
     expect(looksLikeLeaseKey(encodeLeaseKey(identity()))).toBe(true);
     expect(looksLikeLeaseKey("85a5b0b7-a198-48cc-b877-60681836a992")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The migration's backfill computes this same key in SQL. Two implementations
+// of one encoding is exactly the arrangement that drifts, so the
+// correspondence is asserted rather than trusted.
+// ---------------------------------------------------------------------------
+
+describe("the migration backfill agrees with the encoder", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260919090000_assignment_lease_key/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  /**
+   * The migration with its comments stripped.
+   *
+   * Every assertion below reads THIS rather than the raw file. The
+   * distinction is not pedantry: this migration's comments quote the SQL
+   * they explain, so a `toContain` against the raw text passes on the
+   * strength of a comment even after the statement it describes has been
+   * deleted. Verified by mutation — removing the real `WHERE` clause left
+   * the raw-text version of this suite entirely green.
+   */
+  const statements = migration
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("--"))
+    .join("\n");
+
+  /**
+   * The backfill's SQL expression, reimplemented in JavaScript.
+   *
+   * This is NOT a second copy of the encoder — it is a transcription of
+   * what Postgres does with the SQL in the migration file, step for step:
+   * `convert_to(..., 'UTF8')`, `encode(..., 'base64')`, `replace` to strip
+   * MIME line wrapping, `translate('+/', '-_')`, `rtrim('=')`, and
+   * `substr(encode(sha256(...), 'hex'), 1, 8)`. If the two agree on values
+   * that exercise every one of those steps, the SQL and the encoder produce
+   * the same string.
+   */
+  /**
+   * The separator and the `translate` mapping are READ OUT OF THE SQL
+   * rather than restated here, so this transcription follows the migration
+   * instead of merely agreeing with it once.
+   *
+   * That is what makes these assertions able to fail: with the arguments
+   * hardcoded, changing `translate('+/', '-_')` to anything else left this
+   * suite green, because the transcription went on doing what the SQL used
+   * to do. Both were checked by mutation.
+   */
+  const separatorCode = Number(/chr\((\d+)\)/.exec(statements)?.[1]);
+  // The two single-quoted arguments that CLOSE the `translate(...)` call —
+  // matched from its closing paren backwards, because `translate`'s first
+  // argument is the whole nested `replace(encode(...))` expression and a
+  // forward match would capture that inner call's quotes instead. Getting
+  // this wrong is not silent: the transcription then drops characters and
+  // the comparison below fails loudly, which is how it was caught.
+  const translateArgs = /'([^']*)',\s*'([^']*)'\s*\)\s*,\s*\n\s*'='/.exec(statements);
+
+  function asTheMigrationComputesIt(id: LeaseIdentity): string {
+    const payload = [id.rootSessionId, id.sessionId, id.holderType, id.holderId].join(
+      String.fromCharCode(separatorCode),
+    );
+    const bytes = Buffer.from(payload, "utf8");
+
+    const [, from = "", to = ""] = translateArgs ?? [];
+    let body = bytes.toString("base64").replace(/\n/g, "");
+    body = [...body]
+      .map((char) => {
+        const at = from.indexOf(char);
+        return at === -1 ? char : (to[at] ?? "");
+      })
+      .join("");
+    body = body.replace(/=+$/, "");
+
+    return `lk1.${body}.${createHash("sha256").update(bytes).digest("hex").slice(0, 8)}`;
+  }
+
+  it.each([
+    ["a realistic uuid-and-slug claim", identity()],
+    [
+      "single characters, which pad hardest in base64",
+      identity({ rootSessionId: "a", sessionId: "b", holderType: "person", holderId: "c" }),
+    ],
+    [
+      "values long enough that Postgres would wrap base64 output",
+      identity({
+        rootSessionId: "r".repeat(80),
+        sessionId: "s".repeat(80),
+        holderId: "h".repeat(80),
+      }),
+    ],
+    [
+      "multibyte text, where convert_to and Buffer must agree",
+      identity({ rootSessionId: "café-root", sessionId: "sesión-2", holderId: "holder-ü" }),
+    ],
+  ])("matches on %s", (_label, id) => {
+    expect(asTheMigrationComputesIt(id)).toBe(encodeLeaseKey(id));
+  });
+
+  it("translates standard base64 into base64url, rather than some other mapping", () => {
+    // The correspondence test above cannot catch a wrong `translate`: the
+    // transcription reads its arguments out of the SQL, so it follows the
+    // migration into being wrong and the two still agree. Confirmed by
+    // mutation — changing `translate('+/', '-_')` to `translate('', '')`
+    // left every `matches on ...` case green.
+    //
+    // So the MAPPING ITSELF is asserted here, against the only values that
+    // make the output base64url and therefore decodable by
+    // `decodeLeaseKey`. This is a property of the answer, not a restatement
+    // of the question.
+    expect(translateArgs).not.toBeNull();
+    const [, from, to] = translateArgs ?? [];
+    expect(from).toBe("+/");
+    expect(to).toBe("-_");
+  });
+
+  it("uses chr(31) and never chr(0), which Postgres refuses inside text", () => {
+    // The mistake this catches cost a CI round: `chr(0)` raises `null
+    // character not permitted` rather than concatenating, so the whole
+    // backfill statement fails and the migration cannot apply at all.
+    // Asserting against the migration's own text means a later edit that
+    // reaches for the intuitive separator fails here instead of in CI.
+    expect(statements).toContain("chr(31)");
+    expect(statements).not.toContain("chr(0)");
+  });
+
+  it("guards its backfill so a re-run rewrites nothing", () => {
+    expect(statements).toContain('WHERE "leaseKey" IS NULL');
+  });
+
+  it("adds the column without a NOT NULL constraint that would need a default", () => {
+    expect(statements).toContain('ALTER TABLE "Assignment" ADD COLUMN "leaseKey" TEXT;');
   });
 });
 

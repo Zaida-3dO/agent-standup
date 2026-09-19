@@ -43,7 +43,9 @@ ALTER TABLE "Assignment" ADD COLUMN "leaseKey" TEXT;
 -- `encodeLeaseKey` (src/lib/lease-key.ts), expressed in SQL. The key is a
 -- pure derivation of four columns:
 --
---     lk1.<base64url(root NUL session NUL holderType NUL holderId)>.<sha256 prefix>
+--     lk1.<base64url(root US session US holderType US holderId)>.<sha256 prefix>
+--
+-- where US is U+001F, the ASCII unit separator.
 --
 -- Doing it in SQL rather than in a script is deliberate. A script would
 -- need a database connection, a deploy step of its own, and a decision
@@ -77,9 +79,14 @@ ALTER TABLE "Assignment" ADD COLUMN "leaseKey" TEXT;
 -- runs Postgres 17 (docker-compose.yml, and the CI service container), so
 -- adding an extension here would be a dependency taken on for nothing.
 --
--- `chr(0)` is the field separator, matching `FIELD_SEPARATOR` in
--- `lease-key.ts`. Nothing on this table can legitimately contain it, and
--- the encoder refuses a field that does.
+-- **`chr(31)` is the field separator, and the choice is load-bearing.**
+-- It matches `FIELD_SEPARATOR` in `lease-key.ts`, where the reasoning is
+-- written up in full. The short version: U+0000 is the intuitive separator
+-- and is impossible here, because Postgres refuses a NUL inside a `text`
+-- value outright — `chr(0)` raises `ERROR: null character not permitted`
+-- rather than concatenating, so this whole statement would fail. U+001F is
+-- legal in `text` and is what ASCII defines for this. Nothing on this table
+-- can legitimately contain it, and the encoder refuses a field that does.
 UPDATE "Assignment"
 SET "leaseKey" =
   'lk1.'
@@ -88,8 +95,8 @@ SET "leaseKey" =
          replace(
            encode(
              convert_to(
-               "rootSessionId" || chr(0) || "sessionId" || chr(0)
-                 || "holderType"::text || chr(0) || "holderId",
+               "rootSessionId" || chr(31) || "sessionId" || chr(31)
+                 || "holderType"::text || chr(31) || "holderId",
                'UTF8'
              ),
              'base64'
@@ -105,8 +112,8 @@ SET "leaseKey" =
        encode(
          sha256(
            convert_to(
-             "rootSessionId" || chr(0) || "sessionId" || chr(0)
-               || "holderType"::text || chr(0) || "holderId",
+             "rootSessionId" || chr(31) || "sessionId" || chr(31)
+               || "holderType"::text || chr(31) || "holderId",
              'UTF8'
            )
          ),
