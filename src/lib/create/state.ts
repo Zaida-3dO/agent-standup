@@ -142,9 +142,9 @@ export function isPristine(draft: QuickCreateDraft): boolean {
  * input:
  *
  *  * **`title` is normalised on the way in.** `commonCreateShape` applies
- *    `.trim()` and then `normalizeEmDash`, so what is stored is not always
- *    what was typed. A preview of the raw input would be a preview of the
- *    wrong string.
+ *    `.trim()`, and the `insertItem` handler then applies `normalizeEmDash`,
+ *    so what is stored is not always what was typed. A preview of the raw
+ *    input would be a preview of the wrong string.
  *  * **The findings arrive before submit, not after.** `titleAdviceFor`
  *    already attaches this advice to a *successful* create — by which point
  *    the item exists and the person has moved on. Showing the same findings
@@ -162,7 +162,7 @@ export interface TitlePreview {
 }
 
 /**
- * Normalises an em dash the way `commonCreateShape` does on the way in.
+ * Normalises an em dash the way the `insertItem` handler does on the way in.
  *
  * Re-implemented rather than imported for the reason `INBOX_PROJECT_ID` is:
  * `@/lib/text-normalize` is reachable, but the preview only needs to agree
