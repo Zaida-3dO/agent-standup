@@ -39,6 +39,14 @@ export async function GET(request: Request) {
   if (repo !== null) input.repo = repo;
   const openOnly = url.searchParams.get("openOnly");
   if (openOnly !== null) input.openOnly = parseBooleanParam(openOnly);
+  // Read for the same reason every other filter here is: the operation
+  // accepts it. Dropping it did not merely ignore a filter — the notice on
+  // an empty result ends "Loop text was not searched; pass includeLoops to
+  // cover it", so a caller who HAD passed it was advised to pass it again,
+  // and a script that trusted `loopMatches: []` concluded a marker did not
+  // exist anywhere when it did.
+  const includeLoops = url.searchParams.get("includeLoops");
+  if (includeLoops !== null) input.includeLoops = parseBooleanParam(includeLoops);
   const limit = url.searchParams.get("limit");
   if (limit !== null) input.limit = Number(limit);
 

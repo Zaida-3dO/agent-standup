@@ -37,6 +37,8 @@ interface Created {
   title: string;
   /** Present only when the title departs from the convention (MILESTONES.md #131). */
   titleAdvice?: string;
+  /** Present only when `projectId` resolved to the inbox catch-all. */
+  projectAdvice?: string;
 }
 
 interface Rejection {
@@ -823,6 +825,113 @@ describeIfDb("explicit create operations", () => {
         expect(titleRule, `${name} states the title convention`).toBeDefined();
         expect(titleRule?.rule).toContain("body");
       }
+    });
+
+    // ── The em-dash rewrite, said out loud (external feedback batch,
+    // 2026-09-17) ──────────────────────────────────────────────────────────
+    //
+    // The rewrite itself (text-normalize.ts) is UNCHANGED by this suite —
+    // these cases pin its behaviour, not alter it. What is new is only that
+    // a caller is told.
+
+    // Fails if the stored title stops being rewritten, or if the advisory
+    // stops firing when it is. A title carrying only an em dash and nothing
+    // else the convention flags must still get a `titleAdvice`, or the
+    // rewrite reverts to being silent.
+    it("rewrites an em dash to a hyphen and says so in titleAdvice", async () => {
+      const item = await call(
+        "create_project",
+        base("Fix the login flow — it drops the redirect", "titles"),
+      );
+      expect(item.title).toBe("Fix the login flow - it drops the redirect");
+      expect(item.titleAdvice).toBeDefined();
+      expect(item.titleAdvice).toContain("em dash");
+    });
+
+    // The asymmetry the reporter noticed and was right about: an en dash is
+    // a different character (a range, e.g. "2024–2026") and normalizeEmDash
+    // is scoped to U+2014 alone. Fails if someone "fixes" the asymmetry by
+    // widening the rewrite, or if the advisory fires on a title that was
+    // never touched.
+    it("leaves an en dash untouched and says nothing about it", async () => {
+      const item = await call(
+        "create_project",
+        base("Support the 2024–2026 fiscal range", "titles"),
+      );
+      expect(item.title).toBe("Support the 2024–2026 fiscal range");
+      expect(item.titleAdvice).toBeUndefined();
+    });
+
+    // The board is right here (item body's own framing): an ampersand is
+    // ordinary punctuation, stored verbatim, and never mistaken for a
+    // rewrite target. Fails if any normalisation reaches past the em dash.
+    it("stores an ampersand verbatim and says nothing about it", async () => {
+      const item = await call(
+        "create_project",
+        base("Reconcile orders & refunds nightly", "titles"),
+      );
+      expect(item.title).toBe("Reconcile orders & refunds nightly");
+      expect(item.titleAdvice).toBeUndefined();
+    });
+
+    // `update_item` normalises identically to a create (update-item.ts) and
+    // was the surface the reporter called "not defeatable from the client".
+    // Fails if the update path's rewrite ever goes back to being silent.
+    it("says so on update_item too, not only on create", async () => {
+      const project = await call(
+        "create_project",
+        base("Reconcile orders and refunds nightly", "titles"),
+      );
+      const updated = await call("update_item", {
+        id: project.id,
+        title: "Reconcile orders — and refunds — nightly",
+      });
+      expect(updated.title).toBe("Reconcile orders - and refunds - nightly");
+      expect(updated.titleAdvice).toBeDefined();
+      expect(updated.titleAdvice).toContain("em dash");
+    });
+  });
+
+  // ── The catch-all project literal, advised rather than silent (same
+  // batch) ───────────────────────────────────────────────────────────────
+  //
+  // `"inbox"` stays fully supported — this suite does not remove it, only
+  // asserts that resolving to it is now visible on the response.
+  describe("the catch-all project advisory", () => {
+    // Fails if `projectAdvice` stops firing when a create resolves
+    // `projectId` to the inbox sentinel — the whole point of #131's
+    // mechanism being reused for this field.
+    it("says so when create_task resolves projectId to the inbox", async () => {
+      const task = await call("create_task", {
+        ...base("File this for triage later", "catch-all"),
+        projectId: "inbox",
+      });
+      expect(task.projectAdvice).toBeDefined();
+      expect(task.projectAdvice).toContain("inbox");
+    });
+
+    // Fails if a create naming a real project is advised anyway, which
+    // would make the note meaningless noise on the overwhelmingly common
+    // path.
+    it("says nothing when a real project is named", async () => {
+      const project = await call("create_project", base("A real destination", "catch-all"));
+      const task = await call("create_task", {
+        ...base("Filed under the real project", "catch-all"),
+        projectId: project.id,
+      });
+      expect(task.projectAdvice).toBeUndefined();
+    });
+
+    // `create_work` dispatches to `create_task`'s own handler and returns
+    // its result unedited (create-work.ts) — fails if that delegation ever
+    // stops carrying the advisory through.
+    it("carries the advisory through create_work's task delegation", async () => {
+      const task = await call("create_work", {
+        type: "task",
+        ...base("Filed via create_work with no project", "catch-all"),
+        projectId: "inbox",
+      });
+      expect(task.projectAdvice).toBeDefined();
     });
   });
 });

@@ -68,11 +68,21 @@ describe("the duplicated constants agree with the modules that own them", () => 
     expect(DEFAULT_PRIORITY).toBe(parsed.priority);
   });
 
-  it("previews the title exactly as the schema will normalise it", () => {
-    // The preview promises to show what will be STORED. The schema applies
-    // `.trim()` then `normalizeEmDash`; the preview re-implements that. A
-    // table rather than one case, because the two must agree on every shape
-    // — em dash at the edge, in the middle, absent, and repeated.
+  it("previews the title exactly as the normaliser will rewrite it", () => {
+    // The preview promises to show what will be STORED: `.trim()` then
+    // `normalizeEmDash`, and the preview re-implements both. A table rather
+    // than one case, because the two must agree on every shape — em dash at
+    // the edge, in the middle, absent, and repeated.
+    //
+    // Checked directly against `normalizeEmDash` rather than against the
+    // schema's own `.parse()`. The schema's `title` field applies `.trim()`
+    // only; the em-dash rewrite lives in `insertItem`/`update_item`'s
+    // handlers (create-core.ts, update-item.ts), which is where `titleAdvice`
+    // needs the pre-rewrite string to say whether the rewrite happened.
+    // `createProject.input.parse(...).title` is therefore trimmed, and
+    // em-dash rewriting is a separate step this suite does not own —
+    // asserting it here would pin an implementation detail rather than the
+    // actual promise ("the preview matches what gets stored").
     const inputs = [
       "  padded either side  ",
       "an em—dash in the middle",
@@ -83,17 +93,23 @@ describe("the duplicated constants agree with the modules that own them", () => 
       "  —mixed padding and dash— ",
     ];
     for (const input of inputs) {
-      const bySchema = createProject.input.parse({
-        title: input,
-        body: "",
-        area: "web",
-        originType: "auto",
-      }).title;
-      expect(titlePreview(input).text).toBe(bySchema);
-      // And the same fact stated against the normaliser directly, so a
-      // failure says which half disagreed.
       expect(titlePreview(input).text).toBe(normalizeEmDash(input.trim()));
     }
+  });
+
+  it("the schema trims title but leaves the em-dash rewrite to the handler", () => {
+    // Pins the split explicitly: `.parse()` alone trims but does not
+    // rewrite. Fails if the transform is ever restored to the schema
+    // WITHOUT restoring a way to tell `insertItem`/`update_item` whether it
+    // fired — which is exactly the trap that produced a silent rewrite in
+    // the first place.
+    const parsed = createProject.input.parse({
+      title: "  an em—dash, padded  ",
+      body: "",
+      area: "web",
+      originType: "auto",
+    });
+    expect(parsed.title).toBe("an em—dash, padded");
   });
 });
 

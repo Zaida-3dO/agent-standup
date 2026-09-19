@@ -307,11 +307,23 @@ export function responseTooLargeMessage(
     narrower === undefined
       ? `Ask for less, or use ${invocationFor("search", surface, bindingsFor("search"))} to find one specific item.`
       : `Call ${named} with ${narrower}.`;
+  // **What `full: false` costs, stated only where this refusal actually
+  // recommends it.** The slim shape returns fewer FIELDS, not merely smaller
+  // rows — and the fields it omits are rendered as `null` rather than
+  // left out, so "this item has no branch" and "this view does not
+  // carry branch" are the same six characters. A caller who took this
+  // refusal's own advice read 26 populated branches as empty and reported
+  // success. Naming the cost here does not weaken the refusal: the response
+  // is still withheld whole, never truncated.
+  const slimCaveat =
+    narrower !== undefined && narrower.includes("full: false")
+      ? " Note that `full: false` returns fewer FIELDS, not just smaller rows — a field the slim shape does not carry is reported as `null`, which is indistinguishable from a field that is genuinely empty."
+      : "";
   return (
     `This ${named} response is ${size.toLocaleString("en-GB")} characters, ` +
     `over the ${MAX_RESPONSE_CHARS.toLocaleString("en-GB")}-character limit, so it was not returned — ` +
     `it will not be truncated for you, because a partial result you cannot identify as partial is worse ` +
-    `than none. ${remedy}`
+    `than none. ${remedy}${slimCaveat}`
   );
 }
 
