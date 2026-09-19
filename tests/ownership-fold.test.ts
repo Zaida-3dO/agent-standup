@@ -213,14 +213,35 @@ describeIfDb("ownership, against Postgres", () => {
     });
 
     it("refuses a claim missing a field it cannot run without, naming it", async () => {
+      // `role` is the one field no shape supplies, so its absence is still
+      // a plain schema refusal. `holderType`, `holderId` and `sessionId`
+      // are deliberately NOT in this list any more: they are carried inside
+      // `leaseKey`, so requiring them here would refuse a correct key-only
+      // claim before the delegate ever ran.
       const item = await makeItem();
       const refusal = await refusalFrom(
-        runtime.call("ownership", { action: "claim", itemId: item.id }),
+        runtime.call("ownership", {
+          action: "claim",
+          itemId: item.id,
+          leaseKey: "lk1.aaaa.bbbb",
+        }),
       );
       expect(refusal.code).toBe("invalid_input");
-      expect(refusal.fields).toEqual(
-        expect.arrayContaining(["role", "holderType", "holderId", "sessionId"]),
+      expect(refusal.fields).toEqual(expect.arrayContaining(["role"]));
+    });
+
+    it("refuses a claim that states no identity at all, under the lease-key guard", async () => {
+      // A presence list cannot express this, which is why the check sits
+      // in the delegate instead: asking "is each named field present"
+      // accepts a partial legacy shape such as `sessionId` alone, while
+      // this asks whether EITHER shape is complete.
+      const item = await makeItem();
+      const refusal = await refusalFrom(
+        runtime.call("ownership", { action: "claim", itemId: item.id, role: "builder" }),
       );
+      expect(refusal.code).toBe("guard_rejected");
+      expect(refusal.guard).toBe("claims.lease_key_required");
+      expect(refusal.fields).toEqual(expect.arrayContaining(["leaseKey"]));
     });
   });
 
@@ -316,12 +337,34 @@ describeIfDb("ownership, against Postgres", () => {
       // Asserted on the message because an unrecognised key is reported
       // with an empty path, so `fields` is `[]` for this class while the
       // sentence names the key.
+      //
+      // This used `leaseKey` as its example until that became a real field
+      // on this tool. The example has to be a name the schema genuinely
+      // does not know, or the test asserts nothing.
       const refusal = await refusalFrom(
         runtime.call("ownership", {
           action: "release",
           itemId: "item-1",
           sessionId: "sess-1",
-          leaseKey: "not-a-field-here",
+          leeseKey: "not-a-field-here",
+        }),
+      );
+      expect(refusal.code).toBe("invalid_input");
+      expect(refusal.message).toContain("leeseKey");
+    });
+
+    it("refuses `leaseKey` on an action that does not use it, rather than ignoring it", async () => {
+      // `leaseKey` is meaningful on `claim` and meaningless on `release`,
+      // and the fold's schema is one object shared by all three actions —
+      // so without this, a key passed to `release` is accepted and silently
+      // dropped. A caller that believed it was releasing a specific lease
+      // would get no signal that the field did nothing.
+      const refusal = await refusalFrom(
+        runtime.call("ownership", {
+          action: "release",
+          itemId: "item-1",
+          sessionId: "sess-1",
+          leaseKey: "lk1.aaaa.bbbb",
         }),
       );
       expect(refusal.code).toBe("invalid_input");

@@ -175,6 +175,46 @@ const inputSchema = z
 
 export type OwnershipInput = z.infer<typeof inputSchema>;
 
+/**
+ * Fields that mean something to one action and nothing to the others.
+ *
+ * The fold's schema is ONE object shared by all three actions, so a field
+ * only `claim` uses is structurally acceptable on `release` — and because
+ * the `release` branch does not forward it, the delegate's own `.strict()`
+ * parse never sees it either. Without this table such a field is accepted
+ * and silently dropped, which is the one outcome the strict schema exists
+ * to prevent: a caller that believed it was releasing a particular lease
+ * would get no signal that the field did nothing.
+ */
+const ACTION_ONLY_FIELDS: Readonly<Record<string, OwnershipAction>> = Object.freeze({
+  leaseKey: "claim",
+  rootSessionId: "claim",
+  parentSessionId: "claim",
+  role: "claim",
+  roleCustom: "claim",
+});
+
+/** Refuses a field that belongs to a different action than the one asked for. */
+function rejectForeignFields(input: OwnershipInput): void {
+  const foreign = Object.entries(ACTION_ONLY_FIELDS)
+    .filter(
+      ([field, owner]) =>
+        owner !== input.action && input[field as keyof OwnershipInput] !== undefined,
+    )
+    .map(([field]) => field);
+
+  if (foreign.length === 0) return;
+  const list = foreign.map((field) => `\`${field}\``).join(" and ");
+  throw new InvalidInputError(
+    `ownership action "${input.action}" does not accept ${list}, which ${
+      foreign.length === 1 ? "belongs" : "belong"
+    } to action "claim". Remove ${list}, or use the action that takes ${
+      foreign.length === 1 ? "it" : "them"
+    }.`,
+    { fields: foreign },
+  );
+}
+
 /** Refuses an action that is missing a field it cannot run without. */
 function requireFields(input: OwnershipInput): void {
   const missing = OWNERSHIP_ACTION_FIELDS[input.action].required.filter(
@@ -220,6 +260,7 @@ export const ownership = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: OwnershipInput): Promise<unknown> {
+    rejectForeignFields(input);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()`

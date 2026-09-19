@@ -280,11 +280,18 @@ describeIfDb("MCP session tools, over the real transport and a real database", (
       });
     });
 
-    it("rejects a malformed claim (missing required fields) as invalid_input, through MCP", async () => {
+    it("refuses a claim stating no identity, through MCP, with the guard intact", async () => {
+      // The refusal reaches an MCP caller as the guard rejection it is,
+      // rather than being flattened into a generic schema error on the way
+      // out — which is what makes it actionable from the other side of the
+      // fold.
       const itemId = await seedItem();
       const result = await callOwnership("claim", { itemId, role: "builder" });
       expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({ code: "invalid_input" });
+      expect(result.structuredContent).toMatchObject({
+        code: "guard_rejected",
+        guard: "claims.lease_key_required",
+      });
     });
   });
 

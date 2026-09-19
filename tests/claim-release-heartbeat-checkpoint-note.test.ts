@@ -156,10 +156,31 @@ describeIfDb("claim / release / heartbeat / checkpoint / note — against Postgr
       expect((error as { code: string }).code).toBe("conflict");
     });
 
-    it("rejects malformed input (missing required field) as invalid_input", async () => {
+    it("refuses a claim that states no identity at all, naming what to pass", async () => {
+      // A claim carrying neither a `leaseKey` nor the legacy identity
+      // fields cannot say which crew it belongs to or who is making it.
+      // That is refused by the lease-key guard rather than accepted with
+      // the crew defaulted to the caller's own session, which is the
+      // misattribution the key exists to prevent.
       const itemId = await seedItem();
       const error = await runtime
         .call("claim", { itemId, role: "builder" })
+        .catch((e: unknown) => e);
+      expect((error as { code: string }).code).toBe("guard_rejected");
+      expect((error as { guard: string }).guard).toBe("claims.lease_key_required");
+      // The refusal has to be actionable by a dispatched agent that was
+      // told nothing, so it names both the field and where to get one.
+      expect((error as { message: string }).message).toContain("leaseKey");
+    });
+
+    it("still rejects a claim whose schema is malformed as invalid_input", async () => {
+      // The guard above covers the MISSING-identity case only. A field
+      // present but of the wrong type is still a schema failure, and must
+      // not be reported as a guard rejection — otherwise the two classes
+      // become indistinguishable to a caller deciding what to fix.
+      const itemId = await seedItem();
+      const error = await runtime
+        .call("claim", { itemId, role: "no-such-role", leaseKey: "lk1.x.y" })
         .catch((e: unknown) => e);
       expect((error as { code: string }).code).toBe("invalid_input");
     });
