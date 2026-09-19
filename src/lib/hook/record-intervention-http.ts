@@ -22,6 +22,19 @@
 // evidence loop, not the guard" — the same fail-open posture `/hook`
 // itself takes, applied to something even less critical than the decision.
 //
+// ── …but a permanent refusal is still worth a line ──────────────────────
+//
+// The boolean stays the boolean — a lost capture is still the accepted
+// cost, and nothing here retries or blocks. What was missing is that a
+// permanent `4xx` (a misconfigured token, a shape the server has stopped
+// accepting) looked byte-identical from outside to a clean, silent
+// success: both are `{ ok: false, recorded: [] }` with nothing written
+// anywhere a person would see. `ask-http.ts` and `flush-http.ts` both
+// solved this the same way — an `onFailure` callback that fires only on a
+// permanent status, never on a `5xx` or a network error, which are
+// ordinary and transient. This adapter now matches them rather than being
+// the one sender on this path that stays silent forever.
+//
 // ── Deliberately not spooled ────────────────────────────────────────────
 //
 // `SpooledToolCall` (`./spool-record.ts`) carries no `findings`, no
@@ -92,6 +105,39 @@ export interface RecordInterventionHttpOptions {
   readonly timeoutMs?: number;
   /** Creates the abort signal for the timeout. Injected so the timeout is testable. */
   readonly timeoutSignal?: (ms: number) => AbortSignal | undefined;
+  /**
+   * Reports a failure that will recur identically until someone acts.
+   *
+   * A callback rather than a return value, for the same reason
+   * `ask-http.ts` and `flush-http.ts` both use one: `RecordInterventionResult`
+   * must stay a shape a caller can act on without interpreting a status, and
+   * this is how the *reason* escapes without widening that contract.
+   *
+   * Only a permanent `4xx` is reported. A `5xx` or an unreachable server is
+   * the ordinary condition of a server having a bad time or a laptop between
+   * networks, and is not worth a line on every capture — see `isPermanent`.
+   */
+  readonly onFailure?: (failure: RecordInterventionFailure) => void;
+}
+
+/** Why one send did not produce a recorded write. */
+export interface RecordInterventionFailure {
+  /** The HTTP status the server answered with. */
+  readonly status: number;
+}
+
+/**
+ * `4xx` other than the two that are genuinely transient.
+ *
+ * Identical in meaning to `ask-http.ts`'s and `flush-http.ts`'s own
+ * classifiers, and deliberately spelled the same way: `408` and `429` are
+ * `4xx` by number and transient by meaning, so reporting them as
+ * misconfiguration would cry wolf about a timeout or a rate limit that the
+ * next call succeeds through.
+ */
+function isPermanent(status: number): boolean {
+  if (status === 408 || status === 429) return false;
+  return status >= 400 && status < 500;
 }
 
 /** What one call posts: one session's captures from one decision. */
@@ -195,6 +241,9 @@ export function readRecordedFirings(body: unknown): RecordedFiring[] {
  * had to enumerate failure modes could forget one and treat it as success,
  * and here that would only ever cost a log line no one reads, since
  * nothing retries a failed capture the way a flush retries a failed batch.
+ * The boolean itself is unchanged by `onFailure` below — that callback is
+ * how a *permanent* refusal also gets a line on stderr, not a second way of
+ * answering the call.
  *
  * **An unreadable body is not a failed send.** The rows were written — the
  * server said so with its status — and reporting `ok: false` would tell a
@@ -230,7 +279,10 @@ export function createRecordInterventionHttp(
           ...(signal === undefined ? {} : { signal }),
         },
       );
-      if (!response.ok) return { ok: false, recorded: [] };
+      if (!response.ok) {
+        if (isPermanent(response.status)) options.onFailure?.({ status: response.status });
+        return { ok: false, recorded: [] };
+      }
 
       // The body is read inside its own `try`, so a server that answered
       // successfully with something unparseable is still reported as the
