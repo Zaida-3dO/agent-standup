@@ -35,6 +35,7 @@
 // atomically, but the transaction survives to explain itself.
 import { ConflictError, GuardRejectedError } from "./service/errors";
 import { appendEvent } from "./events";
+import { encodeLeaseKey } from "./lease-key";
 import type { TransactionHandle } from "./service/context";
 
 /** The roles an assignment can hold. Mirrors `Role` in schema.prisma. */
@@ -68,6 +69,17 @@ export interface ClaimInput {
    * third possibility to represent.
    */
   readonly rootSessionId?: string | null;
+  /**
+   * The lease key this claim is made under (src/lib/lease-key.ts).
+   *
+   * Resolved by `resolveLease` before the call reaches here, so by this
+   * point it is always present and always agrees with the four identity
+   * fields beside it. It is stored so a row records the key it was claimed
+   * with rather than only a key recomputable from it. Both routes yield the
+   * same string while one encoding is in play, and storing it is what keeps
+   * a change of encoding auditable rather than silent.
+   */
+  readonly leaseKey?: string | null;
   readonly machine: string;
   readonly pid?: number | null;
   readonly branch?: string | null;
@@ -86,6 +98,8 @@ export interface Assignment {
   readonly sessionId: string;
   readonly parentSessionId: string | null;
   readonly rootSessionId: string;
+  /** The lease key this claim was made under. Null on rows predating it. */
+  readonly leaseKey: string | null;
   readonly machine: string;
   readonly pid: number | null;
   readonly branch: string | null;
@@ -224,10 +238,25 @@ export function assertRoleCustom(role: Role, roleCustom: string | null | undefin
 export async function claimItem(db: TransactionHandle, input: ClaimInput): Promise<Assignment> {
   assertRoleCustom(input.role, input.roleCustom);
 
-  // A root session points at itself, so an omitted root means this claim is
-  // the root of its own tree. Resolved once, here, and used for both the
+  // The crew this claim belongs to, resolved once and used for both the
   // crew check and the row — otherwise the check and the write could
   // disagree about which crew this claim belongs to.
+  //
+  // **A request never reaches this line with its crew unresolved.**
+  // `resolveLease` (src/lib/lease-resolution.ts) decides identity for every
+  // operation-borne claim, and refuses one that states none. That matters
+  // because the fallback below is dangerous on its own terms: for a
+  // dispatched agent it is always wrong, it fires on an OMISSION rather
+  // than on a bad value, and the resulting misattribution is invisible in
+  // the result. Refusing is the only safe answer to an absent identity, and
+  // it is made there rather than here.
+  //
+  // The fallback survives HERE for callers that reach `claimItem` directly
+  // — the importer and the tests below construct a `ClaimInput` without
+  // passing through an operation. Those callers supply
+  // historical rows whose root is genuinely their own session, so the
+  // behaviour is right for them; what changed is that no *request* can
+  // reach this line without having been resolved first.
   const rootSessionId = input.rootSessionId ?? input.sessionId;
 
   assertSameCrew(await liveAssignments(db, input.itemId), rootSessionId);
@@ -239,12 +268,12 @@ export async function claimItem(db: TransactionHandle, input: ClaimInput): Promi
   const inserted = await db.$queryRawUnsafe<Assignment[]>(
     `INSERT INTO "Assignment" (
        "id", "itemId", "role", "roleCustom", "holderType", "holderId",
-       "sessionId", "parentSessionId", "rootSessionId", "machine",
+       "sessionId", "parentSessionId", "rootSessionId", "leaseKey", "machine",
        "pid", "branch", "worktree", "model", "effort"
      )
      VALUES (
        gen_random_uuid(), $1, $2::"Role", $3, $4::"HolderType", $5,
-       $6, $7, $8, $9, $10, $11, $12, $13, $14
+       $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
      )
      ON CONFLICT DO NOTHING
      RETURNING *`,
@@ -256,6 +285,17 @@ export async function claimItem(db: TransactionHandle, input: ClaimInput): Promi
     input.sessionId,
     input.parentSessionId ?? null,
     rootSessionId,
+    // Derived when the caller did not supply one, so a row written through
+    // a direct `claimItem` call still carries a key rather than a hole. The
+    // derivation is the same pure function the migration's backfill uses,
+    // so both producers agree byte for byte.
+    input.leaseKey ??
+      encodeLeaseKey({
+        rootSessionId,
+        sessionId: input.sessionId,
+        holderType: input.holderType,
+        holderId: input.holderId,
+      }),
     input.machine,
     input.pid ?? null,
     input.branch ?? null,

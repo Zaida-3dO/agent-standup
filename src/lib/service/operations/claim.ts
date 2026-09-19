@@ -25,6 +25,7 @@ import { assertSessionMayClaim } from "../session-registration";
 import { ensureNameForSession } from "@/lib/agent-names";
 import { evictStaleHolders, type EvictedClaim } from "@/lib/claim-eviction";
 import { resolveItemId } from "../items/resolve-id";
+import { resolveLease, type ResolvedLease } from "@/lib/lease-resolution";
 
 const ROLES = [
   "orchestrator",
@@ -42,11 +43,40 @@ const inputSchema = z
     role: z.enum(ROLES),
     /** Required iff `role === "custom"` — enforced by `assertRoleCustom` inside `claimItem`. */
     roleCustom: z.string().min(1).nullable().optional(),
-    holderType: z.enum(HOLDER_TYPES),
-    holderId: z.string().min(1),
-    sessionId: z.string().min(1),
+    /**
+     * **The one field carrying who is claiming** — `rootSessionId`,
+     * `sessionId`, `holderType` and `holderId`, all implicit in it
+     * (src/lib/lease-key.ts). Issued by `session {action: "register"}` and
+     * returned on every claim response.
+     *
+     * Optional *in the schema* only because the legacy fields are still
+     * accepted during the deprecation window. A call carrying neither this
+     * nor `sessionId` + `holderType` + `holderId` is refused by
+     * `resolveLease` — see the contract rule below. That refusal is the
+     * point of the field: an absent identity used to default to "I am my
+     * own crew", which for a dispatched agent was always wrong and never
+     * visible.
+     */
+    leaseKey: z.string().min(1).nullable().optional(),
+    /**
+     * Deprecated in favour of `leaseKey`, which carries it. Still accepted,
+     * and still required when no key is passed.
+     */
+    holderType: z.enum(HOLDER_TYPES).optional(),
+    /** Deprecated in favour of `leaseKey`, which carries it. */
+    holderId: z.string().min(1).optional(),
+    /** Deprecated in favour of `leaseKey`, which carries it. */
+    sessionId: z.string().min(1).optional(),
     parentSessionId: z.string().min(1).nullable().optional(),
-    /** Omitted = this session is the root of its own crew (SCHEMA.md §2). */
+    /**
+     * Deprecated in favour of `leaseKey`, which carries it.
+     *
+     * Omitting it alongside the other legacy fields still means "this
+     * session is the root of its own crew" (SCHEMA.md §2) — unchanged, so
+     * an existing orchestrator keeps working — but the response now says
+     * so out loud, because that default is the thing a dispatched agent
+     * must not silently get.
+     */
     rootSessionId: z.string().min(1).nullable().optional(),
     /**
      * The machine this claim runs on.
@@ -119,6 +149,26 @@ export interface ClaimResult extends Assignment {
    * here.
    */
   readonly rootSessionWarning: string | null;
+  /**
+   * The lease key for this claim — **the thing to pass on the next one**,
+   * and the thing to hand to any agent this session dispatches.
+   *
+   * Returned on every claim, not only a first one, for the same reason
+   * `crewName` is: the call a caller already makes is the cheapest possible
+   * place to learn the value the next call needs, and a second round trip
+   * to fetch it is a round trip that some callers will simply not make.
+   */
+  readonly leaseKey: string;
+  /**
+   * Said when this claim used the deprecated identity fields — `null` when
+   * it passed a `leaseKey`.
+   *
+   * A deprecation belongs in the response rather than in a document: a
+   * caller using the deprecated shape is told, at the moment it uses it,
+   * which field supersedes it and that this very response already carries
+   * the value to switch to.
+   */
+  readonly leaseKeyDeprecation: string | null;
 }
 
 /**
@@ -148,17 +198,18 @@ export interface ClaimResult extends Assignment {
 async function resolveClaimMachine(
   ctx: ServiceContext,
   input: ClaimOperationInput,
+  sessionId: string,
 ): Promise<string> {
   if (input.machine !== undefined) return input.machine;
 
   const rows = await ctx.db.$queryRawUnsafe<{ machine: string }[]>(
     `SELECT "machine" FROM "Session" WHERE "id" = $1`,
-    input.sessionId,
+    sessionId,
   );
   const machine = rows[0]?.machine;
   if (machine === undefined) {
     throw new InvalidInputError(
-      `This claim omitted \`machine\` and session ${input.sessionId} has not ` +
+      `This claim omitted \`machine\` and session ${sessionId} has not ` +
         `registered, so there is no declared machine to inherit. Either register the ` +
         `session (\`session\` with action register), which is how a machine is stated ` +
         `once and reused, or pass \`machine\` on this call.`,
@@ -191,9 +242,16 @@ async function resolveClaimMachine(
  */
 async function rootSessionWarningFor(
   ctx: ServiceContext,
-  input: ClaimOperationInput,
+  lease: ResolvedLease,
 ): Promise<string | null> {
-  const rootSessionId = input.rootSessionId;
+  // Only a root the caller actually STATED is worth warning about. On the
+  // legacy path with `rootSessionId` omitted, the root was defaulted to the
+  // caller's own session and warning about it would be warning about our
+  // own arithmetic — the deprecation sentence already covers that case, and
+  // says the more useful thing. A key always states its root explicitly, so
+  // a key-borne root is always checked.
+  const rootSessionId =
+    lease.source === "legacy" ? lease.statedRootSessionId : lease.identity.rootSessionId;
   if (rootSessionId === undefined || rootSessionId === null) return null;
 
   const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
@@ -225,8 +283,16 @@ export const claim = defineOperation({
   contract: {
     rules: [
       {
-        fields: ["rootSessionId", "sessionId"],
-        rule: "ONE CREW PER ITEM. A claim is refused when the item's live assignments carry a different `rootSessionId` than this one. **`rootSessionId` defaults to your own `sessionId` when omitted**, which means a DISPATCHED agent claiming alongside its orchestrator must pass the orchestrator's session id explicitly — omit it and you declare yourself a second crew and are refused as one, even though you were sent to help. Pass the root of your own session tree, not your own id, whenever somebody else already holds the item.",
+        fields: ["leaseKey"],
+        rule: "IDENTITY IS ONE FIELD NOW. `leaseKey` carries `rootSessionId`, `sessionId`, `holderType` and `holderId` together, and a claim stating NEITHER a `leaseKey` nor that set of legacy fields is REFUSED rather than defaulted. Get a key from `session` with action register, or from any claim response — if you were dispatched, ask the agent that dispatched you for its key, exactly as you would once have asked for its `rootSessionId`.",
+      },
+      {
+        fields: ["rootSessionId", "sessionId", "holderType", "holderId"],
+        rule: "THE LEGACY IDENTITY FIELDS STILL WORK, AND ARE DEPRECATED. Passing `sessionId`, `holderType`, `holderId` and optionally `rootSessionId` claims exactly as it always did, and the response carries both a `leaseKey` to use next time and a `leaseKeyDeprecation` sentence. Omitting `rootSessionId` on that path still defaults it to your own `sessionId`, which declares you the root of your own crew — right for an orchestrator, wrong for a dispatched agent, and the reason the key exists. Passing BOTH a key and legacy fields is accepted only while they agree, and refused naming every field that disagrees.",
+      },
+      {
+        fields: ["leaseKey"],
+        rule: "ONE CREW PER ITEM. A claim is refused when the item's live assignments carry a different crew root than this one — the root inside your `leaseKey`, or your `rootSessionId` on the legacy path. Pass the key of the crew you belong to, not one you minted yourself, whenever somebody else already holds the item.",
       },
       {
         fields: ["rootSessionId"],
@@ -312,24 +378,32 @@ export const claim = defineOperation({
     // typo'd item id is told about the typo rather than about its
     // registration: the caller can act on the first and, in that moment,
     // cannot act on the second.
-    await assertSessionMayClaim(ctx, input.sessionId);
+    // Who is claiming, from the lease key or the deprecated fields — and a
+    // refusal when the call states neither. Resolved BEFORE the
+    // registration check so a call carrying no identity at all is told
+    // that, rather than being told that `undefined` has not registered.
+    const lease = resolveLease(input);
+    const { sessionId, holderType, holderId, rootSessionId } = lease.identity;
+
+    await assertSessionMayClaim(ctx, sessionId);
 
     // The machine, from the claim or from what the session registered with
     // (#111). Read after `assertSessionMayClaim` so a claim that is going
     // to be refused for its registration is told *that*, rather than being
     // told its machine is unresolvable — which is the same fact stated less
     // usefully, since registering fixes both.
-    const machine = await resolveClaimMachine(ctx, input);
+    const machine = await resolveClaimMachine(ctx, input, sessionId);
 
     const claimInput = {
       itemId: input.itemId,
       role: input.role as Role,
       roleCustom: input.roleCustom ?? null,
-      holderType: input.holderType as HolderType,
-      holderId: input.holderId,
-      sessionId: input.sessionId,
+      holderType: holderType as HolderType,
+      holderId,
+      sessionId,
       parentSessionId: input.parentSessionId ?? null,
-      rootSessionId: input.rootSessionId ?? null,
+      rootSessionId,
+      leaseKey: lease.leaseKey,
       machine,
       pid: input.pid ?? null,
       branch: input.branch ?? null,
@@ -367,7 +441,7 @@ export const claim = defineOperation({
       evicted = await evictStaleHolders(ctx.db, {
         itemId: input.itemId,
         evictAfterSeconds: ctx.settings.values["liveness.evict_after_seconds"],
-        bySessionId: input.sessionId,
+        bySessionId: sessionId,
       });
 
       // Nothing was stale enough to take. Rethrow the *original* refusal
@@ -400,17 +474,22 @@ export const claim = defineOperation({
     // the agent-name pool for a human holder would spend a name nobody
     // reads, so this only ever names an agent holder.
     const crewNameRow =
-      input.holderType === "agent"
-        ? await ensureNameForSession(ctx.db, input.sessionId)
-        : undefined;
+      holderType === "agent" ? await ensureNameForSession(ctx.db, sessionId) : undefined;
 
     // Read only once the claim has actually won, so a call that was going to
     // be refused is told why it was refused rather than being handed an
     // advisory about a field that never mattered. It is also the reason this
     // costs nothing on the refusal paths above, which return earlier.
-    const rootSessionWarning = await rootSessionWarningFor(ctx, input);
+    const rootSessionWarning = await rootSessionWarningFor(ctx, lease);
 
-    return { ...assignment, crewName: crewNameRow?.name ?? null, evicted, rootSessionWarning };
+    return {
+      ...assignment,
+      crewName: crewNameRow?.name ?? null,
+      evicted,
+      rootSessionWarning,
+      leaseKey: lease.leaseKey,
+      leaseKeyDeprecation: lease.leaseKeyDeprecation,
+    };
   },
 });
 
