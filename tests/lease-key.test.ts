@@ -317,7 +317,44 @@ describe("resolveLease — key present", () => {
       expect((error as GuardRejectedError).guard).toBe(LEASE_KEY_GUARD);
     }
   });
+
+  it("sends a wrong-field paste to a real source, not to registration", () => {
+    // The second half of the same defect. A caller that pasted a session id
+    // into `leaseKey` was told a key "comes back from `session {action:
+    // \"register\"}` or from any claim response" — half true, and the false
+    // half named first.
+    //
+    // This refusal reaches a caller that already holds a `sessionId`, which
+    // makes it the one most likely to try registering again. Both real
+    // sources are asserted because either alone strands somebody: a
+    // dispatched agent has no claim of its own to read a key from, and an
+    // orchestrator has nobody to ask.
+    const message = wrongFieldRefusal();
+    expect(message).toContain("claim response");
+    expect(message).toContain("dispatched");
+    expect(message).not.toMatch(/session \{action: "register"\}/);
+  });
 });
+
+/** The message a caller sees when it states no identity at all. */
+function absentKeyRefusal(): string {
+  try {
+    resolveLease({});
+    return "";
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+/** The message a caller sees when it pastes a non-key into `leaseKey`. */
+function wrongFieldRefusal(): string {
+  try {
+    resolveLease({ leaseKey: "worker-session-2" });
+    return "";
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
 
 describe("resolveLease — key absent", () => {
   it("refuses when neither a key nor the legacy fields are supplied", () => {
@@ -341,17 +378,57 @@ describe("resolveLease — key absent", () => {
     // AC2 asks for both, so both are asserted. A refusal that names the
     // field without naming its source is the one a dispatched agent cannot
     // act on, which is the case this whole change is about.
-    const message = (() => {
-      try {
-        resolveLease({});
-        return "";
-      } catch (error) {
-        return (error as Error).message;
-      }
-    })();
+    const message = absentKeyRefusal();
     expect(message).toContain("leaseKey");
-    expect(message).toContain("register");
+    expect(message).toContain("claim response");
     expect(message).toContain("dispatched");
+  });
+
+  it("does not send the caller to a call that cannot issue a key", () => {
+    // **The invariant.** `session {action: "register"}` returns no
+    // `leaseKey` — its output object carries no such field — so a refusal
+    // sending a keyless caller there to obtain one is a dead end, and this
+    // is the most-read refusal in the product.
+    //
+    // Phrased as a ban on the *instruction* rather than on the word, so the
+    // message stays free to explain why registration is not a source, which
+    // it does. What must not exist is a sentence sending the caller there
+    // to obtain a key.
+    const message = absentKeyRefusal();
+
+    // Sentence by sentence rather than over the whole message, because the
+    // message legitimately says "use the `leaseKey` it returns" — of a
+    // CLAIM. A blanket ban on that phrase would fail the correct message as
+    // readily as the wrong one. What must not exist is a single sentence
+    // that both names registration and offers a key.
+    const sentences = message.split(/(?<=[.!?])\s+/);
+    const offering = sentences.filter(
+      (sentence) =>
+        /register/i.test(sentence) &&
+        /\bkey\b|`leaseKey`/.test(sentence) &&
+        !/does not issue|not yet a holder/i.test(sentence),
+    );
+    expect(offering, "a sentence names registration as a source of a key").toEqual([]);
+
+    // And it must say plainly that registering is not the way, since a
+    // caller arriving here has most likely just been told otherwise by a
+    // stale brief.
+    expect(message).toContain("Registering a session does not issue one");
+  });
+
+  it("gives an orchestrator with no key a route that exists", () => {
+    // The caller option (c) could have stranded. A dispatched agent is told
+    // to ask its dispatcher; an orchestrator at the root of a new crew has
+    // nobody to ask, and registration will not help it. Its route is the
+    // legacy fields, which still work for the whole deprecation window and
+    // hand back a key on the first claim.
+    //
+    // Asserted because it is the half most likely to be dropped in a later
+    // trim of this message: it reads as an aside, and it is the only thing
+    // standing between a root orchestrator and a refusal with no remedy.
+    const message = absentKeyRefusal();
+    expect(message).toContain("orchestrator");
+    expect(message).toMatch(/legacy fields|`sessionId`, `holderType`/);
   });
 
   it("refuses a half-stated legacy shape rather than guessing the rest", () => {

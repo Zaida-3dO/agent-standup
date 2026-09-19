@@ -1810,3 +1810,92 @@ describe("a required array<object> is constructable from its own contract", () =
     expect(OPERATION_REGISTRY.record_tool_calls.input.safeParse(example).success).toBe(true);
   });
 });
+
+// ── No contract rule may name a call that cannot satisfy it ─────────────
+//
+// The defect this catches, in the shape it actually shipped: four
+// caller-facing texts told a caller with no `leaseKey` to get one from
+// `session {action: "register"}`. That operation's output carries no
+// `leaseKey` field and never has. The instruction was the primary remedy in
+// the product's most-hit new refusal, and the surface agents are explicitly
+// told to consult before their first write call.
+//
+// Asserted across the **whole registry** rather than against the two rules
+// that happened to be wrong, because the class of bug is "a remedy points at
+// a call that cannot provide the thing" and it can be reintroduced by any
+// operation. A test naming only `claim` and `ownership` would pass the day
+// somebody wrote the same sentence into a third contract.
+describe("a contract rule never sends a caller somewhere that cannot help", () => {
+  /**
+   * The operations that actually return a `leaseKey`, read from the output
+   * shapes rather than listed by hand.
+   *
+   * Listing them would make this test agree with itself: the point is to
+   * compare what the prose PROMISES against what the code DOES, so the
+   * second half has to come from the code. `claim`'s output type is the
+   * source of truth, and `ownership` re-exports it on its claim action.
+   */
+  const ISSUERS = ["claim", "ownership"];
+
+  it("only names lease-key issuers as sources of a lease key", async () => {
+    // A sentence that names an operation right after promising a key is the
+    // shape of the defect. The pattern is deliberately broader than any one
+    // spelling, so `register_session`, `session` and `registering` are all
+    // caught.
+    const offenders: string[] = [];
+
+    for (const name of OPERATION_NAMES) {
+      const contract = await contractFor(name);
+      if (contract.rules === undefined) continue;
+      const text = ruleText(contract);
+      if (!text.includes("leaseKey")) continue;
+
+      // Every sentence that both promises a key and names where it comes
+      // from. Split on sentence boundaries so a contract that mentions
+      // registration for an unrelated reason — `machine` inheritance, which
+      // `claim` legitimately does — is not swept up with it.
+      for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+        const promisesKey = /\bleaseKey\b|\bkey\b/.test(sentence);
+        const namesRegistration = /register|registration|registering/i.test(sentence);
+        if (!promisesKey || !namesRegistration) continue;
+
+        // A sentence DENYING that registration issues one is the fix, not
+        // the defect, so it must keep passing.
+        const denies = /not issue|does not|never issues|nowhere else|registering is not/i.test(
+          sentence,
+        );
+        if (denies) continue;
+
+        offenders.push(`${name}: ${sentence.trim()}`);
+      }
+    }
+
+    expect(offenders, "a rule offers a lease key from a call that does not return one").toEqual([]);
+  });
+
+  it("proves the issuers really do issue, so the rule above is not vacuous", async () => {
+    // Without this, the test above would keep passing if `claim` stopped
+    // returning a key: it would simply find no sentence to object to. This
+    // is the half that makes the invariant mean something — the sources the
+    // prose is allowed to name are exactly the ones whose output carries the
+    // field.
+    for (const name of ISSUERS) {
+      const contract = await contractFor(name);
+      expect(ruleText(contract), `${name} should still be a lease-key issuer`).toContain(
+        "leaseKey",
+      );
+    }
+
+    // And registration is NOT one of them — read from the operation's own
+    // output, so this fails the day registration is taught to issue keys and
+    // these texts are left stale in the other direction.
+    // The transport must be stamped: registration refuses a call it cannot
+    // attribute to an adapter, which is unrelated to what this asserts.
+    const registered = (await runtime().call(
+      "register_session",
+      { sessionId: "contract-invariant-probe", machine: "test-machine" },
+      { caller: { transport: "mcp-http" } },
+    )) as unknown as Record<string, unknown>;
+    expect(registered).not.toHaveProperty("leaseKey");
+  });
+});

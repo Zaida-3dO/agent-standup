@@ -606,9 +606,30 @@ describeIfDb("session registration and the claim refusal", () => {
       // Not decoration: these are the two most-hit refusals in the
       // product, and a pointer that did not name them would be a link
       // nobody follows.
+      //
+      // The identity half names `leaseKey`, because that is the field a
+      // claim is refused for omitting. Naming `rootSessionId` instead would
+      // point a new session at a field the key carries internally and the
+      // claim path does not ask for on its own.
       const reply = await register("http", { sessionId: "named-rules", machine: "m" });
       expect(reply.contracts).toContain("checkpoint");
-      expect(reply.contracts).toContain("rootSessionId");
+      expect(reply.contracts).toContain("leaseKey");
+    });
+
+    it("does NOT offer itself as a source of lease keys", async () => {
+      // The defect this guards: a caller-facing text saying a key comes back
+      // from `session {action: "register"}`, when this response has no
+      // `leaseKey` field at all. A refused caller following such an
+      // instruction registers, finds nothing, and is back where it started.
+      //
+      // Registration is deliberately not made to issue one. The only key it
+      // could mint is self-rooted, since a registering session is not yet a
+      // holder — and a self-rooted key is exactly the wrong key for the
+      // dispatched agent that reads the refusal most. So the response must
+      // not carry a key, and must not claim to.
+      const reply = await register("http", { sessionId: "no-key-here", machine: "m" });
+      expect(reply).not.toHaveProperty("leaseKey");
+      expect(reply.contracts).toContain("does not issue one");
     });
   });
 
