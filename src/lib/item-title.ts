@@ -265,6 +265,27 @@ export function findTitleFindings(title: string, field = "title"): TitleFinding[
 }
 
 /**
+ * The one-sentence note for a title the em-dash rewrite (`text-normalize.ts`)
+ * changed on the way in.
+ *
+ * The rewrite itself stays silent everywhere it is not this message — see
+ * that module's header for why folding U+2014 but not U+2013 is correct, not
+ * an oversight. What was missing is only that the caller is never told the
+ * stored value differs from what it sent. That gap is not cosmetic: a title
+ * is frequently the join key an importer with no id column relies on, and a
+ * caller that does not know its title was rewritten will run an exact-title
+ * lookup that misses the row it just created — a later reconciliation
+ * confidently reporting a row as absent when it is present, which is a worse
+ * failure shape than a visible error because nothing at any point looked
+ * wrong.
+ */
+export const TITLE_REWRITE_MESSAGE =
+  "The title's em dash (—) was rewritten to a hyphen (-) to match this tracker's house style. " +
+  "An en dash (–) or other punctuation would have been left alone — see the em-dash rewrite for " +
+  "why only U+2014 is folded. If you match on title elsewhere (an importer with no id column, " +
+  "for example), match on the stored form.";
+
+/**
  * The findings as one sentence to hand back on a successful create, or `null`
  * when there is nothing to say.
  *
@@ -272,13 +293,28 @@ export function findTitleFindings(title: string, field = "title"): TitleFinding[
  * length, matching `buildSliceNotice`, whose null-when-nothing-withheld shape
  * this deliberately mirrors — both are advice attached to a response that
  * succeeded.
+ *
+ * `wasRewritten` is a second, independent source of advice, not a fifth
+ * finding in `findTitleFindings`: the convention findings are about how the
+ * title reads, and are computed from the string alone; the rewrite note is
+ * about what the caller sent versus what was stored, which `findTitleFindings`
+ * has no way to know since it only ever sees the one, already-normalised
+ * string. Combining both into the one sentence a create response carries
+ * means a title that is both rewritten and, say, a bare cross-reference gets
+ * one `titleAdvice` field with both notes, rather than a caller having to
+ * know to check two different places.
  */
-export function titleAdviceFor(title: string, field = "title"): string | null {
+export function titleAdviceFor(
+  title: string,
+  field = "title",
+  wasRewritten = false,
+): string | null {
   const findings = findTitleFindings(title, field);
-  if (findings.length === 0) return null;
+  const messages = findings.map((finding) => finding.message);
+  if (wasRewritten) messages.push(TITLE_REWRITE_MESSAGE);
+  if (messages.length === 0) return null;
 
-  const detail = findings.map((finding) => finding.message).join(" ");
-  return `A note on the title: ${detail}`;
+  return `A note on the title: ${messages.join(" ")}`;
 }
 
 /**

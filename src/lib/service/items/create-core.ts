@@ -25,7 +25,7 @@ import { noSuchRepoMessage } from "./no-such-repo";
 import { resolveSessionDefaults } from "./session-defaults";
 import { callerEventActor } from "./event-attribution";
 import { appendEvent } from "@/lib/events";
-import { normalizeEmDash } from "@/lib/text-normalize";
+import { normalizeEmDashNoting } from "@/lib/text-normalize";
 import { titleAdviceFor, TITLE_CONVENTION_RULE } from "@/lib/item-title";
 import {
   HEADLINE_MAX_CHARS,
@@ -48,10 +48,21 @@ import {
  * differs per operation by name, requiredness and meaning.
  */
 export const commonCreateShape = {
-  // `.trim()` first, `normalizeEmDash` after: an em dash at the very edge
-  // of the raw string ("— fix the bug") is still a title-authoring choice,
-  // not whitespace, so it must survive trimming to be normalised at all.
-  title: z.string().trim().min(1, "title is required").transform(normalizeEmDash),
+  // Trimmed here, but deliberately NOT em-dash-normalised by this schema's
+  // own `.transform()` — unlike every other input rule in this file. The
+  // normalisation still happens, unconditionally and on the same string
+  // (`insertItem` below calls `normalizeEmDashNoting` on this exact value
+  // before it is ever used), but it is called from the one funnel every
+  // creation path already passes through, rather than from the parse. The
+  // schema alone cannot tell a caller whether the rewrite happened — a Zod
+  // `.transform()` discards the input string once it returns the output —
+  // and `insertItem` is where `titleAdvice` (MILESTONES.md #131) is already
+  // attached to the response, so it is also where the comparison the advice
+  // needs is not yet lost. `.trim()` still runs first, in the schema, for
+  // the reason it always did: an em dash at the very edge of the raw string
+  // ("— fix the bug") is a title-authoring choice, not whitespace, and must
+  // survive trimming to be normalised at all.
+  title: z.string().trim().min(1, "title is required"),
   /**
    * The one-line BLUF — what this work *is* (MILESTONES.md #107).
    * Optional, because an item minted by an importer or a source sweep has
@@ -445,6 +456,23 @@ export interface CreatedItem extends ItemRecord {
    * created either way, and nothing downstream reads this.
    */
   readonly titleAdvice?: string;
+  /**
+   * A note that this create resolved `projectId` to the configured
+   * catch-all (inbox) project — set only by `create_task`, the one caller
+   * that can resolve the sentinel, and carried through by `create_work`'s
+   * delegation.
+   *
+   * Same posture as `titleAdvice`: absent when nothing to say, present only
+   * on the call that actually resolved the sentinel. The literal `"inbox"`
+   * is a real, supported choice (`repair_stuck_projects` names it "the
+   * honest choice when the right project is not known") — this is not a
+   * refusal and does not become one. It exists because the choice has, in
+   * practice, mostly been made by accident: a caller with no real project
+   * id copies the worked example rather than looking one up, and by the
+   * time anyone notices, the catch-all is holding dozens of items that were
+   * never meant to land together.
+   */
+  readonly projectAdvice?: string;
 }
 
 /**
@@ -528,6 +556,8 @@ export interface CreatedWriteRecord extends ItemWriteRecord {
   readonly mergeAuthority: ItemRecord["mergeAuthority"];
   /** See `CreatedItem.titleAdvice` — carried through, since it is about this call. */
   readonly titleAdvice?: string;
+  /** See `CreatedItem.projectAdvice` — carried through, since it is about this call. */
+  readonly projectAdvice?: string;
 }
 
 /**
@@ -557,6 +587,7 @@ export function toCreatedWriteRecord(record: CreatedItem): CreatedWriteRecord {
     // Spread conditionally, so an item whose title is fine carries no key —
     // the same posture `insertItem` uses when it attaches the advice.
     ...(record.titleAdvice === undefined ? {} : { titleAdvice: record.titleAdvice }),
+    ...(record.projectAdvice === undefined ? {} : { projectAdvice: record.projectAdvice }),
   };
 }
 
@@ -574,6 +605,14 @@ export async function insertItem(
   input: CommonCreateInput,
   parent: { id: string | null; depth: number },
 ): Promise<CreatedItem> {
+  // The em-dash rewrite (text-normalize.ts), applied here rather than in the
+  // schema's own `.transform()` — see `commonCreateShape.title`'s comment
+  // for why. `titleWasRewritten` is what lets the advice below say so; every
+  // write below this line uses `title` (the normalised value), never
+  // `input.title` (the raw one), so the stored row is unaffected by where
+  // the call happens to live.
+  const { value: title, rewritten: titleWasRewritten } = normalizeEmDashNoting(input.title);
+
   // items.max_depth (SCHEMA.md §17.2): "A runaway guard on the item tree:
   // a create that would exceed this depth is refused rather than allowed
   // to grow without bound."
@@ -708,7 +747,7 @@ export async function insertItem(
     parent.id,
     kind,
     depth,
-    input.title,
+    title,
     input.headline ?? null,
     input.body,
     input.priority,
@@ -797,6 +836,6 @@ export async function insertItem(
   // explain. Same posture as `example` on a tool contract: absent is a
   // cleaner "nothing to say" than a present empty value.
   const record = toItemRecord(row);
-  const advice = titleAdviceFor(record.title);
+  const advice = titleAdviceFor(record.title, "title", titleWasRewritten);
   return advice === null ? record : { ...record, titleAdvice: advice };
 }

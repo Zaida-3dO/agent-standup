@@ -101,7 +101,11 @@ export const reparentItem = defineOperation({
         rule: "The new parent must exist and must not be in an archived area.",
       },
     ],
-    example: { id: "an-item-id", parentId: "inbox" },
+    // Not the literal "inbox" in the worked example — see create_task's
+    // identical note. The sentinel stays supported and documented in the
+    // rule above; this example shows the more common call, moving an item
+    // to a real, known parent.
+    example: { id: "an-item-id", parentId: "<a project id from a project listing>" },
   },
   async handler(
     ctx: ServiceContext,

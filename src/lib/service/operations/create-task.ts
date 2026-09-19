@@ -60,6 +60,28 @@ import { resolveInboxProject } from "../items/inbox-project";
  */
 export const INBOX_PROJECT_ID = "inbox";
 
+/**
+ * The note attached to a create that resolved `projectId` to the inbox
+ * (MILESTONES.md #131's `titleAdvice` mechanism, reused for a different
+ * field — see `CreatedItem.projectAdvice`).
+ *
+ * `"inbox"` is a real, supported choice, not a mistake by construction — a
+ * caller that types it means "I don't know where this goes yet, file it for
+ * triage" and that is exactly what the operation does. What this note
+ * answers is the far more common case reported against 0.28.2: a caller
+ * with no real project id to hand copied the worked example, which used to
+ * show this exact literal, and never intended the catch-all at all. The
+ * advisory fires on every resolution regardless of which caller meant it,
+ * because the operation cannot tell the two apart — it can only make the
+ * choice visible immediately, on the one response a caller reads before it
+ * moves on to the next call.
+ */
+export const PROJECT_ADVICE_MESSAGE =
+  `A note on the project: projectId resolved to the configured inbox project (the "${INBOX_PROJECT_ID}" ` +
+  "sentinel), which is a real project like any other and not a temporary holding area — it can " +
+  "accumulate work from every caller that reaches for the sentinel. If this task belongs somewhere " +
+  "more specific, look up the right project (get_board, list_items) and reparent it there.";
+
 const inputSchema = z
   .object({
     ...commonCreateShape,
@@ -99,7 +121,10 @@ export const createTask = defineOperation({
       body: "The reset link expires too fast.",
       area: "web",
       originType: "auto",
-      projectId: "inbox",
+      // Not the literal "inbox" — see `create_work`'s identical example for
+      // why the worked example points at a real lookup rather than the
+      // sentinel, even though the sentinel itself stays supported.
+      projectId: "<a project id from a project listing>",
     },
   },
   // Stryker restore all
@@ -129,6 +154,15 @@ export const createTask = defineOperation({
     }
 
     const created = await insertItem(ctx, common as CommonCreateInput, { id: parentId, depth });
-    return input.full ? created : toCreatedWriteRecord(created);
+    // Attached here rather than inside `insertItem`, mirroring where
+    // `toCreatedWriteRecord` already lives: `insertItem` is the shared
+    // funnel and has no notion of "resolved to the inbox" — only this
+    // operation resolved the sentinel, a few lines up, so only this
+    // operation knows whether to say so.
+    const withProjectAdvice =
+      projectId === INBOX_PROJECT_ID
+        ? { ...created, projectAdvice: PROJECT_ADVICE_MESSAGE }
+        : created;
+    return input.full ? withProjectAdvice : toCreatedWriteRecord(withProjectAdvice);
   },
 });

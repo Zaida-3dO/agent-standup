@@ -22,7 +22,8 @@ import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { noSuchRepoMessage } from "../items/no-such-repo";
 import { recordFieldChanges } from "@/lib/events";
 import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
-import { normalizeEmDash } from "@/lib/text-normalize";
+import { normalizeEmDashNoting } from "@/lib/text-normalize";
+import { titleAdviceFor } from "@/lib/item-title";
 import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
@@ -30,7 +31,13 @@ const inputSchema = z
     id: z.string().min(1),
     // Same em-dash-to-hyphen normalisation `create_item` applies — see
     // `text-normalize.ts`. An edit is as much "input" as a create.
-    title: z.string().trim().min(1).transform(normalizeEmDash).optional(),
+    //
+    // NOT normalised by this schema's own `.transform()`, deliberately —
+    // see `commonCreateShape.title` in `create-core.ts` for the identical
+    // reasoning. The rewrite still happens unconditionally, in the handler
+    // below, which is also where `titleAdvice` needs the pre-rewrite string
+    // to say whether it happened.
+    title: z.string().trim().min(1).optional(),
     /**
      * The one-line BLUF (MILESTONES.md #107). Editable because the row's
      * whole claim is that it is "maintained as it moves" — a headline
@@ -109,9 +116,15 @@ export type UpdateItemInput = z.infer<typeof inputSchema>;
  * break each one for no gain. `notifications` is absent when the capability
  * is off (`notify.doc` unset), which stays distinguishable from "on, and
  * nobody matched" — an outcome with empty `recipients`.
+ *
+ * `titleAdvice` rides along under the same rule `create-core.ts` uses
+ * (MILESTONES.md #131): present only when there is something to say about
+ * *this call's* title, absent — never `null` — otherwise, so an edit that
+ * left `title` alone or sent a title with nothing to note carries no key.
  */
 export type UpdateItemResult = (ItemRecord | ItemWriteRecord) & {
   readonly notifications?: NotificationOutcome;
+  readonly titleAdvice?: string;
 };
 
 const MERGE_AUTHORITY_TO_DB: Record<
@@ -202,6 +215,18 @@ export const updateItem = defineOperation({
     const edits = Object.fromEntries(
       Object.entries(rawEdits).filter(([, value]) => value !== undefined),
     ) as Partial<Omit<UpdateItemInput, "id">>;
+
+    // The em-dash rewrite, applied here rather than in the schema's own
+    // `.transform()` — see the `title` field's comment above for why.
+    // `titleWasRewritten` is `false` (never fired) when this edit does not
+    // touch `title` at all, which is correct: nothing was rewritten because
+    // nothing was sent.
+    let titleWasRewritten = false;
+    if (edits.title !== undefined) {
+      const normalized = normalizeEmDashNoting(edits.title);
+      edits.title = normalized.value;
+      titleWasRewritten = normalized.rewritten;
+    }
 
     const currentRows = await ctx.db.$queryRawUnsafe<RawItemRow[]>(
       `SELECT ${ITEM_COLUMNS} FROM "Item" WHERE "id" = $1`,
@@ -342,9 +367,26 @@ export const updateItem = defineOperation({
       await setItemLinks(ctx, id, sortedLinks!);
     }
 
+    // The rewrite note (MILESTONES.md #131's mechanism, reused): computed
+    // once here from `edits.title` (already normalised above) rather than
+    // per return path, since it depends only on whether THIS call's title
+    // was rewritten — not on whether that rewrite happened to change the
+    // stored value. A caller that resends a title whose em dash was already
+    // folded on a previous call is told nothing (its own title carried no
+    // em dash to begin with), but a caller whose submitted title happens to
+    // normalise to what is already stored still gets told: it sent an em
+    // dash and the stored form does not have one, on this call, which is
+    // the exact fact `titleAdvice` exists to surface.
+    const titleAdvice =
+      edits.title === undefined
+        ? undefined
+        : (titleAdviceFor(edits.title, "title", titleWasRewritten) ?? undefined);
+    const withTitleAdvice = (record: ItemRecord | ItemWriteRecord): UpdateItemResult =>
+      titleAdvice === undefined ? record : { ...record, titleAdvice };
+
     if (setClauses.length === 0) {
       if (!areasChanged && !linksChanged) {
-        return shape(toItemRecord(current));
+        return withTitleAdvice(shape(toItemRecord(current)));
       }
       // Only a join table changed, so there is no column to UPDATE — re-read
       // the row to pick up the `areas`/`links` the write above just made
@@ -381,7 +423,7 @@ export const updateItem = defineOperation({
         after: joinAfter,
         fields: joinFields,
       });
-      return shape(toItemRecord(rereadRow));
+      return withTitleAdvice(shape(toItemRecord(rereadRow)));
     }
 
     setClauses.push(`"updatedAt" = CURRENT_TIMESTAMP`);
@@ -473,7 +515,7 @@ export const updateItem = defineOperation({
             snapshotOf(record, null),
           );
 
-    const shaped = shape(record);
+    const shaped = withTitleAdvice(shape(record));
     return notifications ? { ...shaped, notifications } : shaped;
   },
 });
