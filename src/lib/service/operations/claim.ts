@@ -46,8 +46,12 @@ const inputSchema = z
     /**
      * **The one field carrying who is claiming** — `rootSessionId`,
      * `sessionId`, `holderType` and `holderId`, all implicit in it
-     * (src/lib/lease-key.ts). Issued by `session {action: "register"}` and
-     * returned on every claim response.
+     * (src/lib/lease-key.ts). **Returned on every claim response** — that
+     * is the only call that issues one, because a key names a holder and a
+     * session becomes a holder by claiming. Registration does not issue
+     * one. A dispatched agent gets its key from the agent that dispatched
+     * it; an orchestrator with none yet makes its first claim with the
+     * legacy fields below and uses the key that comes back thereafter.
      *
      * Optional *in the schema* only because the legacy fields are still
      * accepted during the deprecation window. A call carrying neither this
@@ -284,7 +288,7 @@ export const claim = defineOperation({
     rules: [
       {
         fields: ["leaseKey"],
-        rule: "IDENTITY IS ONE FIELD NOW. `leaseKey` carries `rootSessionId`, `sessionId`, `holderType` and `holderId` together, and a claim stating NEITHER a `leaseKey` nor that set of legacy fields is REFUSED rather than defaulted. Get a key from `session` with action register, or from any claim response — if you were dispatched, ask the agent that dispatched you for its key, exactly as you would once have asked for its `rootSessionId`.",
+        rule: "IDENTITY IS ONE FIELD NOW. `leaseKey` carries `rootSessionId`, `sessionId`, `holderType` and `holderId` together, and a claim stating NEITHER a `leaseKey` nor that set of legacy fields is REFUSED rather than defaulted. A key comes from a claim response — that is the only call that issues one, since a key names a holder and registering is not holding. If you were dispatched, ask the agent that dispatched you for its key, exactly as you would once have asked for its `rootSessionId`. If you are an orchestrator holding no key yet, make your first claim with the legacy fields and use the key it returns from then on.",
       },
       {
         fields: ["rootSessionId", "sessionId", "holderType", "holderId"],

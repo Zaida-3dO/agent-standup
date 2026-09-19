@@ -123,8 +123,10 @@ const inputSchema = z
     /**
      * **The one field carrying who is claiming** on action `claim` —
      * `rootSessionId`, `sessionId`, `holderType` and `holderId` are all
-     * implicit in it (`src/lib/lease-key.ts`). Issued by `session` with
-     * action register, and returned on every claim response.
+     * implicit in it (`src/lib/lease-key.ts`). **Returned on every claim
+     * response**, which is the only call that issues one — a key names a
+     * holder, and registering a session does not make it one. A dispatched
+     * agent gets its key from the agent that dispatched it.
      *
      * A claim stating neither this nor the full legacy set is refused by
      * the delegate rather than defaulted, which is the point of the field.
@@ -249,7 +251,7 @@ export const ownership = defineOperation({
       },
       {
         fields: ["leaseKey", "rootSessionId"],
-        rule: "On action claim, leaseKey carries the crew and the holder together and a call stating neither it nor the full legacy set — sessionId, holderType and holderId — is REFUSED rather than defaulted. If you were dispatched, ask the agent that dispatched you for its key. The legacy fields still work meanwhile: on that path an omitted rootSessionId still DEFAULTS TO YOUR OWN sessionId, declaring this session the root of a new crew, which is right for an orchestrator and wrong for a dispatched agent claiming alongside one. parentSessionId is a separate field for the spawn tree and does NOT satisfy this.",
+        rule: "On action claim, leaseKey carries the crew and the holder together and a call stating neither it nor the full legacy set — sessionId, holderType and holderId — is REFUSED rather than defaulted. A key comes back from a claim response and from nowhere else, registering included. If you were dispatched, ask the agent that dispatched you for its key; if you are an orchestrator with no key yet, claim once with the legacy fields and use the key that comes back. The legacy fields still work meanwhile: on that path an omitted rootSessionId still DEFAULTS TO YOUR OWN sessionId, declaring this session the root of a new crew, which is right for an orchestrator and wrong for a dispatched agent claiming alongside one. parentSessionId is a separate field for the spawn tree and does NOT satisfy this.",
       },
       {
         fields: ["action", "reason", "force"],

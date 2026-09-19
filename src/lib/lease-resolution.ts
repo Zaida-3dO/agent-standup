@@ -107,16 +107,41 @@ export interface ResolvedLease {
  * the legacy fields as a fallback is deliberate: during the window they
  * still work, and a refusal that hid that would push a caller into a
  * rewrite it does not yet need.
+ *
+ * ── Why registration is NOT named as a source ───────────────────────────
+ *
+ * **`session {action: "register"}` returns no `leaseKey`** — its output
+ * object carries no such field. So it must never be named here as a place
+ * to get one: a caller following that instruction literally would arrive
+ * back at this same refusal having learnt nothing, and a refusal whose
+ * primary remedy is a dead end is worse than a blunter one, because it
+ * spends the caller's next call proving the message wrong.
+ *
+ * The tempting repair is to make registration issue a key. It must not,
+ * and the reason is the same one the key exists for: a registering session
+ * is not yet a holder, so the only key registration could mint is one
+ * rooted at *itself*. That is the right key for exactly one caller — an
+ * orchestrator rooting its own crew — and the wrong one for the caller who
+ * reads this message most, a dispatched agent. Issuing it would restore
+ * the silent self-rooting default `resolveLease` refuses, one call
+ * earlier and wearing the server's authority.
+ *
+ * So the sources named here are the two that can actually produce a key:
+ * a claim response, and the agent that dispatched you (whose key came from
+ * its own claim response). An orchestrator with no key yet is not stuck —
+ * it has the legacy fields below, and its first claim hands it the key for
+ * every claim after.
  */
 function absentKeyMessage(): string {
   return (
     "This claim carries no `leaseKey`, and none of the legacy identity fields either, " +
     "so there is nothing to say which crew it belongs to or who is making it. " +
-    "**Pass `leaseKey`.** Where to get it: it is returned on every `session` registration " +
-    "and on every claim response, so if you were dispatched, the agent that dispatched you " +
-    "has one — ask for it, exactly as you would have asked for its `rootSessionId`. " +
-    "If you are an orchestrator starting your own crew, register this session with " +
-    '`session {action: "register"}` and use the `leaseKey` it returns. ' +
+    "**Pass `leaseKey`.** Where to get it: every claim response returns one, so if you were " +
+    "dispatched, the agent that dispatched you has one — ask for it, exactly as you would " +
+    "have asked for its `rootSessionId`. Registering a session does not issue one: a session " +
+    "that has not claimed anything is not yet a holder, and the key names a holder. " +
+    "If you are an orchestrator starting your own crew and so have no key to be given, make " +
+    "your first claim with the legacy fields below and use the `leaseKey` it returns from then on. " +
     "During the deprecation window you may instead pass the separate fields — `sessionId`, " +
     "`holderType`, `holderId` and `rootSessionId` — and they still work, but a claim " +
     "omitting `rootSessionId` there defaults it to your own `sessionId`, which silently " +
@@ -171,7 +196,7 @@ export function resolveLease(input: LeaseResolutionInput): ResolvedLease {
           "not_a_lease_key",
           `\`leaseKey\` does not start with \`${LEASE_KEY_PREFIX}.\`, so it is not a lease key. ` +
             `If that value is a session id, pass it as \`sessionId\`; a lease key comes back ` +
-            `from \`session {action: "register"}\` or from any claim response.`,
+            `from any claim response, and from the agent that dispatched you.`,
         ),
       );
     }

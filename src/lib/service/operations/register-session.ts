@@ -395,9 +395,11 @@ export const registerSession = defineOperation({
       contracts:
         "Before your first write call, ask `describe_tool` for that tool's contract — it states " +
         "the conditional rules a schema cannot, which are the ones that refuse you. Notably: " +
-        '`record` with `action: "checkpoint"` requires your own live assignment (its `note` action does not), and a claim made by a ' +
-        "dispatched agent must pass its orchestrator's session id as `rootSessionId`, which " +
-        "otherwise defaults to your own and reads as a second crew. Call `describe_tool` with no " +
+        '`record` with `action: "checkpoint"` requires your own live assignment (its `note` action does not), and a claim must ' +
+        "state who is making it — pass the `leaseKey` from the agent that dispatched you, or, if " +
+        "you are starting your own crew, claim once with `sessionId`, `holderType` and `holderId` " +
+        "and use the `leaseKey` that comes back. This registration does not issue one: a key names " +
+        "a holder, and registering is not holding. Call `describe_tool` with no " +
         "argument for this build's limits.",
       ...(hookVersion === null ? { fetch: fetchInstructionsFor(variant) } : {}),
     };
