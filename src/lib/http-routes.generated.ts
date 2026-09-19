@@ -54,7 +54,7 @@ export const HTTP_ROUTES: readonly HttpRoute[] = [
   { path: "/api/items/{id}/detail", methods: ["GET"] },
   { path: "/api/items/{id}/history", methods: ["GET"] },
   { path: "/api/items/{id}/loops", methods: ["GET", "POST"] },
-  { path: "/api/items/{id}/loops/{loopId}", methods: ["GET", "PATCH", "DELETE"] },
+  { path: "/api/items/{id}/loops/{loopId}", methods: ["GET", "POST", "PATCH", "DELETE"] },
   { path: "/api/items/{id}/loops/{loopId}/close", methods: ["POST"] },
   { path: "/api/items/{id}/notes", methods: ["POST"] },
   { path: "/api/items/{id}/orientation", methods: ["GET"] },
