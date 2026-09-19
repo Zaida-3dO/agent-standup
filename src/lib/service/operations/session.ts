@@ -44,6 +44,7 @@ import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { parseDelegateInput } from "../shape-refusal";
+import { rejectForeignFields, type FoldForwarding } from "../foreign-fields";
 import { registerSession } from "./register-session";
 import { getSessionShape } from "./get-session-shape";
 
@@ -101,6 +102,21 @@ const inputSchema = z
 export type SessionInput = z.infer<typeof inputSchema>;
 
 /** Refuses an action that is missing a field it cannot run without. */
+/**
+ * Which delegate each action forwards to, for the foreign-field guard.
+ *
+ * Derived rather than listed: the fields `register` may carry ARE the
+ * fields `register_session` declares. `shape` takes `sessionId` and
+ * `limit` and nothing else, so the six registration fields are refused on
+ * it rather than accepted and dropped — a caller re-registering while
+ * asking for a shape would otherwise get a shape and no registration, with
+ * nothing said about it.
+ */
+const FORWARDING: FoldForwarding<SessionAction> = Object.freeze({
+  register: { schema: registerSession.input },
+  shape: { schema: getSessionShape.input },
+});
+
 function requireFields(input: SessionInput): void {
   const missing = SESSION_ACTION_FIELDS[input.action].required.filter(
     (field) => input[field as keyof SessionInput] === undefined,
@@ -141,6 +157,7 @@ export const session = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: SessionInput): Promise<unknown> {
+    rejectForeignFields("session", input.action, input, FORWARDING);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()` schema

@@ -770,6 +770,14 @@ const RENAMED_IN_FLIGHT: Readonly<Record<string, Readonly<Record<string, string>
   // is the defect that refused every `score run` call while three checks
   // stayed green, so this entry is the one most worth reading twice.
   "score:run": { facets: "scores" },
+  // The mirror image of the line above, and it was MISSING until the
+  // all-slots suite below went looking at every field rather than the few a
+  // fixture named. `score` presents the accept-list as `acceptFacets` and
+  // `accept_run_score` receives it as `facets` — so this fold renames in
+  // both directions across two actions, and `facets` means two different
+  // things depending on which: scored objects on `run`, bare names here.
+  // The forwarding was always correct; only this table did not say so.
+  "score:accept": { acceptFacets: "facets" },
   "project:repair": { id: "projectId" },
 };
 
@@ -879,6 +887,186 @@ describe("every fold forwards to the delegate it claims, under names that delega
       expect(fold, `${key} exempts an action of a tool that folds nothing`).toBeDefined();
       expect(fold!.actions, `${key} exempts an action ${tool} does not declare`).toContain(action);
     }
+  });
+
+  // ── Every slot, not only the ones a fixture thought to send ──────────
+  //
+  // The arrival assertion above is a real check and it has one blind spot,
+  // which is the whole reason this block exists: **it can only see fields
+  // the fixture supplied.** A field nobody put in an `OBSERVED` input is a
+  // field it never asks about, so the measured coverage was 96 of 475
+  // field-slots — one slot being one (action, field) pair — and the other
+  // 379 were unexamined rather than verified.
+  //
+  // That gap is exactly where the defect lived. `record`'s `findings` was
+  // present in the `artifact` fixture and absent from the `note` one, so
+  // arrival was asserted precisely where it already worked and never where
+  // it silently failed.
+  //
+  // So this asserts the property over the WHOLE cross product, and derives
+  // both halves rather than listing either:
+  //
+  //   - the slots come from each fold's own schema × its own action list;
+  //   - the verdict per slot comes from calling the fold and watching what
+  //     it does, which is one of exactly two acceptable outcomes.
+  //
+  // **The two acceptable outcomes, and why "dropped" is not among them.**
+  // A field sent to an action either ARRIVES at that action's delegate, or
+  // is REFUSED by name. What it must never do is be accepted and forwarded
+  // nowhere, because that reports success for work not done. Stating it as
+  // a disjunction rather than asserting arrival everywhere is what lets a
+  // field legitimately belonging to another action stay on the shared
+  // schema — it just has to be refused rather than swallowed.
+  describe("every field-slot either arrives or is refused — never silently dropped", () => {
+    /** One (action, field) pair: the unit a drop happens to. */
+    interface Slot {
+      readonly tool: string;
+      readonly action: string;
+      readonly field: string;
+    }
+
+    /**
+     * Every field a fold's schema declares, bar its discriminator.
+     *
+     * Read off the registered schema rather than listed here, so a field
+     * added to a fold is covered by this suite the moment it is declared —
+     * which is the property the 96-of-475 fixture table did not have.
+     */
+    function foldFields(tool: string): readonly string[] {
+      const fold = getOperation(tool as never) as unknown as { input?: unknown } | undefined;
+      let current: unknown = fold?.input;
+      for (let depth = 0; depth < 20 && current; depth += 1) {
+        const node = current as {
+          shape?: Record<string, unknown> | (() => Record<string, unknown>);
+          _def?: { schema?: unknown; innerType?: unknown };
+        };
+        const shape = typeof node.shape === "function" ? node.shape() : node.shape;
+        if (shape) {
+          return Object.keys(shape).filter((field) => field !== discriminatorFor(tool));
+        }
+        current = node._def?.schema ?? node._def?.innerType ?? null;
+      }
+      return [];
+    }
+
+    /**
+     * A value each field will accept, so a slot is tested for FORWARDING
+     * rather than refused for being the wrong type.
+     *
+     * Derived from the field's own schema by trying a small ladder of
+     * candidates and keeping the first the schema accepts. Guessing from
+     * the field NAME would be the literal-table mistake again — a name is a
+     * sentence about a type, and the schema is the type.
+     */
+    function sampleFor(tool: string, field: string): unknown {
+      const fold = getOperation(tool as never) as unknown as
+        { input?: { safeParse: (v: unknown) => { success: boolean } } } | undefined;
+      const candidates: unknown[] = [
+        "a-value",
+        1,
+        true,
+        [{ text: "a finding", severity: "low" }],
+        ["a-value"],
+        [{ facet: "reasoning", score: 4 }],
+        { a: 1 },
+      ];
+      for (const candidate of candidates) {
+        // Parsed against the FOLD's schema with only this field set, so the
+        // candidate is judged by the declaration rather than by a guess.
+        // Required fields missing is fine — `safeParse` reports every issue
+        // and we only care whether THIS field was among them.
+        const probe = fold?.input?.safeParse({
+          [discriminatorFor(tool)]: undefined,
+          [field]: candidate,
+        }) as { success: boolean; error?: { issues?: { path?: unknown[] }[] } } | undefined;
+        const objected = probe?.error?.issues?.some((issue) => issue.path?.[0] === field);
+        if (!objected) return candidate;
+      }
+      return "a-value";
+    }
+
+    /**
+     * The slots, and the base call each is added to.
+     *
+     * The base is the `OBSERVED` fixture for that action — a call already
+     * known to reach its delegate — so a slot's verdict isolates the one
+     * added field instead of being confounded by a missing required one.
+     */
+    const slots: (Slot & { readonly base: Record<string, unknown> })[] = [];
+    for (const entry of OBSERVED) {
+      const action = String(entry.input[discriminatorFor(entry.tool)]);
+      for (const field of foldFields(entry.tool)) {
+        slots.push({ tool: entry.tool, action, field, base: entry.input });
+      }
+    }
+
+    it("has slots to check, across every fold", () => {
+      // Anti-vacuity. An empty `slots` — a schema shape this reader cannot
+      // walk, a registry that returned nothing — would make every `it.each`
+      // below vanish and the suite report green having checked nothing.
+      expect(slots.length).toBeGreaterThan(300);
+      expect(new Set(slots.map((slot) => slot.tool)).size).toBe(
+        new Set(OBSERVED.map((entry) => entry.tool)).size,
+      );
+    });
+
+    it.each(slots)("$tool $action · $field arrives or is refused", async (slot) => {
+      const fold = getOperation(slot.tool as never) as unknown as FoldOperation | undefined;
+      const renames = RENAMED_IN_FLIGHT[`${slot.tool}:${slot.action}`];
+      const under = renames?.[slot.field] ?? slot.field;
+      const call = { ...slot.base, [slot.field]: sampleFor(slot.tool, slot.field) };
+
+      let forwarded: readonly { operation: string; input: unknown }[] = [];
+      let refusal: unknown;
+      try {
+        forwarded = await observeForwarding(fold!.handler, call);
+      } catch (error) {
+        refusal = error;
+      }
+
+      // Outcome 1: refused. The refusal must NAME the field, otherwise a
+      // caller is told something is wrong and not which thing — and a
+      // refusal that names a different field would let the real drop hide
+      // behind an unrelated complaint.
+      //
+      // The field counts as named under EITHER spelling. A refusal raised
+      // by the delegate arrives in the delegate's vocabulary — `score`
+      // forwards `facets` as `scores`, so a complaint about the value's
+      // shape reads `scores.0.facet`. That refusal is proof the field
+      // ARRIVED, which is the property under test; insisting on the
+      // caller's spelling there would fail the one case that most needs to
+      // pass. A sub-path counts too, for the same reason.
+      if (refusal) {
+        const named = (refusal as { fields?: readonly string[] }).fields ?? [];
+        const message = (refusal as { message?: string }).message ?? "";
+        const mentions = (name: string) =>
+          named.some((field) => field === name || field.startsWith(`${name}.`)) ||
+          message.includes(`\`${name}\``) ||
+          message.includes(`\`${name}.`);
+        expect(
+          mentions(slot.field) || mentions(under),
+          `${slot.tool} ${slot.action} refused \`${slot.field}\` without naming it ` +
+            `under either spelling (\`${slot.field}\` or \`${under}\`): ${message}`,
+        ).toBe(true);
+        return;
+      }
+
+      // Outcome 2: forwarded, and the field actually arrived. This is the
+      // assertion the defect would have failed: a fold that accepts a field
+      // and builds its delegate payload without it lands here with a
+      // payload that parsed cleanly and is missing the field.
+      const arrived = forwarded[0]?.input as Record<string, unknown> | undefined;
+      expect(
+        arrived,
+        `${slot.tool} ${slot.action} accepted \`${slot.field}\` and forwarded nothing at all`,
+      ).toBeDefined();
+      expect(
+        arrived,
+        `${slot.tool} ${slot.action} accepted \`${slot.field}\` and forwarded it nowhere — ` +
+          `neither delivered to the delegate as \`${under}\` nor refused. That is a field ` +
+          `parsed, validated and silently discarded while the call reports success.`,
+      ).toHaveProperty(under);
+    });
   });
 
   it("observes a forwarding reaching every operation FOLDED_INTO claims is reachable", () => {

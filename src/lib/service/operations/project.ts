@@ -44,6 +44,7 @@ import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { parseDelegateInput } from "../shape-refusal";
+import { rejectForeignFields, type FoldForwarding } from "../foreign-fields";
 import { getProjects } from "./get-projects";
 import { getProjectDetail } from "./get-project-detail";
 import { repairStuckProjects } from "./repair-stuck-projects";
@@ -110,6 +111,21 @@ const inputSchema = z
 export type ProjectInput = z.infer<typeof inputSchema>;
 
 /** Refuses an action that is missing a field it cannot run without. */
+/**
+ * Which delegate each action forwards to, for the foreign-field guard.
+ *
+ * `repair` carries the one rename on this tool: the fold calls the subject
+ * `id` for every action, and `repair_stuck_projects` declares it as
+ * `projectId`. Stated here so the guard answers in the CALLER's vocabulary
+ * — a caller passing `id` to `repair` must not be told their own field is
+ * foreign because the delegate spells it differently.
+ */
+const FORWARDING: FoldForwarding<ProjectAction> = Object.freeze({
+  list: { schema: getProjects.input },
+  detail: { schema: getProjectDetail.input },
+  repair: { schema: repairStuckProjects.input, renames: { id: "projectId" } },
+});
+
 function requireFields(input: ProjectInput): void {
   const missing = PROJECT_ACTION_FIELDS[input.action].required.filter(
     (field) => input[field as keyof ProjectInput] === undefined,
@@ -150,6 +166,7 @@ export const project = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ProjectInput): Promise<unknown> {
+    rejectForeignFields("project", input.action, input, FORWARDING);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()` schema

@@ -51,6 +51,7 @@ import { InvalidInputError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { parseDelegateInput } from "../shape-refusal";
+import { rejectForeignFields, type FoldForwarding } from "../foreign-fields";
 import { scoreRun } from "./score-run";
 import { deriveRunScore } from "./derive-run-score";
 import { acceptRunScore } from "./accept-run-score";
@@ -170,6 +171,33 @@ export type ScoreInput = z.infer<typeof inputSchema>;
  * caller that reads this knows which call to make next without opening a
  * schema.
  */
+/**
+ * Which delegate each action forwards to, for the foreign-field guard.
+ *
+ * **This fold carries the two renames that make the derived approach worth
+ * its complexity.** `run` presents the caller's list as `facets` and
+ * forwards it as `scores`; `accept` presents `acceptFacets` and forwards it
+ * as `facets`. So the delegate's declared names and the caller's differ on
+ * two actions, in opposite directions, and `facets` means two different
+ * things depending on the action — a list of scored objects on `run`, a
+ * list of names on `accept`.
+ *
+ * A guard reading only the delegates' field names would therefore refuse
+ * `facets` on `run` (the delegate says `scores`) and accept `facets` on
+ * `accept` under the wrong meaning. Mapping back through the renames is
+ * what makes the answer right in the caller's vocabulary, and it is the
+ * same table `fa83f2b9` is the cautionary tale for.
+ */
+const FORWARDING: FoldForwarding<ScoreAction> = Object.freeze({
+  run: { schema: scoreRun.input, renames: { facets: "scores" } },
+  derive: { schema: deriveRunScore.input },
+  accept: { schema: acceptRunScore.input, renames: { acceptFacets: "facets" } },
+  runs: { schema: getRunScores.input },
+  list: { schema: listRuns.input },
+  intervention: { schema: scoreIntervention.input },
+  interventions: { schema: getInterventionScores.input },
+});
+
 function requireFields(input: ScoreInput): void {
   const missing = SCORE_ACTION_FIELDS[input.action].required.filter(
     (field) => input[field as keyof ScoreInput] === undefined,
@@ -214,6 +242,7 @@ export const score = defineOperation({
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: ScoreInput): Promise<unknown> {
+    rejectForeignFields("score", input.action, input, FORWARDING);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()` schema

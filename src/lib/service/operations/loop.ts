@@ -79,6 +79,7 @@
 import { z } from "zod";
 import { InvalidInputError } from "../errors";
 import { parseDelegateInput } from "../shape-refusal";
+import { rejectForeignFields, type FoldForwarding } from "../foreign-fields";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { LOOP_KINDS } from "@/lib/open-loops";
@@ -166,6 +167,26 @@ export type LoopInput = z.infer<typeof inputSchema>;
  * 120-character cap. Shorten it and resubmit"). A caller that reads this
  * knows which call to make next without opening a schema.
  */
+/**
+ * Which delegate each action forwards to, for the foreign-field guard.
+ *
+ * Note what this changes about the `reason` rule stated in the contract
+ * below. It used to end "Every other action ignores `reason`" — an accurate
+ * description of a silent drop, written as though it were a feature. A
+ * caller who sent a reason to `close` meaning to delete, or to `add`
+ * meaning to explain, had it accepted and discarded. Now it is refused and
+ * names `delete` and `close` as the actions that take one, so the contract
+ * rule below says "refuses" rather than "ignores".
+ */
+const FORWARDING: FoldForwarding<LoopAction> = Object.freeze({
+  add: { schema: loopAdd.input },
+  get: { schema: loopGet.input },
+  list: { schema: loopList.input },
+  edit: { schema: loopEdit.input },
+  close: { schema: loopClose.input },
+  delete: { schema: loopDelete.input },
+});
+
 function requireFields(input: LoopInput): void {
   const missing = ACTION_FIELDS[input.action].required.filter(
     (field) => input[field as keyof LoopInput] === undefined,
@@ -202,13 +223,14 @@ export const loop = defineOperation({
       },
       {
         fields: ["reason"],
-        rule: "delete needs a reason of at least 20 characters that does not describe a resolution — a loose end that was real and has been dealt with is closed with action close, not deleted. close accepts one too, optionally, saying how it was resolved. Both are kept: a closed loop reports `closedReason` and a deleted one `deletedReason`. Every other action ignores `reason`.",
+        rule: "delete needs a reason of at least 20 characters that does not describe a resolution — a loose end that was real and has been dealt with is closed with action close, not deleted. close accepts one too, optionally, saying how it was resolved. Both are kept: a closed loop reports `closedReason` and a deleted one `deletedReason`. Every other action REFUSES `reason` by name rather than ignoring it, so a reason meant for a delete cannot be accepted by an add and discarded.",
       },
     ],
   },
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: LoopInput): Promise<unknown> {
+    rejectForeignFields("loop", input.action, input, FORWARDING);
     requireFields(input);
 
     // Each branch forwards only the fields its operation's `.strict()`
