@@ -1367,6 +1367,45 @@ vocabulary, with two places to disagree.
 
 ---
 
+## 20. The lease key's bootstrap, and how its deprecation ends (2026-09-19)
+
+**Full reasoning and the complete lifecycle: `LEASE-KEY-LIFECYCLE.md`.** Recorded here because it is
+a decision, and this is where decisions live; that document is where the feature is specified.
+
+**The problem.** A first lease key was obtainable only by claiming with the legacy identity fields
+the key exists to replace. On the day those were removed, no caller could obtain a first key — so the
+deprecation had no end, and nothing said so. The feature could not reach its own state.
+
+**Decided: registration issues a key that carries its own provenance** — `origin: "self_rooted" |
+"claimed"`, prefix `lk2`.
+
+Making registration an issuer was rejected once, on the grounds that the only key it can mint is one
+rooted at itself, which is right for an orchestrator and wrong for the dispatched agent who reads the
+refusal most — so issuing it "would restore the silent self-rooting default one call earlier and
+wearing the server's authority." That argument is correct, and the word carrying it is **silent**.
+The bug the key exists to prevent was an omission indistinguishable from a deliberate root claim:
+no value to typo, nothing to validate. A key stamped `self_rooted` is exactly a value to validate, so
+a dispatched agent presenting one can be refused by name rather than quietly forming a second crew.
+The objection holds against a key indistinguishable from a claimed one; it does not hold against one
+that says what it is. This applies the key's own argument one level up rather than contradicting it.
+
+**The alternative, stated because it was genuinely available:** keep the legacy fields permanently and
+say so — in the docs and in every refusal — rather than calling them deprecated. Rejected, but note
+that it is what the system does *while believing it is doing the other thing*, which is the worst of
+the available states. A permanent path described as temporary is its own defect.
+
+**The end condition for the legacy fields is a trigger, not a date** (§8 of the lifecycle doc): they
+go when registration issues keys, when every surface can carry one, when every surface can recover
+one, and when a warn-loudly window has passed with no legacy claims from callers that could have used
+a key. A date would be a value stated in prose with nothing behind it — the failure
+`check-doc-version-claims.mjs` exists to prevent.
+
+**Not reversed, and recorded as an honest assessment:** the encoding is over-engineered for its
+stated goal. The refusal-on-absence is what prevents the bug; the codec, checksum and column are the
+dispatch ergonomic. It has shipped and works, and reversing it would cost more than it returns.
+
+---
+
 ## 14. Still open
 
 1. **Exact band numbers** beyond the starting values above.

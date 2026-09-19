@@ -131,6 +131,28 @@ export interface ResolvedLease {
  * its own claim response). An orchestrator with no key yet is not stuck —
  * it has the legacy fields below, and its first claim hands it the key for
  * every claim after.
+ *
+ * ── …and why that is settled but not yet final ──────────────────────────
+ *
+ * The argument above is correct against the proposal it answers — a key
+ * from registration **indistinguishable** from a claimed one. It does not
+ * answer a key that says what it is. `docs/plans/LEASE-KEY-LIFECYCLE.md` §4
+ * records the decision that registration WILL issue a key carrying
+ * `origin: "self_rooted"`, because the failure this whole feature exists to
+ * prevent was a *silent* one, and a stamped key makes the dispatched-agent
+ * mistake nameable and refusable rather than invisible.
+ *
+ * That decision is recorded and not yet implemented. Until it is, the
+ * reasoning above is the live behaviour and this text is accurate. The row
+ * that implements it must rewrite this comment in the same commit rather
+ * than leaving the two to contradict each other.
+ *
+ * **Consequence for the legacy fields, which this message names as the
+ * bootstrap:** they cannot be removed before that lands, because until it
+ * does they are the ONLY way to obtain a first key. They are supported, not
+ * merely tolerated, and their end condition is a trigger rather than a date
+ * — see §8 of that document. Nothing here may imply they are about to stop
+ * working.
  */
 function absentKeyMessage(): string {
   return (

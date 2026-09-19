@@ -78,8 +78,34 @@ import type { CommandSpec, InputResult } from "./commands";
  * `tests/cli-verb-keys.test.ts` pins that every key here is reachable from
  * a command, which is the half a type cannot state.
  */
+/**
+ * Maps the hyphenated command-line spelling onto the schema's camelCase.
+ *
+ * A **rename, not a filter**, exactly as `commands-scoring.ts`'s `HYPHENATED`
+ * is: a flag with no entry here still passes through under its own name and
+ * is refused by the operation's `.strict()` schema if it is wrong. Adding
+ * `leaseKey` to the verb table instead would be the allow-list mistake this
+ * module's header warns against.
+ *
+ * `--leaseKey` already reached the operation, because `passThroughFlags`
+ * copies flag names verbatim. What did not work was `--lease-key` — the
+ * spelling every other multi-word flag in the product uses — which arrived
+ * under the key `lease-key` and was refused as unrecognised. A caller reading
+ * that refusal concludes the command line cannot pass a key at all, which is
+ * the one surface a lease key must be passable on if the legacy identity
+ * fields are ever to be removed (`docs/plans/LEASE-KEY-LIFECYCLE.md` §3, §8).
+ */
+const HYPHENATED: Readonly<Record<string, string>> = Object.freeze({
+  "lease-key": "leaseKey",
+});
+
 const VERBS = Object.freeze({
-  claim: { itemId: "session claim <item-id>", numbers: { pid: "pid" }, session: true },
+  claim: {
+    itemId: "session claim <item-id>",
+    numbers: { pid: "pid" },
+    session: true,
+    rename: HYPHENATED,
+  },
   release: { itemId: "session release <item-id>", session: true },
   heartbeat: { itemId: "session heartbeat <item-id>", session: true },
   takeover: { itemId: "session takeover <item-id>", optionalSwitches: { force: "force" } },
