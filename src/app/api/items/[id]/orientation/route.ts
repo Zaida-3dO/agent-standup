@@ -18,6 +18,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const input: Record<string, unknown> = { itemId: id };
   const since = url.searchParams.get("since");
   if (since !== null) input.since = since;
+  // Read here because the operation accepts it. Orientation is one of the
+  // reads most likely to overflow the response ceiling — 40 loops measured
+  // 321,056 characters through it — so a caller narrowing this response
+  // depends on the parameter reaching the operation.
+  const limit = url.searchParams.get("limit");
+  if (limit !== null) {
+    const parsed = Number(limit);
+    input.limit = Number.isNaN(parsed) ? limit : parsed;
+  }
 
   try {
     const result = await service.call("orientation", input, { caller });

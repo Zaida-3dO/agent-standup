@@ -28,6 +28,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     input.historyLimit = Number.isNaN(parsed) ? historyLimit : parsed;
   }
 
+  // `artifactLimit` is read on exactly the same terms as its sibling above.
+  // It was accepted by the operation and never read here, so a caller
+  // narrowing this response — which is one of the reads most likely to be
+  // refused for size — could halve its history and not its artifacts, and
+  // the parameter that would have worked was silently ignored.
+  const artifactLimit = url.searchParams.get("artifactLimit");
+  if (artifactLimit !== null) {
+    const parsed = Number(artifactLimit);
+    input.artifactLimit = Number.isNaN(parsed) ? artifactLimit : parsed;
+  }
+
   try {
     const detail = await service.call("get_item_detail", input, {
       caller,

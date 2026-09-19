@@ -93,6 +93,45 @@ export async function PATCH(request: Request, { params }: LoopParams) {
   }
 }
 
+/**
+ * `POST /items/{id}/loops/{loopId}` — refused, naming the sub-path that closes.
+ *
+ * **This exists so that one specific wrong URL stops answering with silence.**
+ * Closing a loop is `POST .../loops/{loopId}/close`, and a caller that puts
+ * the loop id in the body instead — `POST /items/{id}/loops/close` — lands
+ * here with `loopId` bound to the literal string `"close"`. Without a `POST`
+ * export, Next answers that with an empty body and no error envelope, which
+ * is the worst available answer: a caller checking for a non-empty body
+ * reads every close as a failure, and one checking only for the absence of
+ * an error reads success on a loop it never closed. An external report
+ * arrived describing exactly that as "the close silently discards `reason`"
+ * — the close had never run at all.
+ *
+ * Refused rather than helpfully redirected to the close operation. The path
+ * genuinely does not identify a loop, and guessing that `"close"` was meant
+ * as a verb here would make `POST .../loops/close` a second, undocumented
+ * spelling of the close endpoint — reachable only by getting the URL wrong.
+ */
+export async function POST(request: Request, { params }: LoopParams) {
+  const auth = authenticatedCaller(request);
+  if (!auth.ok) return auth.response;
+  const { requestId } = auth;
+  const { id, loopId } = await params;
+
+  const message =
+    loopId === "close"
+      ? `A loop is closed with POST /items/${id}/loops/{loopId}/close, with the loop id in the PATH — not in the body of /items/${id}/loops/close. This request named no loop, so nothing was closed.`
+      : `POST is not a method on a single loop. Close one with POST /items/${id}/loops/${loopId}/close, rewrite its text with PATCH, or retract it with DELETE.`;
+
+  return withRequestId(
+    NextResponse.json(
+      { error: { code: "invalid_input", message, fields: ["loopId"] } },
+      { status: 400 },
+    ),
+    requestId,
+  );
+}
+
 /** `DELETE /items/{id}/loops/{loopId}` — retract a loop that should never have existed. */
 export async function DELETE(request: Request, { params }: LoopParams) {
   const auth = authenticatedCaller(request);
