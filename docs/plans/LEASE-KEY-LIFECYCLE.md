@@ -115,7 +115,12 @@ drops a field."
 So `--leaseKey lk1…` reaches the operation and works. `--lease-key lk1…` arrives under the key
 `"lease-key"` and is refused by `claim`'s `.strict()` schema as an unrecognised field. There is no
 *generic* kebab-to-camel conversion; `buildVerbInput` provides a per-verb `rename` map for exactly
-this, used by `commands-admin.ts`, `commands-scoring.ts` and `commands-sessions.ts`.
+this, used by `commands-scoring.ts` and — after this row — `commands-ownership.ts`.
+
+> `commands-admin.ts` and `commands-sessions.ts` do **not** call `buildVerbInput` at all, so they
+> cannot use its `rename` map; they hand-roll the conversion per command and via an inline ternary
+> respectively. Recorded because this paragraph is the cited justification for choosing a `rename`
+> entry over a verb-table field, and a wrong list of precedents weakens a right argument.
 
 **The fix is therefore a `rename` entry, not a new field**, and the distinction matters: adding
 `leaseKey` to the verb table would be the allow-list mistake that header warns against. A refusal of
