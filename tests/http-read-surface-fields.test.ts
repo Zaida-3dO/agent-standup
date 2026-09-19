@@ -73,6 +73,20 @@ describeIfDb("HTTP read surfaces carry the fields they accept", () => {
       caller,
     )) as { id: string };
 
+    // A second project, so a `limit=1` page over `get_projects` is
+    // genuinely partial rather than happening to be the only one.
+    await runtime.call(
+      "create_project",
+      {
+        title: "read surfaces project two",
+        body: "body",
+        area: "web",
+        originType: "person",
+        originPersonId: "tester",
+      },
+      caller,
+    );
+
     const task = (await runtime.call(
       "create_task",
       {
@@ -184,6 +198,113 @@ describeIfDb("HTTP read surfaces carry the fields they accept", () => {
     // Two more claims exist, so the page is genuinely partial and the cursor
     // is the only way to reach them.
     expect(body.nextCursor).toBeTruthy();
+  });
+
+  // The identical class again, this time in `get_projects` — the exact
+  // shape `get_fleet` had before its own fix: the route never mentioned
+  // `limit` or `cursor` though the operation declares both and its own
+  // summary says "pass limit and cursor, read nextCursor".
+  //
+  // Asserts the page SIZE, not the status, for the same reason as the fleet
+  // case above: the pre-fix route returned 200 with every project on it.
+  // The single-character change that breaks this: deleting the
+  // `queryInput(request, "get_projects")` call in
+  // `src/app/api/projects/route.ts` (or reverting it to a hand-written
+  // reader that never mentions `limit`) returns every project on one page.
+  it("get_projects over HTTP honours limit and cursor, so its second page is reachable", async () => {
+    const projectsRoute = await import("@/app/api/projects/route");
+    const first = await projectsRoute.GET(
+      authenticatedRequest("http://test.invalid/api/projects?limit=1"),
+    );
+    const firstBody = (await first.json()) as {
+      projects: { id: string }[];
+      nextCursor?: string | null;
+    };
+
+    expect(first.status).toBe(200);
+    // This suite's `create_project` in `beforeAll` plus the extra projects
+    // below make at least two, so a `limit=1` page is genuinely partial.
+    expect(firstBody.projects).toHaveLength(1);
+    expect(firstBody.nextCursor).toBeTruthy();
+
+    const second = await projectsRoute.GET(
+      authenticatedRequest(
+        `http://test.invalid/api/projects?limit=1&cursor=${encodeURIComponent(firstBody.nextCursor!)}`,
+      ),
+    );
+    const secondBody = (await second.json()) as { projects: { id: string }[] };
+
+    expect(second.status).toBe(200);
+    expect(secondBody.projects).toHaveLength(1);
+    // The second page names a different project than the first — proof the
+    // cursor actually advanced rather than the route silently ignoring it
+    // and serving page one twice.
+    expect(secondBody.projects[0]!.id).not.toBe(firstBody.projects[0]!.id);
+  });
+
+  // `get_board`'s `trust` filter (MILESTONES.md #131) was never read over
+  // HTTP: the route mentioned 17 of its 18 declared fields and skipped this
+  // one. An imported (`originType: "source"`) row with nobody having
+  // recorded a `historical_verification` against it is `unverified`; an
+  // ordinary row created here is `trusted`. Asserts by ITEM CONTENT — which
+  // ids come back — not merely by status, so a route that accepted and
+  // ignored the parameter (returning every item regardless) would still
+  // fail: it would return both ids under `trust=unverified`.
+  it("the board read over HTTP honours the trust filter", async () => {
+    const boardRoute = await import("@/app/api/board/route");
+    const trustProject = (await runtime.call(
+      "create_project",
+      {
+        title: "trust filter project",
+        body: "body",
+        area: "web",
+        originType: "person",
+        originPersonId: "tester",
+      },
+      caller,
+    )) as { id: string };
+    const sourceTask = (await runtime.call(
+      "create_task",
+      {
+        projectId: trustProject.id,
+        title: "imported task nobody has checked",
+        body: "body",
+        area: "web",
+        originType: "source",
+      },
+      caller,
+    )) as { id: string };
+
+    // `?column=backlog` names the column explicitly — `on_deck` (the
+    // default state a fresh task lands in) maps there, and `backlog` is
+    // withheld by default (MILESTONES.md #109) unless asked for by name.
+    const unverified = await boardRoute.GET(
+      authenticatedRequest("http://test.invalid/api/board?trust=unverified&column=backlog"),
+    );
+    const unverifiedBody = (await unverified.json()) as {
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
+    };
+    const unverifiedIds = Object.values(unverifiedBody.board.columns).flatMap((section) =>
+      section.entries.map((entry) => entry.item.id),
+    );
+
+    expect(unverified.status).toBe(200);
+    expect(unverifiedIds).toContain(sourceTask.id);
+    expect(unverifiedIds).not.toContain(itemId);
+
+    const trusted = await boardRoute.GET(
+      authenticatedRequest("http://test.invalid/api/board?trust=trusted&column=backlog"),
+    );
+    const trustedBody = (await trusted.json()) as {
+      board: { columns: Record<string, { entries: { item: { id: string } }[] }> };
+    };
+    const trustedIds = Object.values(trustedBody.board.columns).flatMap((section) =>
+      section.entries.map((entry) => entry.item.id),
+    );
+
+    expect(trusted.status).toBe(200);
+    expect(trustedIds).toContain(itemId);
+    expect(trustedIds).not.toContain(sourceTask.id);
   });
 
   // Criterion 6. `POST /items/{id}/loops/close` binds `loopId` to the literal

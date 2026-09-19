@@ -14,20 +14,21 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../../../_shared/respond";
+import { queryInput } from "../../../_shared/query";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const { id } = await context.params;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = { sessionId: id };
-
-  // Forwarded untouched when it is not a number, so the schema refuses it
-  // and names the field rather than this adapter substituting a default the
-  // caller never asked for.
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) input.limit = Number.isNaN(Number(limit)) ? limit : Number(limit);
+  // Read off the operation's own schema (`../../../_shared/query.ts`) for
+  // every field except `sessionId`, which is the path param under a
+  // different name and so is set directly rather than read from the query
+  // string.
+  const input: Record<string, unknown> = {
+    sessionId: id,
+    ...queryInput(request, "get_session_shape", ["sessionId"]),
+  };
 
   try {
     const result = await service.call("get_session_shape", input, { caller });

@@ -3,15 +3,23 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../respond";
-import { parseBooleanParam } from "../../_shared/query";
+import { parseBooleanParam, queryInput } from "../../_shared/query";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const { id } = await params;
-  const input: Record<string, unknown> = { id };
   const url = new URL(request.url);
+  // Read off the operation's own schema (`../../_shared/query.ts`) for every
+  // field except `id` (the path param, set directly) and `full`, exempted
+  // and read separately below. `get_item`'s `full` is the one field on this
+  // whole surface typed `z.union([z.boolean(), z.enum(["item","detail"])])`
+  // rather than a plain boolean — `queryInput` has no generic reading for a
+  // union, and every other operation's `full` really is a plain boolean, so
+  // this is the one field kept as a per-route exemption rather than taught
+  // to the shared helper for a shape used nowhere else.
+  const input: Record<string, unknown> = { id, ...queryInput(request, "get_item", ["id", "full"]) };
   // `?full=true` opts out of the slim default (MILESTONES.md #107).
   // `?full=item` and `?full=detail` name the two deeper reads:
   // `parseBooleanParam` returns an unrecognised string unchanged, so the
@@ -20,15 +28,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // vocabulary, and it is why no enum is restated here.
   const full = url.searchParams.get("full");
   if (full !== null) input.full = parseBooleanParam(full);
-  // Only forwarded when present, so the schema's own defaults stand for the
-  // absent case. Left as the string the query gave when it is not a number,
-  // so the schema refuses it and names the field rather than this route
-  // turning `?historyLimit=lots` into NaN.
-  for (const field of ["historyLimit", "artifactLimit"] as const) {
-    const raw = url.searchParams.get(field);
-    if (raw === null) continue;
-    input[field] = Number.isNaN(Number(raw)) ? raw : Number(raw);
-  }
   try {
     const item = await service.call("get_item", input, { caller });
     return withRequestId(NextResponse.json({ item }), requestId);

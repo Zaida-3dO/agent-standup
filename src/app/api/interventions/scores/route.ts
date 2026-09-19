@@ -13,22 +13,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../../_shared/respond";
+import { queryInput } from "../../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-
-  const input: Record<string, unknown> = {};
-  for (const name of ["since", "entryId"] as const) {
-    const raw = url.searchParams.get(name);
-    if (raw !== null) input[name] = raw;
-  }
-  const threshold = url.searchParams.get("threshold");
-  if (threshold !== null) {
-    input.threshold = Number.isNaN(Number(threshold)) ? threshold : Number(threshold);
-  }
+  // Read off the operation's own schema (`../../_shared/query.ts`).
+  const input = queryInput(request, "get_intervention_scores");
 
   try {
     const result = await service.call("get_intervention_scores", input, { caller });

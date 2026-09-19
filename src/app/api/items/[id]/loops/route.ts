@@ -20,6 +20,7 @@ import {
   serializeAppendedEvent,
   serviceErrorResponse,
 } from "../../../_shared/respond";
+import { queryInput } from "../../../_shared/query";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
@@ -56,26 +57,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
  *
  * Open loops that track work only by default; `?includeClosed=true` adds
  * resolved ones, `?includeDeleted=true` adds retracted ones, and
- * `?includeNonWork=true` adds notes. Query parameters arrive as
- * strings, so each is compared against `"true"` here rather than passed
- * through — an absent parameter has to mean `false`, and the string `"false"`
- * must not read as truthy, which is exactly what forwarding the raw value
- * into a boolean field would do.
+ * `?includeNonWork=true` adds notes. Read off the operation's own schema
+ * (`../../../_shared/query.ts`) for every field except `itemId`, which is the
+ * path param under a different name and so is set directly rather than read
+ * from the query string. The three booleans now go through
+ * `parseBooleanParam` like every other boolean on this surface — `?includeClosed`
+ * bare and `1` now also mean true, where before only the literal string
+ * `"true"` did; `"true"` itself still works, so no existing caller changes
+ * meaning.
  */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const { id } = await params;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = { itemId: id };
-  if (url.searchParams.get("includeClosed") === "true") input.includeClosed = true;
-  if (url.searchParams.get("includeDeleted") === "true") input.includeDeleted = true;
-  if (url.searchParams.get("includeNonWork") === "true") input.includeNonWork = true;
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) input.limit = limit;
-  const cursor = url.searchParams.get("cursor");
-  if (cursor !== null) input.cursor = cursor;
+  const input: Record<string, unknown> = {
+    itemId: id,
+    ...queryInput(request, "loop_list", ["itemId"]),
+  };
 
   try {
     const result = await service.call("loop_list", input, { caller });

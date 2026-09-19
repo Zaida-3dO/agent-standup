@@ -17,24 +17,14 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = {};
-  // Passed through as a number when present and omitted when absent, so the
-  // operation's own default applies rather than this adapter restating it. A
-  // non-numeric value goes through untouched for the schema to refuse by
-  // name, matching every other paged read here.
-  const limit = url.searchParams.get("limit");
-  if (limit !== null) {
-    const parsed = Number(limit);
-    input.limit = Number.isNaN(parsed) ? limit : parsed;
-  }
-  const cursor = url.searchParams.get("cursor");
-  if (cursor !== null) input.cursor = cursor;
+  // Read off the operation's own schema (`../_shared/query.ts`).
+  const input = queryInput(request, "get_fleet");
 
   try {
     const result = await service.call("get_fleet", input, { caller });

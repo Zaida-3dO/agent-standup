@@ -12,33 +12,20 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../../items/respond";
-import { parseBooleanParam } from "../../_shared/query";
+import { queryInput } from "../../_shared/query";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
   const { id } = await params;
-  const url = new URL(request.url);
-  const input: Record<string, unknown> = { id };
 
-  // Parsed to a number rather than passed through as text, because every
-  // query param arrives as a string and the operation's schema types these
-  // as integers — handing over the raw string would be refused as invalid
-  // input rather than honoured. `Number` on a non-numeric value yields
-  // `NaN`, which the schema then rejects with a message naming the field,
-  // and that is the intended outcome: a bad limit should say so, not
-  // silently fall back to the default.
-  const activityLimit = url.searchParams.get("activityLimit");
-  if (activityLimit !== null) input.activityLimit = Number(activityLimit);
-  const childLimit = url.searchParams.get("childLimit");
-  if (childLimit !== null) input.childLimit = Number(childLimit);
-  // Archived descendants are off by default, the same shape as the
-  // collection route's flag and parsed rather than forwarded raw for the
-  // same reason. It does not affect whether an archived project itself
-  // resolves here — that is a by-id read and always does.
-  const includeArchived = url.searchParams.get("includeArchived");
-  if (includeArchived !== null) input.includeArchived = parseBooleanParam(includeArchived);
+  // Read off the operation's own schema (`../../_shared/query.ts`) for
+  // every field except `id` (the path param, set directly).
+  const input: Record<string, unknown> = {
+    id,
+    ...queryInput(request, "get_project_detail", ["id"]),
+  };
 
   try {
     const detail = await service.call("get_project_detail", input, { caller });

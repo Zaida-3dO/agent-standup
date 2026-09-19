@@ -4,23 +4,18 @@
 import { NextResponse } from "next/server";
 import { service } from "@/lib/service/live";
 import { authenticatedCaller, withRequestId, serviceErrorResponse } from "../items/respond";
+import { queryInput } from "../_shared/query";
 
 export async function GET(request: Request) {
   const auth = authenticatedCaller(request);
   if (!auth.ok) return auth.response;
   const { requestId, caller } = auth;
-  const url = new URL(request.url);
-  const sessionId = url.searchParams.get("sessionId");
-  const includeCompleted = url.searchParams.get("includeCompleted");
-
-  const input: Record<string, unknown> = {};
-  if (sessionId !== null) input.sessionId = sessionId;
-  // Only forwarded when present, so an absent parameter reaches the schema's
-  // own default rather than being decided here — a route that resolved it
-  // would be a second place the default lives. `"true"` is the only spelling
-  // accepted as true, so a typo reads as false rather than as an unbounded
-  // report nobody asked for.
-  if (includeCompleted !== null) input.includeCompleted = includeCompleted === "true";
+  // Read off the operation's own schema (`../_shared/query.ts`).
+  // `includeCompleted` now goes through `parseBooleanParam` like every other
+  // boolean on this surface — `?includeCompleted` bare and `1` now also
+  // mean true, where before only the literal string `"true"` did. `"true"`
+  // itself still works, so no existing caller changes meaning.
+  const input = queryInput(request, "progress_report");
 
   try {
     const result = await service.call("progress_report", input, { caller });
