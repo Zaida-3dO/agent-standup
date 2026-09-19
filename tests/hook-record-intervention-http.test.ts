@@ -5,8 +5,10 @@
 // shape the request, reduce every failure to a not-ok result, authenticate
 // when a token is configured. The one property this row's design turns on
 // and `flush-http` has no equivalent of: **a capture is never spooled**, so
-// there is no retry and no `onFailure` — a failed send is simply a lost
-// capture, silently, and that silence is asserted here rather than assumed.
+// there is no retry — a failed send is simply a lost capture. The boolean
+// stays silent forever regardless, but `onFailure` reports a *permanent*
+// refusal once, the same shape `ask-http.ts` and `flush-http.ts` use, so a
+// broken audit trail is distinguishable from a clean one from outside.
 //
 // The sender also reads the row ids back off the response, and the group at
 // the bottom covers that: those ids are the only handle anything has on a
@@ -104,10 +106,7 @@ describe("the request is shaped the way record_intervention accepts it", () => {
 });
 
 describe("every failure answers false, and nothing retries", () => {
-  it("answers false on a refused shape, with no onFailure to tell why", async () => {
-    // Unlike a flush, a capture is not spooled and nothing calls this
-    // sender again for the same finding — so there is deliberately no
-    // failure-reason channel to build here.
+  it("answers false on a refused shape", async () => {
     const { fetch } = stubFetch(400, false);
     const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
     expect((await send(BATCH)).ok).toBe(false);
@@ -119,6 +118,132 @@ describe("every failure answers false, and nothing retries", () => {
     };
     const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
     expect((await send(BATCH)).ok).toBe(false);
+  });
+});
+
+// ── A permanent refusal is reported; nothing else is ────────────────────
+//
+// The gap the item is about. The boolean returned to the caller is
+// unchanged by any of this — see the group above — but a 4xx that will
+// recur identically until someone fixes their token or their deployment
+// used to vanish into a `{ ok: false, recorded: [] }` nobody ever looked
+// at. `onFailure` is how that becomes one line instead of nothing, and it
+// fires ONLY on a permanent status: a 5xx or a network error is ordinary
+// and transient, and reporting those would be noise on every blip.
+describe("a permanent refusal is reported through onFailure; nothing else is", () => {
+  it("reports a 400 through onFailure", async () => {
+    const { fetch } = stubFetch(400, false);
+    const onFailure = vi.fn();
+    const send = createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch,
+      onFailure,
+    });
+
+    await send(BATCH);
+    expect(onFailure).toHaveBeenCalledWith({ status: 400 });
+  });
+
+  it("reports a 401 through onFailure", async () => {
+    const { fetch } = stubFetch(401, false);
+    const onFailure = vi.fn();
+    const send = createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch,
+      onFailure,
+    });
+
+    await send(BATCH);
+    expect(onFailure).toHaveBeenCalledWith({ status: 401 });
+  });
+
+  it("does not report a 500, since a server having a bad time is transient", async () => {
+    const { fetch } = stubFetch(500, false);
+    const onFailure = vi.fn();
+    const send = createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch,
+      onFailure,
+    });
+
+    await send(BATCH);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("does not report a network throw, since there is no evidence of a permanent refusal", async () => {
+    const fetch: FetchLike = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+    const onFailure = vi.fn();
+    const send = createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch,
+      onFailure,
+    });
+
+    await send(BATCH);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("does not report a 408 or a 429, since both are 4xx by number and transient by meaning", async () => {
+    const onFailure = vi.fn();
+
+    const { fetch: fetch408 } = stubFetch(408, false);
+    await createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch: fetch408,
+      onFailure,
+    })(BATCH);
+
+    const { fetch: fetch429 } = stubFetch(429, false);
+    await createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch: fetch429,
+      onFailure,
+    })(BATCH);
+
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("does not call onFailure at all on success, even with no ids in the body", async () => {
+    const { fetch } = stubFetch(201);
+    const onFailure = vi.fn();
+    const send = createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch,
+      onFailure,
+    });
+
+    await send(BATCH);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("does not call onFailure when a successful response's body is unparseable", async () => {
+    // Pins the correction: this is a successful write with an unreadable
+    // body, not a failed send, so it must not be reported as one either.
+    const fetch: FetchLike = async () => ({
+      ok: true,
+      status: 201,
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    const onFailure = vi.fn();
+    const send = createRecordInterventionHttp({
+      baseUrl: "https://standup.example",
+      fetch,
+      onFailure,
+    });
+
+    const result = await send(BATCH);
+    expect(result.ok).toBe(true);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("does not throw or require onFailure to be supplied", async () => {
+    const { fetch } = stubFetch(400, false);
+    const send = createRecordInterventionHttp({ baseUrl: "https://standup.example", fetch });
+    await expect(send(BATCH)).resolves.toEqual({ ok: false, recorded: [] });
   });
 });
 

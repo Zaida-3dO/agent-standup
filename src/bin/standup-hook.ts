@@ -69,6 +69,29 @@ function reportAskFailure({ status }: { readonly status: number }): void {
   );
 }
 
+/**
+ * Says, once per affected capture, that an intervention finding was not
+ * recorded.
+ *
+ * Same reasoning as `reportAskFailure`, one rung down in severity: a
+ * permanent `4xx` on this path is not a misconfiguration anyone is blocked
+ * by — the tool call was already decided — but it is one that recurs
+ * identically on every finding until somebody notices, and a dropped
+ * override reason is exactly the kind of thing this line exists to
+ * surface. stderr, not stdout, for the same reason as above: stdout is the
+ * decision channel and this has no decision to report.
+ */
+function reportRecordFailure({ status }: { readonly status: number }): void {
+  const remedy =
+    status === 401 || status === 403
+      ? " — set STANDUP_TOKEN to a token this deployment accepts"
+      : "";
+  process.stderr.write(
+    `standup hook: the server refused an intervention capture (HTTP ${status})${remedy}. ` +
+      `The finding was NOT recorded.\n`,
+  );
+}
+
 /** Reads stdin to the end. Empty string if there is nothing on it. */
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -366,6 +389,7 @@ function recordFindings(
     ...(env.STANDUP_TOKEN === undefined || env.STANDUP_TOKEN.trim() === ""
       ? {}
       : { token: env.STANDUP_TOKEN.trim() }),
+    onFailure: reportRecordFailure,
   });
 
   return async (report) => {
