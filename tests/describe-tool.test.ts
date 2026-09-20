@@ -25,6 +25,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InvalidInputError,
+  MAX_RESPONSE_CHARS,
   NotFoundError,
   OPERATION_REGISTRY,
   ServiceRuntime,
@@ -307,6 +308,42 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(contract.fields.map((entry) => entry.name)).toEqual(
       expect.arrayContaining(["ref", "commitSha"]),
     );
+  });
+
+  it("states record_artifact's body has no practical write limit, distinct from the read-side response cap", async () => {
+    // External feedback batch, 2026-09-17: the reporter believed
+    // agent-standup could not hold a 144 KB plan, because the only size
+    // figure the product states anywhere is `MAX_RESPONSE_CHARS`
+    // (200,000 characters) and it reads as a statement about an artifact
+    // rather than about the page it is returned on. That false belief
+    // blocked a migration item for an afternoon before one call disproved
+    // it. This rule is the fix: a caller can read it before guessing wrong.
+    const contract = await contractFor("record_artifact");
+
+    const rule = declaredRules(contract).find(
+      (entry) => entry.fields.includes("body") && /MAX_RESPONSE_CHARS/.test(entry.rule),
+    );
+    expect(rule).toBeDefined();
+    expect(rule!.rule).toMatch(/no practical write-size limit/i);
+    // Names the actual constant this codebase enforces on reads, so the two
+    // cannot drift apart without this test noticing. Formatted with the
+    // thousands separator the prose itself uses (`200,000`, not `200000`).
+    expect(rule!.rule).toContain(MAX_RESPONSE_CHARS.toLocaleString("en-US"));
+  });
+
+  it("states that an artifact write is permanent and suggests probing on a disposable item", async () => {
+    // External feedback batch, 2026-09-17: `DELETE /api/artifacts/<id>` is a
+    // 404 by design — correct for an evidence store, and not what the
+    // reporter was asking for — but nothing said so before a write, and
+    // their probe writes are now permanent on a real item. They guessed the
+    // right instinct (probe on a known-junk row) without being told to.
+    const contract = await contractFor("record_artifact");
+
+    const rule = declaredRules(contract).find(
+      (entry) => entry.fields.includes("body") && /cannot be undone/i.test(entry.rule),
+    );
+    expect(rule).toBeDefined();
+    expect(rule!.rule).toMatch(/disposable item/i);
   });
 
   it("gives record_artifact.findings a concrete type, an element shape and a worked example", async () => {

@@ -655,6 +655,17 @@ is already the place that says which transitions require what.
 | `created_by_id` | `text` | → `people.id` or `agents.name`, per `created_by_type`. |
 | `created_at` | `timestamptz` | |
 
+**Writes cannot be undone.** `artifacts` is append-only by design (§16, and the closure pattern in
+§6a-pr) — there is no route that deletes one, deliberately, since this table is the evidence store the
+merge and review guards read. Probe against a disposable item, never a real one.
+
+**There is no practical size limit on `body`.** The only size figure this product states anywhere is
+`MAX_RESPONSE_CHARS` (200,000 characters, `src/lib/service/response-size.ts`) — and that guard is on
+the READ side: it refuses a *response page* that would be too large to return, not any one artifact.
+A single `body` well past that figure (145,000+ characters) has been written and read back
+byte-identical. Do not confuse the two: reading a page of many artifacts can hit the response-size
+ceiling; writing one artifact, however large, has no comparable wall.
+
 ---
 
 ### 6a-pr. `pull_request` — the link the progress report will not invent

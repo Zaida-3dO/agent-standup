@@ -312,6 +312,43 @@ describeIfDb("record_artifact (#98), against Postgres", () => {
       expect(error.fields).toEqual(["commitSha"]);
     });
 
+    // External feedback batch, 2026-09-17: binary bytes (a PNG) decoded as
+    // UTF-8 and sent as `body` used to reach Postgres, which rejects an
+    // invalid byte sequence, and that rejection escaped as an unhandled
+    // `PrismaClientValidationError` — a 500 that read as retryable when the
+    // input was invalid and the rejection was deterministic. A lone UTF-16
+    // surrogate (`\uD800` with no low surrogate to pair it) is the same
+    // failure reproduced without needing real binary bytes: `JSON.stringify`
+    // happily emits it, `z.string()` happily accepts it, and only
+    // `String.prototype.isWellFormed()` — or Postgres itself — objects.
+    it("refuses a body containing a lone UTF-16 surrogate as invalid_input naming `body`, not a 500", async () => {
+      const itemId = await createTask();
+      const error = await recordFails({
+        itemId,
+        artifactKind: "other",
+        body: "\uD800",
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["body"]);
+      expect(error.message).toContain("well-formed");
+    });
+
+    it("still accepts a large, well-formed body — the guard does not reject legitimate size", async () => {
+      const itemId = await createTask();
+      const bigBody = "x".repeat(145_064);
+      const artifact = await record({
+        itemId,
+        artifactKind: "other",
+        body: bigBody,
+        createdByType: "agent",
+        createdById: "agent-a",
+      });
+      const stored = await prisma.artifact.findUnique({ where: { id: artifact.id } });
+      expect(stored?.body?.length).toBe(145_064);
+    });
+
     // #138 — a `historical_verification` closes an item on an inspection of
     // merged code rather than on a review. Its whole claim to being an
     // acceptable substitute is that the claim is CHECKABLE, which means the

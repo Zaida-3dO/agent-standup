@@ -125,6 +125,38 @@ const commitShaSchema = z
   .nullable()
   .optional();
 
+/**
+ * True when `value` contains a UTF-16 surrogate half with no partner —
+ * a code unit in `\uD800`–`\uDBFF` (a "high" surrogate) not immediately
+ * followed by one in `\uDC00`–`\uDFFF`, or one of the latter not immediately
+ * preceded by one of the former.
+ *
+ * **Why this matters here specifically.** A JavaScript string is a sequence
+ * of UTF-16 code units, and `z.string()` places no constraint on which
+ * sequences are legal — a lone surrogate is a perfectly ordinary `string` as
+ * far as Zod, `JSON.stringify` and this route's own `request.json()` are
+ * concerned. It only stops being ordinary once it reaches Postgres, whose
+ * `text` columns store UTF-8 and have no encoding for an unpaired surrogate
+ * (there is no such Unicode code point). Feeding binary bytes into a text
+ * field and having them decoded as UTF-8 is exactly how one of these
+ * appears: the decoder cannot always recover a real code point from
+ * arbitrary bytes, and a lone surrogate is one of the ways it fails.
+ *
+ * Before this check existed, that string sailed through validation and
+ * failed only at the `$queryRawUnsafe` INSERT — as a driver-level
+ * `PrismaClientValidationError`, uncaught, rendered as `500: The operation
+ * failed unexpectedly`. The failure was entirely deterministic (the same
+ * bytes fail the same way every time) but read as a server fault, and the
+ * honest next move on a 500 — retry — could never have worked.
+ *
+ * **Not `String.prototype.isWellFormed()`**, despite being the exact
+ * built-in this checks for by hand: it is ES2024, and this project targets
+ * ES2023 (`tsconfig.json`). A regex has no such floor.
+ */
+function hasLoneSurrogate(value: string): boolean {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value);
+}
+
 const inputSchema = z
   .object({
     itemId: z.string().min(1),
@@ -209,6 +241,13 @@ const inputSchema = z
       .string()
       .nullable()
       .optional()
+      .refine((value) => value === null || value === undefined || !hasLoneSurrogate(value), {
+        message:
+          "body must be well-formed text — it contains a lone UTF-16 surrogate, which is not " +
+          "valid Unicode and cannot be stored. This usually means binary data (e.g. an image) " +
+          "was decoded as text before being sent; pass the artifact's textual content, not raw " +
+          "bytes reinterpreted as a string.",
+      })
       .describe(
         "Free text on every artifact kind EXCEPT `pull_request` and `check_run`, where it is a " +
           `status. On pull_request it must be one of: ${PULL_REQUEST_STATUSES.join(", ")} — ` +
@@ -555,6 +594,23 @@ const RECORD_ARTIFACT_CONTRACT = {
     {
       fields: ["verdict", "artifactKind"],
       rule: "Only `plan_review`, `code_review` and `visual_review` take a verdict; any other kind must leave it unset or `na`.",
+    },
+    {
+      fields: ["body"],
+      rule:
+        "There is no practical write-size limit on `body` — a 145,000-character body has been " +
+        "recorded and read back byte-identical. The 200,000-character figure this product states " +
+        "elsewhere (`MAX_RESPONSE_CHARS`) is a READ-side guard on the size of a returned PAGE of " +
+        "artifacts; it says nothing about any one artifact's `body`, however large. `body` must " +
+        "still be well-formed text — binary bytes decoded as a string (e.g. an image read as " +
+        "UTF-8) are refused naming this field, rather than reaching the database.",
+    },
+    {
+      fields: ["body"],
+      rule:
+        "Artifact writes cannot be undone — there is no delete for an artifact, by design, since " +
+        "this table is the evidence the merge and review guards read. Probe against a disposable " +
+        "item, never a real one.",
     },
   ],
   // A second complete call, for the reason `OperationContract.examples`

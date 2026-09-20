@@ -180,6 +180,30 @@ describeIfDb("artifact HTTP routes against Postgres", () => {
         },
       });
     });
+
+    // External feedback batch, 2026-09-17: an artifact `body` carrying binary
+    // bytes decoded as UTF-8 (a PNG, in the report) reached Postgres and came
+    // back as `500: The operation failed unexpectedly` — a deterministic
+    // rejection dressed as a server fault. This is the HTTP-facing shape of
+    // the same failure the operation-level test in
+    // record-artifact-operation.test.ts covers: it must be a 400 naming
+    // `body`, never a 500.
+    it("answers 400, not 500, for a body containing a lone UTF-16 surrogate", async () => {
+      const id = await seedItem();
+      const response = await artifactsRoute.POST(
+        jsonRequest(`http://test.invalid/api/items/${id}/artifacts`, "POST", {
+          artifactKind: "other",
+          body: "\uD800",
+          createdByType: "agent",
+          createdById: "agent-a",
+        }),
+        { params: Promise.resolve({ id }) },
+      );
+      expect(response.status).toBe(400);
+      const payload = (await response.json()) as { error: { code: string; fields: string[] } };
+      expect(payload.error.code).toBe("invalid_input");
+      expect(payload.error.fields).toEqual(["body"]);
+    });
   });
 
   describe("POST /items/{id}/review-requests", () => {
