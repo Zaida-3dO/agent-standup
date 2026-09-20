@@ -19,6 +19,9 @@ import { Pencil } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { Priority } from "@/lib/design/tokens";
 import { PRIORITIES } from "@/lib/design/tokens";
+import type { EditableField, EditingField } from "@/lib/item-detail/edit-state";
+import { AutoFocus } from "./AutoFocus";
+import { EditTrigger } from "./EditTrigger";
 import styles from "./ItemDetail.module.css";
 
 export type InlineEditKind = "text" | "priority";
@@ -46,6 +49,16 @@ export interface InlineEditFieldProps {
    * that it advises rather than refuses.
    */
   readonly advice?: string | null;
+  /**
+   * Which field this one is, for the focus-return signal below. Only the
+   * two editors that own BOTH branches (Headline, and any future one) pass
+   * it; Title, Priority and Area render their own triggers in
+   * `ItemDetailView`/`StatusBlock` and handle their own return there.
+   */
+  readonly field?: EditableField;
+  /** The field whose edit just ended — see `ItemEditProps.returnFocusTo`. */
+  readonly returnFocusTo?: EditingField;
+  readonly onFocusReturned?: () => void;
 }
 
 function placeholderFor(kind: InlineEditKind, label: string): string {
@@ -65,6 +78,9 @@ export function InlineEditField({
   saving = false,
   error = null,
   advice = null,
+  field,
+  returnFocusTo,
+  onFocusReturned,
 }: InlineEditFieldProps) {
   if (!editing) {
     const isEmpty = value === null || value === "";
@@ -98,23 +114,37 @@ export function InlineEditField({
     // tabbing the header would otherwise hear a list of bare values.
     return (
       <span className={styles.inlineEditView} data-field={label.toLowerCase()}>
-        <button
-          type="button"
-          className={styles.editable}
-          aria-label={`${label}: ${isEmpty ? "empty" : value} — activate to edit`}
-          onClick={onStartEdit}
+        <EditTrigger
+          field={field ?? "title"}
+          label={`${label}: ${isEmpty ? "empty" : value} — activate to edit`}
+          onActivate={onStartEdit}
+          variant="value"
+          /* Only a caller that named its `field` can be matched against the
+             return signal. One that did not is unambiguously not the field
+             whose edit just ended, so it is passed nothing rather than
+             being matched against a guessed name. */
+          returnFocusTo={field === undefined ? null : returnFocusTo}
+          onFocusReturned={onFocusReturned}
         >
           <span className={isEmpty ? styles.empty : undefined}>{shown}</span>
           {/* Decorative: the accessible name above already carries the
               affordance, so announcing a pencil as well would be the same
               fact twice. */}
           <Pencil className={styles.editableIcon} size={12} aria-hidden="true" />
-        </button>
+        </EditTrigger>
       </span>
     );
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  // Attached to the `<select>` as well as the `<input>`. It was on the
+  // text input alone, which left the Priority editor with no Escape at all:
+  // its `<select>` had no key handler, so §6's "Escape cancels" was false
+  // for that field even once focus reached it. One handler, both controls.
+  //
+  // Enter on a `<select>` is worth stating: the native behaviour submits
+  // the enclosing form, and there is no form here, so nothing happened.
+  // Saving on Enter is what the other three fields do and what §6 promises.
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
     // Enter saves, Escape cancels — the two shortcuts a reader mid-edit in
     // a single-line field expects; Enter does not insert a newline here
     // because none of the four fields this component serves is
@@ -131,29 +161,34 @@ export function InlineEditField({
   return (
     <span className={styles.inlineEditForm} data-field={label.toLowerCase()} data-editing="true">
       {kind === "priority" ? (
-        <select
-          className={styles.inlineEditSelect}
-          aria-label={label}
-          value={draft}
-          disabled={saving}
-          onChange={onDraftChange ? (event) => onDraftChange(event.target.value) : undefined}
-        >
-          {PRIORITIES.map((priority: Priority) => (
-            <option key={priority} value={priority}>
-              {priority}
-            </option>
-          ))}
-        </select>
+        <AutoFocus>
+          <select
+            className={styles.inlineEditSelect}
+            aria-label={label}
+            value={draft}
+            disabled={saving}
+            onChange={onDraftChange ? (event) => onDraftChange(event.target.value) : undefined}
+            onKeyDown={onKeyDown}
+          >
+            {PRIORITIES.map((priority: Priority) => (
+              <option key={priority} value={priority}>
+                {priority}
+              </option>
+            ))}
+          </select>
+        </AutoFocus>
       ) : (
-        <input
-          type="text"
-          className={styles.inlineEditInput}
-          aria-label={label}
-          value={draft}
-          disabled={saving}
-          onChange={onDraftChange ? (event) => onDraftChange(event.target.value) : undefined}
-          onKeyDown={onKeyDown}
-        />
+        <AutoFocus>
+          <input
+            type="text"
+            className={styles.inlineEditInput}
+            aria-label={label}
+            value={draft}
+            disabled={saving}
+            onChange={onDraftChange ? (event) => onDraftChange(event.target.value) : undefined}
+            onKeyDown={onKeyDown}
+          />
+        </AutoFocus>
       )}
       <button type="button" className={styles.inlineEditButton} disabled={saving} onClick={onSave}>
         Save

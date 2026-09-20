@@ -167,4 +167,21 @@ export interface ItemEditProps {
   readonly editError?: string | null;
   /** Live advice on a title draft (MILESTONES.md #131) — shown only while `editingField` is `"title"`. */
   readonly titleAdvice?: string | null;
+  /**
+   * The field whose edit has just ended, whose trigger should therefore
+   * take focus back — docs/DESIGN-LANGUAGE.md §6's "focus returns to the
+   * trigger on exit".
+   *
+   * A FIELD NAME, not a node reference, and that is the whole point: the
+   * trigger button is unmounted for the entire duration of the edit, so a
+   * ref captured before the edit points at a detached node by the time the
+   * edit ends. A name survives the unmount, and the freshly-remounted
+   * trigger reads it and focuses itself. See `use-edit-focus.ts`.
+   *
+   * Distinct from `editingField` because the two are never both meaningful:
+   * this is set precisely when `editingField` has gone back to `null`.
+   */
+  readonly returnFocusTo?: EditingField;
+  /** Clears `returnFocusTo` once a trigger has taken the focus, so the move happens once rather than on every later re-render. */
+  readonly onFocusReturned?: () => void;
 }

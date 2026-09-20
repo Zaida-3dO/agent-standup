@@ -23,6 +23,7 @@ import { StalenessDot } from "@/components/chips/StalenessDot";
 import { statusSummary, type StatusSummary } from "@/lib/item-detail/status";
 import type { DetailAssignment, DetailHistoryEntry, DetailItem } from "@/lib/item-detail/types";
 import { findAllByType, findOneByType, walk } from "./helpers/react-element";
+import { EditTrigger } from "@/components/item-detail/EditTrigger";
 
 function item(overrides: Partial<DetailItem> = {}): DetailItem {
   return {
@@ -561,9 +562,16 @@ describe("StatusBlock — priority and area inline edit (M10 T10)", () => {
     // only thing a screen-reader user has. So the name is what this
     // asserts, and it must carry the field and its current value: an
     // unnamed icon button is an unusable control, not a tidier one.
+    //
+    // Matched on `EditTrigger` rather than on a raw "button" tag: the
+    // trigger moved into its own component so it could own the
+    // return-focus effect without making StatusBlock hook-ful (see
+    // `EditTrigger.tsx`'s header). That it renders a REAL <button> — the
+    // property this assertion cares about — is proven directly, on the
+    // component itself, in `tests/edit-trigger-focus.test.ts`.
     const element = render({ edit: { onStartEdit: () => {} } });
-    const buttons = [...walk(element)].filter((el) => el.type === "button");
-    const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
+    const buttons = [...walk(element)].filter((el) => el.type === EditTrigger);
+    const labels = buttons.map((b) => (b.props as { label?: string }).label);
     const priority = labels.find((l) => l?.startsWith("Priority:"));
     const area = labels.find((l) => l?.startsWith("Area:"));
     expect(priority, "the priority edit control has no accessible name").toBeDefined();
@@ -582,8 +590,8 @@ describe("StatusBlock — priority and area inline edit (M10 T10)", () => {
     const bare = render({});
     const editControls = (el: ReturnType<typeof render>) =>
       [...walk(el)]
-        .filter((n) => n.type === "button")
-        .map((b) => (b.props as { "aria-label"?: string })["aria-label"])
+        .filter((n) => n.type === EditTrigger)
+        .map((b) => (b.props as { label?: string }).label)
         .filter((l) => l?.startsWith("Priority:") || l?.startsWith("Area:"));
     expect(editControls(wired)).toHaveLength(2);
     expect(editControls(bare)).toHaveLength(0);

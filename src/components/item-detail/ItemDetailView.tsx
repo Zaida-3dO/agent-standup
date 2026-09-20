@@ -63,6 +63,7 @@ import { ArchiveAction, type ArchiveActionState } from "./ArchiveAction";
 import { CancelAction, type CancelActionState } from "./CancelAction";
 import { isAlreadyClosed } from "@/lib/item-detail/cancel-state";
 import { InlineEditField } from "./InlineEditField";
+import { EditTrigger } from "./EditTrigger";
 import { ChipLink } from "./ChipLink";
 import { statusSummary } from "@/lib/item-detail/status";
 import styles from "./ItemDetail.module.css";
@@ -311,15 +312,17 @@ export function ItemDetailView({
                 docs/DESIGN-LANGUAGE.md §6. The button carries no visible
                 word, so the heading still reads as a heading. */}
             {edit.onStartEdit ? (
-              <button
-                type="button"
-                className={styles.editable}
-                aria-label={`Title: ${primaryLine(item)} — activate to edit`}
-                onClick={() => edit.onStartEdit?.("title")}
+              <EditTrigger
+                field="title"
+                label={`Title: ${primaryLine(item)} — activate to edit`}
+                onActivate={() => edit.onStartEdit?.("title")}
+                variant="value"
+                returnFocusTo={edit.returnFocusTo}
+                onFocusReturned={edit.onFocusReturned}
               >
                 <span>{primaryLine(item)}</span>
                 <Pencil className={styles.editableIcon} size={14} aria-hidden="true" />
-              </button>
+              </EditTrigger>
             ) : (
               primaryLine(item)
             )}
@@ -355,6 +358,9 @@ export function ItemDetailView({
             onCancel={edit.onCancelEdit}
             saving={edit.saving}
             error={editingHeadline ? edit.editError : null}
+            field="headline"
+            returnFocusTo={edit.returnFocusTo}
+            onFocusReturned={edit.onFocusReturned}
           />
         </div>
 
