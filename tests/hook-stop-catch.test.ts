@@ -364,7 +364,29 @@ describe("evaluateStopCatch — stopping with unblocked work left", () => {
     // "You have work left" with no instruction is a complaint. The owner
     // asked that the agent continue with the next unblocked task.
     const caught = evaluateStopCatch(stopEvent(), { unfinishedWork: 2 });
-    expect(caught?.text).toMatch(/carry on|next unblocked/i);
+    expect(caught?.text).toMatch(/carry on/i);
+  });
+
+  it("makes the session test whether its blocker is genuine", () => {
+    // The owner's emphasis, and the reason this entry exists rather than a
+    // bare "you have open items": a session that stops saying it is blocked
+    // must be asked whether the blocker is real or merely unexamined. A
+    // message that only counted rows would pass every other case here.
+    const caught = evaluateStopCatch(stopEvent(), { unfinishedWork: 1 });
+    expect(caught?.text).toMatch(/genuinely outside your reach/i);
+    // Both halves of the distinction are named, not just the word "blocked".
+    expect(caught?.text).toMatch(/unanswered question/i);
+    // And the remedy for the second half is concrete.
+    expect(caught?.text).toMatch(/dispatching a scout|scout/i);
+  });
+
+  it("carries the probe test rather than abstract advice", () => {
+    // "If you can touch it, I cannot means you have not looked" is the
+    // operative sentence — it gives the session a test it can actually
+    // apply, which a general reminder to think harder does not.
+    const caught = evaluateStopCatch(stopEvent(), { unfinishedWork: 1 });
+    expect(caught?.text).toMatch(/if you can touch it/i);
+    expect(caught?.text).toMatch(/have not looked/i);
   });
 
   it("is silent when nothing is left", () => {

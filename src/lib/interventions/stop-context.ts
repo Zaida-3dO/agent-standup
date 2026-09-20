@@ -35,31 +35,41 @@
 // the staleness ladder is already the backstop, so nothing here is given a
 // channel it could block through even by mistake.
 //
-// ── What is deliberately NOT assembled: `unfinishedWork` ───────────────
+// ── `unfinishedWork`, and the narrowing that made it answerable ────────
 //
 // `StopContext` has an `unfinishedWork` count for the owner's second ask —
 // *"the agent shouldn't just stop if there is still work remaining"* — and
-// this producer leaves it **absent**, which the client already reads as
-// "nobody counted" and stays silent on.
+// this producer supplies it from a **session-scoped** question, not from
+// the board-wide one. The distinction is the whole of why the field can be
+// filled honestly at all, so it is worth stating before the query.
 //
-// That is a decision rather than an omission, and the reasoning is already
-// on the record in `./builtins.ts`: `UNIMPLEMENTED_CATALOGUE_ENTRIES` lists
-// **I2** as unbuildable for exactly this, because *whether a row is
-// unblocked* has no answer in this schema. The dependency graph that would
-// decide it is prose in a milestone document rather than a relation between
-// items, and `Item.blockedOnType` admits `person`, `external_process` and
-// `time` with no `item` member — so one row cannot even be recorded as
-// waiting on another. That entry also records the cheap substitute being
-// rejected: treating an item with no open children as unblocked *"would
-// fire on every leaf in the backlog, which is most of the board."*
+// **What is not buildable here.** `./builtins.ts` lists **I2** as unbuildable
+// because *whether a row is unblocked* has no answer in this schema. The
+// dependency graph that would decide it is prose in a milestone document
+// rather than a relation between items, and `Item.blockedOnType` admits
+// `person`, `external_process` and `time` with no `item` member — so one
+// row cannot even be recorded as waiting on another. **This module does not
+// pretend otherwise:** nothing here asks the graph anything.
 //
-// Populating the count from open-and-not-`blocked` would be precisely that
-// rejected substitute, arriving through a different door. It would ask every
-// orchestrator at every stop whether it was really done, while pointing at a
-// backlog nobody expected it to finish — and a message that fires when there
-// is nothing to do is the one that gets ignored when there is. So the field
-// stays absent until the graph exists, and the catch ships with the half
-// that can be answered honestly.
+// **Why the cheap substitute is rejected.** I2 also records that version
+// being turned down: treating an item with no open children
+// as unblocked *"would fire on every leaf in the backlog, which is most of
+// the board."* That objection is about **scope**, not about the word
+// `blocked` — a count ranging over the backlog points at work nobody
+// expected this session to finish, and a message that fires when there is
+// nothing to do is the one that gets ignored when there is.
+//
+// **The narrowing.** This count never ranges over the backlog. It ranges
+// over the rows *this session itself put on the board or took hold of* —
+// see `UNFINISHED_WORK_QUERY` below for the three-way scope. A session that
+// minted a row and walked away from it is not being told about the backlog;
+// it is being told about a thing it did, in this session, and left. That is
+// a fact the ledger records directly (`Event.sessionId` on the creation
+// `field_change`), not an inference from a graph that does not exist.
+//
+// So, stated plainly: I2's question is unanswerable and is not asked here. A
+// different, smaller question — *did you leave your own work open?* — is
+// asked instead, and it has an answer.
 
 import type { TransactionHandle } from "@/lib/service/context";
 import { isCrewWaitCommand } from "./commands";
@@ -76,13 +86,22 @@ import { isCrewWaitCommand } from "./commands";
  * side of the boundary and produces a serialisable payload, the same
  * posture `InterventionContext` takes.
  *
- * `unfinishedWork` is absent by design — see the module header.
+ * `unfinishedWork` is session-scoped — see the module header.
  */
 export interface StopContextPayload {
   /** How many crew under this session's root are still running. */
   readonly liveCrew: number;
   /** Whether something is already lined up to wake this session. */
   readonly wakeScheduled: boolean;
+  /**
+   * How many of **this session's own** rows are still open and not blocked.
+   *
+   * Absent when the count could not be established, never zero-as-unknown:
+   * the client reads absent as "nobody counted" and stays silent, and a
+   * manufactured zero would be a settled claim this module had not earned.
+   * Zero is sent when it is genuinely zero, which is the clean stop.
+   */
+  readonly unfinishedWork?: number;
 }
 
 /**
@@ -145,6 +164,110 @@ interface StopRow {
   /** Crew under this root still genuinely running, excluding this session. */
   liveCrew: number;
 }
+
+/** The one row shape the unfinished-work half reads. */
+interface UnfinishedRow {
+  /** This session's own rows that are still open and not blocked. */
+  unfinished: number;
+}
+
+/**
+ * The states that mean a row is **not** finished and **not** parked.
+ *
+ * Spelled as an explicit allow-list rather than "everything except the
+ * terminal ones", and the difference decides whether this nudge survives
+ * contact. `ItemState` has twelve members; a future thirteenth added for
+ * some parked or waiting condition would be silently counted as unfinished
+ * by a deny-list, and the entry would start firing on rows nobody could act
+ * on — the exact failure this narrowing exists to avoid. An allow-list makes
+ * a new state silent by default, which is the safe direction: a missed
+ * reminder costs one stop, a false one costs the channel.
+ *
+ * Four states are deliberately **absent** and each for its own reason:
+ *
+ *   - `blocked` — the row says outright that it is waiting on something.
+ *     Counting it would be telling a session to do work it has recorded as
+ *     undoable, which is the first thing that would make this noise.
+ *   - `paused` — a deliberate decision to stop, with a `resumeCondition`.
+ *     Same argument as `blocked`: a considered park is not an oversight.
+ *   - `someday` — explicitly not now. A backlog marker by definition.
+ *   - `in_review` / `plan_review` — the work is done and the ball is with a
+ *     reviewer. A session that finished and handed off has finished.
+ *
+ * `merged`, `research_done`, `wont_do` and `cancelled` are terminal and
+ * excluded for the obvious reason.
+ */
+const UNFINISHED_STATES = ["on_deck", "planning", "executing"] as const;
+
+/**
+ * This session's own unfinished rows.
+ *
+ * ── The three-way scope, which is the whole design ─────────────────────
+ *
+ * I2 rejected counting unfinished work because a backlog-wide count *"would
+ * fire on every leaf in the backlog, which is most of the board"*. Every
+ * clause here exists to keep that from being true of this count. A row is
+ * counted only when this session is responsible for it, in one of three
+ * ways the ledger records directly:
+ *
+ *   1. **This session minted it.** A create appends a `field_change` with
+ *      `{field: "state", from: null}` carrying the creating `sessionId`
+ *      (`../service/items/create-core.ts` — through `appendEvent`
+ *      precisely so the session lands on the row). This is the item body's
+ *      strongest signal: *"the session found the work, filed it, and walked
+ *      away from it."*
+ *   2. **This session holds a live claim on it.** An unreleased
+ *      `Assignment` is an open statement that this session is the one
+ *      working the row.
+ *   3. **This session released a claim on it** while leaving it open — the
+ *      case that would otherwise slip through, because dropping a claim is
+ *      the easiest way to stop owning something without finishing it.
+ *
+ * A row nobody in this session ever touched is not counted, whatever state
+ * it is in. That is what makes the number mean *"work you left"* rather
+ * than *"work that exists"*.
+ *
+ * ── Why archived rows are excluded ─────────────────────────────────────
+ *
+ * `archivedAt` marks a row withdrawn from circulation — a duplicate or an
+ * accident, served by no ordinary read. Counting one would point a session
+ * at a row it is not meant to see on any other surface.
+ *
+ * ── Why projects are excluded, which a unit test could not have told us ─
+ *
+ * A `project` is a container: its state tracks the work underneath it
+ * rather than describing a unit of work anybody performs. Minting a task
+ * usually means minting or touching the project above it, so counting both
+ * reports two unfinished things where the session did one — and the count
+ * is quoted verbatim in the message, so an inflated number is a message
+ * that is simply wrong.
+ *
+ * **This was found by running the query, not by reading it.** The unit
+ * suite's canned handle cannot surface it: it answers whatever row the test
+ * supplies, so the double count only appears once a real `create_task` has
+ * written a real project row beside the task. `tests/interventions-stop-
+ * unfinished-db.test.ts` failed on exactly this, by exactly one, on every
+ * case that minted anything.
+ */
+const UNFINISHED_WORK_QUERY = `
+  SELECT COUNT(DISTINCT i."id")::int AS "unfinished"
+    FROM "Item" i
+   WHERE i."state" = ANY($2::text[]::"ItemState"[])
+     AND i."kind" <> 'project'
+     AND i."archivedAt" IS NULL
+     AND (
+           EXISTS (SELECT 1
+                     FROM "Event" e
+                    WHERE e."itemId" = i."id"
+                      AND e."sessionId" = $1
+                      AND e."type" = 'field_change'
+                      AND e."payload"->>'field' = 'state'
+                      AND e."payload"->>'from' IS NULL)
+        OR EXISTS (SELECT 1
+                     FROM "Assignment" a
+                    WHERE a."itemId" = i."id"
+                      AND a."sessionId" = $1)
+         )`;
 
 /**
  * Assembles the `stop` block for one `Stop` event, or `undefined` when there
@@ -229,5 +352,26 @@ export async function assembleStopContext(options: {
     (call) => call.command !== null && isCrewWaitCommand(call.command),
   );
 
-  return { liveCrew: row.liveCrew, wakeScheduled };
+  // The unfinished-work half. Read unconditionally rather than skipped when
+  // crew are running: `evaluateStopCatch` decides which catch speaks, and a
+  // producer that withheld the count whenever crew were live would be
+  // making that choice a second time, in a second place. One definition of
+  // the precedence, on the side that already has it.
+  //
+  // A missing row is left **absent** rather than zeroed, the same discipline
+  // the crew half applies: a query that did not answer is "not known", and
+  // the client is built to stay silent on an absent count. A zero here would
+  // assert a clean stop this module had not established.
+  const unfinishedRows = await db.$queryRawUnsafe<UnfinishedRow[]>(
+    UNFINISHED_WORK_QUERY,
+    sessionId,
+    [...UNFINISHED_STATES],
+  );
+  const unfinished = unfinishedRows[0]?.unfinished;
+
+  return {
+    liveCrew: row.liveCrew,
+    wakeScheduled,
+    ...(unfinished === undefined ? {} : { unfinishedWork: unfinished }),
+  };
 }

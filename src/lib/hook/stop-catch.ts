@@ -106,6 +106,14 @@ export interface StopContext {
    * actionable belong in this number, so the party that can tell the
    * difference is the one that supplies it.
    *
+   * **"This session's own" is the second load-bearing phrase**, and the one
+   * that keeps the count from being the backlog. The producer
+   * (`../interventions/stop-context.ts`) scopes it to rows this session
+   * minted, holds a claim on, or held one on and released — never to work
+   * that merely exists. A count ranging wider than that was rejected on the
+   * record as firing *"on every leaf in the backlog"*, and a number sent
+   * here is trusted, so the scoping is the producer's obligation.
+   *
    * Zero, or absent, is silent. Absent means nobody counted, which is not
    * the same as "nothing is left" and must never be read as a finding.
    */
@@ -172,11 +180,16 @@ const stopText = (liveCrew: number): string =>
  * silence.
  */
 const unfinishedText = (unfinished: number): string =>
-  `${unfinished} unblocked item${unfinished === 1 ? "" : "s"} ` +
-  `${unfinished === 1 ? "is" : "are"} still open and nothing is blocking ` +
-  `${unfinished === 1 ? "it" : "them"}. Are you actually done with what you were directed to ` +
-  "do? If not, carry on with the next unblocked one rather than pausing here. If you are done, " +
-  "say so on the item — and if you are waiting on something, record what. " +
+  `${unfinished} item${unfinished === 1 ? "" : "s"} you opened or claimed in this session ` +
+  `${unfinished === 1 ? "is" : "are"} still unfinished, and ` +
+  `${unfinished === 1 ? "it is" : "none of them are"} marked blocked. Are you actually done ` +
+  "with what you were directed to do? If not, carry on with the next one rather than pausing " +
+  "here. If you are done, say so on the item. " +
+  "If you are stopping because you are blocked, test the blocker before you accept it: is it " +
+  "genuinely outside your reach — a person's decision, an irreversible action, a credential " +
+  "nobody has — or is it an unanswered question you could answer yourself by dispatching a " +
+  'scout, reading the code, or probing the system? If you can touch it, "I cannot" means you ' +
+  "have not looked. Record which of the two it is. " +
   "This is advice, not a refusal — the turn is not being held open.";
 
 /**

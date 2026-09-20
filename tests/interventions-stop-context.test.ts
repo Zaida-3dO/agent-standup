@@ -42,27 +42,40 @@ const WAIT_TIMEOUT = 240;
 function handle(options: {
   readonly crew?: number | "no-row";
   readonly commands?: readonly string[];
-}): TransactionHandle & { queries: string[] } {
+  readonly unfinished?: number | "no-row";
+}): TransactionHandle & { queries: string[]; params: unknown[][] } {
   const queries: string[] = [];
+  const params: unknown[][] = [];
   return {
     queries,
-    $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+    params,
+    $queryRawUnsafe: async <T = unknown>(query: string, ...args: unknown[]): Promise<T> => {
       queries.push(query);
+      params.push(args);
       if (query.includes('AS "liveCrew"')) {
         return (options.crew === "no-row" ? [] : [{ liveCrew: options.crew ?? 0 }]) as T;
       }
       if (query.includes('FROM "ToolCall"')) {
         return (options.commands ?? []).map((command) => ({ command })) as T;
       }
+      if (query.includes('AS "unfinished"')) {
+        return (
+          options.unfinished === "no-row" ? [] : [{ unfinished: options.unfinished ?? 0 }]
+        ) as T;
+      }
       throw new Error(`unexpected query: ${query}`);
     },
     $executeRawUnsafe: async () => {
       throw new Error("the stop producer must never write");
     },
-  } as TransactionHandle & { queries: string[] };
+  } as TransactionHandle & { queries: string[]; params: unknown[][] };
 }
 
-function assemble(options: { readonly crew?: number | "no-row"; readonly commands?: string[] }) {
+function assemble(options: {
+  readonly crew?: number | "no-row";
+  readonly commands?: string[];
+  readonly unfinished?: number | "no-row";
+}) {
   return assembleStopContext({
     db: handle(options),
     sessionId: "s1",
@@ -73,14 +86,22 @@ function assemble(options: { readonly crew?: number | "no-row"; readonly command
 
 describe("the crew half", () => {
   it("reports the count it was given", async () => {
-    expect(await assemble({ crew: 3 })).toEqual({ liveCrew: 3, wakeScheduled: false });
+    expect(await assemble({ crew: 3 })).toEqual({
+      liveCrew: 3,
+      wakeScheduled: false,
+      unfinishedWork: 0,
+    });
   });
 
   it("reports a genuine zero rather than dropping the block", async () => {
     // Zero is a real answer — the query ran and nobody is running — and it
     // is different from the query not having answered. Collapsing the two
     // would lose the distinction the whole context discipline rests on.
-    expect(await assemble({ crew: 0 })).toEqual({ liveCrew: 0, wakeScheduled: false });
+    expect(await assemble({ crew: 0 })).toEqual({
+      liveCrew: 0,
+      wakeScheduled: false,
+      unfinishedWork: 0,
+    });
   });
 
   it("answers undefined when the query returned no row at all", async () => {
@@ -96,7 +117,7 @@ describe("the crew half", () => {
 describe("the wake half — the silent case", () => {
   it("is silent about the wake when no shell call looks like a wait", async () => {
     const context = await assemble({ crew: 2, commands: ["ls -la", "git status", "npm test"] });
-    expect(context).toEqual({ liveCrew: 2, wakeScheduled: false });
+    expect(context).toEqual({ liveCrew: 2, wakeScheduled: false, unfinishedWork: 0 });
   });
 
   it("spots a backgrounded wait and reports it", async () => {
@@ -106,7 +127,7 @@ describe("the wake half — the silent case", () => {
       crew: 2,
       commands: ["standup crew wait --since 4120 &"],
     });
-    expect(context).toEqual({ liveCrew: 2, wakeScheduled: true });
+    expect(context).toEqual({ liveCrew: 2, wakeScheduled: true, unfinishedWork: 0 });
   });
 
   it("spots the wait among other calls rather than only as the newest", async () => {
@@ -157,17 +178,19 @@ describe("what the producer refuses to do", () => {
     await expect(assemble({ crew: 1 })).resolves.toBeDefined();
   });
 
-  it("leaves unfinishedWork absent rather than guessing at it", async () => {
-    // I2's reasoning, enforced: "whether a row is unblocked" has no answer
-    // in this schema, and the rejected substitute would fire on every leaf
-    // in the backlog. The client reads an absent field as "nobody counted"
-    // and stays silent, which is the honest outcome. A future change that
-    // populated this from open-and-not-blocked rows fails here.
-    const context = await assemble({ crew: 2 });
+  it("leaves unfinishedWork absent when the count query did not answer", async () => {
+    // The field is populated only from a session-scoped count (see the
+    // suite below), and only when the count actually answered. A query that
+    // returned no row means "nobody counted", which is not the same fact as
+    // "nothing is left": a manufactured zero would tell the client the stop
+    // was clean when nothing established that. Returning `0` here passes
+    // every other case in this file and fails only this one.
+    const context = await assemble({ crew: 2, unfinished: "no-row" });
+    expect(context).toBeDefined();
     expect(context).not.toHaveProperty("unfinishedWork");
   });
 
-  it("makes exactly two reads, both bounded", async () => {
+  it("makes exactly three reads, all bounded or scoped", async () => {
     const db = handle({ crew: 1, commands: [] });
     await assembleStopContext({
       db,
@@ -175,7 +198,7 @@ describe("what the producer refuses to do", () => {
       deadAfterSeconds: DEAD_AFTER,
       waitTimeoutMaxSeconds: WAIT_TIMEOUT,
     });
-    expect(db.queries).toHaveLength(2);
+    expect(db.queries).toHaveLength(3);
     // The shell read is bounded. An unbounded read on a session with a long
     // history is the cost this bound exists to avoid.
     expect(db.queries.some((query) => query.includes("LIMIT"))).toBe(true);
@@ -287,6 +310,171 @@ describe("end to end, through the client's own parser", () => {
     const payload = await assemble({ crew: 2, commands: ["standup crew wait --since 1 &"] });
     const parsed = readStopContext(payload);
 
-    expect(parsed).toEqual({ liveCrew: 2, wakeScheduled: true });
+    // All three field names survive, including the newest. `unfinishedWork`
+    // is parsed independently by the client and dropped if unrecognised, so
+    // a rename on the producer side would show up here as a zero-valued
+    // field silently going missing rather than as a type error.
+    expect(parsed).toEqual({ liveCrew: 2, wakeScheduled: true, unfinishedWork: 0 });
+  });
+});
+
+// ── The unfinished-work half ───────────────────────────────────────────
+//
+// The negative case is the one that decides whether this entry survives.
+// `nits-merged-with-nothing-tracking-them` is the cautionary example in the
+// catalogue: an entry that fires on every stop is noise, and noise is
+// ignored inside a week. So the silence cases outnumber the firing one, and
+// each names the mutation to the SQL that it catches.
+describe("the unfinished-work half — the silent case", () => {
+  it("says zero on a clean stop rather than going absent", async () => {
+    // Criterion 3, at the producer. A session that finished its work gets a
+    // real zero, and `evaluateStopCatch` reads zero as silence. Zero and
+    // absent both end in silence but they are different facts: zero means
+    // the query ran and found nothing left.
+    const context = await assemble({ crew: 0, unfinished: 0 });
+    expect(context?.unfinishedWork).toBe(0);
+  });
+
+  it("scopes the count to this session, never to the board", async () => {
+    // I2's rejected substitute, pinned. A count that ranged over all open
+    // rows "would fire on every leaf in the backlog, which is most of the
+    // board". Every branch of the WHERE must be tied to THIS session, so
+    // deleting the session predicate fails here.
+    const db = handle({ crew: 0 });
+    await assembleStopContext({
+      db,
+      sessionId: "s1",
+      deadAfterSeconds: DEAD_AFTER,
+      waitTimeoutMaxSeconds: WAIT_TIMEOUT,
+    });
+    const query = db.queries.find((q) => q.includes('AS "unfinished"')) ?? "";
+    // Both ownership routes are bound to the session parameter.
+    expect(query).toMatch(/"Event"[\s\S]*e\."sessionId" = \$1/);
+    expect(query).toMatch(/"Assignment"[\s\S]*a\."sessionId" = \$1/);
+    // And the session id is what is actually passed for it.
+    const args = db.params[db.params.length - 1] ?? [];
+    expect(args[0]).toBe("s1");
+  });
+
+  it("counts only states that are genuinely unfinished", async () => {
+    // The allow-list is the guard against noise. `blocked` and `paused` are
+    // rows that have SAID they are waiting, and counting one would tell a
+    // session to do work it recorded as undoable. `someday` is a backlog
+    // marker; the review states mean the work is done and handed off.
+    const db = handle({ crew: 0 });
+    await assembleStopContext({
+      db,
+      sessionId: "s1",
+      deadAfterSeconds: DEAD_AFTER,
+      waitTimeoutMaxSeconds: WAIT_TIMEOUT,
+    });
+    const args = db.params[db.params.length - 1] ?? [];
+    const states = args[1] as string[];
+    expect(states).toEqual(["on_deck", "planning", "executing"]);
+    for (const parked of ["blocked", "paused", "someday", "in_review", "plan_review"]) {
+      expect(states).not.toContain(parked);
+    }
+    for (const terminal of ["merged", "research_done", "wont_do", "cancelled"]) {
+      expect(states).not.toContain(terminal);
+    }
+  });
+
+  it("excludes projects, which are containers rather than work", async () => {
+    // Found by the DB-backed suite, not by this one: minting a task also
+    // mints the project above it, so counting both reports two unfinished
+    // things for one piece of work — and the count is quoted verbatim in
+    // the message. Pinned here so the clause cannot be dropped silently.
+    const db = handle({ crew: 0 });
+    await assembleStopContext({
+      db,
+      sessionId: "s1",
+      deadAfterSeconds: DEAD_AFTER,
+      waitTimeoutMaxSeconds: WAIT_TIMEOUT,
+    });
+    const query = db.queries.find((q) => q.includes('AS "unfinished"')) ?? "";
+    expect(query).toMatch(/kind" <> 'project'/);
+  });
+
+  it("excludes archived rows", async () => {
+    // An archived row is withdrawn from circulation and served by no
+    // ordinary read. Pointing a session at one would name a row it cannot
+    // see anywhere else.
+    const db = handle({ crew: 0 });
+    await assembleStopContext({
+      db,
+      sessionId: "s1",
+      deadAfterSeconds: DEAD_AFTER,
+      waitTimeoutMaxSeconds: WAIT_TIMEOUT,
+    });
+    const query = db.queries.find((q) => q.includes('AS "unfinished"')) ?? "";
+    expect(query).toMatch(/archivedAt" IS NULL/);
+  });
+
+  it("recognises a mint by the creation event's shape, not by any state", async () => {
+    // A create is recorded as a `field_change` from null (create-core.ts).
+    // Matching on the type alone would count every edit this session made
+    // to anyone's row, which is a much wider net than "you filed this".
+    const db = handle({ crew: 0 });
+    await assembleStopContext({
+      db,
+      sessionId: "s1",
+      deadAfterSeconds: DEAD_AFTER,
+      waitTimeoutMaxSeconds: WAIT_TIMEOUT,
+    });
+    const query = db.queries.find((q) => q.includes('AS "unfinished"')) ?? "";
+    expect(query).toMatch(/'field_change'/);
+    expect(query).toMatch(/'field' = 'state'/);
+    expect(query).toMatch(/'from' IS NULL/);
+  });
+
+  it("counts a row once however many ways the session owns it", async () => {
+    // A session that minted a row AND claimed it owns it twice over. The
+    // two EXISTS branches are OR-ed and the count is DISTINCT, so it is one
+    // item. A join instead of EXISTS would double it and overstate the
+    // number the message quotes.
+    const db = handle({ crew: 0 });
+    await assembleStopContext({
+      db,
+      sessionId: "s1",
+      deadAfterSeconds: DEAD_AFTER,
+      waitTimeoutMaxSeconds: WAIT_TIMEOUT,
+    });
+    const query = db.queries.find((q) => q.includes('AS "unfinished"')) ?? "";
+    expect(query).toMatch(/COUNT\(DISTINCT/);
+  });
+
+  it("never writes on the unfinished read either", async () => {
+    // The handle throws on any write, so reaching a defined result is the
+    // assertion. `hook_decision` is declared `kind: "read"` and a Stop must
+    // not mutate the board it is describing.
+    await expect(assemble({ crew: 0, unfinished: 3 })).resolves.toBeDefined();
+  });
+});
+
+describe("the unfinished-work half — end to end through the client", () => {
+  it("a session that left its own work open is told, and told what to test", async () => {
+    // Criterion 6's shape at the unit level; the real-session proof is in
+    // the item's artifacts. Written against the real client parser rather
+    // than a restatement of it, so a renamed field fails here.
+    const context = await assemble({ crew: 0, unfinished: 2 });
+    const parsed = readStopContext(JSON.parse(JSON.stringify(context)));
+    const caught = evaluateStopCatch({ eventType: "Stop", sessionId: "s1" }, parsed);
+    expect(caught?.reason).toBe("unfinished-work");
+    expect(caught?.unfinishedWork).toBe(2);
+    // The distinction Ope asked for: a genuine blocker versus an unanswered
+    // question, with dispatching a scout named as the remedy for the second.
+    expect(caught?.text).toMatch(/genuinely outside your reach/i);
+    expect(caught?.text).toMatch(/scout/i);
+    expect(caught?.text).toMatch(/if you can touch it/i);
+    // Still advisory. A Stop cannot be refused.
+    expect(caught?.text).toMatch(/not a refusal/i);
+  });
+
+  it("a session that finished cleanly is told nothing at all", async () => {
+    // Criterion 3, end to end. This is the case that decides whether the
+    // channel is still trusted in a month.
+    const context = await assemble({ crew: 0, unfinished: 0 });
+    const parsed = readStopContext(JSON.parse(JSON.stringify(context)));
+    expect(evaluateStopCatch({ eventType: "Stop", sessionId: "s1" }, parsed)).toBeNull();
   });
 });
