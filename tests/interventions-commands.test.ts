@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allowsOnlyFastForward,
+  broadProcessKillCause,
   isBroadProcessKill,
   isMergeAttempt,
   isMergeLanding,
@@ -436,6 +437,57 @@ describe("isBroadProcessKill", () => {
       "grep -rn kill src/",
     ]) {
       expect(isBroadProcessKill(command), command).toBe(false);
+    }
+  });
+});
+
+// Row 021fd229: `isBroadProcessKill` collapses two causes that used to
+// share one message — an executable target, and a selector this build
+// cannot read at all — into a single boolean. `broadProcessKillCause`
+// is the function the refusal message now branches on, so it is pinned
+// here on the exact cause each shape produces, not just on true/false.
+describe("broadProcessKillCause", () => {
+  it("reports the executable cause for an image-name kill", () => {
+    for (const command of ["taskkill /F /IM node.exe", "pkill node", "killall node"]) {
+      expect(broadProcessKillCause(command), command).toBe("executable");
+    }
+  });
+
+  it("reports the unparseable cause for a selector this build cannot read", () => {
+    // `$p.Id` is the shape that actually misled five agents (row 021fd229):
+    // the check reads command text before PowerShell expands the variable,
+    // so there is no pid there yet. `/FI` is the other named example —
+    // a filter, not a target list.
+    for (const command of [
+      "Stop-Process -Id $p.Id -Force",
+      'taskkill /F /FI "IMAGENAME eq node.exe"',
+    ]) {
+      expect(broadProcessKillCause(command), command).toBe("unparseable");
+    }
+  });
+
+  it("reports null for a scoped, pid-only kill", () => {
+    for (const command of [
+      "kill -9 1234",
+      "taskkill /PID 71196 /F",
+      "Stop-Process -Id 112048 -Force",
+    ]) {
+      expect(broadProcessKillCause(command), command).toBeNull();
+    }
+  });
+
+  it("agrees with isBroadProcessKill on every case above", () => {
+    // The boolean is now defined in terms of the cause (`!== null`), so
+    // this is a tautology about the current wiring rather than the two
+    // functions independently agreeing — pinned anyway because a future
+    // edit that reintroduces a second, divergent boolean check would break
+    // it silently otherwise.
+    for (const command of [
+      "taskkill /F /IM node.exe",
+      "Stop-Process -Id $p.Id -Force",
+      "kill -9 1234",
+    ]) {
+      expect(isBroadProcessKill(command), command).toBe(broadProcessKillCause(command) !== null);
     }
   });
 });
