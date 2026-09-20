@@ -103,6 +103,17 @@ function isStopShellLookup(query: string): boolean {
 }
 
 /**
+ * The unfinished-work count the `Stop` branch makes for the stop catch.
+ *
+ * Scoped to the stopping session's own rows rather than to the board, which
+ * is what keeps it from reporting the backlog as work the session left
+ * behind — see `../src/lib/interventions/stop-context.ts`.
+ */
+function isStopUnfinishedLookup(query: string): boolean {
+  return query.includes(`AS "unfinished"`);
+}
+
+/**
  * The unrated-firings read the `Stop` branch makes for the session-end
  * survey.
  *
@@ -145,12 +156,17 @@ function stopHandle(
   crew: number,
   commands: readonly string[],
   firings: readonly Record<string, unknown>[] = [],
+  unfinished = 0,
 ): TransactionHandle {
   return {
     $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
       if (isDisplacementLookup(query)) return [] as T;
       if (isStopCrewLookup(query)) return [{ liveCrew: crew }] as T;
       if (isStopShellLookup(query)) return commands.map((command) => ({ command })) as T;
+      // Nothing of this session's own left open, which is the clean stop —
+      // the case the catch must stay silent on. The producer's own suites
+      // cover the populated case.
+      if (isStopUnfinishedLookup(query)) return [{ unfinished: unfinished }] as T;
       // No unrated firings, which is the ordinary session. The survey's own
       // suites cover the populated case; what matters here is that this
       // read is expected rather than a regression, and that nothing else is.
@@ -343,7 +359,7 @@ describe("what the operation answers", () => {
     // block if anything ever wired the catch to the verdict.
     const answer = await callStop(3);
     expect(answer.decision).toBe("allow");
-    expect(answer.stop).toEqual({ liveCrew: 3, wakeScheduled: false });
+    expect(answer.stop).toEqual({ liveCrew: 3, wakeScheduled: false, unfinishedWork: 0 });
   });
 
   it("sends no survey block for a session that tripped nothing", async () => {
