@@ -646,6 +646,61 @@ describe("the correctness entries that block", () => {
     expect(scoped).toEqual([]);
   });
 
+  // Row 021fd229: the two causes behind I12 used to share one message, and
+  // the shared one led with the image-name case — so an unreadable
+  // selector like `$p.Id` was refused with a description of a kill the
+  // caller had not written. Five agents read that as a false refusal.
+  // Pinned at the `evaluate` level rather than only on the predicate,
+  // because this is what a caller actually receives: `verdict.message`
+  // substituted into both `plain` and `prominent` for that one firing.
+  it("I12 gives the unreadable-selector cause its own message, distinct from the image-name one", async () => {
+    const [imageName] = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "taskkill /F /IM node.exe" },
+    });
+    expect(imageName?.messages.plain).toMatch(/image name/i);
+    expect(imageName?.messages.plain).not.toMatch(/\$p\.Id/);
+
+    const [unreadable] = await evaluate({
+      entries: BUILTIN_INTERVENTIONS,
+      phase: "pre",
+      context: { command: "Stop-Process -Id $p.Id -Force" },
+    });
+    expect(unreadable?.id).toBe("broad-process-kill");
+    // Names the cause and the fix: that this runs on command text before
+    // PowerShell expands the variable, and what to pass instead.
+    expect(unreadable?.messages.plain).toMatch(/\$p\.Id/);
+    expect(unreadable?.messages.plain).toMatch(/before/i);
+    expect(unreadable?.messages.plain).toMatch(/Stop-Process -Id 112048 -Force/);
+    // The two messages must actually differ — the whole point of the fix —
+    // and the unreadable-selector message must not lead with the
+    // image-name framing that misled the five agents.
+    expect(unreadable?.messages.plain).not.toBe(imageName?.messages.plain);
+    expect(unreadable?.messages.plain?.toLowerCase().indexOf("image name")).not.toBe(0);
+    // `verdict.message` substitutes both forms — see `evaluate` in
+    // `../src/lib/interventions/registry.ts`.
+    expect(unreadable?.messages.prominent).toBe(unreadable?.messages.plain);
+
+    // The four literal forms from the acceptance criteria must still pass
+    // with no finding at all — the behaviour this task must not move.
+    for (const command of [
+      "taskkill /PID 71196 /F",
+      "kill -9 52588",
+      "Stop-Process -Id 112048 -Force",
+    ]) {
+      const passed = await evaluate({
+        entries: BUILTIN_INTERVENTIONS,
+        phase: "pre",
+        context: { command },
+      });
+      expect(
+        passed.map((f) => f.id),
+        command,
+      ).not.toContain("broad-process-kill");
+    }
+  });
+
   it("every blocking builtin is overridable rather than a hard block", async () => {
     // The catalogue's own rule: the value is the recorded reason, not the
     // friction. A `hard-block` here would be a decision to refuse work with

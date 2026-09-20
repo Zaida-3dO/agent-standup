@@ -264,24 +264,44 @@ export function isMergeLanding(command: string): boolean {
  * reading: an unread selector is not an empty one.
  */
 export function isBroadProcessKill(command: string): boolean {
+  return broadProcessKillCause(command) !== null;
+}
+
+/**
+ * Which of the two causes made `isBroadProcessKill` true, or `null` when it
+ * is false — the distinction the boolean throws away and the refusal
+ * message needs back.
+ *
+ * `isBroadProcessKill` blocks on two different findings that share nothing
+ * but the verdict: a command that names an executable (`taskkill /IM
+ * node.exe`), and a command this build cannot decompose at all
+ * (`unparseable` — a `/FI` filter, `$p.Id`, anything `parseKillCommand`
+ * gives up on). A message correct about the first is false about the
+ * second — see `broadProcessKill`'s messages in `./builtins.ts` for why
+ * that matters enough to keep the causes apart rather than collapse them
+ * back into one string.
+ */
+export type BroadProcessKillCause = "executable" | "unparseable";
+
+export function broadProcessKillCause(command: string): BroadProcessKillCause | null {
   const parsed = parseKillCommand(command);
 
-  if (parsed.kind === "not-a-kill") return false;
+  if (parsed.kind === "not-a-kill") return null;
   // Kill-shaped and undecomposable. Treated as broad for the same reason
   // `kill_guard` denies on it: the command ends processes and this build
   // cannot say which, so "narrow" is not something anyone can assert.
-  if (parsed.kind === "unparseable") return true;
+  if (parsed.kind === "unparseable") return "unparseable";
 
   // A kill naming no target at all is not a kill of everything — it is a
   // malformed command the shell will reject — so it is not this entry's
   // business.
-  if (parsed.targets.length === 0) return false;
+  if (parsed.targets.length === 0) return null;
 
   // Broad exactly when it names an image rather than a process. `taskkill
   // /IM node.exe` and `pkill node` take out every sibling agent's
   // processes, and the caller has no way to tell from the command that it
   // did. A list of pids is scoped however long it is.
-  return parsed.targets.some((target) => target.kind === "executable");
+  return parsed.targets.some((target) => target.kind === "executable") ? "executable" : null;
 }
 
 /**
