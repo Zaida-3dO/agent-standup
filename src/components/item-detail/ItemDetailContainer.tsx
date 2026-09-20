@@ -215,6 +215,21 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   // the four is ever mid-edit, so this is one `editingField` plus one
   // `draft` rather than four independent pairs.
   const [editingField, setEditingField] = useState<EditableField | null>(null);
+  // Which field's trigger should take focus back now that its edit has
+  // ended — docs/DESIGN-LANGUAGE.md §6. Held here, alongside `editingField`
+  // and for the same reason: the trigger button does not exist while its
+  // own edit is open, so the thing that remembers which trigger to return
+  // to has to outlive the trigger. See `lib/item-detail/use-edit-focus.ts`.
+  const [returnFocusTo, setReturnFocusTo] = useState<EditableField | null>(null);
+  // A mirror of `editingField` that a callback can read without closing
+  // over it. `onCancelEdit` needs to know which field it is closing so it
+  // can name the trigger to return focus to, but it is passed down to four
+  // triggers and is a dependency of the effect that moves the focus — a
+  // callback whose identity changed on every render would re-run that
+  // effect on every render. A ref keeps the identity stable AND the read
+  // fresh, where a dependency array gives up one or the other.
+  const editingFieldRef = useRef<EditableField | null>(null);
+  editingFieldRef.current = editingField;
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -234,11 +249,20 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
       setEditingField(field);
       setDraft(current);
       setEditError(null);
+      // Any pending return is stale the moment a new edit opens: the
+      // trigger it named is about to unmount again.
+      setReturnFocusTo(null);
     },
     [loadState],
   );
 
   const onCancelEdit = useCallback(() => {
+    // Read through the ref, NOT from inside a `setEditingField` updater.
+    // An updater must be pure: React invokes it twice under StrictMode, so
+    // a `setReturnFocusTo` call in there would fire twice per cancel. See
+    // `scripts/check-updater-side-effects.mjs`, which is the repo's guard
+    // against the assignment-shaped version of this same mistake.
+    setReturnFocusTo(editingFieldRef.current);
     setEditingField(null);
     setDraft("");
     setEditError(null);
@@ -257,6 +281,12 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
           setEditError(outcome.message);
           return;
         }
+        // §6 promises focus returns to the trigger on exit, and a
+        // SAVED edit exits too — a reader who presses Enter is as lost as
+        // one who presses Escape if focus is dropped. Set before the
+        // re-fetch below, not after: the re-fetch may fail, and the focus
+        // move must not be contingent on it.
+        setReturnFocusTo(editingField);
         setEditingField(null);
         setDraft("");
         // **`outcome.item` is deliberately discarded, and that is what makes
@@ -288,6 +318,9 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
         setEditError(err instanceof Error ? err.message : "Could not save this edit.");
       });
   }, [editingField, draft, loadState]);
+
+  /** Clears the return signal once a trigger has acted on it, so it fires once rather than on every later re-render. */
+  const onFocusReturned = useCallback(() => setReturnFocusTo(null), []);
 
   const titleAdvice = editingField === "title" ? titleAdviceFor(draft) : null;
 
@@ -742,6 +775,8 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
         saving,
         editError,
         titleAdvice,
+        returnFocusTo,
+        onFocusReturned,
       }}
       verifyStateStatus={verifyStateStatus}
       onVerifyState={onVerifyState}

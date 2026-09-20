@@ -24,6 +24,7 @@ import type {
 } from "@/lib/item-detail/types";
 import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 import type { ReactNode } from "react";
+import { EditTrigger } from "@/components/item-detail/EditTrigger";
 
 /**
  * Every string of text anywhere in the tree, flattened — handles arrays of
@@ -380,9 +381,15 @@ describe("ItemDetailView", () => {
         loadState: { status: "loaded", detail: detail({ item: detailItem({ title: "A title" }) }) },
         edit: { onStartEdit: () => {} },
       });
+      //
+      // Point 2 is now asserted where it lives: the trigger is an
+      // `EditTrigger`, which renders the real <button>, and
+      // `tests/edit-trigger-focus.test.ts` pins that it does. It moved out
+      // of the inline JSX so it could own the return-focus effect without
+      // making this component hook-ful — see `EditTrigger.tsx`'s header.
       expect(textOf(element)).toContain("A title");
-      const buttons = [...walk(element)].filter((el) => el.type === "button");
-      const labels = buttons.map((b) => (b.props as { "aria-label"?: string })["aria-label"]);
+      const buttons = [...walk(element)].filter((el) => el.type === EditTrigger);
+      const labels = buttons.map((b) => (b.props as { label?: string }).label);
       const titleControl = labels.find((l) => l?.startsWith("Title:"));
       expect(
         titleControl,

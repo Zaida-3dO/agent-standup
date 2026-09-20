@@ -42,6 +42,7 @@ import type { OpenLoop } from "@/lib/open-loops";
 import type { ItemEditProps } from "@/lib/item-detail/edit-state";
 import { ChipLink } from "./ChipLink";
 import { InlineEditField } from "./InlineEditField";
+import { EditTrigger } from "./EditTrigger";
 import styles from "./StatusBlock.module.css";
 import detailStyles from "./ItemDetail.module.css";
 
@@ -104,14 +105,16 @@ export function StatusBlock({ item, column, status, now, edit = {} }: StatusBloc
               <PriorityChip priority={item.priority as Priority} />
             </ChipLink>
             {edit.onStartEdit && (
-              <button
-                type="button"
-                className={detailStyles.editAffordance}
-                aria-label={`Priority: ${item.priority} — activate to edit`}
-                onClick={() => edit.onStartEdit?.("priority")}
+              <EditTrigger
+                field="priority"
+                label={`Priority: ${item.priority} — activate to edit`}
+                onActivate={() => edit.onStartEdit?.("priority")}
+                variant="affordance"
+                returnFocusTo={edit.returnFocusTo}
+                onFocusReturned={edit.onFocusReturned}
               >
                 <Pencil size={12} aria-hidden="true" />
-              </button>
+              </EditTrigger>
             )}
           </span>
         )}
@@ -160,14 +163,16 @@ export function StatusBlock({ item, column, status, now, edit = {} }: StatusBloc
               <span>{item.area}</span>
             </ChipLink>
             {edit.onStartEdit && (
-              <button
-                type="button"
-                className={detailStyles.editAffordance}
-                aria-label={`Area: ${item.area} — activate to edit`}
-                onClick={() => edit.onStartEdit?.("area")}
+              <EditTrigger
+                field="area"
+                label={`Area: ${item.area} — activate to edit`}
+                onActivate={() => edit.onStartEdit?.("area")}
+                variant="affordance"
+                returnFocusTo={edit.returnFocusTo}
+                onFocusReturned={edit.onFocusReturned}
               >
                 <Pencil size={12} aria-hidden="true" />
-              </button>
+              </EditTrigger>
             )}
           </span>
         )}
