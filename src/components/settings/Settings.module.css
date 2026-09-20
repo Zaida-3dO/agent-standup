@@ -269,3 +269,41 @@
   color: var(--text-faint);
   font-size: var(--text-xs);
 }
+
+/* ── Touch targets at phone widths (task c82a743b) ──────────────────────
+   Measured on the deployed board: 118 of 127 interactive controls on this
+   page sat at 31.2-33.2px tall, well under the 44px minimum a thumb can
+   reliably hit. The cause was uniform across every one of them: no
+   `min-height` was set at all, so height was purely `padding: 0.35rem` (or
+   `0.12rem` for a badge, which is not interactive) plus a 13px line box.
+
+   Same idiom as `BoardFilterBar.module.css`'s equivalent block, which is
+   the app's own established convention for this exact problem — `/board`'s
+   filter controls already measure a clean 44px there. `min-height`, not
+   `height`: a value or label that wraps at this width still has to grow
+   past 44px rather than clip. `.link` is included because `Link` renders
+   an anchor, which is as much an interactive control as a `<button>`.
+
+   Desktop is untouched: this block is scoped to the breakpoint, and
+   nothing outside it changes size, padding step, or font-size. */
+@media (max-width: 640px) {
+  .input,
+  .textarea,
+  .select,
+  .button,
+  .link {
+    min-height: 44px;
+  }
+
+  /* `.link` and `.button` need `align-items`/`justify-content` to keep
+     single-line content centred once `min-height` grows the box past its
+     content's own line height — otherwise the text sits at the top of the
+     taller box. `.input`/`.textarea`/`.select` do not need this: form
+     controls centre their own content vertically by default. */
+  .link,
+  .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
