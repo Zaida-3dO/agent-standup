@@ -39,6 +39,7 @@ import { PriorityChip } from "@/components/chips/PriorityChip";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
 import { TrustBadge } from "@/components/chips/TrustBadge";
+import { showsTrustBadge, trustPresentation } from "@/lib/board/trust";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { EmptyState, ErrorState, LoadingState, emptinessOf } from "@/components/states";
 import { isSelectable } from "@/lib/board/selection";
@@ -319,15 +320,23 @@ export function ListView({
                     const reason = waitingReason(entry);
                     const distinct = hasDistinctHeadline(entry.item);
                     // Row 8243e3b0-3084-44c5-8a0f-b617f7492875: the card view
-                    // marks an imported-and-unchecked row with a dashed
-                    // outline (`ItemCard.tsx`'s `unverified`,
-                    // `Board.module.css` `.cardUnverified`) IN ADDITION to
-                    // `TrustBadge`, so provenance survives even where the
-                    // badge alone (correctly, per `TrustBadge.tsx`'s header)
-                    // says only "nobody has checked" with no origin claim.
-                    // Without this, the list rendered the same badge but no
-                    // second channel, so it was the ONLY trust signal here —
-                    // this gives the row the channel the card already has.
+                    // marks an IMPORTED row with a dashed outline
+                    // (`ItemCard.tsx`'s `unverified`, `Board.module.css`
+                    // `.cardUnverified`) IN ADDITION to `TrustBadge`, so
+                    // provenance survives even where the badge alone
+                    // (correctly, per `TrustBadge.tsx`'s header) says only
+                    // "nobody has checked" with no origin claim. Without
+                    // this, the list rendered the same badge but no second
+                    // channel, so it was the ONLY trust signal here — this
+                    // gives the row the channel the card already has.
+                    //
+                    // **Imported, checked or not** — this reads
+                    // `unverifiedOrigin` alone, which never clears on
+                    // verification. An earlier revision of this comment said
+                    // "imported-and-unchecked", which describes neither this
+                    // line nor the card's; `TrustBadge.tsx`'s header has it
+                    // right ("an imported item that someone has since
+                    // verified is badged 'Verified' and still dashed").
                     const unverified = entry.trust?.unverifiedOrigin === true;
                     return (
                       <tr
@@ -472,17 +481,14 @@ export function ListView({
                             </span>
                           )}
                           {reason && <span className={styles.rowReason}>{reason}</span>}
-                          {entry.trust && (
-                            <TrustBadge
-                              verified={entry.trust.verification !== null}
-                              {...(entry.trust.verification
-                                ? {
-                                    checkedAt: entry.trust.verification.checkedAt,
-                                    checkedByType: entry.trust.verification.checkedByType,
-                                    checkedById: entry.trust.verification.checkedById,
-                                  }
-                                : {})}
-                            />
+                          {/* Gated on ORIGIN, via the same predicate the card
+                              uses — see `@/lib/board/trust` and `ItemCard.tsx`.
+                              `entry.trust` is non-null for every non-project
+                              row, so gating on its presence alone would badge
+                              the whole list "Unchecked" and contradict the
+                              Trusted filter on the rows it returns. */}
+                          {showsTrustBadge(entry.trust) && (
+                            <TrustBadge {...trustPresentation(entry.trust)} />
                           )}
                         </td>
                         <td className={styles.colArea}>

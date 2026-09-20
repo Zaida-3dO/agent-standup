@@ -10,6 +10,7 @@ import { waitingTone } from "@/lib/board/view";
 import { isDraggable } from "@/lib/board/drag";
 import { hasDistinctHeadline, primaryLine } from "@/lib/item-headline-display";
 import { TrustBadge } from "@/components/chips/TrustBadge";
+import { showsTrustBadge, trustPresentation } from "@/lib/board/trust";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
 import { relativeTime } from "@/lib/projects/view";
@@ -235,18 +236,23 @@ export function ItemCard({
         )}
         {/* The trust marker (#131) — a verified state and an unverifiable
             one must not render identically, the same rule #123 applies to
-            an empty vs. withheld column. `entry.trust` is `null` for a
-            project (DECISIONS.md §13c: no `state` of its own to distrust),
-            so the badge is skipped outright rather than shown as "verified"
-            by a default it never earned. */}
-        {entry.trust && (
-          <TrustBadge
-            verified={entry.trust.verification !== null}
-            checkedAt={entry.trust.verification?.checkedAt}
-            checkedByType={entry.trust.verification?.checkedByType}
-            checkedById={entry.trust.verification?.checkedById}
-          />
-        )}
+            an empty vs. withheld column.
+
+            **Gated on ORIGIN, not merely on `entry.trust` being present.**
+            `entry.trust` is non-null for every non-project row, so gating on
+            it alone badged every card in the store "Unchecked" — including
+            rows this product's own state machine wrote, which have never had
+            anything to verify. That also contradicted the board filter in
+            front of the reader: `trusted` is `NOT (imported AND unchecked)`
+            (`trustCondition`, `trust-view.ts`), so filtering to Trusted
+            returned cards whose own badge said Unchecked.
+
+            `showsTrustBadge` is the shared predicate, and it reads the origin
+            rather than the check on purpose: an imported row someone HAS
+            verified keeps its badge, naming who looked and when. See
+            `@/lib/board/trust`. `ItemDetailView.tsx` has always gated this
+            way; this is the board catching up to it. */}
+        {showsTrustBadge(entry.trust) && <TrustBadge {...trustPresentation(entry.trust)} />}
       </div>
       {/* The title is the way into the detail view (#72). A real <Link>
           rather than a click handler on the card: it is a navigation, so it
