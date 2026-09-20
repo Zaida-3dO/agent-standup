@@ -221,15 +221,29 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
   // own edit is open, so the thing that remembers which trigger to return
   // to has to outlive the trigger. See `lib/item-detail/use-edit-focus.ts`.
   const [returnFocusTo, setReturnFocusTo] = useState<EditableField | null>(null);
-  // A mirror of `editingField` that a callback can read without closing
-  // over it. `onCancelEdit` needs to know which field it is closing so it
-  // can name the trigger to return focus to, but it is passed down to four
-  // triggers and is a dependency of the effect that moves the focus — a
-  // callback whose identity changed on every render would re-run that
-  // effect on every render. A ref keeps the identity stable AND the read
-  // fresh, where a dependency array gives up one or the other.
-  const editingFieldRef = useRef<EditableField | null>(null);
-  editingFieldRef.current = editingField;
+  /**
+   * A mirror of `editingField` that a handler can read without closing over
+   * it — the same pattern, and for the same reason, as
+   * `latestArchiveState` below.
+   *
+   * `onCancelEdit` has to know which field it is closing, so it can name
+   * the trigger that should take focus back. Closing over `editingField`
+   * instead would give that callback a new identity on every render, and it
+   * is both passed to four triggers and named in the dependency array of
+   * the effect that performs the focus move — so the effect would re-run,
+   * and re-steal focus, on every render.
+   *
+   * Written through `applyEditingField`, never assigned during render:
+   * reading or writing a ref mid-render is what `react-hooks/refs` rejects,
+   * and the value would not be reliable there anyway.
+   */
+  const latestEditingField = useRef<EditableField | null>(null);
+
+  /** Writes both, together, so the ref can never lag the state it mirrors. */
+  const applyEditingField = useCallback((next: EditableField | null) => {
+    latestEditingField.current = next;
+    setEditingField(next);
+  }, []);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -246,14 +260,14 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
             : field === "priority"
               ? item.priority
               : item.area;
-      setEditingField(field);
+      applyEditingField(field);
       setDraft(current);
       setEditError(null);
       // Any pending return is stale the moment a new edit opens: the
       // trigger it named is about to unmount again.
       setReturnFocusTo(null);
     },
-    [loadState],
+    [loadState, applyEditingField],
   );
 
   const onCancelEdit = useCallback(() => {
@@ -262,11 +276,11 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
     // a `setReturnFocusTo` call in there would fire twice per cancel. See
     // `scripts/check-updater-side-effects.mjs`, which is the repo's guard
     // against the assignment-shaped version of this same mistake.
-    setReturnFocusTo(editingFieldRef.current);
-    setEditingField(null);
+    setReturnFocusTo(latestEditingField.current);
+    applyEditingField(null);
     setDraft("");
     setEditError(null);
-  }, []);
+  }, [applyEditingField]);
 
   const onSaveEdit = useCallback(() => {
     if (editingField === null || loadState.status !== "loaded") return;
@@ -287,7 +301,7 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
         // re-fetch below, not after: the re-fetch may fail, and the focus
         // move must not be contingent on it.
         setReturnFocusTo(editingField);
-        setEditingField(null);
+        applyEditingField(null);
         setDraft("");
         // **`outcome.item` is deliberately discarded, and that is what makes
         // the narrow response safe.** `submitItemEdit` does not send
@@ -317,7 +331,7 @@ export function ItemDetailContainer({ itemId }: ItemDetailContainerProps) {
         setSaving(false);
         setEditError(err instanceof Error ? err.message : "Could not save this edit.");
       });
-  }, [editingField, draft, loadState]);
+  }, [editingField, draft, loadState, applyEditingField]);
 
   /** Clears the return signal once a trigger has acted on it, so it fires once rather than on every later re-render. */
   const onFocusReturned = useCallback(() => setReturnFocusTo(null), []);
