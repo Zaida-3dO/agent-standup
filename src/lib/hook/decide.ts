@@ -336,8 +336,13 @@ export async function decide({
     // Still refused — but say so in a way the caller can act on. A refusal
     // that conceals an available exit is what teaches sessions to route
     // around guards rather than answer them.
+    // The tool is passed because the remedy is only honest when this
+    // particular call can carry a claim. An agent-audience offer is the
+    // command-comment syntax, and a tool with no command to comment on
+    // cannot receive one — see `overrideRemedy` on why that gate, rather
+    // than the audience alone, is what keeps the offer keepable.
     const remedies = blocking
-      .map((finding) => overrideRemedy(finding.id, finding.level, finding.audience))
+      .map((finding) => overrideRemedy(finding.id, finding.level, finding.audience, event.tool))
       .filter((remedy): remedy is string => remedy !== null);
 
     const base = answer.reason ?? "blocked by the server";

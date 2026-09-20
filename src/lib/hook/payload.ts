@@ -23,7 +23,7 @@
 // command.
 
 /** The event types the hook understands. Anything else is refused. */
-import { readOverrideClaim, type OverrideClaim } from "./override";
+import { readCommandOverrideClaim, readOverrideClaim, type OverrideClaim } from "./override";
 
 export const HOOK_EVENT_TYPES = ["PreToolUse", "PostToolUse", "Stop"] as const;
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
@@ -163,13 +163,34 @@ export function parseHookPayload(text: string): ParseResult {
   const toolResult = readToolResult(
     property(raw, "tool_response") ?? property(raw, "toolResponse"),
   );
-  // Read from the top-level payload rather than from `tool_input`: an
-  // override is a statement the *caller* makes about the guard, not an
-  // argument to the tool being called, and putting it inside the tool input
-  // would mean it reached whatever the tool does with unrecognised fields.
-  const override = readOverrideClaim(
-    property(raw, "standup_override") ?? property(raw, "standupOverride"),
-  );
+  // Two channels, one field, and the order between them matters.
+  //
+  // The top-level read comes first and is unchanged: an override is a
+  // statement the *caller* makes about the guard, not an argument to the
+  // tool being called, and a claim placed inside `tool_input` as an
+  // ordinary field is still refused — putting it there would mean it
+  // reached whatever the tool does with unrecognised fields, and would make
+  // "add a field to your tool call" a way to waive a guard.
+  //
+  // The second read is what makes `block-overridable` mean its own name for
+  // the audience that actually meets it. Every such entry is
+  // `audience: "agent"`, and an agent contributes nothing to this payload
+  // but `tool_input` — so the channel above, while correct, was reachable
+  // by nobody who was ever blocked (448 blocks, 7 overrides, and the seven
+  // were probes). `readCommandOverrideClaim` reads a **shell comment** off
+  // the command, which is not a tool argument in any sense the principle
+  // above cares about: it is inert to the tool, it exists only for this,
+  // and the harness still composes everything around it. The claim is
+  // lifted to the same `HookEvent.override` field, so `decide` cannot tell
+  // the two apart and neither channel needs a branch downstream.
+  //
+  // Top level wins on the rare occasion both are present. A caller that
+  // composed its own payload said something more deliberate than a comment
+  // in a command line, and a fixed precedence is one fewer thing for the
+  // two readers to disagree about.
+  const override =
+    readOverrideClaim(property(raw, "standup_override") ?? property(raw, "standupOverride")) ??
+    readCommandOverrideClaim(tool, command);
 
   return {
     ok: true,
