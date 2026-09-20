@@ -16,15 +16,70 @@
 //
 // **Read, never restated**, the same rule `bindings.ts` follows for the
 // command table and the waivers.
-import { LOOP_ACTIONS } from "../operations/loop";
-import { SCORE_ACTIONS, SCORE_ACTION_FIELDS } from "../operations/score";
-import { PROJECT_ACTIONS, PROJECT_ACTION_FIELDS } from "../operations/project";
-import { SESSION_ACTIONS, SESSION_ACTION_FIELDS } from "../operations/session";
+//
+// ── `delegateSchema`, and why it is read rather than named ───────────────
+//
+// A folded action forwards to a real, independently-registered operation —
+// `record`'s `action: "artifact"` forwards to `record_artifact`, exactly the
+// operation a direct MCP caller cannot reach because it is `onMcp: false`
+// (`describe/reachability.ts`). That operation's OWN `contract.rules` is
+// where a conditional rule actually lives — `record_artifact` declares nine
+// of them — and until this field existed, `describe_tool` had no way to
+// find that operation from `(tool, action)` alone, so a fold's answer was
+// only ever the fold's own three or four rules. A caller who reached
+// `record` with `action: "artifact"` never saw a single rule the delegate
+// declares, including ones discovered by being refused.
+//
+// **Not a second table naming which operation each action forwards to.**
+// Each fold already states that, once, as the `schema` half of its own
+// `FORWARDING` (`foreign-fields.ts`) — the same object `parseDelegateInput`
+// parses against a call with. Reading `FORWARDING[action].schema` here and
+// letting `describe-tool.ts` resolve WHICH operation owns that schema by
+// identity against the registry it already holds means this file states
+// nothing that was not already true elsewhere. A fold that renames or
+// re-points an action's delegate changes one line, in one place, and both
+// the parse and the documentation move with it.
+//
+// `undefined` is included and means what it says: `get_item`'s shallow
+// depths and `create_work`'s kinds answer without forwarding to a distinct
+// operation at all (`ActionForwarding.answeredInTool`), so there is no
+// second contract to merge in — that is a fact about the fold, not a gap in
+// this table.
+import { LOOP_ACTIONS, FORWARDING as LOOP_FORWARDING } from "../operations/loop";
+import {
+  SCORE_ACTIONS,
+  SCORE_ACTION_FIELDS,
+  FORWARDING as SCORE_FORWARDING,
+} from "../operations/score";
+import {
+  PROJECT_ACTIONS,
+  PROJECT_ACTION_FIELDS,
+  FORWARDING as PROJECT_FORWARDING,
+} from "../operations/project";
+import {
+  SESSION_ACTIONS,
+  SESSION_ACTION_FIELDS,
+  FORWARDING as SESSION_FORWARDING,
+} from "../operations/session";
 import { CREATE_WORK_TYPES } from "../operations/create-work";
 import { ITEM_DEPTHS } from "../operations/get-item";
-import { READ_ITEM_ACTIONS, READ_ITEM_ACTION_FIELDS } from "../operations/read-item";
-import { OWNERSHIP_ACTIONS, OWNERSHIP_ACTION_FIELDS } from "../operations/ownership";
-import { RECORD_ACTIONS, RECORD_ACTION_FIELDS } from "../operations/record";
+import {
+  READ_ITEM_ACTIONS,
+  READ_ITEM_ACTION_FIELDS,
+  FORWARDING as READ_ITEM_FORWARDING,
+} from "../operations/read-item";
+import {
+  OWNERSHIP_ACTIONS,
+  OWNERSHIP_ACTION_FIELDS,
+  FORWARDING as OWNERSHIP_FORWARDING,
+} from "../operations/ownership";
+import {
+  RECORD_ACTIONS,
+  RECORD_ACTION_FIELDS,
+  FORWARDING as RECORD_FORWARDING,
+} from "../operations/record";
+import type { ActionForwarding, FoldForwarding } from "../foreign-fields";
+import type { z } from "zod";
 
 /** One folded tool's verbs, and what each of them cannot run without. */
 export interface FoldActions {
@@ -32,6 +87,33 @@ export interface FoldActions {
   readonly actions: readonly string[];
   /** Fields required per action. An action absent from this map requires none. */
   readonly requiredByAction: Readonly<Record<string, readonly string[]>>;
+  /**
+   * The delegate operation's own input schema, per action — the same object
+   * its `FORWARDING` table already forwards a call to. `describe-tool.ts`
+   * resolves this to an operation NAME by identity against the registry it
+   * holds, then merges that operation's `contract.rules` into the answer for
+   * this action. Absent for an action answered in-tool (no distinct
+   * delegate to merge) and for a fold that declares no `FORWARDING` at all.
+   */
+  readonly delegateSchema?: Readonly<Record<string, z.ZodTypeAny>>;
+}
+
+/**
+ * `delegateSchema` for a fold, built from its own `FORWARDING` table.
+ *
+ * Drops an action whose forwarding names no `schema` (`answeredInTool`)
+ * rather than recording `undefined` for it — the same "absent, not empty"
+ * distinction `describe-tool.ts` already keeps for `rules` and `example`,
+ * so "this action has no delegate to merge" cannot be misread as "the
+ * lookup failed".
+ */
+function delegateSchemaFrom<Action extends string>(
+  forwarding: FoldForwarding<Action>,
+): Readonly<Record<string, z.ZodTypeAny>> {
+  const entries = (Object.entries(forwarding) as [Action, ActionForwarding][])
+    .filter(([, entry]) => entry.schema !== undefined)
+    .map(([action, entry]) => [action, entry.schema as z.ZodTypeAny] as const);
+  return Object.freeze(Object.fromEntries(entries));
 }
 
 /**
@@ -68,6 +150,7 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
     {
       actions: [...LOOP_ACTIONS],
       requiredByAction: LOOP_REQUIRED,
+      delegateSchema: delegateSchemaFrom(LOOP_FORWARDING),
     },
   ],
   [
@@ -77,6 +160,7 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       requiredByAction: Object.fromEntries(
         Object.entries(SCORE_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
+      delegateSchema: delegateSchemaFrom(SCORE_FORWARDING),
     },
   ],
   [
@@ -86,6 +170,7 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       requiredByAction: Object.fromEntries(
         Object.entries(PROJECT_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
+      delegateSchema: delegateSchemaFrom(PROJECT_FORWARDING),
     },
   ],
   [
@@ -95,6 +180,7 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       requiredByAction: Object.fromEntries(
         Object.entries(SESSION_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
+      delegateSchema: delegateSchemaFrom(SESSION_FORWARDING),
     },
   ],
   [
@@ -112,6 +198,9 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       // are the reverse case: accepted only at `detail`, and refused by
       // name elsewhere, which is a contract rule rather than a requirement.
       requiredByAction: Object.freeze({ summary: [], item: [], detail: [] }),
+      // No `delegateSchema`: every depth is answered in this operation
+      // itself, not by forwarding to a distinct registered operation — there
+      // is no second contract to merge in.
     },
   ],
   [
@@ -121,6 +210,7 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       requiredByAction: Object.fromEntries(
         Object.entries(READ_ITEM_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
+      delegateSchema: delegateSchemaFrom(READ_ITEM_FORWARDING),
     },
   ],
   [
@@ -130,6 +220,7 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       requiredByAction: Object.fromEntries(
         Object.entries(OWNERSHIP_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
+      delegateSchema: delegateSchemaFrom(OWNERSHIP_FORWARDING),
     },
   ],
   [
@@ -139,6 +230,7 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
       requiredByAction: Object.fromEntries(
         Object.entries(RECORD_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
+      delegateSchema: delegateSchemaFrom(RECORD_FORWARDING),
     },
   ],
   [

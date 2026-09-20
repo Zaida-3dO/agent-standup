@@ -120,6 +120,77 @@ export function provideToolIndex(source: { lookup: ToolLookup; names: ToolNames 
 }
 
 /**
+ * The delegate operation a folded action forwards to, resolved by identity
+ * rather than by name.
+ *
+ * ── The gap this closes ───────────────────────────────────────────────────
+ *
+ * A folded tool's OWN `contract.rules` is written about the fold as a whole
+ * — `record`'s three rules cover the checkpoint/note assignment asymmetry,
+ * the per-action meaning of `body`, and `artifactKind` versus `kind`. What
+ * it never carried is the delegate's rules: `record_artifact` alone declares
+ * nine, and until this function existed, a caller who reached `record` with
+ * `action: "artifact"` — the ONLY way an MCP caller can reach it at all,
+ * since `record_artifact` is `onMcp: false` — saw none of them. The write
+ * limit and the permanence rule were exactly this: real, declared, and
+ * invisible on the one surface most callers use.
+ *
+ * ── Why identity, not a second name table ────────────────────────────────
+ *
+ * `FOLD_ACTIONS`'s `delegateSchema` carries the delegate's input SCHEMA per
+ * action — the same object each fold already forwards a call to
+ * (`FoldForwarding`). That schema is a stable, module-level singleton (every
+ * operation is one `defineOperation({...})` literal, never rebuilt), so
+ * `===` against `found.input` for every registered operation answers "which
+ * operation is this" without a second table stating the name and risking
+ * disagreement with the one the fold's own switch statement dispatches to.
+ *
+ * `undefined` whenever the fold declares no `delegateSchema` for the action
+ * (answered in-tool) or no delegate happens to match (defensive; would mean
+ * a fold's forwarding schema and the registry have drifted, which nothing
+ * here should paper over by guessing).
+ */
+function delegateFor(foldName: string, action: string | undefined): ToolSource | undefined {
+  if (action === undefined || lookup === null || names === null) return undefined;
+  const fold = FOLD_ACTIONS.get(foldName);
+  const schema = fold?.delegateSchema?.[action];
+  if (schema === undefined) return undefined;
+  for (const name of names()) {
+    const candidate = lookup(name);
+    if (candidate?.input === schema) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * One action's rules: the fold's own, then its delegate's, in that order.
+ *
+ * The fold's rules read first because they are about the CHOICE a caller
+ * already made — which action, which asymmetry it carries — before the
+ * delegate's rules go on to say what that specific call requires. Neither
+ * list is filtered against the other: a fold and its delegate have not been
+ * observed to declare the same rule twice, and de-duplicating by text would
+ * risk hiding two rules that happen to read alike but govern different
+ * fields.
+ *
+ * Spread-or-nothing at every stage, matching `ToolContract.rules`'s own
+ * "absent means nothing was said, not empty" convention: a tool with
+ * neither a fold nor a contract has no `rules` key at all, one with only a
+ * fold contract carries just that, and one whose action resolves a delegate
+ * carries both in sequence.
+ */
+function rulesFor(
+  found: ToolSource,
+  action: string | undefined,
+): readonly OperationRule[] | undefined {
+  const delegate = action === undefined ? undefined : delegateFor(found.name, action);
+  const own = found.contract?.rules;
+  const delegated = delegate?.contract?.rules;
+  if (own === undefined && delegated === undefined) return undefined;
+  return [...(own ?? []), ...(delegated ?? [])];
+}
+
+/**
  * What this build is, for a caller who named no tool.
  *
  * ── Why these three live here ───────────────────────────────────────────
@@ -567,6 +638,8 @@ export const describeTool = defineOperation({
       );
     }
 
+    const rules = rulesFor(found, input.action);
+
     return {
       name: found.name,
       kind: found.kind,
@@ -597,7 +670,13 @@ export const describeTool = defineOperation({
       // "nothing was said" versus "somebody looked and there was nothing to
       // add" — and collapsing them to `[]` is what let an undeclared rule
       // read as an absent one. See `ToolContract.rules`.
-      ...(found.contract === undefined ? {} : { rules: found.contract.rules }),
+      //
+      // When `action` names a verb that forwards to a distinct delegate
+      // operation, that operation's own rules ride along too (`rulesFor`) —
+      // otherwise a caller reaching `record_artifact` only through `record`
+      // (the one route an MCP caller has, since the delegate is `onMcp:
+      // false`) would never see a rule the delegate declares.
+      ...(rules === undefined ? {} : { rules }),
       ...(found.contract?.example === undefined ? {} : { example: found.contract.example }),
       ...(found.contract?.examples === undefined ? {} : { examples: found.contract.examples }),
     };

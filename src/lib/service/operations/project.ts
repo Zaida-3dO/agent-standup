@@ -120,7 +120,7 @@ export type ProjectInput = z.infer<typeof inputSchema>;
  * — a caller passing `id` to `repair` must not be told their own field is
  * foreign because the delegate spells it differently.
  */
-const FORWARDING: FoldForwarding<ProjectAction> = Object.freeze({
+export const FORWARDING: FoldForwarding<ProjectAction> = Object.freeze({
   list: { schema: getProjects.input },
   detail: { schema: getProjectDetail.input },
   repair: { schema: repairStuckProjects.input, renames: { id: "projectId" } },

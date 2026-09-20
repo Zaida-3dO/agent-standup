@@ -112,7 +112,7 @@ export type SessionInput = z.infer<typeof inputSchema>;
  * asking for a shape would otherwise get a shape and no registration, with
  * nothing said about it.
  */
-const FORWARDING: FoldForwarding<SessionAction> = Object.freeze({
+export const FORWARDING: FoldForwarding<SessionAction> = Object.freeze({
   register: { schema: registerSession.input },
   shape: { schema: getSessionShape.input },
 });

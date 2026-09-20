@@ -188,7 +188,7 @@ export type ScoreInput = z.infer<typeof inputSchema>;
  * what makes the answer right in the caller's vocabulary, and it is the
  * same table `fa83f2b9` is the cautionary tale for.
  */
-const FORWARDING: FoldForwarding<ScoreAction> = Object.freeze({
+export const FORWARDING: FoldForwarding<ScoreAction> = Object.freeze({
   run: { schema: scoreRun.input, renames: { facets: "scores" } },
   derive: { schema: deriveRunScore.input },
   accept: { schema: acceptRunScore.input, renames: { acceptFacets: "facets" } },

@@ -196,7 +196,7 @@ export type OwnershipInput = z.infer<typeof inputSchema>;
  * of, and there is no mechanism that notices the rest. Deriving from the
  * delegates' own schemas covers all nineteen with no list to keep.
  */
-const FORWARDING: FoldForwarding<OwnershipAction> = Object.freeze({
+export const FORWARDING: FoldForwarding<OwnershipAction> = Object.freeze({
   claim: { schema: claim.input },
   release: { schema: release.input },
   takeover: { schema: takeover.input },
