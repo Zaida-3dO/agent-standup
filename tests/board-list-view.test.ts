@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { ListView } from "@/components/board/ListView";
 import { LayoutToggle } from "@/components/board/LayoutToggle";
 import { StateChip } from "@/components/chips/StateChip";
+import { TrustBadge } from "@/components/chips/TrustBadge";
 import { PriorityChip } from "@/components/chips/PriorityChip";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
@@ -306,6 +307,62 @@ describe("the list carries the amber/red split", () => {
     });
     const rows = findAllByType(render(board), "tr").filter((r) => propOf(r, "className"));
     expect(rows.map((r) => propOf<string>(r, "data-unverified"))).toEqual(["true", undefined]);
+  });
+
+  // The list had the same defect as the card: it badged every non-project
+  // row, so a Trusted-filtered list read "Unchecked" down its whole length.
+  // Both surfaces now ask `showsTrustBadge`, so they cannot drift apart
+  // again the way the badge and the border did.
+  //
+  // The single-character change this catches: reverting the gate to
+  // `entry.trust &&`, which puts a badge back on the native row and makes
+  // this expect two rather than one.
+  it("badges only the imported row, not the native one, in list mode", () => {
+    const board = boardOf({
+      backlog: [
+        entry(
+          "backlog",
+          { id: "imported" },
+          { trust: { unverifiedOrigin: true, verification: null } },
+        ),
+        entry(
+          "backlog",
+          { id: "native" },
+          { trust: { unverifiedOrigin: false, verification: null } },
+        ),
+      ],
+    });
+    expect(findAllByType(render(board), TrustBadge)).toHaveLength(1);
+  });
+
+  // The imported-and-verified case in list mode — the one a naive
+  // `if (!verified) return null` would delete. Fails if the list gates on
+  // the check rather than the origin.
+  it("keeps the badge on an imported row that has since been verified", () => {
+    const board = boardOf({
+      backlog: [
+        entry(
+          "backlog",
+          { id: "imported-checked" },
+          {
+            trust: {
+              unverifiedOrigin: true,
+              verification: {
+                checkedAt: "2026-02-03T04:05:06.000Z",
+                checkedByType: "person",
+                checkedById: "ope",
+                body: "Checked.",
+                commitSha: "deadbee",
+              },
+            },
+          },
+        ),
+      ],
+    });
+    const badge = findAllByType(render(board), TrustBadge);
+    expect(badge).toHaveLength(1);
+    expect(propOf<boolean>(badge[0]!, "verified")).toBe(true);
+    expect(propOf<string>(badge[0]!, "checkedById")).toBe("ope");
   });
 
   it("marks a row that needs the active reader, and only for that reader", () => {

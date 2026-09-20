@@ -17,12 +17,38 @@
 //     row arrive by import?*
 //
 // **Those two diverge, by design and in practice.** An imported item that
-// someone has since verified is badged "Verified" and still dashed; an
-// item created in the product and never checked is badged "Unchecked" and
-// is not dashed — which is the common case, so a board where every card
-// reads "Unchecked" and none is outlined is correct, not a bug. Keying the
-// border off `verification` to "restore" a redundancy that was never there
-// would dash every row in the store.
+// someone has since verified is badged "Verified" and still dashed. Keying
+// the border off `verification` to "restore" a redundancy that was never
+// there would dash every row in the store.
+//
+// ── WORDING is this file's question. PRESENCE is the caller's ───────────
+//
+// The reasoning above is about what the badge SAYS, and it is easy to carry
+// one step too far — into concluding that because the badge cannot see
+// provenance, it does not matter which rows receive one. That does not
+// follow, and the two questions have different answers.
+//
+// Every surface that renders this decides presence for itself, and each one
+// gates on ORIGIN: `ItemDetailView.tsx` on `isUnverifiedOrigin(originType)`,
+// the board card and list row on `showsTrustBadge` (`@/lib/board/trust`). So
+// a row this product's own state machine wrote carries no badge anywhere,
+// because it has never had anything to verify.
+//
+// Two things break when a surface skips that gate and renders a badge for
+// every row it has trust data for — which is every non-project row:
+//
+//   - **The marker stops marking.** A label on every card is one a reader
+//     learns to skip, and the cost is paid by the rows where it would have
+//     meant something.
+//   - **It contradicts the board filter in front of the reader.** The
+//     `trusted` position is `NOT (imported AND unchecked)` (`trustCondition`,
+//     `trust-view.ts`), so a natively-created row is inside it. A badge on
+//     that card reads "Unchecked" while the filter that returned it calls it
+//     trusted — two surfaces disagreeing, each individually correct, with
+//     nothing on the card to reconcile them.
+//
+// Keep the split: this component says whether anyone has looked, the caller
+// says whether the row is one worth asking about.
 //
 // **The false-case label used to say "Imported" and its tooltip claimed an
 // external origin.** That was wrong for any row this badge marks whose

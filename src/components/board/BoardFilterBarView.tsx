@@ -134,12 +134,18 @@ const SORT_LABELS: Record<BoardSortKey, string> = {
  * because the bare words mislead here. "Unverified" reads as a claim about
  * the WORK — that nobody has reviewed the task — when the actual claim is
  * about the ROW: its state was copied in from another system and has never
- * been checked against reality. Unlike `TrustBadge` (whose "Unchecked"
- * label deliberately carries no provenance — see that file's header), this
- * filter's `unverified`/`verified` positions ARE origin-gated
- * (`trustCondition()`, `trust-view.ts`: `originType === "source" AND
- * (not) checked`), so "Imported" is the accurate word here even though it
- * would be false on the badge.
+ * been checked against reality. This filter's `unverified`/`verified`
+ * positions are origin-gated (`trustCondition()`, `trust-view.ts`:
+ * `originType === "source" AND (not) checked`), so "Imported" is the
+ * accurate word here.
+ *
+ * **It is the wrong word on `TrustBadge` itself**, whose two labels
+ * deliberately carry no provenance — see that file's header. The label and
+ * the gate are separate questions: a badge appears only on rows this filter
+ * would call imported, because the board surfaces gate its presence on
+ * `showsTrustBadge` (`@/lib/board/trust`). That is what keeps this menu and
+ * the cards it returns saying the same thing — selecting **Trusted** cannot
+ * produce a card whose own face reads "Unchecked".
  *
  * A `Record` over the vocabulary, so a fourth trust position would be a type
  * error here until it is given wording, rather than rendering as raw

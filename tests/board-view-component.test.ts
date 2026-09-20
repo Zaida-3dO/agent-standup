@@ -659,6 +659,68 @@ describe("ItemCard", () => {
       expect((badge.props as { checkedById?: string | null }).checkedById).toBe("crew-1");
     });
 
+    // The defect this row exists to close: `entry.trust` is non-null for
+    // EVERY non-project row, so gating the badge on its presence badged the
+    // whole board "Unchecked" — a marker on everything, which is a marker a
+    // reader stops seeing. Worse, it contradicted the board's own filter:
+    // `trusted` is `NOT (imported AND unchecked)` (`trustCondition`), so a
+    // native row is inside that filter while its card said "Unchecked".
+    //
+    // The single-character change this catches: `showsTrustBadge` returning
+    // `trust?.unverifiedOrigin !== true`, or the call site reverting to
+    // `entry.trust &&`. Either re-badges this row and this assertion fails.
+    it("shows NO badge on a natively-created row, which has nothing to verify", () => {
+      const card = ItemCard({
+        entry: entry("backlog", {}, { unverifiedOrigin: false, verification: null }),
+        needsYou: false,
+        now: 0,
+      });
+      expect(findAllByType(card, TrustBadge)).toHaveLength(0);
+    });
+
+    // The case a careless `if (!verified) return null` destroys: an imported
+    // row someone HAS checked is exactly where the badge earns its place,
+    // because it names who looked and when — the "don't re-derive this a
+    // third time" record.
+    // `unverifiedOrigin` is permanent and does not clear on verification, so
+    // gating on origin keeps this row badged.
+    //
+    // The single-character change this catches: gating `showsTrustBadge` on
+    // `trust.verification === null` instead of on the origin. That would
+    // suppress the noisy case and this one together, and only this assertion
+    // would notice.
+    it("KEEPS the badge, with who and when, on an imported row already verified", () => {
+      const card = ItemCard({
+        entry: entry(
+          "backlog",
+          {},
+          {
+            unverifiedOrigin: true,
+            verification: {
+              checkedAt: "2026-02-03T04:05:06.000Z",
+              checkedByType: "person",
+              checkedById: "ope",
+              body: "Walked the row against the live system.",
+              commitSha: "deadbee",
+            },
+          },
+        ),
+        needsYou: false,
+        now: 0,
+      });
+      const badge = findOneByType(card, TrustBadge);
+      const props = badge.props as {
+        verified: boolean;
+        checkedAt?: string;
+        checkedByType?: string;
+        checkedById?: string | null;
+      };
+      expect(props.verified).toBe(true);
+      expect(props.checkedById).toBe("ope");
+      expect(props.checkedByType).toBe("person");
+      expect(props.checkedAt).toBe("2026-02-03T04:05:06.000Z");
+    });
+
     // Fails if the dashed-border class is applied unconditionally, or never.
     it("marks the card itself unverified only when trust says so", () => {
       const unverified = ItemCard({
