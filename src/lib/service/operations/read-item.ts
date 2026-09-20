@@ -158,7 +158,7 @@ export type ReadItemInput = z.infer<typeof inputSchema>;
  * `artifacts` refuses offset — and `tests/read-item-fold.test.ts` pins that
  * equivalence rather than it being asserted here.
  */
-const FORWARDING: FoldForwarding<ReadItemAction> = Object.freeze({
+export const FORWARDING: FoldForwarding<ReadItemAction> = Object.freeze({
   body: { schema: getItemBody.input },
   history: { schema: getItemHistory.input },
   artifacts: { schema: getItemArtifacts.input },

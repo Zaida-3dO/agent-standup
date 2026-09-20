@@ -346,6 +346,75 @@ describe("describe_tool returns one tool's full contract", () => {
     expect(rule!.rule).toMatch(/disposable item/i);
   });
 
+  // Round 2 of this row: `record_artifact` is `onMcp: false`
+  // (`describe/reachability.ts`) — the ONLY way an MCP caller reaches it is
+  // through `record` with `action: "artifact"`. Before this fix,
+  // `describe_tool` resolved a contract off whichever tool was literally
+  // named, with no merge step, so `record`'s own three rules (the
+  // checkpoint/note asymmetry, per-action `body`, `artifactKind` vs `kind`)
+  // were all an MCP caller ever saw — neither of the two rules above, nor
+  // any of `record_artifact`'s other six, were reachable at all. Asserted
+  // through `record`, never `record_artifact` directly, because that
+  // distinction — declared vs reachable — is the entire finding.
+  it("surfaces record_artifact's body rules through record's own action: artifact, where an MCP caller actually reaches them", async () => {
+    const contract = await contractFor("record");
+    const withAction = (await runtime().call("describe_tool", {
+      tool: "record",
+      action: "artifact",
+    })) as ToolContract;
+
+    const writeLimit = declaredRules(withAction).find(
+      (entry) => entry.fields.includes("body") && /MAX_RESPONSE_CHARS/.test(entry.rule),
+    );
+    expect(writeLimit).toBeDefined();
+    expect(writeLimit!.rule).toMatch(/no practical write-size limit/i);
+
+    const permanence = declaredRules(withAction).find(
+      (entry) => entry.fields.includes("body") && /cannot be undone/i.test(entry.rule),
+    );
+    expect(permanence).toBeDefined();
+    expect(permanence!.rule).toMatch(/disposable item/i);
+
+    // `record`'s own rules still ride along — merging is additive, not a
+    // replacement. Losing this half would trade one gap for another.
+    const ownRule = declaredRules(withAction).find((entry) =>
+      entry.fields.includes("artifactKind"),
+    );
+    expect(ownRule).toBeDefined();
+
+    // Without `action`, only the fold's own rules are shown — merging a
+    // delegate's rules with no action to resolve one against would be
+    // guessing which delegate the caller means.
+    const bareRules = declaredRules(contract);
+    expect(bareRules.some((entry) => /MAX_RESPONSE_CHARS/.test(entry.rule))).toBe(false);
+  });
+
+  // The general mechanism, proved on a SECOND fold with no relation to
+  // `record` — `claim` is folded into `ownership` exactly the same way
+  // `record_artifact` is folded into `record` (both `onMcp: false` in
+  // `describe/reachability.ts`), and declares its own large `leaseKey`
+  // contract that an MCP caller could reach `ownership` a thousand times
+  // without ever seeing, before this fix. If this were special-cased to
+  // `record`/`record_artifact` rather than a real merge in
+  // `describe-tool.ts`, this test would fail exactly where the one above
+  // passes.
+  it("surfaces claim's leaseKey rules through ownership's own action: claim, on an unrelated fold", async () => {
+    const withAction = (await runtime().call("describe_tool", {
+      tool: "ownership",
+      action: "claim",
+    })) as ToolContract;
+
+    const leaseKeyRule = declaredRules(withAction).find(
+      (entry) => entry.fields.includes("leaseKey") && /IDENTITY IS ONE FIELD NOW/.test(entry.rule),
+    );
+    expect(leaseKeyRule).toBeDefined();
+
+    const oneCrewRule = declaredRules(withAction).find(
+      (entry) => entry.fields.includes("leaseKey") && /ONE CREW PER ITEM/.test(entry.rule),
+    );
+    expect(oneCrewRule).toBeDefined();
+  });
+
   it("gives record_artifact.findings a concrete type, an element shape and a worked example", async () => {
     // Row 94eed34b: `findings` was declared `z.unknown()`, so this field
     // reported `type: "unknown"` with `rules: []` on a tool where every

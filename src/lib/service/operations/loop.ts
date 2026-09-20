@@ -178,7 +178,7 @@ export type LoopInput = z.infer<typeof inputSchema>;
  * names `delete` and `close` as the actions that take one, so the contract
  * rule below says "refuses" rather than "ignores".
  */
-const FORWARDING: FoldForwarding<LoopAction> = Object.freeze({
+export const FORWARDING: FoldForwarding<LoopAction> = Object.freeze({
   add: { schema: loopAdd.input },
   get: { schema: loopGet.input },
   list: { schema: loopList.input },

@@ -37,6 +37,7 @@ import {
 } from "@/lib/findings";
 import { PULL_REQUEST_STATUSES, isLinkableUrl, isPullRequestStatus } from "@/lib/pull-requests";
 import { CHECK_RUN_STATUSES, isCheckRunStatus } from "@/lib/check-runs";
+import { MAX_RESPONSE_CHARS } from "../response-size";
 import { currentReviewRound } from "../guards/merge-review-round";
 import { MERGE_APPROVAL_KIND } from "../guards/merge-approval";
 import { MERGE_OVERRIDE_KIND, MIN_REASON_LENGTH } from "../guards/merge-override";
@@ -599,11 +600,12 @@ const RECORD_ARTIFACT_CONTRACT = {
       fields: ["body"],
       rule:
         "There is no practical write-size limit on `body` — a 145,000-character body has been " +
-        "recorded and read back byte-identical. The 200,000-character figure this product states " +
-        "elsewhere (`MAX_RESPONSE_CHARS`) is a READ-side guard on the size of a returned PAGE of " +
-        "artifacts; it says nothing about any one artifact's `body`, however large. `body` must " +
-        "still be well-formed text — binary bytes decoded as a string (e.g. an image read as " +
-        "UTF-8) are refused naming this field, rather than reaching the database.",
+        `recorded and read back byte-identical. The ${MAX_RESPONSE_CHARS.toLocaleString("en-US")}-character ` +
+        "figure this product states elsewhere (`MAX_RESPONSE_CHARS`) is a READ-side guard on the " +
+        "size of a returned PAGE of artifacts; it says nothing about any one artifact's `body`, " +
+        "however large. `body` must still be well-formed text — binary bytes decoded as a string " +
+        "(e.g. an image read as UTF-8) are refused naming this field, rather than reaching the " +
+        "database.",
     },
     {
       fields: ["body"],

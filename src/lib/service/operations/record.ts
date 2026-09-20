@@ -182,7 +182,7 @@ export type RecordInput = z.infer<typeof inputSchema>;
  * same on both sides; it differs from `loop`'s `kind`, which is a different
  * tool entirely.
  */
-const FORWARDING: FoldForwarding<RecordAction> = Object.freeze({
+export const FORWARDING: FoldForwarding<RecordAction> = Object.freeze({
   checkpoint: { schema: checkpoint.input },
   note: { schema: note.input },
   artifact: { schema: recordArtifact.input },
