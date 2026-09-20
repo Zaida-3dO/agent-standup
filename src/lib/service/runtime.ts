@@ -80,6 +80,13 @@ export interface ServiceRuntimeOptions {
     result: unknown,
     caller: Caller,
     findings: readonly InterventionFinding[],
+    /**
+     * Whether `findings` came from an evaluation of **every** entry that
+     * could ride the digest, rather than from a gate that skipped
+     * production entirely. Only the former may retire a finding held from
+     * an earlier call; see `ProducedInterventions`.
+     */
+    reEvaluated?: boolean,
   ) => unknown;
   /**
    * Produces the findings the delivery step then decides what to do with
@@ -109,6 +116,31 @@ export interface ServiceRuntimeOptions {
 export interface CallOptions {
   readonly caller?: Caller;
 }
+
+/**
+ * What the producer found, and whether it actually looked.
+ *
+ * ── Why `complete` cannot be inferred from `findings` ──────────────────
+ *
+ * An empty `findings` means two opposite things. From a producer that ran,
+ * it means every entry declined — so a situation held over from an earlier
+ * call has resolved, and the delivery step may retire it. From a gate that
+ * skipped production — a read, a caller with no session, a runtime with no
+ * producer, a producer that threw — it means nothing was asked, and
+ * retiring anything on that basis would drop findings nobody ever checked.
+ *
+ * The two are indistinguishable by value, which is exactly how a stale
+ * `committed-with-no-pull-request` reached a session five minutes after its
+ * pull request existed. So the flag is carried rather than derived, and
+ * only the one path that evaluates the whole `post` set may set it.
+ */
+interface ProducedInterventions {
+  readonly findings: readonly InterventionFinding[];
+  readonly complete: boolean;
+}
+
+/** Nothing found, and nothing asked — every gate's answer, and the safe default. */
+const NOTHING_PRODUCED: ProducedInterventions = { findings: [], complete: false };
 
 /**
  * The one entry point into the service layer.
@@ -382,7 +414,7 @@ export class ServiceRuntime {
     // result because the rehearsal-rollback path assigns `result` without
     // running the producer at all, and a tuple would have to invent a value
     // for it there.
-    let produced: readonly InterventionFinding[] = [];
+    let produced: ProducedInterventions = NOTHING_PRODUCED;
     try {
       result = await this.#transaction(async (db) => {
         const ctx: ServiceContext = {
@@ -433,7 +465,7 @@ export class ServiceRuntime {
       // Stated rather than implied because a reader is entitled to know which
       // line is load-bearing. A test asserting this branch cannot distinguish
       // it from the ordering above, so no test claims to.
-      produced = [];
+      produced = NOTHING_PRODUCED;
     }
 
     // Step 5 — a read that will not fit is refused rather than returned
@@ -463,7 +495,7 @@ export class ServiceRuntime {
     // nudge into a failed read. The payload is small and bounded, but
     // "small" is not an argument for measuring it, and the ordering makes
     // the question moot rather than merely unlikely.
-    return this.#deliverInterventions(result, caller, produced);
+    return this.#deliverInterventions(result, caller, produced.findings, produced.complete);
   }
 
   /**
@@ -507,25 +539,39 @@ export class ServiceRuntime {
     caller: Caller,
     settings: SettingsSnapshot,
     kind: OperationKind,
-  ): Promise<readonly InterventionFinding[]> {
+  ): Promise<ProducedInterventions> {
     const produce = this.#producer;
-    if (produce === undefined) return [];
-    if (kind !== "write") return [];
+    if (produce === undefined) return NOTHING_PRODUCED;
+    if (kind !== "write") return NOTHING_PRODUCED;
     const sessionId = caller.sessionId;
-    if (sessionId === undefined) return [];
+    if (sessionId === undefined) return NOTHING_PRODUCED;
 
     try {
-      return await produce({
-        db,
-        sessionId,
-        crewInFlightDeadAfterSeconds: settings.values["liveness.dead_after_seconds"],
-      });
+      // `complete: true` only on this path: the producer evaluated every
+      // `post` entry against a fully-assembled context, so a situation
+      // absent from the result has genuinely resolved rather than merely
+      // gone unasked. That is what lets the delivery step retire a stale
+      // held finding — see `../interventions/delivery.ts`'s
+      // `withoutResolved`. Every `return` above is a gate, not an
+      // evaluation, so none of them may claim it.
+      return {
+        findings: await produce({
+          db,
+          sessionId,
+          crewInFlightDeadAfterSeconds: settings.values["liveness.dead_after_seconds"],
+        }),
+        complete: true,
+      };
     } catch (error) {
       log.debug("Intervention production failed; the response carries no findings.", {
         requestId: caller.requestId,
         err: error,
       });
-      return [];
+      // A producer that threw evaluated an unknown amount, so its silence
+      // says nothing about any held finding. `complete: false` keeps a
+      // failure from retiring findings it never actually checked — the
+      // fail-open reading, matching every other swallow on this path.
+      return NOTHING_PRODUCED;
     }
   }
 
@@ -554,12 +600,13 @@ export class ServiceRuntime {
     result: unknown,
     caller: Caller,
     findings: readonly InterventionFinding[],
+    reEvaluated: boolean,
   ): unknown {
     const deliver = this.#deliverer;
     if (deliver === undefined) return result;
 
     try {
-      return deliver(result, caller, findings);
+      return deliver(result, caller, findings, reEvaluated);
     } catch (error) {
       log.debug("Intervention delivery failed; returning the result unchanged.", {
         requestId: caller.requestId,

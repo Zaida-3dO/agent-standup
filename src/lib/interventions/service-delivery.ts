@@ -61,7 +61,22 @@ export interface ServiceDeliverer {
    * has not been taught about the producer — keeps working unchanged and
    * gets exactly the behaviour it had before: a digest, and nothing else.
    */
-  (result: unknown, caller: DeliveryCaller, findings?: readonly InterventionFinding[]): unknown;
+  (
+    result: unknown,
+    caller: DeliveryCaller,
+    findings?: readonly InterventionFinding[],
+    /**
+     * Whether `findings` is an exhaustive evaluation of every entry that
+     * could ride the digest — true from `./service-producer.ts`, which runs
+     * the whole `post` set against a fully-assembled context.
+     *
+     * Only an exhaustive evaluation may retire a finding held from an
+     * earlier call; see `./delivery.ts`'s `withoutResolved`. Defaults to
+     * false so a caller that has not been taught about it keeps exactly the
+     * behaviour it had.
+     */
+    reEvaluated?: boolean,
+  ): unknown;
   /**
    * Holds findings for a session's next digest. Returns the ones it could
    * not hold, in the order they were offered.
@@ -134,6 +149,16 @@ export function createServiceDeliverer(options: ServiceDelivererOptions = {}): S
     result: unknown,
     caller: DeliveryCaller,
     findings: readonly InterventionFinding[] = [],
+    // Whether the producer actually ran. `findings` defaults to `[]` for
+    // callers that predate the producer, and an exhaustive evaluation that
+    // found nothing is *also* `[]` — the two are indistinguishable by value
+    // and mean opposite things to `withoutResolved`, so this asks whether
+    // the argument was supplied at all rather than what it contained.
+    //
+    // `arguments.length` is unavailable in an arrow function, and testing
+    // `findings.length > 0` would be the bug: it is exactly the
+    // "everything resolved" case that must retire held findings.
+    reEvaluated = false,
   ): unknown => {
     // A call naming no session gets nothing. The accumulator is keyed by
     // session and there is no sensible key for a call without one — a
@@ -166,7 +191,12 @@ export function createServiceDeliverer(options: ServiceDelivererOptions = {}): S
     // things noticed five minutes earlier while never being told anything
     // about the call in its hand, which reads as a quiet channel rather
     // than a half-connected one.
-    const payload = decideDelivery(accumulator, { sessionId, findings, now: clock() });
+    const payload = decideDelivery(accumulator, {
+      sessionId,
+      findings,
+      reEvaluated,
+      now: clock(),
+    });
     return attachInterventions(result, payload);
   };
 
