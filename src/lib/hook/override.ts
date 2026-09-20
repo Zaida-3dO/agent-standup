@@ -31,27 +31,48 @@
 // code: `payload.ts` reads the claim, `decide` honours it, `capture`
 // records the outcome, and a raw-stdin test exercises the whole path.
 //
-// It is, however, **unreachable for the audience every `block-overridable`
-// entry addresses.** All four of them are `audience: "agent"`, and an
-// agent's only influence over a PreToolUse payload is the tool call it
-// makes — which arrives in `tool_input`. The read below is top-level ONLY,
-// deliberately, because an override is a statement the caller makes about
-// the guard rather than an argument to the tool. The harness composes the
-// surrounding payload itself. Probed directly: the same claim at top level
-// allows and nested in `tool_input` denies.
+// ── Two channels, because one audience cannot reach the other ──────────
 //
-// So the promise holds at the protocol layer and fails at the delivery
-// layer, which is worse than making no promise at all — a caller reading
-// the offer has no way to tell the difference, and burns attempts
-// discovering it. `overrideRemedy` therefore offers the override only to an
-// audience that can actually compose a top-level payload field — an
-// `orchestrator`-audience finding — and returns `null` for every
-// `agent`-audience one, which is every `block-overridable` entry in the
-// catalogue. When it does speak it now prints the literal accepted
-// syntax rather than alluding to an override the reader must go and invent;
-// see its own comment for the history, which is that a vaguer version of
-// this sentence, shown to the wrong audience, is what emptied the function
-// in the first place.
+// The top-level read below is top-level ONLY, deliberately, because an
+// override is a statement the caller makes about the guard rather than an
+// argument to the tool. That is the right rule and it is load-bearing: if
+// an override were an ordinary tool argument, anything that can call a tool
+// could waive a guard by adding a field.
+//
+// It is also a channel only some callers can use. A caller that composes
+// its own stdin — a harness, a CLI, a non-Claude-Code client — writes the
+// field directly. An **agent** cannot: its only influence over a PreToolUse
+// payload is the tool call it makes, which arrives in `tool_input`, and a
+// claim nested there is refused by design.
+//
+// That matters because every `block-overridable` entry in the catalogue is
+// `audience: "agent"`. A channel none of them can reach makes the level a
+// synonym for `hard-block` at the point where the distinction is supposed
+// to apply — and a promise that holds at the protocol layer while failing
+// at the delivery layer is worse than making no promise at all, because a
+// caller reading the offer has no way to tell the difference and burns
+// attempts discovering it.
+//
+// **`readCommandOverrideClaim` below is the fix, and it keeps the
+// principle intact.** It reads a claim from a *marked shell comment* on the
+// agent's own command: a construct the tool ignores entirely, carrying a
+// marker that exists for no other purpose, which `payload.ts` then lifts to
+// the same `HookEvent.override` field a bespoke client's top-level field
+// reaches. The agent writes a **claim**; the harness still composes the
+// **payload**. What the original rule was protecting — that an override can
+// never be an ordinary argument of the tool, so a tool gaining a parameter
+// cannot become a way to waive a guard — is preserved exactly, and a claim
+// nested in `tool_input` as a field is still refused.
+//
+// `overrideRemedy` therefore now speaks to both audiences, in two different
+// sentences, and is gated on **whether this particular call can carry a
+// claim** rather than on the audience alone. That gate is the load-bearing
+// part: three of the four entries fire only on `Bash` and can take the
+// exit, while `checkout-held-by-another-crew` fires on `Write`/`Edit`/
+// `NotebookEdit`, whose every input field is a path or file content, and is
+// therefore still told nothing. See `toolCarriesOverride` for why that is a
+// structural limit rather than an unfinished corner — a marker there would
+// have to be written into the user's file to be sent.
 //
 // ── Why the module survives that ────────────────────────────────────────
 //
@@ -257,81 +278,215 @@ export function readOverrideClaim(value: unknown): OverrideClaim | undefined {
 }
 
 /**
+ * The marker that introduces an override written into a shell command.
+ *
+ * Exported so the refusal text and the parser cannot drift: `overrideRemedy`
+ * builds its printed syntax from this constant rather than spelling it a
+ * second time, and a test parses the printed sentence back through
+ * `readCommandOverrideClaim`. A remedy that advertises a form the parser
+ * rejects is the defect this whole module's history is about.
+ */
+export const COMMAND_OVERRIDE_MARKER = "standup-override";
+
+/**
+ * The tools whose input carries a field an override can be written into.
+ *
+ * **`Bash` and nothing else, and that is a finding rather than a
+ * shortcut.** The claim has to live somewhere the agent controls, that
+ * reaches the hook, and that is not the content of the user's work. On a
+ * `Bash` call the command line is all three: a trailing comment is inert to
+ * the shell, fully chosen by the caller, and already read by
+ * `payload.ts`.
+ *
+ * No other tool this build blocks on has such a field.
+ * `checkout-held-by-another-crew` — the fourth `block-overridable` entry —
+ * fires only on `Write`, `Edit` and `NotebookEdit`
+ * (`CHECKOUT_WRITE_TOOLS` in `../interventions/context.ts`, which excludes
+ * `Bash` deliberately), and every field of those tools' input is either a
+ * path or the file content being written. A marker placed there would have
+ * to be **written into the user's file** in order to be transmitted, which
+ * is a content mutation dressed up as a protocol. That entry therefore has
+ * no command-borne override, it is not given a remedy that pretends
+ * otherwise, and the reason is recorded here rather than left for the next
+ * reader to rediscover.
+ */
+const COMMAND_OVERRIDE_TOOLS: ReadonlySet<string> = new Set(["Bash"]);
+
+/**
+ * Whether a tool's call can carry an override in its own input.
+ *
+ * Used both by the parser and by `overrideRemedy`, so an entry that cannot
+ * receive a claim is never told to send one. The two questions are the same
+ * question and are answered by one function on purpose.
+ */
+export function toolCarriesOverride(tool: string | undefined): boolean {
+  return tool !== undefined && COMMAND_OVERRIDE_TOOLS.has(tool);
+}
+
+/**
+ * Matches an override claim written as a trailing shell comment.
+ *
+ * ── Every part of this pattern is load-bearing ─────────────────────────
+ *
+ * `(?:^|\r?\n)` — the claim must begin a line, and this is **stricter than
+ * a shell on purpose.** `echo x # standup-override(e): …` is a perfectly
+ * valid trailing comment to `sh`, and it is refused here anyway, because
+ * this reader sees *text* rather than a parsed command: it cannot
+ * distinguish that from `echo "x # standup-override(e): …"`, where the
+ * marker is an argument the caller is printing. A `#` mid-command is
+ * frequently not a comment at all — a URL fragment, `--format=#%h`, a
+ * quoted string — and reading one as a claim would find an override in a
+ * command that made none. Requiring its own line removes that entire class
+ * of ambiguity for the price of one newline, and `overrideRemedy` prints
+ * the form that works so nobody has to discover this by being refused.
+ *
+ * `[ \t]*#[ \t]*` — an ordinary shell comment, allowing the indentation a
+ * multi-line command naturally has.
+ *
+ * `\(([^)\r\n]+)\)` — the entry id, parenthesised. Required, not optional:
+ * an override names **which** finding it excuses, and a bare marker with a
+ * reason would be the blanket claim `OverrideClaim.entryId` exists to
+ * prevent.
+ *
+ * `$` with the `s`-less flag set and a `[^\r\n]*` tail — the claim runs to
+ * the end of its line and no further.
+ *
+ * **Anchored at the END of the command.** This is the property that makes
+ * the negative case hold: a command that merely *mentions* the marker —
+ * `grep -rn "standup-override" src/`, or a heredoc writing this very
+ * documentation into a file — has the mention somewhere other than its
+ * final line, so it does not match. A caller who genuinely wants to
+ * override puts the comment last, which is also where a trailing comment
+ * naturally goes.
+ */
+const COMMAND_OVERRIDE_PATTERN = new RegExp(
+  `(?:^|\\r?\\n)[ \\t]*#[ \\t]*${COMMAND_OVERRIDE_MARKER}\\(([^)\\r\\n]+)\\)[ \\t]*:[ \\t]*([^\\r\\n]*)[ \\t]*$`,
+);
+
+/**
+ * Reads an override claim out of a tool call the agent composed itself.
+ *
+ * ── Why this exists alongside the top-level read ───────────────────────
+ *
+ * The top-level `standup_override` field is correct and stays. It is also
+ * unreachable for every caller that meets a `block-overridable` finding:
+ * all four such entries are `audience: "agent"`, and an agent contributes
+ * nothing to a `PreToolUse` payload except `tool_input`. Measured over the
+ * life of the deployment, that gap reads as **448 blocks against 7
+ * overrides**, and the seven are probes and the test harness — not one
+ * agent has ever taken an exit the level's own name advertises.
+ *
+ * ── The principle this preserves, which is the delicate part ───────────
+ *
+ * The module header's rule is that *an override is a statement the caller
+ * makes about the guard rather than an argument to the tool*, and that rule
+ * is why the top-level read refuses a claim nested in `tool_input`. This
+ * function does not weaken it. What it reads is not a tool argument: it is
+ * a **shell comment**, a construct with no meaning to the tool at all,
+ * carrying a marker that exists for no purpose but this one. The agent
+ * writes a *claim*; the harness still composes the *payload*; `payload.ts`
+ * lifts the claim to the same top-level `HookEvent.override` field the
+ * bespoke channel populates, and `decide` cannot tell which arrived.
+ *
+ * The distinction that actually mattered is preserved exactly: an override
+ * still cannot be an ordinary field of the tool's own input, so a tool
+ * gaining a new parameter can never accidentally become a way to waive a
+ * guard.
+ *
+ * ── The failure direction is unchanged ─────────────────────────────────
+ *
+ * Anything that does not match cleanly yields `undefined`, which reads as
+ * *no override* and leaves the call blocked. A too-short reason is left to
+ * `overrideApplies` rather than rejected here, so that the caller is told
+ * *"your reason was too short"* instead of *"you sent no override"* — two
+ * different next actions, and the refusal machinery already distinguishes
+ * them.
+ */
+export function readCommandOverrideClaim(
+  tool: string | undefined,
+  command: string | undefined,
+): OverrideClaim | undefined {
+  if (!toolCarriesOverride(tool)) return undefined;
+  if (command === undefined) return undefined;
+
+  const match = COMMAND_OVERRIDE_PATTERN.exec(command);
+  if (match === null) return undefined;
+
+  const entryId = match[1]?.trim();
+  const reason = match[2]?.trim();
+
+  if (entryId === undefined || entryId === "") return undefined;
+  // An empty reason is no claim at all. A *short* one is a claim that
+  // `overrideApplies` refuses by name — the distinction above.
+  if (reason === undefined || reason === "") return undefined;
+
+  return { entryId, reason };
+}
+
+/**
  * What to tell a caller whose blocked call could have been overridden.
  *
- * **This now returns `null` for every level, and that is the point.**
+ * **Two sentences, chosen by what the caller can actually send.** That is
+ * the whole shape of this function, and the history below is why it is that
+ * rather than something simpler.
  *
- * It used to return, for a `block-overridable` finding, a sentence telling
- * the caller to re-run the call with an override naming the entry and a
- * written reason. That sentence was true about the protocol and false about
- * the audience, and the difference is the whole of this function's history.
+ * ── The regression this function was once emptied to fix ───────────────
  *
- * The override channel exists and works — `payload.ts` reads a top-level
- * `standup_override`, `decide` honours it, `capture` records it. What does
- * not exist is any way for the audience being spoken to to *supply* one.
- * Every `block-overridable` entry in the catalogue is `audience: "agent"`,
- * and an agent's only influence over the hook payload is the tool call it
- * makes, which lands in `tool_input`. An override nested in `tool_input` is
- * refused by design (see the comment at the top-level read in `payload.ts`:
- * an override is a statement the *caller* makes about the guard, not an
- * argument to the tool). The harness composes the rest of the payload
- * itself. So the offer was demonstrably unkeepable by everyone it was ever
- * shown to — verified by probe: the identical claim at top level allows,
- * nested in `tool_input` it denies.
+ * It used to return one generic sentence for every `block-overridable`
+ * finding, telling the caller to re-run the call with an override naming
+ * the entry and a written reason. That sentence was true about the protocol
+ * and false about its audience. The channel existed and worked — a
+ * top-level `standup_override`, honoured by `decide`, recorded by
+ * `capture` — but every `block-overridable` entry is `audience: "agent"`,
+ * and an agent's only influence over the payload is the tool call it makes.
+ * So the offer was unkeepable by everyone it was ever shown to. Two
+ * sessions lost a merge phase to it, one spending seven attempts inventing
+ * syntaxes that could not have worked, and the function was emptied to stop
+ * the lie.
  *
- * That made this the very thing the module header calls the worst entry in
- * the catalogue — a guard naming a remedy it then refuses. Two sessions
- * lost a merge phase to it, one of them spending seven attempts inventing
- * override syntaxes that could not have worked. Deleting the sentence costs
- * those callers nothing they actually had, and it stops costing them the
- * attempts.
+ * Silence is the right answer only while the reader genuinely has no way to
+ * send a claim. Once `readCommandOverrideClaim` above gives an agent one,
+ * staying silent becomes the same defect pointing the other way — withholding
+ * a syntax that works, from the only audience that ever needs it. Both
+ * failures come from the same mistake: deciding what to say from a general
+ * fact about the audience rather than from what this call can actually do.
  *
- * **Nothing takes its place, deliberately.** Each `block-overridable`
- * entry's own message names its own narrow, executable remedy — stage by
- * path, use a pid-scoped form, take your own worktree, record the approving
- * review. A refusal that says only those is a refusal that names an exit
- * the caller can take. Appending a generic offer on top made the specific
- * remedy look like the lesser option, which is exactly backwards.
+ * ── Why the gate is the TOOL, not the audience ─────────────────────────
  *
- * The function itself is kept rather than deleted, and so is its single
- * call site, because the shape of `decide`'s refusal path — collect a
- * per-finding remedy, append what is non-null — is the right shape for
- * whatever genuinely reachable remedy comes next. Returning `null` here
- * makes the refusal text fall back to the entry's own message, which is
- * the intended behaviour.
+ * The obvious fix — delete the audience check — is the original bug wearing
+ * new clothes, because it would hand the comment syntax to a reader whose
+ * call cannot carry a comment. `checkout-held-by-another-crew` is exactly
+ * that reader: it fires only on `Write`, `Edit` and `NotebookEdit`, whose
+ * every input field is a path or file content.
  *
- * ── What changed, and the narrow thing that is now said ────────────────
+ * So the question asked here is the one the audience check was always a
+ * proxy for: **can this particular call carry a claim?** For an
+ * `orchestrator` — a harness, a CLI, a non-Claude-Code client composing its
+ * own stdin — the answer is yes by construction, and it keeps the top-level
+ * form, which is the one it can actually use. For everyone else the answer
+ * is `toolCarriesOverride`, so an agent on a `Bash` call is told the
+ * comment syntax and an agent on an `Edit` is told nothing at all.
  *
- * The request that reopened this was *"put the override's literal accepted
- * syntax into the refusal text — four sessions have bounced off a message
- * that advertises an override without saying how to supply it."* The
- * complaint is real, and it is worth being precise about what the four
- * sessions actually hit, because the obvious fix is the regression above.
+ * ── Both sentences are pinned to their parsers ─────────────────────────
  *
- * They bounced off an offer that named no syntax. Restoring that offer for
- * an agent would cost a fifth session its merge phase, for exactly the
- * reason this docstring already records. So the sentence below is **not**
- * restored for everyone: it is returned only for an audience that can
- * actually compose the payload it describes, and it states the syntax
- * literally rather than alluding to it, so that a caller who *can* use it
- * does not have to invent one.
+ * Neither is paraphrased from memory. The orchestrator form names
+ * `standup_override` with `entryId`/`reason`, which is what
+ * `readOverrideClaim` accepts at the top level of the stdin JSON. The agent
+ * form is built from `COMMAND_OVERRIDE_MARKER`, and a test in
+ * `tests/hook-override.test.ts` extracts the printed line, substitutes a
+ * real reason, and feeds it back through `readCommandOverrideClaim` — so a
+ * change to the marker or the punctuation on either side fails loudly
+ * rather than advertising a form the parser rejects.
  *
- * The syntax is pinned to the parser rather than paraphrased from memory:
- * `../hook/payload.ts` reads `standup_override` (and `standupOverride`)
- * from the **top level** of the stdin JSON, and `readOverrideClaim` above
- * accepts `entryId` (or `entry_id`) plus `reason`. A test in
- * `tests/hook-run.test.ts` sends precisely this shape.
+ * ── What the agent sentence says beyond the syntax ─────────────────────
  *
- * ── Why the audience test is the gate ──────────────────────────────────
- *
- * `audience` is the field that says who is being spoken to. An
- * `orchestrator`-audience finding is delivered to a session that composes
- * its own hook payload — a harness, a CLI, a non-Claude-Code client — and
- * for that reader the override is genuinely reachable. An `agent`-audience
- * finding is read by a subagent whose only contribution to the payload is
- * `tool_input`, where an override is refused by design. Telling the second
- * reader how to write one is the unkeepable promise; telling the first is
- * the missing documentation the request asks for.
+ * Two things, both deliberate. It frames the block as a prompt to stop and
+ * think rather than a wall, which is what this tier actually is
+ * (MILESTONES.md #128's block-and-record), and it says plainly that the
+ * reason is kept as a record and not checked for correctness — an honest
+ * description beats implying an adjudication that does not happen. And it
+ * names where to file feedback, because an agent that thinks the *entry* is
+ * wrong has something better to do than override it repeatedly.
  *
  * @returns the override sentence for an overridable finding whose audience
  * can supply one, and `null` otherwise — including for every `hard-block`,
@@ -341,20 +496,49 @@ export function overrideRemedy(
   entryId: string,
   level: InterventionLevel,
   audience?: InterventionAudience,
+  tool?: string,
 ): string | null {
   // A hard block is not overridable by anyone, so there is no syntax to
   // offer. Checked first and unconditionally, mirroring `overrideApplies`.
   if (level !== "block-overridable") return null;
-  // The audience that cannot supply one gets no offer. `undefined` is
-  // treated as unreachable rather than reachable: an unknown reader is far
-  // more likely to be an agent than a bespoke client, and the cost of
-  // guessing wrong in that direction is the regression this function was
-  // emptied to fix.
-  if (audience !== "orchestrator") return null;
+
+  // The bespoke-client reader keeps the channel it can actually use. This
+  // branch is unchanged in substance: a caller composing its own stdin
+  // writes the field directly, and telling it to write a shell comment
+  // instead would be handing it the long way round to the same place.
+  if (audience === "orchestrator") {
+    return (
+      `If proceeding is right, re-send this call with a top-level "standup_override": ` +
+      `{"entryId": "${entryId}", "reason": "..."} field on the hook payload — top level, not ` +
+      `inside tool_input, where it is refused. The reason is recorded verbatim beside the call ` +
+      `and must be at least ${MIN_OVERRIDE_REASON_LENGTH} characters.`
+    );
+  }
+
+  // Every other reader — `agent`, and an `undefined` audience, which is
+  // treated as an agent for the reason the emptied version of this
+  // function already gave: an unknown reader is far likelier to be one.
+  //
+  // **Gated on the tool, not merely on the audience.** This is the
+  // safeguard that keeps the original regression from recurring in a new
+  // form. The history here is a sentence that was true about the protocol
+  // and false about its reader; repeating that with a comment syntax would
+  // be the same defect wearing different clothes. So the offer is made only
+  // when this specific call can actually carry a claim — and for the one
+  // `block-overridable` entry that fires on tools which cannot
+  // (`checkout-held-by-another-crew`, on `Write`/`Edit`/`NotebookEdit`),
+  // nothing is offered and the entry's own remedy stands alone.
+  if (!toolCarriesOverride(tool)) return null;
+
   return (
-    `If proceeding is right, re-send this call with a top-level "standup_override": ` +
-    `{"entryId": "${entryId}", "reason": "..."} field on the hook payload — top level, not ` +
-    `inside tool_input, where it is refused. The reason is recorded verbatim beside the call ` +
-    `and must be at least ${MIN_OVERRIDE_REASON_LENGTH} characters.`
+    `This block is a prompt to stop and think, not a wall: if you judge that this guard does ` +
+    `not apply to what you are doing, you may proceed by saying why. Re-run the same command ` +
+    `with the override appended on a line of its own — the newline is required, a comment ` +
+    `sharing a line with the command is not read — exactly like this:\n` +
+    `# ${COMMAND_OVERRIDE_MARKER}(${entryId}): <why this guard does not apply here>\n` +
+    `The reason must be at least ${MIN_OVERRIDE_REASON_LENGTH} characters. It is recorded ` +
+    `verbatim beside this call and is reviewable afterwards — kept as a record, not checked ` +
+    `for correctness. If the guard itself is wrong rather than merely inapplicable, that is ` +
+    `worth more than an override: file it in haven-assistant/agent-standup/feedback/.`
   );
 }

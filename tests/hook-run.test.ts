@@ -442,6 +442,143 @@ describe("onFindings — the override the caller wrote", () => {
   // call stays blocked — never as a weaker override that releases it.
   // `exitCode` is asserted, not just the report: the danger of a parse
   // failure is a release, and this pins that the release did not happen.
+  // ── The agent's own channel, end to end ───────────────────────────────
+  //
+  // The reason this feature exists: an agent cannot compose the payload
+  // above, so every test in this block sends the claim the only way an
+  // agent actually can — inside the command of its own tool call — and
+  // asserts it reaches the capture loop identically. A break anywhere in
+  // payload parsing, the lift to `HookEvent.override`, the decision, or the
+  // report shows up here rather than only in the unit tests either side.
+
+  /** Stdin for a Bash call whose command carries the claim. */
+  function stdinWithCommandOverride(command: string): string {
+    return JSON.stringify({
+      hook_event_name: "PreToolUse",
+      session_id: "s-1",
+      tool_name: "Bash",
+      tool_input: { command },
+    });
+  }
+
+  it("releases a call whose own command carries the override", async () => {
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "broad process kill",
+      findings: [OVERRIDABLE],
+    });
+
+    const rendered = await runHook({
+      stdin: stdinWithCommandOverride(`kill 123
+# standup-override(broad-process-kill): ${REASON}`),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    // Allowed, and recorded as an override rather than as a plain allow —
+    // the distinction the whole `overridden` outcome exists for.
+    expect(rendered.exitCode).toBe(0);
+    expect(onFindings.mock.calls[0]?.[0]).toMatchObject({
+      blocked: false,
+      override: { entryIds: ["broad-process-kill"], reason: REASON },
+    });
+  });
+
+  it("keeps the call blocked when the command only mentions the marker", async () => {
+    // Acceptance criterion 3, asserted where it matters most: at the exit
+    // code. A command searching for the marker must not waive the guard,
+    // and the danger of a parser bug here is a silent release.
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "broad process kill",
+      findings: [OVERRIDABLE],
+    });
+
+    const rendered = await runHook({
+      stdin: stdinWithCommandOverride(
+        `grep -rn "# standup-override(broad-process-kill): ${REASON}" src/`,
+      ),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    expect(rendered.exitCode).toBe(2);
+    const report = onFindings.mock.calls[0]?.[0];
+    expect(report?.blocked).toBe(true);
+    expect(report?.override).toBeUndefined();
+  });
+
+  it("keeps the call blocked when the command's reason is too short", async () => {
+    // The floor still bites on this channel. An override that clears the
+    // parser but not `overrideApplies` must not release the call.
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "broad process kill",
+      findings: [OVERRIDABLE],
+    });
+
+    const rendered = await runHook({
+      stdin: stdinWithCommandOverride("kill 123\n# standup-override(broad-process-kill): no"),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    expect(rendered.exitCode).toBe(2);
+    expect(onFindings.mock.calls[0]?.[0]?.override).toBeUndefined();
+  });
+
+  it("cannot open a hard block from the command channel either", async () => {
+    // The invariant, asserted against the NEW door. If the agent channel
+    // ever became a way past a hard block, that is the one failure this
+    // whole module is written to prevent.
+    const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "a hard rule",
+      findings: [HARD],
+    });
+
+    const rendered = await runHook({
+      stdin: stdinWithCommandOverride(`kill 123
+# standup-override(some-hard-rule): ${REASON}`),
+      askServer,
+      now: NOW,
+      onFindings,
+    });
+
+    expect(rendered.exitCode).toBe(2);
+    expect(onFindings.mock.calls[0]?.[0]?.override).toBeUndefined();
+  });
+
+  it("prints the override syntax in the refusal an agent actually gets", async () => {
+    // Acceptance criterion 2. The first refusal must carry the literal
+    // form, because the whole failure being fixed is a caller who is
+    // blocked and has to invent the syntax. Asserted on the rendered
+    // output, which is what the agent reads.
+    const askServer: AskServer = async () => ({
+      decision: "block",
+      reason: "broad process kill",
+      findings: [OVERRIDABLE],
+    });
+
+    const rendered = await runHook({
+      stdin: stdinWithCommandOverride("taskkill /F /IM node.exe"),
+      askServer,
+      now: NOW,
+    });
+
+    expect(rendered.exitCode).toBe(2);
+    const text = JSON.stringify(rendered);
+    expect(text).toContain("standup-override(broad-process-kill)");
+    expect(text).toContain("feedback/");
+  });
+
   it("keeps the call blocked when the override is malformed", async () => {
     const onFindings = vi.fn<(report: FindingsReport) => Promise<void>>(async () => {});
     const askServer: AskServer = async () => ({

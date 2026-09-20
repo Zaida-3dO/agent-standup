@@ -477,9 +477,24 @@ describe("overriding a block-overridable refusal", () => {
     expect(verdict.decision).toBe("deny");
   });
 
-  it("refuses with the entry's own remedy and appends no override offer", async () => {
+  // ── This assertion has now flipped twice, so keep the reasoning ───────
+  //
+  // It first required the refusal to advertise the override channel. It was
+  // then inverted to require the opposite, because every `block-overridable`
+  // entry is `audience: "agent"` and an agent could only influence
+  // `tool_input`, where a claim was refused by design — so the offer named
+  // an exit the reader provably could not take, and one session spent seven
+  // attempts inventing syntaxes before concluding it did not exist.
+  //
+  // It is back, and the premise is what changed rather than the judgement:
+  // an agent can now write the claim into its own command. The rule that
+  // survived both flips is the one asserted in the pair below — **a refusal
+  // offers an override exactly when this call could carry one, and never
+  // otherwise.** Neither test alone is the spec; the pair is.
+
+  it("appends the literal override syntax when the call can carry a claim", async () => {
     const verdict = await decide({
-      event: event(),
+      event: event(), // `tool: "Bash"`, the case that can.
       askServer: server({
         decision: "block",
         reason: "broad process kill",
@@ -488,21 +503,31 @@ describe("overriding a block-overridable refusal", () => {
     });
 
     expect(verdict.decision).toBe("deny");
-    // This assertion used to require the refusal to advertise the override
-    // channel. It now requires the opposite, and the reason is the whole
-    // point of the change: every `block-overridable` entry is
-    // `audience: "agent"`, and an agent can only influence `tool_input`,
-    // where an override claim is refused by design. Advertising it to that
-    // audience named an exit the reader provably could not take — one
-    // session spent seven attempts on the syntax before concluding it did
-    // not exist.
-    //
-    // What the caller must be left with is the server's reason, carrying
-    // the entry's own narrow remedy, and nothing that looks like a second
-    // way out.
-    expect(verdict.reason).toBe("broad process kill");
-    expect(verdict.reason).not.toContain("can be overridden");
-    expect(verdict.reason).not.toContain("re-run the call with an override");
+    // The server's own reason is still first and still intact — the entry's
+    // narrow remedy is the better option and must not be displaced.
+    expect(verdict.reason).toContain("broad process kill");
+    // And the exit is now named, literally and scoped to the entry, so the
+    // caller does not have to invent it.
+    expect(verdict.reason).toContain("# standup-override(broad-process-kill):");
+  });
+
+  it("appends nothing when the call has nowhere to put a claim", async () => {
+    // The half that keeps the offer keepable. `checkout-held-by-another-crew`
+    // fires on `Edit`/`Write`/`NotebookEdit`, whose inputs are paths and file
+    // content — there is no comment to write. A refusal here must read
+    // exactly as it did before this feature existed.
+    const verdict = await decide({
+      event: event({ tool: "Edit", command: "/tmp/a.ts" }),
+      askServer: server({
+        decision: "block",
+        reason: "another crew holds this checkout",
+        findings: [finding("checkout-held-by-another-crew", "block-overridable")],
+      }),
+    });
+
+    expect(verdict.decision).toBe("deny");
+    expect(verdict.reason).toBe("another crew holds this checkout");
+    expect(verdict.reason).not.toContain("standup-override");
   });
 
   it("offers no override in the refusal text for a hard block", async () => {
@@ -516,6 +541,11 @@ describe("overriding a block-overridable refusal", () => {
     });
 
     expect(verdict.reason).not.toContain("can be overridden");
+    // Asserted against the new marker too: the agent channel must not have
+    // opened a door into the level that is meant to have none. The event
+    // here is a `Bash` call, so the tool gate would permit an offer — it is
+    // the level check that must refuse it.
+    expect(verdict.reason).not.toContain("standup-override");
   });
 });
 

@@ -74,21 +74,30 @@ const broadGitAddOnSharedCheckout: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
-  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): "say
-  // why: the reason is recorded" promised an exit that no caller could ever
-  // take. Removed; the message still names the one remedy that actually
-  // works — staging by path.
+  // ── The override is now reachable from here. Updated with row
+  // d8eb47ac-53a7-47ff-b167-2c089738531e.
   //
-  // Two halves of that, and both need saying, because the first half alone
-  // reads as false. An override channel DOES exist in the wire
-  // protocol (`src/lib/hook/override.ts`), it is honoured, and it is
-  // tested. But it is read from the TOP LEVEL of the hook payload only, by
-  // design, and an agent influences nothing there — its tool call arrives
-  // in `tool_input`, where a claim is refused. This entry's audience is
-  // `agent`. So the conclusion the original comment drew is still exactly
-  // right for everyone this message is shown to, even though its premise
-  // is not: the exit is real, and unreachable from here.
+  // The history, because it explains why this message says what it says.
+  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10 deleted a "say why: the reason
+  // is recorded" sentence from this message, because it promised an exit no
+  // caller could take: the override channel was real and honoured, but read
+  // from the TOP LEVEL of the hook payload only, and an agent — this
+  // entry's audience — contributes nothing there.
+  //
+  // The second channel is what makes the offer keepable here.
+  // `readCommandOverrideClaim` (`../hook/override.ts`) reads a claim from a
+  // marked comment on the command itself, which an agent fully controls, and
+  // `payload.ts` lifts it to the same field the bespoke channel uses. This
+  // entry fires only on `Bash` (its predicate requires `context.command`),
+  // so every caller who reads this message can now take the exit.
+  //
+  // **The message below still carries no override sentence, and that is
+  // deliberate.** `overrideRemedy` appends one, scoped to this entry and
+  // printed with its literal syntax, and it does so only for a call that
+  // can actually carry a claim. Duplicating it here would state the escape
+  // hatch in two places that could drift — the failure the service side's
+  // `override-syntax.ts` already exists to prevent. What a message owes the
+  // caller is its own narrow remedy: staging by path.
   messages: {
     plain:
       "This stages every modified file in a checkout other sessions are also working in, so it " +
@@ -190,14 +199,22 @@ const mergeWithoutApprovalAtTip: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
-  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85): the
-  // override channel exists in the wire protocol and `decide` honours it,
-  // but it is read from the TOP LEVEL of the payload only, and an agent's
-  // tool call reaches nothing but `tool_input`. So "proceed with a written
-  // reason" promised an exit that this entry's audience — `agent`, above —
-  // could never take. Removed; the message names the remedy that actually
-  // works instead.
+  // ── The override is now reachable from here. Updated with row
+  // d8eb47ac-53a7-47ff-b167-2c089738531e.
+  //
+  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10 removed a "proceed with a
+  // written reason" sentence from this message because the only override
+  // channel was read from the TOP LEVEL of the payload, where an agent
+  // contributes nothing. An agent can now write the claim into its own
+  // command as a marked comment (`readCommandOverrideClaim` in
+  // `../hook/override.ts`), and this entry fires only on `Bash`, so the
+  // exit is genuinely available to every reader of this message.
+  //
+  // The sentence is still not restored *here*: `overrideRemedy` appends it,
+  // with the literal syntax and scoped to this entry, so that the accepted
+  // form is stated in exactly one place. What this message owes the caller
+  // is its own remedy — record the approving review — which is the better
+  // option and should not be made to look like the lesser one.
   //
   // That remedy has to name a CALL, not an outcome. The previous wording,
   // "request a review against this commit", is what the caller already
@@ -374,30 +391,37 @@ const broadProcessKill: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // This level is `block-overridable`, and the name is accurate about the
-  // protocol: a caller CAN re-run the call naming this entry with a written
-  // reason, and `decide` releases it and records that reason against the
-  // finding (`src/lib/hook/override.ts`). That path is live and tested.
+  // This level is `block-overridable`, and as of row
+  // d8eb47ac-53a7-47ff-b167-2c089738531e the name is accurate about the
+  // *delivery* as well as the protocol.
   //
-  // **It is not reachable from this entry's audience, which is `agent`.**
-  // The claim is read from the top level of the hook payload only; an
-  // agent's tool call reaches `tool_input` and nothing else, and a claim
-  // there is refused by design. The channel is therefore real for a caller
-  // that composes its own stdin, and unavailable to every caller who will
-  // ever read the messages below.
+  // It was not, and the gap is the reason this comment is long. A caller
+  // could always re-run the call naming this entry with a written reason
+  // and have `decide` release it and record that reason — but only through
+  // a top-level `standup_override` field, and an agent's tool call reaches
+  // `tool_input` and nothing else. Measured across the deployment's whole
+  // life: 448 blocks, 7 overrides, and all seven were probes. This entry's
+  // audience is `agent`, so the exit existed for nobody who ever met it.
   //
-  // **So the messages below deliberately do not mention the override, and
-  // neither does anything else any more.** `overrideRemedy` used to append
-  // a generic override offer to every `block-overridable` refusal; it now
-  // returns `null` for exactly the reason this comment gives. What a
-  // message owes the caller is the *narrow* exit — which pid form to use —
-  // and that is now the whole of what a refusal here says.
+  // `readCommandOverrideClaim` closes that. The claim rides a marked
+  // comment on the command itself — a construct the shell ignores, that the
+  // agent fully controls, and that is not a tool argument in the sense the
+  // principle cares about — and `payload.ts` lifts it to the same field.
+  // This entry turns purely on the command shape, so it is `Bash` by
+  // construction and the exit is always available here.
   //
-  // A message must only offer an exit the protocol can honour. An offer the
-  // caller cannot act on costs several attempts before anyone concludes it
-  // is not negotiable, which is the failure this whole entry is written
-  // against: the pid advice below is worth giving precisely because the
-  // parser reads every pid-scoped form it names.
+  // **The messages below still do not mention the override**, and the
+  // reason is unchanged even though its premise flipped: `overrideRemedy`
+  // appends the offer, with the literal syntax, so the accepted form lives
+  // in one place rather than in five messages that could drift from the
+  // parser. What a message owes the caller is the *narrow* exit — which pid
+  // form to use — and appending a generic offer on top of that made the
+  // specific remedy look like the lesser option, which is backwards.
+  //
+  // A message must only offer an exit the protocol can honour. That rule is
+  // why `overrideRemedy` gates its agent-facing sentence on the tool rather
+  // than merely on the audience: an offer the caller cannot act on costs
+  // several attempts before anyone concludes it is not negotiable.
   // ── Why the messages used to describe the finding rather than the command ──
   //
   // `broadProcessKillCause` distinguishes two findings that share a verdict
@@ -562,21 +586,41 @@ const checkoutHeldByAnotherCrew: Intervention = {
   audience: "agent",
   defaultLevel: "block-overridable",
   defaultTiming: "immediate",
-  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10, same fix as
-  // `broad-process-kill` (row f53e667a-97da-4b10-bded-8a3c50836a85):
-  // "proceed with a written reason" / "say why: the reason is recorded"
-  // promised an exit that no caller could ever take — in all three of this
-  // entry's messages, including the dynamic one built in the predicate
-  // below. Removed; each still names the one remedy that actually works —
-  // taking your own worktree.
+  // ── The one `block-overridable` entry with NO agent-reachable override,
+  // and the reason is structural. Row
+  // d8eb47ac-53a7-47ff-b167-2c089738531e.
   //
-  // Stated precisely, because the short version above is false on its face
-  // now: an override channel DOES exist in the wire protocol and `decide`
-  // honours it. It is read from the top level of the payload only, and an
-  // agent — this entry's audience — can reach nothing but `tool_input`. So
-  // the promise is keepable in principle and unkeepable by anyone who will
-  // read these messages, which is why they carry no override offer and why
-  // `overrideRemedy` returns `null` rather than adding one.
+  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10 stripped "proceed with a
+  // written reason" from all three of this entry's messages — including the
+  // dynamic one built in the predicate below — because the override was
+  // read from the top level of the payload only, and an agent reaches
+  // nothing but `tool_input`.
+  //
+  // That was fixed for the other three `block-overridable` entries by
+  // reading a marked comment off the command. **It cannot be fixed here,
+  // and the asymmetry is worth stating rather than papering over.** This
+  // entry is gated on `CHECKOUT_WRITE_TOOLS` — `Write`, `Edit`,
+  // `NotebookEdit` (`./context.ts`) — which deliberately excludes `Bash`,
+  // because it fires on no command shape at all: it reads only who else
+  // holds the checkout. Those tools' inputs are a file path and the file
+  // content being written, and nothing else. A marker placed in either
+  // would have to be **written into the user's file** to be transmitted,
+  // which is a content mutation wearing a protocol's clothes — and a path
+  // is no better, since `payload.ts` reads `file_path` into the same
+  // `command` field, so a filename carrying the marker would be a silent
+  // waiver. A test pins both routes shut.
+  //
+  // So this entry carries no override offer in its messages, and
+  // `overrideRemedy` returns `null` for it —
+  // because `toolCarriesOverride` is false for the tools it fires on
+  // rather than because the audience is `agent`. The narrow remedy below
+  // (take your own worktree) is the whole of what a refusal here says, and
+  // that remains the right answer.
+  //
+  // **If this ever needs an override**, the honest route is a `Bash`-shaped
+  // one — the caller running its write through a shell — not a sentinel
+  // smuggled through file content. Do not "finish the job" by loosening the
+  // tool gate; that gate is what keeps the offer keepable.
   //
   // Each message also names **the working tree it matched**, at the request
   // of the third crew to hit the false positive: *"the fix with the best

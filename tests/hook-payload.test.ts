@@ -167,3 +167,101 @@ describe("the event-type list", () => {
     expect(isHookEventType(1)).toBe(false);
   });
 });
+
+// ── Lifting an override out of the caller's own tool call ───────────────
+//
+// The two channels meet here, and the reason this block exists is that
+// `command` is NOT only a Bash command: `COMMAND_FIELDS` falls back to
+// `file_path` for a `Write` or an `Edit`, so a path is read into the same
+// field. Without a tool check, a file whose NAME carried the marker would
+// be an override — which is the smuggling route a reader keyed on the
+// string alone would open.
+describe("parseHookPayload and the override an agent writes itself", () => {
+  const ENTRY = "broad-process-kill";
+  const REASON = "this kill names one pid and the guard misread it as broad";
+  const CLAIM = `# standup-override(${ENTRY}): ${REASON}`;
+
+  it("lifts a claim from a Bash command to the top-level override field", () => {
+    // The lift is the whole mechanism: the agent writes a claim in the one
+    // place it controls, and it arrives on `HookEvent.override` exactly
+    // where a bespoke client's top-level field arrives, so `decide` needs
+    // no branch for it.
+    const result = parseHookPayload(
+      payload({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: `kill 123\n${CLAIM}` },
+      }),
+    );
+
+    expect(result.ok && result.event.override).toEqual({ entryId: ENTRY, reason: REASON });
+  });
+
+  it("does not lift a claim out of a file path on a Write", () => {
+    // **The smuggling route, closed.** `file_path` becomes `command` for a
+    // `Write`, so a reader that did not check the tool would treat a file
+    // named after the marker as an override — and `Write` is one of the
+    // tools `checkout-held-by-another-crew` blocks. Passing a hardcoded
+    // "Bash" into `readCommandOverrideClaim` instead of the real tool
+    // fails here.
+    const result = parseHookPayload(
+      payload({
+        hook_event_name: "PreToolUse",
+        tool_name: "Write",
+        tool_input: { file_path: `/tmp/a\n${CLAIM}` },
+      }),
+    );
+
+    expect(result.ok && result.event.override).toBeUndefined();
+  });
+
+  it("does not lift a claim out of an Edit's file path", () => {
+    const result = parseHookPayload(
+      payload({
+        hook_event_name: "PreToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: `/tmp/a\n${CLAIM}` },
+      }),
+    );
+
+    expect(result.ok && result.event.override).toBeUndefined();
+  });
+
+  it("refuses a claim nested in tool_input as an ordinary field", () => {
+    // The principle that had to survive: an override is a statement about
+    // the guard, not an argument to the tool. A `standup_override` key
+    // sitting in `tool_input` is still refused, so a tool gaining a new
+    // parameter can never become a way to waive a guard.
+    const result = parseHookPayload(
+      payload({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: {
+          command: "kill 123",
+          standup_override: { entryId: ENTRY, reason: REASON },
+        },
+      }),
+    );
+
+    expect(result.ok && result.event.override).toBeUndefined();
+  });
+
+  it("prefers a top-level claim over one in the command", () => {
+    // A fixed precedence, so the two readers cannot disagree. A caller that
+    // composed its own payload said something more deliberate than a
+    // comment in a command line.
+    const result = parseHookPayload(
+      payload({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: `kill 123\n# standup-override(${ENTRY}): ${REASON}` },
+        standup_override: { entryId: "other-entry", reason: "the deliberate top-level claim" },
+      }),
+    );
+
+    expect(result.ok && result.event.override).toEqual({
+      entryId: "other-entry",
+      reason: "the deliberate top-level claim",
+    });
+  });
+});
