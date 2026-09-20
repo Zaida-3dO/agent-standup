@@ -182,7 +182,7 @@ const stopText = (liveCrew: number): string =>
 const unfinishedText = (unfinished: number): string =>
   `${unfinished} item${unfinished === 1 ? "" : "s"} you opened or claimed in this session ` +
   `${unfinished === 1 ? "is" : "are"} still unfinished, and ` +
-  `${unfinished === 1 ? "it is" : "none of them are"} marked blocked. Are you actually done ` +
+  `${unfinished === 1 ? "it is not" : "none of them are"} marked blocked. Are you actually done ` +
   "with what you were directed to do? If not, carry on with the next one rather than pausing " +
   "here. If you are done, say so on the item. " +
   "If you are stopping because you are blocked, test the blocker before you accept it: is it " +

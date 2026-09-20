@@ -380,6 +380,26 @@ describe("evaluateStopCatch — stopping with unblocked work left", () => {
     expect(caught?.text).toMatch(/dispatching a scout|scout/i);
   });
 
+  it("says the open work is NOT blocked, in both the singular and the plural", () => {
+    // The state allow-list only counts `on_deck`, `planning` and `executing`,
+    // so a counted row is by construction not blocked — and the message has
+    // to agree with the query that produced it. The singular shipped saying
+    // "it is marked blocked", which asserted the opposite and then asked the
+    // reader to test whether their blocker was genuine, which reads as
+    // incoherent. Count-of-one is the commonest firing, so it was the form
+    // most sessions would have seen.
+    //
+    // Both branches are pinned because the plural was always right: a test
+    // covering only the singular would let someone "fix" the pair by breaking
+    // the half that worked.
+    const one = evaluateStopCatch(stopEvent(), { unfinishedWork: 1 });
+    expect(one?.text).toMatch(/it is not marked blocked/i);
+    expect(one?.text).not.toMatch(/\bit is marked blocked/i);
+
+    const many = evaluateStopCatch(stopEvent(), { unfinishedWork: 3 });
+    expect(many?.text).toMatch(/none of them are marked blocked/i);
+  });
+
   it("carries the probe test rather than abstract advice", () => {
     // "If you can touch it, I cannot means you have not looked" is the
     // operative sentence — it gives the session a test it can actually
