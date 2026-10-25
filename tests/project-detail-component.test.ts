@@ -22,6 +22,7 @@ import { DerivedStatePanel } from "@/components/project-detail/DerivedStatePanel
 import { RepairPanel } from "@/components/project-detail/RepairPanel";
 import { ProjectDetailView } from "@/components/project-detail/ProjectDetailView";
 import type { ProjectChild, ProjectDetail, StateCounts } from "@/lib/project-detail/types";
+import { progressOf } from "@/lib/project-detail/view";
 import { ITEM_STATES } from "@/lib/design/tokens";
 import { findAllByType, walk } from "./helpers/react-element";
 
@@ -174,6 +175,32 @@ describe("DerivedStatePanel — the reading never arrives alone", () => {
     expect(text).toContain("Wire the webhook");
     expect(text).toContain("waiting on a key");
     expect(withAttr(tree, "data-causing-child")).toHaveLength(1);
+  });
+
+  it("prints the same 99.8% as the grid card for 880 of 882 closed", () => {
+    // The panel is handed the project page's reading, so this feeds it the
+    // real `progressOf` rather than a literal: the figure on screen is
+    // whatever the page's logic produced.
+    //
+    // Breaks if: the page's `progressOf` stops using the shared rounding
+    // (the label prints 100), or the panel prints a different number from
+    // the one it puts in `data-percent`.
+    const derived = {
+      column: "in_progress" as const,
+      counts: counts({ merged: 880, executing: 2 }),
+      causingChild: null,
+    };
+    const tree = DerivedStatePanel({
+      derived,
+      total: 882,
+      progress: progressOf(makeDetail({ derived })),
+    });
+
+    const text = textOf(tree);
+    expect(text).toContain("99.8 %");
+    expect(text).not.toContain("100 %");
+    const done = withAttr(tree, "data-percent")[0]!;
+    expect((done.props as Record<string, unknown>)["data-percent"]).toBe(99.8);
   });
 
   it("declares in the markup that it carries both pieces of evidence", () => {

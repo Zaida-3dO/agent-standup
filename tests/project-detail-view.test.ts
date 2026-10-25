@@ -250,6 +250,42 @@ describe("progressOf — three cases, and the third is the point", () => {
     expect(reading).toEqual({ kind: "ratio", value: 0.25, percent: 25 });
   });
 
+  it("does not read nearly-done as 100 or barely-started as 0", () => {
+    // The same two cases as the grid's `progressOf`, deliberately: the card
+    // and this page must print the same figure for the same project.
+    //
+    // Breaks if: this function computes its own rounding again instead of
+    // `percentOf` - 880/882 reads 100 and 1/500 reads 0.
+    const nearly = progressOf(
+      makeDetail({
+        derived: {
+          column: "in_progress",
+          counts: counts({ merged: 880, executing: 2 }),
+          causingChild: null,
+        },
+      }),
+    );
+    expect(nearly).toEqual({ kind: "ratio", value: 880 / 882, percent: 99.8 });
+
+    const barely = progressOf(
+      makeDetail({
+        derived: {
+          column: "in_progress",
+          counts: counts({ merged: 1, executing: 499 }),
+          causingChild: null,
+        },
+      }),
+    );
+    expect(barely).toEqual({ kind: "ratio", value: 1 / 500, percent: 0.2 });
+
+    const all = progressOf(
+      makeDetail({
+        derived: { column: "completed", counts: counts({ merged: 882 }), causingChild: null },
+      }),
+    );
+    expect(all).toMatchObject({ kind: "ratio", percent: 100 });
+  });
+
   it("clamps a server that reports more merged than total, rather than painting past the track", () => {
     const reading = progressOf(
       makeDetail({ total: 2, merged: 5, progress: 2.5, childless: false }),
