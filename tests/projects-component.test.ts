@@ -112,6 +112,52 @@ describe("ProjectCard", () => {
       expect(textOf(tree)).toContain("100 %");
     });
 
+    it("prints 99.8%, not 100%, for 880 of 882 closed - and the label, data-percent and bar agree", () => {
+      // The reported bug: a card with two children still open read 100%.
+      // Four things on the card describe the same ratio and must not
+      // contradict one another.
+      //
+      // Breaks if: the label reads a rounded copy of the percent (it prints
+      // 100), `data-percent` is fed a different number from the label, or
+      // `aria-valuenow` is fed the percent instead of the closed count.
+      const tree = ProjectCard({
+        project: makeProject({ counts: { ...noCounts(), merged: 880, executing: 2 } }),
+        now: NOW,
+      });
+
+      expect(textOf(tree)).toContain("880 of 882 closed");
+      expect(textOf(tree)).toContain("99.8 %");
+      expect(textOf(tree)).not.toContain("100 %");
+
+      const done = [...walk(tree)].find(
+        (element) => (element.props as { "data-band"?: string })["data-band"] === "done",
+      )!;
+      expect((done.props as { "data-percent": number })["data-percent"]).toBe(99.8);
+      // The width is the exact share: it reads 99.77%, so the bar is not
+      // drawn full either.
+      expect(parseFloat((done.props as { style: { width: string } }).style.width)).toBeCloseTo(
+        (880 / 882) * 100,
+        6,
+      );
+      const bar = progressBars(tree)[0]!.props as Record<string, number>;
+      expect(bar["aria-valuenow"]).toBe(880);
+      expect(bar["aria-valuemax"]).toBe(882);
+    });
+
+    it("prints 0.2%, not 0%, for 1 of 500 closed", () => {
+      // Breaks if: the label goes back to a whole number - it prints 0.
+      const tree = ProjectCard({
+        project: makeProject({ counts: { ...noCounts(), merged: 1, executing: 499 } }),
+        now: NOW,
+      });
+
+      expect(textOf(tree)).toContain("0.2 %");
+      const done = [...walk(tree)].find(
+        (element) => (element.props as { "data-band"?: string })["data-band"] === "done",
+      )!;
+      expect((done.props as { "data-percent": number })["data-percent"]).toBe(0.2);
+    });
+
     it("draws ONE bar with a done and a started band, not two bars", () => {
       // Breaks if: the distribution strip comes back — the card then shows
       // the same subtree twice at two denominators, which is what made the

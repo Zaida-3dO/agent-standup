@@ -11,6 +11,9 @@ import { ITEM_STATES, STATE_LABELS } from "@/lib/design/tokens";
 // The board's column table — see `bandsOf` for why the bands are derived
 // from it rather than listed. A leaf module; no server dependency rides in.
 import { finishedFrom, startedFrom } from "@/lib/service/board/columns";
+// One definition of the percentage a label prints, shared with the grid card
+// so the two surfaces cannot disagree. A leaf module.
+import { percentOf } from "@/lib/projects/percent";
 import type { BoardColumnId, ItemState } from "@/lib/board/types";
 import type {
   BlockedDescendant,
@@ -161,7 +164,7 @@ export function progressOf(detail: ProjectDetail): ProgressReading {
   // Clamped, so a server that ever reported more finished children than
   // total cannot paint a bar wider than its track.
   const clamped = Math.min(1, Math.max(0, value));
-  return { kind: "ratio", value: clamped, percent: Math.round(clamped * 100) };
+  return { kind: "ratio", value: clamped, percent: percentOf(clamped) };
 }
 
 /**

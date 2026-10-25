@@ -119,6 +119,28 @@ describe("progressOf", () => {
     expect(reading).toEqual({ kind: "ratio", value: 2 / 3, percent: 67 });
   });
 
+  it("does not read nearly-done as 100 or barely-started as 0", () => {
+    // The owner's case: 880 of 882 children closed printed "100%". The
+    // reading carries the one-decimal figure, and `value` stays the exact
+    // ratio so nothing downstream is fed a rounded number.
+    //
+    // Breaks if: `percentOf(clamped)` goes back to `Math.round(clamped * 100)`
+    // — 880/882 reads 100 and 1/500 reads 0.
+    const nearly = progressOf(
+      makeProject({ counts: { ...noCounts(), merged: 880, executing: 2 } }),
+    );
+    expect(nearly).toEqual({ kind: "ratio", value: 880 / 882, percent: 99.8 });
+
+    const barely = progressOf(
+      makeProject({ counts: { ...noCounts(), merged: 1, executing: 499 } }),
+    );
+    expect(barely).toEqual({ kind: "ratio", value: 1 / 500, percent: 0.2 });
+
+    // And the ends are still reachable, by "all" and "none" only.
+    const all = progressOf(makeProject({ counts: { ...noCounts(), merged: 882 } }));
+    expect(all).toMatchObject({ kind: "ratio", percent: 100 });
+  });
+
   it("clamps a bar that would otherwise overflow its track", () => {
     // A server reporting more merged children than total is a bug, but the
     // card should not paint a 400%-wide bar over the page while it lasts.

@@ -13,6 +13,7 @@ import type { ItemState } from "@/lib/board/types";
 // one definition rather than two that happen to agree. `columns.ts` is a leaf
 // over the state vocabulary — no server dependency comes with it.
 import { finishedFrom, startedFrom } from "@/lib/service/board/columns";
+import { percentOf } from "./percent";
 import type { ProjectRollup, StateCounts } from "./types";
 
 /**
@@ -52,7 +53,7 @@ export function progressOf(project: ProjectRollup): ProgressReading {
   // Clamped, so a server that ever reported more finished children than
   // total cannot paint a bar wider than its track.
   const clamped = Math.min(1, Math.max(0, value));
-  return { kind: "ratio", value: clamped, percent: Math.round(clamped * 100) };
+  return { kind: "ratio", value: clamped, percent: percentOf(clamped) };
 }
 
 /** One band of the distribution strip — a state with at least one child in it. */
