@@ -29,7 +29,7 @@
 // mistake this whole row exists to stop.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -192,8 +192,14 @@ describe("how the bundler resolves a commit", () => {
     git("init", "-q");
     git("config", "user.email", "test@example.invalid");
     git("config", "user.name", "test");
-    writeFileSync(path.join(scratch, "a.txt"), "one\n", "utf-8");
-    git("add", "a.txt");
+    // On a HOOK SOURCE PATH, because the stamp is scoped to those paths —
+    // a scratch repository whose only file is `a.txt` has no hook history
+    // for the stamp to name, and correctly answers UNSTAMPED. The file has
+    // to be one esbuild would actually bundle for the question to apply.
+    mkdirSync(path.join(scratch, "src", "lib", "hook"), { recursive: true });
+    const hookFile = path.join("src", "lib", "hook", "a.ts");
+    writeFileSync(path.join(scratch, hookFile), "one\n", "utf-8");
+    git("add", hookFile);
     git("commit", "-qm", "first");
     const head = git("rev-parse", "HEAD").trim();
 
@@ -216,15 +222,76 @@ describe("how the bundler resolves a commit", () => {
     // Modified: the same commit, marked. Asserted as the exact string rather
     // than a regex allowing an optional suffix — an optional match is what
     // let this mutation survive in the first place.
-    writeFileSync(path.join(scratch, "a.txt"), "two\n", "utf-8");
+    writeFileSync(path.join(scratch, hookFile), "two\n", "utf-8");
     expect(resolveIn()).toBe(`${head}-dirty`);
 
     // An untracked file counts too: it can be bundled, so a build made with
     // one present is no more reproducible than one with a modified file.
-    writeFileSync(path.join(scratch, "a.txt"), "one\n", "utf-8");
+    writeFileSync(path.join(scratch, hookFile), "one\n", "utf-8");
     expect(resolveIn()).toBe(head);
-    writeFileSync(path.join(scratch, "untracked.txt"), "new\n", "utf-8");
+    writeFileSync(path.join(scratch, "src", "lib", "hook", "untracked.ts"), "new\n", "utf-8");
     expect(resolveIn()).toBe(`${head}-dirty`);
+  });
+
+  // ── The stamp names the HOOK's last commit, not HEAD ──────────────────
+  //
+  // Stamping HEAD answers "which server build emitted this" rather than
+  // "which hook code is this", and the two diverge on every commit that does
+  // not touch the hook — which is most commits. Measured consequence: two
+  // 60,819-byte artifacts differing on exactly one line, the stamp itself,
+  // reported as drifted. A session then inferred a bug from a stamp that had
+  // moved while `toWireBatch` was byte-identical across the window.
+  //
+  // Mutation that breaks it: restoring `["rev-parse", "HEAD"]` in
+  // `resolveBuildCommitFromGit`, which makes the second assertion return the
+  // unrelated commit.
+  it("does not move for a commit that cannot have changed the bundle", () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), "build-stamp-stable-"));
+    tempDirs.push(scratch);
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", scratch, ...args], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+
+    git("init", "-q");
+    git("config", "user.email", "test@example.invalid");
+    git("config", "user.name", "test");
+    mkdirSync(path.join(scratch, "src", "lib", "hook"), { recursive: true });
+    const hookFile = path.join("src", "lib", "hook", "a.ts");
+    writeFileSync(path.join(scratch, hookFile), "one\n", "utf-8");
+    git("add", hookFile);
+    git("commit", "-qm", "touches the hook");
+    const hookCommit = git("rev-parse", "HEAD").trim();
+
+    const resolveIn = () =>
+      execFileSync(
+        process.execPath,
+        [
+          "-e",
+          `import(${JSON.stringify(
+            pathToFileURL(path.join(repoRoot, "scripts", "build-hook-scripts.mjs")).href,
+          )}).then((m) => process.stdout.write(m.resolveBuildCommit()));`,
+        ],
+        { cwd: scratch, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] },
+      ).trim();
+
+    expect(resolveIn()).toBe(hookCommit);
+
+    // A README commit: HEAD moves, the bundle cannot have changed, so the
+    // stamp must not move. This is the whole defect in one assertion.
+    writeFileSync(path.join(scratch, "README.md"), "docs\n", "utf-8");
+    git("add", "README.md");
+    git("commit", "-qm", "touches nothing in the hook");
+    expect(git("rev-parse", "HEAD").trim()).not.toBe(hookCommit);
+    expect(resolveIn()).toBe(hookCommit);
+
+    // And it still moves when the hook genuinely changes, which is the
+    // property a stamp that never moved would also satisfy.
+    writeFileSync(path.join(scratch, hookFile), "two\n", "utf-8");
+    git("add", hookFile);
+    git("commit", "-qm", "changes the hook");
+    expect(resolveIn()).toBe(git("rev-parse", "HEAD").trim());
   });
 
   it("reports UNSTAMPED rather than throwing when there is no git checkout", () => {

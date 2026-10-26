@@ -39,6 +39,14 @@ import { rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+// The paths whose history decides what this artifact IS — imported from the
+// checker rather than restated, because the stamp written here and the
+// staleness verdict read there have to be answers to the same question. Two
+// copies of this list would drift into a build that stamps itself current
+// against one set of paths while being judged stale against another, which
+// is a disagreement neither end could detect. The checker imports nothing
+// local, so this direction introduces no cycle.
+import { HOOK_SOURCE_PATHS } from "./check-hook-freshness.mjs";
 
 /** `HookVariant -> source entry point`, for every variant that has a script built. */
 export const HOOK_SCRIPT_ENTRY_POINTS = Object.freeze({
@@ -256,13 +264,64 @@ export function resolveBuildCommit(env = process.env) {
  */
 function resolveBuildCommitFromGit() {
   try {
-    const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    // ── The LAST COMMIT THAT TOUCHED THE HOOK, not HEAD ─────────────────
+    //
+    // A stamp's whole job is to answer "which hook code is this". Stamping
+    // HEAD answers a different question — "which server build emitted this"
+    // — and the two come apart on every commit that does not touch the
+    // hook, which is most commits. The consequence was measured rather than
+    // predicted: two artifacts 60,819 bytes long, differing on **one line**
+    // (the stamp string itself), reported as drifted. Every other byte was
+    // identical.
+    //
+    // Three costs followed, in increasing order. A freshness warning fired
+    // on a byte-current session. Re-vendoring did not durably fix it, since
+    // the next unrelated deploy re-stamped and the warning returned — so a
+    // consumer repository accrued commits whose entire content was a changed
+    // hash. And a session drew a **wrong conclusion** from it: a re-vendor
+    // earlier that week appeared to fix a 400 that it had not caused, and
+    // `toWireBatch` turned out to be byte-identical across the whole window.
+    // The stamp moved, the code did not, and the reasoning built on top of
+    // it was wrong.
+    //
+    // That is the failure this repository keeps naming: a check that is
+    // usually a false alarm is a check nobody reads on the day it is true.
+    //
+    // `-1 --format=%H -- <paths>` is the same question
+    // `scripts/check-hook-freshness.mjs` already asks from the other end:
+    // it reports stale when a commit touching `HOOK_SOURCE_PATHS` is missing
+    // from the artifact. Stamping from that same path list is what makes the
+    // two ends agree by construction rather than by coincidence — and it
+    // makes the value **stable across commits and deploys that cannot have
+    // changed the bundle**, which is the property Ope asked for: "it should
+    // only restamp when the content changes, otherwise it should be stable
+    // even across commits."
+    //
+    // Note this fixes consumers that compare stamps naively too, including
+    // ones outside this repository. A checker that string-compares a
+    // vendored stamp against the served one is asking the wrong question,
+    // but once the served value stops moving on unrelated deploys it stops
+    // getting a wrong answer.
+    const commit = execFileSync("git", ["log", "-1", "--format=%H", "--", ...HOOK_SOURCE_PATHS], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
+    // Empty means no commit in this history touched the hook's sources —
+    // a shallow clone, or a tree where they arrived untracked. Falling back
+    // to HEAD would reintroduce exactly the coupling above, so this reports
+    // no provenance instead and lets the checker treat it as unverifiable.
     if (commit === "") return UNSTAMPED;
 
-    const status = execFileSync("git", ["status", "--porcelain"], {
+    // ── Dirtiness is asked of the hook's sources, for the same reason ────
+    //
+    // `git status --porcelain` with no pathspec marks the build dirty for an
+    // edit anywhere in the tree — an unrelated migration, a stray scratch
+    // file — and `-dirty` makes `check-hook-freshness.mjs` fail outright
+    // ("not reproducible from any commit"). Scoping the question to the same
+    // paths keeps the claim honest in both directions: it still catches an
+    // uncommitted change that IS in the bundle, and stops reporting one that
+    // cannot be.
+    const status = execFileSync("git", ["status", "--porcelain", "--", ...HOOK_SOURCE_PATHS], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

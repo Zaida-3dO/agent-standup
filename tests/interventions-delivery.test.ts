@@ -437,3 +437,132 @@ describe("the deliverer the runtime is given", () => {
     expect(deliver({ id: "item-1" }, { sessionId: "s1" })).toEqual({ id: "item-1" });
   });
 });
+
+// A finding is evaluated when it is NOTICED and delivered up to five
+// minutes later, and nothing between those moments re-asked whether it was
+// still true. So a session that noticed a situation, fixed it, and kept
+// working was told about the fixed situation as though it were current.
+//
+// Measured, with server timestamps: a `commit` artifact at 22:21:13 put
+// `committed-with-no-pull-request` in the batch truthfully; a
+// `pull_request` artifact at 22:21:40 resolved it; the batch arrived at
+// 22:26:43 — 5m03s later against a 5m00s interval — still carrying it.
+//
+// The properties below are the ways the fix quietly stops working:
+//
+//   - repeating a held finding an exhaustive re-check found resolved, which
+//     is the defect itself,
+//   - dropping a held finding that IS still detected, which would lose a
+//     real one,
+//   - filtering on an empty evaluation, which cannot distinguish "all
+//     resolved" from "did not look" and would silently discard everything,
+//   - attaching an envelope whose digest emptied out, which puts a heading
+//     with no lines under it on a response that triggered nothing.
+describe("a batch does not report a situation that has since resolved", () => {
+  /** Holds `heldId` for a session, then delivers once the interval elapses. */
+  function deliverAfterInterval(
+    heldId: string,
+    current: readonly InterventionFinding[],
+  ): ReturnType<typeof decideDelivery> {
+    const accumulator = new DigestAccumulator({ intervalMs: 1000 });
+    accumulator.add("s1", finding({ id: heldId }), 0);
+    return decideDelivery(accumulator, {
+      sessionId: "s1",
+      findings: current,
+      reEvaluated: true,
+      now: 1000,
+    });
+  }
+
+  // The reported case, end to end: the held finding is gone from the batch
+  // because this call's exhaustive evaluation does not contain it.
+  //
+  // Mutation that breaks it: `stillTrue.has(...)` -> `true` in
+  // `withoutResolved`, which restores the stale delivery.
+  it("drops a held finding an exhaustive re-check does not detect", () => {
+    const payload = deliverAfterInterval("committed-with-no-pull-request", [
+      finding({ id: "something-else", timing: "immediate" }),
+    ]);
+
+    expect(payload.digest?.findings ?? []).toEqual([]);
+  });
+
+  // The opposite direction, and the one that matters more: a situation that
+  // is genuinely still true must still be reported. A filter that dropped
+  // this would convert a noisy channel into a silent one.
+  //
+  // Mutation that breaks it: `stillTrue.has(...)` -> `false`.
+  it("keeps a held finding the current call still detects", () => {
+    const payload = deliverAfterInterval("committed-with-no-pull-request", [
+      finding({ id: "committed-with-no-pull-request" }),
+      finding({ id: "other", timing: "immediate" }),
+    ]);
+
+    expect(payload.digest?.findings.map((entry) => entry.id)).toEqual([
+      "committed-with-no-pull-request",
+    ]);
+  });
+
+  // The reported case exactly: the producer ran, every entry declined, and
+  // the held finding must retire. This is the case an "infer completeness
+  // from a non-empty array" implementation gets wrong — and it is the only
+  // case the original report is about, since nothing else was wrong with
+  // that item at delivery time.
+  //
+  // Mutation that breaks it: `options.reEvaluated !== true` ->
+  // `(options.findings ?? []).length === 0`, which restores the stale
+  // delivery for precisely this session.
+  it("retires a held finding when an exhaustive evaluation found nothing at all", () => {
+    const payload = deliverAfterInterval("committed-with-no-pull-request", []);
+
+    expect(payload.digest?.findings ?? []).toEqual([]);
+  });
+
+  // The hook path evaluates only what one tool call's context can answer,
+  // so a held finding is routinely absent there because nobody asked. A
+  // partial evaluation must therefore retire nothing — this is the
+  // property that keeps "a batch accumulates across calls" true, and the
+  // existing suite's own `first`/`second` test is the other half of it.
+  //
+  // Mutation that breaks it: deleting the `reEvaluated !== true` early
+  // return, which lets a partial evaluation drop real findings.
+  it("retires nothing when the evaluation was only partial", () => {
+    const accumulator = new DigestAccumulator({ intervalMs: 1000 });
+    accumulator.add("s1", finding({ id: "held-from-an-earlier-call" }), 0);
+
+    const payload = decideDelivery(accumulator, {
+      sessionId: "s1",
+      findings: [finding({ id: "noticed-now", timing: "immediate" })],
+      now: 1000,
+    });
+
+    expect(payload.digest?.findings.map((entry) => entry.id)).toEqual([
+      "held-from-an-earlier-call",
+    ]);
+  });
+
+  // `renderDigest` returns "" for an empty batch, so an emptied digest must
+  // not reach a response — otherwise a caller gets an envelope carrying a
+  // heading with nothing under it.
+  //
+  // Mutation that breaks it: `digest.findings.length > 0` -> `true` in
+  // `hasAnything`.
+  it("does not attach an envelope when the whole batch resolved", () => {
+    const payload = deliverAfterInterval("committed-with-no-pull-request", [
+      finding({ id: "unrelated", timing: "immediate" }),
+    ]);
+
+    // The immediate finding is real and still rides; the digest must not.
+    expect(hasAnything({ digest: payload.digest })).toBe(false);
+  });
+
+  // The batch's `from`/`to` bounds describe the window, not the findings —
+  // narrowing them to the survivors would misreport when the session was
+  // observed.
+  it("leaves the batch window alone when it filters", () => {
+    const payload = deliverAfterInterval("gone", [finding({ id: "kept" })]);
+
+    expect(payload.digest?.from).toBe(0);
+    expect(payload.digest?.to).toBe(1000);
+  });
+});

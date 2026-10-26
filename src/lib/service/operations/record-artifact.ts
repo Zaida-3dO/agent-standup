@@ -569,7 +569,9 @@ const RECORD_ARTIFACT_CONTRACT = {
     },
     {
       fields: ["ref", "artifactKind"],
-      rule: "A `pull_request` artifact must carry the PR's http(s) URL in `ref`, and its `body`, when set, must be one of the pull-request statuses.",
+      rule:
+        "A `pull_request` artifact must carry the PR's http(s) URL in `ref`, and its `body`, when " +
+        `set, must be one of: ${PULL_REQUEST_STATUSES.join(", ")}.`,
     },
     {
       fields: ["ref", "commitSha"],
@@ -591,6 +593,19 @@ const RECORD_ARTIFACT_CONTRACT = {
         "reported as current or superseded. `ref` is optional here (unlike on a `pull_request`) " +
         "because the status is the answer and the build URL is a convenience, but when set it " +
         "must be an http(s) URL. A build whose status has changed is a NEW check_run row.",
+    },
+    {
+      fields: ["body", "artifactKind"],
+      rule:
+        "**`body` is not the same field on every kind.** On most kinds it is free prose describing " +
+        "the thing — a `commit` body taking three paragraphs is correct and accepted. On the " +
+        "status-shaped kinds it is a value from a closed set and prose is REFUSED: `pull_request` " +
+        `takes one of ${PULL_REQUEST_STATUSES.join(", ")} (optional), and \`check_run\` takes one ` +
+        `of ${CHECK_RUN_STATUSES.join(", ")} (required). Those rows are status OBSERVATIONS rather ` +
+        "than descriptions, which is why they are append-only: a PR that later merges is a NEW " +
+        "`pull_request` row carrying the new status, never an edit of the row that opened it. Put " +
+        'the prose you would have written on the same item with a `record` with `action: "note"` ' +
+        'or `action: "checkpoint"`, where it is read as prose.',
     },
     {
       fields: ["verdict", "artifactKind"],
