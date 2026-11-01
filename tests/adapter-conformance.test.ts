@@ -449,13 +449,32 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       // and a refused move writes nothing, so running it once per driver
       // against the same row is safe: each driver sees the same starting
       // state because the refusal left it unchanged.
-      name: "transition_item refuses blocked with no reason",
+      //
+      // **Both cases drive a refusal, not a missing field, since the nudge
+      // conversion.** A blocked move with reason and type merely absent
+      // only warns now and lands, which would empty the `guard` column
+      // exactly like the dry run this comment refuses; a SUPPLIED
+      // `blocked_on_type` outside the three legal values is what that guard
+      // still refuses. And the merge case's absent answer is now the
+      // summary rather than the commit evidence — `summaries.required_and_valid`
+      // is the guard that actually fires on it.
+      name: "transition_item refuses blocked with an uninterpretable blocker type",
       operation: "transition_item",
-      input: () => ({ id: seededTaskId, to: "blocked" }),
+      input: () => ({
+        id: seededTaskId,
+        to: "blocked",
+        fields: { blocked_reason: "waiting on the design team", blocked_on_type: "design-team" },
+      }),
       expect: "rejected",
     },
     {
-      name: "transition_item refuses a merge with no commit",
+      // The guard that fires is `summaries.required_and_valid`: `merged` is
+      // a completing state and this call carries no summary at all, which
+      // stays an integrity refusal after the conversion. The merge-evidence
+      // guards this case used to trip are nudges now; had the table kept a
+      // summary-less shape claim, the ledger below would name a guard that
+      // no longer refuses anything.
+      name: "transition_item refuses a merge with no summary",
       operation: "transition_item",
       input: () => ({ id: seededTaskId, to: "merged" }),
       expect: "rejected",
@@ -487,9 +506,20 @@ describeIfDb("adapter conformance — every way in agrees", () => {
       // It is safe to run once per driver against the shared row for the
       // same reason the refusing cases are: a rehearsal writes nothing, so
       // each driver sees the same starting state.
+      //
+      // Like the real-move case above, the move rehearsed here carries a
+      // malformed supplied value, not a missing field: since the nudge
+      // conversion a bare blocked rehearsal is simply ALLOWED, and this
+      // case exists for the allowed-call-carrying-a-rejection combination,
+      // which needs a move the guards actually refuse.
       name: "transition_item reports a refused move as a successful rehearsal",
       operation: "transition_item",
-      input: () => ({ id: seededTaskId, to: "blocked", dryRun: true }),
+      input: () => ({
+        id: seededTaskId,
+        to: "blocked",
+        dryRun: true,
+        fields: { blocked_reason: "waiting on the design team", blocked_on_type: "design-team" },
+      }),
       expect: "accepted",
     },
   ];
@@ -575,7 +605,7 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     // assumed.
     const GUARDS_THE_CASES_REACH: readonly string[] = [
       "state-machine.blocked_required_fields",
-      "merge.requires_commit",
+      "summaries.required_and_valid",
     ];
 
     expect(checkGuardCoverage(GUARDS_THE_CASES_REACH, observations)).toEqual([]);

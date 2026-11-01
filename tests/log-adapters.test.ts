@@ -76,8 +76,14 @@ describe("the MCP adapter", () => {
   });
 
   test("logs a refusal at DEBUG, naming the rule that fired", async () => {
+    // A guard that still refuses after the nudge conversion, so the log
+    // line this test pins describes something the live service throws.
     const refusing: ServiceCall = async () => {
-      throw new GuardRejectedError("merge.requires_commit", "A merge needs a commit.");
+      throw new GuardRejectedError(
+        "summaries.required_and_valid",
+        "A summary is required to complete this item — closing as merged needs one.",
+        { fields: ["summary"] },
+      );
     };
 
     await callTool(refusing, "mcp-http", "transition_item", {});
@@ -85,7 +91,7 @@ describe("the MCP adapter", () => {
     const record = oneRecord(logs.stderr(), "MCP tool call refused.");
     expect(record?.level).toBe("debug");
     expect(record?.code).toBe("guard_rejected");
-    expect(record?.guard).toBe("merge.requires_commit");
+    expect(record?.guard).toBe("summaries.required_and_valid");
     expect(record?.fault).toBe("caller");
     // No sub-bucket on a refusal: there is no server failure to classify,
     // and an omitted key is one less empty field to read past.
