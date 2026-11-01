@@ -1,6 +1,12 @@
 // Guards — blocked and paused: required fields, clearing on exit.
 // See docs/plans/MILESTONES.md #16, SCHEMA.md §16.
 //
+// A missing required field nudges: the state is entered and the answer
+// names what was not recorded and how to record it now (re-enter the
+// state with the fields). What still refuses is a supplied
+// blocked_on_type outside the legal enum — a malformed call, not a
+// missing record.
+//
 // Runs against a real Postgres, same convention as
 // tests/state-machine-transition.test.ts — the claims here are about what
 // actually got written (or didn't), which an in-memory model cannot settle.
@@ -114,45 +120,64 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
     });
   }
 
-  describe("AC1 — entering blocked requires its fields", () => {
-    it("refuses blocked with none of the required fields, naming both of them at once", async () => {
+  describe("AC1 — entering blocked nudges when required fields are missing", () => {
+    it("lands blocked with none of the required fields, warned about both at once", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition("apply", id, "blocked", {}, reg).catch(
-        (e: unknown) => e,
-      )) as { code?: string; guard?: string; fields?: readonly string[] };
-      expect(error.code).toBe("guard_rejected");
-      expect(error.guard).toBe("state-machine.blocked_required_fields");
-      // Both static requirements, not just the first one reached.
-      expect(error.fields).toEqual(["blocked_reason", "blocked_on_type"]);
+      const applied = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toEqual([
+        {
+          guard: "state-machine.blocked_required_fields",
+          // Both static requirements named in the one message — not just
+          // the first one reached.
+          message: expect.stringContaining("blocked requires blocked_reason, blocked_on_type."),
+        },
+      ]);
+      // The database proves the warning travelled with the write: the item
+      // is genuinely blocked, with the state's columns empty to match.
       const row = await readItem(id);
-      expect(row.state).toBe("executing"); // refused — nothing written
+      expect(row.state).toBe("blocked");
+      expect(row.blockedReason).toBeNull();
+      expect(row.blockedOnType).toBeNull();
     });
 
-    it("refuses blocked with an empty-string reason — presence isn't just typeof string", async () => {
+    it("nudges on an empty-string reason — presence isn't just typeof string", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_reason: "   ", blocked_on_type: "external_process" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
-      expect(error.fields).toEqual(["blocked_reason"]);
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("state-machine.blocked_required_fields");
+      expect(applied.nudges[0]?.message).toContain("blocked requires blocked_reason.");
+      // The block landed with everything the call actually carried.
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedOnType).toBe("external_process");
     });
 
-    it("refuses blocked with a reason but no blocked_on_type", async () => {
+    it("nudges with a reason but no blocked_on_type, and stores the reason it carried", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_reason: "waiting on infra" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
-      expect(error.fields).toEqual(["blocked_on_type"]);
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("state-machine.blocked_required_fields");
+      expect(applied.nudges[0]?.message).toContain("blocked requires blocked_on_type.");
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedReason).toBe("waiting on infra");
     });
 
     it("names the legal blocked_on_type values in the refusal, not just the field (row c1ee5fbc-2926-4315-87dd-6d4ad2ab69e9)", async () => {
@@ -178,194 +203,199 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
       expect(error.message).toContain('"some_other_row"');
     });
 
-    it("refuses blocked_on_type=person with no blocked_on_person", async () => {
+    it("nudges blocked_on_type=person with no blocked_on_person", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_reason: "waiting on someone", blocked_on_type: "person" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
-      expect(error.fields).toEqual(["blocked_on_person"]);
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("state-machine.blocked_required_fields");
+      expect(applied.nudges[0]?.message).toContain("blocked requires blocked_on_person.");
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedOnType).toBe("person");
     });
 
-    it("refuses blocked_on_type=time with no unblock_at", async () => {
+    it("nudges blocked_on_type=time with no unblock_at", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_reason: "waiting on a timer", blocked_on_type: "time" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
-      expect(error.fields).toEqual(["unblock_at"]);
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("state-machine.blocked_required_fields");
+      expect(applied.nudges[0]?.message).toContain("blocked requires unblock_at.");
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedOnType).toBe("time");
     });
 
     // ── Row a7f39116-9281-4269-8938-539b5bbbb987 ────────────────────────
-    // One refusal names every requirement it already knows about, and —
+    // One warning names every requirement it already knows about, and —
     // the harder half — names no requirement that does not apply.
 
-    it("names all three coupled requirements in ONE refusal for a person block", async () => {
+    it("names all three coupled requirements in ONE warning for a person block", async () => {
       // The reported defect: a caller learned reason, then type, then
       // person over three round trips. Supplying only the type that
       // implies a person must surface the reason AND the person together.
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_on_type: "person" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
-      expect(error.fields).toEqual(["blocked_reason", "blocked_on_person"]);
-      // Asserting the message text too, so reverting to a one-field-at-a-
-      // time chain fails here even if `fields` were somehow preserved.
-      expect(error.message).toContain("blocked_reason");
-      expect(error.message).toContain("blocked_on_person");
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      // Asserting the message text, so reverting to a one-field-at-a-time
+      // chain fails here.
+      const message = applied.nudges[0]?.message ?? "";
+      expect(message).toContain("blocked requires blocked_reason, blocked_on_person.");
+      // The branch explanation, not just the demand list.
+      expect(message).toContain("requires blocked_on_person (a person id)");
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
     });
 
     it("names reason and unblock_at together for a time block", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_on_type: "time" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
-      expect(error.fields).toEqual(["blocked_reason", "unblock_at"]);
-      expect(error.message).toContain("unblock_at");
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      const message = applied.nudges[0]?.message ?? "";
+      expect(message).toContain("blocked requires blocked_reason, unblock_at.");
+      expect(message).toContain("unblock_at (a timestamp)");
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
     });
 
     it("does NOT demand a person for an external_process block", async () => {
       // This is the defect in reverse, and worse: over-reporting sends a
       // caller looking for a person who does not exist, with no value they
       // could supply that helps. external_process requires nothing beyond
-      // reason + type, so a missing reason must be the ONLY field named.
+      // reason + type, so a missing reason must be the ONLY thing the
+      // warning names.
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_on_type: "external_process" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[]; message?: string };
-      expect(error.fields).toEqual(["blocked_reason"]);
-      expect(error.fields).not.toContain("blocked_on_person");
-      expect(error.fields).not.toContain("unblock_at");
-      expect(error.message).not.toContain("blocked_on_person");
-      expect(error.message).not.toContain("unblock_at");
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      const message = applied.nudges[0]?.message ?? "";
+      expect(message).toContain("blocked requires blocked_reason.");
+      expect(message).not.toContain("blocked_on_person");
+      expect(message).not.toContain("unblock_at");
     });
 
     it("does not demand a time block's unblock_at from a person block, or vice versa", async () => {
       const reg = blockedPausedRegistry();
       const personId = await createTask({ state: "executing" });
-      const personError = (await callTransition(
+      const personApplied = (await callTransition(
         "apply",
         personId,
         "blocked",
         { blocked_reason: "waiting", blocked_on_type: "person" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
-      expect(personError.fields).toEqual(["blocked_on_person"]);
-      expect(personError.fields).not.toContain("unblock_at");
+      )) as { nudges: { message: string }[] };
+      expect(personApplied.nudges).toHaveLength(1);
+      expect(personApplied.nudges[0]?.message).toContain("blocked requires blocked_on_person.");
+      expect(personApplied.nudges[0]?.message).not.toContain("unblock_at");
 
       const timeId = await createTask({ state: "executing" });
-      const timeError = (await callTransition(
+      const timeApplied = (await callTransition(
         "apply",
         timeId,
         "blocked",
         { blocked_reason: "waiting", blocked_on_type: "time" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
-      expect(timeError.fields).toEqual(["unblock_at"]);
-      expect(timeError.fields).not.toContain("blocked_on_person");
+      )) as { nudges: { message: string }[] };
+      expect(timeApplied.nudges).toHaveLength(1);
+      expect(timeApplied.nudges[0]?.message).toContain("blocked requires unblock_at.");
+      expect(timeApplied.nudges[0]?.message).not.toContain("blocked_on_person");
     });
 
     it("with no type supplied, explains both branches in prose but demands neither field", async () => {
-      // `fields` must stay a list a caller can act on literally, so when
-      // the branch is genuinely undetermined the conditional fields are
-      // described rather than demanded.
+      // A nudge carries no field list, so the demand list is the literal
+      // head of the message: only the two unconditional requirements are
+      // required. The conditional fields appear only inside the branch
+      // explanation — described, not demanded.
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition("apply", id, "blocked", {}, reg).catch(
-        (e: unknown) => e,
-      )) as { fields?: readonly string[]; message?: string };
-      expect(error.fields).toEqual(["blocked_reason", "blocked_on_type"]);
-      expect(error.fields).not.toContain("blocked_on_person");
-      expect(error.fields).not.toContain("unblock_at");
-      // ...but the message still tells the caller what is coming, which is
+      const applied = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges: { message: string }[];
+      };
+      expect(applied.nudges).toHaveLength(1);
+      const message = applied.nudges[0]?.message ?? "";
+      expect(message).toContain("blocked requires blocked_reason, blocked_on_type.");
+      // ...but the prose still tells the caller what is coming, which is
       // the whole point: they can supply everything on the first retry.
-      expect(error.message).toContain("blocked_on_person");
-      expect(error.message).toContain("unblock_at");
-      expect(error.message).toContain("person");
-      expect(error.message).toContain("external_process");
-      expect(error.message).toContain("time");
+      expect(message).toContain("a person block also requires blocked_on_person");
+      expect(message).toContain("a time block also requires unblock_at");
+      expect(message).toContain("person");
+      expect(message).toContain("external_process");
+      expect(message).toContain("time");
     });
 
-    it("carries the full requirement set in details, including which types need nothing further", async () => {
+    it("carries the full requirement set in the warning itself, including which types need nothing further", async () => {
+      // There is no structured payload on a nudge — the whole requirement
+      // set lives in the message, and this pins each part of it so a
+      // phrasing change that drops one still fails here.
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition("apply", id, "blocked", {}, reg).catch(
-        (e: unknown) => e,
-      )) as { details?: Record<string, unknown> };
-      expect(error.details?.required).toEqual(["blocked_reason", "blocked_on_type"]);
-      expect(error.details?.conditional).toEqual({
-        person: "blocked_on_person",
-        time: "unblock_at",
-        external_process: null,
-      });
+      const applied = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges: { message: string }[];
+      };
+      const message = applied.nudges[0]?.message ?? "";
+      expect(message).toContain("blocked_on_type must be one of person, external_process, time");
+      expect(message).toContain("a person block also requires blocked_on_person");
+      expect(message).toContain("a time block also requires unblock_at");
+      expect(message).toContain("external_process requires nothing further");
+      // And the remedy the warning itself prescribes.
+      expect(message).toContain("enter blocked again (blocked → blocked)");
     });
 
-    it("a caller who supplies everything the one refusal named succeeds on the first retry", async () => {
-      // The end-to-end claim the row actually makes: two calls, not four.
+    it("one warning names everything still owed, and one re-entry with those fields finishes the record", async () => {
+      // The end-to-end claim the row actually makes, in the nudge posture:
+      // two calls, not four. The first call lands blocked and the warning
+      // names both fields still missing; the second call is exactly what
+      // the warning prescribes — blocked → blocked carrying those fields.
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_on_type: "person" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
+      )) as { nudges: { message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      const message = applied.nudges[0]?.message ?? "";
+      expect(message).toContain("blocked requires blocked_reason, blocked_on_person.");
+      // The block really landed despite the gaps.
+      expect((await readItem(id)).state).toBe("blocked");
 
-      // Satisfy exactly what was named — nothing more, nothing guessed.
-      const supplied: Record<string, unknown> = { blocked_on_type: "person" };
-      for (const field of error.fields ?? []) {
-        supplied[field] = field === "blocked_on_person" ? "user-a" : "waiting on user-a";
-      }
-      await callTransition("apply", id, "blocked", supplied, reg);
-
-      const row = await readItem(id);
-      expect(row.state).toBe("blocked");
-      expect(row.blockedOnPersonId).toBe("user-a");
-    });
-
-    it("allows blocked_on_type=external_process with just reason + type", async () => {
-      const reg = blockedPausedRegistry();
-      const id = await createTask({ state: "executing" });
-      await callTransition(
-        "apply",
-        id,
-        "blocked",
-        { blocked_reason: "waiting on a build", blocked_on_type: "external_process" },
-        reg,
-      );
-      const row = await readItem(id);
-      expect(row.state).toBe("blocked");
-      expect(row.blockedReason).toBe("waiting on a build");
-      expect(row.blockedOnType).toBe("external_process");
-    });
-
-    it("allows blocked with all required fields present (person)", async () => {
-      const reg = blockedPausedRegistry();
-      const id = await createTask({ state: "executing" });
+      // Supply exactly what the warning named — nothing more, nothing
+      // guessed.
       await callTransition(
         "apply",
         id,
@@ -377,6 +407,45 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
         },
         reg,
       );
+
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedReason).toBe("waiting on user-a");
+      expect(row.blockedOnPersonId).toBe("user-a");
+    });
+
+    it("allows blocked_on_type=external_process with just reason + type", async () => {
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const applied = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        { blocked_reason: "waiting on a build", blocked_on_type: "external_process" },
+        reg,
+      )) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]); // full evidence, full silence
+      const row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedReason).toBe("waiting on a build");
+      expect(row.blockedOnType).toBe("external_process");
+    });
+
+    it("allows blocked with all required fields present (person)", async () => {
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const applied = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        {
+          blocked_reason: "waiting on user-a",
+          blocked_on_type: "person",
+          blocked_on_person: "user-a",
+        },
+        reg,
+      )) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       const row = await readItem(id);
       expect(row.state).toBe("blocked");
       expect(row.blockedReason).toBe("waiting on user-a");
@@ -388,68 +457,89 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
       const unblockAt = new Date("2027-01-01T00:00:00.000Z");
-      await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "blocked",
         { blocked_reason: "timer", blocked_on_type: "time", unblock_at: unblockAt },
         reg,
-      );
+      )) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       const row = await readItem(id);
       expect(row.state).toBe("blocked");
       expect(row.unblockAt?.toISOString()).toBe(unblockAt.toISOString());
     });
   });
 
-  describe("AC2 — entering paused requires its fields", () => {
-    it("refuses paused with an empty-string pause_reason", async () => {
+  describe("AC2 — entering paused nudges when required fields are missing", () => {
+    it("nudges paused with an empty-string pause_reason — and the pause lands", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "paused",
         { pause_reason: "", resume_condition: "someone claims it" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
-      expect(error.fields).toEqual(["pause_reason"]);
-    });
-
-    it("refuses paused with neither field", async () => {
-      const reg = blockedPausedRegistry();
-      const id = await createTask({ state: "executing" });
-      const error = (await callTransition("apply", id, "paused", {}, reg).catch(
-        (e: unknown) => e,
-      )) as { guard?: string; fields?: readonly string[] };
-      expect(error.guard).toBe("state-machine.paused_required_fields");
-      expect(error.fields).toEqual(["pause_reason"]);
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toEqual([
+        {
+          guard: "state-machine.paused_required_fields",
+          message: expect.stringContaining("paused requires pause_reason."),
+        },
+      ]);
       const row = await readItem(id);
-      expect(row.state).toBe("executing");
+      expect(row.state).toBe("paused");
+      // The condition the call did carry landed anyway.
+      expect(row.resumeCondition).toBe("someone claims it");
     });
 
-    it("refuses paused with pause_reason but no resume_condition", async () => {
+    it("nudges paused with neither field, and the pause lands", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      const error = (await callTransition(
+      const applied = (await callTransition("apply", id, "paused", {}, reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("state-machine.paused_required_fields");
+      // This guard reports one gap at a time (unlike the blocked guard's
+      // named-at-once rule), so the warning names the reason and stops
+      // there — the old `fields` list pinned the same boundary.
+      expect(applied.nudges[0]?.message).toContain("paused requires pause_reason.");
+      expect(applied.nudges[0]?.message).not.toContain("resume_condition");
+      const row = await readItem(id);
+      expect(row.state).toBe("paused");
+    });
+
+    it("nudges paused with pause_reason but no resume_condition", async () => {
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+      const applied = (await callTransition(
         "apply",
         id,
         "paused",
         { pause_reason: "nobody on it" },
         reg,
-      ).catch((e: unknown) => e)) as { fields?: readonly string[] };
-      expect(error.fields).toEqual(["resume_condition"]);
+      )) as { nudges: { guard: string; message: string }[] };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("state-machine.paused_required_fields");
+      expect(applied.nudges[0]?.message).toContain("paused requires resume_condition.");
+      const row = await readItem(id);
+      expect(row.state).toBe("paused");
+      expect(row.pauseReason).toBe("nobody on it");
     });
 
     it("allows paused with both fields present", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
-      await callTransition(
+      const applied = (await callTransition(
         "apply",
         id,
         "paused",
         { pause_reason: "nobody on it", resume_condition: "someone claims it" },
         reg,
-      );
+      )) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       const row = await readItem(id);
       expect(row.state).toBe("paused");
       expect(row.pauseReason).toBe("nobody on it");
@@ -565,11 +655,17 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
       expect(row.resumeCondition).toBe("dependency ships");
     });
 
-    it("blocked -> blocked is still refused when the new entry is missing a required field", async () => {
+    it("blocked -> blocked with a missing field warns, and the record holds only what the re-entry carried", async () => {
       // Re-entry isn't exempt from the guard just because the state didn't
-      // change — an incomplete re-block must still be rejected, and the
-      // original fields must survive untouched (the transaction rolled
-      // back the whole operation, not just skipped the write).
+      // change — an incomplete re-block is still reported. It is no longer
+      // refused, though, and that changes what this case can claim: entry
+      // to `blocked` writes the state's columns from the fields the call
+      // carries, so a bare re-entry lands warned and leaves the item
+      // blocked with no reason recorded — which is exactly why the warning
+      // tells the caller to enter blocked again with the missing fields.
+      // What is pinned here: the guard fires on re-entry, and a warned
+      // re-entry still performs the entry write rather than quietly
+      // keeping the old record.
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
       await callTransition(
@@ -580,12 +676,17 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
         reg,
       );
 
-      const error = await callTransition("apply", id, "blocked", {}, reg).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
+      const applied = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("state-machine.blocked_required_fields");
+      expect(applied.nudges[0]?.message).toContain("enter blocked again");
 
       const row = await readItem(id);
-      expect(row.blockedReason).toBe("original reason");
-      expect(row.blockedOnType).toBe("external_process");
+      expect(row.state).toBe("blocked");
+      expect(row.blockedReason).toBeNull();
+      expect(row.blockedOnType).toBeNull();
     });
   });
 
@@ -612,16 +713,42 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
   });
 
   describe("rehearsal — reports the same verdict without writing", () => {
-    it("reports a rejection for a missing field on dry-run, and writes nothing", async () => {
+    it("warns for a missing field and refuses for an invalid value, and writes nothing either way", async () => {
+      // Both sides of this file's nudge/refusal line, in one rehearsal:
+      // a missing required field is a warning the rehearsal reports
+      // instead of a wall, and a supplied value outside the enum is
+      // still a refusal — reported as an outcome, never as a throw.
       const reg = blockedPausedRegistry();
-      const id = await createTask({ state: "executing" });
-      const outcome = (await callTransition("rehearse", id, "blocked", {}, reg)) as {
+
+      const missing = await createTask({ state: "executing" });
+      const warned = (await callTransition("rehearse", missing, "blocked", {}, reg)) as {
         allowed: boolean;
+        nudges: { guard: string; message: string }[];
       };
-      expect(outcome.allowed).toBe(false);
-      const row = await readItem(id);
-      expect(row.state).toBe("executing");
-      expect(row.blockedReason).toBeNull();
+      expect(warned.allowed).toBe(true);
+      expect(warned.nudges).toEqual([
+        {
+          guard: "state-machine.blocked_required_fields",
+          message: expect.stringContaining("enter blocked again"),
+        },
+      ]);
+
+      const invalid = await createTask({ state: "executing" });
+      const refused = (await callTransition(
+        "rehearse",
+        invalid,
+        "blocked",
+        { blocked_reason: "waiting", blocked_on_type: "some_other_row" },
+        reg,
+      )) as { allowed: boolean; rejection?: { guard: string } };
+      expect(refused.allowed).toBe(false);
+      expect(refused.rejection?.guard).toBe("state-machine.blocked_required_fields");
+
+      for (const itemId of [missing, invalid]) {
+        const row = await readItem(itemId);
+        expect(row.state).toBe("executing");
+        expect(row.blockedReason).toBeNull();
+      }
     });
   });
 });
