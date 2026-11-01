@@ -23,6 +23,7 @@ import {
   rehearseTransition,
   type TransitionOutcome,
 } from "../state-machine/transition";
+import type { GuardNudge } from "../state-machine/guard";
 import { assertTransitionFieldsAccepted } from "../state-machine/transition-fields";
 import { RehearsalRollback } from "./rehearsal-rollback";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
@@ -103,6 +104,13 @@ export interface AppliedTransitionOutcome {
   readonly to: TransitionOutcome["to"];
   readonly allowed: true;
   readonly rehearsed: false;
+  /**
+   * Warnings the process guards raised while applying the move, in
+   * registration order — the same `nudges` shape a `dry_run` rehearsal
+   * reports, so a caller reads `outcome.nudges` on both paths. Omitted
+   * when every guard was content.
+   */
+  readonly nudges?: readonly GuardNudge[];
 }
 
 /** What `transition_item` returns on a real (non-rehearsed) move. */
@@ -247,6 +255,10 @@ export const transitionItem = defineOperation({
       to: applied.to,
       allowed: true,
       rehearsed: false,
+      // Warnings ride the answer, not the wall: a move that was applied
+      // with missing evidence applies *and* names what was missing.
+      // Omitted when empty — see `AppliedTransitionOutcome.nudges`.
+      ...(applied.nudges.length > 0 ? { nudges: applied.nudges } : {}),
     };
     return {
       // `outcome` was already the compact shape this row wanted — `dryRun`

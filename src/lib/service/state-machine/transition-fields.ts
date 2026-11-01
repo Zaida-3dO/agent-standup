@@ -116,10 +116,10 @@ const BOTH_OPERATIONS = ["transition_item", "complete_item"] as const;
 /**
  * Every key `fields` accepts, on any operation, in any state.
  *
- * Eight. Six write a column; `summary` and `merge_rationale` write none and
- * are read by guards only. Derived from *guard consumption*, not from the
- * `UPDATE` statement — see `writesColumn` above for why that distinction is
- * load-bearing rather than trivia.
+ * Ten. Six write a column; `summary`, `merge_rationale`, `merge_proof` and
+ * `skip_proof` write none and are read by guards only. Derived from *guard
+ * consumption*, not from the `UPDATE` statement — see `writesColumn` above
+ * for why that distinction is load-bearing rather than trivia.
  */
 export const TRANSITION_FIELDS: readonly TransitionFieldSpec[] = [
   {
@@ -174,6 +174,28 @@ export const TRANSITION_FIELDS: readonly TransitionFieldSpec[] = [
     writesColumn: false,
     acceptedBy: BOTH_OPERATIONS,
   },
+  {
+    // Proof for a merge, for the case where the caller has a sentence or
+    // the PR title but no recorded commit artifact yet. Read by
+    // `merge.requires_commit` while it decides; like `merge_rationale`, it
+    // writes no column — the proof that outlives the call is whatever
+    // artifact the caller records next.
+    key: "merge_proof",
+    appliesTo: ["merged"],
+    writesColumn: false,
+    acceptedBy: BOTH_OPERATIONS,
+  },
+  {
+    // The caller's explicit "I know there is no proof and I am merging
+    // anyway". Saying it up front is worth more than silence: it converts
+    // a missing-evidence warning into a recorded decision by the caller,
+    // and `merge.requires_commit` stays quiet instead of repeating a
+    // warning nobody asked for.
+    key: "skip_proof",
+    appliesTo: ["merged"],
+    writesColumn: false,
+    acceptedBy: BOTH_OPERATIONS,
+  },
 ];
 
 /** The accepted spellings, for a message that has to list them. */
@@ -201,6 +223,8 @@ export const TRANSITION_FIELD = {
   resume_condition: "resume_condition",
   summary: "summary",
   merge_rationale: "merge_rationale",
+  merge_proof: "merge_proof",
+  skip_proof: "skip_proof",
 } as const satisfies Record<string, string>;
 
 /**

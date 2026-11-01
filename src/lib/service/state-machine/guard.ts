@@ -7,6 +7,25 @@
 // demand that something be true or present before the move is allowed —
 // never refuse a pair outright because of what the pair *is*. There is no
 // edge whitelist here for a guard to consult.
+//
+// The board nudges rather than blocks (the owner's rule for this tracker:
+// it should never stand between an agent and closing work, only point it at
+// what good practice would supply). So a guard has two ways to say
+// "something is missing", split by *why* the missing thing matters:
+//
+//   - A **nudge** (`guardNudged`): the requirement is about process —
+//     evidence the item ought to carry and can still acquire afterwards
+//     (a commit artifact, an approving review, a linked follow-up). The
+//     transition is applied and the answer carries the guard's message as
+//     a warning, so the agent sees the shortfall without being walled off
+//     from finishing the work.
+//   - A **refusal** (`guardRejected`): reserved for data integrity — an
+//     unrecognised stored value, or a claim that would write something
+//     false into the ledger. A refusal says the record cannot be made
+//     trustworthy at all, not that the work was done in the wrong order.
+//
+// Which side a branch falls on is decided at the branch, not here: the
+// framework carries both verdicts and never infers one from the other.
 import { GuardRejectedError } from "../errors";
 import type { TransactionHandle } from "../context";
 import { log } from "@/lib/log";
@@ -61,9 +80,30 @@ export interface GuardInput {
   readonly requestId?: string;
 }
 
-/** A guard's verdict. Rejection carries everything `GuardRejectedError` needs. */
+/**
+ * A nudge carried on the transition's answer: the guard's id and the
+ * warning it raised. Shaped deliberately small — `guard` because §22's
+ * coverage ledger reads guard ids and a caller deciding what to fix needs
+ * to know which rule spoke, and no `fields`/`details`: those existed to
+ * make a refusal actionable, and a nudge asks for evidence, not a retry.
+ */
+export interface GuardNudge {
+  readonly guard: string;
+  readonly message: string;
+}
+
+/**
+ * A guard's verdict. Three kinds:
+ *
+ *   - `guardOk` — nothing to say.
+ *   - `guardNudged` — the move is allowed and the answer should carry the
+ *     message as a warning (process requirements; see this module's header).
+ *   - `guardRejected` — the move is refused, and the rejection carries
+ *     everything `GuardRejectedError` needs (integrity only).
+ */
 export type GuardResult =
   | { readonly ok: true }
+  | { readonly ok: true; readonly nudge: { readonly message: string } }
   | {
       readonly ok: false;
       readonly message: string;
@@ -72,6 +112,18 @@ export type GuardResult =
     };
 
 export const guardOk: GuardResult = Object.freeze({ ok: true });
+
+export function guardNudged(message: string): GuardResult {
+  return { ok: true, nudge: { message } };
+}
+
+/** Whether an OK verdict is a nudged one (the move proceeds either way). */
+export function isNudgedResult(result: GuardResult): result is Extract<
+  GuardResult,
+  { ok: true }
+> & { readonly nudge: { readonly message: string } } {
+  return result.ok === true && "nudge" in result;
+}
 
 export function guardRejected(
   message: string,
@@ -154,16 +206,34 @@ export class GuardRegistry {
 /** The process-wide registry rows #16-#19 and #21 register their guards into. */
 export const guardRegistry = new GuardRegistry();
 
+/** What one pass over the applicable guards reports. */
+export interface GuardRunOutcome {
+  /**
+   * The first hard rejection, when some guard refused outright. Absent
+   * when every applicable guard was content or nudged — and with nudges
+   * collected even when present, so a rehearsal shows what the caller
+   * would have been warned about even after clearing the blocker.
+   */
+  readonly rejection?: GuardRejectedError;
+  /** Every process guard that spoke while the move proceeded, in registration order. */
+  readonly nudges: readonly GuardNudge[];
+}
+
 /**
- * Runs every guard `appliesTo` selects, in registration order, and stops at
- * the first rejection.
+ * Runs every guard `appliesTo` selects, in registration order.
  *
- * Stopping at the first rejection (rather than collecting all of them) keeps
- * one property simple to state and simple to test: the rejection a caller
- * receives is always the rejection of the guard whose `id` it names, with
- * nothing left ambiguous about which rule fired. Ordering guards so the
- * cheapest or most informative check runs first is a registration-time
- * concern, not this function's.
+ * A **nudge does not stop the run** — the point of nudging is that the
+ * move proceeds, so the run continues and collects the warning, and a
+ * caller with four missing pieces of merge evidence learns all four in one
+ * answer rather than one guard-rejection round trip at a time.
+ *
+ * A hard **refusal still stops at the first one** (and the refusals that
+ * remain are integrity-only, decided at the branch — see this module's
+ * header). The property that made first-refusal-wins worth having still
+ * holds for those: the rejection a caller receives is always the rejection
+ * of the guard whose `id` it names, with nothing left ambiguous about
+ * which rule fired. Ordering guards so the cheapest or most informative
+ * check runs first is a registration-time concern, not this function's.
  *
  * ── Why the refusal is logged *here* ────────────────────────────────────
  *
@@ -195,25 +265,46 @@ export const guardRegistry = new GuardRegistry();
 export async function runGuards(
   guards: readonly Guard[],
   input: GuardInput,
-): Promise<GuardRejectedError | undefined> {
+): Promise<GuardRunOutcome> {
+  const nudges: GuardNudge[] = [];
   for (const guard of guards) {
     const result = await guard.check(input);
-    if (!result.ok) {
-      log.info("Guard refused a transition.", {
-        ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
-        guard: guard.id,
-        itemId: input.item.id,
-        from: input.from,
-        to: input.to,
-        reason: result.message,
-        ...(result.fields === undefined ? {} : { fields: [...result.fields] }),
-        ...(result.details === undefined ? {} : { details: result.details }),
-      });
-      return new GuardRejectedError(guard.id, result.message, {
+    if (result.ok === true) {
+      if (isNudgedResult(result)) {
+        nudges.push({ guard: guard.id, message: result.nudge.message });
+        // The same disclosure reasoning that puts refusals in the log at
+        // `info` puts nudges there too: the rule fired, its message is the
+        // whole of its reasoning, and the caller is about to be handed the
+        // same sentence. An operator following a stuck item asks "what did
+        // the board tell that agent" — this is where that answer lives.
+        log.info("Guard nudged an applied transition.", {
+          ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+          guard: guard.id,
+          itemId: input.item.id,
+          from: input.from,
+          to: input.to,
+          reason: result.nudge.message,
+        });
+      }
+      continue;
+    }
+    log.info("Guard refused a transition.", {
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      guard: guard.id,
+      itemId: input.item.id,
+      from: input.from,
+      to: input.to,
+      reason: result.message,
+      ...(result.fields === undefined ? {} : { fields: [...result.fields] }),
+      ...(result.details === undefined ? {} : { details: result.details }),
+    });
+    return {
+      rejection: new GuardRejectedError(guard.id, result.message, {
         fields: result.fields,
         details: result.details,
-      });
-    }
+      }),
+      nudges,
+    };
   }
-  return undefined;
+  return { nudges };
 }

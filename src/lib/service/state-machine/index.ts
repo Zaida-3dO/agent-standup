@@ -3,13 +3,17 @@ export { ITEM_STATES, allStatePairs, isItemState, type ItemStateValue } from "./
 
 export {
   GuardRegistry,
+  guardNudged,
   guardOk,
   guardRegistry,
   guardRejected,
+  isNudgedResult,
   runGuards,
   type Guard,
   type GuardInput,
+  type GuardNudge,
   type GuardResult,
+  type GuardRunOutcome,
   type GuardableItem,
 } from "./guard";
 

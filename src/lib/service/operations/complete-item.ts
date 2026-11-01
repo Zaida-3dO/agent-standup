@@ -26,6 +26,7 @@ import {
   type RawItemRow,
 } from "../items/row";
 import { applyTransition } from "../state-machine/transition";
+import type { GuardNudge } from "../state-machine/guard";
 import { assertTransitionFieldsAccepted } from "../state-machine/transition-fields";
 import {
   COMPLETED_STATES as COMPLETED_STATE_LIST,
@@ -298,6 +299,13 @@ const contract = {
 export interface CompleteItemResult {
   /** Slim by default, the whole record under `full: true` — see `ItemWriteRecord`. */
   readonly item: ItemRecord | ItemWriteRecord;
+  /**
+   * Warnings the transition's process guards raised while completing the
+   * item, in registration order — `transition_item`'s `outcome.nudges` for
+   * a completion. Omitted when every guard was content, so the common
+   * fully-evidenced completion answers exactly as before nudges existed.
+   */
+  readonly nudges?: readonly GuardNudge[];
 }
 
 function toCandidate(summary: CompleteItemInput["summary"]): SummaryCandidate {
@@ -559,6 +567,12 @@ export const completeItem = defineOperation({
     await scoreCompletedRuns(ctx, input.id);
 
     const item = await loadItemRecord(ctx, input.id);
-    return { item: input.full ? item : toItemWriteRecord(item) };
+    return {
+      item: input.full ? item : toItemWriteRecord(item),
+      // The same warnings `transition_item` reports on its outcome: the
+      // completion was applied, and the guards name what good practice
+      // would still supply. Omitted when empty.
+      ...(applied.nudges.length > 0 ? { nudges: applied.nudges } : {}),
+    };
   },
 });

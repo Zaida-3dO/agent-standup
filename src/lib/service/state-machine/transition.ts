@@ -8,8 +8,14 @@
 // guards against a project, running whichever guards `appliesTo` the pair,
 // and either reporting the outcome (rehearsal) or writing it (real).
 import { isTerminalState } from "../board/columns";
-import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
-import { guardRegistry, runGuards, type GuardableItem, type GuardRegistry } from "./guard";
+import { ConflictError, ForbiddenError, GuardRejectedError, NotFoundError } from "../errors";
+import {
+  guardRegistry,
+  runGuards,
+  type GuardNudge,
+  type GuardableItem,
+  type GuardRegistry,
+} from "./guard";
 import { isItemState, type ItemStateValue } from "./states";
 import type { ServiceContext } from "../context";
 // The six writable key names come from the accepted-key table rather than
@@ -70,15 +76,36 @@ export interface TransitionOutcome {
     readonly message: string;
     readonly fields: readonly string[];
   };
+  /**
+   * The process guards that would warn on this move, in registration
+   * order. Omitted when there are none, so a rehearsal of a fully-evidenced
+   * move answers exactly as it did before nudges existed.
+   *
+   * Present even beside a `rejection` when some guard warned before the
+   * blocker: the caller clearing the blocker should learn in the same
+   * round what it would then be warned about, not discover those one
+   * rehearsal at a time.
+   */
+  readonly nudges?: readonly GuardNudge[];
   /** Always `true` here — `rehearseTransition` never writes. */
   readonly rehearsed: true;
 }
 
-/** What `applyTransition` returns — only ever a successful move, since a rejection throws instead. */
+/**
+ * What `applyTransition` returns — only ever a successful move, since a
+ * rejection throws instead.
+ *
+ * `nudges` is always present (empty when every guard was content): this is
+ * the internal seam the operations read to build their adapter-facing
+ * answer, which omits the key when empty. Keeping it always-present here
+ * means the operations never have to handle "did nudging exist on this
+ * call" — they just check the length.
+ */
 export interface AppliedTransition {
   readonly itemId: string;
   readonly from: ItemStateValue;
   readonly to: ItemStateValue;
+  readonly nudges: readonly GuardNudge[];
 }
 
 const ITEM_COLUMNS = `
@@ -205,7 +232,8 @@ async function evaluate(
   item: GuardableItem;
   from: ItemStateValue;
   to: ItemStateValue;
-  rejection?: Awaited<ReturnType<typeof runGuards>>;
+  rejection?: GuardRejectedError;
+  nudges: readonly GuardNudge[];
 }> {
   if (!isItemState(request.to)) {
     throw new NotFoundError(`Not a valid state: ${request.to}.`, { fields: ["to"] });
@@ -251,21 +279,27 @@ async function evaluate(
   }
 
   const applicable = registry.applicable(from, to);
-  const rejection = await runGuards(applicable, {
+  const guardRun = await runGuards(applicable, {
     item,
     from,
     to,
     fields: request.fields ?? {},
     db: ctx.db,
     settings: ctx.settings,
-    // Carried so the refusal `runGuards` logs names the call that provoked
-    // it. Passed through rather than read from ambient storage, for the
-    // reason `context.ts` gives: a guard's inputs should be visible in its
-    // type.
+    // Carried so the refusal and nudge lines `runGuards` logs name the call
+    // that provoked them. Passed through rather than read from ambient
+    // storage, for the reason `context.ts` gives: a guard's inputs should
+    // be visible in its type.
     ...(ctx.caller.requestId === undefined ? {} : { requestId: ctx.caller.requestId }),
   });
 
-  return { item, from, to, rejection };
+  return {
+    item,
+    from,
+    to,
+    ...(guardRun.rejection ? { rejection: guardRun.rejection } : {}),
+    nudges: guardRun.nudges,
+  };
 }
 
 /**
@@ -281,8 +315,8 @@ export async function rehearseTransition(
   request: TransitionRequest,
   registry: GuardRegistry = guardRegistry,
 ): Promise<TransitionOutcome> {
-  const { from, to, rejection } = await evaluate(ctx, request, registry);
-  return buildOutcome(request.itemId, from, to, rejection);
+  const { from, to, rejection, nudges } = await evaluate(ctx, request, registry);
+  return buildOutcome(request.itemId, from, to, rejection, nudges);
 }
 
 /**
@@ -310,13 +344,20 @@ export async function rehearseTransition(
  * for this call, so "committed or rolled back together with everything else
  * this operation does" falls out of using it rather than opening a second
  * one.
+ *
+ * **Nudged guards do not throw, and that has a transaction consequence.**
+ * A guard that returns a nudge is saying "proceed, and say so in the
+ * answer" — so any bookkeeping a nudged guard made through `ctx.db` while
+ * deciding commits with the move, which is the right half of the same
+ * reasoning: throw-don't-return exists to keep *refusals* clean, and a
+ * nudge is not a refusal.
  */
 export async function applyTransition(
   ctx: ServiceContext,
   request: TransitionRequest,
   registry: GuardRegistry = guardRegistry,
 ): Promise<AppliedTransition> {
-  const { from, to, rejection } = await evaluate(ctx, request, registry);
+  const { from, to, rejection, nudges } = await evaluate(ctx, request, registry);
   if (rejection) {
     throw rejection;
   }
@@ -404,7 +445,7 @@ export async function applyTransition(
     resumeCondition,
   );
 
-  return { itemId: request.itemId, from, to };
+  return { itemId: request.itemId, from, to, nudges };
 }
 
 /** Coerces a guard-checked `fields` value to a string for a raw `UPDATE`, or `null`. */
@@ -433,10 +474,16 @@ function buildOutcome(
   itemId: string,
   from: ItemStateValue,
   to: ItemStateValue,
-  rejection: Awaited<ReturnType<typeof runGuards>>,
+  rejection: GuardRejectedError | undefined,
+  nudges: readonly GuardNudge[],
 ): TransitionOutcome {
+  // Omitted when empty rather than printed as `[]`: a rehearsal that had
+  // nothing to warn about answers exactly as it did before nudges existed,
+  // and a caller learns "no warnings" from the key's absence the same way
+  // `transition_item`'s `notifications` key already reads.
+  const collected = nudges.length > 0 ? { nudges } : {};
   if (!rejection) {
-    return { itemId, from, to, allowed: true, rehearsed: true };
+    return { itemId, from, to, allowed: true, rehearsed: true, ...collected };
   }
   return {
     itemId,
@@ -450,5 +497,6 @@ function buildOutcome(
       message: rejection.message,
       fields: rejection.fields,
     },
+    ...collected,
   };
 }
